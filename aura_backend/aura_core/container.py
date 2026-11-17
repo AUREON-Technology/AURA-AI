@@ -185,6 +185,7 @@ class Container:
         self.tenancy.seat_limit = self.plans.seat_limit
         self.tenancy.plan_of = self.plans.plan_id
         self.email, self.notifier = self._build_email()
+        self.tenancy.notifier = self.notifier
         self.billing = self._build_billing()
         self.store_billing = self._build_store_billing()
 
@@ -1364,7 +1365,12 @@ class Container:
 
         billing = self.settings.billing
         if self.settings.infrastructure.document_backend == "postgres":
-            from .adapters.postgres_billing import PostgresBillingLocks, PostgresPaymentStore, PostgresSubscriptionStore
+            from .adapters.postgres_billing import (
+                PostgresBillingContactStore,
+                PostgresBillingLocks,
+                PostgresPaymentStore,
+                PostgresSubscriptionStore,
+            )
 
             url = self.settings.infrastructure.database_url
             subscriptions: Any = PostgresSubscriptionStore(url, pool=self._postgres_pool())
@@ -1372,10 +1378,17 @@ class Container:
             # Advisory locks: one settle per workspace and one cycle at a time across every
             # gateway worker and the cron process (review D1#2/#6).
             locks: Any = PostgresBillingLocks(url, pool=self._postgres_pool())
+            contacts: Any = PostgresBillingContactStore(url, pool=self._postgres_pool())
         else:
-            from .adapters.billing import InMemoryBillingLocks, InMemoryPaymentStore, InMemorySubscriptionStore
+            from .adapters.billing import (
+                InMemoryBillingContactStore,
+                InMemoryBillingLocks,
+                InMemoryPaymentStore,
+                InMemorySubscriptionStore,
+            )
 
             subscriptions, payments, locks = InMemorySubscriptionStore(), InMemoryPaymentStore(), InMemoryBillingLocks()
+            contacts = InMemoryBillingContactStore()
         if billing.fawry_configured:
             from .adapters.fawry import FawryPaymentProvider
 
@@ -1393,7 +1406,7 @@ class Container:
         return BillingService(
             subscriptions=subscriptions, payments=payments, provider=provider, plans=self.plans,
             tenancy=self.tenancy, clock=self.clock, audit=self.audit, settings=billing,
-            prices=load_prices(billing.prices_json), locks=locks,
+            prices=load_prices(billing.prices_json), locks=locks, contacts=contacts, notifier=self.notifier,
         )
 
     def _build_email(self) -> tuple[Any, Any]:

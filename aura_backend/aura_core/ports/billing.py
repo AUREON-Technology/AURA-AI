@@ -97,6 +97,14 @@ class BillingLocks(Protocol):
         """The cycle's lock, or None when another cycle holds it."""
 
 
+class BillingContactStore(Protocol):
+    """Where a workspace's billing email goes (SaaS P1-F1)."""
+
+    async def put(self, workspace_id: str, email: str, at: datetime) -> None: ...
+
+    async def get(self, workspace_id: str) -> str | None: ...
+
+
 class StoreBindingStore(Protocol):
     async def put(self, binding: StoreBinding) -> None: ...
 

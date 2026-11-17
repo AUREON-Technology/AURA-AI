@@ -140,6 +140,27 @@ class PostgresPaymentStore:
         return [_pay(r) for r in rows]
 
 
+class PostgresBillingContactStore:
+    """Table owned by Alembic revision 0024."""
+
+    def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
+        self._pool = pool or PostgresPool(url)
+
+    async def put(self, workspace_id: str, email: str, at: datetime) -> None:
+        pool = await self._pool._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO aura_billing_contacts (workspace_id, email, updated_at) VALUES ($1,$2,$3) "
+                "ON CONFLICT (workspace_id) DO UPDATE SET email = EXCLUDED.email, updated_at = EXCLUDED.updated_at",
+                workspace_id, email, at,
+            )
+
+    async def get(self, workspace_id: str) -> str | None:
+        pool = await self._pool._get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval("SELECT email FROM aura_billing_contacts WHERE workspace_id = $1", workspace_id)
+
+
 class PostgresStoreBindingStore:
     """Tables owned by Alembic revision 0023."""
 

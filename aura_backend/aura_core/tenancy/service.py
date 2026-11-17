@@ -55,6 +55,9 @@ class TenancyService:
     seat_limit: Any = None
     #: ``async (workspace_id) -> str``: the plan's id, for the seats refusal's details.
     plan_of: Any = None
+    #: ``Notifier`` (SaaS P1-F1): emails an invite to the invitee. Unset: the token is only in
+    #: the route's response, as before.
+    notifier: Any = None
 
     async def _no_free_seats(self, workspace_id: str, used: int, allowed: int) -> PlanLimitError:
         plan = await self.plan_of(workspace_id) if self.plan_of is not None else ""
@@ -131,7 +134,8 @@ class TenancyService:
         return ws
 
     async def invite(
-        self, actor: str, workspace_id: str, email: str, role: WorkspaceRole
+        self, actor: str, workspace_id: str, email: str, role: WorkspaceRole, *,
+        inviter_email: str | None = None,
     ) -> tuple[Invite, str]:
         _ws, mine = await self._team(actor, workspace_id)
         self._require(mine.role, "invite")
@@ -153,6 +157,8 @@ class TenancyService:
         )
         await self.store.put_invite(invite)
         await self._audit("invite", actor, mine.role, workspace_id, {"invite_id": invite_id, "role": role.value})
+        if self.notifier is not None:
+            await self.notifier.invite(address, _ws.name, inviter_email, role.value, token)  # never raises
         return invite, token
 
     async def accept(self, user_id: str, token: str) -> Membership:

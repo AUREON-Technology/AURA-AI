@@ -58,6 +58,10 @@ class BillingService:
     prices: Mapping[str, int]
     #: ``BillingLocks``: per-workspace settle lock and the single-cycle lock (review D1#2/#6).
     locks: Any
+    #: ``BillingContactStore`` and ``Notifier`` (SaaS P1-F1): receipts, renewal reminders and
+    #: past-due notices go to the Owner's address stored at checkout. Either unset: no email.
+    contacts: Any = None
+    notifier: Any = None
 
     # -- buying ---------------------------------------------------------------------------
 
@@ -67,6 +71,8 @@ class BillingService:
             raise AuthorizationError("only the workspace owner can buy a plan")
         await self.plans.validate_plan(workspace_id, plan_id, seats)
         amount = price_for(self.prices, plan_id, seats)
+        if email and self.contacts is not None:
+            await self.contacts.put(workspace_id, email, self.clock.now())
         lock = await self.locks.lock_workspace(workspace_id)
         try:
             current = await self.subscriptions.get(workspace_id)
@@ -207,6 +213,8 @@ class BillingService:
                                  expected=(PaymentStatus.RECEIVED,))
         await self._audit("billing.paid", "provider", payment.workspace_id,
                           {"payment_id": payment.id, "period_end": sub.period_end.isoformat()})
+        await self._email(payment.workspace_id, lambda to, name: self.notifier.receipt(
+            to, name, payment.plan_id, payment.amount_piastres, now, sub.period_end, payment.id))
         return "applied"
 
     # -- the scheduled cycle --------------------------------------------------------------
@@ -265,9 +273,12 @@ class BillingService:
                 and not await self._renewal_pending(workspace_id, now)):
             try:
                 amount = price_for(self.prices, sub.plan_id, sub.seats)
-                await self._issue(workspace_id, sub.plan_id, sub.seats, amount, "renewal",
-                                  email=None, card_token=sub.card_token)
+                renewal = await self._issue(workspace_id, sub.plan_id, sub.seats, amount, "renewal",
+                                            email=None, card_token=sub.card_token)
                 counts["renewals"] += 1
+                if renewal.method == "PAYATFAWRY":  # a card renewal needs nothing from the payer
+                    await self._email(workspace_id, lambda to, name: self.notifier.renewal_due(
+                        to, name, renewal.amount_piastres, renewal.reference_number, renewal.expires_at))
             except Exception:
                 counts["errors"] += 1
                 logger.warning("renewal payment could not be issued", exc_info=True, extra={"workspace_id": workspace_id})
@@ -281,6 +292,11 @@ class BillingService:
         if moved is not sub:
             await self.subscriptions.put(moved)
             counts["advanced"] += 1
+            unpaid = (SubscriptionStatus.PAST_DUE, SubscriptionStatus.GRACE)
+            if moved.status in unpaid and sub.status not in unpaid and sub.provider not in ("apple", "google"):
+                # Once, when it first falls behind; the stores tell their own customers.
+                await self._email(workspace_id, lambda to, name: self.notifier.past_due(
+                    to, name, moved.grace_until or (moved.period_end + grace)))
             if moved.status is SubscriptionStatus.EXPIRED:
                 await self._downgrade(workspace_id)
                 await self._audit("billing.expired", "billing", workspace_id, {"plan": sub.plan_id})
@@ -335,6 +351,19 @@ class BillingService:
         payment = replace(payment, reference_number=charge.reference_number, provider_ref=charge.provider_ref)
         await self.payments.put(payment)
         return payment
+
+    async def _email(self, workspace_id: str, send) -> None:
+        """Send one customer email to the workspace's billing contact. Never raises."""
+        if self.notifier is None or self.contacts is None:
+            return
+        try:
+            to = await self.contacts.get(workspace_id)
+            if not to:
+                return
+            workspace = await self.tenancy.store.get_workspace(workspace_id)
+            await send(to, workspace.name if workspace is not None else "your workspace")
+        except Exception:
+            logger.warning("billing email could not be prepared", exc_info=True)
 
     async def _audit(self, action: str, actor: str, workspace_id: str, detail: dict) -> None:
         await self.audit.record(AuditEvent(

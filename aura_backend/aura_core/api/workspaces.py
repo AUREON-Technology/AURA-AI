@@ -148,7 +148,8 @@ def register_workspace_ops(
     @router.post("/workspaces/{workspace_id}/invites")
     async def create_invite(workspace_id: str, payload: InviteRequest, caller=Depends(principal)) -> JSONResponse:
         await invite_budget(caller)
-        invite, token = await tenancy.invite(person(caller), workspace_id, payload.email, _role(payload.role))
+        invite, token = await tenancy.invite(person(caller), workspace_id, payload.email, _role(payload.role),
+                                             inviter_email=getattr(caller, "email", None) or None)
         return JSONResponse(
             status_code=201,
             content={"invite": _invite(invite), "token": token,

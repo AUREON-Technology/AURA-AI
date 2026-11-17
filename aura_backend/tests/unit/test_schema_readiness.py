@@ -58,7 +58,7 @@ def _run(check):
 class TestExpectedHead:
     def test_reads_the_head_from_the_packaged_migrations(self) -> None:
         """Derived from the scripts, so a new migration cannot leave a stale constant behind."""
-        assert expected_head() == "0023"
+        assert expected_head() == "0024"
 
     def test_unreadable_directory_returns_none(self, tmp_path: Path) -> None:
         assert expected_head(tmp_path / "does-not-exist") is None
@@ -71,7 +71,7 @@ class TestSchemaCheck:
 
         assert result["healthy"] is False
         assert result["revision"] is None
-        assert result["expected"] == "0023"
+        assert result["expected"] == "0024"
         assert "alembic upgrade head" in result["detail"]
 
     def test_schema_behind_the_image_is_not_ready(self) -> None:
@@ -79,13 +79,13 @@ class TestSchemaCheck:
 
         assert result["healthy"] is False
         assert result["revision"] == "0001"
-        assert result["expected"] == "0023"
+        assert result["expected"] == "0024"
 
     def test_schema_at_head_is_ready(self) -> None:
-        result = _run(build_schema_check(_Pool(values=["alembic_version", "0023"])))
+        result = _run(build_schema_check(_Pool(values=["alembic_version", "0024"])))
 
         assert result["healthy"] is True
-        assert result["revision"] == "0023"
+        assert result["revision"] == "0024"
 
     def test_unreachable_database_does_not_gate(self) -> None:
         """A blip is transient and the chat path still serves; a stale schema is neither."""

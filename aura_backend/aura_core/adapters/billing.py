@@ -127,6 +127,17 @@ class FakePaymentProvider:
         return ProviderNotification(payment_id, status, amount, data.get("provider_ref"), data.get("card_token"))
 
 
+class InMemoryBillingContactStore:
+    def __init__(self) -> None:
+        self._rows: dict[str, str] = {}
+
+    async def put(self, workspace_id: str, email: str, at: datetime) -> None:
+        self._rows[workspace_id] = email
+
+    async def get(self, workspace_id: str) -> str | None:
+        return self._rows.get(workspace_id)
+
+
 class InMemoryStoreBindingStore:
     def __init__(self) -> None:
         self._rows: dict[str, StoreBinding] = {}
