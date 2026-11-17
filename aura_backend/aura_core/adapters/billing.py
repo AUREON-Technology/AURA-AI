@@ -106,7 +106,7 @@ class FakePaymentProvider:
         body["signature"] = hmac.new(self._secret, payload.encode(), hashlib.sha256).hexdigest() if sign else "x"
         return json.dumps(body).encode()
 
-    def parse_notification(self, body: bytes) -> ProviderNotification:
+    async def parse_notification(self, body: bytes) -> ProviderNotification:
         try:
             data = json.loads(body)
             signature = data.pop("signature")

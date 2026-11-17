@@ -73,6 +73,6 @@ class PaymentProvider(Protocol):
 
     async def status(self, payment_id: str) -> ProviderStatus: ...
 
-    def parse_notification(self, body: bytes) -> ProviderNotification:
+    async def parse_notification(self, body: bytes) -> ProviderNotification:
         """Verify and parse a provider notification. AuthenticationError for a bad signature,
         ValidationError for a malformed body."""
