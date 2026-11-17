@@ -53,7 +53,13 @@ FROM python:3.11-slim as runner
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV PATH=/root/.local/bin:$PATH
+# The builder installs with `pip --user` into /root/.local. The runner copies that tree to
+# /opt/aura-python and points PYTHONUSERBASE at it, so the same packages are found whichever uid
+# runs the process: the image's own `aura` user (Railway), or root where the compose files still
+# set `user: "0:0"` (the VPS stacks, until their secret files and volumes are migrated). /root is
+# mode 0700, so a non-root process could never have read /root/.local.
+ENV PYTHONUSERBASE=/opt/aura-python
+ENV PATH=/opt/aura-python/bin:$PATH
 
 WORKDIR /app
 
@@ -106,14 +112,30 @@ ENV PATH="/opt/piper:${PATH}" \
     LD_LIBRARY_PATH="/opt/piper"
 
 # Copy installed python packages from builder stage
-COPY --from=builder /root/.local /root/.local
+COPY --from=builder /root/.local /opt/aura-python
 
 # Copy application source code
 COPY . .
 
-# Create volume/directory for local qdrant storage if running locally
-RUN mkdir -p local_qdrant_storage \
+# Run as an unprivileged user (uid/gid 10002; the sandbox image uses 10001, and the two never
+# share a mount). The application code stays owned by root, so the process cannot rewrite it.
+# What it may write:
+#   - local_qdrant_storage: the legacy services/rag.py client opens it relative to /app on import.
+#   - /var/lib/aura: DATA_DIR (learning logs, drive ingest) and PROMETHEUS_MULTIPROC_DIR live
+#     under it. The compose files mount their volumes there and set DATA_DIR themselves.
+#   - $HOME (/home/aura): the Hugging Face cache faster-whisper downloads its model into.
+# A platform volume mounted as root (Railway mounts volumes root-owned) is not writable by this
+# user: such a deploy needs the volume's ownership fixed or RAILWAY_RUN_UID=0.
+RUN groupadd --system --gid 10002 aura \
+    && useradd --system --uid 10002 --gid aura --home-dir /home/aura --create-home \
+        --shell /usr/sbin/nologin aura \
+    && mkdir -p local_qdrant_storage /var/lib/aura/data \
+    && chown aura:aura local_qdrant_storage /var/lib/aura /var/lib/aura/data \
     && chmod +x /app/docker-entrypoint.sh
+
+# data_dir's default is "." (/app), which this user cannot write. DATA_DIR (the compose files
+# set it) still takes precedence over this: config.Settings reads DATA_DIR before AURA_DATA_DIR.
+ENV AURA_DATA_DIR=/var/lib/aura/data
 
 # Release identity (BLOCK-03). Deliberately the last layers before EXPOSE: these change on
 # every commit, so declaring them earlier would invalidate the pip install and the piper
@@ -135,6 +157,8 @@ ENV AURA_GIT_SHA=${GIT_SHA} \
 
 EXPOSE 8000
 
+USER aura
+
 # Hydrate *_FILE secrets and mount /api/v3. Compose may override the command
 # (extra uvicorn flags) but must not skip this entrypoint: it wipes the
 # Prometheus multiprocess directory before workers spawn.
@@ -146,8 +170,15 @@ ENTRYPOINT ["/app/docker-entrypoint.sh"]
 # request carried the proxy's address and plain-http scheme (audit FSA-005). `*` is right
 # wherever the only path to this port is a proxy we control -- Railway's edge, nginx on the
 # VPS (the compose files already pass the same flag) -- and must be narrowed to the proxy's
-# address if the port is ever exposed directly.
+# address if the port is ever exposed directly. With `*`, uvicorn's request.client is the
+# *leftmost* X-Forwarded-For entry, which the caller writes; nothing may treat it as the client's
+# address. The v3 router resolves it from the right instead (`client_ip` in aura_core/api/v3.py,
+# for both the rate limiter and audit records; pinned by tests/unit/test_audit_source_ip.py).
+# The default is quoted on purpose: unquoted, `sh -c` globbed `*` to every file in WORKDIR /app,
+# uvicorn got dozens of stray arguments and exited before serving -- every Railway build from
+# c575904 (2026-11-06) on, unless AURA_FORWARDED_ALLOW_IPS was set
+# (tests/unit/test_backend_image_user.py).
 # This is the command Railway runs. `exec` makes uvicorn PID 1, so the platform's SIGTERM reaches
 # it rather than a shell, and --timeout-graceful-shutdown bounds the drain below railway.json's
 # drainingSeconds (audit F-25; the compose files carry the same pair on the gateway).
-CMD ["sh", "-c", "exec uvicorn aura_service:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${AURA_WORKERS:-4} --proxy-headers --forwarded-allow-ips ${AURA_FORWARDED_ALLOW_IPS:-*} --log-level info --timeout-graceful-shutdown ${AURA_GRACEFUL_SHUTDOWN_S:-150}"]
+CMD ["sh", "-c", "exec uvicorn aura_service:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${AURA_WORKERS:-4} --proxy-headers --forwarded-allow-ips \"${AURA_FORWARDED_ALLOW_IPS:-*}\" --log-level info --timeout-graceful-shutdown ${AURA_GRACEFUL_SHUTDOWN_S:-150}"]

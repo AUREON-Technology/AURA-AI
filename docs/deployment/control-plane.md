@@ -92,6 +92,9 @@ AURA_DATABASE_URL=<Railway Postgres plugin's connection string>
 # host-agent relay (ADR-011 amendment, 2026-11-08) is on whenever this and AURA_JWT_SECRET are
 # set. Without it, the image's default 4 workers each see only their own desktop connections, so
 # set AURA_WORKERS=1 instead. AURA_HOST_AGENT_RELAY=false turns the relay off.
+# This one URL is also the Celery broker and result backend (celery_app.broker_url). Before
+# 2026-11-16 Celery read only REDIS_HOST (default localhost, port 6379 fixed), so on this target
+# every .delay() failed and every /admin/jobs/{id} read UNKNOWN unless REDIS_HOST was also set.
 AURA_REDIS_URL=<Railway Redis plugin's connection string, or an external Redis>
 AURA_QDRANT_URL=<Qdrant Cloud or self-hosted Qdrant URL — Railway has no Qdrant plugin>
 AURA_QDRANT_API_KEY=<Qdrant API key>
@@ -348,6 +351,13 @@ Prometheus multiprocess directory before Uvicorn workers spawn; `AURA_LOG_FORMAT
 already structured logging with correlation IDs (ADR-009, observability-first). Railway's own
 SIGTERM handling reaches the same Uvicorn process the VPS does — no different shutdown path was
 built or is needed.
+
+**The image runs as the unprivileged user `aura` (uid/gid 10002) since 2026-11-16.** It can write
+`/var/lib/aura` (the default `AURA_DATA_DIR` is `/var/lib/aura/data`), `/app/local_qdrant_storage`
+and its home directory, and nothing else. If a Railway volume is attached to any service built
+from this image, Railway mounts it root-owned: set `RAILWAY_RUN_UID=0` on that service, or the
+process cannot write to the volume. The VPS compose stacks keep running these services as root
+(`user: "0:0"`) until their root-only secret files and volumes are migrated.
 
 ## 8. CI
 

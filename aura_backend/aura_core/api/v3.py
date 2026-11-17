@@ -326,6 +326,17 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 )
         return caller
 
+    def client_ip(request: Request) -> str:
+        # The one way this router names a caller's address, for the rate limiter and every audit
+        # record alike. Never `request.client.host` on its own: with uvicorn's
+        # `--forwarded-allow-ips *` (the Railway image) that is the *leftmost* X-Forwarded-For
+        # entry, which the caller writes. `extract_client_ip` counts from the right instead.
+        return extract_client_ip(
+            request.headers,
+            peer=request.client.host if request.client else None,
+            trusted_proxies=settings.security.trusted_proxy_count,
+        )
+
     async def audit_service(
         request: Request, caller: Principal, action: str, outcome: str, detail: Mapping[str, Any],
         *, correlation_id: str = "",
@@ -336,7 +347,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 action=action, actor=key.name, actor_role=SERVICE_ROLE, outcome=outcome,
                 resource=f"service_key:{key.key_id}",
                 correlation_id=correlation_id or request.headers.get("x-correlation-id") or "",
-                source_ip=request.client.host if request.client else None,
+                source_ip=client_ip(request),
                 detail=dict(detail),
             ))
         except Exception:
@@ -388,11 +399,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             return
         decision = await rate_limiter.check_all(
             user_key=caller.user_id.value,
-            ip_key=extract_client_ip(
-                request.headers,
-                peer=request.client.host if request.client else None,
-                trusted_proxies=settings.security.trusted_proxy_count,
-            ),
+            ip_key=client_ip(request),
             route_class=route_class,
         )
         if not decision.allowed:
@@ -439,7 +446,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                     resource=resource,
                     outcome=outcome,
                     correlation_id=request.headers.get("x-correlation-id") or "",
-                    source_ip=request.client.host if request.client else None,
+                    source_ip=client_ip(request),
                     detail=detail,
                 )
             )
@@ -1272,7 +1279,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 action="data_key.read", actor=caller.email or caller.user_id.value,
                 actor_role=caller.role, resource=f"user:{caller.user_id.value}", outcome="ok",
                 correlation_id=request.headers.get("x-correlation-id") or "",
-                source_ip=request.client.host if request.client else None,
+                source_ip=client_ip(request),
                 detail={"kids": [k.kid for k in keyring.keys], "primary": keyring.primary.kid},
             ))
         except Exception:
