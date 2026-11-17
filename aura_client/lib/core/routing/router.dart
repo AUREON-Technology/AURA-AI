@@ -382,41 +382,53 @@ class _RailShortcut extends StatelessWidget {
     return Semantics(
       button: true,
       selected: selected,
-      child: Material(
-        color: selected
-            ? palette.brand.withValues(alpha: 0.14)
-            : Colors.transparent,
-        borderRadius: BorderRadius.circular(AuraRadius.sm),
-        child: InkWell(
+      // The highlight eases in and out as the selection moves, instead of
+      // snapping between shortcuts.
+      child: AnimatedContainer(
+        duration: AuraMotion.respecting(context, AuraMotion.standard),
+        curve: AuraMotion.standardCurve,
+        decoration: BoxDecoration(
+          color: selected
+              ? palette.brand.withValues(alpha: 0.14)
+              : palette.brand.withValues(alpha: 0),
           borderRadius: BorderRadius.circular(AuraRadius.sm),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AuraSpacing.md,
-              vertical: AuraSpacing.sm + 2,
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  icon,
-                  size: 18,
-                  color: selected
-                      ? palette.brandOnSurfaceText
-                      : palette.textSecondary,
-                ),
-                const SizedBox(width: AuraSpacing.md),
-                Expanded(
-                  child: Text(
-                    label,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: color,
-                      fontSize: 13,
-                      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+        ),
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(AuraRadius.sm),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(AuraRadius.sm),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AuraSpacing.md,
+                vertical: AuraSpacing.sm + 2,
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    icon,
+                    size: 18,
+                    color: selected
+                        ? palette.brandOnSurfaceText
+                        : palette.textSecondary,
+                  ),
+                  const SizedBox(width: AuraSpacing.md),
+                  Expanded(
+                    child: Text(
+                      label,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: color,
+                        fontSize: 13,
+                        fontWeight: selected
+                            ? FontWeight.w600
+                            : FontWeight.w500,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
