@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 
 import 'knowledge_view_model.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class KnowledgeCenterPage extends ConsumerStatefulWidget {
   const KnowledgeCenterPage({super.key});
@@ -44,7 +45,7 @@ class _KnowledgeCenterPageState extends ConsumerState<KnowledgeCenterPage> {
       if (mounted) {
         AuraSnackbar.show(
           context,
-          message: 'Could not read that file.',
+          message: context.l10n.knowledgeFileReadFailed,
           kind: AuraSnackbarKind.error,
         );
       }
@@ -72,7 +73,7 @@ class _KnowledgeCenterPageState extends ConsumerState<KnowledgeCenterPage> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: Text('Knowledge', style: Theme.of(context).textTheme.headlineMedium),
+        title: Text(context.l10n.knowledgeTitle, style: Theme.of(context).textTheme.headlineMedium),
       ),
       body: ListView(
         padding: const EdgeInsets.all(AuraSpacing.lg),
@@ -81,14 +82,14 @@ class _KnowledgeCenterPageState extends ConsumerState<KnowledgeCenterPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('Add a document', style: Theme.of(context).textTheme.titleSmall),
+                Text(context.l10n.knowledgeAddDocument, style: Theme.of(context).textTheme.titleSmall),
                 const SizedBox(height: AuraSpacing.md),
-                AuraTextField(controller: _title, label: 'Title'),
+                AuraTextField(controller: _title, label: context.l10n.knowledgeTitleLabel),
                 const SizedBox(height: AuraSpacing.md),
-                AuraTextField(controller: _content, label: 'Content', maxLines: 5),
+                AuraTextField(controller: _content, label: context.l10n.knowledgeContentLabel, maxLines: 5),
                 const SizedBox(height: AuraSpacing.md),
                 AuraButton(
-                  label: 'Save',
+                  label: context.l10n.commonSave,
                   expand: true,
                   onPressed: () {
                     final title = _title.text.trim();
@@ -96,7 +97,7 @@ class _KnowledgeCenterPageState extends ConsumerState<KnowledgeCenterPage> {
                     if (title.isEmpty || content.isEmpty) {
                       AuraSnackbar.show(
                         context,
-                        message: 'Title and content are required.',
+                        message: context.l10n.knowledgeTitleContentRequired,
                         kind: AuraSnackbarKind.error,
                       );
                       return;
@@ -111,7 +112,7 @@ class _KnowledgeCenterPageState extends ConsumerState<KnowledgeCenterPage> {
                 ),
                 const SizedBox(height: AuraSpacing.sm),
                 AuraButton(
-                  label: _uploading ? 'Uploading…' : 'Upload a PDF instead',
+                  label: _uploading ? context.l10n.knowledgeUploading : context.l10n.knowledgeUploadPdfInstead,
                   icon: Icons.attach_file,
                   variant: AuraButtonVariant.secondary,
                   expand: true,
@@ -135,18 +136,18 @@ class _KnowledgeCenterPageState extends ConsumerState<KnowledgeCenterPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('Search', style: Theme.of(context).textTheme.titleSmall),
+                Text(context.l10n.commonSearch, style: Theme.of(context).textTheme.titleSmall),
                 const SizedBox(height: AuraSpacing.md),
                 AuraTextField(
                   controller: _search,
-                  label: 'Look up a passage',
+                  label: context.l10n.knowledgeSearchLabel,
                   textInputAction: TextInputAction.search,
                   onSubmitted: (q) =>
                       ref.read(knowledgeViewModelProvider.notifier).search(q),
                 ),
                 const SizedBox(height: AuraSpacing.md),
                 AuraButton(
-                  label: 'Search',
+                  label: context.l10n.commonSearch,
                   variant: AuraButtonVariant.secondary,
                   onPressed: () => ref
                       .read(knowledgeViewModelProvider.notifier)
@@ -155,7 +156,7 @@ class _KnowledgeCenterPageState extends ConsumerState<KnowledgeCenterPage> {
                 if (state.search != null) ...[
                   const SizedBox(height: AuraSpacing.md),
                   if (state.search!.searchedButEmpty || state.search!.results.isEmpty)
-                    const Text('Searched your library — nothing relevant turned up.')
+                    Text(context.l10n.knowledgeSearchEmpty)
                   else
                     for (final hit in state.search!.results)
                       Padding(
@@ -178,13 +179,13 @@ class _KnowledgeCenterPageState extends ConsumerState<KnowledgeCenterPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Always in context (CAG)',
+                      context.l10n.knowledgeCagTitle,
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                     const SizedBox(height: AuraSpacing.sm),
                     Text(
-                      'Budget ${state.cag!.tokens} / ${state.cag!.budget} tokens'
-                      '${state.cag!.documents.isEmpty ? ' · nothing pinned yet' : ''}',
+                      '${context.l10n.knowledgeCagBudget(state.cag!.tokens, state.cag!.budget)}'
+                      '${state.cag!.documents.isEmpty ? ' · ${context.l10n.knowledgeCagNothingPinned}' : ''}',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                     if (state.cag!.documents.isNotEmpty) ...[
@@ -192,8 +193,8 @@ class _KnowledgeCenterPageState extends ConsumerState<KnowledgeCenterPage> {
                       for (final d in state.cag!.documents)
                         Text(
                           '• ${d['title'] ?? d['document_id']} '
-                          '(${d['is_global'] == true ? 'handbook' : 'yours'}, '
-                          '${d['tokens'] ?? 0} tok)',
+                          '(${d['is_global'] == true ? context.l10n.knowledgeCagHandbook : context.l10n.knowledgeCagYours}, '
+                          '${context.l10n.knowledgeCagDocTokens('${d['tokens'] ?? 0}')})',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                     ],
@@ -201,21 +202,21 @@ class _KnowledgeCenterPageState extends ConsumerState<KnowledgeCenterPage> {
                 ),
               ),
             ),
-          Text('Library', style: Theme.of(context).textTheme.titleSmall),
+          Text(context.l10n.knowledgeLibrary, style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: AuraSpacing.md),
           if (state.loading)
             const AuraSkeletonCard()
           else if (state.error != null)
             AuraEmptyState(
               icon: Icons.error_outline,
-              title: 'Could not load documents',
+              title: context.l10n.knowledgeLoadFailed,
               message: state.error,
             )
           else if (state.documents.isEmpty)
-            const AuraEmptyState(
+            AuraEmptyState(
               icon: Icons.folder_open_outlined,
-              title: 'No documents yet',
-              message: 'Save a title and some text to build your library.',
+              title: context.l10n.knowledgeEmptyTitle,
+              message: context.l10n.knowledgeEmptyMessage,
             )
           else
             for (final doc in state.documents)
@@ -227,7 +228,7 @@ class _KnowledgeCenterPageState extends ConsumerState<KnowledgeCenterPage> {
                     title: Text(doc.title),
                     subtitle: Text(
                       'v${doc.version} · ${doc.status}'
-                      '${doc.cagPinned ? ' · Always in context' : ''}',
+                      '${doc.cagPinned ? ' · ${context.l10n.knowledgeAlwaysInContext}' : ''}',
                     ),
                     leading: doc.isQuarantined
                         ? Icon(Icons.shield_outlined, color: palette.warning)
@@ -244,8 +245,8 @@ class _KnowledgeCenterPageState extends ConsumerState<KnowledgeCenterPage> {
                       children: [
                         IconButton(
                           tooltip: doc.cagPinned
-                              ? 'Remove from always-in-context'
-                              : 'Keep always in context',
+                              ? context.l10n.knowledgeUnpinTooltip
+                              : context.l10n.knowledgePinTooltip,
                           icon: Icon(
                             doc.cagPinned
                                 ? Icons.push_pin
@@ -256,7 +257,7 @@ class _KnowledgeCenterPageState extends ConsumerState<KnowledgeCenterPage> {
                               .toggleCagPin(doc),
                         ),
                         IconButton(
-                          tooltip: 'Delete',
+                          tooltip: context.l10n.commonDelete,
                           icon: const Icon(Icons.delete_outline),
                           onPressed: () => ref
                               .read(knowledgeViewModelProvider.notifier)

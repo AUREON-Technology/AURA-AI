@@ -17,6 +17,7 @@ import 'package:xterm/xterm.dart' as xterm;
 
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 const _bg = Color(0xFF14161B);
 const _fg = Color(0xFFD4D4D4);
@@ -83,7 +84,7 @@ class _TerminalViewState extends ConsumerState<TerminalView> {
     final hostdRoots = ref.watch(workspaceNotifierProvider).hostdRoots;
 
     if (workspace == null) {
-      return _CenteredMessage(text: 'Open a workspace to use the terminal.', palette: palette);
+      return _CenteredMessage(text: context.l10n.terminalOpenWorkspace, palette: palette);
     }
 
     final rootPath = workspace.rootPath;
@@ -101,20 +102,20 @@ class _TerminalViewState extends ConsumerState<TerminalView> {
 
     if (session == null) {
       if (matchingRoot == null) {
-        return _CenteredMessage(text: 'Grant this workspace to the host daemon to use the terminal.', palette: palette);
+        return _CenteredMessage(text: context.l10n.terminalGrantWorkspace, palette: palette);
       }
       if (!trusted) {
         return _CenteredMessage(
-          text: 'Workspace is not trusted. Trust it from the Host panel to use the terminal.',
+          text: context.l10n.terminalUntrusted,
           palette: palette,
         );
       }
-      return _CenteredMessage(text: 'Starting terminal...', palette: palette);
+      return _CenteredMessage(text: context.l10n.terminalStarting, palette: palette);
     }
 
     final terminal = notifier.terminalFor(session.id);
     if (terminal == null) {
-      return _CenteredMessage(text: 'Starting terminal...', palette: palette);
+      return _CenteredMessage(text: context.l10n.terminalStarting, palette: palette);
     }
 
     return Container(
@@ -144,13 +145,15 @@ class _TerminalViewState extends ConsumerState<TerminalView> {
               child: Row(
                 children: [
                   Text(
-                    'Session ended${session.exitCode != null ? ' (exit code ${session.exitCode})' : ''}.',
+                    session.exitCode != null
+                        ? context.l10n.terminalSessionEndedWithCode(session.exitCode!)
+                        : context.l10n.terminalSessionEnded,
                     style: TextStyle(color: palette.textDisabled, fontSize: 12),
                   ),
                   const SizedBox(width: AuraSpacing.sm),
                   TextButton(
                     onPressed: () => notifier.restart(session.id, rootPath: rootPath),
-                    child: const Text('Restart'),
+                    child: Text(context.l10n.terminalRestart),
                   ),
                 ],
               ),

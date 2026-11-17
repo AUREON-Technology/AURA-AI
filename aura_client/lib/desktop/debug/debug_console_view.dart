@@ -15,6 +15,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/desktop/debug/debug_notifier.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class DebugConsoleView extends ConsumerStatefulWidget {
   const DebugConsoleView({super.key});
@@ -56,7 +57,7 @@ class _DebugConsoleViewState extends ConsumerState<DebugConsoleView> {
     });
 
     if (workspace == null) {
-      return _Centered(text: 'Open a workspace to use the Debug Console.', palette: palette);
+      return _Centered(text: context.l10n.debugOpenWorkspace, palette: palette);
     }
 
     if (_scriptController.text.isEmpty) {
@@ -115,10 +116,10 @@ class _DebugConsoleViewState extends ConsumerState<DebugConsoleView> {
             child: TextField(
               controller: _scriptController,
               enabled: isIdleOrStopped,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 isDense: true,
                 border: InputBorder.none,
-                hintText: 'script.py (relative to workspace root)',
+                hintText: context.l10n.debugScriptHint,
               ),
               style: TextStyle(fontFamily: 'Courier', fontSize: 12, color: palette.textPrimary),
             ),
@@ -126,7 +127,7 @@ class _DebugConsoleViewState extends ConsumerState<DebugConsoleView> {
           if (isIdleOrStopped)
             IconButton(
               icon: Icon(Icons.play_arrow, size: 18, color: palette.success),
-              tooltip: 'Start',
+              tooltip: context.l10n.debugStart,
               onPressed: _scriptController.text.trim().isEmpty
                   ? null
                   : () => notifier.start(rootPath: rootPath, scriptPath: _scriptController.text.trim()),
@@ -134,27 +135,27 @@ class _DebugConsoleViewState extends ConsumerState<DebugConsoleView> {
           else ...[
             IconButton(
               icon: Icon(Icons.play_arrow, size: 18, color: palette.textSecondary),
-              tooltip: 'Continue',
+              tooltip: context.l10n.debugContinue,
               onPressed: debug.status == DebugStatus.paused ? notifier.continue_ : null,
             ),
             IconButton(
               icon: Icon(Icons.arrow_downward, size: 18, color: palette.textSecondary),
-              tooltip: 'Step Over',
+              tooltip: context.l10n.debugStepOver,
               onPressed: debug.status == DebugStatus.paused ? notifier.stepOver : null,
             ),
             IconButton(
               icon: Icon(Icons.south_east, size: 18, color: palette.textSecondary),
-              tooltip: 'Step Into',
+              tooltip: context.l10n.debugStepInto,
               onPressed: debug.status == DebugStatus.paused ? notifier.stepIn : null,
             ),
             IconButton(
               icon: Icon(Icons.north_east, size: 18, color: palette.textSecondary),
-              tooltip: 'Step Out',
+              tooltip: context.l10n.debugStepOut,
               onPressed: debug.status == DebugStatus.paused ? notifier.stepOut : null,
             ),
             IconButton(
               icon: Icon(Icons.stop, size: 18, color: palette.danger),
-              tooltip: 'Stop',
+              tooltip: context.l10n.debugStop,
               onPressed: notifier.stop,
             ),
           ],
@@ -168,11 +169,12 @@ class _DebugConsoleViewState extends ConsumerState<DebugConsoleView> {
   }
 
   String _statusLabel(DebugState debug) => switch (debug.status) {
-        DebugStatus.idle => 'Idle',
-        DebugStatus.starting => 'Starting...',
-        DebugStatus.running => debug.pid != null ? 'Running (pid ${debug.pid})' : 'Running',
-        DebugStatus.paused => 'Paused',
-        DebugStatus.stopped => 'Stopped',
+        DebugStatus.idle => context.l10n.debugStatusIdle,
+        DebugStatus.starting => context.l10n.debugStatusStarting,
+        DebugStatus.running =>
+          debug.pid != null ? context.l10n.debugStatusRunningPid(debug.pid!) : context.l10n.debugStatusRunning,
+        DebugStatus.paused => context.l10n.debugStatusPaused,
+        DebugStatus.stopped => context.l10n.debugStatusStopped,
       };
 
   Widget _buildBreakpointsBar(AuraPalette palette, DebugNotifier notifier) {
@@ -184,14 +186,14 @@ class _DebugConsoleViewState extends ConsumerState<DebugConsoleView> {
         children: [
           Icon(Icons.circle, size: 8, color: palette.danger),
           const SizedBox(width: AuraSpacing.xs),
-          Text('Breakpoints:', style: TextStyle(fontSize: 11, color: palette.textSecondary)),
+          Text(context.l10n.debugBreakpointsLabel, style: TextStyle(fontSize: 11, color: palette.textSecondary)),
           const SizedBox(width: AuraSpacing.xs),
           SizedBox(
             width: 60,
             child: TextField(
               controller: _breakpointLineController,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(isDense: true, hintText: 'line #', border: InputBorder.none),
+              decoration: InputDecoration(isDense: true, hintText: context.l10n.debugLineHint, border: InputBorder.none),
               style: const TextStyle(fontSize: 12, fontFamily: 'Courier'),
               onSubmitted: (value) {
                 final line = int.tryParse(value.trim());
@@ -228,7 +230,7 @@ class _DebugConsoleViewState extends ConsumerState<DebugConsoleView> {
     return ListView(
       padding: const EdgeInsets.all(AuraSpacing.sm),
       children: [
-        Text('CALL STACK', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: palette.textDisabled)),
+        Text(context.l10n.debugCallStack, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: palette.textDisabled)),
         const SizedBox(height: AuraSpacing.xs),
         if (debug.stackFrames.isEmpty)
           Text('--', style: TextStyle(fontSize: 12, color: palette.textDisabled))
@@ -242,7 +244,7 @@ class _DebugConsoleViewState extends ConsumerState<DebugConsoleView> {
               ),
             ),
         const SizedBox(height: AuraSpacing.md),
-        Text('VARIABLES', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: palette.textDisabled)),
+        Text(context.l10n.debugVariables, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: palette.textDisabled)),
         const SizedBox(height: AuraSpacing.xs),
         if (debug.variablesByScope.isEmpty)
           Text('--', style: TextStyle(fontSize: 12, color: palette.textDisabled))

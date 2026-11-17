@@ -15,6 +15,7 @@ import 'package:aura_client/desktop/editor/editor_tab.dart';
 import 'package:aura_client/desktop/editor/providers/flutter_code_editor_provider.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 import 'package:aura_client/desktop/workspace/workspace_file_service.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class CodeEditorView extends ConsumerWidget {
   const CodeEditorView({super.key});
@@ -47,12 +48,12 @@ class _EmptyEditorPlaceholder extends StatelessWidget {
           Icon(Icons.code_outlined, size: 64, color: palette.textDisabled),
           const SizedBox(height: AuraSpacing.md),
           Text(
-            'No file open',
+            context.l10n.editorNoFileOpen,
             style: TextStyle(color: palette.textSecondary, fontSize: 18),
           ),
           const SizedBox(height: AuraSpacing.xs),
           Text(
-            'Open a file from the Explorer or press Ctrl+P',
+            context.l10n.editorNoFileOpenHint,
             style: TextStyle(color: palette.textDisabled, fontSize: 12),
           ),
         ],
@@ -114,22 +115,21 @@ class _EditorContentState extends ConsumerState<_EditorContent> {
           notifier.recordDiskBase(widget.tab.id, initialText);
           notifier.setContent(widget.tab.id, initialText);
         } catch (e) {
-          loadError = 'Could not read ${widget.tab.path}: $e';
+          loadError = currentL10n.editorCouldNotRead(widget.tab.path, '$e');
         }
       } else {
-        loadError = 'No active workspace';
+        loadError = currentL10n.editorNoActiveWorkspace;
       }
     } else if (notifier.wasRestored(widget.tab.id)) {
       // The text is an unsaved buffer from the last session (hot exit). Say so, and check the
       // file underneath it: if it changed since, saving would overwrite that change.
-      restoredNotice = 'Restored unsaved changes from your last session.';
+      restoredNotice = currentL10n.editorRestoredNotice;
       if (root != null) {
         try {
           final onDisk = await WorkspaceFileService(root).readFile(widget.tab.path);
           if (notifier.restoredOverChangedFile(widget.tab.id, onDisk)) {
             restoredOverChange = true;
-            restoredNotice = 'Restored unsaved changes from your last session. The file has '
-                'changed on disk since; saving will overwrite that change.';
+            restoredNotice = currentL10n.editorRestoredOverChange;
           }
         } catch (_) {
           // Deleted or unreadable since: the restored text is still the user's work.

@@ -891,4 +891,2044 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get commonNo => 'No';
+
+  @override
+  String get healthPageTitle => 'Health Monitor';
+
+  @override
+  String get healthPageSubtitle =>
+      'Track fitness parameters, log water, sleep, and review logs';
+
+  @override
+  String get healthDailyGoalsTitle => 'Daily Goals Progress';
+
+  @override
+  String healthWeightBadge(String weight) {
+    return 'Weight: $weight kg';
+  }
+
+  @override
+  String get healthWaterIntake => 'Water Intake';
+
+  @override
+  String get healthUnitMl => 'ml';
+
+  @override
+  String get healthSleepDuration => 'Sleep Duration';
+
+  @override
+  String get healthUnitMins => 'mins';
+
+  @override
+  String healthSleepHoursProgress(String hours) {
+    return '$hours / 8.0 hrs';
+  }
+
+  @override
+  String get healthExerciseDuration => 'Exercise Duration';
+
+  @override
+  String get healthCaloriesConsumed => 'Calories Consumed';
+
+  @override
+  String get healthUnitKcal => 'kcal';
+
+  @override
+  String get healthQuickLoggerTitle => 'Quick Logger Panel';
+
+  @override
+  String get healthAddWater250 => '+250ml Water';
+
+  @override
+  String get healthAddWater500 => '+500ml Water';
+
+  @override
+  String get healthLogSleepTitle => 'Log Sleep Duration';
+
+  @override
+  String get healthSleepMinutesLabel => 'Sleep Minutes';
+
+  @override
+  String get healthSleepMinutesHint => 'e.g. 480 for 8 hours';
+
+  @override
+  String get healthLogSleep => 'Log Sleep';
+
+  @override
+  String get healthLogExerciseTitle => 'Log Exercise Duration';
+
+  @override
+  String get healthExerciseMinutesLabel => 'Exercise Minutes';
+
+  @override
+  String healthExampleHint(String example) {
+    return 'e.g. $example';
+  }
+
+  @override
+  String get healthLogExercise => 'Log Exercise';
+
+  @override
+  String get healthLogCaloriesTitle => 'Log Calories';
+
+  @override
+  String get healthKcalConsumedLabel => 'Kcal Consumed';
+
+  @override
+  String get healthLogCalories => 'Log Calories';
+
+  @override
+  String get healthLogWeightTitle => 'Log Current Weight';
+
+  @override
+  String get healthWeightKgLabel => 'Weight (kg)';
+
+  @override
+  String get healthLogWeight => 'Log Weight';
+
+  @override
+  String get healthWeeklyTrendsTitle => 'Weekly Health Trends';
+
+  @override
+  String get healthWeeklyTrendsEmpty => 'Log metrics to populate weekly graphs';
+
+  @override
+  String get healthWaterChartTitle => 'Water Intake (ml)';
+
+  @override
+  String get healthWeightChartTitle => 'Weight Trends (kg)';
+
+  @override
+  String get healthWeightChartEmpty => 'Log weight to display trend line';
+
+  @override
+  String get knowledgeFileReadFailed => 'Could not read that file.';
+
+  @override
+  String get knowledgeAddDocument => 'Add a document';
+
+  @override
+  String get knowledgeTitleLabel => 'Title';
+
+  @override
+  String get knowledgeContentLabel => 'Content';
+
+  @override
+  String get knowledgeTitleContentRequired => 'Title and content are required.';
+
+  @override
+  String get knowledgeUploading => 'Uploading…';
+
+  @override
+  String get knowledgeUploadPdfInstead => 'Upload a PDF instead';
+
+  @override
+  String get knowledgeSearchLabel => 'Look up a passage';
+
+  @override
+  String get knowledgeSearchEmpty =>
+      'Searched your library — nothing relevant turned up.';
+
+  @override
+  String get knowledgeCagTitle => 'Always in context (CAG)';
+
+  @override
+  String knowledgeCagBudget(int tokens, int budget) {
+    return 'Budget $tokens / $budget tokens';
+  }
+
+  @override
+  String get knowledgeCagNothingPinned => 'nothing pinned yet';
+
+  @override
+  String get knowledgeCagHandbook => 'handbook';
+
+  @override
+  String get knowledgeCagYours => 'yours';
+
+  @override
+  String knowledgeCagDocTokens(String tokens) {
+    return '$tokens tok';
+  }
+
+  @override
+  String get knowledgeLibrary => 'Library';
+
+  @override
+  String get knowledgeLoadFailed => 'Could not load documents';
+
+  @override
+  String get knowledgeEmptyTitle => 'No documents yet';
+
+  @override
+  String get knowledgeEmptyMessage =>
+      'Save a title and some text to build your library.';
+
+  @override
+  String get knowledgeAlwaysInContext => 'Always in context';
+
+  @override
+  String get knowledgeUnpinTooltip => 'Remove from always-in-context';
+
+  @override
+  String get knowledgePinTooltip => 'Keep always in context';
+
+  @override
+  String get knowledgeAddFailed => 'Could not add this document.';
+
+  @override
+  String knowledgePassagesHeldBack(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count passages were held back.',
+      one: '1 passage was held back.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get knowledgeSaved => 'Saved.';
+
+  @override
+  String get knowledgePdfUploadFailed => 'Could not upload this PDF.';
+
+  @override
+  String get knowledgeUploaded => 'Uploaded.';
+
+  @override
+  String get goalsWelcomeBack => 'Welcome back,';
+
+  @override
+  String get goalsDefaultUserName => 'Aura User';
+
+  @override
+  String get goalsPageTitle => 'Goals';
+
+  @override
+  String get goalsPageSubtitle => 'Track your aspirations and progress';
+
+  @override
+  String get goalsNewGoal => 'New Goal';
+
+  @override
+  String get goalsEmptyTitle => 'No goals yet';
+
+  @override
+  String get goalsEmptyMessage => 'Create your first goal to get started';
+
+  @override
+  String get goalsCreateGoalTitle => 'Create Goal';
+
+  @override
+  String get goalsTitleRequiredLabel => 'Title *';
+
+  @override
+  String get goalsDescriptionLabel => 'Description';
+
+  @override
+  String get goalsStatusLabel => 'Status';
+
+  @override
+  String get goalsPriorityLabel => 'Priority';
+
+  @override
+  String get goalsSetTargetDate => 'Set target date (optional)';
+
+  @override
+  String goalsTargetDate(String date) {
+    return 'Target: $date';
+  }
+
+  @override
+  String goalsProgressPercent(int percent) {
+    return 'Progress: $percent%';
+  }
+
+  @override
+  String get goalsCreate => 'Create';
+
+  @override
+  String get goalsStatusActive => 'active';
+
+  @override
+  String get goalsStatusAchieved => 'achieved';
+
+  @override
+  String get goalsStatusAbandoned => 'abandoned';
+
+  @override
+  String get goalsPriorityLow => 'low';
+
+  @override
+  String get goalsPriorityMedium => 'medium';
+
+  @override
+  String get goalsPriorityHigh => 'high';
+
+  @override
+  String get tasksWelcomeBack => 'Welcome back,';
+
+  @override
+  String get tasksDefaultUserName => 'Aura User';
+
+  @override
+  String get tasksPageTitle => 'Task Workspace';
+
+  @override
+  String get tasksPageSubtitle => 'Prioritize and manage your goals';
+
+  @override
+  String get tasksViewSyncLogs => 'View Sync Logs';
+
+  @override
+  String get tasksSyncing => 'Syncing...';
+
+  @override
+  String get tasksSyncFailed => 'Tasks sync encountered errors.';
+
+  @override
+  String get tasksSyncSucceeded => 'Google Tasks sync completed successfully!';
+
+  @override
+  String get tasksSyncButton => 'Sync Tasks';
+
+  @override
+  String get tasksAddTask => 'Add Task';
+
+  @override
+  String get tasksAddNewTaskTitle => 'Add New Task';
+
+  @override
+  String get tasksTitleLabel => 'Task Title';
+
+  @override
+  String get tasksTitleHint => 'What needs to be done?';
+
+  @override
+  String get tasksTitleRequired => 'Please enter a title';
+
+  @override
+  String get tasksDescriptionLabel => 'Description';
+
+  @override
+  String get tasksDescriptionHint => 'Add details (optional)';
+
+  @override
+  String get tasksCategoryLabel => 'Category';
+
+  @override
+  String get tasksPriorityLabel => 'Priority';
+
+  @override
+  String get tasksNoDueDate => 'No Due Date Selected';
+
+  @override
+  String get tasksSaveTask => 'Save Task';
+
+  @override
+  String get tasksCategoryAll => 'All';
+
+  @override
+  String get tasksCategoryPersonal => 'Personal';
+
+  @override
+  String get tasksCategoryAcademic => 'Academic';
+
+  @override
+  String get tasksCategoryClient => 'Client';
+
+  @override
+  String get tasksCategoryProject => 'Project';
+
+  @override
+  String get tasksPriorityLow => 'Low';
+
+  @override
+  String get tasksPriorityMedium => 'Medium';
+
+  @override
+  String get tasksPriorityHigh => 'High';
+
+  @override
+  String get tasksEmptyTitle => 'All caught up!';
+
+  @override
+  String get tasksEmptyMessage =>
+      'Enjoy your day or create a new task to stay organized.';
+
+  @override
+  String get tasksSyncLogTitle => 'Tasks Sync Activity Log';
+
+  @override
+  String get tasksSyncLogEmpty => 'No logs recorded yet. Press sync to begin.';
+
+  @override
+  String get tasksDeleteTask => 'Delete task';
+
+  @override
+  String get tasksTaskDeleted => 'Task deleted';
+
+  @override
+  String get calendarSyncFailed => 'Calendar sync encountered errors.';
+
+  @override
+  String get calendarSyncSucceeded =>
+      'Google Calendar sync completed successfully!';
+
+  @override
+  String get calendarPageTitle => 'Calendar';
+
+  @override
+  String get calendarPageSubtitle =>
+      'Manage local schedules and sync with Google';
+
+  @override
+  String get calendarViewSyncLogs => 'View Sync Logs';
+
+  @override
+  String get calendarSyncing => 'Syncing...';
+
+  @override
+  String get calendarSyncButton => 'Sync Calendar';
+
+  @override
+  String get calendarSyncLogTitle => 'Sync Activity Log';
+
+  @override
+  String get calendarSyncLogEmpty =>
+      'No logs recorded yet. Press sync to begin.';
+
+  @override
+  String get calendarCreateEventTitle => 'Create Calendar Event';
+
+  @override
+  String get calendarEventTitleLabel => 'Event Title';
+
+  @override
+  String get calendarEventTitleHint => 'e.g. Team Standup';
+
+  @override
+  String get calendarEventDescriptionLabel => 'Description (Optional)';
+
+  @override
+  String get calendarEventDescriptionHint => 'Enter event details';
+
+  @override
+  String get calendarStartTime => 'Start Time';
+
+  @override
+  String get calendarEndTime => 'End Time';
+
+  @override
+  String get calendarEventCreated => 'Event created successfully!';
+
+  @override
+  String get calendarCreate => 'Create';
+
+  @override
+  String get calendarNoEvents => 'No events scheduled for today';
+
+  @override
+  String get calendarCloudSynced => 'Cloud Synced';
+
+  @override
+  String get calendarDeleteEventTitle => 'Delete Event';
+
+  @override
+  String calendarDeleteEventConfirm(String title) {
+    return 'Are you sure you want to delete \'$title\'?';
+  }
+
+  @override
+  String get calendarEventDeleted => 'Event deleted successfully.';
+
+  @override
+  String get hostPanelTitle => 'Host Daemon';
+
+  @override
+  String get hostFullSettings => 'Full Settings';
+
+  @override
+  String hostStatusError(String error) {
+    return 'Error: $error';
+  }
+
+  @override
+  String get hostStatusGaveUp => 'Stopped after repeated crashes';
+
+  @override
+  String hostStatusRestarting(int seconds) {
+    return 'Crashed, restarting in ${seconds}s...';
+  }
+
+  @override
+  String get hostStatusNotRunning => 'Not running';
+
+  @override
+  String get hostStatusRunningNotPaired => 'Running, not paired';
+
+  @override
+  String get hostStatusRunningOtherServer =>
+      'Running, paired to a different server';
+
+  @override
+  String get hostStatusRunningPaired => 'Running, paired';
+
+  @override
+  String get hostStatusReconnecting => 'Running, reconnecting...';
+
+  @override
+  String get hostStatusPairedUpdateDaemon =>
+      'Running, paired (update aura_hostd)';
+
+  @override
+  String hostBackendLabel(String url) {
+    return 'Backend: $url';
+  }
+
+  @override
+  String hostOtherServerNotice(String url) {
+    return 'This app is signed in to $url. Pair again to move the daemon there.';
+  }
+
+  @override
+  String get hostStarting => 'Starting...';
+
+  @override
+  String get hostStartNow => 'Start now';
+
+  @override
+  String get hostStart => 'Start';
+
+  @override
+  String get hostCancelRestart => 'Cancel restart';
+
+  @override
+  String get hostStop => 'Stop';
+
+  @override
+  String get hostPairing => 'Pairing...';
+
+  @override
+  String get hostRepair => 'Re-pair';
+
+  @override
+  String get hostPair => 'Pair';
+
+  @override
+  String get hostGrantedRoots => 'Granted Roots';
+
+  @override
+  String get hostTrusted => 'Trusted';
+
+  @override
+  String get hostSetExecutableFirst =>
+      'Set the aura_hostd executable path in Full Settings first.';
+
+  @override
+  String hostCouldNotStart(String error) {
+    return 'Could not start aura_hostd: $error';
+  }
+
+  @override
+  String hostCouldNotStop(String error) {
+    return 'Could not stop aura_hostd: $error';
+  }
+
+  @override
+  String get hostPairDialogTitle => 'Pair this device';
+
+  @override
+  String get hostPairApproving =>
+      'Approving with your signed-in AURA session...';
+
+  @override
+  String get hostPairWaiting => 'Waiting for approval...';
+
+  @override
+  String get hostPairSignInFirst =>
+      'Sign in to AURA first -- pairing needs a valid session to approve with.';
+
+  @override
+  String get hostPaired => 'Paired.';
+
+  @override
+  String hostPairingFailed(String reason) {
+    return 'Pairing failed: $reason';
+  }
+
+  @override
+  String get hostPairingExpired => 'Pairing code expired.';
+
+  @override
+  String hostCouldNotStartPairing(String error) {
+    return 'Could not start pairing: $error';
+  }
+
+  @override
+  String get debugOpenWorkspace => 'Open a workspace to use the Debug Console.';
+
+  @override
+  String get debugScriptHint => 'script.py (relative to workspace root)';
+
+  @override
+  String get debugStart => 'Start';
+
+  @override
+  String get debugContinue => 'Continue';
+
+  @override
+  String get debugStepOver => 'Step Over';
+
+  @override
+  String get debugStepInto => 'Step Into';
+
+  @override
+  String get debugStepOut => 'Step Out';
+
+  @override
+  String get debugStop => 'Stop';
+
+  @override
+  String get debugStatusIdle => 'Idle';
+
+  @override
+  String get debugStatusStarting => 'Starting...';
+
+  @override
+  String debugStatusRunningPid(int pid) {
+    return 'Running (pid $pid)';
+  }
+
+  @override
+  String get debugStatusRunning => 'Running';
+
+  @override
+  String get debugStatusPaused => 'Paused';
+
+  @override
+  String get debugStatusStopped => 'Stopped';
+
+  @override
+  String get debugBreakpointsLabel => 'Breakpoints:';
+
+  @override
+  String get debugLineHint => 'line #';
+
+  @override
+  String get debugCallStack => 'CALL STACK';
+
+  @override
+  String get debugVariables => 'VARIABLES';
+
+  @override
+  String get controlCenterDiscardTitle => 'Discard this task?';
+
+  @override
+  String controlCenterDiscardBody(String branch, String path) {
+    return 'This permanently deletes the \"$branch\" branch and its worktree at $path. Any unmerged work in it is lost. This cannot be undone.';
+  }
+
+  @override
+  String get controlCenterDiscard => 'Discard';
+
+  @override
+  String get controlCenterMergedTitle => 'Merged';
+
+  @override
+  String controlCenterMergedBody(String branch) {
+    return '\"$branch\" was merged locally. Discard its now-merged worktree?';
+  }
+
+  @override
+  String get controlCenterKeepIt => 'Keep it';
+
+  @override
+  String get controlCenterTitle => 'Agent Review';
+
+  @override
+  String get controlCenterEmpty =>
+      'No isolated agent tasks right now. Starting a new chat task creates one automatically.';
+
+  @override
+  String get controlCenterNoChanges => '(no changes)';
+
+  @override
+  String controlCenterDiffStatError(String message) {
+    return 'error: $message';
+  }
+
+  @override
+  String get controlCenterBaseBranchUnknown =>
+      'Could not determine the base branch to diff against.';
+
+  @override
+  String get controlCenterMergeConflict =>
+      'Merge conflict -- resolve in the main worktree, then commit there directly.';
+
+  @override
+  String get controlCenterHideDiff => 'Hide diff';
+
+  @override
+  String get controlCenterViewDiff => 'View diff';
+
+  @override
+  String get controlCenterSquashMerge => 'Squash merge';
+
+  @override
+  String get controlCenterWorking => 'Working...';
+
+  @override
+  String get controlCenterMerge => 'Merge';
+
+  @override
+  String get terminalOpenWorkspace => 'Open a workspace to use the terminal.';
+
+  @override
+  String get terminalGrantWorkspace =>
+      'Grant this workspace to the host daemon to use the terminal.';
+
+  @override
+  String get terminalUntrusted =>
+      'Workspace is not trusted. Trust it from the Host panel to use the terminal.';
+
+  @override
+  String get terminalStarting => 'Starting terminal...';
+
+  @override
+  String terminalSessionEndedWithCode(int code) {
+    return 'Session ended (exit code $code).';
+  }
+
+  @override
+  String get terminalSessionEnded => 'Session ended.';
+
+  @override
+  String get terminalRestart => 'Restart';
+
+  @override
+  String get outputFilterAll => 'All';
+
+  @override
+  String get outputChannelAgent => 'Agent';
+
+  @override
+  String get outputChannelHost => 'Host';
+
+  @override
+  String get outputChannelTasks => 'Tasks';
+
+  @override
+  String get outputChannelDiagnostics => 'Diagnostics';
+
+  @override
+  String get outputClear => 'Clear Output';
+
+  @override
+  String get outputEmpty => 'No output yet';
+
+  @override
+  String get diagnosticsOpenWorkspace => 'Open a workspace to see problems.';
+
+  @override
+  String get diagnosticsDetecting => 'Detecting diagnostics tool...';
+
+  @override
+  String get diagnosticsNoTool =>
+      'No diagnostics tool detected for this workspace.';
+
+  @override
+  String get diagnosticsRerun => 'Rerun';
+
+  @override
+  String get diagnosticsNoProblems => 'No problems detected';
+
+  @override
+  String diagnosticsToolNotFound(String tool) {
+    return '\"$tool\" is not installed or not on PATH.';
+  }
+
+  @override
+  String get editorNoFileOpen => 'No file open';
+
+  @override
+  String get editorNoFileOpenHint =>
+      'Open a file from the Explorer or press Ctrl+P';
+
+  @override
+  String editorCouldNotRead(String path, String error) {
+    return 'Could not read $path: $error';
+  }
+
+  @override
+  String get editorNoActiveWorkspace => 'No active workspace';
+
+  @override
+  String get editorRestoredNotice =>
+      'Restored unsaved changes from your last session.';
+
+  @override
+  String get editorRestoredOverChange =>
+      'Restored unsaved changes from your last session. The file has changed on disk since; saving will overwrite that change.';
+
+  @override
+  String get editorUnsavedTitle => 'Unsaved changes';
+
+  @override
+  String editorUnsavedBody(String title) {
+    return '\"$title\" has unsaved changes.';
+  }
+
+  @override
+  String get editorDiscard => 'Discard';
+
+  @override
+  String get editorQuickOpenHint => 'Type to search files...';
+
+  @override
+  String get editorNoFilesFound => 'No files found';
+
+  @override
+  String get editorNoMatches => 'No matches';
+
+  @override
+  String agentWorkspaceLabel(String path) {
+    return 'Workspace: $path';
+  }
+
+  @override
+  String get agentLockedTitle => 'Engineer is not available on this account';
+
+  @override
+  String get agentLockedMessage =>
+      'Engineer needs the engineer_agent capability. Ask an operator to grant it; until then, messages from here would be answered by the general assistant instead.';
+
+  @override
+  String get agentEmptyTitle => 'No messages yet';
+
+  @override
+  String get agentEmptyMessage =>
+      'Ask Engineer about this workspace — it can read your files, run commands and propose changes for you to review before anything is applied.';
+
+  @override
+  String get agentTaskDefault => 'Default';
+
+  @override
+  String agentTaskLabel(String id) {
+    return 'Task $id';
+  }
+
+  @override
+  String get agentSwitchTask => 'Switch task';
+
+  @override
+  String get agentNewTask => '+ New Task';
+
+  @override
+  String get engineeringDaemonSaved => 'Saved.';
+
+  @override
+  String get engineeringDaemonPathMissing =>
+      'Set the aura_hostd executable path first.';
+
+  @override
+  String engineeringDaemonStartFailed(String error) {
+    return 'Could not start aura_hostd: $error';
+  }
+
+  @override
+  String engineeringDaemonStopFailed(String error) {
+    return 'Could not stop aura_hostd: $error';
+  }
+
+  @override
+  String get engineeringPairThisDevice => 'Pair this device';
+
+  @override
+  String get engineeringPairApproving =>
+      'Approving with your signed-in AURA session...';
+
+  @override
+  String get engineeringPairWaiting => 'Waiting for approval...';
+
+  @override
+  String get engineeringPairSignInFirst =>
+      'Sign in to AURA first -- pairing needs a valid session to approve with.';
+
+  @override
+  String engineeringPairApprovalRejected(int status, String body) {
+    return 'Approval rejected: HTTP $status $body';
+  }
+
+  @override
+  String get engineeringPaired => 'Paired.';
+
+  @override
+  String engineeringPairedNamed(String name) {
+    return 'Paired $name.';
+  }
+
+  @override
+  String engineeringPairingFailed(String reason) {
+    return 'Pairing failed: $reason';
+  }
+
+  @override
+  String get engineeringPairingExpired => 'Pairing code expired.';
+
+  @override
+  String engineeringPairingStartFailed(String error) {
+    return 'Could not start pairing: $error';
+  }
+
+  @override
+  String engineeringGrantRootFailed(String path, String error) {
+    return 'Could not grant $path: $error';
+  }
+
+  @override
+  String get engineeringRevokeRootTitle => 'Revoke workspace root?';
+
+  @override
+  String engineeringRevokeRootBody(String path) {
+    return 'The agent will no longer be able to read or write anything under $path.';
+  }
+
+  @override
+  String get engineeringRevoke => 'Revoke';
+
+  @override
+  String get engineeringDaemonTitle => 'Desktop Engineer Daemon';
+
+  @override
+  String engineeringDaemonStatusFailed(String error) {
+    return 'Could not check status: $error';
+  }
+
+  @override
+  String get engineeringExecutableTitle => 'aura_hostd executable';
+
+  @override
+  String get engineeringExecutableHelp =>
+      'Installed builds use the aura_hostd that ships with this app. To use another one, point this at it (see aura_hostd/README.md); clear it to go back to the bundled one.';
+
+  @override
+  String get engineeringDaemonNotRunning => 'Not running';
+
+  @override
+  String get engineeringDaemonRunningNotPaired => 'Running, not paired';
+
+  @override
+  String get engineeringDaemonRunningOtherServer =>
+      'Running, paired to a different server';
+
+  @override
+  String get engineeringDaemonRunningPaired => 'Running, paired';
+
+  @override
+  String get engineeringDaemonReconnecting => 'Running, reconnecting...';
+
+  @override
+  String get engineeringDaemonPairedUpdateNeeded =>
+      'Running, paired -- update aura_hostd to see connection status';
+
+  @override
+  String engineeringDaemonBackend(String url) {
+    return 'Backend: $url';
+  }
+
+  @override
+  String engineeringDaemonOtherServerNote(String url) {
+    return 'This app is signed in to $url. Pair again to move the daemon there.';
+  }
+
+  @override
+  String get engineeringDaemonStart => 'Start';
+
+  @override
+  String get engineeringDaemonStop => 'Stop';
+
+  @override
+  String get engineeringPairAgain => 'Pair again';
+
+  @override
+  String get engineeringWorkspaceRoots => 'Workspace roots';
+
+  @override
+  String get engineeringNoRoots =>
+      'No folders granted yet -- the agent can\'t read or write anything on this machine until you add one.';
+
+  @override
+  String get engineeringRootTrusted =>
+      'Trusted -- commands run without per-call confirmation (still confined to this folder)';
+
+  @override
+  String get engineeringRootUntrusted =>
+      'Untrusted -- only a read-only inspection allowlist runs';
+
+  @override
+  String get engineeringBrowse => 'Browse';
+
+  @override
+  String get engineeringDaemonOutput => 'Daemon output';
+
+  @override
+  String get engineeringNoLogsNote =>
+      'Live output is only available for a daemon this app started -- pointing at one already running elsewhere still works for everything else on this page.';
+
+  @override
+  String get engineeringBackToFileList => 'Back to file list';
+
+  @override
+  String get engineeringFileTruncated =>
+      'File is larger than this preview shows.';
+
+  @override
+  String engineeringReadDirFailed(String error) {
+    return 'Could not read this directory: $error';
+  }
+
+  @override
+  String get engineeringFolderEmpty => 'This folder is empty.';
+
+  @override
+  String get engineeringGithubBrowserFailed =>
+      'Could not open the browser to connect GitHub.';
+
+  @override
+  String get engineeringGithubDisconnected => 'GitHub disconnected.';
+
+  @override
+  String get engineeringGithubConnectedUnknown =>
+      'Connected as a GitHub account';
+
+  @override
+  String engineeringGithubConnectedAs(String login) {
+    return 'Connected as $login';
+  }
+
+  @override
+  String get engineeringGithubNotConnected => 'No GitHub account connected';
+
+  @override
+  String engineeringGithubConnectedAt(String date) {
+    return 'Connected $date';
+  }
+
+  @override
+  String get engineeringGithubConnectedBody =>
+      'The engineer agent can read and write exactly the repositories you granted when you installed the GitHub App. Disconnecting only removes what AURA can use -- it does not revoke the app on github.com.';
+
+  @override
+  String get engineeringGithubDisconnectedBody =>
+      'Connect your own GitHub account so the engineer agent (opening PRs, reading issues, committing files) acts on the repositories you choose, instead of relying on a shared token an operator configured.';
+
+  @override
+  String get engineeringGithubDisconnect => 'Disconnect GitHub';
+
+  @override
+  String get engineeringGithubConnect => 'Connect GitHub';
+
+  @override
+  String get engineeringDesktopDaemonTooltip => 'Desktop daemon';
+
+  @override
+  String get engineeringNoRunsTitle => 'No engineer runs yet';
+
+  @override
+  String get engineeringNoRunsMessage =>
+      'Ask the Engineer agent to open a PR or run a command, and it will show up here.';
+
+  @override
+  String get engineeringToolOpenedDraftPr => 'Opened draft PR';
+
+  @override
+  String get engineeringToolCommittedFiles => 'Committed files';
+
+  @override
+  String get engineeringToolCreatedBranch => 'Created branch';
+
+  @override
+  String get engineeringToolWroteFile => 'Wrote file';
+
+  @override
+  String get engineeringToolEditedFile => 'Edited file';
+
+  @override
+  String get engineeringToolRanCommand => 'Ran command';
+
+  @override
+  String get engineeringToolCommitted => 'Committed';
+
+  @override
+  String get engineeringToolSwitchedBranch => 'Switched branch';
+
+  @override
+  String get engineeringToolDiffedSandbox => 'Diffed sandbox';
+
+  @override
+  String get engineeringRunStatusPending => 'pending';
+
+  @override
+  String get engineeringRunStatusSucceeded => 'succeeded';
+
+  @override
+  String get engineeringRunStatusFailed => 'failed';
+
+  @override
+  String engineeringRunStatus(String status) {
+    return 'Status: $status';
+  }
+
+  @override
+  String engineeringRunBranch(String branch) {
+    return 'Branch: $branch';
+  }
+
+  @override
+  String engineeringRunCommit(String sha) {
+    return 'Commit: $sha';
+  }
+
+  @override
+  String get engineeringCopyLink => 'Copy link';
+
+  @override
+  String get engineeringLinkCopied => 'Link copied';
+
+  @override
+  String get engineeringRunOutput => 'Output';
+
+  @override
+  String get automationsTitle => 'AURA Automations';
+
+  @override
+  String get automationsSubtitle =>
+      'Extract tasks from emails and issues, generate workspace structures';
+
+  @override
+  String get automationsTabGmail => 'Gmail Inbox Analyzer';
+
+  @override
+  String get automationsTabGithub => 'GitHub Issue Importer';
+
+  @override
+  String get automationsTabDrive => 'Drive Workspace Builder';
+
+  @override
+  String get automationsGmailUnavailableTitle =>
+      'Live Gmail Integration Unavailable';
+
+  @override
+  String get automationsGmailUnavailableBody =>
+      'You are signed in via a mock developer profile. Real unread emails can only be fetched when logged in with a real Google Account.';
+
+  @override
+  String get automationsGmailRecentUnread => 'Recent Unread Emails';
+
+  @override
+  String get automationsGmailFetchUnread => 'Fetch Unread';
+
+  @override
+  String get automationsGmailFetching => 'Fetching...';
+
+  @override
+  String get automationsGmailEmpty => 'No unread emails loaded. Click Fetch.';
+
+  @override
+  String automationsGmailFrom(String sender) {
+    return 'From: $sender';
+  }
+
+  @override
+  String get automationsGmailAnalyze => 'AI Analyze';
+
+  @override
+  String automationsGmailCategory(String category) {
+    return 'Category: $category';
+  }
+
+  @override
+  String get automationsGmailUrgent => 'URGENT';
+
+  @override
+  String get automationsGmailLowUrgency => 'Low Urgency';
+
+  @override
+  String get automationsGmailAiSummary => 'AI Summary';
+
+  @override
+  String get automationsGmailActionItems => 'Action Items Extracted';
+
+  @override
+  String automationsGmailSuggestedDeadline(String date) {
+    return 'Suggested Deadline: $date';
+  }
+
+  @override
+  String get automationsGmailImportTask => 'Import as AURA Task';
+
+  @override
+  String automationsGmailImportedTask(String title) {
+    return 'Imported task: $title';
+  }
+
+  @override
+  String get automationsGmailSuggestedEvent => 'Suggested Calendar Event';
+
+  @override
+  String get automationsGmailScheduleEvent => 'Schedule Event';
+
+  @override
+  String automationsGmailScheduledEvent(String title) {
+    return 'Scheduled event: $title';
+  }
+
+  @override
+  String automationsGmailFetchError(String error) {
+    return 'Gmail Fetch Error: $error';
+  }
+
+  @override
+  String automationsGmailAnalysisFailed(String error) {
+    return 'Analysis failed: $error';
+  }
+
+  @override
+  String get automationsGmailNoSubject => 'No Subject';
+
+  @override
+  String get automationsGmailUnknownSender => 'Unknown Sender';
+
+  @override
+  String get automationsGithubSetup => 'GitHub Integration Setup';
+
+  @override
+  String get automationsGithubPatLabel => 'GitHub PAT (Personal Access Token)';
+
+  @override
+  String get automationsGithubRepoLabel => 'Repository Path';
+
+  @override
+  String get automationsGithubLoadIssues => 'Load Repo Issues';
+
+  @override
+  String get automationsGithubLoading => 'Loading GitHub Board...';
+
+  @override
+  String get automationsGithubEmpty => 'No open issues loaded.';
+
+  @override
+  String get automationsGithubExtractSubtasks => 'Extract Subtasks';
+
+  @override
+  String automationsGithubComplexity(String complexity) {
+    return 'Complexity: $complexity';
+  }
+
+  @override
+  String automationsGithubPriority(String priority) {
+    return 'Priority: $priority';
+  }
+
+  @override
+  String get automationsGithubIssueSummary => 'Issue Summary';
+
+  @override
+  String get automationsGithubCodingTasks => 'Extracted Coding Tasks';
+
+  @override
+  String get automationsGithubImported => 'Imported coding task!';
+
+  @override
+  String get automationsGithubMissingInput =>
+      'Please provide both GitHub PAT and Repository Path.';
+
+  @override
+  String get automationsGithubRepoFormat =>
+      'Repository Path must be in \'owner/repo\' format (e.g., owner/AURA-AI).';
+
+  @override
+  String automationsGithubFetchFailed(String error) {
+    return 'GitHub fetch failed: $error';
+  }
+
+  @override
+  String automationsGithubAnalysisFailed(String error) {
+    return 'Issue analysis failed: $error';
+  }
+
+  @override
+  String get automationsDriveUnavailableTitle =>
+      'Google Drive Workspace Creation Unavailable';
+
+  @override
+  String get automationsDriveUnavailableBody =>
+      'You are signed in via a mock developer profile. Drive workspace directories can only be generated when logged in with a real Google Account.';
+
+  @override
+  String get automationsDriveGeneratorTitle =>
+      'Drive Project Workspace Generator';
+
+  @override
+  String get automationsDriveGeneratorBody =>
+      'Enter project details. AURA will generate a Google Drive folder and populate it with a structured Markdown project outline document.';
+
+  @override
+  String get automationsDriveProjectName => 'Project Name';
+
+  @override
+  String get automationsDriveProjectNameHint => 'e.g. Freelance Mobile App';
+
+  @override
+  String get automationsDriveProjectDescription =>
+      'Project Description / Outline';
+
+  @override
+  String get automationsDriveProjectDescriptionHint =>
+      'Describe details to generate template plan';
+
+  @override
+  String get automationsDriveGenerate => 'Generate Drive Workspace';
+
+  @override
+  String get automationsDriveConsole => 'Automation Activity Console';
+
+  @override
+  String get automationsDriveInitializing =>
+      'Initializing project workspace folders...';
+
+  @override
+  String automationsDriveFailed(String error) {
+    return 'Workspace creation failed: $error';
+  }
+
+  @override
+  String get automationsDriveRequestingPermissions =>
+      'Requesting Drive storage permissions...';
+
+  @override
+  String get automationsDriveConnected =>
+      'Established connection with Google Drive.';
+
+  @override
+  String automationsDriveCreatedFolder(String name) {
+    return 'Created Folder: $name';
+  }
+
+  @override
+  String automationsDriveCreatedDocument(String name) {
+    return 'Created document: $name';
+  }
+
+  @override
+  String get automationsDriveDone => 'Drive Workspace generated successfully!';
+
+  @override
+  String get financeTitle => 'Finance Ledger';
+
+  @override
+  String get financeSubtitle =>
+      'Track incomes, expenses, and analyze financial distributions';
+
+  @override
+  String get financeBalance => 'Balance';
+
+  @override
+  String get financeIncome => 'Income';
+
+  @override
+  String get financeExpenses => 'Expenses';
+
+  @override
+  String get financeExpensesByCategory => 'Expenses by Category';
+
+  @override
+  String get financeNoExpenses => 'No expenses logged';
+
+  @override
+  String get financeIncomeVsExpense => 'Income vs Expense';
+
+  @override
+  String get financeExpense => 'Expense';
+
+  @override
+  String get financeLogTransaction => 'Log Transaction';
+
+  @override
+  String financeAmountLabel(String currency) {
+    return 'Amount ($currency)';
+  }
+
+  @override
+  String get financeCategory => 'Category';
+
+  @override
+  String get financeCategoryFood => 'Food';
+
+  @override
+  String get financeCategoryStudies => 'Studies';
+
+  @override
+  String get financeCategoryFreelance => 'Freelance';
+
+  @override
+  String get financeCategoryHousing => 'Housing';
+
+  @override
+  String get financeCategoryEntertainment => 'Entertainment';
+
+  @override
+  String get financeCategoryUtilities => 'Utilities';
+
+  @override
+  String get financeCategoryTransport => 'Transport';
+
+  @override
+  String get financeCategoryOther => 'Other';
+
+  @override
+  String get financeDescriptionLabel => 'Description (Optional)';
+
+  @override
+  String get financeDescriptionHint => 'e.g. Weekly grocery shopping';
+
+  @override
+  String get financeDate => 'Date';
+
+  @override
+  String get financeLogged => 'Transaction logged successfully!';
+
+  @override
+  String get financeSubmit => 'Submit Ledger Entry';
+
+  @override
+  String get financeInvalidAmount => 'Please enter a valid positive amount.';
+
+  @override
+  String get financeChooseCategory => 'Please choose a category.';
+
+  @override
+  String get financeRecentActivities => 'Recent Activities';
+
+  @override
+  String get financeNoActivities => 'No activities recorded yet';
+
+  @override
+  String financeDeletedEntry(String entry) {
+    return 'Deleted entry: $entry';
+  }
+
+  @override
+  String get ideClosePanel => 'Close panel';
+
+  @override
+  String get ideActivityExplorer => 'Explorer';
+
+  @override
+  String get ideActivityExplorerTooltip => 'Explorer (Ctrl+B)';
+
+  @override
+  String get ideActivityGoToFile => 'Go to File';
+
+  @override
+  String get ideActivityGoToFileTooltip => 'Go to File (Ctrl+P)';
+
+  @override
+  String get ideActivitySourceControl => 'Source Control';
+
+  @override
+  String get ideActivityAgents => 'AURA Agents';
+
+  @override
+  String get ideActivityAgentsTooltip => 'AURA Agents (Ctrl+J)';
+
+  @override
+  String get ideActivityControlCenterTooltip => 'AURA Control Center';
+
+  @override
+  String get ideActivityPanel => 'Panel';
+
+  @override
+  String get ideActivityPanelTooltip =>
+      'Terminal, Output & Problems (Ctrl+Shift+J)';
+
+  @override
+  String ideActivityPanelProblems(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count problems',
+      one: '1 problem',
+    );
+    return 'Panel, $_temp0';
+  }
+
+  @override
+  String get ideBottomTerminal => 'Terminal';
+
+  @override
+  String get ideBottomOutput => 'Output';
+
+  @override
+  String ideBottomProblemsCount(int count) {
+    return 'Problems ($count)';
+  }
+
+  @override
+  String get ideBottomProblems => 'Problems';
+
+  @override
+  String get ideBottomDebugConsole => 'Debug Console';
+
+  @override
+  String get ideCmdNoWorkspace => 'No workspace is open';
+
+  @override
+  String get ideCmdNoFileOpen => 'No file is open';
+
+  @override
+  String get ideCmdGroupFile => 'File';
+
+  @override
+  String get ideCmdGroupView => 'View';
+
+  @override
+  String get ideCmdGoToFile => 'Go to File...';
+
+  @override
+  String get ideCmdSaveFile => 'Save File';
+
+  @override
+  String get ideCmdNoUnsavedChanges => 'No unsaved changes';
+
+  @override
+  String get ideCmdCloseEditor => 'Close Editor';
+
+  @override
+  String get ideCmdShowExplorer => 'Show Explorer';
+
+  @override
+  String get ideCmdShowSourceControl => 'Show Source Control';
+
+  @override
+  String get ideCmdShowControlCenter => 'Show AURA Control Center';
+
+  @override
+  String get ideCmdHideSidebar => 'Hide Side Bar';
+
+  @override
+  String get ideCmdShowSidebar => 'Show Side Bar';
+
+  @override
+  String get ideCmdHidePanel => 'Hide Panel';
+
+  @override
+  String get ideCmdShowPanel => 'Show Panel';
+
+  @override
+  String get ideCmdFocusTerminal => 'Focus Terminal';
+
+  @override
+  String get ideCmdHideAgent => 'Hide AURA Agent';
+
+  @override
+  String get ideCmdShowAgent => 'Show AURA Agent';
+
+  @override
+  String get ideCmdInlineCompletion => 'Request Inline Completion';
+
+  @override
+  String get ideCmdRefreshSourceControl => 'Refresh Source Control';
+
+  @override
+  String get ideCmdLeaveIde => 'Leave IDE (Open Today)';
+
+  @override
+  String get ideStatusNoBranch => 'No branch';
+
+  @override
+  String get ideStatusHostNotRunning => 'Host Not Running';
+
+  @override
+  String get ideStatusHostNotPaired => 'Host Not Paired';
+
+  @override
+  String get ideStatusHostOtherServer =>
+      'Host paired to a different server -- re-pair';
+
+  @override
+  String get ideStatusHostConnected => 'Host Connected';
+
+  @override
+  String get ideStatusReconnecting => 'Reconnecting to server...';
+
+  @override
+  String get ideStatusHostUnknown => 'Host Status Unknown (update aura_hostd)';
+
+  @override
+  String ideStatusPendingApprovals(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count pending approvals',
+      one: '1 pending approval',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String ideStatusRolledBackTooltip(String version) {
+    return 'This version was rolled back to $version';
+  }
+
+  @override
+  String ideStatusUpdateAvailableTooltip(String version) {
+    return 'AURA $version is available';
+  }
+
+  @override
+  String ideStatusRollBackTo(String version) {
+    return 'Roll back to $version';
+  }
+
+  @override
+  String ideStatusUpdateTo(String version) {
+    return 'Update to $version';
+  }
+
+  @override
+  String ideStatusLineColumn(int line, int column) {
+    return 'Ln $line, Col $column';
+  }
+
+  @override
+  String get ideStatusLineEndingMixed => 'Mixed';
+
+  @override
+  String ideUpdateRollbackTitle(String version) {
+    return 'Roll back to AURA $version?';
+  }
+
+  @override
+  String ideUpdateTitle(String version) {
+    return 'Update to AURA $version?';
+  }
+
+  @override
+  String ideUpdateWindowsRollbackBody(String version) {
+    return 'This version has been rolled back. AURA will close, install $version and reopen. Unsaved changes are kept and restored.';
+  }
+
+  @override
+  String ideUpdateWindowsBody(String version) {
+    return 'AURA will close, install $version and reopen. Unsaved changes are kept and restored.';
+  }
+
+  @override
+  String ideUpdateLinuxBody(String version) {
+    return 'Download AURA $version for Linux in your browser.';
+  }
+
+  @override
+  String get ideNotNow => 'Not now';
+
+  @override
+  String get ideUpdateInstallRestart => 'Install and restart';
+
+  @override
+  String get ideUpdateDownload => 'Download';
+
+  @override
+  String get ideUpdateDownloading => 'Downloading the update...';
+
+  @override
+  String get ideUpdateChecksumFailed =>
+      'The download did not match the release checksum and was deleted. Nothing was installed.';
+
+  @override
+  String ideUpdateFailed(String error) {
+    return 'Could not update: $error';
+  }
+
+  @override
+  String get idePendingApprovalsTitle => 'Pending Approvals';
+
+  @override
+  String ideApprovalFilesInRoot(int count, String root) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count files in $root',
+      one: '1 file in $root',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String ideApprovalFiles(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count files',
+      one: '1 file',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get ideApprove => 'Approve';
+
+  @override
+  String get explorerGrantTitle => 'Grant workspace to hostd?';
+
+  @override
+  String explorerGrantBody(String root) {
+    return 'This allows the AURA agent to read and write files in \"$root\".';
+  }
+
+  @override
+  String get explorerGrant => 'Grant';
+
+  @override
+  String get explorerAccessGranted => 'Workspace access granted';
+
+  @override
+  String explorerGrantFailed(String error) {
+    return 'Could not grant root: $error';
+  }
+
+  @override
+  String get explorerHostOffline => 'Host offline';
+
+  @override
+  String get explorerNoWorkspaceTitle => 'No workspace open';
+
+  @override
+  String get explorerNoWorkspaceMessage =>
+      'Open a folder from the welcome page to browse its files here.';
+
+  @override
+  String get explorerAccessRequiredTitle => 'Workspace access required';
+
+  @override
+  String get explorerLoadFailedTitle => 'Failed to load directory';
+
+  @override
+  String get explorerAccessRequiredBody =>
+      'This folder is outside every root granted to the host daemon. Grant access to browse it here and let the AURA agent work in it.';
+
+  @override
+  String get explorerGrantAccess => 'Grant Access';
+
+  @override
+  String get explorerOutsideGrantedRoots =>
+      'This folder is outside every root granted to the host daemon.';
+
+  @override
+  String get explorerHostUnreachable => 'The host daemon is unreachable.';
+
+  @override
+  String get explorerDirectoryNotFound => 'Directory not found';
+
+  @override
+  String get explorerDeleteFolderTitle => 'Delete folder?';
+
+  @override
+  String get explorerDeleteFileTitle => 'Delete file?';
+
+  @override
+  String explorerDeleteFolderBody(String name) {
+    return '\"$name\" and everything inside it will be permanently deleted.';
+  }
+
+  @override
+  String explorerDeleteFileBody(String name) {
+    return '\"$name\" will be permanently deleted.';
+  }
+
+  @override
+  String get explorerRenameFolderTitle => 'Rename folder';
+
+  @override
+  String get explorerRenameFileTitle => 'Rename file';
+
+  @override
+  String get explorerNewName => 'New name';
+
+  @override
+  String get explorerRename => 'Rename';
+
+  @override
+  String explorerRenameFailed(String error) {
+    return 'Could not rename: $error';
+  }
+
+  @override
+  String explorerDeleteFailed(String error) {
+    return 'Could not delete: $error';
+  }
+
+  @override
+  String get explorerNewFileTitle => 'New file';
+
+  @override
+  String get explorerFileName => 'File name';
+
+  @override
+  String get explorerCreate => 'Create';
+
+  @override
+  String explorerCreateFileFailed(String error) {
+    return 'Could not create file: $error';
+  }
+
+  @override
+  String get explorerNewFolderTitle => 'New folder';
+
+  @override
+  String get explorerFolderName => 'Folder name';
+
+  @override
+  String explorerCreateFolderFailed(String error) {
+    return 'Could not create folder: $error';
+  }
+
+  @override
+  String get explorerMenuOpen => 'Open';
+
+  @override
+  String get explorerMenuCopyPath => 'Copy path';
+
+  @override
+  String get explorerMenuCopyRelativePath => 'Copy relative path';
+
+  @override
+  String get explorerMenuReveal => 'Reveal in filesystem';
+
+  @override
+  String get explorerMenuOpenInTerminal => 'Open in Terminal';
+
+  @override
+  String get explorerMenuCollapse => 'Collapse';
+
+  @override
+  String get explorerMenuExpand => 'Expand';
+
+  @override
+  String get explorerMenuNewFile => 'New File';
+
+  @override
+  String get explorerMenuNewFolder => 'New Folder';
+
+  @override
+  String get explorerAccessRequired => 'Access required';
+
+  @override
+  String get explorerLoadFailed => 'Failed to load';
+
+  @override
+  String get explorerEmpty => 'Empty';
+
+  @override
+  String get explorerPathCopied => 'Path copied';
+
+  @override
+  String get explorerRevealWindowsOnly =>
+      'Reveal in filesystem is only supported on Windows for now';
+
+  @override
+  String explorerRevealFailed(String error) {
+    return 'Could not open filesystem: $error';
+  }
+
+  @override
+  String get gitDiffTruncated =>
+      'Diff truncated -- view the full diff in a terminal.';
+
+  @override
+  String get gitMergeDialogTitle => 'Merge branch into current';
+
+  @override
+  String gitRemoteBranch(String name) {
+    return '$name (remote)';
+  }
+
+  @override
+  String get gitCreateBranchTitle => 'Create branch';
+
+  @override
+  String get gitBranchNameHint => 'Branch name';
+
+  @override
+  String get gitNoWorkspace => 'Open a workspace to use Source Control.';
+
+  @override
+  String get gitGrantRequired =>
+      'Grant this workspace to the host daemon to use Source Control.';
+
+  @override
+  String get gitFetchTooltip => 'Fetch from all remotes';
+
+  @override
+  String get gitPullTooltip => 'Pull (fast-forward only)';
+
+  @override
+  String get gitPushTooltip => 'Push current branch to its upstream';
+
+  @override
+  String get gitMerge => 'Merge';
+
+  @override
+  String get gitBranch => 'Branch';
+
+  @override
+  String get gitCommitMessageHint => 'Commit message';
+
+  @override
+  String get gitWorking => 'Working...';
+
+  @override
+  String get gitCommit => 'Commit';
+
+  @override
+  String get gitHistory => 'History';
+
+  @override
+  String get gitNoCommits => 'No commits loaded.';
+
+  @override
+  String get gitStagedChanges => 'Staged Changes';
+
+  @override
+  String get gitUnstageAll => 'Unstage All';
+
+  @override
+  String get gitUnstage => 'Unstage';
+
+  @override
+  String get gitChanges => 'Changes';
+
+  @override
+  String get gitStageAll => 'Stage All';
+
+  @override
+  String get gitStage => 'Stage';
+
+  @override
+  String get gitNoChanges => 'No changes.';
+
+  @override
+  String get gitDetachedHead => '(detached HEAD)';
+
+  @override
+  String gitConflictCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count files have merge conflicts',
+      one: '1 file has merge conflicts',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get gitAbortMerge => 'Abort Merge';
+
+  @override
+  String get gitMarkResolved => 'Mark Resolved';
+
+  @override
+  String get gitNothingStaged => 'Nothing is staged to commit.';
+
+  @override
+  String get gitCheckoutOverwrite =>
+      'Switching branches would overwrite local changes.';
+
+  @override
+  String gitCheckoutOverwriteIn(String files) {
+    return 'Switching branches would overwrite local changes in: $files';
+  }
+
+  @override
+  String get gitNoUpstream => 'The current branch has no upstream set.';
+
+  @override
+  String get gitDiverged =>
+      'The branch has diverged -- pull (or push) cannot fast-forward.';
+
+  @override
+  String get gitLocalChangesOverwritten =>
+      'Local changes would be overwritten.';
+
+  @override
+  String gitLocalChangesOverwrittenIn(String files) {
+    return 'Local changes would be overwritten in: $files';
+  }
+
+  @override
+  String get gitRemoteSyncFailed => 'Remote sync failed.';
+
+  @override
+  String get workspaceWelcomeSubtitle =>
+      'Open a folder to start coding with AURA';
+
+  @override
+  String get workspaceOpenFolder => 'Open Folder';
+
+  @override
+  String get workspaceRecent => 'Recent';
+
+  @override
+  String workspaceGrantBody(String path) {
+    return 'This allows the AURA agent to read/write files in \"$path\".';
+  }
+
+  @override
+  String get workspaceNotNow => 'Not Now';
+
+  @override
+  String get workspaceNoRecent => 'No recent workspaces';
+
+  @override
+  String get workspaceNoRecentHint => 'Open a folder to get started';
+
+  @override
+  String get workspaceRemoveFromRecent => 'Remove from recent';
+
+  @override
+  String get workspaceManagerTitle => 'Workspaces';
+
+  @override
+  String get workspaceRecentWorkspaces => 'Recent Workspaces';
+
+  @override
+  String get workspaceActive => 'Active';
+
+  @override
+  String workspaceLastOpened(String date) {
+    return 'Last opened: $date';
+  }
+
+  @override
+  String get workspaceOpen => 'Open';
+
+  @override
+  String get workspaceRemoveTitle => 'Remove workspace?';
+
+  @override
+  String workspaceRemoveBody(String name) {
+    return 'This will remove \"$name\" from your recent workspaces.';
+  }
+
+  @override
+  String get workspaceRemove => 'Remove';
+
+  @override
+  String get workspaceEmptyTitle => 'No workspaces yet';
+
+  @override
+  String get workspaceEmptyMessage =>
+      'Open a folder to create your first workspace';
 }

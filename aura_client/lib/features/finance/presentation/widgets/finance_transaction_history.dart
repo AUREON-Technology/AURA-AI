@@ -7,6 +7,7 @@ import 'package:aura_client/core/design_system/design_system.dart';
 import '../finance_view_model.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class FinanceTransactionHistory extends ConsumerWidget {
   final AsyncValue<List<FinanceRecord>> transactionsAsync;
@@ -27,7 +28,7 @@ class FinanceTransactionHistory extends ConsumerWidget {
               mainAxisSize: bounded ? MainAxisSize.max : MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('Recent Activities', style: Theme.of(context).textTheme.titleMedium),
+                Text(context.l10n.financeRecentActivities, style: Theme.of(context).textTheme.titleMedium),
                 Divider(color: palette.border, height: 20),
                 if (bounded)
                   Expanded(
@@ -81,7 +82,7 @@ class _HistoryBody extends ConsumerWidget {
             padding: const EdgeInsets.symmetric(vertical: 24),
             child: Center(
               child: Text(
-                'No activities recorded yet',
+                context.l10n.financeNoActivities,
                 style: TextStyle(color: palette.textSecondary),
               ),
             ),
@@ -111,7 +112,7 @@ class _HistoryBody extends ConsumerWidget {
                 await ref.read(financeViewModelProvider.notifier).deleteTransaction(tx.id);
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Deleted entry: ${tx.description ?? tx.category}')),
+                  SnackBar(content: Text(context.l10n.financeDeletedEntry(tx.description ?? financeCategoryLabel(context.l10n, tx.category)))),
                 );
               },
               child: Container(
@@ -134,10 +135,10 @@ class _HistoryBody extends ConsumerWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(tx.description ?? tx.category, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                          Text(tx.description ?? financeCategoryLabel(context.l10n, tx.category), style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
                           const SizedBox(height: 2),
                           Text(
-                            '${tx.category} • ${DateFormat('yyyy-MM-dd').format(tx.date)}',
+                            '${financeCategoryLabel(context.l10n, tx.category)} • ${DateFormat('yyyy-MM-dd').format(tx.date)}',
                             style: TextStyle(color: palette.textSecondary, fontSize: 11),
                           ),
                         ],

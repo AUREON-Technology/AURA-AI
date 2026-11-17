@@ -888,4 +888,2056 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get commonNo => 'لأ';
+
+  @override
+  String get healthPageTitle => 'متابعة الصحة';
+
+  @override
+  String get healthPageSubtitle =>
+      'تابع لياقتك، وسجّل المية والنوم، وراجع سجلاتك';
+
+  @override
+  String get healthDailyGoalsTitle => 'تقدّم أهداف النهارده';
+
+  @override
+  String healthWeightBadge(String weight) {
+    return 'الوزن: $weight كجم';
+  }
+
+  @override
+  String get healthWaterIntake => 'شرب المية';
+
+  @override
+  String get healthUnitMl => 'مل';
+
+  @override
+  String get healthSleepDuration => 'مدة النوم';
+
+  @override
+  String get healthUnitMins => 'دقيقة';
+
+  @override
+  String healthSleepHoursProgress(String hours) {
+    return '$hours / 8.0 ساعة';
+  }
+
+  @override
+  String get healthExerciseDuration => 'مدة التمرين';
+
+  @override
+  String get healthCaloriesConsumed => 'السعرات اللي اتاكلت';
+
+  @override
+  String get healthUnitKcal => 'سعرة';
+
+  @override
+  String get healthQuickLoggerTitle => 'تسجيل سريع';
+
+  @override
+  String get healthAddWater250 => '+250 مل مية';
+
+  @override
+  String get healthAddWater500 => '+500 مل مية';
+
+  @override
+  String get healthLogSleepTitle => 'سجّل مدة النوم';
+
+  @override
+  String get healthSleepMinutesLabel => 'دقايق النوم';
+
+  @override
+  String get healthSleepMinutesHint => 'مثلاً 480 يعني 8 ساعات';
+
+  @override
+  String get healthLogSleep => 'سجّل النوم';
+
+  @override
+  String get healthLogExerciseTitle => 'سجّل مدة التمرين';
+
+  @override
+  String get healthExerciseMinutesLabel => 'دقايق التمرين';
+
+  @override
+  String healthExampleHint(String example) {
+    return 'مثلاً $example';
+  }
+
+  @override
+  String get healthLogExercise => 'سجّل التمرين';
+
+  @override
+  String get healthLogCaloriesTitle => 'سجّل السعرات';
+
+  @override
+  String get healthKcalConsumedLabel => 'السعرات اللي اتاكلت';
+
+  @override
+  String get healthLogCalories => 'سجّل السعرات';
+
+  @override
+  String get healthLogWeightTitle => 'سجّل وزنك الحالي';
+
+  @override
+  String get healthWeightKgLabel => 'الوزن (كجم)';
+
+  @override
+  String get healthLogWeight => 'سجّل الوزن';
+
+  @override
+  String get healthWeeklyTrendsTitle => 'مؤشرات الصحة في الأسبوع';
+
+  @override
+  String get healthWeeklyTrendsEmpty =>
+      'سجّل قياساتك عشان الرسوم الأسبوعية تتملي';
+
+  @override
+  String get healthWaterChartTitle => 'شرب المية (مل)';
+
+  @override
+  String get healthWeightChartTitle => 'تغيّر الوزن (كجم)';
+
+  @override
+  String get healthWeightChartEmpty => 'سجّل وزنك عشان يظهر خط التغيّر';
+
+  @override
+  String get knowledgeFileReadFailed => 'معرفناش نقرا الملف ده.';
+
+  @override
+  String get knowledgeAddDocument => 'إضافة مستند';
+
+  @override
+  String get knowledgeTitleLabel => 'العنوان';
+
+  @override
+  String get knowledgeContentLabel => 'المحتوى';
+
+  @override
+  String get knowledgeTitleContentRequired => 'لازم تكتب العنوان والمحتوى.';
+
+  @override
+  String get knowledgeUploading => 'جاري الرفع…';
+
+  @override
+  String get knowledgeUploadPdfInstead => 'ارفع PDF بدل كده';
+
+  @override
+  String get knowledgeSearchLabel => 'دوّر على جزء';
+
+  @override
+  String get knowledgeSearchEmpty => 'دوّرنا في مكتبتك — مفيش حاجة ليها علاقة.';
+
+  @override
+  String get knowledgeCagTitle => 'موجود في السياق على طول (CAG)';
+
+  @override
+  String knowledgeCagBudget(int tokens, int budget) {
+    return 'الميزانية $tokens / $budget token';
+  }
+
+  @override
+  String get knowledgeCagNothingPinned => 'مفيش حاجة متثبتة لسه';
+
+  @override
+  String get knowledgeCagHandbook => 'الدليل';
+
+  @override
+  String get knowledgeCagYours => 'بتاعك';
+
+  @override
+  String knowledgeCagDocTokens(String tokens) {
+    return '$tokens token';
+  }
+
+  @override
+  String get knowledgeLibrary => 'المكتبة';
+
+  @override
+  String get knowledgeLoadFailed => 'معرفناش نحمّل المستندات';
+
+  @override
+  String get knowledgeEmptyTitle => 'مفيش مستندات لسه';
+
+  @override
+  String get knowledgeEmptyMessage => 'احفظ عنوان وشوية كلام عشان تبني مكتبتك.';
+
+  @override
+  String get knowledgeAlwaysInContext => 'في السياق على طول';
+
+  @override
+  String get knowledgeUnpinTooltip => 'شيله من السياق الدائم';
+
+  @override
+  String get knowledgePinTooltip => 'خليه في السياق على طول';
+
+  @override
+  String get knowledgeAddFailed => 'معرفناش نضيف المستند ده.';
+
+  @override
+  String knowledgePassagesHeldBack(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count جزء اتحجزوا.',
+      many: '$count جزء اتحجزوا.',
+      few: '$count أجزاء اتحجزت.',
+      two: 'جزأين اتحجزوا.',
+      one: 'جزء واحد اتحجز.',
+      zero: 'مفيش أجزاء اتحجزت.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get knowledgeSaved => 'اتحفظ.';
+
+  @override
+  String get knowledgePdfUploadFailed => 'معرفناش نرفع الـ PDF ده.';
+
+  @override
+  String get knowledgeUploaded => 'اترفع.';
+
+  @override
+  String get goalsWelcomeBack => 'أهلاً بيك تاني،';
+
+  @override
+  String get goalsDefaultUserName => 'مستخدم Aura';
+
+  @override
+  String get goalsPageTitle => 'الأهداف';
+
+  @override
+  String get goalsPageSubtitle => 'تابع طموحاتك وتقدّمك';
+
+  @override
+  String get goalsNewGoal => 'هدف جديد';
+
+  @override
+  String get goalsEmptyTitle => 'مفيش أهداف لسه';
+
+  @override
+  String get goalsEmptyMessage => 'اعمل أول هدف ليك عشان تبدأ';
+
+  @override
+  String get goalsCreateGoalTitle => 'إنشاء هدف';
+
+  @override
+  String get goalsTitleRequiredLabel => 'العنوان *';
+
+  @override
+  String get goalsDescriptionLabel => 'الوصف';
+
+  @override
+  String get goalsStatusLabel => 'الحالة';
+
+  @override
+  String get goalsPriorityLabel => 'الأولوية';
+
+  @override
+  String get goalsSetTargetDate => 'حدد تاريخ الهدف (اختياري)';
+
+  @override
+  String goalsTargetDate(String date) {
+    return 'الميعاد المستهدف: $date';
+  }
+
+  @override
+  String goalsProgressPercent(int percent) {
+    return 'التقدّم: $percent%';
+  }
+
+  @override
+  String get goalsCreate => 'إنشاء';
+
+  @override
+  String get goalsStatusActive => 'شغّال';
+
+  @override
+  String get goalsStatusAchieved => 'اتحقق';
+
+  @override
+  String get goalsStatusAbandoned => 'اتساب';
+
+  @override
+  String get goalsPriorityLow => 'منخفضة';
+
+  @override
+  String get goalsPriorityMedium => 'متوسطة';
+
+  @override
+  String get goalsPriorityHigh => 'عالية';
+
+  @override
+  String get tasksWelcomeBack => 'أهلاً بيك تاني،';
+
+  @override
+  String get tasksDefaultUserName => 'مستخدم Aura';
+
+  @override
+  String get tasksPageTitle => 'مساحة المهام';
+
+  @override
+  String get tasksPageSubtitle => 'رتّب أولوياتك وظبّط أهدافك';
+
+  @override
+  String get tasksViewSyncLogs => 'عرض سجل المزامنة';
+
+  @override
+  String get tasksSyncing => 'جاري المزامنة...';
+
+  @override
+  String get tasksSyncFailed => 'حصلت مشاكل في مزامنة المهام.';
+
+  @override
+  String get tasksSyncSucceeded => 'مزامنة Google Tasks خلصت بنجاح!';
+
+  @override
+  String get tasksSyncButton => 'مزامنة المهام';
+
+  @override
+  String get tasksAddTask => 'إضافة مهمة';
+
+  @override
+  String get tasksAddNewTaskTitle => 'إضافة مهمة جديدة';
+
+  @override
+  String get tasksTitleLabel => 'عنوان المهمة';
+
+  @override
+  String get tasksTitleHint => 'محتاج تعمل إيه؟';
+
+  @override
+  String get tasksTitleRequired => 'اكتب عنوان لو سمحت';
+
+  @override
+  String get tasksDescriptionLabel => 'الوصف';
+
+  @override
+  String get tasksDescriptionHint => 'ضيف تفاصيل (اختياري)';
+
+  @override
+  String get tasksCategoryLabel => 'التصنيف';
+
+  @override
+  String get tasksPriorityLabel => 'الأولوية';
+
+  @override
+  String get tasksNoDueDate => 'مفيش ميعاد تسليم متحدد';
+
+  @override
+  String get tasksSaveTask => 'حفظ المهمة';
+
+  @override
+  String get tasksCategoryAll => 'الكل';
+
+  @override
+  String get tasksCategoryPersonal => 'شخصي';
+
+  @override
+  String get tasksCategoryAcademic => 'دراسي';
+
+  @override
+  String get tasksCategoryClient => 'عميل';
+
+  @override
+  String get tasksCategoryProject => 'مشروع';
+
+  @override
+  String get tasksPriorityLow => 'منخفضة';
+
+  @override
+  String get tasksPriorityMedium => 'متوسطة';
+
+  @override
+  String get tasksPriorityHigh => 'عالية';
+
+  @override
+  String get tasksEmptyTitle => 'خلّصت كل حاجة!';
+
+  @override
+  String get tasksEmptyMessage =>
+      'استمتع بيومك أو اعمل مهمة جديدة عشان تفضل منظّم.';
+
+  @override
+  String get tasksSyncLogTitle => 'سجل مزامنة المهام';
+
+  @override
+  String get tasksSyncLogEmpty => 'مفيش سجلات لسه. دوس مزامنة عشان تبدأ.';
+
+  @override
+  String get tasksDeleteTask => 'مسح المهمة';
+
+  @override
+  String get tasksTaskDeleted => 'المهمة اتمسحت';
+
+  @override
+  String get calendarSyncFailed => 'حصلت مشاكل في مزامنة التقويم.';
+
+  @override
+  String get calendarSyncSucceeded => 'مزامنة Google Calendar خلصت بنجاح!';
+
+  @override
+  String get calendarPageTitle => 'التقويم';
+
+  @override
+  String get calendarPageSubtitle =>
+      'نظّم مواعيدك على الجهاز واعمل مزامنة مع Google';
+
+  @override
+  String get calendarViewSyncLogs => 'عرض سجل المزامنة';
+
+  @override
+  String get calendarSyncing => 'جاري المزامنة...';
+
+  @override
+  String get calendarSyncButton => 'مزامنة التقويم';
+
+  @override
+  String get calendarSyncLogTitle => 'سجل المزامنة';
+
+  @override
+  String get calendarSyncLogEmpty => 'مفيش سجلات لسه. دوس مزامنة عشان تبدأ.';
+
+  @override
+  String get calendarCreateEventTitle => 'إنشاء ميعاد';
+
+  @override
+  String get calendarEventTitleLabel => 'عنوان الميعاد';
+
+  @override
+  String get calendarEventTitleHint => 'مثلاً اجتماع الفريق اليومي';
+
+  @override
+  String get calendarEventDescriptionLabel => 'الوصف (اختياري)';
+
+  @override
+  String get calendarEventDescriptionHint => 'اكتب تفاصيل الميعاد';
+
+  @override
+  String get calendarStartTime => 'وقت البداية';
+
+  @override
+  String get calendarEndTime => 'وقت النهاية';
+
+  @override
+  String get calendarEventCreated => 'الميعاد اتعمل بنجاح!';
+
+  @override
+  String get calendarCreate => 'إنشاء';
+
+  @override
+  String get calendarNoEvents => 'مفيش مواعيد النهارده';
+
+  @override
+  String get calendarCloudSynced => 'اتزامن مع السحابة';
+
+  @override
+  String get calendarDeleteEventTitle => 'مسح الميعاد';
+
+  @override
+  String calendarDeleteEventConfirm(String title) {
+    return 'متأكد إنك عايز تمسح «$title»؟';
+  }
+
+  @override
+  String get calendarEventDeleted => 'الميعاد اتمسح.';
+
+  @override
+  String get hostPanelTitle => 'الـ Host Daemon';
+
+  @override
+  String get hostFullSettings => 'كل الإعدادات';
+
+  @override
+  String hostStatusError(String error) {
+    return 'مشكلة: $error';
+  }
+
+  @override
+  String get hostStatusGaveUp => 'وقف بعد ما وقع كذا مرة';
+
+  @override
+  String hostStatusRestarting(int seconds) {
+    return 'وقع، وهيشتغل تاني بعد $seconds ثانية...';
+  }
+
+  @override
+  String get hostStatusNotRunning => 'مش شغّال';
+
+  @override
+  String get hostStatusRunningNotPaired => 'شغّال، بس مش متربط';
+
+  @override
+  String get hostStatusRunningOtherServer => 'شغّال، ومتربط بسيرفر تاني';
+
+  @override
+  String get hostStatusRunningPaired => 'شغّال ومتربط';
+
+  @override
+  String get hostStatusReconnecting => 'شغّال، وبيحاول يتصل تاني...';
+
+  @override
+  String get hostStatusPairedUpdateDaemon => 'شغّال ومتربط (حدّث aura_hostd)';
+
+  @override
+  String hostBackendLabel(String url) {
+    return 'السيرفر: $url';
+  }
+
+  @override
+  String hostOtherServerNotice(String url) {
+    return 'التطبيق ده مسجّل دخول على $url. اربطه تاني عشان تنقل الـ daemon هناك.';
+  }
+
+  @override
+  String get hostStarting => 'بيشتغل...';
+
+  @override
+  String get hostStartNow => 'شغّل دلوقتي';
+
+  @override
+  String get hostStart => 'تشغيل';
+
+  @override
+  String get hostCancelRestart => 'إلغاء إعادة التشغيل';
+
+  @override
+  String get hostStop => 'إيقاف';
+
+  @override
+  String get hostPairing => 'جاري الربط...';
+
+  @override
+  String get hostRepair => 'ربط تاني';
+
+  @override
+  String get hostPair => 'ربط';
+
+  @override
+  String get hostGrantedRoots => 'الفولدرات المسموحة';
+
+  @override
+  String get hostTrusted => 'موثوق';
+
+  @override
+  String get hostSetExecutableFirst =>
+      'حدد مسار ملف تشغيل aura_hostd من «كل الإعدادات» الأول.';
+
+  @override
+  String hostCouldNotStart(String error) {
+    return 'مقدرناش نشغّل aura_hostd: $error';
+  }
+
+  @override
+  String hostCouldNotStop(String error) {
+    return 'مقدرناش نوقف aura_hostd: $error';
+  }
+
+  @override
+  String get hostPairDialogTitle => 'ربط الجهاز ده';
+
+  @override
+  String get hostPairApproving =>
+      'بنوافق بجلسة AURA اللي انت مسجّل دخول بيها...';
+
+  @override
+  String get hostPairWaiting => 'مستنيين الموافقة...';
+
+  @override
+  String get hostPairSignInFirst =>
+      'سجّل دخول على AURA الأول، الربط محتاج جلسة شغّالة عشان يتوافق عليه.';
+
+  @override
+  String get hostPaired => 'اتربط.';
+
+  @override
+  String hostPairingFailed(String reason) {
+    return 'الربط فشل: $reason';
+  }
+
+  @override
+  String get hostPairingExpired => 'كود الربط خلص وقته.';
+
+  @override
+  String hostCouldNotStartPairing(String error) {
+    return 'مقدرناش نبدأ الربط: $error';
+  }
+
+  @override
+  String get debugOpenWorkspace =>
+      'افتح مساحة شغل عشان تستخدم الـ Debug Console.';
+
+  @override
+  String get debugScriptHint => 'script.py (نسبةً لفولدر مساحة الشغل الرئيسي)';
+
+  @override
+  String get debugStart => 'ابدأ';
+
+  @override
+  String get debugContinue => 'كمّل';
+
+  @override
+  String get debugStepOver => 'Step Over';
+
+  @override
+  String get debugStepInto => 'Step Into';
+
+  @override
+  String get debugStepOut => 'Step Out';
+
+  @override
+  String get debugStop => 'إيقاف';
+
+  @override
+  String get debugStatusIdle => 'مستني';
+
+  @override
+  String get debugStatusStarting => 'بيبدأ...';
+
+  @override
+  String debugStatusRunningPid(int pid) {
+    return 'شغّال (pid $pid)';
+  }
+
+  @override
+  String get debugStatusRunning => 'شغّال';
+
+  @override
+  String get debugStatusPaused => 'متوقف مؤقتًا';
+
+  @override
+  String get debugStatusStopped => 'وقف';
+
+  @override
+  String get debugBreakpointsLabel => 'الـ Breakpoints:';
+
+  @override
+  String get debugLineHint => 'رقم السطر';
+
+  @override
+  String get debugCallStack => 'الـ CALL STACK';
+
+  @override
+  String get debugVariables => 'المتغيرات';
+
+  @override
+  String get controlCenterDiscardTitle => 'عايز تمسح المهمة دي؟';
+
+  @override
+  String controlCenterDiscardBody(String branch, String path) {
+    return 'ده هيمسح الـ Branch \"$branch\" والـ worktree بتاعه في $path نهائي. أي شغل فيه متعملوش Merge هيضيع، ومش هتقدر ترجّعه.';
+  }
+
+  @override
+  String get controlCenterDiscard => 'مسح';
+
+  @override
+  String get controlCenterMergedTitle => 'اتعمل Merge';
+
+  @override
+  String controlCenterMergedBody(String branch) {
+    return 'اتعمل Merge لـ \"$branch\" على الجهاز. تمسح الـ worktree بتاعه؟';
+  }
+
+  @override
+  String get controlCenterKeepIt => 'سيبه';
+
+  @override
+  String get controlCenterTitle => 'مراجعة الـ Agent';
+
+  @override
+  String get controlCenterEmpty =>
+      'مفيش مهام معزولة للـ Agent دلوقتي. لما تبدأ مهمة شات جديدة هتتعمل واحدة لوحدها.';
+
+  @override
+  String get controlCenterNoChanges => '(مفيش تغييرات)';
+
+  @override
+  String controlCenterDiffStatError(String message) {
+    return 'مشكلة: $message';
+  }
+
+  @override
+  String get controlCenterBaseBranchUnknown =>
+      'مقدرناش نعرف الـ Branch الأساسي اللي نقارن بيه.';
+
+  @override
+  String get controlCenterMergeConflict =>
+      'فيه Merge conflict -- حلّه في الـ worktree الأساسي، وبعدين اعمل Commit هناك على طول.';
+
+  @override
+  String get controlCenterHideDiff => 'إخفاء الـ diff';
+
+  @override
+  String get controlCenterViewDiff => 'عرض الـ diff';
+
+  @override
+  String get controlCenterSquashMerge => 'Squash merge';
+
+  @override
+  String get controlCenterWorking => 'شغّالين...';
+
+  @override
+  String get controlCenterMerge => 'Merge';
+
+  @override
+  String get terminalOpenWorkspace => 'افتح مساحة شغل عشان تستخدم التيرمينال.';
+
+  @override
+  String get terminalGrantWorkspace =>
+      'اسمح للـ Host Daemon بمساحة الشغل دي عشان تستخدم التيرمينال.';
+
+  @override
+  String get terminalUntrusted =>
+      'مساحة الشغل دي مش موثوقة. خليها موثوقة من لوحة الـ Host عشان تستخدم التيرمينال.';
+
+  @override
+  String get terminalStarting => 'التيرمينال بيشتغل...';
+
+  @override
+  String terminalSessionEndedWithCode(int code) {
+    return 'الجلسة خلصت (exit code $code).';
+  }
+
+  @override
+  String get terminalSessionEnded => 'الجلسة خلصت.';
+
+  @override
+  String get terminalRestart => 'إعادة تشغيل';
+
+  @override
+  String get outputFilterAll => 'الكل';
+
+  @override
+  String get outputChannelAgent => 'الـ Agent';
+
+  @override
+  String get outputChannelHost => 'الـ Host';
+
+  @override
+  String get outputChannelTasks => 'المهام';
+
+  @override
+  String get outputChannelDiagnostics => 'التشخيصات';
+
+  @override
+  String get outputClear => 'مسح الـ Output';
+
+  @override
+  String get outputEmpty => 'مفيش Output لسه';
+
+  @override
+  String get diagnosticsOpenWorkspace => 'افتح مساحة شغل عشان تشوف المشاكل.';
+
+  @override
+  String get diagnosticsDetecting => 'بندوّر على أداة التشخيص...';
+
+  @override
+  String get diagnosticsNoTool => 'ملقيناش أداة تشخيص لمساحة الشغل دي.';
+
+  @override
+  String get diagnosticsRerun => 'شغّل تاني';
+
+  @override
+  String get diagnosticsNoProblems => 'مفيش مشاكل';
+
+  @override
+  String diagnosticsToolNotFound(String tool) {
+    return '\"$tool\" مش متسطّب أو مش موجود في الـ PATH.';
+  }
+
+  @override
+  String get editorNoFileOpen => 'مفيش ملف مفتوح';
+
+  @override
+  String get editorNoFileOpenHint => 'افتح ملف من المستكشف أو دوس Ctrl+P';
+
+  @override
+  String editorCouldNotRead(String path, String error) {
+    return 'مقدرناش نقرا $path: $error';
+  }
+
+  @override
+  String get editorNoActiveWorkspace => 'مفيش مساحة شغل مفتوحة';
+
+  @override
+  String get editorRestoredNotice =>
+      'رجّعنالك التغييرات اللي متحفظتش من آخر جلسة.';
+
+  @override
+  String get editorRestoredOverChange =>
+      'رجّعنالك التغييرات اللي متحفظتش من آخر جلسة. الملف اتغيّر على الجهاز من ساعتها، ولو حفظت هتكتب فوق التغيير ده.';
+
+  @override
+  String get editorUnsavedTitle => 'تغييرات متحفظتش';
+
+  @override
+  String editorUnsavedBody(String title) {
+    return 'فيه تغييرات متحفظتش في \"$title\".';
+  }
+
+  @override
+  String get editorDiscard => 'تجاهل';
+
+  @override
+  String get editorQuickOpenHint => 'اكتب عشان تدوّر على ملفات...';
+
+  @override
+  String get editorNoFilesFound => 'مفيش ملفات';
+
+  @override
+  String get editorNoMatches => 'مفيش نتايج';
+
+  @override
+  String agentWorkspaceLabel(String path) {
+    return 'مساحة الشغل: $path';
+  }
+
+  @override
+  String get agentLockedTitle => 'المهندس مش متاح على الحساب ده';
+
+  @override
+  String get agentLockedMessage =>
+      'المهندس محتاج صلاحية engineer_agent. اطلبها من حد من المسؤولين؛ ولحد ما تتفعّل، الرسايل من هنا هيرد عليها المساعد العام بداله.';
+
+  @override
+  String get agentEmptyTitle => 'مفيش رسايل لسه';
+
+  @override
+  String get agentEmptyMessage =>
+      'اسأل المهندس عن مساحة الشغل دي — يقدر يقرا ملفاتك، ويشغّل أوامر، ويقترح تغييرات تراجعها قبل ما أي حاجة تتطبّق.';
+
+  @override
+  String get agentTaskDefault => 'الافتراضية';
+
+  @override
+  String agentTaskLabel(String id) {
+    return 'مهمة $id';
+  }
+
+  @override
+  String get agentSwitchTask => 'تغيير المهمة';
+
+  @override
+  String get agentNewTask => '+ مهمة جديدة';
+
+  @override
+  String get engineeringDaemonSaved => 'اتحفظ.';
+
+  @override
+  String get engineeringDaemonPathMissing =>
+      'حدد مسار ملف تشغيل aura_hostd الأول.';
+
+  @override
+  String engineeringDaemonStartFailed(String error) {
+    return 'مقدرناش نشغّل aura_hostd: $error';
+  }
+
+  @override
+  String engineeringDaemonStopFailed(String error) {
+    return 'مقدرناش نوقف aura_hostd: $error';
+  }
+
+  @override
+  String get engineeringPairThisDevice => 'اربط الجهاز ده';
+
+  @override
+  String get engineeringPairApproving =>
+      'بنوافق باستخدام جلسة AURA اللي انت داخل بيها...';
+
+  @override
+  String get engineeringPairWaiting => 'مستنيين الموافقة...';
+
+  @override
+  String get engineeringPairSignInFirst =>
+      'سجّل دخولك في AURA الأول -- الربط محتاج جلسة شغّالة عشان يوافق بيها.';
+
+  @override
+  String engineeringPairApprovalRejected(int status, String body) {
+    return 'الموافقة اترفضت: HTTP $status $body';
+  }
+
+  @override
+  String get engineeringPaired => 'اتربط.';
+
+  @override
+  String engineeringPairedNamed(String name) {
+    return 'اتربط $name.';
+  }
+
+  @override
+  String engineeringPairingFailed(String reason) {
+    return 'الربط فشل: $reason';
+  }
+
+  @override
+  String get engineeringPairingExpired => 'كود الربط خلص وقته.';
+
+  @override
+  String engineeringPairingStartFailed(String error) {
+    return 'مقدرناش نبدأ الربط: $error';
+  }
+
+  @override
+  String engineeringGrantRootFailed(String path, String error) {
+    return 'مقدرناش نسمح بـ $path: $error';
+  }
+
+  @override
+  String get engineeringRevokeRootTitle => 'عايز تشيل صلاحية الفولدر ده؟';
+
+  @override
+  String engineeringRevokeRootBody(String path) {
+    return 'الـ agent مش هيقدر يقرا أو يكتب أي حاجة جوّه $path تاني.';
+  }
+
+  @override
+  String get engineeringRevoke => 'شيل الصلاحية';
+
+  @override
+  String get engineeringDaemonTitle =>
+      'الـ Host Daemon بتاع المهندس على الكمبيوتر';
+
+  @override
+  String engineeringDaemonStatusFailed(String error) {
+    return 'مقدرناش نشوف الحالة: $error';
+  }
+
+  @override
+  String get engineeringExecutableTitle => 'ملف تشغيل aura_hostd';
+
+  @override
+  String get engineeringExecutableHelp =>
+      'النسخ المتسطّبة بتستخدم aura_hostd اللي جاي مع الأبلكيشن. لو عايز تستخدم واحد تاني، حط مساره هنا (شوف aura_hostd/README.md)؛ وامسحه عشان ترجع للي جاي مع الأبلكيشن.';
+
+  @override
+  String get engineeringDaemonNotRunning => 'مش شغّال';
+
+  @override
+  String get engineeringDaemonRunningNotPaired => 'شغّال، بس مش مربوط';
+
+  @override
+  String get engineeringDaemonRunningOtherServer => 'شغّال، ومربوط بسيرفر تاني';
+
+  @override
+  String get engineeringDaemonRunningPaired => 'شغّال ومربوط';
+
+  @override
+  String get engineeringDaemonReconnecting => 'شغّال، وبيحاول يتصل تاني...';
+
+  @override
+  String get engineeringDaemonPairedUpdateNeeded =>
+      'شغّال ومربوط -- حدّث aura_hostd عشان تشوف حالة الاتصال';
+
+  @override
+  String engineeringDaemonBackend(String url) {
+    return 'السيرفر: $url';
+  }
+
+  @override
+  String engineeringDaemonOtherServerNote(String url) {
+    return 'الأبلكيشن ده داخل على $url. اربط تاني عشان تنقل الـ daemon هناك.';
+  }
+
+  @override
+  String get engineeringDaemonStart => 'تشغيل';
+
+  @override
+  String get engineeringDaemonStop => 'إيقاف';
+
+  @override
+  String get engineeringPairAgain => 'اربط تاني';
+
+  @override
+  String get engineeringWorkspaceRoots => 'فولدرات مساحة الشغل';
+
+  @override
+  String get engineeringNoRoots =>
+      'لسه مفيش فولدرات متاحة -- الـ agent مش هيقدر يقرا أو يكتب أي حاجة على الجهاز ده لحد ما تضيف واحد.';
+
+  @override
+  String get engineeringRootTrusted =>
+      'موثوق -- الأوامر بتشتغل من غير تأكيد كل مرة (بس برضه جوّه الفولدر ده بس)';
+
+  @override
+  String get engineeringRootUntrusted =>
+      'مش موثوق -- بيشتغل بس قايمة أوامر للقراية والفحص';
+
+  @override
+  String get engineeringBrowse => 'تصفّح';
+
+  @override
+  String get engineeringDaemonOutput => 'مخرجات الـ daemon';
+
+  @override
+  String get engineeringNoLogsNote =>
+      'المخرجات المباشرة بتظهر بس لـ daemon الأبلكيشن ده هو اللي شغّله -- لو بتستخدم واحد شغّال من مكان تاني، كل حاجة تانية في الصفحة دي هتشتغل عادي.';
+
+  @override
+  String get engineeringBackToFileList => 'ارجع لقايمة الملفات';
+
+  @override
+  String get engineeringFileTruncated =>
+      'الملف أكبر من اللي ظاهر في المعاينة دي.';
+
+  @override
+  String engineeringReadDirFailed(String error) {
+    return 'مقدرناش نقرا الفولدر ده: $error';
+  }
+
+  @override
+  String get engineeringFolderEmpty => 'الفولدر ده فاضي.';
+
+  @override
+  String get engineeringGithubBrowserFailed =>
+      'مقدرناش نفتح المتصفح عشان نربط GitHub.';
+
+  @override
+  String get engineeringGithubDisconnected => 'اتفصل GitHub.';
+
+  @override
+  String get engineeringGithubConnectedUnknown => 'متوصّل بحساب GitHub';
+
+  @override
+  String engineeringGithubConnectedAs(String login) {
+    return 'متوصّل باسم $login';
+  }
+
+  @override
+  String get engineeringGithubNotConnected => 'مفيش حساب GitHub متوصّل';
+
+  @override
+  String engineeringGithubConnectedAt(String date) {
+    return 'اتوصّل $date';
+  }
+
+  @override
+  String get engineeringGithubConnectedBody =>
+      'المهندس يقدر يقرا ويكتب في الريبوهات اللي انت سمحت بيها بالظبط لما سطّبت الـ GitHub App. الفصل بيشيل بس اللي AURA تقدر تستخدمه -- مش بيلغي الأبلكيشن على github.com.';
+
+  @override
+  String get engineeringGithubDisconnectedBody =>
+      'اربط حساب GitHub بتاعك عشان المهندس (يفتح PRs، يقرا الـ issues، يعمل Commit للملفات) يشتغل على الريبوهات اللي انت تختارها، بدل ما يعتمد على token مشترك حد من الإدارة ظبطه.';
+
+  @override
+  String get engineeringGithubDisconnect => 'افصل GitHub';
+
+  @override
+  String get engineeringGithubConnect => 'اربط GitHub';
+
+  @override
+  String get engineeringDesktopDaemonTooltip => 'الـ daemon بتاع الكمبيوتر';
+
+  @override
+  String get engineeringNoRunsTitle => 'لسه المهندس ماعملش أي حاجة';
+
+  @override
+  String get engineeringNoRunsMessage =>
+      'اطلب من المهندس يفتح PR أو يشغّل أمر، وهيظهر هنا.';
+
+  @override
+  String get engineeringToolOpenedDraftPr => 'فتح PR مسودة';
+
+  @override
+  String get engineeringToolCommittedFiles => 'عمل Commit لملفات';
+
+  @override
+  String get engineeringToolCreatedBranch => 'عمل Branch جديد';
+
+  @override
+  String get engineeringToolWroteFile => 'كتب ملف';
+
+  @override
+  String get engineeringToolEditedFile => 'عدّل ملف';
+
+  @override
+  String get engineeringToolRanCommand => 'شغّل أمر';
+
+  @override
+  String get engineeringToolCommitted => 'عمل Commit';
+
+  @override
+  String get engineeringToolSwitchedBranch => 'غيّر الـ Branch';
+
+  @override
+  String get engineeringToolDiffedSandbox => 'عمل Diff للـ sandbox';
+
+  @override
+  String get engineeringRunStatusPending => 'مستني';
+
+  @override
+  String get engineeringRunStatusSucceeded => 'نجح';
+
+  @override
+  String get engineeringRunStatusFailed => 'فشل';
+
+  @override
+  String engineeringRunStatus(String status) {
+    return 'الحالة: $status';
+  }
+
+  @override
+  String engineeringRunBranch(String branch) {
+    return 'الـ Branch: $branch';
+  }
+
+  @override
+  String engineeringRunCommit(String sha) {
+    return 'الـ Commit: $sha';
+  }
+
+  @override
+  String get engineeringCopyLink => 'انسخ اللينك';
+
+  @override
+  String get engineeringLinkCopied => 'اتنسخ اللينك';
+
+  @override
+  String get engineeringRunOutput => 'المخرجات';
+
+  @override
+  String get automationsTitle => 'أتمتة AURA';
+
+  @override
+  String get automationsSubtitle =>
+      'طلّع مهام من الإيميلات والـ issues، واعمل هيكل لمساحات الشغل';
+
+  @override
+  String get automationsTabGmail => 'تحليل إيميلات Gmail';
+
+  @override
+  String get automationsTabGithub => 'استيراد issues من GitHub';
+
+  @override
+  String get automationsTabDrive => 'بناء مساحة شغل على Drive';
+
+  @override
+  String get automationsGmailUnavailableTitle => 'ربط Gmail مش متاح';
+
+  @override
+  String get automationsGmailUnavailableBody =>
+      'انت داخل بحساب مطوّر تجريبي. الإيميلات اللي ماتقرتش الحقيقية بتتجاب بس لما تدخل بحساب Google حقيقي.';
+
+  @override
+  String get automationsGmailRecentUnread => 'آخر الإيميلات اللي ماتقرتش';
+
+  @override
+  String get automationsGmailFetchUnread => 'هات اللي ماتقراش';
+
+  @override
+  String get automationsGmailFetching => 'بنجيب...';
+
+  @override
+  String get automationsGmailEmpty =>
+      'مفيش إيميلات ماتقرتش اتجابت. دوس على الزرار عشان تجيبها.';
+
+  @override
+  String automationsGmailFrom(String sender) {
+    return 'من: $sender';
+  }
+
+  @override
+  String get automationsGmailAnalyze => 'حلّل بالـ AI';
+
+  @override
+  String automationsGmailCategory(String category) {
+    return 'التصنيف: $category';
+  }
+
+  @override
+  String get automationsGmailUrgent => 'مستعجل';
+
+  @override
+  String get automationsGmailLowUrgency => 'مش مستعجل';
+
+  @override
+  String get automationsGmailAiSummary => 'ملخص الـ AI';
+
+  @override
+  String get automationsGmailActionItems => 'المهام اللي اتطلّعت';
+
+  @override
+  String automationsGmailSuggestedDeadline(String date) {
+    return 'آخر ميعاد مقترح: $date';
+  }
+
+  @override
+  String get automationsGmailImportTask => 'ضيفها كمهمة في AURA';
+
+  @override
+  String automationsGmailImportedTask(String title) {
+    return 'اتضافت المهمة: $title';
+  }
+
+  @override
+  String get automationsGmailSuggestedEvent => 'ميعاد مقترح للتقويم';
+
+  @override
+  String get automationsGmailScheduleEvent => 'ضيف الميعاد';
+
+  @override
+  String automationsGmailScheduledEvent(String title) {
+    return 'اتضاف الميعاد: $title';
+  }
+
+  @override
+  String automationsGmailFetchError(String error) {
+    return 'مشكلة في جلب إيميلات Gmail: $error';
+  }
+
+  @override
+  String automationsGmailAnalysisFailed(String error) {
+    return 'التحليل فشل: $error';
+  }
+
+  @override
+  String get automationsGmailNoSubject => 'من غير عنوان';
+
+  @override
+  String get automationsGmailUnknownSender => 'راسل مش معروف';
+
+  @override
+  String get automationsGithubSetup => 'إعداد ربط GitHub';
+
+  @override
+  String get automationsGithubPatLabel => 'GitHub PAT (الـ token الشخصي)';
+
+  @override
+  String get automationsGithubRepoLabel => 'مسار الريبو';
+
+  @override
+  String get automationsGithubLoadIssues => 'هات الـ issues بتاعة الريبو';
+
+  @override
+  String get automationsGithubLoading => 'جاري تحميل الـ issues من GitHub...';
+
+  @override
+  String get automationsGithubEmpty => 'مفيش issues مفتوحة اتجابت.';
+
+  @override
+  String get automationsGithubExtractSubtasks => 'طلّع المهام الفرعية';
+
+  @override
+  String automationsGithubComplexity(String complexity) {
+    return 'الصعوبة: $complexity';
+  }
+
+  @override
+  String automationsGithubPriority(String priority) {
+    return 'الأولوية: $priority';
+  }
+
+  @override
+  String get automationsGithubIssueSummary => 'ملخص الـ issue';
+
+  @override
+  String get automationsGithubCodingTasks => 'مهام البرمجة اللي اتطلّعت';
+
+  @override
+  String get automationsGithubImported => 'اتضافت مهمة البرمجة!';
+
+  @override
+  String get automationsGithubMissingInput =>
+      'لازم تكتب الـ GitHub PAT ومسار الريبو الاتنين.';
+
+  @override
+  String get automationsGithubRepoFormat =>
+      'مسار الريبو لازم يكون بالشكل ده \'owner/repo\' (زي owner/AURA-AI).';
+
+  @override
+  String automationsGithubFetchFailed(String error) {
+    return 'جلب البيانات من GitHub فشل: $error';
+  }
+
+  @override
+  String automationsGithubAnalysisFailed(String error) {
+    return 'تحليل الـ issue فشل: $error';
+  }
+
+  @override
+  String get automationsDriveUnavailableTitle =>
+      'إنشاء مساحة شغل على Google Drive مش متاح';
+
+  @override
+  String get automationsDriveUnavailableBody =>
+      'انت داخل بحساب مطوّر تجريبي. فولدرات مساحة الشغل على Drive بتتعمل بس لما تدخل بحساب Google حقيقي.';
+
+  @override
+  String get automationsDriveGeneratorTitle =>
+      'إنشاء مساحة شغل لمشروع على Drive';
+
+  @override
+  String get automationsDriveGeneratorBody =>
+      'اكتب تفاصيل المشروع. AURA هتعمل فولدر على Google Drive وتحط فيه مستند Markdown فيه خطة المشروع مترتبة.';
+
+  @override
+  String get automationsDriveProjectName => 'اسم المشروع';
+
+  @override
+  String get automationsDriveProjectNameHint => 'مثلاً: أبلكيشن موبايل فريلانس';
+
+  @override
+  String get automationsDriveProjectDescription =>
+      'وصف المشروع / الخطوط العريضة';
+
+  @override
+  String get automationsDriveProjectDescriptionHint =>
+      'اوصف التفاصيل عشان نعمل خطة جاهزة';
+
+  @override
+  String get automationsDriveGenerate => 'اعمل مساحة الشغل على Drive';
+
+  @override
+  String get automationsDriveConsole => 'سجل خطوات الأتمتة';
+
+  @override
+  String get automationsDriveInitializing =>
+      'بنجهّز فولدرات مساحة شغل المشروع...';
+
+  @override
+  String automationsDriveFailed(String error) {
+    return 'إنشاء مساحة الشغل فشل: $error';
+  }
+
+  @override
+  String get automationsDriveRequestingPermissions =>
+      'بنطلب صلاحيات التخزين على Drive...';
+
+  @override
+  String get automationsDriveConnected => 'اتصلنا بـ Google Drive.';
+
+  @override
+  String automationsDriveCreatedFolder(String name) {
+    return 'اتعمل الفولدر: $name';
+  }
+
+  @override
+  String automationsDriveCreatedDocument(String name) {
+    return 'اتعمل المستند: $name';
+  }
+
+  @override
+  String get automationsDriveDone => 'مساحة الشغل على Drive اتعملت بنجاح!';
+
+  @override
+  String get financeTitle => 'دفتر الماليات';
+
+  @override
+  String get financeSubtitle => 'تابع الدخل والمصاريف، وحلّل فلوسك بتروح فين';
+
+  @override
+  String get financeBalance => 'الرصيد';
+
+  @override
+  String get financeIncome => 'الدخل';
+
+  @override
+  String get financeExpenses => 'المصاريف';
+
+  @override
+  String get financeExpensesByCategory => 'المصاريف حسب التصنيف';
+
+  @override
+  String get financeNoExpenses => 'مفيش مصاريف متسجلة';
+
+  @override
+  String get financeIncomeVsExpense => 'الدخل قصاد المصاريف';
+
+  @override
+  String get financeExpense => 'مصروف';
+
+  @override
+  String get financeLogTransaction => 'سجّل معاملة';
+
+  @override
+  String financeAmountLabel(String currency) {
+    return 'المبلغ ($currency)';
+  }
+
+  @override
+  String get financeCategory => 'التصنيف';
+
+  @override
+  String get financeCategoryFood => 'أكل';
+
+  @override
+  String get financeCategoryStudies => 'دراسة';
+
+  @override
+  String get financeCategoryFreelance => 'فريلانس';
+
+  @override
+  String get financeCategoryHousing => 'سكن';
+
+  @override
+  String get financeCategoryEntertainment => 'ترفيه';
+
+  @override
+  String get financeCategoryUtilities => 'فواتير';
+
+  @override
+  String get financeCategoryTransport => 'مواصلات';
+
+  @override
+  String get financeCategoryOther => 'حاجات تانية';
+
+  @override
+  String get financeDescriptionLabel => 'الوصف (اختياري)';
+
+  @override
+  String get financeDescriptionHint => 'مثلاً: طلبات البيت بتاعة الأسبوع';
+
+  @override
+  String get financeDate => 'التاريخ';
+
+  @override
+  String get financeLogged => 'المعاملة اتسجلت!';
+
+  @override
+  String get financeSubmit => 'سجّل في الدفتر';
+
+  @override
+  String get financeInvalidAmount => 'اكتب مبلغ صحيح أكبر من صفر.';
+
+  @override
+  String get financeChooseCategory => 'اختار تصنيف.';
+
+  @override
+  String get financeRecentActivities => 'آخر المعاملات';
+
+  @override
+  String get financeNoActivities => 'لسه مفيش معاملات متسجلة';
+
+  @override
+  String financeDeletedEntry(String entry) {
+    return 'اتمسحت المعاملة: $entry';
+  }
+
+  @override
+  String get ideClosePanel => 'اقفل اللوحة';
+
+  @override
+  String get ideActivityExplorer => 'المستكشف';
+
+  @override
+  String get ideActivityExplorerTooltip => 'المستكشف (Ctrl+B)';
+
+  @override
+  String get ideActivityGoToFile => 'روح لملف';
+
+  @override
+  String get ideActivityGoToFileTooltip => 'روح لملف (Ctrl+P)';
+
+  @override
+  String get ideActivitySourceControl => 'Source Control';
+
+  @override
+  String get ideActivityAgents => 'وكلاء AURA';
+
+  @override
+  String get ideActivityAgentsTooltip => 'وكلاء AURA (Ctrl+J)';
+
+  @override
+  String get ideActivityControlCenterTooltip => 'مركز تحكم AURA';
+
+  @override
+  String get ideActivityPanel => 'اللوحة';
+
+  @override
+  String get ideActivityPanelTooltip =>
+      'التيرمينال والمخرجات والمشاكل (Ctrl+Shift+J)';
+
+  @override
+  String ideActivityPanelProblems(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count مشكلة',
+      many: '$count مشكلة',
+      few: '$count مشاكل',
+      two: 'مشكلتين',
+      one: 'مشكلة واحدة',
+      zero: 'مفيش مشاكل',
+    );
+    return 'اللوحة، $_temp0';
+  }
+
+  @override
+  String get ideBottomTerminal => 'التيرمينال';
+
+  @override
+  String get ideBottomOutput => 'المخرجات';
+
+  @override
+  String ideBottomProblemsCount(int count) {
+    return 'المشاكل ($count)';
+  }
+
+  @override
+  String get ideBottomProblems => 'المشاكل';
+
+  @override
+  String get ideBottomDebugConsole => 'كونسول الـ Debug';
+
+  @override
+  String get ideCmdNoWorkspace => 'مفيش مساحة شغل مفتوحة';
+
+  @override
+  String get ideCmdNoFileOpen => 'مفيش ملف مفتوح';
+
+  @override
+  String get ideCmdGroupFile => 'ملف';
+
+  @override
+  String get ideCmdGroupView => 'العرض';
+
+  @override
+  String get ideCmdGoToFile => 'روح لملف...';
+
+  @override
+  String get ideCmdSaveFile => 'حفظ الملف';
+
+  @override
+  String get ideCmdNoUnsavedChanges => 'مفيش تغييرات مش محفوظة';
+
+  @override
+  String get ideCmdCloseEditor => 'قفل المحرر';
+
+  @override
+  String get ideCmdShowExplorer => 'إظهار المستكشف';
+
+  @override
+  String get ideCmdShowSourceControl => 'إظهار Source Control';
+
+  @override
+  String get ideCmdShowControlCenter => 'إظهار مركز تحكم AURA';
+
+  @override
+  String get ideCmdHideSidebar => 'إخفاء الشريط الجانبي';
+
+  @override
+  String get ideCmdShowSidebar => 'إظهار الشريط الجانبي';
+
+  @override
+  String get ideCmdHidePanel => 'إخفاء اللوحة';
+
+  @override
+  String get ideCmdShowPanel => 'إظهار اللوحة';
+
+  @override
+  String get ideCmdFocusTerminal => 'روح للتيرمينال';
+
+  @override
+  String get ideCmdHideAgent => 'إخفاء وكيل AURA';
+
+  @override
+  String get ideCmdShowAgent => 'إظهار وكيل AURA';
+
+  @override
+  String get ideCmdInlineCompletion => 'اطلب اقتراح كود في السطر';
+
+  @override
+  String get ideCmdRefreshSourceControl => 'تحديث Source Control';
+
+  @override
+  String get ideCmdLeaveIde => 'اخرج من الـ IDE (افتح النهارده)';
+
+  @override
+  String get ideStatusNoBranch => 'مفيش Branch';
+
+  @override
+  String get ideStatusHostNotRunning => 'الـ Host مش شغال';
+
+  @override
+  String get ideStatusHostNotPaired => 'الـ Host مش متربط';
+
+  @override
+  String get ideStatusHostOtherServer =>
+      'الـ Host متربط بسيرفر تاني -- اربطه من جديد';
+
+  @override
+  String get ideStatusHostConnected => 'الـ Host متصل';
+
+  @override
+  String get ideStatusReconnecting => 'بنعيد الاتصال بالسيرفر...';
+
+  @override
+  String get ideStatusHostUnknown =>
+      'حالة الـ Host مش معروفة (حدّث aura_hostd)';
+
+  @override
+  String ideStatusPendingApprovals(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count طلب موافقة مستني',
+      many: '$count طلب موافقة مستني',
+      few: '$count طلبات موافقة مستنية',
+      two: 'طلبين موافقة مستنيين',
+      one: 'طلب موافقة واحد مستني',
+      zero: 'مفيش طلبات موافقة',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String ideStatusRolledBackTooltip(String version) {
+    return 'النسخة دي اترجعت لـ $version';
+  }
+
+  @override
+  String ideStatusUpdateAvailableTooltip(String version) {
+    return 'AURA $version متاح';
+  }
+
+  @override
+  String ideStatusRollBackTo(String version) {
+    return 'ارجع لـ $version';
+  }
+
+  @override
+  String ideStatusUpdateTo(String version) {
+    return 'حدّث لـ $version';
+  }
+
+  @override
+  String ideStatusLineColumn(int line, int column) {
+    return 'سطر $line، عمود $column';
+  }
+
+  @override
+  String get ideStatusLineEndingMixed => 'مختلط';
+
+  @override
+  String ideUpdateRollbackTitle(String version) {
+    return 'ترجع لـ AURA $version؟';
+  }
+
+  @override
+  String ideUpdateTitle(String version) {
+    return 'تحدّث لـ AURA $version؟';
+  }
+
+  @override
+  String ideUpdateWindowsRollbackBody(String version) {
+    return 'النسخة دي اترجعت. AURA هيتقفل، ويثبّت $version ويفتح تاني. التغييرات اللي مش محفوظة هتفضل وترجع زي ما هي.';
+  }
+
+  @override
+  String ideUpdateWindowsBody(String version) {
+    return 'AURA هيتقفل، ويثبّت $version ويفتح تاني. التغييرات اللي مش محفوظة هتفضل وترجع زي ما هي.';
+  }
+
+  @override
+  String ideUpdateLinuxBody(String version) {
+    return 'نزّل AURA $version للينكس من المتصفح.';
+  }
+
+  @override
+  String get ideNotNow => 'مش دلوقتي';
+
+  @override
+  String get ideUpdateInstallRestart => 'تثبيت وإعادة تشغيل';
+
+  @override
+  String get ideUpdateDownload => 'تنزيل';
+
+  @override
+  String get ideUpdateDownloading => 'بننزّل التحديث...';
+
+  @override
+  String get ideUpdateChecksumFailed =>
+      'الملف اللي اتنزّل مطابقش الـ checksum بتاع الإصدار واتمسح. مفيش حاجة اتثبّتت.';
+
+  @override
+  String ideUpdateFailed(String error) {
+    return 'معرفناش نحدّث: $error';
+  }
+
+  @override
+  String get idePendingApprovalsTitle => 'طلبات الموافقة المستنية';
+
+  @override
+  String ideApprovalFilesInRoot(int count, String root) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count ملف في $root',
+      many: '$count ملف في $root',
+      few: '$count ملفات في $root',
+      two: 'ملفين في $root',
+      one: 'ملف واحد في $root',
+      zero: 'مفيش ملفات في $root',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String ideApprovalFiles(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count ملف',
+      many: '$count ملف',
+      few: '$count ملفات',
+      two: 'ملفين',
+      one: 'ملف واحد',
+      zero: 'مفيش ملفات',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get ideApprove => 'موافقة';
+
+  @override
+  String get explorerGrantTitle => 'تدّي hostd صلاحية على مساحة الشغل دي؟';
+
+  @override
+  String explorerGrantBody(String root) {
+    return 'كده وكيل AURA هيقدر يقرا ويكتب ملفات في \"$root\".';
+  }
+
+  @override
+  String get explorerGrant => 'اسمح';
+
+  @override
+  String get explorerAccessGranted => 'اتدّت صلاحية الوصول لمساحة الشغل';
+
+  @override
+  String explorerGrantFailed(String error) {
+    return 'معرفناش ندّي الصلاحية: $error';
+  }
+
+  @override
+  String get explorerHostOffline => 'الـ Host مش متصل';
+
+  @override
+  String get explorerNoWorkspaceTitle => 'مفيش مساحة شغل مفتوحة';
+
+  @override
+  String get explorerNoWorkspaceMessage =>
+      'افتح فولدر من صفحة البداية علشان تتصفح ملفاته هنا.';
+
+  @override
+  String get explorerAccessRequiredTitle => 'محتاج صلاحية على مساحة الشغل';
+
+  @override
+  String get explorerLoadFailedTitle => 'فشل تحميل الفولدر';
+
+  @override
+  String get explorerAccessRequiredBody =>
+      'الفولدر ده برّه كل الـ roots اللي الـ Host Daemon واخد صلاحية عليها. اسمح بالوصول علشان تتصفحه هنا ويقدر وكيل AURA يشتغل فيه.';
+
+  @override
+  String get explorerGrantAccess => 'اسمح بالوصول';
+
+  @override
+  String get explorerOutsideGrantedRoots =>
+      'الفولدر ده برّه كل الـ roots اللي الـ Host Daemon واخد صلاحية عليها.';
+
+  @override
+  String get explorerHostUnreachable => 'مفيش اتصال بالـ Host Daemon.';
+
+  @override
+  String get explorerDirectoryNotFound => 'الفولدر مش موجود';
+
+  @override
+  String get explorerDeleteFolderTitle => 'تمسح الفولدر؟';
+
+  @override
+  String get explorerDeleteFileTitle => 'تمسح الملف؟';
+
+  @override
+  String explorerDeleteFolderBody(String name) {
+    return '\"$name\" وكل اللي جواه هيتمسح نهائي.';
+  }
+
+  @override
+  String explorerDeleteFileBody(String name) {
+    return '\"$name\" هيتمسح نهائي.';
+  }
+
+  @override
+  String get explorerRenameFolderTitle => 'تغيير اسم الفولدر';
+
+  @override
+  String get explorerRenameFileTitle => 'تغيير اسم الملف';
+
+  @override
+  String get explorerNewName => 'الاسم الجديد';
+
+  @override
+  String get explorerRename => 'تغيير الاسم';
+
+  @override
+  String explorerRenameFailed(String error) {
+    return 'معرفناش نغيّر الاسم: $error';
+  }
+
+  @override
+  String explorerDeleteFailed(String error) {
+    return 'معرفناش نمسح: $error';
+  }
+
+  @override
+  String get explorerNewFileTitle => 'ملف جديد';
+
+  @override
+  String get explorerFileName => 'اسم الملف';
+
+  @override
+  String get explorerCreate => 'إنشاء';
+
+  @override
+  String explorerCreateFileFailed(String error) {
+    return 'معرفناش نعمل الملف: $error';
+  }
+
+  @override
+  String get explorerNewFolderTitle => 'فولدر جديد';
+
+  @override
+  String get explorerFolderName => 'اسم الفولدر';
+
+  @override
+  String explorerCreateFolderFailed(String error) {
+    return 'معرفناش نعمل الفولدر: $error';
+  }
+
+  @override
+  String get explorerMenuOpen => 'فتح';
+
+  @override
+  String get explorerMenuCopyPath => 'نسخ المسار';
+
+  @override
+  String get explorerMenuCopyRelativePath => 'نسخ المسار النسبي';
+
+  @override
+  String get explorerMenuReveal => 'إظهار في نظام الملفات';
+
+  @override
+  String get explorerMenuOpenInTerminal => 'فتح في التيرمينال';
+
+  @override
+  String get explorerMenuCollapse => 'تصغير';
+
+  @override
+  String get explorerMenuExpand => 'توسيع';
+
+  @override
+  String get explorerMenuNewFile => 'ملف جديد';
+
+  @override
+  String get explorerMenuNewFolder => 'فولدر جديد';
+
+  @override
+  String get explorerAccessRequired => 'محتاج صلاحية';
+
+  @override
+  String get explorerLoadFailed => 'فشل التحميل';
+
+  @override
+  String get explorerEmpty => 'فاضي';
+
+  @override
+  String get explorerPathCopied => 'اتنسخ المسار';
+
+  @override
+  String get explorerRevealWindowsOnly =>
+      'الإظهار في نظام الملفات شغال على ويندوز بس دلوقتي';
+
+  @override
+  String explorerRevealFailed(String error) {
+    return 'معرفناش نفتح نظام الملفات: $error';
+  }
+
+  @override
+  String get gitDiffTruncated =>
+      'الـ Diff اتقص -- شوف الـ Diff كامل في التيرمينال.';
+
+  @override
+  String get gitMergeDialogTitle => 'اعمل Merge لـ Branch في الـ Branch الحالي';
+
+  @override
+  String gitRemoteBranch(String name) {
+    return '$name (remote)';
+  }
+
+  @override
+  String get gitCreateBranchTitle => 'إنشاء Branch';
+
+  @override
+  String get gitBranchNameHint => 'اسم الـ Branch';
+
+  @override
+  String get gitNoWorkspace => 'افتح مساحة شغل علشان تستخدم Source Control.';
+
+  @override
+  String get gitGrantRequired =>
+      'ادّي الـ Host Daemon صلاحية على مساحة الشغل دي علشان تستخدم Source Control.';
+
+  @override
+  String get gitFetchTooltip => 'Fetch من كل الـ remotes';
+
+  @override
+  String get gitPullTooltip => 'Pull (fast-forward بس)';
+
+  @override
+  String get gitPushTooltip => 'Push للـ Branch الحالي على الـ upstream بتاعه';
+
+  @override
+  String get gitMerge => 'Merge';
+
+  @override
+  String get gitBranch => 'Branch';
+
+  @override
+  String get gitCommitMessageHint => 'رسالة الـ Commit';
+
+  @override
+  String get gitWorking => 'شغالين...';
+
+  @override
+  String get gitCommit => 'Commit';
+
+  @override
+  String get gitHistory => 'السجل';
+
+  @override
+  String get gitNoCommits => 'مفيش Commits اتحمّلت.';
+
+  @override
+  String get gitStagedChanges => 'التغييرات اللي اتعملها Stage';
+
+  @override
+  String get gitUnstageAll => 'Unstage للكل';
+
+  @override
+  String get gitUnstage => 'Unstage';
+
+  @override
+  String get gitChanges => 'التغييرات';
+
+  @override
+  String get gitStageAll => 'Stage للكل';
+
+  @override
+  String get gitStage => 'Stage';
+
+  @override
+  String get gitNoChanges => 'مفيش تغييرات.';
+
+  @override
+  String get gitDetachedHead => '(detached HEAD)';
+
+  @override
+  String gitConflictCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count ملف فيهم Merge conflicts',
+      many: '$count ملف فيهم Merge conflicts',
+      few: '$count ملفات فيها Merge conflicts',
+      two: 'ملفين فيهم Merge conflicts',
+      one: 'ملف واحد فيه Merge conflicts',
+      zero: 'مفيش ملفات فيها Merge conflicts',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get gitAbortMerge => 'إلغاء الـ Merge';
+
+  @override
+  String get gitMarkResolved => 'اعتبره اتحل';
+
+  @override
+  String get gitNothingStaged => 'مفيش حاجة متعملها Stage علشان تعمل Commit.';
+
+  @override
+  String get gitCheckoutOverwrite => 'تغيير الـ Branch هيمسح تغييراتك المحلية.';
+
+  @override
+  String gitCheckoutOverwriteIn(String files) {
+    return 'تغيير الـ Branch هيمسح تغييراتك المحلية في: $files';
+  }
+
+  @override
+  String get gitNoUpstream => 'الـ Branch الحالي ملوش upstream.';
+
+  @override
+  String get gitDiverged =>
+      'الـ Branch اتفرّع عن الـ remote -- الـ Pull (أو الـ Push) مينفعش يعمل fast-forward.';
+
+  @override
+  String get gitLocalChangesOverwritten => 'التغييرات المحلية هتتمسح.';
+
+  @override
+  String gitLocalChangesOverwrittenIn(String files) {
+    return 'التغييرات المحلية هتتمسح في: $files';
+  }
+
+  @override
+  String get gitRemoteSyncFailed => 'فشلت المزامنة مع الـ remote.';
+
+  @override
+  String get workspaceWelcomeSubtitle => 'افتح فولدر وابدأ تكتب كود مع AURA';
+
+  @override
+  String get workspaceOpenFolder => 'فتح فولدر';
+
+  @override
+  String get workspaceRecent => 'الأخيرة';
+
+  @override
+  String workspaceGrantBody(String path) {
+    return 'كده وكيل AURA هيقدر يقرا ويكتب ملفات في \"$path\".';
+  }
+
+  @override
+  String get workspaceNotNow => 'مش دلوقتي';
+
+  @override
+  String get workspaceNoRecent => 'مفيش مساحات شغل اتفتحت قريب';
+
+  @override
+  String get workspaceNoRecentHint => 'افتح فولدر علشان تبدأ';
+
+  @override
+  String get workspaceRemoveFromRecent => 'شيلها من الأخيرة';
+
+  @override
+  String get workspaceManagerTitle => 'مساحات الشغل';
+
+  @override
+  String get workspaceRecentWorkspaces => 'مساحات الشغل الأخيرة';
+
+  @override
+  String get workspaceActive => 'الحالية';
+
+  @override
+  String workspaceLastOpened(String date) {
+    return 'آخر فتح: $date';
+  }
+
+  @override
+  String get workspaceOpen => 'فتح';
+
+  @override
+  String get workspaceRemoveTitle => 'تشيل مساحة الشغل؟';
+
+  @override
+  String workspaceRemoveBody(String name) {
+    return 'كده \"$name\" هتتشال من مساحات الشغل الأخيرة.';
+  }
+
+  @override
+  String get workspaceRemove => 'إزالة';
+
+  @override
+  String get workspaceEmptyTitle => 'لسه مفيش مساحات شغل';
+
+  @override
+  String get workspaceEmptyMessage => 'افتح فولدر علشان تعمل أول مساحة شغل ليك';
 }

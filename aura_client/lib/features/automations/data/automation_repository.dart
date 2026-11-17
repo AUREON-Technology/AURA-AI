@@ -7,6 +7,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
 import 'package:aura_client/core/network/aura_api_client.dart';
 import 'package:aura_client/core/security/aura_secure_storage.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 // ----------------------------------------------------
 // Models
@@ -162,8 +163,8 @@ class AutomationRepository {
       if (msg.id == null) continue;
       final fullMsg = await gmailApi.users.messages.get('me', msg.id!);
       
-      String subject = "No Subject";
-      String sender = "Unknown Sender";
+      String subject = currentL10n.automationsGmailNoSubject;
+      String sender = currentL10n.automationsGmailUnknownSender;
       
       final headers = fullMsg.payload?.headers ?? [];
       for (final header in headers) {
@@ -268,7 +269,7 @@ class AutomationRepository {
     required String description,
   }) async {
     final logs = <String>[];
-    logs.add("Requesting Drive storage permissions...");
+    logs.add(currentL10n.automationsDriveRequestingPermissions);
 
     final driveScopes = [
       'https://www.googleapis.com/auth/drive.readonly',
@@ -281,7 +282,7 @@ class AutomationRepository {
     final client = authorization.authClient(scopes: driveScopes);
 
     final driveApi = drive.DriveApi(client);
-    logs.add("Established connection with Google Drive.");
+    logs.add(currentL10n.automationsDriveConnected);
 
     // 1. Create Workspace Folder
     final folder = drive.File()
@@ -292,7 +293,7 @@ class AutomationRepository {
     if (createdFolder.id == null) {
       throw Exception("Failed to create Drive folder.");
     }
-    logs.add("Created Folder: AURA Workspace - $name");
+    logs.add(currentL10n.automationsDriveCreatedFolder("AURA Workspace - $name"));
 
     // 2. Create Project Doc inside the folder
     final docContent = """
@@ -324,9 +325,9 @@ $description
     );
 
     await driveApi.files.create(documentFile, uploadMedia: media);
-    logs.add("Created document: AURA Project Plan - $name");
+    logs.add(currentL10n.automationsDriveCreatedDocument("AURA Project Plan - $name"));
 
-    logs.add("Drive Workspace generated successfully!");
+    logs.add(currentL10n.automationsDriveDone);
     return logs;
   }
 }

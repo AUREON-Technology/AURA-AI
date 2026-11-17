@@ -11,6 +11,7 @@ import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/desktop/state/desktop_application_state.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 import 'package:aura_client/features/chat/presentation/widgets/sandbox_diff_view.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class GitDiffPage extends ConsumerStatefulWidget {
   const GitDiffPage({super.key, required this.filePath, required this.scope});
@@ -56,7 +57,7 @@ class _GitDiffPageState extends ConsumerState<GitDiffPage> {
                     Padding(
                       padding: const EdgeInsets.only(bottom: AuraSpacing.sm),
                       child: Text(
-                        'Diff truncated -- view the full diff in a terminal.',
+                        context.l10n.gitDiffTruncated,
                         style: TextStyle(color: palette.warning, fontSize: 12),
                       ),
                     ),

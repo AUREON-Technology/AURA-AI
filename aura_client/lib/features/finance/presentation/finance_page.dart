@@ -9,6 +9,7 @@ import 'widgets/finance_transaction_form.dart';
 import 'widgets/finance_transaction_history.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class FinancePage extends ConsumerWidget {
   const FinancePage({super.key});
@@ -38,10 +39,10 @@ class FinancePage extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('Finance Ledger', style: Theme.of(context).textTheme.displayLarge?.copyWith(fontSize: 28)),
+                Text(context.l10n.financeTitle, style: Theme.of(context).textTheme.displayLarge?.copyWith(fontSize: 28)),
                 const SizedBox(height: 4),
                 Text(
-                  'Track incomes, expenses, and analyze financial distributions',
+                  context.l10n.financeSubtitle,
                   style: TextStyle(color: palette.textSecondary, fontSize: 14),
                 ),
                 const SizedBox(height: 24),

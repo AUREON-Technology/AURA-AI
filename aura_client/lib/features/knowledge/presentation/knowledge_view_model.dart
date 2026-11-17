@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/ai/knowledge/knowledge_center.dart';
 import '../../../core/network/aura_api_error.dart';
 import '../domain/knowledge_document.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class KnowledgeUiState {
   final bool loading;
@@ -85,16 +86,16 @@ class KnowledgeViewModel extends Notifier<KnowledgeUiState> {
         );
     if (!result.ok) {
       state = state.copyWith(
-        ingestMessage: 'Could not add this document.',
+        ingestMessage: currentL10n.knowledgeAddFailed,
         ingestError: true,
       );
       return;
     }
     final quarantine = result.quarantinedChunks > 0
-        ? ' ${result.quarantinedChunks} passage(s) were held back.'
+        ? ' ${currentL10n.knowledgePassagesHeldBack(result.quarantinedChunks)}'
         : '';
     state = state.copyWith(
-      ingestMessage: 'Saved.$quarantine',
+      ingestMessage: '${currentL10n.knowledgeSaved}$quarantine',
       ingestError: false,
     );
     await refresh();
@@ -112,16 +113,16 @@ class KnowledgeViewModel extends Notifier<KnowledgeUiState> {
         );
     if (!result.ok) {
       state = state.copyWith(
-        ingestMessage: 'Could not upload this PDF.',
+        ingestMessage: currentL10n.knowledgePdfUploadFailed,
         ingestError: true,
       );
       return;
     }
     final quarantine = result.quarantinedChunks > 0
-        ? ' ${result.quarantinedChunks} passage(s) were held back.'
+        ? ' ${currentL10n.knowledgePassagesHeldBack(result.quarantinedChunks)}'
         : '';
     state = state.copyWith(
-      ingestMessage: 'Uploaded.$quarantine',
+      ingestMessage: '${currentL10n.knowledgeUploaded}$quarantine',
       ingestError: false,
     );
     await refresh();

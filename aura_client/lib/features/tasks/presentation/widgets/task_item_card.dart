@@ -92,7 +92,7 @@ class TaskItemCard extends ConsumerWidget {
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
-                          task.category.toUpperCase(),
+                          taskCategoryLabel(context.l10n, task.category).toUpperCase(),
                           style: TextStyle(fontSize: 10, color: palette.textSecondary, fontWeight: FontWeight.bold),
                         ),
                       ),
@@ -103,7 +103,7 @@ class TaskItemCard extends ConsumerWidget {
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
-                          task.priority.toUpperCase(),
+                          taskPriorityLabel(context.l10n, task.priority).toUpperCase(),
                           style: TextStyle(
                             fontSize: 10,
                             color: priorityColor,
@@ -147,13 +147,13 @@ class TaskItemCard extends ConsumerWidget {
             IconButton(
               icon: Icon(Icons.delete_outline, color: palette.textSecondary, size: 20),
               hoverColor: palette.danger.withValues(alpha: 0.1),
-              tooltip: 'Delete task',
+              tooltip: context.l10n.tasksDeleteTask,
               // Hidden now, deleted once the Undo window closes (F-34).
               onPressed: () => deleteWithUndo(
                 context,
                 ref,
                 key: taskUndoKey(task.id),
-                message: 'Task deleted',
+                message: context.l10n.tasksTaskDeleted,
                 commit: () => vm.deleteTask(task.id),
               ),
             ),

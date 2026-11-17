@@ -11,6 +11,7 @@ import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
 import 'package:aura_client/features/chat/presentation/widgets/sandbox_diff_view.dart';
 import 'package:aura_client/features/chat/presentation/widgets/sandbox_terminal_view.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 import '../data/engineer_run_repository.dart';
 
@@ -35,10 +36,10 @@ class EngineerHistoryPage extends ConsumerWidget {
       backgroundColor: palette.background,
       appBar: AppBar(
         backgroundColor: palette.background,
-        title: const Text('Engineer'),
+        title: Text(context.l10n.settingsEngineerTitle),
         actions: [
           IconButton(
-            tooltip: 'Desktop daemon',
+            tooltip: context.l10n.engineeringDesktopDaemonTooltip,
             icon: const Icon(Icons.dns_outlined),
             onPressed: () => context.push('/engineer-daemon'),
           ),
@@ -68,12 +69,11 @@ class EngineerHistoryPage extends ConsumerWidget {
               sliver: runsAsync.when(
                 data: (runs) {
                   if (runs.isEmpty) {
-                    return const SliverToBoxAdapter(
+                    return SliverToBoxAdapter(
                       child: AuraEmptyState(
                         icon: Icons.code_outlined,
-                        title: 'No engineer runs yet',
-                        message:
-                            'Ask the Engineer agent to open a PR or run a command, and it will show up here.',
+                        title: context.l10n.engineeringNoRunsTitle,
+                        message: context.l10n.engineeringNoRunsMessage,
                       ),
                     );
                   }
@@ -106,17 +106,28 @@ class EngineerHistoryPage extends ConsumerWidget {
   }
 }
 
-const Map<String, (IconData, String)> _toolDisplay = {
-  'github_create_draft_pull_request': (Icons.merge_type, 'Opened draft PR'),
-  'github_commit_files': (Icons.upload_file, 'Committed files'),
-  'github_create_branch': (Icons.call_split, 'Created branch'),
-  'write_file': (Icons.note_add_outlined, 'Wrote file'),
-  'edit_file': (Icons.edit_note_outlined, 'Edited file'),
-  'run_command': (Icons.terminal, 'Ran command'),
-  'git_commit': (Icons.commit, 'Committed'),
-  'git_checkout_branch': (Icons.call_split, 'Switched branch'),
-  'git_diff': (Icons.difference_outlined, 'Diffed sandbox'),
-};
+/// Icon and on-screen label for a tool name the engineer agent records; an unknown tool falls back
+/// to a generic icon and its raw name.
+(IconData, String) _toolDisplay(AppLocalizations l10n, String tool) => switch (tool) {
+      'github_create_draft_pull_request' => (Icons.merge_type, l10n.engineeringToolOpenedDraftPr),
+      'github_commit_files' => (Icons.upload_file, l10n.engineeringToolCommittedFiles),
+      'github_create_branch' => (Icons.call_split, l10n.engineeringToolCreatedBranch),
+      'write_file' => (Icons.note_add_outlined, l10n.engineeringToolWroteFile),
+      'edit_file' => (Icons.edit_note_outlined, l10n.engineeringToolEditedFile),
+      'run_command' => (Icons.terminal, l10n.engineeringToolRanCommand),
+      'git_commit' => (Icons.commit, l10n.engineeringToolCommitted),
+      'git_checkout_branch' => (Icons.call_split, l10n.engineeringToolSwitchedBranch),
+      'git_diff' => (Icons.difference_outlined, l10n.engineeringToolDiffedSandbox),
+      _ => (Icons.build_outlined, tool),
+    };
+
+/// The run's status word as shown on screen; an unknown status is shown as the server sent it.
+String _statusLabel(AppLocalizations l10n, String status) => switch (status) {
+      'pending' => l10n.engineeringRunStatusPending,
+      'succeeded' => l10n.engineeringRunStatusSucceeded,
+      'failed' => l10n.engineeringRunStatusFailed,
+      _ => status,
+    };
 
 class _EngineerRunTile extends StatelessWidget {
   const _EngineerRunTile({required this.run});
@@ -126,7 +137,7 @@ class _EngineerRunTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
-    final (icon, label) = _toolDisplay[run.tool] ?? (Icons.build_outlined, run.tool);
+    final (icon, label) = _toolDisplay(context.l10n, run.tool);
     final statusColor = switch (run.status) {
       'succeeded' => palette.success,
       'failed' => palette.danger,
@@ -198,7 +209,7 @@ class _EngineerRunDetailSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
-    final (icon, label) = _toolDisplay[run.tool] ?? (Icons.build_outlined, run.tool);
+    final (icon, label) = _toolDisplay(context.l10n, run.tool);
     final maxHeight = MediaQuery.sizeOf(context).height * 0.8;
 
     return SafeArea(
@@ -226,11 +237,11 @@ class _EngineerRunDetailSheet extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: AuraSpacing.sm),
-                  Text('Status: ${run.status}', style: TextStyle(color: palette.textSecondary)),
+                  Text(context.l10n.engineeringRunStatus(_statusLabel(context.l10n, run.status)), style: TextStyle(color: palette.textSecondary)),
                   if (run.branch != null)
-                    Text('Branch: ${run.branch}', style: TextStyle(color: palette.textSecondary)),
+                    Text(context.l10n.engineeringRunBranch(run.branch!), style: TextStyle(color: palette.textSecondary)),
                   if (run.commitSha != null)
-                    Text('Commit: ${run.commitSha}', style: TextStyle(color: palette.textSecondary)),
+                    Text(context.l10n.engineeringRunCommit(run.commitSha!), style: TextStyle(color: palette.textSecondary)),
                   if (run.prUrl != null) ...[
                     const SizedBox(height: AuraSpacing.sm),
                     Row(
@@ -242,13 +253,13 @@ class _EngineerRunDetailSheet extends StatelessWidget {
                           ),
                         ),
                         IconButton(
-                          tooltip: 'Copy link',
+                          tooltip: context.l10n.engineeringCopyLink,
                           icon: Icon(Icons.copy, size: 18, color: palette.textSecondary),
                           onPressed: () async {
                             await Clipboard.setData(ClipboardData(text: run.prUrl!));
                             if (context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Link copied')),
+                                SnackBar(content: Text(context.l10n.engineeringLinkCopied)),
                               );
                             }
                           },
@@ -258,7 +269,7 @@ class _EngineerRunDetailSheet extends StatelessWidget {
                   ],
                   if (run.sandboxTranscript != null && run.sandboxTranscript!.trim().isNotEmpty) ...[
                     const SizedBox(height: AuraSpacing.md),
-                    Text('Output', style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    Text(context.l10n.engineeringRunOutput, style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           fontWeight: FontWeight.w600,
                         )),
                     if (run.tool == 'git_diff')

@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class HealthTrendCharts extends StatelessWidget {
   final List<HealthRecord> records;
@@ -18,13 +19,13 @@ class HealthTrendCharts extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Weekly Health Trends', style: Theme.of(context).textTheme.titleMedium),
+            Text(context.l10n.healthWeeklyTrendsTitle, style: Theme.of(context).textTheme.titleMedium),
             Divider(color: palette.border, height: 20),
             Expanded(
               child: records.isEmpty
                   ? Center(
                       child: Text(
-                        'Log metrics to populate weekly graphs',
+                        context.l10n.healthWeeklyTrendsEmpty,
                         style: TextStyle(color: palette.textSecondary),
                       ),
                     )
@@ -34,7 +35,7 @@ class HealthTrendCharts extends StatelessWidget {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              Text('Water Intake (ml)', style: TextStyle(fontSize: 12, color: palette.textSecondary)),
+                              Text(context.l10n.healthWaterChartTitle, style: TextStyle(fontSize: 12, color: palette.textSecondary)),
                               const SizedBox(height: 8),
                               Expanded(child: _WaterBarChart(records: records)),
                             ],
@@ -45,7 +46,7 @@ class HealthTrendCharts extends StatelessWidget {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              Text('Weight Trends (kg)', style: TextStyle(fontSize: 12, color: palette.textSecondary)),
+                              Text(context.l10n.healthWeightChartTitle, style: TextStyle(fontSize: 12, color: palette.textSecondary)),
                               const SizedBox(height: 8),
                               Expanded(child: _WeightLineChart(records: records)),
                             ],
@@ -135,7 +136,7 @@ class _WeightLineChart extends StatelessWidget {
 
     if (spots.isEmpty) {
       return Center(
-        child: Text('Log weight to display trend line', style: TextStyle(fontSize: 11, color: palette.textSecondary)),
+        child: Text(context.l10n.healthWeightChartEmpty, style: TextStyle(fontSize: 11, color: palette.textSecondary)),
       );
     }
 

@@ -15,6 +15,7 @@ import 'package:aura_client/core/hostd/hostd_providers.dart';
 import 'package:aura_client/desktop/diagnostics/diagnostics_parser.dart';
 import 'package:aura_client/desktop/events/ide_event.dart';
 import 'package:aura_client/desktop/events/ide_event_bus.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class DiagnosticsState {
   const DiagnosticsState({
@@ -111,7 +112,7 @@ class DiagnosticsNotifier extends StateNotifier<DiagnosticsState> {
     try {
       final result = await _hostdClient.diagnosticsRun(root: root, tool: tool);
       if (result['not_found'] == true) {
-        state = state.copyWith(scanning: false, error: '"$tool" is not installed or not on PATH.');
+        state = state.copyWith(scanning: false, error: currentL10n.diagnosticsToolNotFound(tool));
         return;
       }
       final newByFile = parseDiagnostics(tool, result['stdout'] as String? ?? '', root);

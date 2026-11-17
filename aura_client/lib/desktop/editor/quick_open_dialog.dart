@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/desktop/workspace/workspace_file_service.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// Result of a successful [fuzzyMatch]: the matched candidate, a relevance [score] (higher is
 /// better), and the character indices in [text] that matched the query, for highlighting.
@@ -141,9 +142,9 @@ class _QuickOpenDialogState extends ConsumerState<QuickOpenDialog> {
                         autofocus: true,
                         onChanged: _filterFiles,
                         style: Theme.of(context).textTheme.bodyLarge,
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           border: InputBorder.none,
-                          hintText: 'Type to search files...',
+                          hintText: context.l10n.editorQuickOpenHint,
                           isDense: true,
                         ),
                       ),
@@ -189,7 +190,7 @@ class _QuickOpenDialogState extends ConsumerState<QuickOpenDialog> {
                   padding: EdgeInsets.all(ideDensity.spacingScale * AuraSpacing.lg),
                   child: Center(
                     child: Text(
-                      _query.isEmpty ? 'No files found' : 'No matches',
+                      _query.isEmpty ? context.l10n.editorNoFilesFound : context.l10n.editorNoMatches,
                       style: TextStyle(color: palette.textDisabled),
                     ),
                   ),

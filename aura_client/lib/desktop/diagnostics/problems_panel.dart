@@ -9,6 +9,7 @@ import 'package:aura_client/desktop/diagnostics/diagnostics_notifier.dart';
 import 'package:aura_client/desktop/events/ide_event.dart';
 import 'package:aura_client/desktop/events/ide_event_bus.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class ProblemsPanel extends ConsumerStatefulWidget {
   const ProblemsPanel({super.key});
@@ -47,17 +48,17 @@ class _ProblemsPanelState extends ConsumerState<ProblemsPanel> {
     final workspace = ref.watch(workspaceNotifierProvider).activeWorkspace;
 
     if (workspace == null) {
-      return _Centered(text: 'Open a workspace to see problems.', palette: palette);
+      return _Centered(text: context.l10n.diagnosticsOpenWorkspace, palette: palette);
     }
 
     _maybeOpen(workspace.id, workspace.rootPath);
     final diagnostics = ref.watch(diagnosticsNotifierProvider);
 
     if (!diagnostics.detected) {
-      return _Centered(text: 'Detecting diagnostics tool...', palette: palette);
+      return _Centered(text: context.l10n.diagnosticsDetecting, palette: palette);
     }
     if (diagnostics.tool == null) {
-      return _Centered(text: 'No diagnostics tool detected for this workspace.', palette: palette);
+      return _Centered(text: context.l10n.diagnosticsNoTool, palette: palette);
     }
 
     return Container(
@@ -78,7 +79,7 @@ class _ProblemsPanelState extends ConsumerState<ProblemsPanel> {
                   ),
                 IconButton(
                   icon: Icon(Icons.refresh, size: 16, color: palette.textSecondary),
-                  tooltip: 'Rerun',
+                  tooltip: context.l10n.diagnosticsRerun,
                   onPressed: () => ref.read(diagnosticsNotifierProvider.notifier).rescan(),
                 ),
               ],
@@ -94,7 +95,7 @@ class _ProblemsPanelState extends ConsumerState<ProblemsPanel> {
           Expanded(
             child: diagnostics.byFile.isEmpty
                 ? Center(
-                    child: Text('No problems detected', style: TextStyle(color: palette.textDisabled, fontSize: 12)),
+                    child: Text(context.l10n.diagnosticsNoProblems, style: TextStyle(color: palette.textDisabled, fontSize: 12)),
                   )
                 : ListView(
                     padding: const EdgeInsets.symmetric(vertical: AuraSpacing.xs),

@@ -8,6 +8,7 @@ import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 import '../data/github_integration_repository.dart';
 
@@ -29,7 +30,7 @@ class GithubConnectionPage extends ConsumerWidget {
       backgroundColor: palette.background,
       appBar: AppBar(
         backgroundColor: palette.background,
-        title: const Text('GitHub Connection'),
+        title: Text(context.l10n.settingsGithubTitle),
       ),
       body: RefreshIndicator(
         onRefresh: () => ref.refresh(githubConnectionStatusProvider.future),
@@ -78,7 +79,7 @@ class _StatusViewState extends ConsumerState<_StatusView> {
       if (!opened && mounted) {
         AuraSnackbar.show(
           context,
-          message: 'Could not open the browser to connect GitHub.',
+          message: context.l10n.engineeringGithubBrowserFailed,
           kind: AuraSnackbarKind.error,
         );
       }
@@ -99,7 +100,7 @@ class _StatusViewState extends ConsumerState<_StatusView> {
       await disconnectGithub(backendUrl: backendUrl, accessToken: accessToken);
       ref.invalidate(githubConnectionStatusProvider);
       if (mounted) {
-        AuraSnackbar.show(context, message: 'GitHub disconnected.', kind: AuraSnackbarKind.success);
+        AuraSnackbar.show(context, message: context.l10n.engineeringGithubDisconnected, kind: AuraSnackbarKind.success);
       }
     } catch (e) {
       if (mounted) {
@@ -132,8 +133,10 @@ class _StatusViewState extends ConsumerState<_StatusView> {
                   Expanded(
                     child: Text(
                       status.connected
-                          ? 'Connected as ${status.githubLogin ?? 'a GitHub account'}'
-                          : 'No GitHub account connected',
+                          ? (status.githubLogin == null
+                              ? context.l10n.engineeringGithubConnectedUnknown
+                              : context.l10n.engineeringGithubConnectedAs(status.githubLogin!))
+                          : context.l10n.engineeringGithubNotConnected,
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                   ),
@@ -142,24 +145,20 @@ class _StatusViewState extends ConsumerState<_StatusView> {
               if (status.connected && status.connectedAt != null) ...[
                 const SizedBox(height: AuraSpacing.xs),
                 Text(
-                  'Connected ${DateFormat.yMMMd().add_jm().format(status.connectedAt!)}',
+                  context.l10n.engineeringGithubConnectedAt(DateFormat.yMMMd().add_jm().format(status.connectedAt!)),
                   style: TextStyle(fontSize: 12, color: palette.textSecondary),
                 ),
               ],
               const SizedBox(height: AuraSpacing.md),
               Text(
                 status.connected
-                    ? 'The engineer agent can read and write exactly the repositories you '
-                        'granted when you installed the GitHub App. Disconnecting only removes '
-                        'what AURA can use -- it does not revoke the app on github.com.'
-                    : 'Connect your own GitHub account so the engineer agent (opening PRs, '
-                        'reading issues, committing files) acts on the repositories you choose, '
-                        'instead of relying on a shared token an operator configured.',
+                    ? context.l10n.engineeringGithubConnectedBody
+                    : context.l10n.engineeringGithubDisconnectedBody,
                 style: TextStyle(color: palette.textSecondary),
               ),
               const SizedBox(height: AuraSpacing.lg),
               AuraButton(
-                label: status.connected ? 'Disconnect GitHub' : 'Connect GitHub',
+                label: status.connected ? context.l10n.engineeringGithubDisconnect : context.l10n.engineeringGithubConnect,
                 variant: status.connected
                     ? AuraButtonVariant.destructive
                     : AuraButtonVariant.primary,

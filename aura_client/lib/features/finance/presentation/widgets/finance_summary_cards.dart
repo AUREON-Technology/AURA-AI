@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import 'package:aura_client/core/theme/theme.dart';
+import 'package:aura_client/l10n/l10n.dart';
 import '../../data/finance_repository.dart';
 
 class FinanceSummaryCards extends StatelessWidget {
@@ -14,19 +15,19 @@ class FinanceSummaryCards extends StatelessWidget {
       builder: (context, constraints) {
         final isNarrow = constraints.maxWidth < 600;
         final balanceCard = _SummaryCard(
-          title: 'Balance',
+          title: context.l10n.financeBalance,
           amount: stats.balance,
           color: stats.balance >= 0 ? AuraTheme.accentTeal : Colors.redAccent,
           icon: Icons.account_balance_wallet,
         );
         final incomeCard = _SummaryCard(
-          title: 'Income',
+          title: context.l10n.financeIncome,
           amount: stats.totalIncome,
           color: AuraTheme.accentTeal,
           icon: Icons.arrow_upward,
         );
         final expenseCard = _SummaryCard(
-          title: 'Expenses',
+          title: context.l10n.financeExpenses,
           amount: stats.totalExpense,
           color: Colors.redAccent,
           icon: Icons.arrow_downward,
