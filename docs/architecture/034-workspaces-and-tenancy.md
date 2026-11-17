@@ -119,6 +119,32 @@ Ingest, upload, delete and pin/unpin require `manage_knowledge` (Owner or Admin)
   expired (Free), and reconciles pending payments with Fawry.
 - **Secrets.** The Fawry secure key is read from the environment through a property, never a
   settings field. Operations guide: `docs/deployment/billing-fawry.md`.
+- **Money is never charged twice, lost or undone by a race** (the D1 review). A payment is recorded
+  before Fawry is asked, so a card charge that times out is reconciled rather than re-charged.
+  Settling and the cycle run under a per-workspace Postgres advisory lock and re-read the
+  subscription inside it; one cycle runs at a time. A payment goes `pending → received → paid`,
+  and `last_payment_id` makes re-applying it a no-op, so a crash between the two is re-driven.
+
+### 9. In-app subscriptions (SaaS P1-D2)
+
+- **Binding.** A store purchase reaches a workspace only through a token AURA issued to that
+  workspace's Owner before the purchase (`aura_store_bindings`, migration `0023`). The app passes
+  it as Apple's `appAccountToken` or Google's `obfuscatedExternalAccountId`. Only personal
+  workspaces can buy in the apps; Team is sold on the web.
+- **Trust.** Apple's notifications are trusted only under the pinned Apple Root CA - G3. A Google
+  push must carry Google's OIDC token for our audience and push service account, and it only names
+  a purchase: the state comes from the Play Developer API.
+- **Same record.** A store event updates the same `aura_subscriptions` row as a Fawry payment,
+  with `provider` set to `apple` or `google`. The cycle renews nothing for those (the store
+  renews), but still expires one whose store fell silent past period + grace.
+- **Once, forwards only.** An event id is recorded after it is applied, under the workspace lock,
+  so a replay is a no-op and a crash is retried. The period end is the `max` of expiries, and an
+  Apple event about a transaction that ended before the current period is stale. Refund or revoke
+  means Free at once.
+- **One provider at a time.** A store activation over a live Fawry subscription is applied and
+  audited as `billing.provider_switch`; non-activating events from a store that does not own the
+  subscription are ignored. A Fawry payment makes the subscription Fawry's again. Operations
+  guide: `docs/deployment/billing-stores.md`.
 
 ## Consequences
 

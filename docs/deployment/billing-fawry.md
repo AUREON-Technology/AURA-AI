@@ -92,6 +92,6 @@ deploy refuses to start with billing on and no credentials.
 
 ## Not built yet
 
-- Apple and Google in-app purchase (Plan D2).
+- Apple and Google in-app purchase are built separately: `docs/deployment/billing-stores.md` (Plan D2).
 - Fawry's hosted first-time card page (see section 1).
 - The app's upgrade screens (Plan F). Until then an Owner can only check out through the API.
