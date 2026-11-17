@@ -191,6 +191,19 @@ groups:
             BACKUP_S3_URI is set but the last upload, remote check, or cycle failed.
             Credentials live in deploy/secrets/; no keys are in the image.
 
+      - alert: AuraBackupUnderReplicated
+        expr: |
+          aura_backup_offsite_configured == 1
+          and aura_backup_offsite_copies_verified < aura_backup_offsite_copies_required
+        for: 15m
+        labels: {severity: critical}
+        annotations:
+          summary: "Latest backup set is not on enough offsite providers"
+          description: >
+            Fewer than BACKUP_OFFSITE_MIN_COPIES offsite targets verified the last set. A
+            single provider holding the only copy is one outage from data loss. Check
+            `docker compose logs backup` for which target failed verification.
+
       - alert: AuraEvalRegression
         expr: aura_eval_score{metric="recall_at_k"} < 0.6
         for: 30m

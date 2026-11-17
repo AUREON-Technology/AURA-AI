@@ -227,7 +227,11 @@ cmd=$1; shift
 case "$cmd" in
     copy)
         src=$(map "$1"); dst=$(map "$2"); mkdir -p "$dst"; cp -R "$src/." "$dst/"
-        if [ "${STUB_CORRUPT_COPY:-0}" = 1 ]; then
+        corrupt=${STUB_CORRUPT_COPY:-0}
+        if [ -n "${STUB_CORRUPT_DST:-}" ]; then
+            case "$2" in *"$STUB_CORRUPT_DST"*) corrupt=1 ;; esac
+        fi
+        if [ "$corrupt" = 1 ]; then
             f=$(find "$dst" -name '*.dump.age' | head -n 1); printf 'Z' | dd of="$f" bs=1 seek=40 conv=notrunc 2>/dev/null
         fi ;;
     check)
@@ -263,6 +267,59 @@ mkdir -p "$T/remote/bucket/aura-20991231T000000Z"
 expect_fail "offsite prune refuses when the newest remote set is not the one just verified" \
     bk_offsite_prune "stub:bucket" "aura-$STAMP" 1 0 0
 [ -d "$T/remote/bucket/aura-20260803T020000Z" ] && ok "...and deletes nothing" || bad "offsite deleted despite refusal"
+
+# ---------------------------------------------------------------------------------------------
+echo "# multi-target offsite quorum (copy_offsite and resolve_offsite_remote, from backup.sh)"
+# Extracted rather than sourced: backup.sh runs its cycle loop as soon as it is loaded.
+sed -n '/^resolve_offsite_remote() {/,/^}/p; /^copy_offsite() {/,/^}/p' "$HERE/../backup.sh" > "$T/offsite-funcs.sh"
+[ -s "$T/offsite-funcs.sh" ] && ok "extracted copy_offsite and resolve_offsite_remote from backup.sh" || bad "could not extract offsite functions"
+RCLONE_CONFIG_FILE="$T/rclone.conf"; export RCLONE_CONFIG_FILE
+: > "$RCLONE_CONFIG_FILE"
+
+# offsite_case <min> <target>...  -- runs copy_offsite in a subshell; writes the verified count to $T/verified
+offsite_case() (
+    OFFSITE_MIN_COPIES=$1; shift
+    OFFSITE_TARGETS="$*"
+    OFFSITE_TARGET_COUNT=$#
+    OFFSITE_KEEP_DAILY=7; OFFSITE_KEEP_WEEKLY=4; OFFSITE_KEEP_MONTHLY=6
+    BACKUP_DIR="$T/offsite-dir"; STAGING="$T/offsite-staging"
+    mkdir -p "$BACKUP_DIR" "$STAGING"
+    . "$T/offsite-funcs.sh"
+    rc=0
+    copy_offsite "$SET" || rc=$?
+    echo "$OFFSITE_VERIFIED" > "$T/verified"
+    exit "$rc"
+)
+verified() { cat "$T/verified"; }
+
+rm -rf "$T/offsite-dir" "$T/remote/ob-good-a" "$T/remote/ob-good-b" "$T/remote/ob-bad"
+expect_ok "two targets both verify: durable at min=2" offsite_case 2 "stub:ob-good-a" "stub:ob-good-b"
+[ "$(verified)" = 2 ] && ok "...verified count is 2" || bad "verified count $(verified), wanted 2"
+[ -f "$T/offsite-dir/.last_offsite_success" ] && ok "...and the success marker advances" || bad "no success marker after a durable cycle"
+
+rm -rf "$T/offsite-dir" "$T/remote/ob-good-a" "$T/remote/ob-good-b" "$T/remote/ob-bad"
+STUB_CORRUPT_DST=ob-bad; export STUB_CORRUPT_DST
+expect_fail "one of two targets corrupt at min=2: the cycle reports failure" offsite_case 2 "stub:ob-bad" "stub:ob-good-a"
+[ "$(verified)" = 1 ] && ok "...only the good target counts as verified" || bad "verified count $(verified), wanted 1"
+[ -d "$T/remote/ob-good-a/aura-$STAMP" ] && ok "...the good copy is still uploaded" || bad "good copy missing"
+[ ! -f "$T/offsite-dir/.last_offsite_success" ] && ok "...and the success marker does NOT advance" || bad "success marker advanced on an under-replicated set"
+unset STUB_CORRUPT_DST
+
+rm -rf "$T/offsite-dir" "$T/remote/ob-good-a" "$T/remote/ob-bad"
+STUB_CORRUPT_DST=ob-bad; export STUB_CORRUPT_DST
+expect_ok "the same split passes when min=1" offsite_case 1 "stub:ob-bad" "stub:ob-good-a"
+[ "$(verified)" = 1 ] && ok "...with one verified copy" || bad "verified count $(verified)"
+unset STUB_CORRUPT_DST
+
+rm -rf "$T/offsite-dir" "$T/remote/ob-good-a"
+expect_fail "one target cannot meet min=2 even when it verifies" offsite_case 2 "stub:ob-good-a"
+[ "$(verified)" = 1 ] && ok "...it is still uploaded and counted" || bad "single target not counted"
+
+rm -rf "$T/offsite-dir" "$T/remote/ob-good-a" "$T/remote/ob-good-b"
+RCLONE_CONFIG_FILE="$T/no-such.conf"; export RCLONE_CONFIG_FILE
+expect_fail "several targets without named remotes in rclone.conf are refused" offsite_case 2 "stub:ob-good-a" "stub:ob-good-b"
+[ ! -e "$T/remote/ob-good-a" ] && ok "...and nothing is uploaded" || bad "upload happened without a named-remote config"
+RCLONE_CONFIG_FILE="$T/rclone.conf"; export RCLONE_CONFIG_FILE
 
 # ---------------------------------------------------------------------------------------------
 echo "# library functions do not clobber caller variables"

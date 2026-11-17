@@ -195,16 +195,41 @@ rebuild.
 
 ## Quarterly
 
-**Pull one offsite set back and verify it** (when `BACKUP_S3_URI` is set). The nightly job
-already `rclone check`s each upload; this proves the copy is restorable from the far side:
+**Pull one offsite set back and verify it** (for each offsite target). The nightly job already
+`rclone check`s each upload; this proves every copy is restorable from the far side. Run it
+against each remote in `BACKUP_OFFSITE_TARGETS`, or against `BACKUP_S3_URI` for a single target:
 
 ```bash
-rclone copy "$BACKUP_S3_URI/aura-<stamp>" /root/offsite-check/aura-<stamp>
+rclone copy "<remote>/aura-<stamp>" /root/offsite-check/aura-<stamp>
 ./deploy/scripts/backup-open.sh --verify /root/offsite-check/aura-<stamp>
 BACKUP_AGE_IDENTITY_FILE=/path/to/aura-backup.agekey DRILL_RECORD=deploy/backups/drills.tsv \
   ./deploy/scripts/restore-drill.sh /root/offsite-check/aura-<stamp>
 rm -rf /root/offsite-check
 ```
+
+### Offsite providers (multi-target)
+
+A set is durable only when `BACKUP_OFFSITE_MIN_COPIES` targets (default 2) verify it. Anything
+below that fails the cycle and fires `AuraBackupUnderReplicated`, because a single provider
+holding the only copy is one outage from data loss.
+
+1. Create one bucket per provider, in different companies (for example Backblaze B2, Cloudflare
+   R2, Wasabi or AWS S3). Turn on object lock or versioning on each, so a compromised VPS cannot
+   delete old sets.
+2. Name each remote in the rclone config at `deploy/secrets/backup/rclone.conf`, one section per
+   provider. Credentials stay in that file, never in the image or the compose file.
+3. Set, in the environment that runs compose:
+   ```bash
+   BACKUP_OFFSITE_TARGETS="b2-aura:aura-backups r2-aura:aura-backups"
+   BACKUP_OFFSITE_MIN_COPIES=2
+   ```
+   `BACKUP_OFFSITE_TARGETS` is a space-separated list. Several targets require `rclone.conf`;
+   one target may still use `BACKUP_S3_URI` with the S3 key files.
+4. Confirm both copies after the first cycle: `aura_backup_offsite_copies_verified` should equal
+   `aura_backup_offsite_copies_required`.
+
+The age private key is still needed for every restore. Losing it loses every backup on every
+provider; see "Backup encryption keys" above.
 
 **Rotate `jwt_secret`.** This invalidates every session, so announce it first.
 

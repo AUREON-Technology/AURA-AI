@@ -18,8 +18,11 @@
 #      CHECKSUMS.sha256 over the ciphertext. The staged plaintext is deleted.
 #   4. Verify the sealed set; only then advance .last_success and apply GFS retention (never
 #      pruning when the newest set fails verification).
-#   5. If BACKUP_S3_URI is set: rclone the set offsite, verify the remote copy (rclone check +
-#      remote CHECKSUMS comparison), and only then apply the offsite retention policy.
+#   5. If BACKUP_OFFSITE_TARGETS (or BACKUP_S3_URI) is set: rclone the set to each target, verify
+#      each remote copy (rclone check + remote CHECKSUMS comparison), and only then apply that
+#      target's offsite retention policy. The cycle counts as durable only when at least
+#      BACKUP_OFFSITE_MIN_COPIES targets verify (default 2); fewer reports failure, which fires
+#      AuraBackupUnderReplicated.
 #
 # The host holds only the age PUBLIC key. Decryption needs the private key, which is kept
 # offline -- see docs/guides/maintenance-guide.md "Backup encryption keys".
@@ -40,6 +43,20 @@ OFFSITE_KEEP_MONTHLY=${BACKUP_OFFSITE_KEEP_MONTHLY:-$KEEP_MONTHLY}
 # Legacy flat artifacts (postgres-*.dump etc. written before backup sets existed) are unencrypted;
 # they age out on the old day-based rule once a verified set exists.
 LEGACY_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-14}
+
+# Offsite targets: whitespace-separated rclone remotes. Several targets must be named in an
+# rclone.conf (RCLONE_CONFIG_FILE), one remote per provider. A single target may instead be an
+# s3 URI with credentials from BACKUP_S3_ACCESS_KEY_FILE / BACKUP_S3_SECRET_KEY_FILE.
+# BACKUP_S3_URI is the pre-multi-target name and still works as a one-target list.
+OFFSITE_TARGETS=${BACKUP_OFFSITE_TARGETS:-${BACKUP_S3_URI:-}}
+# A cycle counts as durable only when this many targets verify. Defaults to 2: one provider
+# losing the data must not be the only copy.
+OFFSITE_MIN_COPIES=${BACKUP_OFFSITE_MIN_COPIES:-2}
+OFFSITE_TARGET_COUNT=0
+for _target in $OFFSITE_TARGETS; do
+    OFFSITE_TARGET_COUNT=$((OFFSITE_TARGET_COUNT + 1))
+done
+OFFSITE_VERIFIED=0
 
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [backup] $*"; }
 
@@ -179,6 +196,8 @@ write_backup_metrics() {
     offsite_configured=$1
     offsite_exit=$2
     config_error=${3:-0}
+    offsite_verified=${4:-0}
+    offsite_required=${5:-0}
     metrics_dir="${BACKUP_METRICS_DIR:-/textfile}"
     mkdir -p "$metrics_dir"
     last=$(cat "$BACKUP_DIR/.last_success" 2>/dev/null || echo 0)
@@ -205,14 +224,20 @@ aura_backup_offsite_last_success_timestamp_seconds $offsite_last
 # HELP aura_backup_offsite_last_exit_code Last offsite copy+verify exit code (0 if offsite is not configured).
 # TYPE aura_backup_offsite_last_exit_code gauge
 aura_backup_offsite_last_exit_code $offsite_exit
+# HELP aura_backup_offsite_copies_verified Offsite targets whose copy of the last set passed remote verification.
+# TYPE aura_backup_offsite_copies_verified gauge
+aura_backup_offsite_copies_verified $offsite_verified
+# HELP aura_backup_offsite_copies_required Offsite targets that must verify for a set to count as durable (BACKUP_OFFSITE_MIN_COPIES).
+# TYPE aura_backup_offsite_copies_required gauge
+aura_backup_offsite_copies_required $offsite_required
 EOF
     mv "$tmp" "$metrics_dir/aura_backup.prom"
 }
 
-# Resolves BACKUP_S3_URI into an rclone remote path, exporting rclone config env as needed.
-# Prints the remote base on stdout.
+# Resolves one offsite target into an rclone remote path, exporting rclone config env as needed.
+# Prints the remote base on stdout. $1 is the target as listed in BACKUP_OFFSITE_TARGETS.
 resolve_offsite_remote() {
-    uri="${BACKUP_S3_URI:-}"
+    uri=$1
     config="${RCLONE_CONFIG_FILE:-}"
     if [ -n "$config" ] && [ -f "$config" ]; then
         export RCLONE_CONFIG="$config"
@@ -246,30 +271,57 @@ resolve_offsite_remote() {
     esac
 }
 
+# Uploads and verifies one set to every offsite target, then sets OFFSITE_VERIFIED to how many
+# passed. Each target is independent: one failing provider does not stop the others. Returns 0
+# only when at least OFFSITE_MIN_COPIES targets verified; a single surviving copy is still
+# uploaded, but the cycle reports failure so the under-replication alert fires.
 copy_offsite() {
     set_dir=$1
+    OFFSITE_VERIFIED=0
     if ! command -v rclone >/dev/null 2>&1; then
-        log "ERROR: BACKUP_S3_URI is set but rclone is not installed"
+        log "ERROR: offsite targets are set but rclone is not installed"
         return 1
     fi
-    # Not via $(...): the function exports rclone config into this shell.
-    resolve_offsite_remote > "$STAGING/.remote" || return 1
-    remote=$(cat "$STAGING/.remote")
-    rm -f "$STAGING/.remote"
+    if [ "$OFFSITE_TARGET_COUNT" -gt 1 ] && [ ! -f "${RCLONE_CONFIG_FILE:-}" ]; then
+        log "ERROR: several offsite targets need named remotes in RCLONE_CONFIG_FILE (not found)"
+        return 1
+    fi
 
-    bk_offsite_push "$set_dir" "$remote" || return 1
-    date -u +%s > "$BACKUP_DIR/.last_offsite_success"
+    for target in $OFFSITE_TARGETS; do
+        # Not via $(...): resolve exports rclone config into this shell.
+        if ! resolve_offsite_remote "$target" > "$STAGING/.remote"; then
+            log "ERROR: cannot resolve offsite target $target"
+            rm -f "$STAGING/.remote"
+            continue
+        fi
+        remote=$(cat "$STAGING/.remote")
+        rm -f "$STAGING/.remote"
 
-    # Retention runs only after this cycle's upload verified; its failure is logged, not fatal to
-    # the (already verified) copy.
-    bk_offsite_prune "$remote" "$(basename "$set_dir")" \
-        "$OFFSITE_KEEP_DAILY" "$OFFSITE_KEEP_WEEKLY" "$OFFSITE_KEEP_MONTHLY" \
-        || log "WARNING: offsite retention skipped this cycle"
-    # Pre-P1.3 cycles copied flat, unencrypted artifacts to the bucket root; let those age out.
-    rclone delete "$remote" --min-age "${OFFSITE_KEEP_DAILY}d" \
-        --include '/postgres-*.dump' --include '/redis-*.rdb' --include '/qdrant-*/**' \
-        --include '/.last_success' --include '/.last_offsite_success' || true
-    log "offsite copy ok (keep daily=$OFFSITE_KEEP_DAILY weekly=$OFFSITE_KEEP_WEEKLY monthly=$OFFSITE_KEEP_MONTHLY)"
+        if ! bk_offsite_push "$set_dir" "$remote"; then
+            log "ERROR: offsite copy to $target did not verify"
+            continue
+        fi
+        OFFSITE_VERIFIED=$((OFFSITE_VERIFIED + 1))
+
+        # Retention runs only after this target's upload verified; its failure is logged, not
+        # fatal to the (already verified) copy.
+        bk_offsite_prune "$remote" "$(basename "$set_dir")" \
+            "$OFFSITE_KEEP_DAILY" "$OFFSITE_KEEP_WEEKLY" "$OFFSITE_KEEP_MONTHLY" \
+            || log "WARNING: offsite retention skipped for $target this cycle"
+        # Pre-P1.3 cycles copied flat, unencrypted artifacts to the bucket root; let those age out.
+        rclone delete "$remote" --min-age "${OFFSITE_KEEP_DAILY}d" \
+            --include '/postgres-*.dump' --include '/redis-*.rdb' --include '/qdrant-*/**' \
+            --include '/.last_success' --include '/.last_offsite_success' || true
+        log "offsite copy ok at $target (keep daily=$OFFSITE_KEEP_DAILY weekly=$OFFSITE_KEEP_WEEKLY monthly=$OFFSITE_KEEP_MONTHLY)"
+    done
+
+    if [ "$OFFSITE_VERIFIED" -ge "$OFFSITE_MIN_COPIES" ]; then
+        date -u +%s > "$BACKUP_DIR/.last_offsite_success"
+        log "offsite: $OFFSITE_VERIFIED of $OFFSITE_TARGET_COUNT target(s) verified (required $OFFSITE_MIN_COPIES)"
+        return 0
+    fi
+    log "ERROR: offsite: only $OFFSITE_VERIFIED of $OFFSITE_TARGET_COUNT target(s) verified; BACKUP_OFFSITE_MIN_COPIES=$OFFSITE_MIN_COPIES not met"
+    return 1
 }
 
 cleanup_staging() {
@@ -332,11 +384,15 @@ ensure_tools
 
 while true; do
     offsite_configured=0
-    [ -n "${BACKUP_S3_URI:-}" ] && offsite_configured=1
+    offsite_required=0
+    if [ -n "$OFFSITE_TARGETS" ]; then
+        offsite_configured=1
+        offsite_required=$OFFSITE_MIN_COPIES
+    fi
 
     if ! bk_require_encryption_config; then
         log "cycle REFUSED -- fix the backup encryption configuration; previous backups retained"
-        write_backup_metrics "$offsite_configured" "$offsite_configured" 1
+        write_backup_metrics "$offsite_configured" "$offsite_configured" 1 0 "$offsite_required"
         pause_until_next_cycle
         continue
     fi
@@ -348,6 +404,7 @@ while true; do
             prune_legacy
         fi
         offsite_exit=0
+        OFFSITE_VERIFIED=0
         if [ "$offsite_configured" -eq 1 ]; then
             STAGING="$BACKUP_DIR/.staging-offsite"
             mkdir -p "$STAGING"
@@ -357,11 +414,11 @@ while true; do
             fi
             cleanup_staging
         fi
-        write_backup_metrics "$offsite_configured" "$offsite_exit" 0
+        write_backup_metrics "$offsite_configured" "$offsite_exit" 0 "$OFFSITE_VERIFIED" "$offsite_required"
         log "cycle complete"
     else
         log "cycle FAILED -- previous backups retained, nothing pruned"
-        write_backup_metrics "$offsite_configured" "$offsite_configured" 0
+        write_backup_metrics "$offsite_configured" "$offsite_configured" 0 0 "$offsite_required"
     fi
     pause_until_next_cycle
 done
