@@ -1,7 +1,11 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/ai/knowledge/knowledge_center.dart';
 import '../../../core/network/aura_api_error.dart';
+import '../../../core/network/idempotency.dart';
 import '../domain/knowledge_document.dart';
 
 class KnowledgeUiState {
@@ -47,7 +51,94 @@ class KnowledgeUiState {
   }
 }
 
+/// A write whose outcome is not settled, kept so a retry of the *same* content reuses its
+/// Idempotency-Key and the server replays rather than saving twice (INT-017).
+class _PendingWrite {
+  const _PendingWrite(this.fingerprint, this.key);
+  final String fingerprint;
+  final String key;
+}
+
 class KnowledgeViewModel extends Notifier<KnowledgeUiState> {
+  _PendingWrite? _pendingIngest;
+  _PendingWrite? _pendingUpload;
+
+  /// The key for this write: the pending one when [fingerprint] matches it, else a new one.
+  static _PendingWrite _keyFor(_PendingWrite? pending, String fingerprint) {
+    if (pending != null && pending.fingerprint == fingerprint) return pending;
+    return _PendingWrite(fingerprint, newIdempotencyKey());
+  }
+
+  static String _fingerprint(List<Object?> parts, List<int> body) {
+    final digest = sha256.convert(body).toString();
+    return [...parts.map((p) => p?.toString() ?? ''), digest].join('\u0000');
+  }
+
+  /// The message for an ingest or upload that did not succeed (INT-021).
+  String _failureMessage(KnowledgeIngestResult result, {required bool pdf}) {
+    final what = pdf ? 'this PDF' : 'this document';
+    final limit = result.limitBytes ?? ref.read(knowledgeCenterProvider).maxDocumentBytes;
+    return switch (result.failure) {
+      KnowledgeIngestFailure.tooLarge =>
+        '${pdf ? 'This PDF' : 'This document'} is larger than the server\'s '
+            '${_megabytes(limit)} limit.',
+      KnowledgeIngestFailure.rateLimited =>
+        'Too many uploads right now. Wait a minute, then try again.',
+      KnowledgeIngestFailure.unavailable =>
+        'The knowledge library is unavailable right now. Try again later.',
+      KnowledgeIngestFailure.inProgress =>
+        'AURA is still saving $what. Refresh in a moment before trying again.',
+      KnowledgeIngestFailure.timeout =>
+        'AURA is taking a long time with $what. It may still be saved: refresh to check. '
+            'Trying again will not add it twice.',
+      KnowledgeIngestFailure.network =>
+        'Could not reach AURA. Trying again will not add it twice.',
+      KnowledgeIngestFailure.unauthorized => 'Sign in again to continue.',
+      KnowledgeIngestFailure.forbidden => 'You do not have permission to add documents.',
+      KnowledgeIngestFailure.server =>
+        'AURA could not save $what. Trying again will not add it twice.',
+      KnowledgeIngestFailure.rejected || null =>
+        (result.failureMessage?.isNotEmpty ?? false)
+            ? 'Could not add $what: ${result.failureMessage}'
+            : (pdf ? 'Could not upload this PDF.' : 'Could not add this document.'),
+    };
+  }
+
+  static String _megabytes(int bytes) {
+    final mb = bytes / (1024 * 1024);
+    return mb == mb.roundToDouble() ? '${mb.round()} MB' : '${mb.toStringAsFixed(1)} MB';
+  }
+
+  /// Reports a 2xx outcome; returns whether the library changed and should be reloaded.
+  bool _reportSaved(KnowledgeIngestResult result, {required String savedWord}) {
+    switch (result.skippedReason) {
+      case null || '':
+        final quarantine = result.quarantinedChunks > 0
+            ? ' ${result.quarantinedChunks} passage(s) were held back.'
+            : '';
+        state = state.copyWith(ingestMessage: '$savedWord.$quarantine', ingestError: false);
+        return true;
+      case 'unchanged_content':
+        state = state.copyWith(
+          ingestMessage: 'Already in your library, unchanged. Nothing new was saved.',
+          ingestError: false,
+        );
+        return false;
+      case 'fully_quarantined':
+        state = state.copyWith(
+          ingestMessage: 'Not saved: every passage was held back by the safety check.',
+          ingestError: true,
+        );
+        return false;
+      default:
+        state = state.copyWith(
+          ingestMessage: 'Not saved (${result.skippedReason}).',
+          ingestError: true,
+        );
+        return false;
+    }
+  }
+
   @override
   KnowledgeUiState build() {
     Future.microtask(refresh);
@@ -78,26 +169,25 @@ class KnowledgeViewModel extends Notifier<KnowledgeUiState> {
     required String content,
     String? documentId,
   }) async {
+    final pending = _keyFor(
+      _pendingIngest,
+      _fingerprint(['text', title, documentId], utf8.encode(content)),
+    );
     final result = await ref.read(knowledgeCenterProvider).ingestDocumentResult(
           title: title,
           content: content,
           documentId: documentId,
+          idempotencyKey: pending.key,
         );
+    _pendingIngest = !result.ok && result.retryWithSameKey ? pending : null;
     if (!result.ok) {
       state = state.copyWith(
-        ingestMessage: 'Could not add this document.',
+        ingestMessage: _failureMessage(result, pdf: false),
         ingestError: true,
       );
       return;
     }
-    final quarantine = result.quarantinedChunks > 0
-        ? ' ${result.quarantinedChunks} passage(s) were held back.'
-        : '';
-    state = state.copyWith(
-      ingestMessage: 'Saved.$quarantine',
-      ingestError: false,
-    );
-    await refresh();
+    if (_reportSaved(result, savedWord: 'Saved')) await refresh();
   }
 
   Future<void> uploadPdf({
@@ -105,26 +195,22 @@ class KnowledgeViewModel extends Notifier<KnowledgeUiState> {
     required List<int> bytes,
     String filename = 'document.pdf',
   }) async {
+    final pending = _keyFor(_pendingUpload, _fingerprint(['pdf', title, filename], bytes));
     final result = await ref.read(knowledgeCenterProvider).uploadPdf(
           title: title,
           bytes: bytes,
           filename: filename,
+          idempotencyKey: pending.key,
         );
+    _pendingUpload = !result.ok && result.retryWithSameKey ? pending : null;
     if (!result.ok) {
       state = state.copyWith(
-        ingestMessage: 'Could not upload this PDF.',
+        ingestMessage: _failureMessage(result, pdf: true),
         ingestError: true,
       );
       return;
     }
-    final quarantine = result.quarantinedChunks > 0
-        ? ' ${result.quarantinedChunks} passage(s) were held back.'
-        : '';
-    state = state.copyWith(
-      ingestMessage: 'Uploaded.$quarantine',
-      ingestError: false,
-    );
-    await refresh();
+    if (_reportSaved(result, savedWord: 'Uploaded')) await refresh();
   }
 
   Future<void> search(String query) async {
@@ -132,8 +218,25 @@ class KnowledgeViewModel extends Notifier<KnowledgeUiState> {
     state = state.copyWith(search: result);
   }
 
+  /// Deletes a document. A failure is reported in the action banner and the list stays as
+  /// it was; it used to throw out of the button's callback (INT-021).
   Future<void> remove(String documentId) async {
-    await ref.read(knowledgeCenterProvider).deleteDocument(documentId);
+    try {
+      await ref.read(knowledgeCenterProvider).deleteDocument(documentId);
+    } on AuraApiError catch (e) {
+      state = state.copyWith(
+        ingestMessage: 'Could not delete this document: ${e.message}',
+        ingestError: true,
+      );
+      return;
+    } catch (_) {
+      state = state.copyWith(
+        ingestMessage: 'Could not reach AURA to delete this document.',
+        ingestError: true,
+      );
+      return;
+    }
+    state = state.copyWith(clearIngest: true);
     await refresh();
   }
 
