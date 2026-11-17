@@ -13,6 +13,7 @@ class BackendUrlPolicy {
 
   /// Known AURA gateway hosts users may switch between in release builds.
   static const Set<String> runtimeAllowlistedHosts = {
+    'api.aureon-ai.tech',
     'aureon-ai.tech',
     'dev.aureon-ai.tech',
     'aura-ai-production-03a4.up.railway.app',

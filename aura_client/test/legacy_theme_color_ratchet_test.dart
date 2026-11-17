@@ -12,13 +12,13 @@ import 'package:flutter_test/flutter_test.dart';
 // the palette, lower its number here in the same change. Raising one needs a reason that
 // survives review.
 const Map<String, int> _ceilings = {
-  'accentAmber': 13,
-  'accentIndigo': 45,
-  'accentTeal': 30,
-  'background': 6,
-  'cardBg': 14,
-  'primaryGradient': 3,
-  'textSecondary': 66,
+  'accentAmber': 6,
+  'accentIndigo': 6,
+  'accentTeal': 8,
+  'background': 2,
+  'cardBg': 8,
+  'primaryGradient': 0,
+  'textSecondary': 7,
   // Driven to zero by F-32: every remaining use was primary text on a theme surface.
   'textPrimary': 0,
 };

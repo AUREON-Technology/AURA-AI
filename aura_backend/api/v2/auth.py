@@ -10,10 +10,11 @@ import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from infrastructure.db.user_repo import get_or_create_user
 from services import device_pairing
+from services.google_oauth import GoogleExchangeError, exchange_desktop_code
 from services.jwt_auth import (
     HOST_AGENT_SCOPE,
     issue_desktop_session,
@@ -105,6 +106,24 @@ class DesktopLoginResponse(BaseModel):
     token_type: str
     expires_in: int
     device_id: str
+
+
+class DesktopExchangeRequest(BaseModel):
+    #: The one-time authorization code Google redirected the browser to the app's loopback
+    #: listener with. Bounds only: Google decides whether it is real.
+    code: str = Field(min_length=1, max_length=2048)
+    #: The PKCE verifier (RFC 7636 section 4.1: 43-128 unreserved characters) whose S256
+    #: challenge the app put in the authorization URL. Google checks them against each other.
+    code_verifier: str = Field(min_length=43, max_length=128, pattern=r"^[A-Za-z0-9\-._~]+$")
+    #: The loopback redirect the app used, ``http://127.0.0.1:<port>/``; must repeat the
+    #: authorization request's value exactly or Google refuses the code.
+    redirect_uri: str = Field(min_length=1, max_length=64)
+
+
+class DesktopExchangeResponse(BaseModel):
+    #: Google's ID token, unverified here -- ``/desktop/login`` verifies it. Nothing else from
+    #: Google's response (access or refresh tokens) is passed on.
+    id_token: str
 
 
 class DesktopDevice(BaseModel):
@@ -373,6 +392,34 @@ async def revoke_desktop_device(
     if not ok:
         raise HTTPException(status_code=404, detail="No such device paired to this account.")
     return {"status": "revoked"}
+
+
+@router.post("/desktop/exchange", response_model=DesktopExchangeResponse)
+async def desktop_exchange(body: DesktopExchangeRequest):
+    """Complete the desktop app's Google sign-in: trade its one-time ``code`` for an ID token.
+
+    The app cannot do this call itself. Google's token endpoint refuses the exchange for our
+    "Desktop app" client without the client secret (``invalid_request: client_secret is
+    missing``), and a secret shipped in the binary is a secret on every user's disk -- so the
+    server holds it (``GOOGLE_DESKTOP_CLIENT_SECRET``) and adds it here. See
+    ``services/google_oauth.py``.
+
+    Public, with no session, because it runs *before* one exists: it is the step that produces
+    the identity proof ``/desktop/login`` then verifies. What stops it being a relay for other
+    people's codes is that the code is useless without the PKCE verifier only the requesting app
+    holds, the redirect is pinned to the loopback form, and the client id is the server's own.
+    It mints no session and returns nothing but the ID token; the operator gate and
+    device-bound issuance stay in ``/desktop/login``.
+    """
+    try:
+        id_token = await exchange_desktop_code(
+            code=body.code,
+            code_verifier=body.code_verifier,
+            redirect_uri=body.redirect_uri,
+        )
+    except GoogleExchangeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return {"id_token": id_token}
 
 
 @router.post("/desktop/login", response_model=DesktopLoginResponse)

@@ -27,6 +27,7 @@ class DesktopOAuthResult {
 Future<DesktopOAuthResult> signInWithGoogleLoopback({
   required String clientId,
   String clientSecret = '',
+  Uri? backendExchangeEndpoint,
   Duration timeout = const Duration(minutes: 5),
   Future<bool> Function(Uri uri)? launch,
   Uri? tokenEndpoint,

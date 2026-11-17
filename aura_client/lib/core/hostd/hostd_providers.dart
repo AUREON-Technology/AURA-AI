@@ -57,6 +57,40 @@ class HostdStatusSnapshot {
   final String? backendUrl;
   final List<HostdRoot> roots;
   final String? error;
+
+  /// Whether the daemon holds a pairing for a *different* server than [appBackendUrl], the one
+  /// this app is signed in to.
+  ///
+  /// The daemon keeps its own `config.json` (backend URL plus device token), written when it was
+  /// last paired, and keeps dialling that URL for as long as it runs. When the backend moves --
+  /// found live 2026-11-17, after the production backend moved to `api.aureon-ai.tech` -- a
+  /// daemon paired to the old host retries a dead address forever: the status bar said
+  /// "Reconnecting to server..." indefinitely and the Engineer reported it could not touch any
+  /// file. Nothing offered a way out, because Pair was only shown to an *unpaired* daemon. This is
+  /// the check that makes the difference visible, and re-pairing the way out.
+  ///
+  /// False when the daemon is not paired (nothing to be stale) or did not report its URL (an
+  /// older aura_hostd), so neither case raises a false alarm.
+  bool pairedToDifferentServer(String appBackendUrl) {
+    final daemonUrl = backendUrl;
+    if (!authenticated || daemonUrl == null || daemonUrl.trim().isEmpty) return false;
+    return !sameBackendServer(daemonUrl, appBackendUrl);
+  }
+}
+
+/// Whether two backend base URLs name the same server: same scheme, host and port, ignoring case,
+/// a trailing slash and an explicit default port. Anything that does not parse as a URL falls back
+/// to a trimmed, case-insensitive comparison rather than reporting a difference it cannot prove.
+bool sameBackendServer(String a, String b) {
+  final left = Uri.tryParse(a.trim());
+  final right = Uri.tryParse(b.trim());
+  if (left == null || right == null || !left.hasAuthority || !right.hasAuthority) {
+    String bare(String value) => value.trim().toLowerCase().replaceAll(RegExp(r'/+$'), '');
+    return bare(a) == bare(b);
+  }
+  return left.scheme.toLowerCase() == right.scheme.toLowerCase() &&
+      left.host.toLowerCase() == right.host.toLowerCase() &&
+      left.port == right.port;
 }
 
 final hostdControlClientProvider = Provider<HostdControlClient>((ref) {

@@ -50,6 +50,9 @@ PUBLIC = {
     ("POST", "/api/v3/auth/revoke"): "authenticated by the refresh token in the body",
     ("POST", "/api/v3/auth/desktop/pair/start"): "RFC 8628 device flow: daemon has no identity yet",
     ("POST", "/api/v3/auth/desktop/pair/poll"): "RFC 8628 device flow: bound to an unguessable id",
+    ("POST", "/api/v3/auth/desktop/exchange"): "runs before any session exists: trades the app's "
+        "single-use Google code, useless without its PKCE verifier and a loopback redirect, for "
+        "an ID token; mints no session (tests/unit/test_desktop_code_exchange.py)",
     ("GET", "/api/v3/integrations/github/callback"): "browser redirect; authenticated by the "
         "single-use OAuth `state` (tests/unit/test_github_oauth_state.py); links nothing itself",
     ("POST", "/api/v3/integrations/github/callback/confirm"): "the callback page's confirmation; "

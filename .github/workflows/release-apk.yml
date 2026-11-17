@@ -16,7 +16,7 @@ on:
       backend_url:
         description: "Backend URL to bake into the build"
         required: false
-        default: "https://aureon-ai.tech"
+        default: "https://api.aureon-ai.tech"
 
 permissions:
   contents: read
@@ -58,7 +58,7 @@ jobs:
         # Android versionCode / iOS CFBundleVersion; pubspec's `3.0.1` has no `+N`, so every
         # build was versionCode 1 and Play refuses a second upload with the same one.
         env:
-          BACKEND_URL: ${{ github.event.inputs.backend_url || 'https://aureon-ai.tech' }}
+          BACKEND_URL: ${{ github.event.inputs.backend_url || 'https://api.aureon-ai.tech' }}
           BUILD_NUMBER: ${{ github.run_number }}
         run: flutter build apk --release --build-number="$BUILD_NUMBER" --dart-define=BACKEND_URL="$BACKEND_URL"
 
@@ -126,7 +126,7 @@ jobs:
           AURA_RELEASE_STORE_PASSWORD: ${{ secrets.AURA_RELEASE_STORE_PASSWORD }}
           AURA_RELEASE_KEY_PASSWORD: ${{ secrets.AURA_RELEASE_KEY_PASSWORD }}
           AURA_RELEASE_KEY_ALIAS: ${{ secrets.AURA_RELEASE_KEY_ALIAS }}
-          BACKEND_URL: ${{ github.event.inputs.backend_url || 'https://aureon-ai.tech' }}
+          BACKEND_URL: ${{ github.event.inputs.backend_url || 'https://api.aureon-ai.tech' }}
           BUILD_NUMBER: ${{ github.run_number }}
         run: flutter build appbundle --release --build-number="$BUILD_NUMBER" --dart-define=BACKEND_URL="$BACKEND_URL"
 

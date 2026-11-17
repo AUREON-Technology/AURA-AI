@@ -306,6 +306,10 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
   }
 
   Widget _buildStatusCard(AuraPalette palette, HostdStatusSnapshot status, HostdSupervisor supervisor) {
+    // Paired, but to a server other than the one this app is signed in to -- see
+    // HostdStatusSnapshot.pairedToDifferentServer. Pairing again is the only way to move it.
+    final appBackendUrl = ref.watch(backendUrlProvider);
+    final otherServer = status.pairedToDifferentServer(appBackendUrl);
     return AuraCard(
       padding: const EdgeInsets.all(AuraSpacing.lg),
       child: Column(
@@ -328,6 +332,8 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
                     ? 'Not running'
                     : !status.authenticated
                         ? 'Running, not paired'
+                        : otherServer
+                        ? 'Running, paired to a different server'
                         // Paired (stored token) but not connected happens right after a drop --
                         // a backend redeploy, a network blip -- while the daemon's reconnect
                         // loop is in backoff; every tool call fails during that window, so this
@@ -347,6 +353,13 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
             const SizedBox(height: AuraSpacing.xs),
             Text('Backend: ${status.backendUrl}', style: TextStyle(color: palette.textSecondary, fontSize: 12)),
           ],
+          if (otherServer) ...[
+            const SizedBox(height: AuraSpacing.xs),
+            Text(
+              'This app is signed in to $appBackendUrl. Pair again to move the daemon there.',
+              style: TextStyle(color: palette.warning, fontSize: 12),
+            ),
+          ],
           const SizedBox(height: AuraSpacing.md),
           Wrap(
             spacing: AuraSpacing.sm,
@@ -360,8 +373,13 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
                   variant: AuraButtonVariant.secondary,
                   onPressed: () => _stopDaemon(supervisor),
                 ),
-              if (status.reachable && !status.authenticated)
-                AuraButton(label: 'Pair this device', icon: Icons.link, loading: _pairing, onPressed: _pairDevice),
+              if (status.reachable && (!status.authenticated || otherServer))
+                AuraButton(
+                  label: otherServer ? 'Pair again' : 'Pair this device',
+                  icon: Icons.link,
+                  loading: _pairing,
+                  onPressed: _pairDevice,
+                ),
             ],
           ),
         ],
