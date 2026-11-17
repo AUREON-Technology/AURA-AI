@@ -107,6 +107,19 @@ Ingest, upload, delete and pin/unpin require `manage_knowledge` (Owner or Admin)
 - **Refusals.** HTTP 402 `plan_limit`. Operators and service keys are unmetered. Operations guide:
   `docs/deployment/plans-and-limits.md`.
 
+### 8. Subscriptions and billing (SaaS P1-D1)
+
+- **Ownership.** AURA owns each workspace's subscription (`aura_subscriptions`, migration `0022`).
+  Fawry only collects payments (`aura_payments`).
+- **Notifications.** A payment leaves `pending` exactly once (a conditional UPDATE), so a duplicate
+  or out-of-order provider notification is a no-op.
+- **What changes the plan.** A paid payment activates or extends the subscription and sets the
+  plan with `source="subscription"`. A wrong amount activates nothing.
+- **The hourly cycle.** It renews, moves unpaid subscriptions past due → grace (full access) →
+  expired (Free), and reconciles pending payments with Fawry.
+- **Secrets.** The Fawry secure key is read from the environment through a property, never a
+  settings field. Operations guide: `docs/deployment/billing-fawry.md`.
+
 ## Consequences
 
 - Tables `aura_workspaces`, `aura_workspace_members` and `aura_workspace_invites` arrive with Alembic
