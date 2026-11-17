@@ -68,8 +68,10 @@ async def test_binding_roundtrip(stores) -> None:
 
 async def test_event_recorded_once_even_concurrently(stores) -> None:
     _b, events, _ws = stores
+    assert await events.seen("apple", "evt-1") is False
     results = await asyncio.gather(*(events.record("apple", "evt-1", T0) for _ in range(10)))
     assert results.count(True) == 1
+    assert await events.seen("apple", "evt-1") is True and await events.seen("google", "evt-1") is False
     assert await events.record("google", "evt-1", T0) is True   # per provider
 
 

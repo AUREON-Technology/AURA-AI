@@ -125,5 +125,20 @@ async def test_play_errors() -> None:
 
 
 def test_play_client_repr_hides_the_key() -> None:
-    client = GooglePlayClient(PKG, {"private_key": "-----BEGIN PRIVATE KEY-----SECRET"})
+    client = GooglePlayClient(PKG, {"private_key": "not-a-real-key-SECRET"})
     assert "SECRET" not in repr(client)
+
+
+async def test_acknowledge_posts_to_the_subscription_token() -> None:
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json={})
+
+    await _client(handler).acknowledge("aura.pro", "t/1")
+    assert seen[0].method == "POST" and seen[0].headers["Authorization"] == "Bearer sa-token"
+    assert seen[0].url.raw_path.decode() == (
+        "/androidpublisher/v3/applications/tech.aureon.app/purchases/subscriptions/aura.pro/tokens/t%2F1:acknowledge")
+    with pytest.raises(DependencyUnavailableError):
+        await _client(lambda r: httpx.Response(400, json={})).acknowledge("aura.pro", "t")

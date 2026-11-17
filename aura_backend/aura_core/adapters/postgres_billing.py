@@ -168,6 +168,14 @@ class PostgresStoreEventLog:
     def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
         self._pool = pool or PostgresPool(url)
 
+    async def seen(self, provider: str, event_id: str) -> bool:
+        pool = await self._pool._get_pool()
+        async with pool.acquire() as conn:
+            return bool(await conn.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM aura_store_events WHERE provider = $1 AND event_id = $2)",
+                provider, event_id,
+            ))
+
     async def record(self, provider: str, event_id: str, at: datetime) -> bool:
         pool = await self._pool._get_pool()
         async with pool.acquire() as conn:

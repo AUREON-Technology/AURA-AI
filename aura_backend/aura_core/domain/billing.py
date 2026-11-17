@@ -143,7 +143,9 @@ def apply_payment(sub: Subscription | None, payment: Payment, now: datetime) -> 
         plan_id=payment.plan_id,
         seats=payment.seats,
         status=SubscriptionStatus.ACTIVE,
-        provider=sub.provider if sub is not None else "fawry",
+        # A Fawry payment makes this a Fawry subscription, even one that was a store's: otherwise
+        # the cycle would never issue its renewals (it skips store-renewed subscriptions).
+        provider="fawry",
         period_start=start,
         period_end=add_month(start),
         updated_at=now,

@@ -133,6 +133,10 @@ class GooglePushVerifier:
         self._email = service_account_email.lower()
         self._verify = verify_token or _default_verify_token
 
+    def parse(self, body: bytes) -> PlayPush | None:
+        """``parse_push``, here so the billing engine needs no adapter import."""
+        return parse_push(body)
+
     async def verify(self, authorization: str | None) -> None:
         scheme, _, token = (authorization or "").partition(" ")
         if scheme.lower() != "bearer" or not token.strip():
@@ -232,3 +236,17 @@ class GooglePlayClient:
             linked_purchase_token=linked if isinstance(linked, str) and linked else None,
             acknowledged=data.get("acknowledgementState") == "ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED",
         )
+
+    async def acknowledge(self, product_id: str, purchase_token: str) -> None:
+        """``purchases.subscriptions.acknowledge``. Play refunds a purchase nobody acknowledged
+        within three days; the app acknowledges too, so a failure here is logged, not fatal."""
+        url = (f"{_API}/{quote(self.package_name, safe='')}/purchases/subscriptions/"
+               f"{quote(product_id, safe='')}/tokens/{quote(purchase_token, safe='')}:acknowledge")
+        try:
+            bearer = await self._token_provider()
+            response = await self._client().post(url, headers={"Authorization": f"Bearer {bearer}"}, json={})
+        except Exception as exc:
+            raise DependencyUnavailableError("Google Play did not answer", dependency="google_play", cause=exc) from exc
+        if response.status_code >= 300:
+            raise DependencyUnavailableError("Google Play refused the acknowledgement", dependency="google_play",
+                                             details={"status": response.status_code})

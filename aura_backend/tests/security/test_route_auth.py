@@ -58,6 +58,12 @@ PUBLIC = {
     ("POST", "/api/v3/billing/fawry/notify"): "Fawry's server notification; authenticated by its "
         "SHA-256 messageSignature over the payment and our secure key (tests/unit/test_fawry_adapter.py, "
         "tests/integration/test_billing_api.py); 403 without it, and a payment leaves pending once",
+    ("POST", "/api/v3/billing/apple/notify"): "App Store Server Notification V2; authenticated by its "
+        "ES256 JWS whose x5c chain must end in the pinned Apple Root CA - G3 "
+        "(tests/unit/test_apple_store_verifier.py, tests/integration/test_store_billing_api.py); 403 without it",
+    ("POST", "/api/v3/billing/google/notify"): "Pub/Sub push of Play RTDN; authenticated by Google's OIDC "
+        "token for our audience and push service account, and acts only on the Play API's own answer "
+        "(tests/unit/test_google_play_adapter.py, tests/integration/test_store_billing_api.py); 403 without it",
     ("POST", "/api/v3/integrations/github/callback/confirm"): "the callback page's confirmation; "
         "spends the single-use OAuth `state` (tests/unit/test_github_link_confirmation.py)",
 }

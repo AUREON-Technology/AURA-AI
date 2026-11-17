@@ -185,6 +185,7 @@ class Container:
         self.tenancy.seat_limit = self.plans.seat_limit
         self.tenancy.plan_of = self.plans.plan_id
         self.billing = self._build_billing()
+        self.store_billing = self._build_store_billing()
 
         self.providers = build_providers(
             settings.llm, model_allowlist=settings.security.model_allowlist
@@ -1392,6 +1393,40 @@ class Container:
             subscriptions=subscriptions, payments=payments, provider=provider, plans=self.plans,
             tenancy=self.tenancy, clock=self.clock, audit=self.audit, settings=billing,
             prices=load_prices(billing.prices_json), locks=locks,
+        )
+
+    def _build_store_billing(self) -> Any:
+        """App Store and Google Play subscriptions (SaaS P1-D2). Shares D1's subscription store,
+        locks and audit; each store is wired only when its settings are complete."""
+        from .billing import StoreBillingService
+        from .domain.billing import load_store_products
+
+        billing = self.settings.billing
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_billing import PostgresStoreBindingStore, PostgresStoreEventLog
+
+            url = self.settings.infrastructure.database_url
+            bindings: Any = PostgresStoreBindingStore(url, pool=self._postgres_pool())
+            events: Any = PostgresStoreEventLog(url, pool=self._postgres_pool())
+        else:
+            from .adapters.billing import InMemoryStoreBindingStore, InMemoryStoreEventLog
+
+            bindings, events = InMemoryStoreBindingStore(), InMemoryStoreEventLog()
+        apple = google_push = google_play = None
+        if billing.apple_configured:
+            from .adapters.apple_store import AppleNotificationVerifier
+
+            apple = AppleNotificationVerifier(billing.apple_bundle_id, environment=billing.apple_environment or None)
+        if billing.google_configured:
+            from .adapters.google_play import GooglePlayClient, GooglePushVerifier
+
+            google_push = GooglePushVerifier(billing.google_push_audience, billing.google_push_service_account)
+            google_play = GooglePlayClient(billing.google_package_name, billing.google_play_credentials)
+        return StoreBillingService(
+            bindings=bindings, events=events, subscriptions=self.billing.subscriptions, plans=self.plans,
+            tenancy=self.tenancy, clock=self.clock, audit=self.audit, locks=self.billing.locks,
+            settings=billing, products=load_store_products(billing.store_products_json, self.plans.catalogue),
+            apple=apple, google_push=google_push, google_play=google_play,
         )
 
     def _build_idempotency_store(self) -> Any:

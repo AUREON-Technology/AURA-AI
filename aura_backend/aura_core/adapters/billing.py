@@ -143,6 +143,9 @@ class InMemoryStoreEventLog:
         self._seen: set[tuple[str, str]] = set()
         self._lock = asyncio.Lock()
 
+    async def seen(self, provider: str, event_id: str) -> bool:
+        return (provider, event_id) in self._seen
+
     async def record(self, provider: str, event_id: str, at: datetime) -> bool:
         async with self._lock:
             key = (provider, event_id)

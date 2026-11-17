@@ -1919,6 +1919,38 @@ class BillingSettings:
     renewal_lead_days: int = 3
     grace_days: int = 7
     reference_expiry_hours: int = 72
+    #: In-app subscriptions (SaaS P1-D2). Each store is off until its fields are set.
+    apple_bundle_id: str = ""
+    #: ``Production`` or ``Sandbox``; empty accepts either (useful while testing with TestFlight).
+    apple_environment: str = ""
+    google_package_name: str = ""
+    #: The audience the Pub/Sub push subscription puts in its OIDC token (the notify URL).
+    google_push_audience: str = ""
+    google_push_service_account: str = ""
+    #: Env var holding the Play service-account JSON. Read through a property, never a field.
+    google_play_credentials_env: str = "AURA_GOOGLE_PLAY_CREDENTIALS_JSON"
+    #: ``AURA_STORE_PRODUCTS``: ``{"apple": {productId: plan}, "google": {productId: plan}}``.
+    store_products_json: str = ""
+
+    @property
+    def google_play_credentials(self) -> dict | None:
+        raw = (os.environ.get(self.google_play_credentials_env, "") or "").strip()
+        if not raw:
+            return None
+        try:
+            value = json.loads(raw)
+        except ValueError:
+            return None
+        return value if isinstance(value, dict) else None
+
+    @property
+    def apple_configured(self) -> bool:
+        return bool(self.apple_bundle_id)
+
+    @property
+    def google_configured(self) -> bool:
+        return bool(self.google_package_name and self.google_push_audience and self.google_push_service_account
+                    and self.google_play_credentials)
 
     @property
     def fawry_secure_key(self) -> str:
@@ -1938,6 +1970,12 @@ class BillingSettings:
             renewal_lead_days=_int("BILLING_RENEWAL_LEAD_DAYS", 3, minimum=1, maximum=14),
             grace_days=_int("BILLING_GRACE_DAYS", 7, minimum=0, maximum=60),
             reference_expiry_hours=_int("FAWRY_REFERENCE_EXPIRY_HOURS", 72, minimum=1, maximum=720),
+            apple_bundle_id=(_env("APPLE_BUNDLE_ID", "") or "").strip(),
+            apple_environment=(_env("APPLE_ENVIRONMENT", "") or "").strip(),
+            google_package_name=(_env("GOOGLE_PACKAGE_NAME", "") or "").strip(),
+            google_push_audience=(_env("GOOGLE_PUSH_AUDIENCE", "") or "").strip(),
+            google_push_service_account=(_env("GOOGLE_PUSH_SERVICE_ACCOUNT", "") or "").strip(),
+            store_products_json=(_env("STORE_PRODUCTS", "") or "").strip(),
         )
 
 
@@ -2136,6 +2174,14 @@ class AuraSettings:
         where one of these is violated.
         """
         problems: list[str] = []
+
+        if self.billing.apple_environment not in ("", "Production", "Sandbox"):
+            problems.append("billing.apple_environment must be Production, Sandbox or empty")
+        if self.billing.google_package_name and not self.billing.google_configured:
+            # SaaS P1-D2: half a Play configuration would 503 every RTDN push, and Pub/Sub would
+            # retry them for a week before dropping them.
+            problems.append("billing.google_package_name needs AURA_GOOGLE_PUSH_AUDIENCE, "
+                            "AURA_GOOGLE_PUSH_SERVICE_ACCOUNT and the Play credentials JSON")
 
         if self.environment.is_production_like:
             # SEC-05: a single debug flag currently turns every endpoint into an

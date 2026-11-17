@@ -126,6 +126,8 @@ COVERED = {
         "TestWorkspaces::test_bob_cannot_buy_for_alices_team",
     ("POST", "/api/v3/workspaces/{workspace_id}/billing/cancel"):
         "TestWorkspaces::test_bob_cannot_cancel_alices_billing",
+    ("POST", "/api/v3/workspaces/{workspace_id}/billing/store-token"):
+        "TestWorkspaces::test_bob_cannot_bind_a_purchase_to_alices_workspace",
     ("POST", "/api/v3/insights/{insight_id}/dismiss"):
         "Postgres-only route (api/v2/insights.py): `row.user_id != user.id` -> 404; exercised "
         "against a real database by test_insights_integration.py in the legacy suite",
@@ -614,6 +616,9 @@ class TestWorkspaces:
 
     def test_bob_cannot_cancel_alices_billing(self, client, team, billing_on) -> None:
         self._refused(client.post(f"/api/v3/workspaces/{team[0]}/billing/cancel", headers=AUTH_B))
+
+    def test_bob_cannot_bind_a_purchase_to_alices_workspace(self, client, team, billing_on) -> None:
+        self._refused(client.post(f"/api/v3/workspaces/{team[0]}/billing/store-token", headers=AUTH_B))
 
     def test_bob_cannot_revoke_alices_invite(self, client, team) -> None:
         self._refused(client.delete(f"/api/v3/workspaces/{team[0]}/invites/{team[1]}", headers=AUTH_B))

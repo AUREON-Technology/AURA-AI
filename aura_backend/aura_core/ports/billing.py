@@ -104,5 +104,11 @@ class StoreBindingStore(Protocol):
 
 
 class StoreEventLog(Protocol):
+    async def seen(self, provider: str, event_id: str) -> bool:
+        """Whether ``(provider, event_id)`` was recorded. Checked under the workspace lock, before
+        the event is applied; ``record`` follows the application, so a crash in between is
+        retried by the store rather than lost."""
+        ...
+
     async def record(self, provider: str, event_id: str, at: datetime) -> bool:
         """True the first time ``(provider, event_id)`` is seen, False for a replay. Atomic."""
