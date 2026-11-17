@@ -184,6 +184,7 @@ class Container:
         self.plans = self._build_plans()
         self.tenancy.seat_limit = self.plans.seat_limit
         self.tenancy.plan_of = self.plans.plan_id
+        self.email, self.notifier = self._build_email()
         self.billing = self._build_billing()
         self.store_billing = self._build_store_billing()
 
@@ -1394,6 +1395,21 @@ class Container:
             tenancy=self.tenancy, clock=self.clock, audit=self.audit, settings=billing,
             prices=load_prices(billing.prices_json), locks=locks,
         )
+
+    def _build_email(self) -> tuple[Any, Any]:
+        """Customer email (SaaS P1-F1). With email off, a sender that only logs, and no
+        notifier at all -- nothing tries to send."""
+        email = self.settings.email
+        if not email.enabled:
+            from .adapters.email import LogEmailSender
+
+            return LogEmailSender(), None
+        from .adapters.email import SmtpEmailSender
+        from .notifications import Notifier
+
+        sender = SmtpEmailSender(email.smtp_host, email.smtp_port, email.smtp_username, email.smtp_password,
+                                 email.from_address, starttls=email.smtp_starttls)
+        return sender, Notifier(sender=sender, settings=email, audit=self.audit, clock=self.clock)
 
     def _build_store_billing(self) -> Any:
         """App Store and Google Play subscriptions (SaaS P1-D2). Shares D1's subscription store,

@@ -1985,6 +1985,40 @@ class BillingSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class EmailSettings:
+    """Customer email over SMTP (SaaS P1-F1): invites, receipts, renewal and past-due notices.
+    Off until configured; any transactional provider's SMTP endpoint works. The password is read
+    from the env var named by ``smtp_password_env`` through a property, never a field."""
+
+    enabled: bool = False
+    #: e.g. ``AURA <billing@aureon-ai.tech>``; the domain needs SPF/DKIM for the provider.
+    from_address: str = ""
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password_env: str = "AURA_SMTP_PASSWORD"
+    smtp_starttls: bool = True
+    #: Where the customer app is served, for links in email (``/invite?token=...``).
+    app_base_url: str = ""
+
+    @property
+    def smtp_password(self) -> str:
+        return (os.environ.get(self.smtp_password_env, "") or "").strip()
+
+    @classmethod
+    def from_env(cls) -> "EmailSettings":
+        return cls(
+            enabled=_bool("EMAIL_ENABLED", False),
+            from_address=(_env("EMAIL_FROM", "") or "").strip(),
+            smtp_host=(_env("SMTP_HOST", "") or "").strip(),
+            smtp_port=_int("SMTP_PORT", 587, minimum=1, maximum=65535),
+            smtp_username=(_env("SMTP_USERNAME", "") or "").strip(),
+            smtp_starttls=_bool("SMTP_STARTTLS", True),
+            app_base_url=(_env("APP_BASE_URL", "") or "").strip(),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ReleaseSettings:
     """Which build this process actually is (BLOCK-03).
 
@@ -2129,6 +2163,7 @@ class AuraSettings:
     release: ReleaseSettings = field(default_factory=ReleaseSettings)
     tenancy: TenancySettings = field(default_factory=TenancySettings)
     billing: BillingSettings = field(default_factory=BillingSettings)
+    email: EmailSettings = field(default_factory=EmailSettings)
 
     @classmethod
     def from_env(cls) -> "AuraSettings":
@@ -2167,6 +2202,7 @@ class AuraSettings:
             release=ReleaseSettings.from_env(),
             tenancy=TenancySettings.from_env(),
             billing=BillingSettings.from_env(),
+            email=EmailSettings.from_env(),
         )
 
     # -- validation --------------------------------------------------------------------
@@ -2198,6 +2234,9 @@ class AuraSettings:
             if not self.tools.require_confirmation_for_side_effects:
                 problems.append("AURA_ENGINEER_FOR_CUSTOMERS needs AURA_TOOLS_REQUIRE_CONFIRMATION=true: "
                                 "per-call confirmation stays mandatory for customers (ADR-006)")
+
+        if self.email.enabled and not (self.email.smtp_host and self.email.from_address and self.email.app_base_url):
+            problems.append("AURA_EMAIL_ENABLED needs AURA_SMTP_HOST, AURA_EMAIL_FROM and AURA_APP_BASE_URL")
 
         if self.billing.apple_environment not in ("", "Production", "Sandbox"):
             problems.append("billing.apple_environment must be Production, Sandbox or empty")
