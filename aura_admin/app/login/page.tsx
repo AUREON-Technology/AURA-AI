@@ -58,21 +58,33 @@ export default function LoginPage() {
   }, []);
 
   return (
-    <div className="login card">
-      <h1>AURA Console</h1>
-      <p className="sub">Operator access only. Consumer accounts are refused.</p>
-      {error ? <div className="banner">{error}</div> : null}
-      <div id="google-btn" />
-      {process.env.NEXT_PUBLIC_DEV_LOGIN === "1" ? (
-        <div className="row" style={{ marginTop: 16 }}>
-          <button className="btn primary" type="button" onClick={() => void exchange("mock_token")}>
-            Developer mock login
-          </button>
-          <button className="btn" type="button" onClick={() => void exchange("mock_token_super")}>
-            SuperAdmin mock login
-          </button>
+    <div className="login-page">
+      <div className="login card">
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">
+            A
+          </span>
+          <span className="brand-text">
+            <span>AURA</span>
+            <small>Operator workspace</small>
+          </span>
         </div>
-      ) : null}
+        <h1>AURA Console</h1>
+        <p className="sub">Operator access only. Consumer accounts are refused.</p>
+        {error ? <div className="banner">{error}</div> : null}
+        <div id="google-btn" />
+        {process.env.NEXT_PUBLIC_DEV_LOGIN === "1" ? (
+          <div className="row" style={{ marginTop: 16 }}>
+            <button className="btn primary" type="button" onClick={() => void exchange("mock_token")}>
+              Developer mock login
+            </button>
+            <button className="btn" type="button" onClick={() => void exchange("mock_token_super")}>
+              SuperAdmin mock login
+            </button>
+          </div>
+        ) : null}
+        <p className="fine">Confirmed changes made here write an audit event.</p>
+      </div>
     </div>
   );
 }
