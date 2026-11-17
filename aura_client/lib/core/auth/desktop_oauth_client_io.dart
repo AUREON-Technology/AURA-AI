@@ -13,23 +13,25 @@
 /// 4. Wait for exactly one request to land on the local server -- that's Google's redirect
 ///    carrying `?code=&state=`. Answer it with a small HTML page so the browser tab shows
 ///    something instead of hanging, then stop listening.
-/// 5. Exchange the authorization code for tokens directly with Google's token endpoint, proving
-///    possession of the `code` with the PKCE `code_verifier` and nothing else. RFC 8252 §8.5 --
-///    and Google's own installed-app guidance -- treat a native app as a *public* client: PKCE
-///    is the proof, and `client_secret` is left out of the request entirely.
+/// 5. Exchange the authorization code for an ID token **through the AURA backend**
+///    (`POST /api/v3/auth/desktop/exchange`, [_exchangeCodeViaBackend]). The app sends the
+///    one-time `code`, its PKCE `code_verifier` and the loopback `redirect_uri`; the server adds
+///    the OAuth client secret from its own environment, calls Google's token endpoint, and
+///    returns only the ID token.
 ///
-/// Needs a real **"Desktop app"**-type OAuth client registered in Google Cloud Console
-/// (`core/config/config.dart::googleDesktopClientId`) -- see
-/// `aura_backend/config.py::google_desktop_client_id`'s doc comment for why it can't be the same
-/// client id as the existing mobile/web login path. That type is not cosmetic: a "Web
-/// application"-type client is *confidential*, so its token endpoint refuses the exchange above
-/// with `invalid_request: client_secret is missing` however correct the PKCE is. That error was
-/// once read as a quirk of desktop login and worked around by compiling a `GOCSPX-...` secret
-/// into the client; it actually means "this client is registered as the wrong type", and
-/// [_exchangeCodeForIdToken] now says so when Google returns it.
+/// Why not call Google directly, as RFC 8252 §8.5 suggests for a public client? Because Google
+/// does not treat this client as public. Confirmed live 2026-11-17: for the registered
+/// **"Desktop app"**-type client (`core/config/config.dart::googleDesktopClientId`, shown as type
+/// Desktop in Google Cloud Console), Google's token endpoint answers a PKCE-only exchange with
+/// `invalid_request: client_secret is missing`. An earlier version of this comment read that as
+/// "the client is registered as the wrong type" and told the next person not to ship a secret --
+/// the client type was right and the diagnosis was wrong, and sign-in failed after the browser
+/// step. Compiling the secret into the binary is what once leaked one (and forced a rotation),
+/// so the secret stays on the server instead (`aura_backend/services/google_oauth.py`).
 ///
-/// A build whose configured client genuinely is a confidential one can still supply a secret via
-/// `--dart-define=GOOGLE_DESKTOP_CLIENT_SECRET=...`, but nothing needs it by default.
+/// A build can still skip the backend: when [clientSecret] is non-empty (injected with
+/// `--dart-define=GOOGLE_DESKTOP_CLIENT_SECRET=...`), or when no `backendExchangeEndpoint` is
+/// given, the exchange goes straight to Google as before. Nothing needs that by default.
 library;
 
 import 'dart:async';
@@ -66,10 +68,13 @@ const _tokenEndpoint = 'https://oauth2.googleapis.com/token';
 /// [DesktopOAuthCancelledException] if the user cancels, the browser can't be opened, Google
 /// reports an error, or nothing arrives within [timeout].
 ///
-/// [clientSecret] is optional and empty by default -- a "Desktop app" client is public and
-/// authenticates with PKCE alone, so an empty one is the normal case and is omitted from the
-/// token exchange rather than refused. Pass one only for a confidential client; see
-/// `core/config/config.dart::googleDesktopClientSecret`.
+/// [backendExchangeEndpoint] is the AURA backend's `POST /api/v3/auth/desktop/exchange`. When
+/// given (and [clientSecret] is empty) the code exchange runs there, so no secret is needed in
+/// this binary; see the library comment for why Google requires one.
+///
+/// [clientSecret] is optional and empty by default. Pass one only to make this app exchange the
+/// code with Google itself; see `core/config/config.dart::googleDesktopClientSecret`. A non-empty
+/// secret takes precedence over [backendExchangeEndpoint].
 ///
 /// [launch] and [tokenEndpoint] exist only so `desktop_oauth_client_io_test.dart` can exercise
 /// this against a local fake server instead of a real browser and Google's real token endpoint
@@ -77,6 +82,7 @@ const _tokenEndpoint = 'https://oauth2.googleapis.com/token';
 Future<DesktopOAuthResult> signInWithGoogleLoopback({
   required String clientId,
   String clientSecret = '',
+  Uri? backendExchangeEndpoint,
   Duration timeout = const Duration(minutes: 5),
   @visibleForTesting Future<bool> Function(Uri uri)? launch,
   @visibleForTesting Uri? tokenEndpoint,
@@ -139,14 +145,24 @@ Future<DesktopOAuthResult> signInWithGoogleLoopback({
 
     await _respond(request, success: true, message: 'Signed in -- you can close this tab.');
 
-    final idToken = await _exchangeCodeForIdToken(
-      tokenEndpoint: tokenEndpoint ?? Uri.parse(_tokenEndpoint),
-      clientId: clientId,
-      clientSecret: clientSecret,
-      code: code,
-      verifier: verifier,
-      redirectUri: redirectUri,
-    );
+    final String idToken;
+    if (backendExchangeEndpoint != null && clientSecret.isEmpty) {
+      idToken = await _exchangeCodeViaBackend(
+        endpoint: backendExchangeEndpoint,
+        code: code,
+        verifier: verifier,
+        redirectUri: redirectUri,
+      );
+    } else {
+      idToken = await _exchangeCodeForIdToken(
+        tokenEndpoint: tokenEndpoint ?? Uri.parse(_tokenEndpoint),
+        clientId: clientId,
+        clientSecret: clientSecret,
+        code: code,
+        verifier: verifier,
+        redirectUri: redirectUri,
+      );
+    }
     return DesktopOAuthResult(idToken: idToken);
   } finally {
     await server.close(force: true);
@@ -191,17 +207,17 @@ Future<String> _exchangeCodeForIdToken({
     final response = await request.close();
     final raw = await response.transform(utf8.decoder).join();
     if (response.statusCode != 200) {
-      // Google answers a secret-less exchange against a *confidential* client this way. It reads
-      // like "you forgot a credential", but for this flow it means the configured client id is
-      // registered as the wrong type -- a public "Desktop app" client never asks for a secret.
-      // Saying so here is what keeps the next person from re-fixing it by shipping a secret.
+      // Google demands the client secret for this client even though it is a "Desktop app" one
+      // (confirmed live 2026-11-17; the client type is not the problem). The normal build never
+      // reaches this path -- it exchanges through the backend, which holds the secret. Landing
+      // here means a build with no `backendExchangeEndpoint` talking to Google directly.
       if (clientSecret.isEmpty && raw.contains('client_secret is missing')) {
         throw DesktopOAuthCancelledException(
-          'Google rejected the PKCE-only token exchange because client id $clientId is not '
-          'registered as a "Desktop app" OAuth client -- only a confidential ("Web '
-          'application") client demands a client_secret. Register a Desktop app client in '
-          'Google Cloud Console and set GOOGLE_DESKTOP_CLIENT_ID (and the backend\'s matching '
-          'google_desktop_client_id) to it. Raw response: $raw',
+          'Google requires a client secret to exchange the sign-in code for client id '
+          '$clientId, and this build is calling Google directly without one. Sign-in normally '
+          'runs through the AURA backend (POST /api/v3/auth/desktop/exchange), which holds the '
+          'secret; use a build that does, or inject GOOGLE_DESKTOP_CLIENT_SECRET at build '
+          'time. Raw response: $raw',
         );
       }
       throw DesktopOAuthCancelledException(
@@ -212,6 +228,78 @@ Future<String> _exchangeCodeForIdToken({
     final idToken = decoded['id_token'] as String?;
     if (idToken == null) {
       throw DesktopOAuthCancelledException('Google token response had no id_token.');
+    }
+    return idToken;
+  } finally {
+    client.close(force: true);
+  }
+}
+
+/// Trades the one-time [code] for Google's ID token via the AURA backend, which adds the OAuth
+/// client secret this binary does not carry. Sends no credential of the user's -- the code is
+/// useless without [verifier], which never leaves this process except to this call.
+///
+/// Every failure becomes a [DesktopOAuthCancelledException] whose message is what the server said
+/// (its `detail`, already written to be shown) or a plain sentence when nothing answered, so the
+/// sign-in screen never has to guess between "Google said no" and "AURA is unreachable".
+Future<String> _exchangeCodeViaBackend({
+  required Uri endpoint,
+  required String code,
+  required String verifier,
+  required String redirectUri,
+}) async {
+  final client = HttpClient();
+  try {
+    final String raw;
+    final int status;
+    try {
+      final request = await client.postUrl(endpoint).timeout(const Duration(seconds: 30));
+      request.headers.contentType = ContentType.json;
+      request.write(jsonEncode({
+        'code': code,
+        'code_verifier': verifier,
+        'redirect_uri': redirectUri,
+      }));
+      final response = await request.close().timeout(const Duration(seconds: 30));
+      status = response.statusCode;
+      raw = await response.transform(utf8.decoder).join().timeout(const Duration(seconds: 30));
+    } on SocketException {
+      throw DesktopOAuthCancelledException(
+        'Could not reach the AURA server to finish signing in. Check your connection and try again.',
+      );
+    } on HandshakeException {
+      throw DesktopOAuthCancelledException(
+        'Could not make a secure connection to the AURA server to finish signing in.',
+      );
+    } on HttpException {
+      throw DesktopOAuthCancelledException(
+        'The AURA server did not answer properly while finishing sign-in. Try again.',
+      );
+    } on TimeoutException {
+      throw DesktopOAuthCancelledException(
+        'The AURA server took too long to finish signing in. Try again.',
+      );
+    }
+
+    Object? decoded;
+    try {
+      decoded = jsonDecode(raw);
+    } on FormatException {
+      decoded = null;
+    }
+    final body = decoded is Map<String, dynamic> ? decoded : const <String, dynamic>{};
+
+    if (status != 200) {
+      final detail = body['detail'];
+      throw DesktopOAuthCancelledException(
+        detail is String && detail.isNotEmpty
+            ? detail
+            : 'The AURA server could not finish signing in (HTTP $status).',
+      );
+    }
+    final idToken = body['id_token'];
+    if (idToken is! String || idToken.isEmpty) {
+      throw DesktopOAuthCancelledException('The AURA server returned no identity token.');
     }
     return idToken;
   } finally {

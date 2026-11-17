@@ -17,6 +17,7 @@
 /// vocabulary and which parts of it are not distinguishable today.
 library;
 
+import '../auth/desktop_oauth_client.dart' show DesktopOAuthCancelledException;
 import '../auth/sign_in_refused.dart';
 import 'aura_api_error.dart';
 
@@ -121,6 +122,19 @@ class AuraFailure {
             'Try another account, or ask whoever runs this AURA server to check this one.',
         canRetry: false,
         detail: error.detail,
+      );
+    }
+    if (error is DesktopOAuthCancelledException) {
+      // The desktop sign-in flow's own failures (cancelled in the browser, Google or the AURA
+      // server refusing the code, nothing answering). Each message is written to be read --
+      // by the app or by the server's `detail` -- and carries no credential. Until this case
+      // existed they all rendered as "could not classify", which is how a sign-in that failed
+      // after the browser step looked identical to an unrelated crash.
+      return AuraFailure(
+        kind: AuraFailureKind.unknown,
+        title: "Couldn't finish signing in",
+        message: error.message,
+        canRetry: true,
       );
     }
     return AuraFailure(

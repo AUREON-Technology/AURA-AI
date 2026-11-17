@@ -1,6 +1,6 @@
 import os
 
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings
 
 from aura_core.config.settings import Environment
@@ -96,15 +96,27 @@ class Settings(BaseSettings):
     # audience). Registered 2026-09-10 (Google Cloud project aura-ai-anas-gnedy) and hardcoded
     # here the same way google_client_id above is -- an OAuth client id is not a secret, it's a
     # public identifier embedded in the app itself; only the id is needed here, since
-    # verify_identity_token checks it as an audience, not a credential. The matching client
-    # *secret* is a client-side-only concern (aura_client/lib/core/config/config.dart's
-    # googleDesktopClientSecret) -- confirmed live, this registered client's token endpoint
-    # rejects a PKCE-only exchange with "client_secret is missing", so the client sends it
-    # alongside PKCE; the backend never sees or needs it. Still overridable via
+    # verify_identity_token checks it as an audience, not a credential. Still overridable via
     # AURA_GOOGLE_DESKTOP_CLIENT_ID for a deployment that registers its own.
     google_desktop_client_id: str = Field(
         default="87789110323-pprobmjkf4f16rem4kacr2nqgi9ql1i0.apps.googleusercontent.com",
         validation_alias=AliasChoices("GOOGLE_DESKTOP_CLIENT_ID", "AURA_GOOGLE_DESKTOP_CLIENT_ID"),
+    )
+    # The matching client *secret*. Confirmed live (2026-11-17): Google's token endpoint answers a
+    # PKCE-only exchange for this correctly registered "Desktop app" client with
+    # `invalid_request: client_secret is missing`, so the code exchange cannot run in the
+    # shipped app without compiling a secret into every binary -- which has already forced one
+    # rotation. It runs here instead (`POST /api/v3/auth/desktop/exchange`,
+    # services/google_oauth.py): the app sends the one-time code and its PKCE verifier, the
+    # server adds this secret, and only the resulting ID token goes back. Never committed --
+    # environment only (tests/architecture/test_no_committed_client_secrets.py) -- and a
+    # SecretStr so no log line or settings dump prints it. Empty means "not configured": the
+    # exchange route then says so (503) instead of guessing.
+    google_desktop_client_secret: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias=AliasChoices(
+            "GOOGLE_DESKTOP_CLIENT_SECRET", "AURA_GOOGLE_DESKTOP_CLIENT_SECRET"
+        ),
     )
     # Must match aura_client/android/app/build.gradle.kts `applicationId`.
     # Play Integrity rejects any token whose requestDetails.packageName differs,
