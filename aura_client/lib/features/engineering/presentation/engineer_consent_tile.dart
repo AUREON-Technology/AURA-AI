@@ -100,11 +100,13 @@ class _EngineerConsentTileState extends ConsumerState<EngineerConsentTile> {
           trailing: const Icon(Icons.refresh),
           onTap: () => ref.invalidate(engineerConsentProvider),
         ),
+      // Words, not a spinner: this row is one of many on the page, and an endless animation
+      // would be the only thing on it still moving.
       _ => AuraListTile(
           icon: icon,
           title: l10n.engineerConsentStatusTitle,
           subtitle: l10n.engineerConsentStatusLoading,
-          trailing: spinner,
+          trailing: const SizedBox.shrink(),
         ),
     };
   }

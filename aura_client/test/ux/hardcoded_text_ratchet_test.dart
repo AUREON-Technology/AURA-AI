@@ -14,7 +14,7 @@ import 'source_scan.dart';
 // lower it here in the same change. Raising it needs a reason that survives review. A
 // `Text('$value')` that only interpolates data counts too -- it is cheap to route through
 // `Text(value)` instead, and the scan stays a plain lexical check.
-const int _ceiling = 209;
+const int _ceiling = 208;
 
 final _textLiteral = RegExp(r'''(?<![\w$.])Text\(\s*['"]''');
 
