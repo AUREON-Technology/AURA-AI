@@ -221,18 +221,43 @@ A set is durable only when `BACKUP_OFFSITE_MIN_COPIES` targets (default 2) verif
 below that fails the cycle and fires `AuraBackupUnderReplicated`, because a single provider
 holding the only copy is one outage from data loss.
 
-1. Create one bucket per provider, in different companies (for example Backblaze B2, Cloudflare
-   R2, Wasabi or AWS S3). Turn on object lock or versioning on each, so a compromised VPS cannot
-   delete old sets.
-2. Name each remote in the rclone config at `deploy/secrets/backup/rclone.conf`, one section per
-   provider. Credentials stay in that file, never in the image or the compose file.
-3. Set, in the environment that runs compose:
+The chosen pair is **Backblaze B2** and **Cloudflare R2** (two companies, so neither outage nor
+account loss takes both copies). Any other S3-compatible provider works the same way.
+
+1. **Backblaze B2.** Create a private bucket with **Object Lock** enabled, and set a default
+   retention of **6 days**. Then create an application key restricted to that bucket alone, with
+   read and write. Keep its keyID and applicationKey for step 3.
+2. **Cloudflare R2.** Create a bucket and add a **bucket lock** rule of **6 days** for all
+   objects. Then create an R2 API token with *Object Read & Write*, scoped to that bucket. Keep its
+   access key ID, secret, and your Cloudflare account ID (the endpoint is
+   `https://<account-id>.r2.cloudflarestorage.com`).
+3. Copy `deploy/backup/rclone.conf.example` to `deploy/secrets/backup/rclone.conf`, run
+   `chmod 600` on it, and fill in the placeholders. It defines the remotes `b2-aura` and
+   `r2-aura`. Credentials stay in that file, never in the image or the compose file. Check that it
+   parses: `rclone --config deploy/secrets/backup/rclone.conf listremotes`.
+4. Set, in the environment that runs compose:
    ```bash
-   BACKUP_OFFSITE_TARGETS="b2-aura:aura-backups r2-aura:aura-backups"
+   BACKUP_OFFSITE_TARGETS="b2-aura:<b2-bucket> r2-aura:<r2-bucket>"
    BACKUP_OFFSITE_MIN_COPIES=2
    ```
    `BACKUP_OFFSITE_TARGETS` is a space-separated list. Several targets require `rclone.conf`;
    one target may still use `BACKUP_S3_URI` with the S3 key files.
+
+**Why 6 days.** The lock is what stops a compromised VPS from deleting the offsite copies, since
+the VPS holds keys that can delete. It must be shorter than the daily retention
+(`BACKUP_OFFSITE_KEEP_DAILY`, 7 by default; the compose file sets
+`BACKUP_OFFSITE_RETENTION_DAYS=14`). Otherwise pruning tries to delete sets that are still
+locked. That is harmless, because the cycle logs `could not remove remote` and retries the next
+night, but those sets keep being billed until the lock expires. Lengthening the lock means
+lengthening the daily retention with it.
+
+**Two settings in the example matter.** `no_check_bucket = true` on R2: a bucket-scoped token
+cannot check or create buckets, so without it every upload fails. `hard_delete = true` on B2:
+otherwise a pruned set is only hidden, and is stored and billed indefinitely. Do not add
+`disable_checksum`. rclone stores an MD5 (R2) or SHA1 (B2) of each large upload, which is what lets
+the nightly `rclone check` compare hashes rather than sizes. For a full re-read of every object
+instead, set `BACKUP_OFFSITE_VERIFY=download`. R2 charges no egress; B2 egress is free only up to
+an allowance.
 4. Confirm both copies after the first cycle: `aura_backup_offsite_copies_verified` should equal
    `aura_backup_offsite_copies_required`.
 

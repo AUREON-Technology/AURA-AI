@@ -342,6 +342,19 @@ metric_for() ( OFFSITE_MIN_COPIES=$1; . "$T/offsite-funcs.sh"; offsite_required_
     && ok "the required-copies gauge stays a positive number for any setting" \
     || bad "required-copies gauge: two=$(metric_for two) 0=$(metric_for 0) 3=$(metric_for 3)"
 
+echo "# the shipped B2 + R2 rclone example is a configuration backup.sh accepts"
+EXAMPLE="$HERE/../../backup/rclone.conf.example"
+remotes=$(sed -n 's/^\[\(.*\)\]$/\1/p' "$EXAMPLE")
+[ "$(echo "$remotes" | sort -u | wc -l | tr -d ' ')" = 2 ] \
+    && ok "the example names two distinct remotes ($(echo "$remotes" | tr '\n' ' '))" || bad "example remotes: $remotes"
+example_targets=$(echo "$remotes" | sed 's/$/:aura-backups/' | tr '\n' ' ')
+# shellcheck disable=SC2034,SC1091 # read by the sourced offsite_config_error
+example_problem=$( OFFSITE_MIN_COPIES=2; OFFSITE_TARGETS=$example_targets; . "$T/offsite-funcs.sh"; offsite_config_error )
+[ -z "$example_problem" ] && ok "...and backup.sh accepts them as two independent targets" || bad "example rejected: $example_problem"
+grep -Eq '^[[:space:]]*disable_checksum' "$EXAMPLE" \
+    && bad "the example disables upload checksums (rclone check would compare sizes only)" \
+    || ok "the example keeps upload checksums on"
+
 echo "# backup-fetch.sh: newest set from the first target whose copy verifies"
 FETCH="$HERE/../backup-fetch.sh"
 OLD=aura-20260101T000000Z
