@@ -8,6 +8,7 @@ from .arabic import (
     has_arabic,
     is_arabic_token,
     light_stem,
+    plural_ar,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "has_arabic",
     "is_arabic_token",
     "light_stem",
+    "plural_ar",
 ]

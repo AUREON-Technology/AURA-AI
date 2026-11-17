@@ -29,6 +29,7 @@ __all__ = [
     "has_arabic",
     "is_arabic_token",
     "light_stem",
+    "plural_ar",
 ]
 
 #: Arabic block + supplement + extended-A + presentation forms: what counts as Arabic *script*
@@ -139,3 +140,21 @@ def dominant_script(text: str) -> str | None:
     if latin > 0:
         return "en"
     return None
+
+
+def plural_ar(n: int, *, one: str, two: str, few: str, other: str) -> str:
+    """The Arabic phrase for a count of ``n``, by the language's plural classes.
+
+    Arabic agrees the noun with the number: «مهمة واحدة» (1), «مهمتين» (2, dual), «3 مهام»
+    (3-10, plural), «11 مهمة» (11 and up, singular after the number). ``few`` and ``other`` may
+    contain ``{n}``; ``one`` and ``two`` name the count themselves. CLDR's rule: few is
+    ``n % 100`` in 3..10; 0 and 11 upward take ``other`` (callers say "none" in their own words).
+    Digits stay Western (owner decision 7).
+    """
+    if n == 1:
+        return one
+    if n == 2:
+        return two
+    if 3 <= n % 100 <= 10:
+        return few.format(n=n)
+    return other.format(n=n)

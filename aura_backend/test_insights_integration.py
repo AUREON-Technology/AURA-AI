@@ -394,6 +394,37 @@ class TestInsightsIntegration(unittest.TestCase):
         self.assertEqual(call(generate_insights, None), "Asia/Riyadh")
         self.assertEqual(call(generate_insights, "America/Bogota"), "America/Bogota")
 
+    def test_an_arabic_user_gets_arabic_insights_and_briefing(self):
+        """``users.language = 'ar'`` writes both producers' text in Egyptian Arabic (decision 9);
+        a user who never reported a language keeps English."""
+        from infrastructure.db.base import get_session_factory
+        from infrastructure.db.models import Task
+        from services.daily_briefing import generate_daily_briefing_for_user
+        from services.insights import generate_insights_for_user
+
+        now = datetime(2026, 11, 17, 9, 0, tzinfo=timezone.utc)
+
+        async def scenario(language):
+            async with get_session_factory()() as db:
+                user = self._user("lang", "Africa/Cairo")
+                user.language = language
+                db.add(user)
+                await db.flush()
+                for _ in range(2):
+                    db.add(Task(id=uuid.uuid4(), user_id=user.id, title_enc="x",
+                                due_date=now - timedelta(days=1)))
+                await db.commit()
+                insights = await generate_insights_for_user(db, user.id, now=now)
+                briefing = await generate_daily_briefing_for_user(db, user.id, now=now)
+                await db.commit()
+                overdue = next(json.loads(r.payload_json) for r in insights if r.kind == "overdue_tasks")
+                return overdue["message"], json.loads(briefing.payload_json)["message"]
+
+        self.assertEqual(self._arun(scenario("ar")),
+                         ("عندك مهمتين متأخرين.", "حاجة واحدة لازم تعرفها النهارده."))
+        self.assertEqual(self._arun(scenario(None)),
+                         ("You have 2 overdue tasks.", "1 thing to know about today."))
+
     def test_the_insights_endpoints_remember_the_clients_language(self):
         """``X-Client-Language`` is persisted as ``ar``/``en``; a bad, unsupported or missing value
         never overwrites a good one (docs/plans/arabic-language_plan.md, stage 1)."""
