@@ -1,9 +1,23 @@
 # Web console status
 
 **As of 2026-10-28 (evening), `main` at `2337577`.** Covers `aura_admin/`, the Next.js operator console
-(Next 15.5.27) served under `/console`. The Flutter client's web target (`aura_client/web/`) is a
-different thing: it is built locally but deployed nowhere. Evidence scale and refresh steps:
-[README.md](README.md).
+(Next 15.5.27). On Railway it moves to its own host, `https://console.aureon-ai.tech/`, served
+from the root; the VPS stacks keep `/console` (see "Domain move" below). The Flutter client's web
+target (`aura_client/web/`) is a different thing: it is built locally but deployed nowhere.
+Evidence scale and refresh steps: [README.md](README.md).
+
+## Domain move to `console.aureon-ai.tech` (2026-11-18)
+
+Plan and user decisions: [`docs/plans/console-subdomain-plan.md`](../plans/console-subdomain-plan.md).
+
+| Step | Status | Evidence |
+| --- | --- | --- |
+| Image defaults to the root base path; `/console`, `/console/*` → 308 to the unprefixed path when the base path is empty | TESTED locally (2026-11-18), not CI-run | `aura_admin/Dockerfile`, `next.config.ts`; `tests/e2e/legacy-path.spec.ts`; full suite 33 passed; `tsc`, lint, and both builds (root, and `/console` showing `basePath: '/console'` with no redirects) clean |
+| VPS prod/dev stacks unchanged at `/console` | BUILT (no change) | Both compose files pass `/console` as build args and runtime env |
+| Railway custom domain `console.aureon-ai.tech` on `AURA-Admin` (port 3000) | BUILT 2026-11-18 | Custom domain `a9c3ee6b-…`; Hostinger `CNAME console → mdgyf063.up.railway.app` and `TXT _railway-verify.console`, both resolving on the Hostinger NS and 8.8.8.8 |
+| Railway variables `NEXT_BASE_PATH` / `NEXT_PUBLIC_BASE_PATH` (`/console`) removed | OPEN | Do this only after the PR is merged; it is the step that moves the console to the root. Rollback: set both back to `/console` |
+| Google OAuth Authorized JavaScript origin `https://console.aureon-ai.tech` | OPEN (owner) | Without it the Google sign-in button does not load on the new host |
+| Live: `/login` 200, `/console/login` 308 → `/login`, operator sign-in | OPEN | Not proven until checked on the live host |
 
 **Re-read against commit:** `b2e14c4` (2026-11-08) for every row dated 2026-11-07 or later (their live checks came first; the re-read confirmed that tree holds what they describe); older rows carry the commit they were checked at. Refresh this line whenever a row is re-verified (audit FSA-120).
 
@@ -13,7 +27,10 @@ The console is built: 10 pages, Google sign-in for Developer+ roles, and a same-
 turns a cookie into a Bearer token against `/api/v3/admin/*`. It is wired into both compose files
 and both nginx server blocks. None of it is proven:
 - It is **not served anywhere reachable today**: `aureon-ai.tech/console/login` returns 404 on
-  Railway, the VPS takes no deploys, and the dev domain no longer resolves.
+  Railway, the VPS takes no deploys, and the dev domain no longer resolves. *Update
+  2026-11-18:* the Railway `AURA-Admin` service serves it on its generated host
+  (`aura-admin-production-03530311.up.railway.app/console/login` → 200), and it is moving to
+  `console.aureon-ai.tech` (table above).
 - Admin CI has **never run**.
 - The Track AP Super-Admin screens (AP9) have not been started.
 
