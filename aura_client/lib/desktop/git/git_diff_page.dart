@@ -43,7 +43,7 @@ class _GitDiffPageState extends ConsumerState<GitDiffPage> {
     return Scaffold(
       backgroundColor: palette.background,
       appBar: AppBar(
-        title: Text(widget.filePath, overflow: TextOverflow.ellipsis),
+        title: Text(widget.filePath, overflow: TextOverflow.ellipsis, textDirection: TextDirection.ltr),
         backgroundColor: palette.surface,
       ),
       body: SingleChildScrollView(

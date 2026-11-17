@@ -2931,4 +2931,1113 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get workspaceEmptyMessage =>
       'Open a folder to create your first workspace';
+
+  @override
+  String relativeTodayAt(String time) {
+    return 'Today $time';
+  }
+
+  @override
+  String get relativeYesterday => 'Yesterday';
+
+  @override
+  String relativeDaysAgo(int days) {
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: '$days days ago',
+      one: '1 day ago',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get coreEngineerWorkspacesUnavailableTitle => 'Workspaces unavailable';
+
+  @override
+  String get coreEngineerWorkspacesUnavailableMessage =>
+      'Could not reach the server. Your work is not lost -- try again shortly.';
+
+  @override
+  String get coreEngineerWorkspacesDisabledTitle =>
+      'Workspaces are not enabled';
+
+  @override
+  String get coreEngineerWorkspacesDisabledMessage =>
+      'This server does not run the engineer agent’s sandboxes.';
+
+  @override
+  String get coreEngineerWorkspacesEmptyTitle => 'No workspaces yet';
+
+  @override
+  String coreEngineerWorkspacesEmptyMessage(int hours) {
+    return 'Ask the engineer agent to clone a repository and one will appear here. Workspaces are removed after $hours hours without activity.';
+  }
+
+  @override
+  String get coreEngineerWorkspacesHeader => 'Engineer workspaces';
+
+  @override
+  String coreEngineerWorkspaceSemanticLabel(String repo) {
+    return 'Workspace for $repo';
+  }
+
+  @override
+  String coreEngineerWorkspaceBranch(String branch) {
+    return 'Branch $branch';
+  }
+
+  @override
+  String get coreEngineerWorkspaceDeleteTitle => 'Delete this workspace?';
+
+  @override
+  String get coreEngineerWorkspaceKeep => 'Keep';
+
+  @override
+  String coreEngineerWorkspaceDeleteBody(String repo) {
+    return 'The checkout of $repo and any uncommitted changes in it will be removed. Anything already pushed is unaffected.';
+  }
+
+  @override
+  String get coreEngineerWorkspaceDeleted => 'Workspace deleted.';
+
+  @override
+  String get coreEngineerWorkspaceDeleteFailed =>
+      'Could not delete that workspace.';
+
+  @override
+  String get coreEngineerWorkspaceExpiryOverdue => 'Due to be removed';
+
+  @override
+  String get coreEngineerWorkspaceExpiryUnderHour =>
+      'Removed in under an hour unless used';
+
+  @override
+  String coreEngineerWorkspaceExpiryHours(int hours) {
+    String _temp0 = intl.Intl.pluralLogic(
+      hours,
+      locale: localeName,
+      other: 'Removed in ${hours}h unless used',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String coreEngineerWorkspaceExpiryDays(int days) {
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: 'Removed in ${days}d unless used',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get coreEngineerWorkspaceRunning => 'Running';
+
+  @override
+  String get coreEngineerWorkspaceIdle => 'Idle';
+
+  @override
+  String get voiceClientNothingToRead => 'Nothing to read in this reply.';
+
+  @override
+  String get voiceClientSpeechFailed =>
+      'Could not generate speech for this reply.';
+
+  @override
+  String get voiceClientUnreachable =>
+      'Could not reach AURA to generate speech.';
+
+  @override
+  String get voiceClientSignInAgain => 'Sign in again to continue.';
+
+  @override
+  String get voiceClientSpeakNotAvailable =>
+      'Speech playback is not available on this server.';
+
+  @override
+  String get voiceClientReplyTooLong => 'This reply is too long to read aloud.';
+
+  @override
+  String get voiceClientRateLimited =>
+      'Too many speech requests. Try again shortly.';
+
+  @override
+  String get voiceClientNoSpeechEngine =>
+      'This server has no speech engine configured.';
+
+  @override
+  String get voiceSocketSessionExpired =>
+      'Live voice ended because your sign-in needs renewing. Start it again.';
+
+  @override
+  String get voiceSocketDisconnected =>
+      'Live voice was disconnected. Start it again.';
+
+  @override
+  String get coreBackendEnvironmentProduction => 'Production';
+
+  @override
+  String get coreBackendEnvironmentDevelopment => 'Development';
+
+  @override
+  String get coreAskCopilotTooltip => 'Ask Copilot';
+
+  @override
+  String get coreDesktopSignInBrowserFailed =>
+      'Could not open the system browser.';
+
+  @override
+  String get coreDesktopSignInTimedOut =>
+      'Timed out waiting for the browser sign-in to complete.';
+
+  @override
+  String coreDesktopSignInPageCancelled(String error) {
+    return 'Sign-in was cancelled ($error).';
+  }
+
+  @override
+  String coreDesktopSignInGoogleError(String error) {
+    return 'Google returned an error: $error';
+  }
+
+  @override
+  String get coreDesktopSignInPageInvalidResponse =>
+      'Sign-in failed: invalid response.';
+
+  @override
+  String get coreDesktopSignInInvalidRedirect =>
+      'Missing authorization code or a state mismatch (possible CSRF).';
+
+  @override
+  String get coreDesktopSignInPageSuccess =>
+      'Signed in -- you can close this tab.';
+
+  @override
+  String get coreDesktopSignInServerUnreachable =>
+      'Could not reach the AURA server to finish signing in. Check your connection and try again.';
+
+  @override
+  String get coreDesktopSignInServerInsecure =>
+      'Could not make a secure connection to the AURA server to finish signing in.';
+
+  @override
+  String get coreDesktopSignInServerBadAnswer =>
+      'The AURA server did not answer properly while finishing sign-in. Try again.';
+
+  @override
+  String get coreDesktopSignInServerTimedOut =>
+      'The AURA server took too long to finish signing in. Try again.';
+
+  @override
+  String coreDesktopSignInServerFailed(int status) {
+    return 'The AURA server could not finish signing in (HTTP $status).';
+  }
+
+  @override
+  String get coreDesktopSignInNoIdentityToken =>
+      'The AURA server returned no identity token.';
+
+  @override
+  String get coreDesktopSignInPageSignedIn => 'Signed in';
+
+  @override
+  String get coreDesktopSignInPageFailed => 'Sign-in failed';
+
+  @override
+  String get failureFeatureUnavailableTitle =>
+      'This needs a feature that isn\'t available yet';
+
+  @override
+  String get failureFeatureUnavailableMessage =>
+      'AURA can answer plain questions right now. Answers that use your memory, documents, tools or images are coming soon.';
+
+  @override
+  String get failureSignInRefusedTitle => 'AURA did not accept this sign-in';
+
+  @override
+  String get failureSignInRefusedMessage =>
+      'The server refused this Google account, so you have not been signed in. Try another account, or ask whoever runs this AURA server to check this one.';
+
+  @override
+  String get failureSignInIncompleteTitle => 'Couldn\'t finish signing in';
+
+  @override
+  String get failureUnclassifiedMessage =>
+      'AURA hit an error it could not classify. Your work is unaffected.';
+
+  @override
+  String get failureUnreachableTitle => 'Couldn\'t reach AURA';
+
+  @override
+  String get failureUnreachableMessage =>
+      'Nothing answered — this may be your connection or the server. Anything you have already saved is safe on this device.';
+
+  @override
+  String get failureInferenceUnavailableTitle =>
+      'AURA reached the server, but the model is not answering';
+
+  @override
+  String get failureInferenceUnavailableMessage =>
+      'The Control Plane is up; inference is not. Your workspace and conversations are untouched.';
+
+  @override
+  String get failureBusyTitle => 'AURA is busy';
+
+  @override
+  String get failureBusyMessage =>
+      'Too much is running at once. Waiting a moment usually clears it.';
+
+  @override
+  String get failureRateLimitedTitle => 'Too many requests';
+
+  @override
+  String get failureRateLimitedMessage =>
+      'You have hit the request limit. Try again shortly.';
+
+  @override
+  String get failureTurnInFlightTitle =>
+      'AURA is still working on your last request';
+
+  @override
+  String get failureTurnInFlightMessage =>
+      'Only one turn runs at a time. Wait for it to finish, or stop it first.';
+
+  @override
+  String get failureAuthRequiredTitle => 'Sign in again';
+
+  @override
+  String get failureAuthRequiredMessage =>
+      'Your session expired. Signing in again picks up exactly where you left off.';
+
+  @override
+  String get failureForbiddenTitle => 'Not allowed';
+
+  @override
+  String get failureForbiddenMessage =>
+      'Your account does not have permission for this. Retrying will not change that.';
+
+  @override
+  String get failureBudgetTitle => 'Budget reached';
+
+  @override
+  String get failureBudgetMessage =>
+      'This request would go over the configured spend limit.';
+
+  @override
+  String get failureBlockedTitle => 'AURA declined this request';
+
+  @override
+  String get failureBlockedMessage =>
+      'It was refused on safety grounds. Sending the same thing again will be refused the same way — rephrasing is what changes the outcome.';
+
+  @override
+  String get failureIndexingTitle => 'Still indexing';
+
+  @override
+  String get failureIndexingMessage =>
+      'AURA is building the search index for this content. It will work once that finishes.';
+
+  @override
+  String get failureDegradedTitle => 'AURA is degraded';
+
+  @override
+  String get failureDegradedMessage =>
+      'Part of the system did not respond in time. Your data is unaffected.';
+
+  @override
+  String get failureServerErrorTitle => 'AURA had a problem';
+
+  @override
+  String get failureServerErrorMessage =>
+      'The server failed to complete this. Your data is unaffected.';
+
+  @override
+  String get failureUnknownMessage =>
+      'AURA could not complete this request. Your work is unaffected.';
+
+  @override
+  String failureRateLimitedWaitSeconds(int seconds) {
+    String _temp0 = intl.Intl.pluralLogic(
+      seconds,
+      locale: localeName,
+      other: '$seconds seconds',
+      one: '1 second',
+    );
+    return 'You have hit the request limit. Try again in $_temp0.';
+  }
+
+  @override
+  String failureRateLimitedWaitMinutes(int minutes) {
+    String _temp0 = intl.Intl.pluralLogic(
+      minutes,
+      locale: localeName,
+      other: '$minutes minutes',
+      one: '1 minute',
+    );
+    return 'You have hit the request limit. Try again in about $_temp0.';
+  }
+
+  @override
+  String get coreApiErrorUnreachable => 'Could not reach AURA.';
+
+  @override
+  String coreApiErrorUnreachableCause(String cause) {
+    return 'Could not reach AURA: $cause';
+  }
+
+  @override
+  String get coreApiErrorBlocked => 'AURA blocked this turn.';
+
+  @override
+  String get coreApiErrorSignInAgain => 'Sign in again to continue.';
+
+  @override
+  String get coreApiErrorForbidden =>
+      'You do not have permission for this action.';
+
+  @override
+  String get coreApiErrorRateLimited => 'Too many requests. Try again shortly.';
+
+  @override
+  String get coreApiErrorStartingUp =>
+      'AURA is starting up. Try again in a moment.';
+
+  @override
+  String coreApiErrorRequestFailed(int status) {
+    return 'Request failed ($status).';
+  }
+
+  @override
+  String get coreSyncSynced => 'Synced';
+
+  @override
+  String get coreSyncSyncing => 'Syncing';
+
+  @override
+  String get coreSyncOffline => 'Offline';
+
+  @override
+  String get coreSyncFailed => 'Sync failed';
+
+  @override
+  String coreSyncPendingRefused(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count changes not synced',
+      one: '1 change not synced',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String coreSyncStatusSemantic(String label) {
+    return 'Sync status: $label';
+  }
+
+  @override
+  String coreSyncParkedBanner(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count changes haven\'t reached the server. They\'re saved on this device.',
+      one: '1 change hasn\'t reached the server. It\'s saved on this device.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String coreSyncParkedBannerSemantic(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count changes have not reached the server. They are saved on this device.',
+      one: '1 change has not reached the server. It is saved on this device.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get coreSyncReview => 'Review';
+
+  @override
+  String get coreHostdNotRunning => 'aura_hostd is not running.';
+
+  @override
+  String coreHostdUnreachable(String error) {
+    return 'Could not reach aura_hostd: $error';
+  }
+
+  @override
+  String get coreHostdOutOfDate =>
+      'The local aura_hostd daemon does not recognize this request -- it may be out of date. Rebuild and restart aura_hostd, then try again.';
+
+  @override
+  String get coreHostdNotRunningStartIt =>
+      'aura_hostd is not running. Start it and try again.';
+
+  @override
+  String get coreHostdNotOnWeb =>
+      'The desktop Engineer daemon is not available on web.';
+
+  @override
+  String get coreHostdRejectedArguments =>
+      'aura_hostd rejected its arguments (exit 64) -- check the configured executable';
+
+  @override
+  String coreHostdCrashedRepeatedly(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'aura_hostd crashed $count times in a row; see the log above',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String coreHostdRestartFailed(String error) {
+    return 'could not restart aura_hostd: $error';
+  }
+
+  @override
+  String coreCommandItemUnavailable(String title, String reason) {
+    return '$title, unavailable: $reason';
+  }
+
+  @override
+  String chatActionCreateTask(String title) {
+    return 'Create Task: $title';
+  }
+
+  @override
+  String chatActionScheduleEvent(String title) {
+    return 'Schedule Event: $title';
+  }
+
+  @override
+  String chatActionLogExpense(String amount) {
+    return 'Log Expense: \$$amount';
+  }
+
+  @override
+  String chatActionLogIncome(String amount) {
+    return 'Log Income: \$$amount';
+  }
+
+  @override
+  String get chatActionLogHealth => 'Log Health';
+
+  @override
+  String chatActionUnknownNamed(String type) {
+    return 'Unknown Action: $type';
+  }
+
+  @override
+  String get chatActionUnknown => 'Unknown Action';
+
+  @override
+  String get chatSpeechGenerateFailed =>
+      'Could not generate speech for this reply.';
+
+  @override
+  String get chatSpeechPlayFailed => 'Could not play the generated speech.';
+
+  @override
+  String get chatDefaultImageQuestion => 'What is in this image?';
+
+  @override
+  String get chatEngineUnreachable => 'AURA (unreachable)';
+
+  @override
+  String get chatEngineServer => 'AURA server';
+
+  @override
+  String chatCreateBranchOnRepo(String repo) {
+    return 'Create branch on $repo';
+  }
+
+  @override
+  String get chatCreateBranch => 'Create branch';
+
+  @override
+  String get chatConfirmActions => 'Confirm actions';
+
+  @override
+  String get chatConfirmAction => 'Confirm action';
+
+  @override
+  String get chatConfirmSelected => 'Confirm selected';
+
+  @override
+  String get chatConfirmSwitchBranch => 'Switch to branch';
+
+  @override
+  String get chatConfirmOpenDraftPr => 'Open draft pull request';
+
+  @override
+  String chatConfirmCommitFiles(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count files',
+      one: '1 file',
+    );
+    return 'Commit $_temp0';
+  }
+
+  @override
+  String chatConfirmCommitFilesToBranch(int count, String branch) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count files',
+      one: '1 file',
+    );
+    return 'Commit $_temp0 to $branch';
+  }
+
+  @override
+  String get chatConfirmWriteFile => 'Write file';
+
+  @override
+  String chatConfirmEditFile(String path) {
+    return 'Edit $path';
+  }
+
+  @override
+  String get chatConfirmEditFileUnnamed => 'Edit file';
+
+  @override
+  String get chatConfirmRunCommand => 'Run command in sandbox';
+
+  @override
+  String get chatConfirmCommitSandbox => 'Commit sandbox changes';
+
+  @override
+  String get chatTurnQuarantined =>
+      'AURA treated the content it read as untrusted, so nothing with side effects can run without your confirmation.';
+
+  @override
+  String get chatTurnInterrupted => 'Interrupted — this answer is incomplete.';
+
+  @override
+  String get chatTurnRedacted => 'This answer was redacted by a safety check.';
+
+  @override
+  String chatTurnLowConfidence(int percent) {
+    return 'Low confidence ($percent%).';
+  }
+
+  @override
+  String get chatTurnLibraryEmpty =>
+      'Searched your library — nothing relevant was found.';
+
+  @override
+  String get chatTurnReducedMode => 'AURA ran this turn in a reduced mode.';
+
+  @override
+  String get chatTurnUngrounded => 'Ungrounded — no sources attached.';
+
+  @override
+  String chatMoreLines(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count more lines',
+      one: '1 more line',
+    );
+    return '… $_temp0';
+  }
+
+  @override
+  String chatImageReadFailed(String name) {
+    return 'Could not read $name.';
+  }
+
+  @override
+  String chatImageTooMany(int max) {
+    return 'You can attach up to $max images to one message.';
+  }
+
+  @override
+  String chatImageTooLarge(String name, String mb) {
+    return '$name is larger than $mb MB.';
+  }
+
+  @override
+  String chatImagesAttached(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count images attached',
+      one: '1 image attached',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String chatActionCreateTaskDetail(
+    String title,
+    String priority,
+    String category,
+  ) {
+    return 'Create Task: $title ($priority priority, $category)';
+  }
+
+  @override
+  String chatActionScheduleEventAt(String title, String start) {
+    return 'Schedule Event: $title at $start';
+  }
+
+  @override
+  String chatActionLogExpenseFor(String amount, String category) {
+    return 'Log Expense: \$$amount for $category';
+  }
+
+  @override
+  String chatActionLogIncomeFor(String amount, String category) {
+    return 'Log Income: \$$amount for $category';
+  }
+
+  @override
+  String chatHealthWater(String ml) {
+    return '${ml}ml water';
+  }
+
+  @override
+  String chatHealthSleep(String minutes) {
+    return '${minutes}m sleep';
+  }
+
+  @override
+  String chatHealthExercise(String minutes) {
+    return '${minutes}m exercise';
+  }
+
+  @override
+  String chatActionLogHealthDetail(String metrics) {
+    return 'Log Health: $metrics';
+  }
+
+  @override
+  String get chatListSeparator => ', ';
+
+  @override
+  String get chatStepFallback => 'step';
+
+  @override
+  String chatStepBlocked(String detail) {
+    return 'Blocked: $detail';
+  }
+
+  @override
+  String get chatCapabilityEngineer => 'the Engineer capability';
+
+  @override
+  String get chatCapabilityAdditional => 'an additional capability';
+
+  @override
+  String chatPersonaRequires(String capability) {
+    return 'Requires $capability -- not available on this account';
+  }
+
+  @override
+  String get chatWithheldNotice =>
+      'This response was withheld by a safety check.';
+
+  @override
+  String get chatBlockedNotice =>
+      'AURA did not answer this request: it was stopped by a safety check.';
+
+  @override
+  String get chatFeatureUnavailableNotice =>
+      'This needs a feature that isn\'t available yet. AURA can answer plain questions right now. Answers that use your memory, documents, tools or images are coming soon.';
+
+  @override
+  String get chatPersonaOrchestrator => 'Orchestrator';
+
+  @override
+  String get chatPersonaTaskPlanner => 'Task Planner';
+
+  @override
+  String get chatPersonaFinanceAdvisor => 'Finance Advisor';
+
+  @override
+  String get chatPersonaHealthCompanion => 'Health Companion';
+
+  @override
+  String get chatPersonaResearchAgent => 'Research Agent';
+
+  @override
+  String get chatPersonaCodingAgent => 'Coding Agent';
+
+  @override
+  String get chatPersonaDecisionAgent => 'Decision Agent';
+
+  @override
+  String get chatPersonaEngineer => 'Engineer';
+
+  @override
+  String chatHeaderStatus(String model, String status, String latency) {
+    return 'Active • $model ($status) • ${latency}ms';
+  }
+
+  @override
+  String get memoryFilterAll => 'All';
+
+  @override
+  String get memoryEmptyTitle => 'No memories yet';
+
+  @override
+  String get memoryEmptyMessage =>
+      'Save a fact with a kind so Copilot can use it later.';
+
+  @override
+  String get memoryForgotten => 'Memory forgotten';
+
+  @override
+  String get memoryForgottenLocally =>
+      'Forgotten on this device. AURA will finish removing it from the server the next time it can reach it.';
+
+  @override
+  String memoryForgetFailed(String reason) {
+    return 'Could not forget this memory. $reason';
+  }
+
+  @override
+  String get memoryAddTitle => 'Remember this';
+
+  @override
+  String get memoryFactLabel => 'Fact';
+
+  @override
+  String get memorySubjectLabel => 'Subject (optional)';
+
+  @override
+  String get memoryKindField => 'Kind';
+
+  @override
+  String get memoryKindWorking => 'working';
+
+  @override
+  String get memoryKindEpisodic => 'episodic';
+
+  @override
+  String get memoryKindSemantic => 'semantic';
+
+  @override
+  String get memoryKindEntity => 'entity';
+
+  @override
+  String get memoryKindProcedural => 'procedural';
+
+  @override
+  String get memoryKindReflection => 'reflection';
+
+  @override
+  String get projectsWelcomeBack => 'Welcome back,';
+
+  @override
+  String get projectsDefaultUserName => 'Aura User';
+
+  @override
+  String get projectsTitle => 'Projects';
+
+  @override
+  String get projectsSubtitle => 'Organize your work into projects';
+
+  @override
+  String get projectsNew => 'New Project';
+
+  @override
+  String get projectsEmptyTitle => 'No projects yet';
+
+  @override
+  String get projectsEmptyMessage => 'Create your first project to get started';
+
+  @override
+  String get projectsCreateTitle => 'Create Project';
+
+  @override
+  String get projectsTitleField => 'Title *';
+
+  @override
+  String get projectsDescriptionField => 'Description';
+
+  @override
+  String get projectsStatusField => 'Status';
+
+  @override
+  String get projectsSetTargetDate => 'Set target date (optional)';
+
+  @override
+  String projectsTarget(String date) {
+    return 'Target: $date';
+  }
+
+  @override
+  String get projectsCreate => 'Create';
+
+  @override
+  String projectsDue(String date) {
+    return 'Due: $date';
+  }
+
+  @override
+  String get projectsStatusActive => 'active';
+
+  @override
+  String get projectsStatusCompleted => 'completed';
+
+  @override
+  String get projectsStatusArchived => 'archived';
+
+  @override
+  String get projectsStatusOnHold => 'on hold';
+
+  @override
+  String get analyticsTitle => 'System Analytics Dashboard';
+
+  @override
+  String get analyticsEmptyTitle => 'No telemetry metrics collected yet';
+
+  @override
+  String get analyticsEmptyMessage =>
+      'Metrics will appear once you stream prompts.';
+
+  @override
+  String get analyticsTotalRequests => 'Total Requests';
+
+  @override
+  String get analyticsAvgLatency => 'Avg Latency';
+
+  @override
+  String get analyticsFailovers => 'Failovers';
+
+  @override
+  String get analyticsErrorsLogged => 'Errors Logged';
+
+  @override
+  String get analyticsLatencyHistory =>
+      'Latency History (Last 10 Request Streams)';
+
+  @override
+  String get analyticsInsufficientData => 'Insufficient data';
+
+  @override
+  String get analyticsInferencePaths => 'Inference Path Distribution';
+
+  @override
+  String get analyticsNoInferenceData => 'No inference data';
+
+  @override
+  String get analyticsFailoverStats => 'API Failover Statistics';
+
+  @override
+  String get analyticsNoFailoverEvents => 'No failover events';
+
+  @override
+  String analyticsSuccessCount(int count) {
+    return 'Success ($count)';
+  }
+
+  @override
+  String analyticsFailoversCount(int count) {
+    return 'Failovers ($count)';
+  }
+
+  @override
+  String get analyticsLatestLogs => 'Latest Telemetry Logs';
+
+  @override
+  String get lifeHubFilterAll => 'All';
+
+  @override
+  String get lifeHubFilterTasks => 'Tasks';
+
+  @override
+  String get lifeHubFilterCalendar => 'Calendar';
+
+  @override
+  String get lifeHubFilterFinance => 'Finance';
+
+  @override
+  String get lifeHubFilterHealth => 'Health';
+
+  @override
+  String get lifeHubFilterProjects => 'Projects';
+
+  @override
+  String get lifeHubFilterGoals => 'Goals';
+
+  @override
+  String get lifeHubAgendaEmptyTitle => 'Nothing on the board';
+
+  @override
+  String get lifeHubAgendaEmptyMessage =>
+      'Add a task, event, or log to see this week in one place.';
+
+  @override
+  String get lifeHubHealthLogTitle => 'Today’s health log';
+
+  @override
+  String lifeHubHealthLogWater(int ml) {
+    return '$ml ml water';
+  }
+
+  @override
+  String get lifeHubNoUpcomingEvents => 'No upcoming events';
+
+  @override
+  String get lifeHubProjectsEmptyMessage =>
+      'Create a project to organize your work.';
+
+  @override
+  String get lifeHubGoalsEmptyTitle => 'No goals yet';
+
+  @override
+  String get lifeHubGoalsEmptyMessage =>
+      'Create a goal to track your aspirations.';
+
+  @override
+  String lifeHubGoalProgress(int percent) {
+    return '$percent% complete';
+  }
+
+  @override
+  String get voiceLiveTranscript => 'Transcript';
+
+  @override
+  String get voiceLiveInterrupt => 'Interrupt';
+
+  @override
+  String get voiceLiveEndShort => 'End';
+
+  @override
+  String get voiceLiveUnsupported =>
+      'Live voice is available on Android and iOS only';
+
+  @override
+  String get homeAskAuraLabel => 'Ask AURA anything';
+
+  @override
+  String get homeSendToAura => 'Send to AURA';
+
+  @override
+  String get homeInsightsLoadFailed => 'Could not load insights';
+
+  @override
+  String get homeInsightsLoadFailedMessage =>
+      'Pull to refresh when you are back online.';
+
+  @override
+  String get homeDismissInsight => 'Dismiss insight';
+
+  @override
+  String homeDueTask(String title) {
+    return 'Task: $title';
+  }
+
+  @override
+  String homeDueEvent(String title) {
+    return 'Event: $title';
+  }
+
+  @override
+  String homeDueOverdue(String item) {
+    return '$item, overdue';
+  }
+
+  @override
+  String get notificationsFailoverTitle => 'Server inference failover';
+
+  @override
+  String notificationsFailoverMessage(String model) {
+    return 'AURA could not complete the request on $model and recorded a failover.';
+  }
+
+  @override
+  String get notificationsRequestFailedTitle => 'Request failed';
+
+  @override
+  String notificationsRequestFailedMessage(String model) {
+    return 'An AI request failed on $model.';
+  }
+
+  @override
+  String get notificationsEmptyTitle => 'Nothing to report';
+
+  @override
+  String get notificationsEmptyMessage =>
+      'You\'ll see AI failovers and request errors here.';
+
+  @override
+  String get notificationsLoadFailed => 'Couldn\'t load notifications';
+
+  @override
+  String get feedbackEmptyTitle => 'No corrections yet';
+
+  @override
+  String get feedbackEmptyMessage =>
+      'Rate a Copilot answer to help AURA learn what you prefer.';
+
+  @override
+  String feedbackRated(int rating, String date) {
+    return 'Rated $rating/5 · $date';
+  }
+
+  @override
+  String modelsLastResponse(String ms) {
+    return 'Last response in $ms ms';
+  }
+
+  @override
+  String get modelsNoRequestsYet => 'No requests yet this session';
+
+  @override
+  String get modelsCheckAgain => 'Check again';
+
+  @override
+  String get modelsServerNote =>
+      'Requests are processed on AURA’s servers. There is nothing to download or configure on this device.';
+
+  @override
+  String get paletteOpenDesktopIde => 'Open Desktop IDE';
+
+  @override
+  String get paletteSearchHint => 'Search AURA, or jump to a screen…';
+
+  @override
+  String get paletteGoTo => 'Go to';
+
+  @override
+  String get paletteNoMatches => 'No matches';
+
+  @override
+  String get authAttestationDebugOnly =>
+      'Debug marker only — hardware attestation is not enabled in this app';
+
+  @override
+  String get authAttestationReady => 'Hardware attestation token ready';
+
+  @override
+  String get authAttestationUnavailable =>
+      'Hardware attestation unavailable on this device';
+
+  @override
+  String get authAuthorizedUser => 'Authorized User';
+
+  @override
+  String get authAttestationHeading => 'Device Attestation Status';
+
+  @override
+  String get authAttestationExplainer =>
+      'This client does not request Google Play Integrity or Apple App Attest tokens. Debug builds send an explicit development marker; release builds advertise that hardware attestation is unsupported. Backend verification of real Play Integrity tokens exists, but this app cannot produce them without a vendor SDK and Play Console keys.';
+
+  @override
+  String get authSessionOperations => 'Session Operations';
 }

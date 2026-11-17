@@ -5,6 +5,7 @@ import '../../finance/data/finance_repository.dart';
 import '../../health/data/health_repository.dart';
 import '../../tasks/data/task_repository.dart';
 import '../domain/life_item.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 enum LifeHubFilter { all, tasks, calendar, finance, health, projects, goals }
 
@@ -66,8 +67,8 @@ final lifeAgendaProvider = Provider<List<LifeItem>>((ref) {
       LifeItem(
         id: health.id,
         type: LifeItemType.health,
-        title: 'Today’s health log',
-        subtitle: '${health.waterIntakeMl} ml water',
+        title: currentL10n.lifeHubHealthLogTitle,
+        subtitle: currentL10n.lifeHubHealthLogWater(health.waterIntakeMl),
         when: health.recordDate,
       ),
   ];

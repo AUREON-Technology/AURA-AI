@@ -9,6 +9,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:aura_client/l10n/l10n.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -55,7 +56,7 @@ class HostdTerminalClient {
   Future<void> connect({required String rootPath, required int cols, required int rows}) async {
     final endpoint = await _discoverEndpoint();
     if (endpoint == null) {
-      throw HostdTerminalUnavailable('aura_hostd is not running.');
+      throw HostdTerminalUnavailable(currentL10n.coreHostdNotRunning);
     }
     final uri = Uri.parse(
       'ws://127.0.0.1:${endpoint.port}/terminal?root=${Uri.encodeQueryComponent(rootPath)}',

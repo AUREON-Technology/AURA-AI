@@ -5215,6 +5215,1678 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Open a folder to create your first workspace'**
   String get workspaceEmptyMessage;
+
+  /// Relative date: earlier today, with the time
+  ///
+  /// In en, this message translates to:
+  /// **'Today {time}'**
+  String relativeTodayAt(String time);
+
+  /// Relative date: the previous calendar day
+  ///
+  /// In en, this message translates to:
+  /// **'Yesterday'**
+  String get relativeYesterday;
+
+  /// Relative date: 2-6 calendar days ago
+  ///
+  /// In en, this message translates to:
+  /// **'{days, plural, =1{1 day ago} other{{days} days ago}}'**
+  String relativeDaysAgo(int days);
+
+  /// Engineer workspaces panel: title when the list could not be loaded
+  ///
+  /// In en, this message translates to:
+  /// **'Workspaces unavailable'**
+  String get coreEngineerWorkspacesUnavailableTitle;
+
+  /// Engineer workspaces panel: message when the list could not be loaded
+  ///
+  /// In en, this message translates to:
+  /// **'Could not reach the server. Your work is not lost -- try again shortly.'**
+  String get coreEngineerWorkspacesUnavailableMessage;
+
+  /// Engineer workspaces panel: title when the server has the feature off
+  ///
+  /// In en, this message translates to:
+  /// **'Workspaces are not enabled'**
+  String get coreEngineerWorkspacesDisabledTitle;
+
+  /// Engineer workspaces panel: message when the server has the feature off
+  ///
+  /// In en, this message translates to:
+  /// **'This server does not run the engineer agent’s sandboxes.'**
+  String get coreEngineerWorkspacesDisabledMessage;
+
+  /// Engineer workspaces panel: empty state title
+  ///
+  /// In en, this message translates to:
+  /// **'No workspaces yet'**
+  String get coreEngineerWorkspacesEmptyTitle;
+
+  /// Engineer workspaces panel: empty state message; hours = inactivity limit before deletion
+  ///
+  /// In en, this message translates to:
+  /// **'Ask the engineer agent to clone a repository and one will appear here. Workspaces are removed after {hours} hours without activity.'**
+  String coreEngineerWorkspacesEmptyMessage(int hours);
+
+  /// Engineer workspaces panel: section header above the list
+  ///
+  /// In en, this message translates to:
+  /// **'Engineer workspaces'**
+  String get coreEngineerWorkspacesHeader;
+
+  /// Engineer workspace card: screen-reader label; repo = repository name
+  ///
+  /// In en, this message translates to:
+  /// **'Workspace for {repo}'**
+  String coreEngineerWorkspaceSemanticLabel(String repo);
+
+  /// Engineer workspace card: the checked-out Git branch
+  ///
+  /// In en, this message translates to:
+  /// **'Branch {branch}'**
+  String coreEngineerWorkspaceBranch(String branch);
+
+  /// Engineer workspace delete confirmation: dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'Delete this workspace?'**
+  String get coreEngineerWorkspaceDeleteTitle;
+
+  /// Engineer workspace delete confirmation: cancel button (keep the workspace)
+  ///
+  /// In en, this message translates to:
+  /// **'Keep'**
+  String get coreEngineerWorkspaceKeep;
+
+  /// Engineer workspace delete confirmation: dialog body; repo = repository name
+  ///
+  /// In en, this message translates to:
+  /// **'The checkout of {repo} and any uncommitted changes in it will be removed. Anything already pushed is unaffected.'**
+  String coreEngineerWorkspaceDeleteBody(String repo);
+
+  /// Snackbar after an engineer workspace was deleted
+  ///
+  /// In en, this message translates to:
+  /// **'Workspace deleted.'**
+  String get coreEngineerWorkspaceDeleted;
+
+  /// Snackbar when deleting an engineer workspace failed
+  ///
+  /// In en, this message translates to:
+  /// **'Could not delete that workspace.'**
+  String get coreEngineerWorkspaceDeleteFailed;
+
+  /// Engineer workspace card: the inactivity deadline has passed
+  ///
+  /// In en, this message translates to:
+  /// **'Due to be removed'**
+  String get coreEngineerWorkspaceExpiryOverdue;
+
+  /// Engineer workspace card: less than an hour before deletion
+  ///
+  /// In en, this message translates to:
+  /// **'Removed in under an hour unless used'**
+  String get coreEngineerWorkspaceExpiryUnderHour;
+
+  /// Engineer workspace card: hours left before deletion (1-23)
+  ///
+  /// In en, this message translates to:
+  /// **'{hours, plural, other{Removed in {hours}h unless used}}'**
+  String coreEngineerWorkspaceExpiryHours(int hours);
+
+  /// Engineer workspace card: days left before deletion
+  ///
+  /// In en, this message translates to:
+  /// **'{days, plural, other{Removed in {days}d unless used}}'**
+  String coreEngineerWorkspaceExpiryDays(int days);
+
+  /// Engineer workspace card: status chip, the workspace is running
+  ///
+  /// In en, this message translates to:
+  /// **'Running'**
+  String get coreEngineerWorkspaceRunning;
+
+  /// Engineer workspace card: status chip, the workspace is stopped but kept
+  ///
+  /// In en, this message translates to:
+  /// **'Idle'**
+  String get coreEngineerWorkspaceIdle;
+
+  /// Read-aloud failure: the reply has no speakable text
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing to read in this reply.'**
+  String get voiceClientNothingToRead;
+
+  /// Read-aloud failure: the server could not synthesize speech
+  ///
+  /// In en, this message translates to:
+  /// **'Could not generate speech for this reply.'**
+  String get voiceClientSpeechFailed;
+
+  /// Read-aloud failure: no answer from the server
+  ///
+  /// In en, this message translates to:
+  /// **'Could not reach AURA to generate speech.'**
+  String get voiceClientUnreachable;
+
+  /// Read-aloud failure: session expired (HTTP 401)
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in again to continue.'**
+  String get voiceClientSignInAgain;
+
+  /// Read-aloud failure: the server has no speak endpoint (HTTP 404)
+  ///
+  /// In en, this message translates to:
+  /// **'Speech playback is not available on this server.'**
+  String get voiceClientSpeakNotAvailable;
+
+  /// Read-aloud failure: text too long (HTTP 422)
+  ///
+  /// In en, this message translates to:
+  /// **'This reply is too long to read aloud.'**
+  String get voiceClientReplyTooLong;
+
+  /// Read-aloud failure: rate limited (HTTP 429)
+  ///
+  /// In en, this message translates to:
+  /// **'Too many speech requests. Try again shortly.'**
+  String get voiceClientRateLimited;
+
+  /// Read-aloud failure: no TTS engine on the server (HTTP 503)
+  ///
+  /// In en, this message translates to:
+  /// **'This server has no speech engine configured.'**
+  String get voiceClientNoSpeechEngine;
+
+  /// Live voice: the server closed the socket because the session expired
+  ///
+  /// In en, this message translates to:
+  /// **'Live voice ended because your sign-in needs renewing. Start it again.'**
+  String get voiceSocketSessionExpired;
+
+  /// Live voice: the server or network closed the socket
+  ///
+  /// In en, this message translates to:
+  /// **'Live voice was disconnected. Start it again.'**
+  String get voiceSocketDisconnected;
+
+  /// Server environment picker: the production server
+  ///
+  /// In en, this message translates to:
+  /// **'Production'**
+  String get coreBackendEnvironmentProduction;
+
+  /// Server environment picker: the development server
+  ///
+  /// In en, this message translates to:
+  /// **'Development'**
+  String get coreBackendEnvironmentDevelopment;
+
+  /// Mobile shell: tooltip on the floating capture button
+  ///
+  /// In en, this message translates to:
+  /// **'Ask Copilot'**
+  String get coreAskCopilotTooltip;
+
+  /// Desktop Google sign-in failure: the browser would not open
+  ///
+  /// In en, this message translates to:
+  /// **'Could not open the system browser.'**
+  String get coreDesktopSignInBrowserFailed;
+
+  /// Desktop Google sign-in failure: nothing came back from the browser in time
+  ///
+  /// In en, this message translates to:
+  /// **'Timed out waiting for the browser sign-in to complete.'**
+  String get coreDesktopSignInTimedOut;
+
+  /// Browser page shown after desktop sign-in: cancelled; error = Google error code
+  ///
+  /// In en, this message translates to:
+  /// **'Sign-in was cancelled ({error}).'**
+  String coreDesktopSignInPageCancelled(String error);
+
+  /// Desktop sign-in failure: Google redirected back with an error code (e.g. access_denied when the user cancels); error = Google error code, left untranslated
+  ///
+  /// In en, this message translates to:
+  /// **'Google returned an error: {error}'**
+  String coreDesktopSignInGoogleError(String error);
+
+  /// Browser page shown after desktop sign-in: the redirect was malformed
+  ///
+  /// In en, this message translates to:
+  /// **'Sign-in failed: invalid response.'**
+  String get coreDesktopSignInPageInvalidResponse;
+
+  /// Desktop sign-in failure: the browser redirect had no code or a wrong state value
+  ///
+  /// In en, this message translates to:
+  /// **'Missing authorization code or a state mismatch (possible CSRF).'**
+  String get coreDesktopSignInInvalidRedirect;
+
+  /// Browser page shown after desktop sign-in succeeded
+  ///
+  /// In en, this message translates to:
+  /// **'Signed in -- you can close this tab.'**
+  String get coreDesktopSignInPageSuccess;
+
+  /// Desktop sign-in failure: AURA server unreachable during the code exchange
+  ///
+  /// In en, this message translates to:
+  /// **'Could not reach the AURA server to finish signing in. Check your connection and try again.'**
+  String get coreDesktopSignInServerUnreachable;
+
+  /// Desktop sign-in failure: TLS handshake with the AURA server failed
+  ///
+  /// In en, this message translates to:
+  /// **'Could not make a secure connection to the AURA server to finish signing in.'**
+  String get coreDesktopSignInServerInsecure;
+
+  /// Desktop sign-in failure: malformed HTTP answer from the AURA server
+  ///
+  /// In en, this message translates to:
+  /// **'The AURA server did not answer properly while finishing sign-in. Try again.'**
+  String get coreDesktopSignInServerBadAnswer;
+
+  /// Desktop sign-in failure: the AURA server timed out
+  ///
+  /// In en, this message translates to:
+  /// **'The AURA server took too long to finish signing in. Try again.'**
+  String get coreDesktopSignInServerTimedOut;
+
+  /// Desktop sign-in failure: the AURA server answered with an error and no detail
+  ///
+  /// In en, this message translates to:
+  /// **'The AURA server could not finish signing in (HTTP {status}).'**
+  String coreDesktopSignInServerFailed(int status);
+
+  /// Desktop sign-in failure: the AURA server answered without an ID token
+  ///
+  /// In en, this message translates to:
+  /// **'The AURA server returned no identity token.'**
+  String get coreDesktopSignInNoIdentityToken;
+
+  /// Browser page shown after desktop sign-in: heading on success
+  ///
+  /// In en, this message translates to:
+  /// **'Signed in'**
+  String get coreDesktopSignInPageSignedIn;
+
+  /// Browser page shown after desktop sign-in: heading on failure
+  ///
+  /// In en, this message translates to:
+  /// **'Sign-in failed'**
+  String get coreDesktopSignInPageFailed;
+
+  /// Failure title: the request needs memory/documents/tools/images, which are not available yet (owner-approved wording)
+  ///
+  /// In en, this message translates to:
+  /// **'This needs a feature that isn\'t available yet'**
+  String get failureFeatureUnavailableTitle;
+
+  /// Failure message for the feature-unavailable state (owner-approved wording)
+  ///
+  /// In en, this message translates to:
+  /// **'AURA can answer plain questions right now. Answers that use your memory, documents, tools or images are coming soon.'**
+  String get failureFeatureUnavailableMessage;
+
+  /// Failure title: the server refused the Google account
+  ///
+  /// In en, this message translates to:
+  /// **'AURA did not accept this sign-in'**
+  String get failureSignInRefusedTitle;
+
+  /// Failure message: the server refused the Google account
+  ///
+  /// In en, this message translates to:
+  /// **'The server refused this Google account, so you have not been signed in. Try another account, or ask whoever runs this AURA server to check this one.'**
+  String get failureSignInRefusedMessage;
+
+  /// Failure title: the desktop sign-in flow failed (message comes from the flow)
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t finish signing in'**
+  String get failureSignInIncompleteTitle;
+
+  /// Failure message: an error the app does not recognise
+  ///
+  /// In en, this message translates to:
+  /// **'AURA hit an error it could not classify. Your work is unaffected.'**
+  String get failureUnclassifiedMessage;
+
+  /// Failure title: nothing answered (network or server down)
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t reach AURA'**
+  String get failureUnreachableTitle;
+
+  /// Failure message: nothing answered; deliberately does not claim the user is offline
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing answered — this may be your connection or the server. Anything you have already saved is safe on this device.'**
+  String get failureUnreachableMessage;
+
+  /// Failure title: the server is up but the AI model is down
+  ///
+  /// In en, this message translates to:
+  /// **'AURA reached the server, but the model is not answering'**
+  String get failureInferenceUnavailableTitle;
+
+  /// Failure message: the server is up but the AI model is down
+  ///
+  /// In en, this message translates to:
+  /// **'The Control Plane is up; inference is not. Your workspace and conversations are untouched.'**
+  String get failureInferenceUnavailableMessage;
+
+  /// Failure title: the server is overloaded
+  ///
+  /// In en, this message translates to:
+  /// **'AURA is busy'**
+  String get failureBusyTitle;
+
+  /// Failure message: the server is overloaded
+  ///
+  /// In en, this message translates to:
+  /// **'Too much is running at once. Waiting a moment usually clears it.'**
+  String get failureBusyMessage;
+
+  /// Failure title: rate limited
+  ///
+  /// In en, this message translates to:
+  /// **'Too many requests'**
+  String get failureRateLimitedTitle;
+
+  /// Failure message: rate limited, no wait time known
+  ///
+  /// In en, this message translates to:
+  /// **'You have hit the request limit. Try again shortly.'**
+  String get failureRateLimitedMessage;
+
+  /// Failure title: another chat turn is still running
+  ///
+  /// In en, this message translates to:
+  /// **'AURA is still working on your last request'**
+  String get failureTurnInFlightTitle;
+
+  /// Failure message: another chat turn is still running
+  ///
+  /// In en, this message translates to:
+  /// **'Only one turn runs at a time. Wait for it to finish, or stop it first.'**
+  String get failureTurnInFlightMessage;
+
+  /// Failure title: the session expired
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in again'**
+  String get failureAuthRequiredTitle;
+
+  /// Failure message: the session expired
+  ///
+  /// In en, this message translates to:
+  /// **'Your session expired. Signing in again picks up exactly where you left off.'**
+  String get failureAuthRequiredMessage;
+
+  /// Failure title: the account lacks permission
+  ///
+  /// In en, this message translates to:
+  /// **'Not allowed'**
+  String get failureForbiddenTitle;
+
+  /// Failure message: the account lacks permission
+  ///
+  /// In en, this message translates to:
+  /// **'Your account does not have permission for this. Retrying will not change that.'**
+  String get failureForbiddenMessage;
+
+  /// Failure title: the spend limit was reached
+  ///
+  /// In en, this message translates to:
+  /// **'Budget reached'**
+  String get failureBudgetTitle;
+
+  /// Failure message: the spend limit was reached
+  ///
+  /// In en, this message translates to:
+  /// **'This request would go over the configured spend limit.'**
+  String get failureBudgetMessage;
+
+  /// Failure title: refused on safety grounds
+  ///
+  /// In en, this message translates to:
+  /// **'AURA declined this request'**
+  String get failureBlockedTitle;
+
+  /// Failure message: refused on safety grounds; retrying will not help
+  ///
+  /// In en, this message translates to:
+  /// **'It was refused on safety grounds. Sending the same thing again will be refused the same way — rephrasing is what changes the outcome.'**
+  String get failureBlockedMessage;
+
+  /// Failure title: the knowledge index is still building
+  ///
+  /// In en, this message translates to:
+  /// **'Still indexing'**
+  String get failureIndexingTitle;
+
+  /// Failure message: the knowledge index is still building
+  ///
+  /// In en, this message translates to:
+  /// **'AURA is building the search index for this content. It will work once that finishes.'**
+  String get failureIndexingMessage;
+
+  /// Failure title: a dependency timed out or is degraded
+  ///
+  /// In en, this message translates to:
+  /// **'AURA is degraded'**
+  String get failureDegradedTitle;
+
+  /// Failure message: a dependency timed out or is degraded
+  ///
+  /// In en, this message translates to:
+  /// **'Part of the system did not respond in time. Your data is unaffected.'**
+  String get failureDegradedMessage;
+
+  /// Failure title: the server failed (HTTP 5xx)
+  ///
+  /// In en, this message translates to:
+  /// **'AURA had a problem'**
+  String get failureServerErrorTitle;
+
+  /// Failure message: the server failed (HTTP 5xx)
+  ///
+  /// In en, this message translates to:
+  /// **'The server failed to complete this. Your data is unaffected.'**
+  String get failureServerErrorMessage;
+
+  /// Failure message: an unrecognised HTTP error
+  ///
+  /// In en, this message translates to:
+  /// **'AURA could not complete this request. Your work is unaffected.'**
+  String get failureUnknownMessage;
+
+  /// Failure message: rate limited with a known wait under a minute
+  ///
+  /// In en, this message translates to:
+  /// **'You have hit the request limit. Try again in {seconds, plural, =1{1 second} other{{seconds} seconds}}.'**
+  String failureRateLimitedWaitSeconds(int seconds);
+
+  /// Failure message: rate limited with a known wait of a minute or more
+  ///
+  /// In en, this message translates to:
+  /// **'You have hit the request limit. Try again in about {minutes, plural, =1{1 minute} other{{minutes} minutes}}.'**
+  String failureRateLimitedWaitMinutes(int minutes);
+
+  /// Request error text when nothing answered (no technical cause known)
+  ///
+  /// In en, this message translates to:
+  /// **'Could not reach AURA.'**
+  String get coreApiErrorUnreachable;
+
+  /// Request error text when nothing answered; cause = technical error text, left untranslated
+  ///
+  /// In en, this message translates to:
+  /// **'Could not reach AURA: {cause}'**
+  String coreApiErrorUnreachableCause(String cause);
+
+  /// Request error fallback when the server sent HTTP 400 with no message
+  ///
+  /// In en, this message translates to:
+  /// **'AURA blocked this turn.'**
+  String get coreApiErrorBlocked;
+
+  /// Request error fallback when the server sent HTTP 401 with no message
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in again to continue.'**
+  String get coreApiErrorSignInAgain;
+
+  /// Request error fallback when the server sent HTTP 403 with no message
+  ///
+  /// In en, this message translates to:
+  /// **'You do not have permission for this action.'**
+  String get coreApiErrorForbidden;
+
+  /// Request error fallback when the server sent HTTP 429 with no message
+  ///
+  /// In en, this message translates to:
+  /// **'Too many requests. Try again shortly.'**
+  String get coreApiErrorRateLimited;
+
+  /// Request error fallback when the server sent HTTP 503 with no message
+  ///
+  /// In en, this message translates to:
+  /// **'AURA is starting up. Try again in a moment.'**
+  String get coreApiErrorStartingUp;
+
+  /// Request error fallback for any other HTTP status with no message
+  ///
+  /// In en, this message translates to:
+  /// **'Request failed ({status}).'**
+  String coreApiErrorRequestFailed(int status);
+
+  /// Sync status pill: everything is on the server
+  ///
+  /// In en, this message translates to:
+  /// **'Synced'**
+  String get coreSyncSynced;
+
+  /// Sync status pill: sync in progress
+  ///
+  /// In en, this message translates to:
+  /// **'Syncing'**
+  String get coreSyncSyncing;
+
+  /// Sync status pill: cannot reach the server
+  ///
+  /// In en, this message translates to:
+  /// **'Offline'**
+  String get coreSyncOffline;
+
+  /// Sync status pill: the last sync failed
+  ///
+  /// In en, this message translates to:
+  /// **'Sync failed'**
+  String get coreSyncFailed;
+
+  /// Sync status pill: changes the server refused and that were set aside
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 change not synced} other{{count} changes not synced}}'**
+  String coreSyncPendingRefused(int count);
+
+  /// Sync status pill: screen-reader label; label = the visible status text
+  ///
+  /// In en, this message translates to:
+  /// **'Sync status: {label}'**
+  String coreSyncStatusSemantic(String label);
+
+  /// Shell banner: changes still not on the server
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 change hasn\'t reached the server. It\'s saved on this device.} other{{count} changes haven\'t reached the server. They\'re saved on this device.}}'**
+  String coreSyncParkedBanner(int count);
+
+  /// Shell banner: screen-reader label (no contractions)
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 change has not reached the server. It is saved on this device.} other{{count} changes have not reached the server. They are saved on this device.}}'**
+  String coreSyncParkedBannerSemantic(int count);
+
+  /// Shell sync banner: action button to review unsynced changes
+  ///
+  /// In en, this message translates to:
+  /// **'Review'**
+  String get coreSyncReview;
+
+  /// Desktop IDE: the local Host Daemon (aura_hostd) is not running
+  ///
+  /// In en, this message translates to:
+  /// **'aura_hostd is not running.'**
+  String get coreHostdNotRunning;
+
+  /// Desktop IDE: the local Host Daemon did not answer; error = technical cause, left untranslated
+  ///
+  /// In en, this message translates to:
+  /// **'Could not reach aura_hostd: {error}'**
+  String coreHostdUnreachable(String error);
+
+  /// Desktop IDE: the local Host Daemon is older than the app
+  ///
+  /// In en, this message translates to:
+  /// **'The local aura_hostd daemon does not recognize this request -- it may be out of date. Rebuild and restart aura_hostd, then try again.'**
+  String get coreHostdOutOfDate;
+
+  /// Desktop IDE: the local Host Daemon is not running (with what to do)
+  ///
+  /// In en, this message translates to:
+  /// **'aura_hostd is not running. Start it and try again.'**
+  String get coreHostdNotRunningStartIt;
+
+  /// Web build: the desktop Engineer daemon cannot be used in a browser
+  ///
+  /// In en, this message translates to:
+  /// **'The desktop Engineer daemon is not available on web.'**
+  String get coreHostdNotOnWeb;
+
+  /// Desktop IDE: the supervised Host Daemon refused its command line
+  ///
+  /// In en, this message translates to:
+  /// **'aura_hostd rejected its arguments (exit 64) -- check the configured executable'**
+  String get coreHostdRejectedArguments;
+
+  /// Desktop IDE: the supervised Host Daemon kept crashing and was given up on
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, other{aura_hostd crashed {count} times in a row; see the log above}}'**
+  String coreHostdCrashedRepeatedly(int count);
+
+  /// Desktop IDE: restarting the Host Daemon failed; error = technical cause, left untranslated
+  ///
+  /// In en, this message translates to:
+  /// **'could not restart aura_hostd: {error}'**
+  String coreHostdRestartFailed(String error);
+
+  /// Command palette: screen-reader label of a disabled command; reason = why it is disabled
+  ///
+  /// In en, this message translates to:
+  /// **'{title}, unavailable: {reason}'**
+  String coreCommandItemUnavailable(String title, String reason);
+
+  /// Chat: label of a proposed 'add task' action
+  ///
+  /// In en, this message translates to:
+  /// **'Create Task: {title}'**
+  String chatActionCreateTask(String title);
+
+  /// Chat: label of a proposed 'add calendar event' action
+  ///
+  /// In en, this message translates to:
+  /// **'Schedule Event: {title}'**
+  String chatActionScheduleEvent(String title);
+
+  /// Chat: label of a proposed 'log expense' action; amount is a number
+  ///
+  /// In en, this message translates to:
+  /// **'Log Expense: \${amount}'**
+  String chatActionLogExpense(String amount);
+
+  /// Chat: label of a proposed 'log income' action; amount is a number
+  ///
+  /// In en, this message translates to:
+  /// **'Log Income: \${amount}'**
+  String chatActionLogIncome(String amount);
+
+  /// Chat: label of a proposed 'log health metrics' action
+  ///
+  /// In en, this message translates to:
+  /// **'Log Health'**
+  String get chatActionLogHealth;
+
+  /// Chat: label of a proposed action of an unrecognised type (type is a code identifier)
+  ///
+  /// In en, this message translates to:
+  /// **'Unknown Action: {type}'**
+  String chatActionUnknownNamed(String type);
+
+  /// Chat: label of a malformed proposed action that failed
+  ///
+  /// In en, this message translates to:
+  /// **'Unknown Action'**
+  String get chatActionUnknown;
+
+  /// Chat: error when text-to-speech for a reply fails
+  ///
+  /// In en, this message translates to:
+  /// **'Could not generate speech for this reply.'**
+  String get chatSpeechGenerateFailed;
+
+  /// Chat: error when playing generated speech fails
+  ///
+  /// In en, this message translates to:
+  /// **'Could not play the generated speech.'**
+  String get chatSpeechPlayFailed;
+
+  /// Chat: the question sent (and shown as the user's message) when only images are attached
+  ///
+  /// In en, this message translates to:
+  /// **'What is in this image?'**
+  String get chatDefaultImageQuestion;
+
+  /// Chat sidebar: AI engine value when the server is unreachable
+  ///
+  /// In en, this message translates to:
+  /// **'AURA (unreachable)'**
+  String get chatEngineUnreachable;
+
+  /// Chat sidebar: AI engine value when the server is reachable
+  ///
+  /// In en, this message translates to:
+  /// **'AURA server'**
+  String get chatEngineServer;
+
+  /// Chat: confirmation card heading for creating a Git branch in a named repository
+  ///
+  /// In en, this message translates to:
+  /// **'Create branch on {repo}'**
+  String chatCreateBranchOnRepo(String repo);
+
+  /// Chat: confirmation card heading for creating a Git branch
+  ///
+  /// In en, this message translates to:
+  /// **'Create branch'**
+  String get chatCreateBranch;
+
+  /// Chat: heading of the confirmation card when several tool calls await approval
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm actions'**
+  String get chatConfirmActions;
+
+  /// Chat: heading of the confirmation card when one tool call awaits approval
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm action'**
+  String get chatConfirmAction;
+
+  /// Chat: confirmation card button when only some calls are selected
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm selected'**
+  String get chatConfirmSelected;
+
+  /// Chat: confirmation card heading for a git checkout of a branch
+  ///
+  /// In en, this message translates to:
+  /// **'Switch to branch'**
+  String get chatConfirmSwitchBranch;
+
+  /// Chat: confirmation card heading for opening a draft GitHub pull request
+  ///
+  /// In en, this message translates to:
+  /// **'Open draft pull request'**
+  String get chatConfirmOpenDraftPr;
+
+  /// Chat: confirmation card heading for committing files to GitHub
+  ///
+  /// In en, this message translates to:
+  /// **'Commit {count, plural, =1{1 file} other{{count} files}}'**
+  String chatConfirmCommitFiles(int count);
+
+  /// Chat: confirmation card heading for committing files to a named GitHub branch
+  ///
+  /// In en, this message translates to:
+  /// **'Commit {count, plural, =1{1 file} other{{count} files}} to {branch}'**
+  String chatConfirmCommitFilesToBranch(int count, String branch);
+
+  /// Chat: confirmation card heading for writing a file in the sandbox
+  ///
+  /// In en, this message translates to:
+  /// **'Write file'**
+  String get chatConfirmWriteFile;
+
+  /// Chat: confirmation card heading for editing a file; path is a file path
+  ///
+  /// In en, this message translates to:
+  /// **'Edit {path}'**
+  String chatConfirmEditFile(String path);
+
+  /// Chat: confirmation card heading for editing a file whose path is unknown
+  ///
+  /// In en, this message translates to:
+  /// **'Edit file'**
+  String get chatConfirmEditFileUnnamed;
+
+  /// Chat: confirmation card heading for running a shell command in the sandbox
+  ///
+  /// In en, this message translates to:
+  /// **'Run command in sandbox'**
+  String get chatConfirmRunCommand;
+
+  /// Chat: confirmation card heading for committing the sandbox's changes
+  ///
+  /// In en, this message translates to:
+  /// **'Commit sandbox changes'**
+  String get chatConfirmCommitSandbox;
+
+  /// Chat: note under an answer whose retrieved context was quarantined
+  ///
+  /// In en, this message translates to:
+  /// **'AURA treated the content it read as untrusted, so nothing with side effects can run without your confirmation.'**
+  String get chatTurnQuarantined;
+
+  /// Chat: note under an answer that was interrupted
+  ///
+  /// In en, this message translates to:
+  /// **'Interrupted — this answer is incomplete.'**
+  String get chatTurnInterrupted;
+
+  /// Chat: note under an answer a safety check redacted
+  ///
+  /// In en, this message translates to:
+  /// **'This answer was redacted by a safety check.'**
+  String get chatTurnRedacted;
+
+  /// Chat: note under a low-confidence answer
+  ///
+  /// In en, this message translates to:
+  /// **'Low confidence ({percent}%).'**
+  String chatTurnLowConfidence(int percent);
+
+  /// Chat: note when knowledge search found nothing relevant
+  ///
+  /// In en, this message translates to:
+  /// **'Searched your library — nothing relevant was found.'**
+  String get chatTurnLibraryEmpty;
+
+  /// Chat: note under an answer produced in degraded mode
+  ///
+  /// In en, this message translates to:
+  /// **'AURA ran this turn in a reduced mode.'**
+  String get chatTurnReducedMode;
+
+  /// Chat: note under an answer with no citations
+  ///
+  /// In en, this message translates to:
+  /// **'Ungrounded — no sources attached.'**
+  String get chatTurnUngrounded;
+
+  /// Chat: note under a truncated code, file, diff or terminal preview
+  ///
+  /// In en, this message translates to:
+  /// **'… {count, plural, =1{1 more line} other{{count} more lines}}'**
+  String chatMoreLines(int count);
+
+  /// Chat: error when a picked image file cannot be read; name is the file name
+  ///
+  /// In en, this message translates to:
+  /// **'Could not read {name}.'**
+  String chatImageReadFailed(String name);
+
+  /// Chat: error when too many images are attached
+  ///
+  /// In en, this message translates to:
+  /// **'You can attach up to {max} images to one message.'**
+  String chatImageTooMany(int max);
+
+  /// Chat: error when an image is too large; mb is a number
+  ///
+  /// In en, this message translates to:
+  /// **'{name} is larger than {mb} MB.'**
+  String chatImageTooLarge(String name, String mb);
+
+  /// Chat: shown in a sent message whose images are no longer available
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 image attached} other{{count} images attached}}'**
+  String chatImagesAttached(int count);
+
+  /// Chat: proposed-actions card line for adding a task; priority and category are data values
+  ///
+  /// In en, this message translates to:
+  /// **'Create Task: {title} ({priority} priority, {category})'**
+  String chatActionCreateTaskDetail(
+    String title,
+    String priority,
+    String category,
+  );
+
+  /// Chat: proposed-actions card line for adding a calendar event; start is a timestamp
+  ///
+  /// In en, this message translates to:
+  /// **'Schedule Event: {title} at {start}'**
+  String chatActionScheduleEventAt(String title, String start);
+
+  /// Chat: proposed-actions card line for logging an expense
+  ///
+  /// In en, this message translates to:
+  /// **'Log Expense: \${amount} for {category}'**
+  String chatActionLogExpenseFor(String amount, String category);
+
+  /// Chat: proposed-actions card line for logging income
+  ///
+  /// In en, this message translates to:
+  /// **'Log Income: \${amount} for {category}'**
+  String chatActionLogIncomeFor(String amount, String category);
+
+  /// Chat: health metric in a proposed log-health action
+  ///
+  /// In en, this message translates to:
+  /// **'{ml}ml water'**
+  String chatHealthWater(String ml);
+
+  /// Chat: health metric in a proposed log-health action
+  ///
+  /// In en, this message translates to:
+  /// **'{minutes}m sleep'**
+  String chatHealthSleep(String minutes);
+
+  /// Chat: health metric in a proposed log-health action
+  ///
+  /// In en, this message translates to:
+  /// **'{minutes}m exercise'**
+  String chatHealthExercise(String minutes);
+
+  /// Chat: proposed-actions card line for logging health metrics; metrics is a list
+  ///
+  /// In en, this message translates to:
+  /// **'Log Health: {metrics}'**
+  String chatActionLogHealthDetail(String metrics);
+
+  /// Separator between items of an inline list (keep the trailing space)
+  ///
+  /// In en, this message translates to:
+  /// **', '**
+  String get chatListSeparator;
+
+  /// Chat: fallback name of a plan step that has no label
+  ///
+  /// In en, this message translates to:
+  /// **'step'**
+  String get chatStepFallback;
+
+  /// Chat: detail of a plan step blocked by a failed dependency; detail comes from the server
+  ///
+  /// In en, this message translates to:
+  /// **'Blocked: {detail}'**
+  String chatStepBlocked(String detail);
+
+  /// Persona picker: name of the capability the Engineer persona needs, inserted into chatPersonaRequires
+  ///
+  /// In en, this message translates to:
+  /// **'the Engineer capability'**
+  String get chatCapabilityEngineer;
+
+  /// Persona picker: generic capability name, inserted into chatPersonaRequires
+  ///
+  /// In en, this message translates to:
+  /// **'an additional capability'**
+  String get chatCapabilityAdditional;
+
+  /// Persona picker: subtitle of a locked persona
+  ///
+  /// In en, this message translates to:
+  /// **'Requires {capability} -- not available on this account'**
+  String chatPersonaRequires(String capability);
+
+  /// Chat: shown in place of an answer a safety check withheld after it streamed
+  ///
+  /// In en, this message translates to:
+  /// **'This response was withheld by a safety check.'**
+  String get chatWithheldNotice;
+
+  /// Chat: shown in place of an answer a safety check refused before generation
+  ///
+  /// In en, this message translates to:
+  /// **'AURA did not answer this request: it was stopped by a safety check.'**
+  String get chatBlockedNotice;
+
+  /// Chat: shown in place of an answer the server refused because a needed capability is unavailable
+  ///
+  /// In en, this message translates to:
+  /// **'This needs a feature that isn\'t available yet. AURA can answer plain questions right now. Answers that use your memory, documents, tools or images are coming soon.'**
+  String get chatFeatureUnavailableNotice;
+
+  /// Persona name: the default orchestrator agent
+  ///
+  /// In en, this message translates to:
+  /// **'Orchestrator'**
+  String get chatPersonaOrchestrator;
+
+  /// Persona name
+  ///
+  /// In en, this message translates to:
+  /// **'Task Planner'**
+  String get chatPersonaTaskPlanner;
+
+  /// Persona name
+  ///
+  /// In en, this message translates to:
+  /// **'Finance Advisor'**
+  String get chatPersonaFinanceAdvisor;
+
+  /// Persona name
+  ///
+  /// In en, this message translates to:
+  /// **'Health Companion'**
+  String get chatPersonaHealthCompanion;
+
+  /// Persona name
+  ///
+  /// In en, this message translates to:
+  /// **'Research Agent'**
+  String get chatPersonaResearchAgent;
+
+  /// Persona name
+  ///
+  /// In en, this message translates to:
+  /// **'Coding Agent'**
+  String get chatPersonaCodingAgent;
+
+  /// Persona name
+  ///
+  /// In en, this message translates to:
+  /// **'Decision Agent'**
+  String get chatPersonaDecisionAgent;
+
+  /// Persona name: the gated Engineer persona
+  ///
+  /// In en, this message translates to:
+  /// **'Engineer'**
+  String get chatPersonaEngineer;
+
+  /// Chat header: AI router status line; model and status come from the server, latency is a number
+  ///
+  /// In en, this message translates to:
+  /// **'Active • {model} ({status}) • {latency}ms'**
+  String chatHeaderStatus(String model, String status, String latency);
+
+  /// Memory page: filter chip showing every kind of memory
+  ///
+  /// In en, this message translates to:
+  /// **'All'**
+  String get memoryFilterAll;
+
+  /// Memory page: empty state title
+  ///
+  /// In en, this message translates to:
+  /// **'No memories yet'**
+  String get memoryEmptyTitle;
+
+  /// Memory page: empty state message
+  ///
+  /// In en, this message translates to:
+  /// **'Save a fact with a kind so Copilot can use it later.'**
+  String get memoryEmptyMessage;
+
+  /// Memory page: snackbar after a memory is deleted on the server
+  ///
+  /// In en, this message translates to:
+  /// **'Memory forgotten'**
+  String get memoryForgotten;
+
+  /// Memory page: snackbar when a memory was deleted locally but the server delete is pending
+  ///
+  /// In en, this message translates to:
+  /// **'Forgotten on this device. AURA will finish removing it from the server the next time it can reach it.'**
+  String get memoryForgottenLocally;
+
+  /// Memory page: snackbar when deleting a memory fails; reason is a localized failure message
+  ///
+  /// In en, this message translates to:
+  /// **'Could not forget this memory. {reason}'**
+  String memoryForgetFailed(String reason);
+
+  /// Memory page: title of the add-memory dialog
+  ///
+  /// In en, this message translates to:
+  /// **'Remember this'**
+  String get memoryAddTitle;
+
+  /// Memory page: label of the fact field in the add-memory dialog
+  ///
+  /// In en, this message translates to:
+  /// **'Fact'**
+  String get memoryFactLabel;
+
+  /// Memory page: label of the subject field in the add-memory dialog
+  ///
+  /// In en, this message translates to:
+  /// **'Subject (optional)'**
+  String get memorySubjectLabel;
+
+  /// Memory page: label of the memory-kind dropdown
+  ///
+  /// In en, this message translates to:
+  /// **'Kind'**
+  String get memoryKindField;
+
+  /// Memory kind name (backend 'working' memory)
+  ///
+  /// In en, this message translates to:
+  /// **'working'**
+  String get memoryKindWorking;
+
+  /// Memory kind name (backend 'episodic' memory)
+  ///
+  /// In en, this message translates to:
+  /// **'episodic'**
+  String get memoryKindEpisodic;
+
+  /// Memory kind name (backend 'semantic' memory)
+  ///
+  /// In en, this message translates to:
+  /// **'semantic'**
+  String get memoryKindSemantic;
+
+  /// Memory kind name (backend 'entity' memory)
+  ///
+  /// In en, this message translates to:
+  /// **'entity'**
+  String get memoryKindEntity;
+
+  /// Memory kind name (backend 'procedural' memory)
+  ///
+  /// In en, this message translates to:
+  /// **'procedural'**
+  String get memoryKindProcedural;
+
+  /// Memory kind name (backend 'reflection' memory)
+  ///
+  /// In en, this message translates to:
+  /// **'reflection'**
+  String get memoryKindReflection;
+
+  /// Projects page: greeting above the user's name
+  ///
+  /// In en, this message translates to:
+  /// **'Welcome back,'**
+  String get projectsWelcomeBack;
+
+  /// Projects page: name shown when the account has no display name
+  ///
+  /// In en, this message translates to:
+  /// **'Aura User'**
+  String get projectsDefaultUserName;
+
+  /// Projects page: title
+  ///
+  /// In en, this message translates to:
+  /// **'Projects'**
+  String get projectsTitle;
+
+  /// Projects page: subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'Organize your work into projects'**
+  String get projectsSubtitle;
+
+  /// Projects page: button that opens the create-project dialog
+  ///
+  /// In en, this message translates to:
+  /// **'New Project'**
+  String get projectsNew;
+
+  /// Projects page: empty state title
+  ///
+  /// In en, this message translates to:
+  /// **'No projects yet'**
+  String get projectsEmptyTitle;
+
+  /// Projects page: empty state message
+  ///
+  /// In en, this message translates to:
+  /// **'Create your first project to get started'**
+  String get projectsEmptyMessage;
+
+  /// Projects page: create-project dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'Create Project'**
+  String get projectsCreateTitle;
+
+  /// Projects page: required title field label
+  ///
+  /// In en, this message translates to:
+  /// **'Title *'**
+  String get projectsTitleField;
+
+  /// Projects page: description field label
+  ///
+  /// In en, this message translates to:
+  /// **'Description'**
+  String get projectsDescriptionField;
+
+  /// Projects page: status dropdown label
+  ///
+  /// In en, this message translates to:
+  /// **'Status'**
+  String get projectsStatusField;
+
+  /// Projects page: row that opens the target date picker
+  ///
+  /// In en, this message translates to:
+  /// **'Set target date (optional)'**
+  String get projectsSetTargetDate;
+
+  /// Projects page: chosen target date; date is already formatted
+  ///
+  /// In en, this message translates to:
+  /// **'Target: {date}'**
+  String projectsTarget(String date);
+
+  /// Projects page: confirm button of the create-project dialog
+  ///
+  /// In en, this message translates to:
+  /// **'Create'**
+  String get projectsCreate;
+
+  /// Projects page: a project's target date; date is already formatted
+  ///
+  /// In en, this message translates to:
+  /// **'Due: {date}'**
+  String projectsDue(String date);
+
+  /// Project status name
+  ///
+  /// In en, this message translates to:
+  /// **'active'**
+  String get projectsStatusActive;
+
+  /// Project status name
+  ///
+  /// In en, this message translates to:
+  /// **'completed'**
+  String get projectsStatusCompleted;
+
+  /// Project status name
+  ///
+  /// In en, this message translates to:
+  /// **'archived'**
+  String get projectsStatusArchived;
+
+  /// Project status name ('on_hold')
+  ///
+  /// In en, this message translates to:
+  /// **'on hold'**
+  String get projectsStatusOnHold;
+
+  /// Analytics page: title
+  ///
+  /// In en, this message translates to:
+  /// **'System Analytics Dashboard'**
+  String get analyticsTitle;
+
+  /// Analytics page: empty state title
+  ///
+  /// In en, this message translates to:
+  /// **'No telemetry metrics collected yet'**
+  String get analyticsEmptyTitle;
+
+  /// Analytics page: empty state message
+  ///
+  /// In en, this message translates to:
+  /// **'Metrics will appear once you stream prompts.'**
+  String get analyticsEmptyMessage;
+
+  /// Analytics page: KPI card title
+  ///
+  /// In en, this message translates to:
+  /// **'Total Requests'**
+  String get analyticsTotalRequests;
+
+  /// Analytics page: KPI card title
+  ///
+  /// In en, this message translates to:
+  /// **'Avg Latency'**
+  String get analyticsAvgLatency;
+
+  /// Analytics page: KPI card title (requests that fell back to another path)
+  ///
+  /// In en, this message translates to:
+  /// **'Failovers'**
+  String get analyticsFailovers;
+
+  /// Analytics page: KPI card title
+  ///
+  /// In en, this message translates to:
+  /// **'Errors Logged'**
+  String get analyticsErrorsLogged;
+
+  /// Analytics page: latency chart title
+  ///
+  /// In en, this message translates to:
+  /// **'Latency History (Last 10 Request Streams)'**
+  String get analyticsLatencyHistory;
+
+  /// Analytics page: shown in a chart with no data points
+  ///
+  /// In en, this message translates to:
+  /// **'Insufficient data'**
+  String get analyticsInsufficientData;
+
+  /// Analytics page: inference path pie chart title
+  ///
+  /// In en, this message translates to:
+  /// **'Inference Path Distribution'**
+  String get analyticsInferencePaths;
+
+  /// Analytics page: shown when the inference pie chart is empty
+  ///
+  /// In en, this message translates to:
+  /// **'No inference data'**
+  String get analyticsNoInferenceData;
+
+  /// Analytics page: failover pie chart title
+  ///
+  /// In en, this message translates to:
+  /// **'API Failover Statistics'**
+  String get analyticsFailoverStats;
+
+  /// Analytics page: shown when the failover chart is empty
+  ///
+  /// In en, this message translates to:
+  /// **'No failover events'**
+  String get analyticsNoFailoverEvents;
+
+  /// Analytics page: pie chart slice label
+  ///
+  /// In en, this message translates to:
+  /// **'Success ({count})'**
+  String analyticsSuccessCount(int count);
+
+  /// Analytics page: pie chart slice label
+  ///
+  /// In en, this message translates to:
+  /// **'Failovers ({count})'**
+  String analyticsFailoversCount(int count);
+
+  /// Analytics page: recent telemetry list title
+  ///
+  /// In en, this message translates to:
+  /// **'Latest Telemetry Logs'**
+  String get analyticsLatestLogs;
+
+  /// Life Hub: filter chip for every item type
+  ///
+  /// In en, this message translates to:
+  /// **'All'**
+  String get lifeHubFilterAll;
+
+  /// Life Hub: filter chip
+  ///
+  /// In en, this message translates to:
+  /// **'Tasks'**
+  String get lifeHubFilterTasks;
+
+  /// Life Hub: filter chip
+  ///
+  /// In en, this message translates to:
+  /// **'Calendar'**
+  String get lifeHubFilterCalendar;
+
+  /// Life Hub: filter chip
+  ///
+  /// In en, this message translates to:
+  /// **'Finance'**
+  String get lifeHubFilterFinance;
+
+  /// Life Hub: filter chip
+  ///
+  /// In en, this message translates to:
+  /// **'Health'**
+  String get lifeHubFilterHealth;
+
+  /// Life Hub: filter chip
+  ///
+  /// In en, this message translates to:
+  /// **'Projects'**
+  String get lifeHubFilterProjects;
+
+  /// Life Hub: filter chip
+  ///
+  /// In en, this message translates to:
+  /// **'Goals'**
+  String get lifeHubFilterGoals;
+
+  /// Life Hub: agenda empty state title
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing on the board'**
+  String get lifeHubAgendaEmptyTitle;
+
+  /// Life Hub: agenda empty state message
+  ///
+  /// In en, this message translates to:
+  /// **'Add a task, event, or log to see this week in one place.'**
+  String get lifeHubAgendaEmptyMessage;
+
+  /// Life Hub: agenda entry for today's health record
+  ///
+  /// In en, this message translates to:
+  /// **'Today’s health log'**
+  String get lifeHubHealthLogTitle;
+
+  /// Life Hub: water amount of today's health record
+  ///
+  /// In en, this message translates to:
+  /// **'{ml} ml water'**
+  String lifeHubHealthLogWater(int ml);
+
+  /// Life Hub: calendar pane empty state
+  ///
+  /// In en, this message translates to:
+  /// **'No upcoming events'**
+  String get lifeHubNoUpcomingEvents;
+
+  /// Life Hub: projects pane empty state message
+  ///
+  /// In en, this message translates to:
+  /// **'Create a project to organize your work.'**
+  String get lifeHubProjectsEmptyMessage;
+
+  /// Life Hub: goals pane empty state title
+  ///
+  /// In en, this message translates to:
+  /// **'No goals yet'**
+  String get lifeHubGoalsEmptyTitle;
+
+  /// Life Hub: goals pane empty state message
+  ///
+  /// In en, this message translates to:
+  /// **'Create a goal to track your aspirations.'**
+  String get lifeHubGoalsEmptyMessage;
+
+  /// Life Hub: a goal's progress
+  ///
+  /// In en, this message translates to:
+  /// **'{percent}% complete'**
+  String lifeHubGoalProgress(int percent);
+
+  /// Live voice: tooltip of the button that shows or hides the transcript
+  ///
+  /// In en, this message translates to:
+  /// **'Transcript'**
+  String get voiceLiveTranscript;
+
+  /// Live voice: tooltip of the button that interrupts AURA while it speaks
+  ///
+  /// In en, this message translates to:
+  /// **'Interrupt'**
+  String get voiceLiveInterrupt;
+
+  /// Live voice: tooltip of the button that ends the session
+  ///
+  /// In en, this message translates to:
+  /// **'End'**
+  String get voiceLiveEndShort;
+
+  /// Live voice: error on platforms without live voice support
+  ///
+  /// In en, this message translates to:
+  /// **'Live voice is available on Android and iOS only'**
+  String get voiceLiveUnsupported;
+
+  /// Home: screen-reader label of the capture bar
+  ///
+  /// In en, this message translates to:
+  /// **'Ask AURA anything'**
+  String get homeAskAuraLabel;
+
+  /// Home: screen-reader label of the capture bar's send button
+  ///
+  /// In en, this message translates to:
+  /// **'Send to AURA'**
+  String get homeSendToAura;
+
+  /// Home: insights section error title
+  ///
+  /// In en, this message translates to:
+  /// **'Could not load insights'**
+  String get homeInsightsLoadFailed;
+
+  /// Home: insights section error message
+  ///
+  /// In en, this message translates to:
+  /// **'Pull to refresh when you are back online.'**
+  String get homeInsightsLoadFailedMessage;
+
+  /// Home: screen-reader label of the button that dismisses an insight
+  ///
+  /// In en, this message translates to:
+  /// **'Dismiss insight'**
+  String get homeDismissInsight;
+
+  /// Home: screen-reader label of a due task
+  ///
+  /// In en, this message translates to:
+  /// **'Task: {title}'**
+  String homeDueTask(String title);
+
+  /// Home: screen-reader label of a due calendar event
+  ///
+  /// In en, this message translates to:
+  /// **'Event: {title}'**
+  String homeDueEvent(String title);
+
+  /// Home: screen-reader label of an overdue item; item is homeDueTask or homeDueEvent
+  ///
+  /// In en, this message translates to:
+  /// **'{item}, overdue'**
+  String homeDueOverdue(String item);
+
+  /// Notifications: title of a failover notification
+  ///
+  /// In en, this message translates to:
+  /// **'Server inference failover'**
+  String get notificationsFailoverTitle;
+
+  /// Notifications: body of a failover notification; model is a model/path identifier
+  ///
+  /// In en, this message translates to:
+  /// **'AURA could not complete the request on {model} and recorded a failover.'**
+  String notificationsFailoverMessage(String model);
+
+  /// Notifications: title of a failed-request notification
+  ///
+  /// In en, this message translates to:
+  /// **'Request failed'**
+  String get notificationsRequestFailedTitle;
+
+  /// Notifications: body of a failed-request notification without its own error text
+  ///
+  /// In en, this message translates to:
+  /// **'An AI request failed on {model}.'**
+  String notificationsRequestFailedMessage(String model);
+
+  /// Notifications: empty state title
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing to report'**
+  String get notificationsEmptyTitle;
+
+  /// Notifications: empty state message
+  ///
+  /// In en, this message translates to:
+  /// **'You\'ll see AI failovers and request errors here.'**
+  String get notificationsEmptyMessage;
+
+  /// Notifications: error state title
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t load notifications'**
+  String get notificationsLoadFailed;
+
+  /// Feedback page: empty state title
+  ///
+  /// In en, this message translates to:
+  /// **'No corrections yet'**
+  String get feedbackEmptyTitle;
+
+  /// Feedback page: empty state message
+  ///
+  /// In en, this message translates to:
+  /// **'Rate a Copilot answer to help AURA learn what you prefer.'**
+  String get feedbackEmptyMessage;
+
+  /// Feedback page: heading of a sent rating; date is already formatted
+  ///
+  /// In en, this message translates to:
+  /// **'Rated {rating}/5 · {date}'**
+  String feedbackRated(int rating, String date);
+
+  /// Engine status page: latency of the last response; ms is a number
+  ///
+  /// In en, this message translates to:
+  /// **'Last response in {ms} ms'**
+  String modelsLastResponse(String ms);
+
+  /// Engine status page: shown before any request was made
+  ///
+  /// In en, this message translates to:
+  /// **'No requests yet this session'**
+  String get modelsNoRequestsYet;
+
+  /// Engine status page: button that probes the server again
+  ///
+  /// In en, this message translates to:
+  /// **'Check again'**
+  String get modelsCheckAgain;
+
+  /// Engine status page: explanatory note
+  ///
+  /// In en, this message translates to:
+  /// **'Requests are processed on AURA’s servers. There is nothing to download or configure on this device.'**
+  String get modelsServerNote;
+
+  /// Command palette: command that opens the desktop IDE shell
+  ///
+  /// In en, this message translates to:
+  /// **'Open Desktop IDE'**
+  String get paletteOpenDesktopIde;
+
+  /// Command palette: search field hint
+  ///
+  /// In en, this message translates to:
+  /// **'Search AURA, or jump to a screen…'**
+  String get paletteSearchHint;
+
+  /// Command palette: heading above navigation destinations
+  ///
+  /// In en, this message translates to:
+  /// **'Go to'**
+  String get paletteGoTo;
+
+  /// Command palette: shown when nothing matches the search
+  ///
+  /// In en, this message translates to:
+  /// **'No matches'**
+  String get paletteNoMatches;
+
+  /// Profile page: attestation check result on a debug build
+  ///
+  /// In en, this message translates to:
+  /// **'Debug marker only — hardware attestation is not enabled in this app'**
+  String get authAttestationDebugOnly;
+
+  /// Profile page: attestation check result when a hardware token was produced
+  ///
+  /// In en, this message translates to:
+  /// **'Hardware attestation token ready'**
+  String get authAttestationReady;
+
+  /// Profile page: attestation check result when no hardware token could be produced
+  ///
+  /// In en, this message translates to:
+  /// **'Hardware attestation unavailable on this device'**
+  String get authAttestationUnavailable;
+
+  /// Profile page: badge under the signed-in user's name
+  ///
+  /// In en, this message translates to:
+  /// **'Authorized User'**
+  String get authAuthorizedUser;
+
+  /// Profile page: device attestation card title
+  ///
+  /// In en, this message translates to:
+  /// **'Device Attestation Status'**
+  String get authAttestationHeading;
+
+  /// Profile page: explanation on the device attestation card
+  ///
+  /// In en, this message translates to:
+  /// **'This client does not request Google Play Integrity or Apple App Attest tokens. Debug builds send an explicit development marker; release builds advertise that hardware attestation is unsupported. Backend verification of real Play Integrity tokens exists, but this app cannot produce them without a vendor SDK and Play Console keys.'**
+  String get authAttestationExplainer;
+
+  /// Profile page: title of the sign-out card
+  ///
+  /// In en, this message translates to:
+  /// **'Session Operations'**
+  String get authSessionOperations;
 }
 
 class _AppLocalizationsDelegate

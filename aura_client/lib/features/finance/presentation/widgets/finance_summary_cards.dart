@@ -73,7 +73,7 @@ class _SummaryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final formatCurrency = NumberFormat.simpleCurrency(decimalDigits: 2);
+    final formatCurrency = NumberFormat.simpleCurrency(locale: 'en_US', decimalDigits: 2);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16.0),

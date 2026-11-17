@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 import '../../data/turn_meta.dart';
 
@@ -62,7 +63,7 @@ class _StepRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                step.label ?? step.kind ?? 'step',
+                step.label ?? step.kind ?? context.l10n.chatStepFallback,
                 style: TextStyle(fontSize: 13, color: palette.textPrimary),
               ),
               if ((step.status == 'failed' || step.status == 'blocked') &&
@@ -75,7 +76,7 @@ class _StepRow extends StatelessWidget {
                     // (Plan.mark_blocked_steps/StepStatus.BLOCKED, aura_core/domain/planning.py)
                     // -- worded and coloured distinctly so it never reads as "this step failed".
                     step.status == 'blocked'
-                        ? 'Blocked: ${step.detail!}'
+                        ? context.l10n.chatStepBlocked(step.detail!)
                         : step.detail!,
                     style: TextStyle(
                       fontSize: 12,

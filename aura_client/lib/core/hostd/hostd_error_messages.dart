@@ -6,6 +6,8 @@
 /// string only for an exception type this daemon-facing code has no better-known meaning for.
 library;
 
+import 'package:aura_client/l10n/l10n.dart';
+
 import 'hostd_control_client.dart' show HostdControlError, HostdControlUnavailable;
 
 String describeHostdError(Object error) {
@@ -17,7 +19,7 @@ String describeHostdError(Object error) {
     return error.message;
   }
   if (error is HostdControlUnavailable) {
-    return 'aura_hostd is not running. Start it and try again.';
+    return currentL10n.coreHostdNotRunningStartIt;
   }
   return '$error';
 }

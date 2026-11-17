@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/insights/insights_client.dart';
-import '../../../l10n/generated/app_localizations.dart';
+import 'package:aura_client/l10n/l10n.dart';
 import '../../notifications/notification_center.dart';
 import 'package:aura_client/core/ai/ai_router/aura_ai_router.dart';
 import '../../tasks/data/task_repository.dart';
@@ -79,7 +79,7 @@ class _TodayScaffold extends ConsumerWidget {
           padding: const EdgeInsets.all(AuraSpacing.lg),
           children: [
             Text(
-              DateFormat('EEEE, MMMM d').format(DateTime.now()).toUpperCase(),
+              DateFormat.MMMMEEEEd().format(DateTime.now()).toUpperCase(),
               style: Theme.of(context).textTheme.labelMedium?.copyWith(
                 color: palette.brandOnSurfaceText,
                 fontWeight: FontWeight.w700,
@@ -143,7 +143,7 @@ class _CaptureBarState extends ConsumerState<_CaptureBar> {
     final palette = AuraPalette.of(context);
     return AuraCard(
       glass: true,
-      semanticLabel: 'Ask AURA anything',
+      semanticLabel: context.l10n.homeAskAuraLabel,
       child: Row(
         children: [
           Icon(Icons.auto_awesome, color: palette.brandOnSurfaceText, size: 20),
@@ -163,7 +163,7 @@ class _CaptureBarState extends ConsumerState<_CaptureBar> {
           const SizedBox(width: AuraSpacing.sm),
           Semantics(
             button: true,
-            label: 'Send to AURA',
+            label: context.l10n.homeSendToAura,
             child: InkWell(
               borderRadius: BorderRadius.circular(AuraRadius.pill),
               onTap: _submit,
@@ -232,8 +232,8 @@ class _InsightsSection extends ConsumerWidget {
         padding: const EdgeInsets.only(bottom: AuraSpacing.lg),
         child: AuraEmptyState(
           icon: Icons.cloud_off_outlined,
-          title: 'Could not load insights',
-          message: 'Pull to refresh when you are back online.',
+          title: context.l10n.homeInsightsLoadFailed,
+          message: context.l10n.homeInsightsLoadFailedMessage,
         ),
       ),
     );
@@ -280,7 +280,7 @@ class _InsightCard extends ConsumerWidget {
           ),
           Semantics(
             button: true,
-            label: 'Dismiss insight',
+            label: context.l10n.homeDismissInsight,
             child: InkWell(
               onTap: () async {
                 await ref.read(insightsClientProvider).dismiss(insight.id);
@@ -436,9 +436,11 @@ class _DueRow extends StatelessWidget {
               ? palette.brandOnSurfaceText
               : palette.warning);
 
+    final dueLabel = item.kind == _DueItemKind.task
+        ? context.l10n.homeDueTask(item.title)
+        : context.l10n.homeDueEvent(item.title);
     return Semantics(
-      label:
-          '${item.kind == _DueItemKind.task ? "Task" : "Event"}: ${item.title}${item.overdue ? ", overdue" : ""}',
+      label: item.overdue ? context.l10n.homeDueOverdue(dueLabel) : dueLabel,
       child: Row(
         children: [
           Icon(icon, size: 16, color: color),
@@ -454,7 +456,7 @@ class _DueRow extends StatelessWidget {
           ),
           if (item.time != null)
             Text(
-              DateFormat('h:mm a').format(item.time!),
+              DateFormat.jm().format(item.time!),
               style: TextStyle(
                 color: item.overdue ? palette.danger : palette.textSecondary,
                 fontSize: 12,

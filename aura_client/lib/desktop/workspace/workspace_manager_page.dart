@@ -3,6 +3,7 @@
 /// Full workspace management UI with recent list, open folder, remove recent.
 library;
 
+import 'package:aura_client/core/locale/relative_time.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
@@ -129,7 +130,7 @@ class WorkspaceManagerPage extends ConsumerWidget {
                                     ),
                                     const SizedBox(height: 2),
                                     Text(
-                                      context.l10n.workspaceLastOpened(_formatDate(ws.lastOpenedAt)),
+                                      context.l10n.workspaceLastOpened(relativeDay(context.l10n, ws.lastOpenedAt)),
                                       style: TextStyle(
                                         fontSize: 11,
                                         color: palette.textDisabled,
@@ -224,20 +225,6 @@ class WorkspaceManagerPage extends ConsumerWidget {
     );
     if (confirmed == true) {
       ref.read(workspaceNotifierProvider.notifier).removeWorkspace(ws.id);
-    }
-  }
-
-  String _formatDate(DateTime date) {
-    final now = DateTime.now();
-    final diff = now.difference(date);
-    if (diff.inDays == 0) {
-      return 'Today ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
-    } else if (diff.inDays == 1) {
-      return 'Yesterday';
-    } else if (diff.inDays < 7) {
-      return '${diff.inDays} days ago';
-    } else {
-      return '${date.day}/${date.month}/${date.year}';
     }
   }
 }

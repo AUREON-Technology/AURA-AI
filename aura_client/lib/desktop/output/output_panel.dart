@@ -1,6 +1,7 @@
 /// Output panel widget for Desktop IDE's bottom-panel "Output" tab (D7 Part A.1).
 library;
 
+import 'package:aura_client/core/locale/text_direction.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -87,7 +88,7 @@ class _OutputPanelState extends ConsumerState<OutputPanel> {
                     itemBuilder: (context, index) {
                       final entry = filtered[index];
                       final time = entry.timestamp.toIso8601String().substring(11, 19);
-                      return Padding(
+                      return LtrContent(child: Padding(
                         padding: const EdgeInsets.symmetric(vertical: 1),
                         child: RichText(
                           text: TextSpan(
@@ -102,7 +103,7 @@ class _OutputPanelState extends ConsumerState<OutputPanel> {
                             ],
                           ),
                         ),
-                      );
+                      ));
                     },
                   ),
           ),

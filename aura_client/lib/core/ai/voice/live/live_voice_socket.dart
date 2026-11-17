@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:aura_client/l10n/l10n.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -77,8 +78,8 @@ class LiveVoiceSocket {
           _frames.add(LiveErrorFrame(
             error: code == closeUnauthorized ? 'session_expired' : 'socket_closed',
             message: code == closeUnauthorized
-                ? 'Live voice ended because your sign-in needs renewing. Start it again.'
-                : 'Live voice was disconnected. Start it again.',
+                ? currentL10n.voiceSocketSessionExpired
+                : currentL10n.voiceSocketDisconnected,
           ));
         }
       },

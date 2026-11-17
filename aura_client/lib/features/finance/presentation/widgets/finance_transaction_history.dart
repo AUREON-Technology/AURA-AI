@@ -15,7 +15,7 @@ class FinanceTransactionHistory extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final formatCurrency = NumberFormat.simpleCurrency(decimalDigits: 2);
+    final formatCurrency = NumberFormat.simpleCurrency(locale: 'en_US', decimalDigits: 2);
     final palette = AuraPalette.of(context);
 
     return Card(

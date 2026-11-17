@@ -31,7 +31,7 @@ class TaskItemCard extends ConsumerWidget {
     final palette = AuraPalette.of(context);
     final priorityColor = _getPriorityColor(palette, task.priority);
     final hasDueDate = task.dueDate != null;
-    final formattedDate = hasDueDate ? DateFormat('MMM d, y').format(task.dueDate!) : null;
+    final formattedDate = hasDueDate ? DateFormat.yMMMd().format(task.dueDate!) : null;
     final isOverdue = hasDueDate &&
         task.dueDate!.isBefore(DateTime.now().subtract(const Duration(days: 1))) &&
         !task.isCompleted;

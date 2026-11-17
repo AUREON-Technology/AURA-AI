@@ -11,6 +11,7 @@ import 'package:aura_client/features/chat/data/chat_repository.dart';
 import 'package:aura_client/features/chat/data/turn_meta.dart';
 import 'package:aura_client/features/voice_live/data/live_voice_history.dart';
 import 'package:aura_client/features/voice_live/presentation/live_voice_state.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// Calls the live-voice session is holding for confirmation. Separate from chat's
 /// [pendingConfirmationProvider] (UX-05): voice must neither show nor clear chat's pending calls,
@@ -46,7 +47,7 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
 
   Future<void> startSession({String? conversationId}) async {
     if (!state.supported) {
-      state = state.copyWith(error: 'Live voice is available on Android and iOS only');
+      state = state.copyWith(error: currentL10n.voiceLiveUnsupported);
       return;
     }
     await _teardown();

@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:aura_client/l10n/l10n.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
@@ -86,7 +87,7 @@ class VoiceClient {
   Future<VoiceSpeakResult> speak(String text, {String? voice}) async {
     final spoken = prepareSpeechText(text);
     if (spoken.isEmpty) {
-      return VoiceSpeakResult.failure('Nothing to read in this reply.');
+      return VoiceSpeakResult.failure(currentL10n.voiceClientNothingToRead);
     }
 
     final tokens = _ref.read(tokenManagerProvider);
@@ -118,23 +119,23 @@ class VoiceClient {
       final audio = response.bodyBytes;
       if (audio.isEmpty) {
         debugPrint("[VoiceClient] speak returned an empty body");
-        return VoiceSpeakResult.failure('Could not generate speech for this reply.');
+        return VoiceSpeakResult.failure(currentL10n.voiceClientSpeechFailed);
       }
       return VoiceSpeakResult.success(audio);
     } catch (e) {
       debugPrint("[VoiceClient] speak failed: $e");
-      return VoiceSpeakResult.failure('Could not reach AURA to generate speech.');
+      return VoiceSpeakResult.failure(currentL10n.voiceClientUnreachable);
     }
   }
 
   static String _speakFailureMessage(int statusCode) {
     return switch (statusCode) {
-      401 => 'Sign in again to continue.',
-      404 => 'Speech playback is not available on this server.',
-      422 => 'This reply is too long to read aloud.',
-      429 => 'Too many speech requests. Try again shortly.',
-      503 => 'This server has no speech engine configured.',
-      _ => 'Could not generate speech for this reply.',
+      401 => currentL10n.voiceClientSignInAgain,
+      404 => currentL10n.voiceClientSpeakNotAvailable,
+      422 => currentL10n.voiceClientReplyTooLong,
+      429 => currentL10n.voiceClientRateLimited,
+      503 => currentL10n.voiceClientNoSpeechEngine,
+      _ => currentL10n.voiceClientSpeechFailed,
     };
   }
 }

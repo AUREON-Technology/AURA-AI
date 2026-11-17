@@ -29,6 +29,12 @@ const _identicalOnPurpose = <String>{
   'appName', // AURA
   'navCopilot', // product name, as in "Ask Copilot"
   'planStepWithStatus', // placeholders only
+  // Git and debugger vocabulary Egyptian developers use as-is (decision 6).
+  'gitCommit', 'gitBranch', 'gitStage', 'gitUnstage', 'gitMerge', 'gitDetachedHead',
+  'controlCenterMerge', 'controlCenterSquashMerge', 'coreEngineerWorkspaceBranch',
+  'debugStepOver', 'debugStepInto', 'debugStepOut',
+  // Server environment names, shown as configured.
+  'coreBackendEnvironmentProduction', 'coreBackendEnvironmentDevelopment',
 };
 
 void main() {

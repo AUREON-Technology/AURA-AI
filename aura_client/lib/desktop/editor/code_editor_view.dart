@@ -3,6 +3,7 @@
 /// Uses the EditorProvider abstraction to support multiple editor implementations.
 library;
 
+import 'package:aura_client/core/locale/text_direction.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -207,7 +208,7 @@ class _EditorContentState extends ConsumerState<_EditorContent> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    return Container(
+    return LtrContent(child: Container(
       color: AuraPalette.of(context).background,
       child: Column(
         children: [
@@ -245,7 +246,7 @@ class _EditorContentState extends ConsumerState<_EditorContent> {
           ),
         ],
       ),
-    );
+    ));
   }
 
   void _handleTextChange(String text) {

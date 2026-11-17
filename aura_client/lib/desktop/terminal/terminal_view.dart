@@ -11,6 +11,7 @@
 /// `_translateKey` never did.
 library;
 
+import 'package:aura_client/core/locale/text_direction.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart' as xterm;
@@ -118,7 +119,7 @@ class _TerminalViewState extends ConsumerState<TerminalView> {
       return _CenteredMessage(text: context.l10n.terminalStarting, palette: palette);
     }
 
-    return Container(
+    return LtrContent(child: Container(
       color: _bg,
       child: Column(
         children: [
@@ -160,7 +161,7 @@ class _TerminalViewState extends ConsumerState<TerminalView> {
             ),
         ],
       ),
-    );
+    ));
   }
 }
 

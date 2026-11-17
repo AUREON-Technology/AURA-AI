@@ -100,7 +100,7 @@ class IncompletePlanNotice extends StatelessWidget {
                     // The backend's own status word, not a word of ours: there
                     // is a real difference between blocked, failed and never
                     // started, and flattening it would lose the useful part.
-                    l10n.planStepWithStatus(_stepLabel(step), step.status ?? ''),
+                    l10n.planStepWithStatus(_stepLabel(step, l10n), step.status ?? ''),
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: palette.textSecondary,
                         ),
@@ -114,9 +114,9 @@ class IncompletePlanNotice extends StatelessWidget {
   }
 
   /// The step's own description, or its kind when the planner gave none.
-  static String _stepLabel(PlanStep step) {
+  static String _stepLabel(PlanStep step, AppLocalizations l10n) {
     final description = step.description?.trim();
     if (description != null && description.isNotEmpty) return description;
-    return step.kind ?? 'step';
+    return step.kind ?? l10n.chatStepFallback;
   }
 }

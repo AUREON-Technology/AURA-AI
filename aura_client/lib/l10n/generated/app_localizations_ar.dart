@@ -2328,7 +2328,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get ideActivityGoToFileTooltip => 'روح لملف (Ctrl+P)';
 
   @override
-  String get ideActivitySourceControl => 'Source Control';
+  String get ideActivitySourceControl => 'التحكم في الإصدارات';
 
   @override
   String get ideActivityAgents => 'وكلاء AURA';
@@ -2761,7 +2761,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String gitRemoteBranch(String name) {
-    return '$name (remote)';
+    return '$name (ريموت)';
   }
 
   @override
@@ -2940,4 +2940,1140 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get workspaceEmptyMessage => 'افتح فولدر علشان تعمل أول مساحة شغل ليك';
+
+  @override
+  String relativeTodayAt(String time) {
+    return 'النهارده $time';
+  }
+
+  @override
+  String get relativeYesterday => 'امبارح';
+
+  @override
+  String relativeDaysAgo(int days) {
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: 'من $days يوم',
+      many: 'من $days يوم',
+      few: 'من $days أيام',
+      two: 'من يومين',
+      one: 'من يوم',
+      zero: 'النهارده',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get coreEngineerWorkspacesUnavailableTitle => 'مساحات الشغل مش متاحة';
+
+  @override
+  String get coreEngineerWorkspacesUnavailableMessage =>
+      'مقدرناش نوصل للسيرفر. شغلك مضاعش -- جرّب تاني كمان شوية.';
+
+  @override
+  String get coreEngineerWorkspacesDisabledTitle => 'مساحات الشغل مش مفعّلة';
+
+  @override
+  String get coreEngineerWorkspacesDisabledMessage =>
+      'السيرفر ده مش بيشغّل الـ sandboxes بتاعة المهندس.';
+
+  @override
+  String get coreEngineerWorkspacesEmptyTitle => 'مفيش مساحات شغل لسه';
+
+  @override
+  String coreEngineerWorkspacesEmptyMessage(int hours) {
+    return 'اطلب من المهندس يعمل clone لريبو وهتظهر مساحة شغل هنا. مساحات الشغل بتتمسح بعد $hours ساعة من غير أي نشاط.';
+  }
+
+  @override
+  String get coreEngineerWorkspacesHeader => 'مساحات شغل المهندس';
+
+  @override
+  String coreEngineerWorkspaceSemanticLabel(String repo) {
+    return 'مساحة شغل لـ $repo';
+  }
+
+  @override
+  String coreEngineerWorkspaceBranch(String branch) {
+    return 'Branch $branch';
+  }
+
+  @override
+  String get coreEngineerWorkspaceDeleteTitle => 'عايز تمسح مساحة الشغل دي؟';
+
+  @override
+  String get coreEngineerWorkspaceKeep => 'سيبها';
+
+  @override
+  String coreEngineerWorkspaceDeleteBody(String repo) {
+    return 'نسخة $repo وأي تغييرات مش متعملها Commit فيها هتتمسح. أي حاجة اتعملها Push قبل كده مش هتتأثر.';
+  }
+
+  @override
+  String get coreEngineerWorkspaceDeleted => 'مساحة الشغل اتمسحت.';
+
+  @override
+  String get coreEngineerWorkspaceDeleteFailed =>
+      'مقدرناش نمسح مساحة الشغل دي.';
+
+  @override
+  String get coreEngineerWorkspaceExpiryOverdue => 'هتتمسح دلوقتي';
+
+  @override
+  String get coreEngineerWorkspaceExpiryUnderHour =>
+      'هتتمسح في أقل من ساعة لو ما اتستخدمتش';
+
+  @override
+  String coreEngineerWorkspaceExpiryHours(int hours) {
+    String _temp0 = intl.Intl.pluralLogic(
+      hours,
+      locale: localeName,
+      other: 'هتتمسح خلال $hours ساعة لو ما اتستخدمتش',
+      many: 'هتتمسح خلال $hours ساعة لو ما اتستخدمتش',
+      few: 'هتتمسح خلال $hours ساعات لو ما اتستخدمتش',
+      two: 'هتتمسح خلال ساعتين لو ما اتستخدمتش',
+      one: 'هتتمسح خلال ساعة لو ما اتستخدمتش',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String coreEngineerWorkspaceExpiryDays(int days) {
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: 'هتتمسح خلال $days يوم لو ما اتستخدمتش',
+      many: 'هتتمسح خلال $days يوم لو ما اتستخدمتش',
+      few: 'هتتمسح خلال $days أيام لو ما اتستخدمتش',
+      two: 'هتتمسح خلال يومين لو ما اتستخدمتش',
+      one: 'هتتمسح خلال يوم لو ما اتستخدمتش',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get coreEngineerWorkspaceRunning => 'شغّالة';
+
+  @override
+  String get coreEngineerWorkspaceIdle => 'واقفة';
+
+  @override
+  String get voiceClientNothingToRead => 'مفيش حاجة تتقري في الرد ده.';
+
+  @override
+  String get voiceClientSpeechFailed => 'مقدرناش نحوّل الرد ده لصوت.';
+
+  @override
+  String get voiceClientUnreachable =>
+      'مقدرناش نوصل لـ AURA علشان نطلّع الصوت.';
+
+  @override
+  String get voiceClientSignInAgain => 'سجّل الدخول تاني علشان تكمّل.';
+
+  @override
+  String get voiceClientSpeakNotAvailable =>
+      'تشغيل الصوت مش متاح على السيرفر ده.';
+
+  @override
+  String get voiceClientReplyTooLong => 'الرد ده طويل أوي إنه يتقري بصوت عالي.';
+
+  @override
+  String get voiceClientRateLimited =>
+      'طلبات صوت كتير أوي. جرّب تاني كمان شوية.';
+
+  @override
+  String get voiceClientNoSpeechEngine => 'السيرفر ده مفيهوش محرك صوت متظبط.';
+
+  @override
+  String get voiceSocketSessionExpired =>
+      'الصوت المباشر وقف علشان تسجيل الدخول محتاج يتجدد. ابدأه تاني.';
+
+  @override
+  String get voiceSocketDisconnected => 'الصوت المباشر اتقطع. ابدأه تاني.';
+
+  @override
+  String get coreBackendEnvironmentProduction => 'Production';
+
+  @override
+  String get coreBackendEnvironmentDevelopment => 'Development';
+
+  @override
+  String get coreAskCopilotTooltip => 'اسأل Copilot';
+
+  @override
+  String get coreDesktopSignInBrowserFailed => 'مقدرناش نفتح المتصفح.';
+
+  @override
+  String get coreDesktopSignInTimedOut =>
+      'الوقت خلص واحنا مستنيين تسجيل الدخول من المتصفح يخلص.';
+
+  @override
+  String coreDesktopSignInPageCancelled(String error) {
+    return 'تسجيل الدخول اتلغى ($error).';
+  }
+
+  @override
+  String coreDesktopSignInGoogleError(String error) {
+    return 'Google رجّع مشكلة: $error';
+  }
+
+  @override
+  String get coreDesktopSignInPageInvalidResponse =>
+      'تسجيل الدخول فشل: الرد مش سليم.';
+
+  @override
+  String get coreDesktopSignInInvalidRedirect =>
+      'الـ authorization code ناقص أو الـ state مش مطابق (ممكن يكون CSRF).';
+
+  @override
+  String get coreDesktopSignInPageSuccess =>
+      'سجّلت الدخول -- تقدر تقفل التاب ده.';
+
+  @override
+  String get coreDesktopSignInServerUnreachable =>
+      'مقدرناش نوصل لسيرفر AURA علشان نكمّل تسجيل الدخول. اتأكد من الاتصال وجرّب تاني.';
+
+  @override
+  String get coreDesktopSignInServerInsecure =>
+      'مقدرناش نعمل اتصال آمن بسيرفر AURA علشان نكمّل تسجيل الدخول.';
+
+  @override
+  String get coreDesktopSignInServerBadAnswer =>
+      'سيرفر AURA مردّش صح واحنا بنكمّل تسجيل الدخول. جرّب تاني.';
+
+  @override
+  String get coreDesktopSignInServerTimedOut =>
+      'سيرفر AURA أخد وقت طويل أوي في تسجيل الدخول. جرّب تاني.';
+
+  @override
+  String coreDesktopSignInServerFailed(int status) {
+    return 'سيرفر AURA مقدرش يكمّل تسجيل الدخول (HTTP $status).';
+  }
+
+  @override
+  String get coreDesktopSignInNoIdentityToken =>
+      'سيرفر AURA مرجّعش identity token.';
+
+  @override
+  String get coreDesktopSignInPageSignedIn => 'سجّلت الدخول';
+
+  @override
+  String get coreDesktopSignInPageFailed => 'تسجيل الدخول فشل';
+
+  @override
+  String get failureFeatureUnavailableTitle => 'ده محتاج ميزة لسه مش متاحة';
+
+  @override
+  String get failureFeatureUnavailableMessage =>
+      'AURA يقدر يجاوب على الأسئلة العادية دلوقتي. الإجابات اللي بتستخدم الذاكرة أو المستندات أو الأدوات أو الصور جاية قريب.';
+
+  @override
+  String get failureSignInRefusedTitle => 'AURA مقبلش تسجيل الدخول ده';
+
+  @override
+  String get failureSignInRefusedMessage =>
+      'السيرفر رفض حساب Google ده، فمتسجّلتش. جرّب حساب تاني، أو اطلب من اللي مشغّل سيرفر AURA ده يراجع الحساب ده.';
+
+  @override
+  String get failureSignInIncompleteTitle => 'مقدرناش نكمّل تسجيل الدخول';
+
+  @override
+  String get failureUnclassifiedMessage =>
+      'AURA قابل مشكلة مش عارف يحدد نوعها. شغلك ماتأثرش.';
+
+  @override
+  String get failureUnreachableTitle => 'مقدرناش نوصل لـ AURA';
+
+  @override
+  String get failureUnreachableMessage =>
+      'محدش ردّ — ممكن يكون الاتصال عندك أو السيرفر. أي حاجة حفظتها قبل كده موجودة بأمان على الجهاز ده.';
+
+  @override
+  String get failureInferenceUnavailableTitle =>
+      'AURA وصل للسيرفر، بس الموديل مش بيرد';
+
+  @override
+  String get failureInferenceUnavailableMessage =>
+      'الـ Control Plane شغّال، بس الـ inference لأ. مساحة الشغل والمحادثات بتاعتك زي ما هي.';
+
+  @override
+  String get failureBusyTitle => 'AURA مشغول';
+
+  @override
+  String get failureBusyMessage =>
+      'في حاجات كتير شغّالة في نفس الوقت. استنى لحظة وغالبًا هتتحل.';
+
+  @override
+  String get failureRateLimitedTitle => 'طلبات كتير أوي';
+
+  @override
+  String get failureRateLimitedMessage =>
+      'وصلت للحد الأقصى للطلبات. جرّب تاني كمان شوية.';
+
+  @override
+  String get failureTurnInFlightTitle => 'AURA لسه شغّال على طلبك اللي فات';
+
+  @override
+  String get failureTurnInFlightMessage =>
+      'طلب واحد بس بيشتغل في المرة. استنى لحد ما يخلص، أو وقّفه الأول.';
+
+  @override
+  String get failureAuthRequiredTitle => 'سجّل الدخول تاني';
+
+  @override
+  String get failureAuthRequiredMessage =>
+      'الجلسة بتاعتك خلصت. لما تسجّل الدخول تاني هتكمّل من نفس المكان اللي وقفت عنده.';
+
+  @override
+  String get failureForbiddenTitle => 'مش مسموح';
+
+  @override
+  String get failureForbiddenMessage =>
+      'حسابك ماعندوش صلاحية للحاجة دي. وإنك تجرّب تاني مش هيغيّر ده.';
+
+  @override
+  String get failureBudgetTitle => 'الميزانية خلصت';
+
+  @override
+  String get failureBudgetMessage => 'الطلب ده هيعدّي حد الصرف المتظبط.';
+
+  @override
+  String get failureBlockedTitle => 'AURA رفض الطلب ده';
+
+  @override
+  String get failureBlockedMessage =>
+      'اترفض لأسباب تخص الأمان. لو بعت نفس الحاجة تاني هتترفض بنفس الطريقة — إنك تعيد الصياغة هو اللي هيغيّر النتيجة.';
+
+  @override
+  String get failureIndexingTitle => 'لسه بيعمل فهرسة';
+
+  @override
+  String get failureIndexingMessage =>
+      'AURA بيبني فهرس البحث للمحتوى ده. هيشتغل أول ما يخلص.';
+
+  @override
+  String get failureDegradedTitle => 'AURA شغّال بأداء أقل';
+
+  @override
+  String get failureDegradedMessage =>
+      'جزء من النظام مردّش في الوقت المطلوب. بياناتك ماتأثرتش.';
+
+  @override
+  String get failureServerErrorTitle => 'AURA حصلت عنده مشكلة';
+
+  @override
+  String get failureServerErrorMessage =>
+      'السيرفر فشل إنه يكمّل ده. بياناتك ماتأثرتش.';
+
+  @override
+  String get failureUnknownMessage =>
+      'AURA مقدرش يكمّل الطلب ده. شغلك ماتأثرش.';
+
+  @override
+  String failureRateLimitedWaitSeconds(int seconds) {
+    String _temp0 = intl.Intl.pluralLogic(
+      seconds,
+      locale: localeName,
+      other: '$seconds ثانية',
+      many: '$seconds ثانية',
+      few: '$seconds ثواني',
+      two: 'ثانيتين',
+      one: 'ثانية',
+    );
+    return 'وصلت للحد الأقصى للطلبات. جرّب تاني بعد $_temp0.';
+  }
+
+  @override
+  String failureRateLimitedWaitMinutes(int minutes) {
+    String _temp0 = intl.Intl.pluralLogic(
+      minutes,
+      locale: localeName,
+      other: '$minutes دقيقة',
+      many: '$minutes دقيقة',
+      few: '$minutes دقايق',
+      two: 'دقيقتين',
+      one: 'دقيقة',
+    );
+    return 'وصلت للحد الأقصى للطلبات. جرّب تاني بعد حوالي $_temp0.';
+  }
+
+  @override
+  String get coreApiErrorUnreachable => 'مقدرناش نوصل لـ AURA.';
+
+  @override
+  String coreApiErrorUnreachableCause(String cause) {
+    return 'مقدرناش نوصل لـ AURA: $cause';
+  }
+
+  @override
+  String get coreApiErrorBlocked => 'AURA وقّف الطلب ده.';
+
+  @override
+  String get coreApiErrorSignInAgain => 'سجّل الدخول تاني علشان تكمّل.';
+
+  @override
+  String get coreApiErrorForbidden => 'ماعندكش صلاحية تعمل ده.';
+
+  @override
+  String get coreApiErrorRateLimited => 'طلبات كتير أوي. جرّب تاني كمان شوية.';
+
+  @override
+  String get coreApiErrorStartingUp => 'AURA لسه بيقوم. جرّب تاني كمان لحظة.';
+
+  @override
+  String coreApiErrorRequestFailed(int status) {
+    return 'الطلب فشل ($status).';
+  }
+
+  @override
+  String get coreSyncSynced => 'اتعمل Sync';
+
+  @override
+  String get coreSyncSyncing => 'جاري الـ Sync';
+
+  @override
+  String get coreSyncOffline => 'مفيش اتصال';
+
+  @override
+  String get coreSyncFailed => 'الـ Sync فشل';
+
+  @override
+  String coreSyncPendingRefused(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count تغيير ما اتعملهاش Sync',
+      many: '$count تغيير ما اتعملهاش Sync',
+      few: '$count تغييرات ما اتعملهاش Sync',
+      two: 'تغييرين ما اتعملهمش Sync',
+      one: 'تغيير واحد ما اتعملوش Sync',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String coreSyncStatusSemantic(String label) {
+    return 'حالة الـ Sync: $label';
+  }
+
+  @override
+  String coreSyncParkedBanner(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'في $count تغيير موصلوش للسيرفر. هما محفوظين على الجهاز ده.',
+      many: 'في $count تغيير موصلوش للسيرفر. هما محفوظين على الجهاز ده.',
+      few: 'في $count تغييرات موصلوش للسيرفر. هما محفوظين على الجهاز ده.',
+      two: 'في تغييرين موصلوش للسيرفر. هما محفوظين على الجهاز ده.',
+      one: 'في تغيير واحد موصلش للسيرفر. هو محفوظ على الجهاز ده.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String coreSyncParkedBannerSemantic(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'في $count تغيير موصلوش للسيرفر. هما محفوظين على الجهاز ده.',
+      many: 'في $count تغيير موصلوش للسيرفر. هما محفوظين على الجهاز ده.',
+      few: 'في $count تغييرات موصلوش للسيرفر. هما محفوظين على الجهاز ده.',
+      two: 'في تغييرين موصلوش للسيرفر. هما محفوظين على الجهاز ده.',
+      one: 'في تغيير واحد موصلش للسيرفر. هو محفوظ على الجهاز ده.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get coreSyncReview => 'مراجعة';
+
+  @override
+  String get coreHostdNotRunning => 'aura_hostd مش شغّال.';
+
+  @override
+  String coreHostdUnreachable(String error) {
+    return 'مقدرناش نوصل لـ aura_hostd: $error';
+  }
+
+  @override
+  String get coreHostdOutOfDate =>
+      'الـ aura_hostd اللي على جهازك مش فاهم الطلب ده -- ممكن يكون قديم. اعمل Build تاني لـ aura_hostd وشغّله من الأول، وبعدين جرّب تاني.';
+
+  @override
+  String get coreHostdNotRunningStartIt =>
+      'aura_hostd مش شغّال. شغّله وجرّب تاني.';
+
+  @override
+  String get coreHostdNotOnWeb =>
+      'الـ Host Daemon بتاع المهندس مش متاح على الويب.';
+
+  @override
+  String get coreHostdRejectedArguments =>
+      'aura_hostd رفض الـ arguments بتاعته (exit 64) -- راجع الملف التنفيذي المتظبط';
+
+  @override
+  String coreHostdCrashedRepeatedly(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'aura_hostd وقع $count مرة ورا بعض؛ شوف الـ log اللي فوق',
+      many: 'aura_hostd وقع $count مرة ورا بعض؛ شوف الـ log اللي فوق',
+      few: 'aura_hostd وقع $count مرات ورا بعض؛ شوف الـ log اللي فوق',
+      two: 'aura_hostd وقع مرتين ورا بعض؛ شوف الـ log اللي فوق',
+      one: 'aura_hostd وقع مرة؛ شوف الـ log اللي فوق',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String coreHostdRestartFailed(String error) {
+    return 'مقدرناش نعيد تشغيل aura_hostd: $error';
+  }
+
+  @override
+  String coreCommandItemUnavailable(String title, String reason) {
+    return '$title، مش متاح: $reason';
+  }
+
+  @override
+  String chatActionCreateTask(String title) {
+    return 'إنشاء مهمة: $title';
+  }
+
+  @override
+  String chatActionScheduleEvent(String title) {
+    return 'تحديد ميعاد: $title';
+  }
+
+  @override
+  String chatActionLogExpense(String amount) {
+    return 'تسجيل مصروف: \$$amount';
+  }
+
+  @override
+  String chatActionLogIncome(String amount) {
+    return 'تسجيل دخل: \$$amount';
+  }
+
+  @override
+  String get chatActionLogHealth => 'تسجيل الصحة';
+
+  @override
+  String chatActionUnknownNamed(String type) {
+    return 'إجراء مش معروف: $type';
+  }
+
+  @override
+  String get chatActionUnknown => 'إجراء مش معروف';
+
+  @override
+  String get chatSpeechGenerateFailed => 'معرفناش نطلّع صوت للرد ده.';
+
+  @override
+  String get chatSpeechPlayFailed => 'معرفناش نشغّل الصوت.';
+
+  @override
+  String get chatDefaultImageQuestion => 'إيه اللي في الصورة دي؟';
+
+  @override
+  String get chatEngineUnreachable => 'AURA (مفيش اتصال)';
+
+  @override
+  String get chatEngineServer => 'سيرفر AURA';
+
+  @override
+  String chatCreateBranchOnRepo(String repo) {
+    return 'إنشاء Branch في $repo';
+  }
+
+  @override
+  String get chatCreateBranch => 'إنشاء Branch';
+
+  @override
+  String get chatConfirmActions => 'تأكيد الإجراءات';
+
+  @override
+  String get chatConfirmAction => 'تأكيد الإجراء';
+
+  @override
+  String get chatConfirmSelected => 'تأكيد المختار';
+
+  @override
+  String get chatConfirmSwitchBranch => 'التحويل لـ Branch';
+
+  @override
+  String get chatConfirmOpenDraftPr => 'فتح Draft Pull Request';
+
+  @override
+  String chatConfirmCommitFiles(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'لـ $count ملف',
+      many: 'لـ $count ملف',
+      few: 'لـ $count ملفات',
+      two: 'لملفين',
+      one: 'لملف واحد',
+      zero: 'لـ 0 ملفات',
+    );
+    return 'Commit $_temp0';
+  }
+
+  @override
+  String chatConfirmCommitFilesToBranch(int count, String branch) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'لـ $count ملف',
+      many: 'لـ $count ملف',
+      few: 'لـ $count ملفات',
+      two: 'لملفين',
+      one: 'لملف واحد',
+      zero: 'لـ 0 ملفات',
+    );
+    return 'Commit $_temp0 على $branch';
+  }
+
+  @override
+  String get chatConfirmWriteFile => 'كتابة ملف';
+
+  @override
+  String chatConfirmEditFile(String path) {
+    return 'تعديل $path';
+  }
+
+  @override
+  String get chatConfirmEditFileUnnamed => 'تعديل ملف';
+
+  @override
+  String get chatConfirmRunCommand => 'تشغيل أمر في الـ Sandbox';
+
+  @override
+  String get chatConfirmCommitSandbox => 'Commit لتغييرات الـ Sandbox';
+
+  @override
+  String get chatTurnQuarantined =>
+      'AURA اعتبر المحتوى اللي قراه مش موثوق، فمفيش حاجة ليها تأثير هتشتغل من غير تأكيدك.';
+
+  @override
+  String get chatTurnInterrupted => 'اتقطع — الرد ده مش كامل.';
+
+  @override
+  String get chatTurnRedacted => 'الرد ده اتعدّل بفحص أمان.';
+
+  @override
+  String chatTurnLowConfidence(int percent) {
+    return 'ثقة قليلة ($percent%).';
+  }
+
+  @override
+  String get chatTurnLibraryEmpty =>
+      'دوّرنا في مكتبتك — ملقيناش حاجة ليها علاقة.';
+
+  @override
+  String get chatTurnReducedMode => 'AURA اشتغل في الدور ده بوضع محدود.';
+
+  @override
+  String get chatTurnUngrounded => 'من غير مصادر — مفيش مصادر مرفقة.';
+
+  @override
+  String chatMoreLines(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count سطر كمان',
+      many: '$count سطر كمان',
+      few: '$count سطور كمان',
+      two: 'سطرين كمان',
+      one: 'سطر كمان',
+      zero: 'مفيش سطور تانية',
+    );
+    return '… $_temp0';
+  }
+
+  @override
+  String chatImageReadFailed(String name) {
+    return 'معرفناش نقرا $name.';
+  }
+
+  @override
+  String chatImageTooMany(int max) {
+    return 'تقدر ترفق لحد $max صور في الرسالة الواحدة.';
+  }
+
+  @override
+  String chatImageTooLarge(String name, String mb) {
+    return '$name أكبر من $mb MB.';
+  }
+
+  @override
+  String chatImagesAttached(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count صورة مرفقة',
+      many: '$count صورة مرفقة',
+      few: '$count صور مرفقة',
+      two: 'صورتين مرفقين',
+      one: 'صورة واحدة مرفقة',
+      zero: 'مفيش صور مرفقة',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String chatActionCreateTaskDetail(
+    String title,
+    String priority,
+    String category,
+  ) {
+    return 'إنشاء مهمة: $title (أولوية $priority، $category)';
+  }
+
+  @override
+  String chatActionScheduleEventAt(String title, String start) {
+    return 'تحديد ميعاد: $title في $start';
+  }
+
+  @override
+  String chatActionLogExpenseFor(String amount, String category) {
+    return 'تسجيل مصروف: \$$amount على $category';
+  }
+
+  @override
+  String chatActionLogIncomeFor(String amount, String category) {
+    return 'تسجيل دخل: \$$amount من $category';
+  }
+
+  @override
+  String chatHealthWater(String ml) {
+    return '${ml}ml مية';
+  }
+
+  @override
+  String chatHealthSleep(String minutes) {
+    return '$minutes دقيقة نوم';
+  }
+
+  @override
+  String chatHealthExercise(String minutes) {
+    return '$minutes دقيقة تمرين';
+  }
+
+  @override
+  String chatActionLogHealthDetail(String metrics) {
+    return 'تسجيل الصحة: $metrics';
+  }
+
+  @override
+  String get chatListSeparator => '، ';
+
+  @override
+  String get chatStepFallback => 'خطوة';
+
+  @override
+  String chatStepBlocked(String detail) {
+    return 'متوقفة: $detail';
+  }
+
+  @override
+  String get chatCapabilityEngineer => 'صلاحية المهندس';
+
+  @override
+  String get chatCapabilityAdditional => 'صلاحية إضافية';
+
+  @override
+  String chatPersonaRequires(String capability) {
+    return 'محتاج $capability -- مش متاحة على الحساب ده';
+  }
+
+  @override
+  String get chatWithheldNotice => 'الرد ده اتحجب بفحص أمان.';
+
+  @override
+  String get chatBlockedNotice => 'AURA مردّش على الطلب ده: فحص أمان وقّفه.';
+
+  @override
+  String get chatFeatureUnavailableNotice =>
+      'ده محتاج ميزة لسه مش متاحة. AURA يقدر يرد على الأسئلة العادية دلوقتي. الردود اللي بتستخدم الذاكرة أو المستندات أو الأدوات أو الصور جاية قريب.';
+
+  @override
+  String get chatPersonaOrchestrator => 'المنسّق';
+
+  @override
+  String get chatPersonaTaskPlanner => 'مخطط المهام';
+
+  @override
+  String get chatPersonaFinanceAdvisor => 'المستشار المالي';
+
+  @override
+  String get chatPersonaHealthCompanion => 'رفيق الصحة';
+
+  @override
+  String get chatPersonaResearchAgent => 'وكيل البحث';
+
+  @override
+  String get chatPersonaCodingAgent => 'وكيل البرمجة';
+
+  @override
+  String get chatPersonaDecisionAgent => 'وكيل القرارات';
+
+  @override
+  String get chatPersonaEngineer => 'المهندس';
+
+  @override
+  String chatHeaderStatus(String model, String status, String latency) {
+    return 'نشط • $model ($status) • ${latency}ms';
+  }
+
+  @override
+  String get memoryFilterAll => 'الكل';
+
+  @override
+  String get memoryEmptyTitle => 'مفيش ذكريات لسه';
+
+  @override
+  String get memoryEmptyMessage =>
+      'احفظ معلومة ومعاها نوعها علشان Copilot يقدر يستخدمها بعدين.';
+
+  @override
+  String get memoryForgotten => 'الذكرى اتمسحت';
+
+  @override
+  String get memoryForgottenLocally =>
+      'اتمسحت من الجهاز ده. AURA هيكمّل مسحها من السيرفر أول ما يقدر يوصله.';
+
+  @override
+  String memoryForgetFailed(String reason) {
+    return 'معرفناش نمسح الذكرى دي. $reason';
+  }
+
+  @override
+  String get memoryAddTitle => 'افتكر ده';
+
+  @override
+  String get memoryFactLabel => 'المعلومة';
+
+  @override
+  String get memorySubjectLabel => 'الموضوع (اختياري)';
+
+  @override
+  String get memoryKindField => 'النوع';
+
+  @override
+  String get memoryKindWorking => 'مؤقتة';
+
+  @override
+  String get memoryKindEpisodic => 'أحداث';
+
+  @override
+  String get memoryKindSemantic => 'معلومات';
+
+  @override
+  String get memoryKindEntity => 'كيانات';
+
+  @override
+  String get memoryKindProcedural => 'طرق وخطوات';
+
+  @override
+  String get memoryKindReflection => 'تأملات';
+
+  @override
+  String get projectsWelcomeBack => 'أهلاً بيك تاني،';
+
+  @override
+  String get projectsDefaultUserName => 'مستخدم AURA';
+
+  @override
+  String get projectsTitle => 'المشاريع';
+
+  @override
+  String get projectsSubtitle => 'نظّم شغلك في مشاريع';
+
+  @override
+  String get projectsNew => 'مشروع جديد';
+
+  @override
+  String get projectsEmptyTitle => 'مفيش مشاريع لسه';
+
+  @override
+  String get projectsEmptyMessage => 'اعمل أول مشروع ليك علشان تبدأ';
+
+  @override
+  String get projectsCreateTitle => 'إنشاء مشروع';
+
+  @override
+  String get projectsTitleField => 'العنوان *';
+
+  @override
+  String get projectsDescriptionField => 'الوصف';
+
+  @override
+  String get projectsStatusField => 'الحالة';
+
+  @override
+  String get projectsSetTargetDate => 'حدد تاريخ مستهدف (اختياري)';
+
+  @override
+  String projectsTarget(String date) {
+    return 'المستهدف: $date';
+  }
+
+  @override
+  String get projectsCreate => 'إنشاء';
+
+  @override
+  String projectsDue(String date) {
+    return 'التسليم: $date';
+  }
+
+  @override
+  String get projectsStatusActive => 'نشط';
+
+  @override
+  String get projectsStatusCompleted => 'خلصان';
+
+  @override
+  String get projectsStatusArchived => 'متأرشف';
+
+  @override
+  String get projectsStatusOnHold => 'متوقف مؤقتاً';
+
+  @override
+  String get analyticsTitle => 'لوحة تحليلات النظام';
+
+  @override
+  String get analyticsEmptyTitle => 'لسه مفيش قياسات اتجمعت';
+
+  @override
+  String get analyticsEmptyMessage => 'القياسات هتظهر أول ما تبعت رسايل.';
+
+  @override
+  String get analyticsTotalRequests => 'إجمالي الطلبات';
+
+  @override
+  String get analyticsAvgLatency => 'متوسط زمن الاستجابة';
+
+  @override
+  String get analyticsFailovers => 'التحويلات الاحتياطية';
+
+  @override
+  String get analyticsErrorsLogged => 'المشاكل المسجّلة';
+
+  @override
+  String get analyticsLatencyHistory => 'سجل زمن الاستجابة (آخر 10 طلبات)';
+
+  @override
+  String get analyticsInsufficientData => 'البيانات مش كفاية';
+
+  @override
+  String get analyticsInferencePaths => 'توزيع مسارات الاستدلال';
+
+  @override
+  String get analyticsNoInferenceData => 'مفيش بيانات استدلال';
+
+  @override
+  String get analyticsFailoverStats => 'إحصائيات التحويل الاحتياطي للـ API';
+
+  @override
+  String get analyticsNoFailoverEvents => 'مفيش تحويلات احتياطية';
+
+  @override
+  String analyticsSuccessCount(int count) {
+    return 'نجاح ($count)';
+  }
+
+  @override
+  String analyticsFailoversCount(int count) {
+    return 'تحويلات احتياطية ($count)';
+  }
+
+  @override
+  String get analyticsLatestLogs => 'أحدث سجلات القياس';
+
+  @override
+  String get lifeHubFilterAll => 'الكل';
+
+  @override
+  String get lifeHubFilterTasks => 'المهام';
+
+  @override
+  String get lifeHubFilterCalendar => 'التقويم';
+
+  @override
+  String get lifeHubFilterFinance => 'الماليات';
+
+  @override
+  String get lifeHubFilterHealth => 'الصحة';
+
+  @override
+  String get lifeHubFilterProjects => 'المشاريع';
+
+  @override
+  String get lifeHubFilterGoals => 'الأهداف';
+
+  @override
+  String get lifeHubAgendaEmptyTitle => 'مفيش حاجة على اللوحة';
+
+  @override
+  String get lifeHubAgendaEmptyMessage =>
+      'ضيف مهمة أو ميعاد أو تسجيل علشان تشوف الأسبوع ده كله في مكان واحد.';
+
+  @override
+  String get lifeHubHealthLogTitle => 'سجل الصحة النهارده';
+
+  @override
+  String lifeHubHealthLogWater(int ml) {
+    return '$ml ml مية';
+  }
+
+  @override
+  String get lifeHubNoUpcomingEvents => 'مفيش مواعيد جاية';
+
+  @override
+  String get lifeHubProjectsEmptyMessage => 'اعمل مشروع علشان تنظّم شغلك.';
+
+  @override
+  String get lifeHubGoalsEmptyTitle => 'مفيش أهداف لسه';
+
+  @override
+  String get lifeHubGoalsEmptyMessage => 'اعمل هدف علشان تتابع طموحاتك.';
+
+  @override
+  String lifeHubGoalProgress(int percent) {
+    return '$percent% خلصان';
+  }
+
+  @override
+  String get voiceLiveTranscript => 'النص المكتوب';
+
+  @override
+  String get voiceLiveInterrupt => 'مقاطعة';
+
+  @override
+  String get voiceLiveEndShort => 'إنهاء';
+
+  @override
+  String get voiceLiveUnsupported => 'الصوت المباشر متاح على Android وiOS بس';
+
+  @override
+  String get homeAskAuraLabel => 'اسأل AURA أي حاجة';
+
+  @override
+  String get homeSendToAura => 'ابعت لـ AURA';
+
+  @override
+  String get homeInsightsLoadFailed => 'معرفناش نحمّل الملاحظات';
+
+  @override
+  String get homeInsightsLoadFailedMessage =>
+      'اسحب لتحت علشان تحدّث لما النت يرجع.';
+
+  @override
+  String get homeDismissInsight => 'تجاهل الملاحظة';
+
+  @override
+  String homeDueTask(String title) {
+    return 'مهمة: $title';
+  }
+
+  @override
+  String homeDueEvent(String title) {
+    return 'ميعاد: $title';
+  }
+
+  @override
+  String homeDueOverdue(String item) {
+    return '$item، متأخر';
+  }
+
+  @override
+  String get notificationsFailoverTitle => 'تحويل احتياطي في السيرفر';
+
+  @override
+  String notificationsFailoverMessage(String model) {
+    return 'AURA مقدرش يكمّل الطلب على $model وسجّل تحويل احتياطي.';
+  }
+
+  @override
+  String get notificationsRequestFailedTitle => 'الطلب فشل';
+
+  @override
+  String notificationsRequestFailedMessage(String model) {
+    return 'طلب AI فشل على $model.';
+  }
+
+  @override
+  String get notificationsEmptyTitle => 'مفيش حاجة جديدة';
+
+  @override
+  String get notificationsEmptyMessage =>
+      'هتلاقي هنا التحويلات الاحتياطية ومشاكل الطلبات.';
+
+  @override
+  String get notificationsLoadFailed => 'معرفناش نحمّل الإشعارات';
+
+  @override
+  String get feedbackEmptyTitle => 'مفيش تصحيحات لسه';
+
+  @override
+  String get feedbackEmptyMessage =>
+      'قيّم رد من Copilot علشان تساعد AURA يتعلم إنت بتفضّل إيه.';
+
+  @override
+  String feedbackRated(int rating, String date) {
+    return 'التقييم $rating/5 · $date';
+  }
+
+  @override
+  String modelsLastResponse(String ms) {
+    return 'آخر رد خد $ms ms';
+  }
+
+  @override
+  String get modelsNoRequestsYet => 'مفيش طلبات لسه في الجلسة دي';
+
+  @override
+  String get modelsCheckAgain => 'افحص تاني';
+
+  @override
+  String get modelsServerNote =>
+      'الطلبات بتتعالج على سيرفرات AURA. مفيش حاجة تنزّلها أو تظبطها على الجهاز ده.';
+
+  @override
+  String get paletteOpenDesktopIde => 'فتح الـ Desktop IDE';
+
+  @override
+  String get paletteSearchHint => 'دوّر في AURA أو روح لشاشة…';
+
+  @override
+  String get paletteGoTo => 'روح لـ';
+
+  @override
+  String get paletteNoMatches => 'مفيش نتايج';
+
+  @override
+  String get authAttestationDebugOnly =>
+      'علامة Debug بس — توثيق الهاردوير مش مفعّل في التطبيق ده';
+
+  @override
+  String get authAttestationReady => 'token توثيق الهاردوير جاهز';
+
+  @override
+  String get authAttestationUnavailable =>
+      'توثيق الهاردوير مش متاح على الجهاز ده';
+
+  @override
+  String get authAuthorizedUser => 'مستخدم مصرّح له';
+
+  @override
+  String get authAttestationHeading => 'حالة توثيق الجهاز';
+
+  @override
+  String get authAttestationExplainer =>
+      'التطبيق ده مش بيطلب tokens من Google Play Integrity أو Apple App Attest. نسخ الـ Debug بتبعت علامة تطوير واضحة، ونسخ الـ Release بتعلن إن توثيق الهاردوير مش مدعوم. السيرفر عنده تحقق من tokens الـ Play Integrity الحقيقية، بس التطبيق ده مقدرش يطلّعها من غير SDK من الشركة ومفاتيح Play Console.';
+
+  @override
+  String get authSessionOperations => 'إدارة الجلسة';
 }

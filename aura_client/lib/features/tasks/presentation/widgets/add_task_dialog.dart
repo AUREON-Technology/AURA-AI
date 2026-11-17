@@ -171,7 +171,7 @@ class _AddTaskDialogState extends ConsumerState<AddTaskDialog> {
                         const SizedBox(width: 12),
                         Expanded(
                           child: Text(
-                            _dueDate == null ? context.l10n.tasksNoDueDate : DateFormat('MMM d, y').format(_dueDate!),
+                            _dueDate == null ? context.l10n.tasksNoDueDate : DateFormat.yMMMd().format(_dueDate!),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(

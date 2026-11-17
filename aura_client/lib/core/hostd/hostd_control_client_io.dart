@@ -9,6 +9,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:aura_client/l10n/l10n.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
@@ -83,7 +84,7 @@ class HostdControlClient {
   }) async {
     final endpoint = await _discoverEndpoint();
     if (endpoint == null) {
-      throw HostdControlUnavailable('aura_hostd is not running.');
+      throw HostdControlUnavailable(currentL10n.coreHostdNotRunning);
     }
     final uri = Uri.parse('http://127.0.0.1:${endpoint.port}$path');
     final headers = <String, String>{
@@ -98,9 +99,9 @@ class HostdControlClient {
         _ => throw ArgumentError('unsupported method $method'),
       };
     } on http.ClientException catch (error) {
-      throw HostdControlUnavailable('Could not reach aura_hostd: $error');
+      throw HostdControlUnavailable(currentL10n.coreHostdUnreachable('$error'));
     } on SocketException catch (error) {
-      throw HostdControlUnavailable('Could not reach aura_hostd: $error');
+      throw HostdControlUnavailable(currentL10n.coreHostdUnreachable('$error'));
     }
     final decoded = response.body.isEmpty ? <String, dynamic>{} : jsonDecode(response.body);
     final decodedMap = decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
@@ -125,8 +126,7 @@ class HostdControlClient {
       if (response.statusCode == 404 && message == 'no such endpoint') {
         throw HostdControlError(
           response.statusCode,
-          'The local aura_hostd daemon does not recognize this request -- it may be out of '
-          'date. Rebuild and restart aura_hostd, then try again.',
+          currentL10n.coreHostdOutOfDate,
         );
       }
       throw HostdControlError(response.statusCode, message);

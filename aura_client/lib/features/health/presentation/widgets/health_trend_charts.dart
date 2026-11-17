@@ -100,7 +100,7 @@ class _WaterBarChart extends StatelessWidget {
               getTitlesWidget: (value, meta) {
                 final idx = value.toInt();
                 if (idx >= 0 && idx < records.length) {
-                  return Text(DateFormat('E').format(records[idx].recordDate), style: TextStyle(fontSize: 10, color: palette.textSecondary));
+                  return Text(DateFormat.E().format(records[idx].recordDate), style: TextStyle(fontSize: 10, color: palette.textSecondary));
                 }
                 return const Text('');
               },
@@ -160,7 +160,7 @@ class _WeightLineChart extends StatelessWidget {
               getTitlesWidget: (value, meta) {
                 final idx = value.toInt();
                 if (idx >= 0 && idx < records.length) {
-                  return Text(DateFormat('MM/dd').format(records[idx].recordDate), style: TextStyle(fontSize: 9, color: palette.textSecondary));
+                  return Text(DateFormat.Md().format(records[idx].recordDate), style: TextStyle(fontSize: 9, color: palette.textSecondary));
                 }
                 return const Text('');
               },

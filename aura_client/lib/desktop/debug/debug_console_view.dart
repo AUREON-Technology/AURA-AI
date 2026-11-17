@@ -9,6 +9,7 @@
 /// click-in-the-gutter *input method* is deferred, not breakpoint support itself.
 library;
 
+import 'package:aura_client/core/locale/text_direction.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -65,7 +66,7 @@ class _DebugConsoleViewState extends ConsumerState<DebugConsoleView> {
       if (activeTab != null) _scriptController.text = activeTab.path;
     }
 
-    return Container(
+    return LtrContent(child: Container(
       color: palette.surface,
       child: Column(
         children: [
@@ -102,7 +103,7 @@ class _DebugConsoleViewState extends ConsumerState<DebugConsoleView> {
           ),
         ],
       ),
-    );
+    ));
   }
 
   Widget _buildToolbar(AuraPalette palette, String rootPath, DebugState debug, DebugNotifier notifier) {

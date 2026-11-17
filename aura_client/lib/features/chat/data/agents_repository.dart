@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:aura_client/core/auth/token_manager.dart';
 import 'package:aura_client/core/config/backend_url_provider.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// One persona from `GET /api/v3/agents` (`aura_core/agents/registry.py`'s
 /// `AgentRegistry`, plus any `bp_*` agents a deployed blueprint adds).
@@ -59,21 +60,22 @@ class AgentInfo {
 /// Icon + display label for a known persona id. Falls back to a
 /// title-cased id + generic icon for anything the backend adds later that
 /// this map doesn't know about yet, so a new persona never breaks the UI.
-const Map<String, (String, IconData)> _knownPersonas = {
-  'orchestrator': ('Orchestrator', Icons.hub_outlined),
-  'task_planner': ('Task Planner', Icons.checklist_outlined),
-  'finance_advisor': ('Finance Advisor', Icons.account_balance_outlined),
-  'health_companion': ('Health Companion', Icons.favorite_outline),
-  'research_agent': ('Research Agent', Icons.travel_explore_outlined),
-  'coding_agent': ('Coding Agent', Icons.code_outlined),
-  'decision_agent': ('Decision Agent', Icons.balance_outlined),
-  // The gated persona backing tools/coding.py's sandbox + GitHub tools -- distinct from the
-  // much weaker 'coding_agent' above (read-only tools, no capability gate).
-  'engineer': ('Engineer', Icons.build_circle_outlined),
-};
+Map<String, (String, IconData)> _knownPersonas(AppLocalizations l10n) => {
+      'orchestrator': (l10n.chatPersonaOrchestrator, Icons.hub_outlined),
+      'task_planner': (l10n.chatPersonaTaskPlanner, Icons.checklist_outlined),
+      'finance_advisor': (l10n.chatPersonaFinanceAdvisor, Icons.account_balance_outlined),
+      'health_companion': (l10n.chatPersonaHealthCompanion, Icons.favorite_outline),
+      'research_agent': (l10n.chatPersonaResearchAgent, Icons.travel_explore_outlined),
+      'coding_agent': (l10n.chatPersonaCodingAgent, Icons.code_outlined),
+      'decision_agent': (l10n.chatPersonaDecisionAgent, Icons.balance_outlined),
+      // The gated persona backing tools/coding.py's sandbox + GitHub tools -- distinct from the
+      // much weaker 'coding_agent' above (read-only tools, no capability gate).
+      'engineer': (l10n.chatPersonaEngineer, Icons.build_circle_outlined),
+    };
 
+/// Labels are read in the language on screen ([currentL10n]) when called, i.e. at build time.
 (String label, IconData icon) personaDisplay(String agentId) {
-  final known = _knownPersonas[agentId];
+  final known = _knownPersonas(currentL10n)[agentId];
   if (known != null) return known;
   final label = agentId
       .split('_')

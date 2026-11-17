@@ -33,7 +33,7 @@ class CalendarSchedulePanel extends ConsumerWidget {
                     children: [
                       Text(DateFormat('EEEE').format(ui.selectedDate), style: Theme.of(context).textTheme.titleMedium),
                       Text(
-                        DateFormat('MMMM d, yyyy').format(ui.selectedDate),
+                        DateFormat.yMMMMd().format(ui.selectedDate),
                         style: TextStyle(color: palette.textSecondary, fontSize: 13),
                       ),
                     ],
@@ -71,8 +71,8 @@ class CalendarSchedulePanel extends ConsumerWidget {
                       itemCount: dayEvents.length,
                       itemBuilder: (context, index) {
                         final event = dayEvents[index];
-                        final startText = DateFormat('hh:mm a').format(event.startTime);
-                        final endText = DateFormat('hh:mm a').format(event.endTime);
+                        final startText = DateFormat.jm().format(event.startTime);
+                        final endText = DateFormat.jm().format(event.endTime);
                         return Container(
                           margin: const EdgeInsets.only(bottom: 12),
                           padding: const EdgeInsets.all(14),

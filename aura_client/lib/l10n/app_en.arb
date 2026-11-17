@@ -4000,5 +4000,1465 @@
   "workspaceEmptyMessage": "Open a folder to create your first workspace",
   "@workspaceEmptyMessage": {
     "description": "Workspace manager: empty state message"
+  },
+  "relativeTodayAt": "Today {time}",
+  "@relativeTodayAt": {
+    "description": "Relative date: earlier today, with the time",
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "relativeYesterday": "Yesterday",
+  "@relativeYesterday": {
+    "description": "Relative date: the previous calendar day"
+  },
+  "relativeDaysAgo": "{days, plural, =1{1 day ago} other{{days} days ago}}",
+  "@relativeDaysAgo": {
+    "description": "Relative date: 2-6 calendar days ago",
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "coreEngineerWorkspacesUnavailableTitle": "Workspaces unavailable",
+  "@coreEngineerWorkspacesUnavailableTitle": {
+    "description": "Engineer workspaces panel: title when the list could not be loaded"
+  },
+  "coreEngineerWorkspacesUnavailableMessage": "Could not reach the server. Your work is not lost -- try again shortly.",
+  "@coreEngineerWorkspacesUnavailableMessage": {
+    "description": "Engineer workspaces panel: message when the list could not be loaded"
+  },
+  "coreEngineerWorkspacesDisabledTitle": "Workspaces are not enabled",
+  "@coreEngineerWorkspacesDisabledTitle": {
+    "description": "Engineer workspaces panel: title when the server has the feature off"
+  },
+  "coreEngineerWorkspacesDisabledMessage": "This server does not run the engineer agent’s sandboxes.",
+  "@coreEngineerWorkspacesDisabledMessage": {
+    "description": "Engineer workspaces panel: message when the server has the feature off"
+  },
+  "coreEngineerWorkspacesEmptyTitle": "No workspaces yet",
+  "@coreEngineerWorkspacesEmptyTitle": {
+    "description": "Engineer workspaces panel: empty state title"
+  },
+  "coreEngineerWorkspacesEmptyMessage": "Ask the engineer agent to clone a repository and one will appear here. Workspaces are removed after {hours} hours without activity.",
+  "@coreEngineerWorkspacesEmptyMessage": {
+    "description": "Engineer workspaces panel: empty state message; hours = inactivity limit before deletion",
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "coreEngineerWorkspacesHeader": "Engineer workspaces",
+  "@coreEngineerWorkspacesHeader": {
+    "description": "Engineer workspaces panel: section header above the list"
+  },
+  "coreEngineerWorkspaceSemanticLabel": "Workspace for {repo}",
+  "@coreEngineerWorkspaceSemanticLabel": {
+    "description": "Engineer workspace card: screen-reader label; repo = repository name",
+    "placeholders": {
+      "repo": {
+        "type": "String"
+      }
+    }
+  },
+  "coreEngineerWorkspaceBranch": "Branch {branch}",
+  "@coreEngineerWorkspaceBranch": {
+    "description": "Engineer workspace card: the checked-out Git branch",
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      }
+    }
+  },
+  "coreEngineerWorkspaceDeleteTitle": "Delete this workspace?",
+  "@coreEngineerWorkspaceDeleteTitle": {
+    "description": "Engineer workspace delete confirmation: dialog title"
+  },
+  "coreEngineerWorkspaceKeep": "Keep",
+  "@coreEngineerWorkspaceKeep": {
+    "description": "Engineer workspace delete confirmation: cancel button (keep the workspace)"
+  },
+  "coreEngineerWorkspaceDeleteBody": "The checkout of {repo} and any uncommitted changes in it will be removed. Anything already pushed is unaffected.",
+  "@coreEngineerWorkspaceDeleteBody": {
+    "description": "Engineer workspace delete confirmation: dialog body; repo = repository name",
+    "placeholders": {
+      "repo": {
+        "type": "String"
+      }
+    }
+  },
+  "coreEngineerWorkspaceDeleted": "Workspace deleted.",
+  "@coreEngineerWorkspaceDeleted": {
+    "description": "Snackbar after an engineer workspace was deleted"
+  },
+  "coreEngineerWorkspaceDeleteFailed": "Could not delete that workspace.",
+  "@coreEngineerWorkspaceDeleteFailed": {
+    "description": "Snackbar when deleting an engineer workspace failed"
+  },
+  "coreEngineerWorkspaceExpiryOverdue": "Due to be removed",
+  "@coreEngineerWorkspaceExpiryOverdue": {
+    "description": "Engineer workspace card: the inactivity deadline has passed"
+  },
+  "coreEngineerWorkspaceExpiryUnderHour": "Removed in under an hour unless used",
+  "@coreEngineerWorkspaceExpiryUnderHour": {
+    "description": "Engineer workspace card: less than an hour before deletion"
+  },
+  "coreEngineerWorkspaceExpiryHours": "{hours, plural, other{Removed in {hours}h unless used}}",
+  "@coreEngineerWorkspaceExpiryHours": {
+    "description": "Engineer workspace card: hours left before deletion (1-23)",
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "coreEngineerWorkspaceExpiryDays": "{days, plural, other{Removed in {days}d unless used}}",
+  "@coreEngineerWorkspaceExpiryDays": {
+    "description": "Engineer workspace card: days left before deletion",
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "coreEngineerWorkspaceRunning": "Running",
+  "@coreEngineerWorkspaceRunning": {
+    "description": "Engineer workspace card: status chip, the workspace is running"
+  },
+  "coreEngineerWorkspaceIdle": "Idle",
+  "@coreEngineerWorkspaceIdle": {
+    "description": "Engineer workspace card: status chip, the workspace is stopped but kept"
+  },
+  "voiceClientNothingToRead": "Nothing to read in this reply.",
+  "@voiceClientNothingToRead": {
+    "description": "Read-aloud failure: the reply has no speakable text"
+  },
+  "voiceClientSpeechFailed": "Could not generate speech for this reply.",
+  "@voiceClientSpeechFailed": {
+    "description": "Read-aloud failure: the server could not synthesize speech"
+  },
+  "voiceClientUnreachable": "Could not reach AURA to generate speech.",
+  "@voiceClientUnreachable": {
+    "description": "Read-aloud failure: no answer from the server"
+  },
+  "voiceClientSignInAgain": "Sign in again to continue.",
+  "@voiceClientSignInAgain": {
+    "description": "Read-aloud failure: session expired (HTTP 401)"
+  },
+  "voiceClientSpeakNotAvailable": "Speech playback is not available on this server.",
+  "@voiceClientSpeakNotAvailable": {
+    "description": "Read-aloud failure: the server has no speak endpoint (HTTP 404)"
+  },
+  "voiceClientReplyTooLong": "This reply is too long to read aloud.",
+  "@voiceClientReplyTooLong": {
+    "description": "Read-aloud failure: text too long (HTTP 422)"
+  },
+  "voiceClientRateLimited": "Too many speech requests. Try again shortly.",
+  "@voiceClientRateLimited": {
+    "description": "Read-aloud failure: rate limited (HTTP 429)"
+  },
+  "voiceClientNoSpeechEngine": "This server has no speech engine configured.",
+  "@voiceClientNoSpeechEngine": {
+    "description": "Read-aloud failure: no TTS engine on the server (HTTP 503)"
+  },
+  "voiceSocketSessionExpired": "Live voice ended because your sign-in needs renewing. Start it again.",
+  "@voiceSocketSessionExpired": {
+    "description": "Live voice: the server closed the socket because the session expired"
+  },
+  "voiceSocketDisconnected": "Live voice was disconnected. Start it again.",
+  "@voiceSocketDisconnected": {
+    "description": "Live voice: the server or network closed the socket"
+  },
+  "coreBackendEnvironmentProduction": "Production",
+  "@coreBackendEnvironmentProduction": {
+    "description": "Server environment picker: the production server"
+  },
+  "coreBackendEnvironmentDevelopment": "Development",
+  "@coreBackendEnvironmentDevelopment": {
+    "description": "Server environment picker: the development server"
+  },
+  "coreAskCopilotTooltip": "Ask Copilot",
+  "@coreAskCopilotTooltip": {
+    "description": "Mobile shell: tooltip on the floating capture button"
+  },
+  "coreDesktopSignInBrowserFailed": "Could not open the system browser.",
+  "@coreDesktopSignInBrowserFailed": {
+    "description": "Desktop Google sign-in failure: the browser would not open"
+  },
+  "coreDesktopSignInTimedOut": "Timed out waiting for the browser sign-in to complete.",
+  "@coreDesktopSignInTimedOut": {
+    "description": "Desktop Google sign-in failure: nothing came back from the browser in time"
+  },
+  "coreDesktopSignInPageCancelled": "Sign-in was cancelled ({error}).",
+  "@coreDesktopSignInPageCancelled": {
+    "description": "Browser page shown after desktop sign-in: cancelled; error = Google error code",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "coreDesktopSignInGoogleError": "Google returned an error: {error}",
+  "@coreDesktopSignInGoogleError": {
+    "description": "Desktop sign-in failure: Google redirected back with an error code (e.g. access_denied when the user cancels); error = Google error code, left untranslated",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "coreDesktopSignInPageInvalidResponse": "Sign-in failed: invalid response.",
+  "@coreDesktopSignInPageInvalidResponse": {
+    "description": "Browser page shown after desktop sign-in: the redirect was malformed"
+  },
+  "coreDesktopSignInInvalidRedirect": "Missing authorization code or a state mismatch (possible CSRF).",
+  "@coreDesktopSignInInvalidRedirect": {
+    "description": "Desktop sign-in failure: the browser redirect had no code or a wrong state value"
+  },
+  "coreDesktopSignInPageSuccess": "Signed in -- you can close this tab.",
+  "@coreDesktopSignInPageSuccess": {
+    "description": "Browser page shown after desktop sign-in succeeded"
+  },
+  "coreDesktopSignInServerUnreachable": "Could not reach the AURA server to finish signing in. Check your connection and try again.",
+  "@coreDesktopSignInServerUnreachable": {
+    "description": "Desktop sign-in failure: AURA server unreachable during the code exchange"
+  },
+  "coreDesktopSignInServerInsecure": "Could not make a secure connection to the AURA server to finish signing in.",
+  "@coreDesktopSignInServerInsecure": {
+    "description": "Desktop sign-in failure: TLS handshake with the AURA server failed"
+  },
+  "coreDesktopSignInServerBadAnswer": "The AURA server did not answer properly while finishing sign-in. Try again.",
+  "@coreDesktopSignInServerBadAnswer": {
+    "description": "Desktop sign-in failure: malformed HTTP answer from the AURA server"
+  },
+  "coreDesktopSignInServerTimedOut": "The AURA server took too long to finish signing in. Try again.",
+  "@coreDesktopSignInServerTimedOut": {
+    "description": "Desktop sign-in failure: the AURA server timed out"
+  },
+  "coreDesktopSignInServerFailed": "The AURA server could not finish signing in (HTTP {status}).",
+  "@coreDesktopSignInServerFailed": {
+    "description": "Desktop sign-in failure: the AURA server answered with an error and no detail",
+    "placeholders": {
+      "status": {
+        "type": "int"
+      }
+    }
+  },
+  "coreDesktopSignInNoIdentityToken": "The AURA server returned no identity token.",
+  "@coreDesktopSignInNoIdentityToken": {
+    "description": "Desktop sign-in failure: the AURA server answered without an ID token"
+  },
+  "coreDesktopSignInPageSignedIn": "Signed in",
+  "@coreDesktopSignInPageSignedIn": {
+    "description": "Browser page shown after desktop sign-in: heading on success"
+  },
+  "coreDesktopSignInPageFailed": "Sign-in failed",
+  "@coreDesktopSignInPageFailed": {
+    "description": "Browser page shown after desktop sign-in: heading on failure"
+  },
+  "failureFeatureUnavailableTitle": "This needs a feature that isn't available yet",
+  "@failureFeatureUnavailableTitle": {
+    "description": "Failure title: the request needs memory/documents/tools/images, which are not available yet (owner-approved wording)"
+  },
+  "failureFeatureUnavailableMessage": "AURA can answer plain questions right now. Answers that use your memory, documents, tools or images are coming soon.",
+  "@failureFeatureUnavailableMessage": {
+    "description": "Failure message for the feature-unavailable state (owner-approved wording)"
+  },
+  "failureSignInRefusedTitle": "AURA did not accept this sign-in",
+  "@failureSignInRefusedTitle": {
+    "description": "Failure title: the server refused the Google account"
+  },
+  "failureSignInRefusedMessage": "The server refused this Google account, so you have not been signed in. Try another account, or ask whoever runs this AURA server to check this one.",
+  "@failureSignInRefusedMessage": {
+    "description": "Failure message: the server refused the Google account"
+  },
+  "failureSignInIncompleteTitle": "Couldn't finish signing in",
+  "@failureSignInIncompleteTitle": {
+    "description": "Failure title: the desktop sign-in flow failed (message comes from the flow)"
+  },
+  "failureUnclassifiedMessage": "AURA hit an error it could not classify. Your work is unaffected.",
+  "@failureUnclassifiedMessage": {
+    "description": "Failure message: an error the app does not recognise"
+  },
+  "failureUnreachableTitle": "Couldn't reach AURA",
+  "@failureUnreachableTitle": {
+    "description": "Failure title: nothing answered (network or server down)"
+  },
+  "failureUnreachableMessage": "Nothing answered — this may be your connection or the server. Anything you have already saved is safe on this device.",
+  "@failureUnreachableMessage": {
+    "description": "Failure message: nothing answered; deliberately does not claim the user is offline"
+  },
+  "failureInferenceUnavailableTitle": "AURA reached the server, but the model is not answering",
+  "@failureInferenceUnavailableTitle": {
+    "description": "Failure title: the server is up but the AI model is down"
+  },
+  "failureInferenceUnavailableMessage": "The Control Plane is up; inference is not. Your workspace and conversations are untouched.",
+  "@failureInferenceUnavailableMessage": {
+    "description": "Failure message: the server is up but the AI model is down"
+  },
+  "failureBusyTitle": "AURA is busy",
+  "@failureBusyTitle": {
+    "description": "Failure title: the server is overloaded"
+  },
+  "failureBusyMessage": "Too much is running at once. Waiting a moment usually clears it.",
+  "@failureBusyMessage": {
+    "description": "Failure message: the server is overloaded"
+  },
+  "failureRateLimitedTitle": "Too many requests",
+  "@failureRateLimitedTitle": {
+    "description": "Failure title: rate limited"
+  },
+  "failureRateLimitedMessage": "You have hit the request limit. Try again shortly.",
+  "@failureRateLimitedMessage": {
+    "description": "Failure message: rate limited, no wait time known"
+  },
+  "failureTurnInFlightTitle": "AURA is still working on your last request",
+  "@failureTurnInFlightTitle": {
+    "description": "Failure title: another chat turn is still running"
+  },
+  "failureTurnInFlightMessage": "Only one turn runs at a time. Wait for it to finish, or stop it first.",
+  "@failureTurnInFlightMessage": {
+    "description": "Failure message: another chat turn is still running"
+  },
+  "failureAuthRequiredTitle": "Sign in again",
+  "@failureAuthRequiredTitle": {
+    "description": "Failure title: the session expired"
+  },
+  "failureAuthRequiredMessage": "Your session expired. Signing in again picks up exactly where you left off.",
+  "@failureAuthRequiredMessage": {
+    "description": "Failure message: the session expired"
+  },
+  "failureForbiddenTitle": "Not allowed",
+  "@failureForbiddenTitle": {
+    "description": "Failure title: the account lacks permission"
+  },
+  "failureForbiddenMessage": "Your account does not have permission for this. Retrying will not change that.",
+  "@failureForbiddenMessage": {
+    "description": "Failure message: the account lacks permission"
+  },
+  "failureBudgetTitle": "Budget reached",
+  "@failureBudgetTitle": {
+    "description": "Failure title: the spend limit was reached"
+  },
+  "failureBudgetMessage": "This request would go over the configured spend limit.",
+  "@failureBudgetMessage": {
+    "description": "Failure message: the spend limit was reached"
+  },
+  "failureBlockedTitle": "AURA declined this request",
+  "@failureBlockedTitle": {
+    "description": "Failure title: refused on safety grounds"
+  },
+  "failureBlockedMessage": "It was refused on safety grounds. Sending the same thing again will be refused the same way — rephrasing is what changes the outcome.",
+  "@failureBlockedMessage": {
+    "description": "Failure message: refused on safety grounds; retrying will not help"
+  },
+  "failureIndexingTitle": "Still indexing",
+  "@failureIndexingTitle": {
+    "description": "Failure title: the knowledge index is still building"
+  },
+  "failureIndexingMessage": "AURA is building the search index for this content. It will work once that finishes.",
+  "@failureIndexingMessage": {
+    "description": "Failure message: the knowledge index is still building"
+  },
+  "failureDegradedTitle": "AURA is degraded",
+  "@failureDegradedTitle": {
+    "description": "Failure title: a dependency timed out or is degraded"
+  },
+  "failureDegradedMessage": "Part of the system did not respond in time. Your data is unaffected.",
+  "@failureDegradedMessage": {
+    "description": "Failure message: a dependency timed out or is degraded"
+  },
+  "failureServerErrorTitle": "AURA had a problem",
+  "@failureServerErrorTitle": {
+    "description": "Failure title: the server failed (HTTP 5xx)"
+  },
+  "failureServerErrorMessage": "The server failed to complete this. Your data is unaffected.",
+  "@failureServerErrorMessage": {
+    "description": "Failure message: the server failed (HTTP 5xx)"
+  },
+  "failureUnknownMessage": "AURA could not complete this request. Your work is unaffected.",
+  "@failureUnknownMessage": {
+    "description": "Failure message: an unrecognised HTTP error"
+  },
+  "failureRateLimitedWaitSeconds": "You have hit the request limit. Try again in {seconds, plural, =1{1 second} other{{seconds} seconds}}.",
+  "@failureRateLimitedWaitSeconds": {
+    "description": "Failure message: rate limited with a known wait under a minute",
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "failureRateLimitedWaitMinutes": "You have hit the request limit. Try again in about {minutes, plural, =1{1 minute} other{{minutes} minutes}}.",
+  "@failureRateLimitedWaitMinutes": {
+    "description": "Failure message: rate limited with a known wait of a minute or more",
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "coreApiErrorUnreachable": "Could not reach AURA.",
+  "@coreApiErrorUnreachable": {
+    "description": "Request error text when nothing answered (no technical cause known)"
+  },
+  "coreApiErrorUnreachableCause": "Could not reach AURA: {cause}",
+  "@coreApiErrorUnreachableCause": {
+    "description": "Request error text when nothing answered; cause = technical error text, left untranslated",
+    "placeholders": {
+      "cause": {
+        "type": "String"
+      }
+    }
+  },
+  "coreApiErrorBlocked": "AURA blocked this turn.",
+  "@coreApiErrorBlocked": {
+    "description": "Request error fallback when the server sent HTTP 400 with no message"
+  },
+  "coreApiErrorSignInAgain": "Sign in again to continue.",
+  "@coreApiErrorSignInAgain": {
+    "description": "Request error fallback when the server sent HTTP 401 with no message"
+  },
+  "coreApiErrorForbidden": "You do not have permission for this action.",
+  "@coreApiErrorForbidden": {
+    "description": "Request error fallback when the server sent HTTP 403 with no message"
+  },
+  "coreApiErrorRateLimited": "Too many requests. Try again shortly.",
+  "@coreApiErrorRateLimited": {
+    "description": "Request error fallback when the server sent HTTP 429 with no message"
+  },
+  "coreApiErrorStartingUp": "AURA is starting up. Try again in a moment.",
+  "@coreApiErrorStartingUp": {
+    "description": "Request error fallback when the server sent HTTP 503 with no message"
+  },
+  "coreApiErrorRequestFailed": "Request failed ({status}).",
+  "@coreApiErrorRequestFailed": {
+    "description": "Request error fallback for any other HTTP status with no message",
+    "placeholders": {
+      "status": {
+        "type": "int"
+      }
+    }
+  },
+  "coreSyncSynced": "Synced",
+  "@coreSyncSynced": {
+    "description": "Sync status pill: everything is on the server"
+  },
+  "coreSyncSyncing": "Syncing",
+  "@coreSyncSyncing": {
+    "description": "Sync status pill: sync in progress"
+  },
+  "coreSyncOffline": "Offline",
+  "@coreSyncOffline": {
+    "description": "Sync status pill: cannot reach the server"
+  },
+  "coreSyncFailed": "Sync failed",
+  "@coreSyncFailed": {
+    "description": "Sync status pill: the last sync failed"
+  },
+  "coreSyncPendingRefused": "{count, plural, =1{1 change not synced} other{{count} changes not synced}}",
+  "@coreSyncPendingRefused": {
+    "description": "Sync status pill: changes the server refused and that were set aside",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "coreSyncStatusSemantic": "Sync status: {label}",
+  "@coreSyncStatusSemantic": {
+    "description": "Sync status pill: screen-reader label; label = the visible status text",
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "coreSyncParkedBanner": "{count, plural, =1{1 change hasn't reached the server. It's saved on this device.} other{{count} changes haven't reached the server. They're saved on this device.}}",
+  "@coreSyncParkedBanner": {
+    "description": "Shell banner: changes still not on the server",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "coreSyncParkedBannerSemantic": "{count, plural, =1{1 change has not reached the server. It is saved on this device.} other{{count} changes have not reached the server. They are saved on this device.}}",
+  "@coreSyncParkedBannerSemantic": {
+    "description": "Shell banner: screen-reader label (no contractions)",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "coreSyncReview": "Review",
+  "@coreSyncReview": {
+    "description": "Shell sync banner: action button to review unsynced changes"
+  },
+  "coreHostdNotRunning": "aura_hostd is not running.",
+  "@coreHostdNotRunning": {
+    "description": "Desktop IDE: the local Host Daemon (aura_hostd) is not running"
+  },
+  "coreHostdUnreachable": "Could not reach aura_hostd: {error}",
+  "@coreHostdUnreachable": {
+    "description": "Desktop IDE: the local Host Daemon did not answer; error = technical cause, left untranslated",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "coreHostdOutOfDate": "The local aura_hostd daemon does not recognize this request -- it may be out of date. Rebuild and restart aura_hostd, then try again.",
+  "@coreHostdOutOfDate": {
+    "description": "Desktop IDE: the local Host Daemon is older than the app"
+  },
+  "coreHostdNotRunningStartIt": "aura_hostd is not running. Start it and try again.",
+  "@coreHostdNotRunningStartIt": {
+    "description": "Desktop IDE: the local Host Daemon is not running (with what to do)"
+  },
+  "coreHostdNotOnWeb": "The desktop Engineer daemon is not available on web.",
+  "@coreHostdNotOnWeb": {
+    "description": "Web build: the desktop Engineer daemon cannot be used in a browser"
+  },
+  "coreHostdRejectedArguments": "aura_hostd rejected its arguments (exit 64) -- check the configured executable",
+  "@coreHostdRejectedArguments": {
+    "description": "Desktop IDE: the supervised Host Daemon refused its command line"
+  },
+  "coreHostdCrashedRepeatedly": "{count, plural, other{aura_hostd crashed {count} times in a row; see the log above}}",
+  "@coreHostdCrashedRepeatedly": {
+    "description": "Desktop IDE: the supervised Host Daemon kept crashing and was given up on",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "coreHostdRestartFailed": "could not restart aura_hostd: {error}",
+  "@coreHostdRestartFailed": {
+    "description": "Desktop IDE: restarting the Host Daemon failed; error = technical cause, left untranslated",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "coreCommandItemUnavailable": "{title}, unavailable: {reason}",
+  "@coreCommandItemUnavailable": {
+    "description": "Command palette: screen-reader label of a disabled command; reason = why it is disabled",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      },
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "chatActionCreateTask": "Create Task: {title}",
+  "@chatActionCreateTask": {
+    "description": "Chat: label of a proposed 'add task' action",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "chatActionScheduleEvent": "Schedule Event: {title}",
+  "@chatActionScheduleEvent": {
+    "description": "Chat: label of a proposed 'add calendar event' action",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "chatActionLogExpense": "Log Expense: ${amount}",
+  "@chatActionLogExpense": {
+    "description": "Chat: label of a proposed 'log expense' action; amount is a number",
+    "placeholders": {
+      "amount": {
+        "type": "String"
+      }
+    }
+  },
+  "chatActionLogIncome": "Log Income: ${amount}",
+  "@chatActionLogIncome": {
+    "description": "Chat: label of a proposed 'log income' action; amount is a number",
+    "placeholders": {
+      "amount": {
+        "type": "String"
+      }
+    }
+  },
+  "chatActionLogHealth": "Log Health",
+  "@chatActionLogHealth": {
+    "description": "Chat: label of a proposed 'log health metrics' action"
+  },
+  "chatActionUnknownNamed": "Unknown Action: {type}",
+  "@chatActionUnknownNamed": {
+    "description": "Chat: label of a proposed action of an unrecognised type (type is a code identifier)",
+    "placeholders": {
+      "type": {
+        "type": "String"
+      }
+    }
+  },
+  "chatActionUnknown": "Unknown Action",
+  "@chatActionUnknown": {
+    "description": "Chat: label of a malformed proposed action that failed"
+  },
+  "chatSpeechGenerateFailed": "Could not generate speech for this reply.",
+  "@chatSpeechGenerateFailed": {
+    "description": "Chat: error when text-to-speech for a reply fails"
+  },
+  "chatSpeechPlayFailed": "Could not play the generated speech.",
+  "@chatSpeechPlayFailed": {
+    "description": "Chat: error when playing generated speech fails"
+  },
+  "chatDefaultImageQuestion": "What is in this image?",
+  "@chatDefaultImageQuestion": {
+    "description": "Chat: the question sent (and shown as the user's message) when only images are attached"
+  },
+  "chatEngineUnreachable": "AURA (unreachable)",
+  "@chatEngineUnreachable": {
+    "description": "Chat sidebar: AI engine value when the server is unreachable"
+  },
+  "chatEngineServer": "AURA server",
+  "@chatEngineServer": {
+    "description": "Chat sidebar: AI engine value when the server is reachable"
+  },
+  "chatCreateBranchOnRepo": "Create branch on {repo}",
+  "@chatCreateBranchOnRepo": {
+    "description": "Chat: confirmation card heading for creating a Git branch in a named repository",
+    "placeholders": {
+      "repo": {
+        "type": "String"
+      }
+    }
+  },
+  "chatCreateBranch": "Create branch",
+  "@chatCreateBranch": {
+    "description": "Chat: confirmation card heading for creating a Git branch"
+  },
+  "chatConfirmActions": "Confirm actions",
+  "@chatConfirmActions": {
+    "description": "Chat: heading of the confirmation card when several tool calls await approval"
+  },
+  "chatConfirmAction": "Confirm action",
+  "@chatConfirmAction": {
+    "description": "Chat: heading of the confirmation card when one tool call awaits approval"
+  },
+  "chatConfirmSelected": "Confirm selected",
+  "@chatConfirmSelected": {
+    "description": "Chat: confirmation card button when only some calls are selected"
+  },
+  "chatConfirmSwitchBranch": "Switch to branch",
+  "@chatConfirmSwitchBranch": {
+    "description": "Chat: confirmation card heading for a git checkout of a branch"
+  },
+  "chatConfirmOpenDraftPr": "Open draft pull request",
+  "@chatConfirmOpenDraftPr": {
+    "description": "Chat: confirmation card heading for opening a draft GitHub pull request"
+  },
+  "chatConfirmCommitFiles": "Commit {count, plural, =1{1 file} other{{count} files}}",
+  "@chatConfirmCommitFiles": {
+    "description": "Chat: confirmation card heading for committing files to GitHub",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chatConfirmCommitFilesToBranch": "Commit {count, plural, =1{1 file} other{{count} files}} to {branch}",
+  "@chatConfirmCommitFilesToBranch": {
+    "description": "Chat: confirmation card heading for committing files to a named GitHub branch",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "branch": {
+        "type": "String"
+      }
+    }
+  },
+  "chatConfirmWriteFile": "Write file",
+  "@chatConfirmWriteFile": {
+    "description": "Chat: confirmation card heading for writing a file in the sandbox"
+  },
+  "chatConfirmEditFile": "Edit {path}",
+  "@chatConfirmEditFile": {
+    "description": "Chat: confirmation card heading for editing a file; path is a file path",
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "chatConfirmEditFileUnnamed": "Edit file",
+  "@chatConfirmEditFileUnnamed": {
+    "description": "Chat: confirmation card heading for editing a file whose path is unknown"
+  },
+  "chatConfirmRunCommand": "Run command in sandbox",
+  "@chatConfirmRunCommand": {
+    "description": "Chat: confirmation card heading for running a shell command in the sandbox"
+  },
+  "chatConfirmCommitSandbox": "Commit sandbox changes",
+  "@chatConfirmCommitSandbox": {
+    "description": "Chat: confirmation card heading for committing the sandbox's changes"
+  },
+  "chatTurnQuarantined": "AURA treated the content it read as untrusted, so nothing with side effects can run without your confirmation.",
+  "@chatTurnQuarantined": {
+    "description": "Chat: note under an answer whose retrieved context was quarantined"
+  },
+  "chatTurnInterrupted": "Interrupted — this answer is incomplete.",
+  "@chatTurnInterrupted": {
+    "description": "Chat: note under an answer that was interrupted"
+  },
+  "chatTurnRedacted": "This answer was redacted by a safety check.",
+  "@chatTurnRedacted": {
+    "description": "Chat: note under an answer a safety check redacted"
+  },
+  "chatTurnLowConfidence": "Low confidence ({percent}%).",
+  "@chatTurnLowConfidence": {
+    "description": "Chat: note under a low-confidence answer",
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "chatTurnLibraryEmpty": "Searched your library — nothing relevant was found.",
+  "@chatTurnLibraryEmpty": {
+    "description": "Chat: note when knowledge search found nothing relevant"
+  },
+  "chatTurnReducedMode": "AURA ran this turn in a reduced mode.",
+  "@chatTurnReducedMode": {
+    "description": "Chat: note under an answer produced in degraded mode"
+  },
+  "chatTurnUngrounded": "Ungrounded — no sources attached.",
+  "@chatTurnUngrounded": {
+    "description": "Chat: note under an answer with no citations"
+  },
+  "chatMoreLines": "… {count, plural, =1{1 more line} other{{count} more lines}}",
+  "@chatMoreLines": {
+    "description": "Chat: note under a truncated code, file, diff or terminal preview",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chatImageReadFailed": "Could not read {name}.",
+  "@chatImageReadFailed": {
+    "description": "Chat: error when a picked image file cannot be read; name is the file name",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "chatImageTooMany": "You can attach up to {max} images to one message.",
+  "@chatImageTooMany": {
+    "description": "Chat: error when too many images are attached",
+    "placeholders": {
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "chatImageTooLarge": "{name} is larger than {mb} MB.",
+  "@chatImageTooLarge": {
+    "description": "Chat: error when an image is too large; mb is a number",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "mb": {
+        "type": "String"
+      }
+    }
+  },
+  "chatImagesAttached": "{count, plural, =1{1 image attached} other{{count} images attached}}",
+  "@chatImagesAttached": {
+    "description": "Chat: shown in a sent message whose images are no longer available",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chatActionCreateTaskDetail": "Create Task: {title} ({priority} priority, {category})",
+  "@chatActionCreateTaskDetail": {
+    "description": "Chat: proposed-actions card line for adding a task; priority and category are data values",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      },
+      "priority": {
+        "type": "String"
+      },
+      "category": {
+        "type": "String"
+      }
+    }
+  },
+  "chatActionScheduleEventAt": "Schedule Event: {title} at {start}",
+  "@chatActionScheduleEventAt": {
+    "description": "Chat: proposed-actions card line for adding a calendar event; start is a timestamp",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      },
+      "start": {
+        "type": "String"
+      }
+    }
+  },
+  "chatActionLogExpenseFor": "Log Expense: ${amount} for {category}",
+  "@chatActionLogExpenseFor": {
+    "description": "Chat: proposed-actions card line for logging an expense",
+    "placeholders": {
+      "amount": {
+        "type": "String"
+      },
+      "category": {
+        "type": "String"
+      }
+    }
+  },
+  "chatActionLogIncomeFor": "Log Income: ${amount} for {category}",
+  "@chatActionLogIncomeFor": {
+    "description": "Chat: proposed-actions card line for logging income",
+    "placeholders": {
+      "amount": {
+        "type": "String"
+      },
+      "category": {
+        "type": "String"
+      }
+    }
+  },
+  "chatHealthWater": "{ml}ml water",
+  "@chatHealthWater": {
+    "description": "Chat: health metric in a proposed log-health action",
+    "placeholders": {
+      "ml": {
+        "type": "String"
+      }
+    }
+  },
+  "chatHealthSleep": "{minutes}m sleep",
+  "@chatHealthSleep": {
+    "description": "Chat: health metric in a proposed log-health action",
+    "placeholders": {
+      "minutes": {
+        "type": "String"
+      }
+    }
+  },
+  "chatHealthExercise": "{minutes}m exercise",
+  "@chatHealthExercise": {
+    "description": "Chat: health metric in a proposed log-health action",
+    "placeholders": {
+      "minutes": {
+        "type": "String"
+      }
+    }
+  },
+  "chatActionLogHealthDetail": "Log Health: {metrics}",
+  "@chatActionLogHealthDetail": {
+    "description": "Chat: proposed-actions card line for logging health metrics; metrics is a list",
+    "placeholders": {
+      "metrics": {
+        "type": "String"
+      }
+    }
+  },
+  "chatListSeparator": ", ",
+  "@chatListSeparator": {
+    "description": "Separator between items of an inline list (keep the trailing space)"
+  },
+  "chatStepFallback": "step",
+  "@chatStepFallback": {
+    "description": "Chat: fallback name of a plan step that has no label"
+  },
+  "chatStepBlocked": "Blocked: {detail}",
+  "@chatStepBlocked": {
+    "description": "Chat: detail of a plan step blocked by a failed dependency; detail comes from the server",
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "chatCapabilityEngineer": "the Engineer capability",
+  "@chatCapabilityEngineer": {
+    "description": "Persona picker: name of the capability the Engineer persona needs, inserted into chatPersonaRequires"
+  },
+  "chatCapabilityAdditional": "an additional capability",
+  "@chatCapabilityAdditional": {
+    "description": "Persona picker: generic capability name, inserted into chatPersonaRequires"
+  },
+  "chatPersonaRequires": "Requires {capability} -- not available on this account",
+  "@chatPersonaRequires": {
+    "description": "Persona picker: subtitle of a locked persona",
+    "placeholders": {
+      "capability": {
+        "type": "String"
+      }
+    }
+  },
+  "chatWithheldNotice": "This response was withheld by a safety check.",
+  "@chatWithheldNotice": {
+    "description": "Chat: shown in place of an answer a safety check withheld after it streamed"
+  },
+  "chatBlockedNotice": "AURA did not answer this request: it was stopped by a safety check.",
+  "@chatBlockedNotice": {
+    "description": "Chat: shown in place of an answer a safety check refused before generation"
+  },
+  "chatFeatureUnavailableNotice": "This needs a feature that isn't available yet. AURA can answer plain questions right now. Answers that use your memory, documents, tools or images are coming soon.",
+  "@chatFeatureUnavailableNotice": {
+    "description": "Chat: shown in place of an answer the server refused because a needed capability is unavailable"
+  },
+  "chatPersonaOrchestrator": "Orchestrator",
+  "@chatPersonaOrchestrator": {
+    "description": "Persona name: the default orchestrator agent"
+  },
+  "chatPersonaTaskPlanner": "Task Planner",
+  "@chatPersonaTaskPlanner": {
+    "description": "Persona name"
+  },
+  "chatPersonaFinanceAdvisor": "Finance Advisor",
+  "@chatPersonaFinanceAdvisor": {
+    "description": "Persona name"
+  },
+  "chatPersonaHealthCompanion": "Health Companion",
+  "@chatPersonaHealthCompanion": {
+    "description": "Persona name"
+  },
+  "chatPersonaResearchAgent": "Research Agent",
+  "@chatPersonaResearchAgent": {
+    "description": "Persona name"
+  },
+  "chatPersonaCodingAgent": "Coding Agent",
+  "@chatPersonaCodingAgent": {
+    "description": "Persona name"
+  },
+  "chatPersonaDecisionAgent": "Decision Agent",
+  "@chatPersonaDecisionAgent": {
+    "description": "Persona name"
+  },
+  "chatPersonaEngineer": "Engineer",
+  "@chatPersonaEngineer": {
+    "description": "Persona name: the gated Engineer persona"
+  },
+  "chatHeaderStatus": "Active • {model} ({status}) • {latency}ms",
+  "@chatHeaderStatus": {
+    "description": "Chat header: AI router status line; model and status come from the server, latency is a number",
+    "placeholders": {
+      "model": {
+        "type": "String"
+      },
+      "status": {
+        "type": "String"
+      },
+      "latency": {
+        "type": "String"
+      }
+    }
+  },
+  "memoryFilterAll": "All",
+  "@memoryFilterAll": {
+    "description": "Memory page: filter chip showing every kind of memory"
+  },
+  "memoryEmptyTitle": "No memories yet",
+  "@memoryEmptyTitle": {
+    "description": "Memory page: empty state title"
+  },
+  "memoryEmptyMessage": "Save a fact with a kind so Copilot can use it later.",
+  "@memoryEmptyMessage": {
+    "description": "Memory page: empty state message"
+  },
+  "memoryForgotten": "Memory forgotten",
+  "@memoryForgotten": {
+    "description": "Memory page: snackbar after a memory is deleted on the server"
+  },
+  "memoryForgottenLocally": "Forgotten on this device. AURA will finish removing it from the server the next time it can reach it.",
+  "@memoryForgottenLocally": {
+    "description": "Memory page: snackbar when a memory was deleted locally but the server delete is pending"
+  },
+  "memoryForgetFailed": "Could not forget this memory. {reason}",
+  "@memoryForgetFailed": {
+    "description": "Memory page: snackbar when deleting a memory fails; reason is a localized failure message",
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "memoryAddTitle": "Remember this",
+  "@memoryAddTitle": {
+    "description": "Memory page: title of the add-memory dialog"
+  },
+  "memoryFactLabel": "Fact",
+  "@memoryFactLabel": {
+    "description": "Memory page: label of the fact field in the add-memory dialog"
+  },
+  "memorySubjectLabel": "Subject (optional)",
+  "@memorySubjectLabel": {
+    "description": "Memory page: label of the subject field in the add-memory dialog"
+  },
+  "memoryKindField": "Kind",
+  "@memoryKindField": {
+    "description": "Memory page: label of the memory-kind dropdown"
+  },
+  "memoryKindWorking": "working",
+  "@memoryKindWorking": {
+    "description": "Memory kind name (backend 'working' memory)"
+  },
+  "memoryKindEpisodic": "episodic",
+  "@memoryKindEpisodic": {
+    "description": "Memory kind name (backend 'episodic' memory)"
+  },
+  "memoryKindSemantic": "semantic",
+  "@memoryKindSemantic": {
+    "description": "Memory kind name (backend 'semantic' memory)"
+  },
+  "memoryKindEntity": "entity",
+  "@memoryKindEntity": {
+    "description": "Memory kind name (backend 'entity' memory)"
+  },
+  "memoryKindProcedural": "procedural",
+  "@memoryKindProcedural": {
+    "description": "Memory kind name (backend 'procedural' memory)"
+  },
+  "memoryKindReflection": "reflection",
+  "@memoryKindReflection": {
+    "description": "Memory kind name (backend 'reflection' memory)"
+  },
+  "projectsWelcomeBack": "Welcome back,",
+  "@projectsWelcomeBack": {
+    "description": "Projects page: greeting above the user's name"
+  },
+  "projectsDefaultUserName": "Aura User",
+  "@projectsDefaultUserName": {
+    "description": "Projects page: name shown when the account has no display name"
+  },
+  "projectsTitle": "Projects",
+  "@projectsTitle": {
+    "description": "Projects page: title"
+  },
+  "projectsSubtitle": "Organize your work into projects",
+  "@projectsSubtitle": {
+    "description": "Projects page: subtitle"
+  },
+  "projectsNew": "New Project",
+  "@projectsNew": {
+    "description": "Projects page: button that opens the create-project dialog"
+  },
+  "projectsEmptyTitle": "No projects yet",
+  "@projectsEmptyTitle": {
+    "description": "Projects page: empty state title"
+  },
+  "projectsEmptyMessage": "Create your first project to get started",
+  "@projectsEmptyMessage": {
+    "description": "Projects page: empty state message"
+  },
+  "projectsCreateTitle": "Create Project",
+  "@projectsCreateTitle": {
+    "description": "Projects page: create-project dialog title"
+  },
+  "projectsTitleField": "Title *",
+  "@projectsTitleField": {
+    "description": "Projects page: required title field label"
+  },
+  "projectsDescriptionField": "Description",
+  "@projectsDescriptionField": {
+    "description": "Projects page: description field label"
+  },
+  "projectsStatusField": "Status",
+  "@projectsStatusField": {
+    "description": "Projects page: status dropdown label"
+  },
+  "projectsSetTargetDate": "Set target date (optional)",
+  "@projectsSetTargetDate": {
+    "description": "Projects page: row that opens the target date picker"
+  },
+  "projectsTarget": "Target: {date}",
+  "@projectsTarget": {
+    "description": "Projects page: chosen target date; date is already formatted",
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "projectsCreate": "Create",
+  "@projectsCreate": {
+    "description": "Projects page: confirm button of the create-project dialog"
+  },
+  "projectsDue": "Due: {date}",
+  "@projectsDue": {
+    "description": "Projects page: a project's target date; date is already formatted",
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "projectsStatusActive": "active",
+  "@projectsStatusActive": {
+    "description": "Project status name"
+  },
+  "projectsStatusCompleted": "completed",
+  "@projectsStatusCompleted": {
+    "description": "Project status name"
+  },
+  "projectsStatusArchived": "archived",
+  "@projectsStatusArchived": {
+    "description": "Project status name"
+  },
+  "projectsStatusOnHold": "on hold",
+  "@projectsStatusOnHold": {
+    "description": "Project status name ('on_hold')"
+  },
+  "analyticsTitle": "System Analytics Dashboard",
+  "@analyticsTitle": {
+    "description": "Analytics page: title"
+  },
+  "analyticsEmptyTitle": "No telemetry metrics collected yet",
+  "@analyticsEmptyTitle": {
+    "description": "Analytics page: empty state title"
+  },
+  "analyticsEmptyMessage": "Metrics will appear once you stream prompts.",
+  "@analyticsEmptyMessage": {
+    "description": "Analytics page: empty state message"
+  },
+  "analyticsTotalRequests": "Total Requests",
+  "@analyticsTotalRequests": {
+    "description": "Analytics page: KPI card title"
+  },
+  "analyticsAvgLatency": "Avg Latency",
+  "@analyticsAvgLatency": {
+    "description": "Analytics page: KPI card title"
+  },
+  "analyticsFailovers": "Failovers",
+  "@analyticsFailovers": {
+    "description": "Analytics page: KPI card title (requests that fell back to another path)"
+  },
+  "analyticsErrorsLogged": "Errors Logged",
+  "@analyticsErrorsLogged": {
+    "description": "Analytics page: KPI card title"
+  },
+  "analyticsLatencyHistory": "Latency History (Last 10 Request Streams)",
+  "@analyticsLatencyHistory": {
+    "description": "Analytics page: latency chart title"
+  },
+  "analyticsInsufficientData": "Insufficient data",
+  "@analyticsInsufficientData": {
+    "description": "Analytics page: shown in a chart with no data points"
+  },
+  "analyticsInferencePaths": "Inference Path Distribution",
+  "@analyticsInferencePaths": {
+    "description": "Analytics page: inference path pie chart title"
+  },
+  "analyticsNoInferenceData": "No inference data",
+  "@analyticsNoInferenceData": {
+    "description": "Analytics page: shown when the inference pie chart is empty"
+  },
+  "analyticsFailoverStats": "API Failover Statistics",
+  "@analyticsFailoverStats": {
+    "description": "Analytics page: failover pie chart title"
+  },
+  "analyticsNoFailoverEvents": "No failover events",
+  "@analyticsNoFailoverEvents": {
+    "description": "Analytics page: shown when the failover chart is empty"
+  },
+  "analyticsSuccessCount": "Success ({count})",
+  "@analyticsSuccessCount": {
+    "description": "Analytics page: pie chart slice label",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "analyticsFailoversCount": "Failovers ({count})",
+  "@analyticsFailoversCount": {
+    "description": "Analytics page: pie chart slice label",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "analyticsLatestLogs": "Latest Telemetry Logs",
+  "@analyticsLatestLogs": {
+    "description": "Analytics page: recent telemetry list title"
+  },
+  "lifeHubFilterAll": "All",
+  "@lifeHubFilterAll": {
+    "description": "Life Hub: filter chip for every item type"
+  },
+  "lifeHubFilterTasks": "Tasks",
+  "@lifeHubFilterTasks": {
+    "description": "Life Hub: filter chip"
+  },
+  "lifeHubFilterCalendar": "Calendar",
+  "@lifeHubFilterCalendar": {
+    "description": "Life Hub: filter chip"
+  },
+  "lifeHubFilterFinance": "Finance",
+  "@lifeHubFilterFinance": {
+    "description": "Life Hub: filter chip"
+  },
+  "lifeHubFilterHealth": "Health",
+  "@lifeHubFilterHealth": {
+    "description": "Life Hub: filter chip"
+  },
+  "lifeHubFilterProjects": "Projects",
+  "@lifeHubFilterProjects": {
+    "description": "Life Hub: filter chip"
+  },
+  "lifeHubFilterGoals": "Goals",
+  "@lifeHubFilterGoals": {
+    "description": "Life Hub: filter chip"
+  },
+  "lifeHubAgendaEmptyTitle": "Nothing on the board",
+  "@lifeHubAgendaEmptyTitle": {
+    "description": "Life Hub: agenda empty state title"
+  },
+  "lifeHubAgendaEmptyMessage": "Add a task, event, or log to see this week in one place.",
+  "@lifeHubAgendaEmptyMessage": {
+    "description": "Life Hub: agenda empty state message"
+  },
+  "lifeHubHealthLogTitle": "Today’s health log",
+  "@lifeHubHealthLogTitle": {
+    "description": "Life Hub: agenda entry for today's health record"
+  },
+  "lifeHubHealthLogWater": "{ml} ml water",
+  "@lifeHubHealthLogWater": {
+    "description": "Life Hub: water amount of today's health record",
+    "placeholders": {
+      "ml": {
+        "type": "int"
+      }
+    }
+  },
+  "lifeHubNoUpcomingEvents": "No upcoming events",
+  "@lifeHubNoUpcomingEvents": {
+    "description": "Life Hub: calendar pane empty state"
+  },
+  "lifeHubProjectsEmptyMessage": "Create a project to organize your work.",
+  "@lifeHubProjectsEmptyMessage": {
+    "description": "Life Hub: projects pane empty state message"
+  },
+  "lifeHubGoalsEmptyTitle": "No goals yet",
+  "@lifeHubGoalsEmptyTitle": {
+    "description": "Life Hub: goals pane empty state title"
+  },
+  "lifeHubGoalsEmptyMessage": "Create a goal to track your aspirations.",
+  "@lifeHubGoalsEmptyMessage": {
+    "description": "Life Hub: goals pane empty state message"
+  },
+  "lifeHubGoalProgress": "{percent}% complete",
+  "@lifeHubGoalProgress": {
+    "description": "Life Hub: a goal's progress",
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "voiceLiveTranscript": "Transcript",
+  "@voiceLiveTranscript": {
+    "description": "Live voice: tooltip of the button that shows or hides the transcript"
+  },
+  "voiceLiveInterrupt": "Interrupt",
+  "@voiceLiveInterrupt": {
+    "description": "Live voice: tooltip of the button that interrupts AURA while it speaks"
+  },
+  "voiceLiveEndShort": "End",
+  "@voiceLiveEndShort": {
+    "description": "Live voice: tooltip of the button that ends the session"
+  },
+  "voiceLiveUnsupported": "Live voice is available on Android and iOS only",
+  "@voiceLiveUnsupported": {
+    "description": "Live voice: error on platforms without live voice support"
+  },
+  "homeAskAuraLabel": "Ask AURA anything",
+  "@homeAskAuraLabel": {
+    "description": "Home: screen-reader label of the capture bar"
+  },
+  "homeSendToAura": "Send to AURA",
+  "@homeSendToAura": {
+    "description": "Home: screen-reader label of the capture bar's send button"
+  },
+  "homeInsightsLoadFailed": "Could not load insights",
+  "@homeInsightsLoadFailed": {
+    "description": "Home: insights section error title"
+  },
+  "homeInsightsLoadFailedMessage": "Pull to refresh when you are back online.",
+  "@homeInsightsLoadFailedMessage": {
+    "description": "Home: insights section error message"
+  },
+  "homeDismissInsight": "Dismiss insight",
+  "@homeDismissInsight": {
+    "description": "Home: screen-reader label of the button that dismisses an insight"
+  },
+  "homeDueTask": "Task: {title}",
+  "@homeDueTask": {
+    "description": "Home: screen-reader label of a due task",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "homeDueEvent": "Event: {title}",
+  "@homeDueEvent": {
+    "description": "Home: screen-reader label of a due calendar event",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "homeDueOverdue": "{item}, overdue",
+  "@homeDueOverdue": {
+    "description": "Home: screen-reader label of an overdue item; item is homeDueTask or homeDueEvent",
+    "placeholders": {
+      "item": {
+        "type": "String"
+      }
+    }
+  },
+  "notificationsFailoverTitle": "Server inference failover",
+  "@notificationsFailoverTitle": {
+    "description": "Notifications: title of a failover notification"
+  },
+  "notificationsFailoverMessage": "AURA could not complete the request on {model} and recorded a failover.",
+  "@notificationsFailoverMessage": {
+    "description": "Notifications: body of a failover notification; model is a model/path identifier",
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "notificationsRequestFailedTitle": "Request failed",
+  "@notificationsRequestFailedTitle": {
+    "description": "Notifications: title of a failed-request notification"
+  },
+  "notificationsRequestFailedMessage": "An AI request failed on {model}.",
+  "@notificationsRequestFailedMessage": {
+    "description": "Notifications: body of a failed-request notification without its own error text",
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "notificationsEmptyTitle": "Nothing to report",
+  "@notificationsEmptyTitle": {
+    "description": "Notifications: empty state title"
+  },
+  "notificationsEmptyMessage": "You'll see AI failovers and request errors here.",
+  "@notificationsEmptyMessage": {
+    "description": "Notifications: empty state message"
+  },
+  "notificationsLoadFailed": "Couldn't load notifications",
+  "@notificationsLoadFailed": {
+    "description": "Notifications: error state title"
+  },
+  "feedbackEmptyTitle": "No corrections yet",
+  "@feedbackEmptyTitle": {
+    "description": "Feedback page: empty state title"
+  },
+  "feedbackEmptyMessage": "Rate a Copilot answer to help AURA learn what you prefer.",
+  "@feedbackEmptyMessage": {
+    "description": "Feedback page: empty state message"
+  },
+  "feedbackRated": "Rated {rating}/5 · {date}",
+  "@feedbackRated": {
+    "description": "Feedback page: heading of a sent rating; date is already formatted",
+    "placeholders": {
+      "rating": {
+        "type": "int"
+      },
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "modelsLastResponse": "Last response in {ms} ms",
+  "@modelsLastResponse": {
+    "description": "Engine status page: latency of the last response; ms is a number",
+    "placeholders": {
+      "ms": {
+        "type": "String"
+      }
+    }
+  },
+  "modelsNoRequestsYet": "No requests yet this session",
+  "@modelsNoRequestsYet": {
+    "description": "Engine status page: shown before any request was made"
+  },
+  "modelsCheckAgain": "Check again",
+  "@modelsCheckAgain": {
+    "description": "Engine status page: button that probes the server again"
+  },
+  "modelsServerNote": "Requests are processed on AURA’s servers. There is nothing to download or configure on this device.",
+  "@modelsServerNote": {
+    "description": "Engine status page: explanatory note"
+  },
+  "paletteOpenDesktopIde": "Open Desktop IDE",
+  "@paletteOpenDesktopIde": {
+    "description": "Command palette: command that opens the desktop IDE shell"
+  },
+  "paletteSearchHint": "Search AURA, or jump to a screen…",
+  "@paletteSearchHint": {
+    "description": "Command palette: search field hint"
+  },
+  "paletteGoTo": "Go to",
+  "@paletteGoTo": {
+    "description": "Command palette: heading above navigation destinations"
+  },
+  "paletteNoMatches": "No matches",
+  "@paletteNoMatches": {
+    "description": "Command palette: shown when nothing matches the search"
+  },
+  "authAttestationDebugOnly": "Debug marker only — hardware attestation is not enabled in this app",
+  "@authAttestationDebugOnly": {
+    "description": "Profile page: attestation check result on a debug build"
+  },
+  "authAttestationReady": "Hardware attestation token ready",
+  "@authAttestationReady": {
+    "description": "Profile page: attestation check result when a hardware token was produced"
+  },
+  "authAttestationUnavailable": "Hardware attestation unavailable on this device",
+  "@authAttestationUnavailable": {
+    "description": "Profile page: attestation check result when no hardware token could be produced"
+  },
+  "authAuthorizedUser": "Authorized User",
+  "@authAuthorizedUser": {
+    "description": "Profile page: badge under the signed-in user's name"
+  },
+  "authAttestationHeading": "Device Attestation Status",
+  "@authAttestationHeading": {
+    "description": "Profile page: device attestation card title"
+  },
+  "authAttestationExplainer": "This client does not request Google Play Integrity or Apple App Attest tokens. Debug builds send an explicit development marker; release builds advertise that hardware attestation is unsupported. Backend verification of real Play Integrity tokens exists, but this app cannot produce them without a vendor SDK and Play Console keys.",
+  "@authAttestationExplainer": {
+    "description": "Profile page: explanation on the device attestation card"
+  },
+  "authSessionOperations": "Session Operations",
+  "@authSessionOperations": {
+    "description": "Profile page: title of the sign-out card"
   }
 }

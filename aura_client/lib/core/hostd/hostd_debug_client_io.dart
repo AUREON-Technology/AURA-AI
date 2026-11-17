@@ -9,6 +9,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:aura_client/l10n/l10n.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -55,7 +56,7 @@ class HostdDebugClient {
   }) async {
     final endpoint = await discoverHostdControlEndpoint();
     if (endpoint == null) {
-      throw HostdDebugUnavailable('aura_hostd is not running.');
+      throw HostdDebugUnavailable(currentL10n.coreHostdNotRunning);
     }
     final uri = Uri.parse(
       'ws://127.0.0.1:${endpoint.port}/debug?root=${Uri.encodeQueryComponent(rootPath)}',

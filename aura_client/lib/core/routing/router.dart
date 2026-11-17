@@ -32,7 +32,7 @@ import '../../features/settings/presentation/backend_environment_page.dart';
 import '../../features/settings/presentation/appearance_page.dart';
 import '../../features/settings/presentation/desktop_devices_page.dart';
 import '../../features/settings/presentation/settings_page.dart';
-import '../../l10n/generated/app_localizations.dart';
+import '../../l10n/l10n.dart';
 import '../../features/voice_live/presentation/live_voice_page.dart';
 import '../design_system/design_system.dart';
 import '../platform/aura_platform.dart';
@@ -92,7 +92,7 @@ class ShellLayout extends ConsumerWidget {
     final isMobile = width < 768;
     final isWide = width >= 1100;
     final palette = AuraPalette.of(context);
-    final l10n = AppLocalizations.of(context);
+    final l10n = context.l10n;
 
     final shortcuts = <ShortcutActivator, VoidCallback>{
       const SingleActivator(LogicalKeyboardKey.keyK, control: true): () =>
@@ -104,7 +104,7 @@ class ShellLayout extends ConsumerWidget {
     final fab = _showCaptureFab(context)
         ? FloatingActionButton(
             heroTag: 'capture_fab',
-            tooltip: 'Ask Copilot',
+            tooltip: l10n.coreAskCopilotTooltip,
             onPressed: () => showCaptureSheet(context),
             child: const Icon(Icons.auto_awesome),
           )
@@ -136,22 +136,22 @@ class ShellLayout extends ConsumerWidget {
                 NavigationDestination(
                   icon: const Icon(Icons.today_outlined),
                   selectedIcon: const Icon(Icons.today),
-                  label: l10n?.navToday ?? 'Today',
+                  label: l10n.navToday,
                 ),
                 NavigationDestination(
                   icon: const Icon(Icons.auto_awesome_outlined),
                   selectedIcon: const Icon(Icons.auto_awesome),
-                  label: l10n?.navCopilot ?? 'Copilot',
+                  label: l10n.navCopilot,
                 ),
                 NavigationDestination(
                   icon: const Icon(Icons.view_week_outlined),
                   selectedIcon: const Icon(Icons.view_week),
-                  label: l10n?.navLifeHub ?? 'Life Hub',
+                  label: l10n.navLifeHub,
                 ),
                 NavigationDestination(
                   icon: const Icon(Icons.person_outline),
                   selectedIcon: const Icon(Icons.person),
-                  label: l10n?.navYou ?? 'You',
+                  label: l10n.navYou,
                 ),
               ],
             ),
@@ -188,22 +188,22 @@ class ShellLayout extends ConsumerWidget {
                   NavigationRailDestination(
                     icon: const Icon(Icons.today_outlined),
                     selectedIcon: const Icon(Icons.today),
-                    label: Text(l10n?.navToday ?? 'Today'),
+                    label: Text(l10n.navToday),
                   ),
                   NavigationRailDestination(
                     icon: const Icon(Icons.auto_awesome_outlined),
                     selectedIcon: const Icon(Icons.auto_awesome),
-                    label: Text(l10n?.navCopilot ?? 'Copilot'),
+                    label: Text(l10n.navCopilot),
                   ),
                   NavigationRailDestination(
                     icon: const Icon(Icons.view_week_outlined),
                     selectedIcon: const Icon(Icons.view_week),
-                    label: Text(l10n?.navLifeHub ?? 'Life Hub'),
+                    label: Text(l10n.navLifeHub),
                   ),
                   NavigationRailDestination(
                     icon: const Icon(Icons.person_outline),
                     selectedIcon: const Icon(Icons.person),
-                    label: Text(l10n?.navYou ?? 'You'),
+                    label: Text(l10n.navYou),
                   ),
                 ],
               ),
@@ -301,23 +301,23 @@ class _RailShortcuts extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
-    final l10n = AppLocalizations.of(context);
+    final l10n = context.l10n;
     final path = GoRouterState.of(context).uri.path;
     final links = <(IconData, String, String)>[
       (
         Icons.folder_shared_outlined,
-        l10n?.knowledgeTitle ?? 'Knowledge',
+        l10n.knowledgeTitle,
         '/knowledge',
       ),
-      (Icons.psychology_outlined, l10n?.memoryTitle ?? 'Memory', '/memory'),
+      (Icons.psychology_outlined, l10n.memoryTitle, '/memory'),
       (
         Icons.bolt_outlined,
-        l10n?.settingsAutomationsTitle ?? 'Automations',
+        l10n.settingsAutomationsTitle,
         '/automations',
       ),
       (
         Icons.code_outlined,
-        l10n?.settingsEngineerTitle ?? 'Engineer',
+        l10n.settingsEngineerTitle,
         '/engineer-history',
       ),
     ];
@@ -339,7 +339,7 @@ class _RailShortcuts extends StatelessWidget {
                 bottom: AuraSpacing.sm,
               ),
               child: Text(
-                (l10n?.settingsSectionYourAura ?? 'Your AURA').toUpperCase(),
+                l10n.settingsSectionYourAura.toUpperCase(),
                 style: TextStyle(
                   color: palette.textDisabled,
                   fontSize: 11,

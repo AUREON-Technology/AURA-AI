@@ -1,3 +1,4 @@
+import 'package:aura_client/l10n/l10n.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -21,10 +22,10 @@ class EngineerWorkspacesPanel extends ConsumerWidget {
       loading: () => const AuraSkeleton(height: 96),
       // A failed fetch of a secondary panel should not shout. The client already degrades to an
       // empty list, so this branch is for the unexpected rather than the routine.
-      error: (_, _) => const AuraEmptyState(
+      error: (_, _) => AuraEmptyState(
         icon: Icons.cloud_off_outlined,
-        title: 'Workspaces unavailable',
-        message: 'Could not reach the server. Your work is not lost -- try again shortly.',
+        title: context.l10n.coreEngineerWorkspacesUnavailableTitle,
+        message: context.l10n.coreEngineerWorkspacesUnavailableMessage,
       ),
       data: (list) => _body(context, ref, list),
     );
@@ -33,18 +34,17 @@ class EngineerWorkspacesPanel extends ConsumerWidget {
   Widget _body(BuildContext context, WidgetRef ref, EngineerWorkspaceList list) {
     if (!list.enabled) {
       // Not an error: this deployment simply has not switched the engineer agent on.
-      return const AuraEmptyState(
+      return AuraEmptyState(
         icon: Icons.terminal_outlined,
-        title: 'Workspaces are not enabled',
-        message: 'This server does not run the engineer agent’s sandboxes.',
+        title: context.l10n.coreEngineerWorkspacesDisabledTitle,
+        message: context.l10n.coreEngineerWorkspacesDisabledMessage,
       );
     }
     if (list.workspaces.isEmpty) {
       return AuraEmptyState(
         icon: Icons.folder_off_outlined,
-        title: 'No workspaces yet',
-        message: 'Ask the engineer agent to clone a repository and one will appear here. '
-            'Workspaces are removed after ${list.ttlHours.round()} hours without activity.',
+        title: context.l10n.coreEngineerWorkspacesEmptyTitle,
+        message: context.l10n.coreEngineerWorkspacesEmptyMessage(list.ttlHours.round()),
       );
     }
 
@@ -52,7 +52,7 @@ class EngineerWorkspacesPanel extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const AuraSectionHeader(title: 'Engineer workspaces'),
+        AuraSectionHeader(title: context.l10n.coreEngineerWorkspacesHeader),
         for (final workspace in list.workspaces)
           Padding(
             padding: const EdgeInsets.only(bottom: AuraSpacing.md),
@@ -74,7 +74,7 @@ class _WorkspaceCard extends ConsumerWidget {
     final palette = AuraPalette.of(context);
 
     return AuraCard(
-      semanticLabel: 'Workspace for ${workspace.repo}',
+      semanticLabel: context.l10n.coreEngineerWorkspaceSemanticLabel(workspace.repo),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -92,7 +92,7 @@ class _WorkspaceCard extends ConsumerWidget {
           ),
           const SizedBox(height: AuraSpacing.sm),
           Text(
-            _expiryLabel(workspace, now),
+            _expiryLabel(context.l10n, workspace, now),
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: _isUrgent(workspace, now) ? palette.danger : palette.textSecondary,
                 ),
@@ -100,7 +100,7 @@ class _WorkspaceCard extends ConsumerWidget {
           if (workspace.branch != null) ...[
             const SizedBox(height: AuraSpacing.xs),
             Text(
-              'Branch ${workspace.branch}',
+              context.l10n.coreEngineerWorkspaceBranch(workspace.branch!),
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
@@ -108,7 +108,7 @@ class _WorkspaceCard extends ConsumerWidget {
           Align(
             alignment: AlignmentDirectional.centerEnd,
             child: AuraButton(
-              label: 'Delete',
+              label: context.l10n.commonDelete,
               icon: Icons.delete_outline,
               variant: AuraButtonVariant.ghost,
               onPressed: () => _confirmDelete(context, ref),
@@ -125,15 +125,12 @@ class _WorkspaceCard extends ConsumerWidget {
     var confirmed = false;
     await AuraDialog.show<void>(
       context: context,
-      title: 'Delete this workspace?',
-      confirmLabel: 'Delete',
-      cancelLabel: 'Keep',
+      title: context.l10n.coreEngineerWorkspaceDeleteTitle,
+      confirmLabel: context.l10n.commonDelete,
+      cancelLabel: context.l10n.coreEngineerWorkspaceKeep,
       confirmDestructive: true,
       onConfirm: () => confirmed = true,
-      child: Text(
-        'The checkout of ${workspace.repo} and any uncommitted changes in it will be removed. '
-        'Anything already pushed is unaffected.',
-      ),
+      child: Text(context.l10n.coreEngineerWorkspaceDeleteBody(workspace.repo)),
     );
     if (!confirmed || !context.mounted) return;
 
@@ -141,7 +138,9 @@ class _WorkspaceCard extends ConsumerWidget {
     if (!context.mounted) return;
     AuraSnackbar.show(
       context,
-      message: ok ? 'Workspace deleted.' : 'Could not delete that workspace.',
+      message: ok
+          ? context.l10n.coreEngineerWorkspaceDeleted
+          : context.l10n.coreEngineerWorkspaceDeleteFailed,
       kind: ok ? AuraSnackbarKind.success : AuraSnackbarKind.error,
     );
     if (ok) ref.invalidate(engineerWorkspacesProvider);
@@ -150,12 +149,12 @@ class _WorkspaceCard extends ConsumerWidget {
   static bool _isUrgent(EngineerWorkspace workspace, DateTime now) =>
       workspace.timeUntilExpiry(now).inHours < 12;
 
-  static String _expiryLabel(EngineerWorkspace workspace, DateTime now) {
+  static String _expiryLabel(AppLocalizations l10n, EngineerWorkspace workspace, DateTime now) {
     final left = workspace.timeUntilExpiry(now);
-    if (left.isNegative) return 'Due to be removed';
-    if (left.inHours < 1) return 'Removed in under an hour unless used';
-    if (left.inHours < 24) return 'Removed in ${left.inHours}h unless used';
-    return 'Removed in ${left.inDays}d unless used';
+    if (left.isNegative) return l10n.coreEngineerWorkspaceExpiryOverdue;
+    if (left.inHours < 1) return l10n.coreEngineerWorkspaceExpiryUnderHour;
+    if (left.inHours < 24) return l10n.coreEngineerWorkspaceExpiryHours(left.inHours);
+    return l10n.coreEngineerWorkspaceExpiryDays(left.inDays);
   }
 }
 
@@ -180,7 +179,7 @@ class _StatusChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(AuraRadius.sm),
       ),
       child: Text(
-        running ? 'Running' : 'Idle',
+        running ? context.l10n.coreEngineerWorkspaceRunning : context.l10n.coreEngineerWorkspaceIdle,
         style: Theme.of(context).textTheme.labelSmall?.copyWith(color: color),
       ),
     );
