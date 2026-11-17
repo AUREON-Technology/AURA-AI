@@ -17,7 +17,11 @@ class BackendUrlSettings {
 
   static const String storageKey = 'aura_backend_environment';
 
-  static const String productionUrl = 'https://aureon-ai.tech';
+  /// `api.aureon-ai.tech`, not the apex: since 2026-11-14 the backend runs in a new Railway
+  /// project and the apex is still bound to the old one, so it answers 404. A saved
+  /// "production" choice resolves to this constant on every launch, so a build-time
+  /// `BACKEND_URL` alone cannot move installed apps -- this value has to.
+  static const String productionUrl = 'https://api.aureon-ai.tech';
   static const String developmentUrl = 'https://dev.aureon-ai.tech';
 
   static const Map<BackendEnvironment, String> presetUrls = {
