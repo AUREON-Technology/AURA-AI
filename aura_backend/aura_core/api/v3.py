@@ -1811,6 +1811,11 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         JSONResponse=JSONResponse,
     )
 
+    from .shared_conversations import register_sharing_ops
+
+    register_sharing_ops(router, container, principal=principal, Depends=Depends,
+                         JSONResponse=JSONResponse, Response=Response)
+
     from .workspaces import register_workspace_ops
 
     register_workspace_ops(

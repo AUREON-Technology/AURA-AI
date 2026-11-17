@@ -126,6 +126,14 @@ COVERED = {
         "TestWorkspaces::test_bob_cannot_buy_for_alices_team",
     ("POST", "/api/v3/workspaces/{workspace_id}/billing/cancel"):
         "TestWorkspaces::test_bob_cannot_cancel_alices_billing",
+    ("POST", "/api/v3/workspaces/{workspace_id}/shared-conversations"):
+        "TestWorkspaces::test_bob_cannot_share_into_alices_team",
+    ("GET", "/api/v3/workspaces/{workspace_id}/shared-conversations"):
+        "TestWorkspaces::test_bob_cannot_read_alices_shared_chats",
+    ("GET", "/api/v3/workspaces/{workspace_id}/shared-conversations/{conversation_id}"):
+        "TestWorkspaces::test_bob_cannot_read_alices_shared_chats",
+    ("DELETE", "/api/v3/workspaces/{workspace_id}/shared-conversations/{conversation_id}"):
+        "TestWorkspaces::test_bob_cannot_unshare_alices_shared_chat",
     ("POST", "/api/v3/workspaces/{workspace_id}/billing/store-token"):
         "TestWorkspaces::test_bob_cannot_bind_a_purchase_to_alices_workspace",
     ("POST", "/api/v3/insights/{insight_id}/dismiss"):
@@ -616,6 +624,29 @@ class TestWorkspaces:
 
     def test_bob_cannot_cancel_alices_billing(self, client, team, billing_on) -> None:
         self._refused(client.post(f"/api/v3/workspaces/{team[0]}/billing/cancel", headers=AUTH_B))
+
+    def _shared(self, client, team) -> str:
+        created = client.post(f"/api/v3/workspaces/{team[0]}/shared-conversations", headers=AUTH_A,
+                              json={"source_id": "c1", "title": "t", "messages": [{"role": "user", "text": "secret"}]})
+        assert created.status_code == 201, created.text
+        return created.json()["id"]
+
+    def test_bob_cannot_share_into_alices_team(self, client, team) -> None:
+        self._refused(client.post(f"/api/v3/workspaces/{team[0]}/shared-conversations", headers=AUTH_B,
+                                  json={"source_id": "c", "title": "t", "messages": [{"role": "user", "text": "x"}]}))
+        assert client.get(f"/api/v3/workspaces/{team[0]}/shared-conversations", headers=AUTH_A).json()["conversations"] == []
+
+    def test_bob_cannot_read_alices_shared_chats(self, client, team) -> None:
+        sid = self._shared(client, team)
+        self._refused(client.get(f"/api/v3/workspaces/{team[0]}/shared-conversations", headers=AUTH_B))
+        response = client.get(f"/api/v3/workspaces/{team[0]}/shared-conversations/{sid}", headers=AUTH_B)
+        self._refused(response)
+        assert "secret" not in response.text
+
+    def test_bob_cannot_unshare_alices_shared_chat(self, client, team) -> None:
+        sid = self._shared(client, team)
+        self._refused(client.delete(f"/api/v3/workspaces/{team[0]}/shared-conversations/{sid}", headers=AUTH_B))
+        assert client.get(f"/api/v3/workspaces/{team[0]}/shared-conversations/{sid}", headers=AUTH_A).status_code == 200
 
     def test_bob_cannot_bind_a_purchase_to_alices_workspace(self, client, team, billing_on) -> None:
         self._refused(client.post(f"/api/v3/workspaces/{team[0]}/billing/store-token", headers=AUTH_B))

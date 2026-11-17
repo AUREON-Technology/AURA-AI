@@ -184,6 +184,7 @@ class Container:
         self.plans = self._build_plans()
         self.tenancy.seat_limit = self.plans.seat_limit
         self.tenancy.plan_of = self.plans.plan_id
+        self.sharing = self._build_sharing()
         self.email, self.notifier = self._build_email()
         self.tenancy.notifier = self.notifier
         self.billing = self._build_billing()
@@ -1408,6 +1409,21 @@ class Container:
             tenancy=self.tenancy, clock=self.clock, audit=self.audit, settings=billing,
             prices=load_prices(billing.prices_json), locks=locks, contacts=contacts, notifier=self.notifier,
         )
+
+    def _build_sharing(self) -> Any:
+        """Chats shared with a team (SaaS P1-F1)."""
+        from .sharing import SharingService
+
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_sharing import PostgresSharedConversationStore
+
+            store: Any = PostgresSharedConversationStore(self.settings.infrastructure.database_url,
+                                                         pool=self._postgres_pool())
+        else:
+            from .adapters.sharing import InMemorySharedConversationStore
+
+            store = InMemorySharedConversationStore()
+        return SharingService(store=store, tenancy=self.tenancy, clock=self.clock, audit=self.audit)
 
     def _build_email(self) -> tuple[Any, Any]:
         """Customer email (SaaS P1-F1). With email off, a sender that only logs, and no
