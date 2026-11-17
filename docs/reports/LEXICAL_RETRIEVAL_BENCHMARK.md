@@ -138,12 +138,31 @@ at all three points measured:
 
 The metrics:
 
-- nDCG 0.6082
+- nDCG 0.6082 (**overstated; corrected value 0.5358**, see the note below)
 - recall@5 0.70
 - MRR 0.4792
 - precision@5 0.3867
 - pass rate 0.6522
 - empty-correct 0.3333
+
+> **Correction (2026-11-17): the nDCG above was computed by a broken metric.**
+> `RetrievalEvaluator` passed `_ndcg` one document id per returned *chunk*. DCG added a gain for
+> every chunk of a relevant document, while the ideal DCG counted each relevant document once.
+> nDCG could therefore exceed 1.0; a threshold-0 run of the multilingual eval reported 1.19. The
+> harness now counts only the first chunk of each relevant document, so DCG and the ideal use the
+> same unit (`aura_core/evaluation/harness.py::_ndcg`, pinned by `tests/unit/test_evaluation.py`).
+> Recall, MRR, precision and pass rate were never affected.
+>
+> Re-run at `b242efaf`, the commit that added this report, the old metric reproduces nDCG 0.6082
+> exactly. The corrected metric on the same retrievals gives **nDCG 0.5358**; one case
+> (`hitl-finetune-approval`, four chunks of ADR-008 in the top 5) had scored 2.45 on its own.
+> **R2.4's threshold is therefore nDCG 0.5358 under the corrected metric.** Compare Option B
+> against that, measured with the corrected harness, never against 0.6082.
+>
+> Current `main` (`446e004`) gives corrected nDCG 0.5174, MRR 0.4542, with recall, precision and
+> pass rate unchanged from the list above. Retrieval ranking has moved since `b242efaf`; that drop
+> is not caused by the metric fix (MRR does not use `_ndcg`) and is within the gate's 0.03 nDCG
+> tolerance. `evaluation/suites/docs_corpus_baseline.json` now holds current `main`'s numbers.
 
 The default suite has the gate as well.
 
@@ -209,7 +228,8 @@ design. It is **not** shipped in this change, for three reasons:
 - It needs a migration. The owner has to coordinate that with a production upgrade (see CB-43
   for how the last one went).
 - R2.4's decision rule requires recall@k and nDCG on the phase-a3 corpus within 1 point of the
-  numbers above (nDCG 0.6082). `ts_rank_cd` does not rank like BM25, so that rule could fail.
+  numbers above (nDCG 0.5358 under the corrected metric; the 0.6082 first published here was
+  inflated, see §3). `ts_rank_cd` does not rank like BM25, so that rule could fail.
 - The Arabic tokenization configuration has to be settled first: the `simple` dictionary loses
   stemming.
 
