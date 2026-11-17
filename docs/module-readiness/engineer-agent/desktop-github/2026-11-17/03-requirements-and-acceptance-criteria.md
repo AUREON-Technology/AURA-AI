@@ -43,12 +43,56 @@ names its source decision. Status is against `main` at `0d6c53e`, using the stat
 
 ### Access and model
 
-**FR-01 (D-04).** Production MUST grant `engineer_agent` to Developer, Admin and SuperAdmin, and
-to no other role.
-- *Acceptance:* `GET /api/v3/agents` shows `engineer` `usable:true` for a Developer token and
-  `usable:false` for a User token, live on `api.aureon-ai.tech`.
-- *Status:* **UNVERIFIABLE.** The Railway environment is not visible, the default is empty, and
-  the deploy guide does not mention it. → G-02
+**FR-01 (D-04, revised by D-11).** Production MUST grant `engineer_agent` to:
+- Developer, Admin and SuperAdmin (`AURA_ENGINEER_AGENT_ROLES`);
+- a User-role person whose **active workspace's** plan has `engineer: true` (#246's `PlanLimits`).
+
+No one else gets it.
+- *Acceptance:* `GET /api/v3/agents` shows `engineer` as:
+  - `usable:true` for a Developer;
+  - `usable:true` for a User in a Pro workspace;
+  - `usable:false` for a User in a Free workspace;
+
+  checked live on `api.aureon-ai.tech`.
+- *Status:*
+  - **UNVERIFIABLE** for operators: the Railway environment is not visible, and the default is
+    empty. → G-02
+  - **GAP** for customers: nothing grants the capability from a plan; #246 only removes it.
+    → G-27
+
+**FR-18 (D-11).** Desktop sign-in, desktop refresh, pairing approval and the host socket MUST
+admit a User-role person who is entitled to the Engineer in any workspace they belong to (T-6).
+They keep refusing everyone else, exactly as F-09 does today.
+- *Acceptance:*
+  - A Pro customer can sign in to the desktop and pair.
+  - A Free customer gets 403 with a plain reason.
+  - A customer downgraded to Free:
+    - loses the desktop session at the next refresh;
+    - loses the host socket at the next 60 s re-check (4401).
+- *Status:* **GAP.** `api/v2/auth.py:207-251` (`is_console_operator`). → G-27
+
+**FR-19 (D-11).** Customer Engineer turns MUST count against #246's monthly message meter, as any
+turn does. Operators stay unmetered (#246). The D-05 token cap applies to everyone who uses the
+Claude slot, operators included.
+- *Status:* **GAP** (depends on #246 merging).
+
+**FR-20 (D-12).** The desktop app MUST sign in through the same Firebase providers as web (Google,
+Apple, email), via a browser hand-off to the loopback listener (T-7). An existing Google desktop
+account keeps its identity (#246 `canonical_subject`).
+- *Acceptance:* each of the three providers signs in on Windows and on Linux.
+- *Status:* **GAP.** → G-28
+
+**SEC-11 (D-02, T-1).** The Claude slot MUST serve Engineer-workload generations only. Every other
+generation, including unhinted ones, MUST exclude it.
+- *Acceptance:*
+  - A router test: a SENSITIVE generation with no hint, and an interactive one, never select a
+    provider whose workloads are `{engineer}`.
+  - An Engineer turn does select it.
+- *Status:* **GAP.** No workload allowlist exists, and `DEFAULT_WORKLOAD` has no pool. → G-26
+
+**SEC-12 (D-11).** Every customer-facing daemon defect MUST be closed before any customer can pair:
+G-04, G-05, G-06, G-16, G-17 and G-18.
+- *Status:* **GAP.**
 
 **NFR-01 (D-02).** Every Engineer turn MUST be served by the Claude slot configured with a
 `sensitive` ceiling and a pool the `coder` request accepts.
@@ -270,5 +314,8 @@ so a paired desktop is reachable from every worker.
 |---|---|---|
 | PASS | 1 | SEC-01 |
 | PARTIAL | 2 | FR-09, NFR-05 |
-| UNVERIFIABLE | 2 | FR-01, NFR-06 |
-| GAP | 28 | All the rest |
+| UNVERIFIABLE | 1 | NFR-06 |
+| UNVERIFIABLE (operators) + GAP (customers) | 1 | FR-01 |
+| GAP | 33 | All the rest, including FR-18…20, SEC-11 and SEC-12 added in PLAN |
+
+38 requirements in total.

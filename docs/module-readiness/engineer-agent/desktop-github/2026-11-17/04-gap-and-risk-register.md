@@ -48,7 +48,32 @@ Severity scale: P0 = the feature cannot serve users or must not ship; P1 = a rel
 - **Fix (D-03):** a consent record (migration), a refusal in the kernel before routing for the
   Engineer workload, a notice on every client, a withdraw control, the copy and ADR updates.
 
+### G-26: A sensitive-ceiling Claude slot would also receive non-Engineer data
+- **Requirements:** SEC-11. **Verified.** Added in PLAN.
+- **Evidence:**
+  - `DEFAULT_WORKLOAD = WorkloadHint()` has no pool (`llm/workload.py:39`).
+  - The router excludes a pooled provider only when a pool *is* requested (`router.py:475-477`).
+  - Unclassified generations count as SENSITIVE (ADR-030).
+- **Impact:** done as written, D-02 would send unhinted background generations (and any other
+  pool-less call) to Anthropic, beyond what the owner agreed to.
+- **Fix:** T-1, a per-provider workload allowlist. This must land in the same release as, or
+  before, WP6.
+
 ## P1
+
+### G-27: Nothing grants the Engineer from a plan, and desktop sign-in refuses customers
+- **Requirements:** FR-01 (customers), FR-18. **Verified.** Added in PLAN.
+- **Evidence:**
+  - `aura_service.py:128-129` grants by role only.
+  - #246 only removes `engineer_agent`.
+  - `api/v2/auth.py:242-251` ends any non-operator desktop session (F-09).
+- **Fix:** T-6, plus an ADR-011 amendment recording that F-09 is narrowed for plan-entitled
+  customers.
+
+### G-28: Desktop sign-in is Google-only
+- **Requirements:** FR-20. **Verified.** Added in PLAN.
+- **Evidence:** `services/google_oauth.py`, `/auth/desktop/login` and `/auth/desktop/exchange`.
+- **Fix:** T-7.
 
 ### G-04: The daemon's `task_key` escapes the granted folder
 - **Requirements:** SEC-03. **Verified.**

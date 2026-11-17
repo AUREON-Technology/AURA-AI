@@ -1,15 +1,17 @@
 # Engineer agent: module readiness, executive summary
 
-- **Mode:** DISCOVER.
+- **Mode:** DISCOVER, then PLAN (same day). The plan awaits approval.
 - **Date:** 2026-11-17.
 - **Repository:** `main` at `0d6c53e`; production `api.aureon-ai.tech` runs the same commit.
 - **Scope (D-01):** the Desktop Engineer (paired `aura_hostd`, Windows + Linux) and the GitHub
   tools, served from Railway.
+- **Who gets it (D-11):** operators (Developer, Admin, SuperAdmin) and Pro/Team customers,
+  desktop included.
 - **Out of scope:** server-side Docker workspaces (GAP-025) and macOS.
 
 ## Verdict: NO-SHIP
 
-The Engineer cannot answer a single turn in production today, and three P0 and nine P1 gaps
+The Engineer cannot answer a single turn in production today, and four P0 and eleven P1 gaps
 stand between it and real users.
 
 1. **No model can serve it.** Every Engineer turn is classified SENSITIVE, and the only healthy
@@ -29,7 +31,12 @@ stand between it and real users.
    - isolated worktrees by default;
    - the IDE on Linux;
    - remote control with a desktop opt-in and per-action approval.
-6. **There is no release evidence.** Backend and daemon CI have not run since `dc87beb`, `main`
+6. **Found in PLAN:**
+   - Raising Claude to `sensitive` would also hand it every unhinted generation, unless it is
+     fenced to the Engineer workload (G-26, P0).
+   - Customers need a plan-based grant and Firebase desktop sign-in, both built on open PR #246
+     (G-27, G-28).
+7. **There is no release evidence.** Backend and daemon CI have not run since `dc87beb`, `main`
    fails one architecture test (a stale reachability doc), and no end-to-end report exists
    (GAP-026).
 
@@ -56,10 +63,10 @@ stand between it and real users.
 | File | Content |
 |---|---|
 | `01-as-is-system-map.md` | Layers, live state, flows, tests, evidence map |
-| `02-business-interview-and-decisions.md` | D-01…D-10c, accepted consequences, deferred and open items |
-| `03-requirements-and-acceptance-criteria.md` | 33 requirements with acceptance criteria and status (1 PASS, 2 PARTIAL, 2 UNVERIFIABLE, 28 GAP) |
-| `04-gap-and-risk-register.md` | G-01…G-25 with severity and evidence |
-| `05-implementation-plan.md` | WP0…WP10, sequenced; Claude goes on only after consent and the cap |
+| `02-business-interview-and-decisions.md` | D-01…D-12, technical decisions T-1…T-8, accepted consequences, deferred and open items |
+| `03-requirements-and-acceptance-criteria.md` | 38 requirements with acceptance criteria and status |
+| `04-gap-and-risk-register.md` | G-01…G-28 with severity and evidence |
+| `05-implementation-plan.md` | Two stages. Stage 1, operators: WP0–WP10a. Stage 2, customers after #246: WP11, WP12, WP10b. Files, tests, gates and rollback for each. |
 
-The next step is PLAN, or IMPLEMENT with explicit approval, starting with WP0, WP1, WP2 and WP3.
-These four can proceed in parallel.
+The next step is IMPLEMENT with explicit approval. The suggested first batch is independent and
+inert when merged: WP0, WP6a, WP3 and WP5.
