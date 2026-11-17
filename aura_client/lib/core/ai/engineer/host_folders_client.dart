@@ -81,16 +81,7 @@ class HostFoldersClient {
 
   /// Throws [AuraApiError] when the request fails and [FormatException] on a body that is not
   /// the documented shape.
-  Future<HostFolders> fetch() async {
-    final body = await _api.json(method: 'GET', path: path);
-    try {
-      return HostFolders.fromJson(body);
-    } on FormatException {
-      rethrow;
-    } catch (e) {
-      throw FormatException('Unexpected host folders response: $e');
-    }
-  }
+  Future<HostFolders> fetch() async => HostFolders.fromJson(await _api.json(method: 'GET', path: path));
 }
 
 final hostFoldersClientProvider = Provider<HostFoldersClient>((ref) => HostFoldersClient(ref));
