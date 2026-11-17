@@ -19,6 +19,8 @@ Explicitly not the goal: pooling many free-tier accounts for capacity. Storage c
 5. A second VPS exists that the user runs. It is the candidate target for the deferred replication phase. Not used in this plan.
 6. (2026-11-17) Offsite providers: **Backblaze B2 and Cloudflare R2**, as rclone remotes `b2-aura` and `r2-aura` (`deploy/backup/rclone.conf.example`), each with a bucket-scoped key and a 6-day object lock.
 7. (2026-11-17) Encryption keys: **two independent age key pairs**. Both public keys go in `backup_age_recipients.txt`, so either private key alone restores any set. The two private keys are kept offline in separate places. `AuraBackupSingleKey` fires while fewer than two distinct keys are configured.
+8. (2026-11-17) The **live Railway data** is backed up by a **Railway cron service** running the same `backup.sh` in run-once mode (`deploy/backup/railway.Dockerfile`), to the same B2 + R2 and the same two keys. Runbook: `docs/deployment/backups.md`.
+9. (2026-11-17) Production's vector index is on **Qdrant Cloud**; it is backed up through its snapshot API with `QDRANT_API_KEY`.
 
 ## Current state (from code)
 
@@ -89,7 +91,11 @@ Gap: **one remote, not two.** Offsite may also be unset in production; the plan 
 
 1. ~~Age key custody~~ Two key pairs (decision 7). Still needed: the owner generates both off the VPS, stores the private keys apart, and installs both public keys.
 2. ~~Which two providers?~~ B2 and R2 (decision 6). Still needed: both buckets and keys created per the maintenance guide.
-3. Is `BACKUP_S3_URI` set on the VPS right now? (Needed for rollout step 1.)
+3. ~~Is `BACKUP_S3_URI` set on the VPS?~~ **No** (owner, 2026-11-17). No offsite copy of any backup exists today, and there is no old single-target bucket to migrate.
+
+## Finding (2026-11-17): the live data is not covered
+
+Production (`aureon-ai.tech`) runs on Railway: Railway-managed Postgres and Redis, and a Qdrant outside Railway (`docs/deployment/control-plane.md`). The backup sidecar this plan extends runs only in the VPS compose stack, and the VPS is in an unknown state: Deploy VPS has failed since its host key changed on 2026-10-18 (`docs/status/BACKEND_STATUS.md`). So **nothing in this repo backs up the live Railway data**, and the multi-provider work above protects the stack that is not serving users. Resolved by decisions 8 and 9: a Railway cron service backs up the live data (see the implementation status below).
 4. ~~Approve this plan~~ Approved 2026-11-17.
 
 ## Implementation status (2026-11-17)
@@ -120,6 +126,13 @@ Deviations from the plan above, and why:
 - **Behaviour change:** with the default minimum of 2, an existing single-target setup now
   reports offsite failure and fires both alerts until a second target is added. This is
   intended: one provider is not durable.
+
+Railway cron service (decisions 8-9), added the same day:
+
+- `backup.sh` run-once mode (`BACKUP_RUN_ONCE=1`): one cycle, exit 0 only when the set is durable. Inputs from env for hosts with no secret files: `BACKUP_DATABASE_URL`, `BACKUP_REDIS_URL`, `QDRANT_API_KEY`, `BACKUP_RCLONE_CONFIG`. `BACKUP_HEARTBEAT_URL` is pinged only on a durable run (dead man's switch, since nothing scrapes metrics on Railway).
+- `deploy/backup/railway.Dockerfile`: the VPS image's packages with the scripts copied in; `PG_MAJOR` build argument; `deploy/.dockerignore` allows only `scripts/` into its build context.
+- Two pre-existing bugs fixed in `backup_qdrant`, affecting the VPS too: a greedy `sed` kept only the LAST collection name, so all other collections were silently skipped; and snapshots were never deleted from Qdrant after download, so they accumulated on its disk nightly.
+- Proven locally end to end with the built image (stock Postgres 16, Redis 7, Qdrant v1.12.4, local folders as remotes): both copies verified; fetched from one remote; restored with key B alone into a throwaway Postgres; a read-only remote gave exit 1 and no heartbeat. Stub tests for the same paths are in the shell suite (118 assertions).
 
 Not proven until the rollout steps run: a real cycle to two real providers, and a restore drill
 from each provider's copy (maintenance-guide "Quarterly"). CI on the PR shows red because the

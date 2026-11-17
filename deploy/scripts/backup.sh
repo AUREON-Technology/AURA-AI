@@ -133,7 +133,15 @@ backup_postgres() {
     target="$STAGING/postgres-$stamp.dump"
     log "dumping postgres -> $target"
     # Custom format: parallel restore, selective table recovery, and built-in compression.
-    pg_dump --format=custom --compress=6 --file="$target"
+    if [ -n "${BACKUP_DATABASE_URL:-}" ]; then
+        # Hosts without the PG* variables (the Railway cron service) pass one connection URL.
+        # libpq wants postgresql://; an SQLAlchemy-style URL carries a driver suffix to drop.
+        # The URL holds the password, so it is never logged.
+        db_url=$(printf '%s' "$BACKUP_DATABASE_URL" | sed 's|^postgres\(ql\)\{0,1\}+[A-Za-z0-9_]*://|postgresql://|')
+        pg_dump --format=custom --compress=6 --dbname="$db_url" --file="$target"
+    else
+        pg_dump --format=custom --compress=6 --file="$target"
+    fi
 
     # Verify the archive is readable and non-trivial before counting it as a backup. This has to
     # happen on the plaintext, before encryption: the host cannot decrypt afterwards.
@@ -157,7 +165,12 @@ backup_qdrant() {
     mkdir -p "$dest"
     log "snapshotting qdrant -> $dest"
     key=""
-    [ -f /run/secrets/qdrant_api_key ] && key="$(cat /run/secrets/qdrant_api_key)"
+    if [ -f /run/secrets/qdrant_api_key ]; then
+        key="$(cat /run/secrets/qdrant_api_key)"
+    elif [ -n "${QDRANT_API_KEY:-}" ]; then
+        # Hosted Qdrant (Qdrant Cloud) on a host with no secret files: the key comes from env.
+        key=$QDRANT_API_KEY
+    fi
 
     if ! command -v wget >/dev/null 2>&1; then
         log "WARNING: wget missing; qdrant snapshots stay on the Qdrant volume only"
@@ -166,8 +179,10 @@ backup_qdrant() {
 
     # Qdrant snapshots are per-collection; enumerate rather than assuming a fixed name, since
     # index identity encodes the embedding model and changes on a rebuild (ADR-007).
+    # One name per "name" field. A greedy sed over the single-line JSON kept only the LAST
+    # collection, so every other collection went unbacked-up without a warning.
     collections=$(wget -qO- --header="api-key: $key" "$QDRANT_URL/collections" \
-        | sed -n 's/.*"name":"\([^"]*\)".*/\1/p' || true)
+        | grep -o '"name":"[^"]*"' | sed 's/^"name":"//; s/"$//' || true)
 
     if [ -z "$collections" ]; then
         log "qdrant: no collections to snapshot"
@@ -189,6 +204,11 @@ backup_qdrant() {
             log "WARNING: qdrant snapshot download failed for $collection"
             rm -f "$dest/$collection.snapshot"
         fi
+        # The copy now lives in the backup set; left on Qdrant, one snapshot per collection per
+        # night accumulates on Qdrant's own disk (a hard limit on Qdrant Cloud).
+        wget -q -O /dev/null --method=DELETE --header="api-key: $key" \
+            "$QDRANT_URL/collections/$collection/snapshots/$snap" \
+            || log "WARNING: could not delete qdrant snapshot $snap of $collection"
     done
 }
 
@@ -209,7 +229,10 @@ backup_redis() {
     log "dumping redis -> $target"
     # --rdb copies RDB over the wire; the dump.rdb on the redis volume is not mounted here.
     # Refresh tokens live in Redis: a stale RDB means users re-login. Documented in maintenance-guide.
-    if [ -n "$pass" ]; then
+    if [ -n "${BACKUP_REDIS_URL:-}" ]; then
+        # One URL (redis://user:pass@host:port) on hosts without the REDIS_* variables. Never logged.
+        redis-cli -u "$BACKUP_REDIS_URL" --no-auth-warning --rdb "$target"
+    elif [ -n "$pass" ]; then
         redis-cli -h "$host" -a "$pass" --no-auth-warning --rdb "$target"
     else
         redis-cli -h "$host" --rdb "$target"
@@ -435,10 +458,24 @@ run_cycle() {
     return 0
 }
 
-mkdir -p "$BACKUP_DIR"
-ensure_tools
+# Dead man's switch for a scheduler that no Prometheus watches (the Railway cron service): only a
+# durable cycle requests BACKUP_HEARTBEAT_URL, so a monitor that alerts when the pings stop
+# catches every kind of failure, including the job never starting. The URL is a credential of
+# sorts and is never logged.
+send_heartbeat() {
+    url=${BACKUP_HEARTBEAT_URL:-}
+    [ -n "$url" ] || return 0
+    if wget -q -O /dev/null -T 30 "$url" 2>/dev/null; then
+        log "heartbeat sent"
+    else
+        log "WARNING: heartbeat request failed"
+    fi
+}
 
-while true; do
+# One full cycle: check encryption, back up, seal, prune, ship offsite, write metrics. Returns 0
+# only when the local set verified AND, with offsite configured, enough offsite copies verified:
+# the status BACKUP_RUN_ONCE hands to its scheduler.
+backup_once() {
     offsite_configured=0
     offsite_required=0
     if [ -n "$OFFSITE_TARGETS" ]; then
@@ -449,32 +486,63 @@ while true; do
     if ! bk_require_encryption_config; then
         log "cycle REFUSED -- fix the backup encryption configuration; previous backups retained"
         write_backup_metrics "$offsite_configured" "$offsite_configured" 1 0 "$offsite_required"
-        pause_until_next_cycle
-        continue
+        return 1
     fi
 
-    if run_cycle; then
-        # A marker the monitoring stack can alert on if it stops advancing.
-        date -u +%s > "$BACKUP_DIR/.last_success"
-        if bk_prune_local "$BACKUP_DIR" "$KEEP_DAILY" "$KEEP_WEEKLY" "$KEEP_MONTHLY"; then
-            prune_legacy
-        fi
-        offsite_exit=0
-        OFFSITE_VERIFIED=0
-        if [ "$offsite_configured" -eq 1 ]; then
-            STAGING="$BACKUP_DIR/.staging-offsite"
-            mkdir -p "$STAGING"
-            if ! copy_offsite "$set_dir"; then
-                offsite_exit=1
-                log "ERROR: offsite copy or its verification failed"
-            fi
-            cleanup_staging
-        fi
-        write_backup_metrics "$offsite_configured" "$offsite_exit" 0 "$OFFSITE_VERIFIED" "$offsite_required"
-        log "cycle complete"
-    else
+    if ! run_cycle; then
         log "cycle FAILED -- previous backups retained, nothing pruned"
         write_backup_metrics "$offsite_configured" "$offsite_configured" 0 0 "$offsite_required"
+        return 1
     fi
+
+    # A marker the monitoring stack can alert on if it stops advancing.
+    date -u +%s > "$BACKUP_DIR/.last_success"
+    if bk_prune_local "$BACKUP_DIR" "$KEEP_DAILY" "$KEEP_WEEKLY" "$KEEP_MONTHLY"; then
+        prune_legacy
+    fi
+    offsite_exit=0
+    OFFSITE_VERIFIED=0
+    if [ "$offsite_configured" -eq 1 ]; then
+        STAGING="$BACKUP_DIR/.staging-offsite"
+        mkdir -p "$STAGING"
+        if ! copy_offsite "$set_dir"; then
+            offsite_exit=1
+            log "ERROR: offsite copy or its verification failed"
+        fi
+        cleanup_staging
+    fi
+    write_backup_metrics "$offsite_configured" "$offsite_exit" 0 "$OFFSITE_VERIFIED" "$offsite_required"
+    if [ "$offsite_exit" -ne 0 ]; then
+        log "cycle complete locally, but NOT durable offsite"
+        return 1
+    fi
+    log "cycle complete"
+    send_heartbeat
+    return 0
+}
+
+mkdir -p "$BACKUP_DIR"
+ensure_tools
+
+# Hosts without secret files (Railway) pass the whole rclone config as one variable, in the same
+# format as deploy/backup/rclone.conf.example. It is written next to the sets, readable only by
+# this user (umask 077 above), and a mounted RCLONE_CONFIG_FILE always wins.
+if [ -n "${BACKUP_RCLONE_CONFIG:-}" ] && [ ! -f "${RCLONE_CONFIG_FILE:-}" ]; then
+    RCLONE_CONFIG_FILE="$BACKUP_DIR/.rclone.conf"
+    printf '%s\n' "$BACKUP_RCLONE_CONFIG" > "$RCLONE_CONFIG_FILE"
+    export RCLONE_CONFIG_FILE
+fi
+
+# BACKUP_RUN_ONCE=1: one cycle, then exit with its status -- for a scheduler that starts the
+# container (the Railway cron service). Otherwise: the long-lived VPS sidecar loop.
+if [ "${BACKUP_RUN_ONCE:-0}" = 1 ]; then
+    if backup_once; then
+        exit 0
+    fi
+    exit 1
+fi
+
+while true; do
+    backup_once || true
     pause_until_next_cycle
 done

@@ -221,6 +221,9 @@ A set is durable only when `BACKUP_OFFSITE_MIN_COPIES` targets (default 2) verif
 below that fails the cycle and fires `AuraBackupUnderReplicated`, because a single provider
 holding the only copy is one outage from data loss.
 
+This section sets up the VPS sidecar. The **live** data on Railway is backed up by a separate
+Railway cron service using the same providers and keys: [deployment/backups.md](../deployment/backups.md).
+
 The chosen pair is **Backblaze B2** and **Cloudflare R2** (two companies, so neither outage nor
 account loss takes both copies). Any other S3-compatible provider works the same way.
 

@@ -436,6 +436,118 @@ expect_fail "an existing destination set is not overwritten" fetch "$OLD"
 expect_fail "a name that is not a set name is refused" fetch "../etc"
 
 # ---------------------------------------------------------------------------------------------
+echo "# Railway inputs: Qdrant Cloud, connection URLs (backup_* functions from backup.sh, stubbed services)"
+SVC="$T/bin-svc"
+mkdir -p "$SVC"
+cat > "$SVC/wget" <<'STUB'
+#!/bin/sh
+# Qdrant stand-in: two collections, a snapshot per collection, and DELETE. Logs every call.
+echo "$*" >> "$WGET_LOG"
+out=""; url=""; method=GET
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -qO-) out=- ;;
+        -qO|-O) shift; out=$1 ;;
+        --post-data=*) method=POST ;;
+        --method=*) method=${1#--method=} ;;
+        http*) url=$1 ;;
+    esac
+    shift
+done
+case "$method $url" in
+    "GET "*/collections) body='{"result":{"collections":[{"name":"knowledge"},{"name":"memory"}]},"status":"ok"}' ;;
+    "POST "*/snapshots) c=${url%/snapshots}; c=${c##*/}; body="{\"result\":{\"name\":\"$c-1.snapshot\",\"size\":9},\"status\":\"ok\"}" ;;
+    "GET "*/snapshots/*) body="SNAPSHOT-BYTES" ;;
+    "DELETE "*) body='{"result":true}' ;;
+    *) exit 8 ;;
+esac
+if [ "$out" = - ]; then printf '%s' "$body"; else printf '%s' "$body" > "$out"; fi
+STUB
+cat > "$SVC/pg_dump" <<'STUB'
+#!/bin/sh
+echo "$*" > "$PGDUMP_LOG"
+for a in "$@"; do case "$a" in --file=*) echo "PGDMP" > "${a#--file=}" ;; esac; done
+STUB
+cat > "$SVC/pg_restore" <<'STUB'
+#!/bin/sh
+echo "3445; 0 16384 TABLE DATA public users postgres"
+STUB
+cat > "$SVC/redis-cli" <<'STUB'
+#!/bin/sh
+echo "$*" > "$REDIS_LOG"
+while [ $# -gt 0 ]; do [ "$1" = --rdb ] && { shift; echo "REDIS0011" > "$1"; }; shift; done
+STUB
+chmod +x "$SVC/wget" "$SVC/pg_dump" "$SVC/pg_restore" "$SVC/redis-cli"
+sed -n '/^backup_postgres() {/,/^}/p; /^backup_qdrant() {/,/^}/p; /^backup_redis() {/,/^}/p' \
+    "$HERE/../backup.sh" > "$T/svc-funcs.sh"
+WGET_LOG="$T/wget.log"; PGDUMP_LOG="$T/pgdump.log"; REDIS_LOG="$T/redis.log"
+export WGET_LOG PGDUMP_LOG REDIS_LOG
+# Variables are read by the sourced backup_* functions; PATH is changed only inside the subshell.
+# shellcheck disable=SC2034,SC1091,SC2030
+svc_run() (
+    PATH="$SVC:$PATH"; STAGING="$T/svc-staging"; QDRANT_URL=https://qdrant.example
+    mkdir -p "$STAGING"
+    . "$T/svc-funcs.sh"
+    "$@"
+)
+
+: > "$WGET_LOG"
+rm -rf "$T/svc-staging"
+QDRANT_API_KEY=qkey-from-env; export QDRANT_API_KEY
+expect_ok "backup_qdrant runs against a key-protected Qdrant" svc_run backup_qdrant S1
+[ -f "$T/svc-staging/qdrant-S1/knowledge.snapshot" ] && [ -f "$T/svc-staging/qdrant-S1/memory.snapshot" ] \
+    && ok "EVERY collection is snapshotted, not only the last one in the JSON" \
+    || bad "collections snapshotted: $(ls "$T/svc-staging/qdrant-S1" 2>/dev/null | tr '\n' ' ')"
+[ "$(grep -c -- '--method=DELETE' "$WGET_LOG")" = 2 ] && ok "...and each snapshot is deleted from Qdrant afterwards" \
+    || bad "DELETE calls: $(grep -c -- '--method=DELETE' "$WGET_LOG")"
+grep -q 'api-key: qkey-from-env' "$WGET_LOG" && ok "the API key comes from QDRANT_API_KEY when there is no secret file" \
+    || bad "QDRANT_API_KEY not used"
+unset QDRANT_API_KEY
+
+BACKUP_DATABASE_URL='postgresql+asyncpg://u:p@db.internal:5432/railway'; export BACKUP_DATABASE_URL
+expect_ok "backup_postgres dumps from BACKUP_DATABASE_URL" svc_run backup_postgres S2
+grep -q -- '--dbname=postgresql://u:p@db.internal:5432/railway' "$PGDUMP_LOG" \
+    && ok "...with the SQLAlchemy driver suffix stripped for libpq" || bad "pg_dump args: $(cat "$PGDUMP_LOG")"
+unset BACKUP_DATABASE_URL
+expect_ok "backup_postgres without a URL still uses the PG* variables" svc_run backup_postgres S3
+grep -q -- '--dbname' "$PGDUMP_LOG" && bad "pg_dump got --dbname without BACKUP_DATABASE_URL" \
+    || ok "...and passes no --dbname"
+
+BACKUP_REDIS_URL='redis://default:rpw@redis.internal:6379'; export BACKUP_REDIS_URL
+expect_ok "backup_redis dumps from BACKUP_REDIS_URL" svc_run backup_redis S4
+grep -q -- '-u redis://default:rpw@redis.internal:6379' "$REDIS_LOG" && ok "...through redis-cli -u" \
+    || bad "redis-cli args: $(cat "$REDIS_LOG")"
+unset BACKUP_REDIS_URL
+
+echo "# BACKUP_RUN_ONCE: one cycle, exit status for the scheduler"
+mkdir -p "$T/once-dir" "$T/once-metrics"
+once_status=0
+# shellcheck disable=SC2031 # the stubbed PATH is meant for this one run only
+(
+    unset BACKUP_AGE_RECIPIENT BACKUP_AGE_RECIPIENTS_FILE
+    BACKUP_RUN_ONCE=1 BACKUP_ENCRYPTION=age BACKUP_DIR="$T/once-dir" BACKUP_METRICS_DIR="$T/once-metrics" \
+        PATH="$SVC:$PATH" timeout 60 sh "$HERE/../backup.sh" > "$T/once.log" 2>&1
+) || once_status=$?
+[ "$once_status" = 1 ] && ok "a refused cycle exits 1 instead of sleeping until the next one" \
+    || bad "BACKUP_RUN_ONCE exit status $once_status (124 = it looped)"
+grep -q 'aura_backup_config_error 1' "$T/once-metrics/aura_backup.prom" && ok "...after writing its metrics" \
+    || bad "no metrics written in once mode"
+
+echo "# the Railway image stays in step with the VPS image"
+VPS_DF="$HERE/../../backup/Dockerfile"
+RAIL_DF="$HERE/../../backup/railway.Dockerfile"
+[ "$(grep 'apk add' "$VPS_DF")" = "$(grep 'apk add' "$RAIL_DF")" ] \
+    && ok "both images install the same packages" || bad "apk lines differ between the two backup Dockerfiles"
+vps_alpine=$(sed -n 's/^FROM postgres:[0-9]*-\(alpine[0-9.]*\).*/\1/p' "$VPS_DF")
+grep -q "^FROM postgres:\${PG_MAJOR}-$vps_alpine\$" "$RAIL_DF" && ok "...on the same Alpine branch ($vps_alpine)" \
+    || bad "the Railway image is not on $vps_alpine"
+missing=""
+for s in backup.sh backup-lib.sh backup-fetch.sh backup-open.sh restore.sh restore-drill.sh; do
+    grep -q "scripts/$s" "$RAIL_DF" || missing="$missing $s"
+done
+[ -z "$missing" ] && ok "the Railway image copies every backup script" || bad "not copied into the Railway image:$missing"
+
+# ---------------------------------------------------------------------------------------------
 echo "# library functions do not clobber caller variables"
 set_dir=caller-set; remote=caller-remote; names=caller-names; dir=caller-dir; mode=caller-mode
 bk_verify_set "$SET" >/dev/null 2>&1 || true
