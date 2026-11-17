@@ -65,21 +65,34 @@ Future<HostdControlEndpoint?> discoverHostdControlEndpoint() async {
   }
 }
 
+/// How long an ordinary control-server call may take before it is reported as unreachable
+/// (audit INT-038): a daemon that accepts the connection but never answers (wedged, or paused
+/// in a debugger) used to hang the calling screen forever.
+const hostdDefaultRequestTimeout = Duration(seconds: 30);
+
+/// The ceiling for calls that legitimately run long -- git fetch/pull/push/merge against a
+/// remote, a whole-project lint run.
+const hostdLongRequestTimeout = Duration(minutes: 10);
+
 class HostdControlClient {
   HostdControlClient({
     http.Client? httpClient,
     @visibleForTesting Future<HostdControlEndpoint?> Function()? discoverEndpoint,
+    @visibleForTesting Duration requestTimeout = hostdDefaultRequestTimeout,
   })  : _http = httpClient ?? http.Client(),
-        _discoverEndpoint = discoverEndpoint ?? discoverHostdControlEndpoint;
+        _discoverEndpoint = discoverEndpoint ?? discoverHostdControlEndpoint,
+        _requestTimeout = requestTimeout;
 
   final http.Client _http;
   final Future<HostdControlEndpoint?> Function() _discoverEndpoint;
+  final Duration _requestTimeout;
 
   Future<Map<String, dynamic>> _request(
     String method,
     String path, {
     Map<String, Object?>? body,
     bool authorize = true,
+    Duration? timeout,
   }) async {
     final endpoint = await _discoverEndpoint();
     if (endpoint == null) {
@@ -90,13 +103,17 @@ class HostdControlClient {
       if (authorize) 'Authorization': 'Bearer ${endpoint.token}',
       if (body != null) 'Content-Type': 'application/json',
     };
+    final limit = timeout ?? _requestTimeout;
     http.Response response;
     try {
-      response = switch (method) {
-        'GET' => await _http.get(uri, headers: headers),
-        'POST' => await _http.post(uri, headers: headers, body: body == null ? null : jsonEncode(body)),
+      final pending = switch (method) {
+        'GET' => _http.get(uri, headers: headers),
+        'POST' => _http.post(uri, headers: headers, body: body == null ? null : jsonEncode(body)),
         _ => throw ArgumentError('unsupported method $method'),
       };
+      response = await pending.timeout(limit);
+    } on TimeoutException {
+      throw HostdControlUnavailable('aura_hostd did not answer within ${limit.inSeconds}s.');
     } on http.ClientException catch (error) {
       throw HostdControlUnavailable('Could not reach aura_hostd: $error');
     } on SocketException catch (error) {
@@ -134,9 +151,10 @@ class HostdControlClient {
     return decodedMap;
   }
 
-  /// The one call that works even when `aura_hostd` has no auth token yet -- so the daemon
-  /// status card can show "running, not paired" instead of a hard error.
-  Future<Map<String, dynamic>> status() => _request('GET', '/status', authorize: false);
+  /// Sends the control token like every other call: the daemon answers `/status` without one
+  /// too, but then leaves out the granted roots and backend URL (audit INT-037), which the
+  /// status card shows.
+  Future<Map<String, dynamic>> status() => _request('GET', '/status');
 
   Future<List<Map<String, dynamic>>> roots() async {
     final result = await _request('GET', '/roots');
@@ -205,7 +223,7 @@ class HostdControlClient {
   /// D5 Git panel: merges [branch] into the human's own checked-out working tree -- distinct from
   /// [gitMergeTask] below, which only ever targets a task's isolated worktree.
   Future<Map<String, dynamic>> gitMerge({required String root, required String branch}) =>
-      _request('POST', '/git/merge', body: {'root': root, 'branch': branch});
+      _request('POST', '/git/merge', body: {'root': root, 'branch': branch}, timeout: hostdLongRequestTimeout);
 
   Future<Map<String, dynamic>> gitMergeAbort({required String root}) =>
       _request('POST', '/git/merge-abort', body: {'root': root});
@@ -217,13 +235,13 @@ class HostdControlClient {
       _request('GET', '/git/branches?root=${Uri.encodeQueryComponent(root)}');
 
   Future<Map<String, dynamic>> gitFetch({required String root}) =>
-      _request('POST', '/git/fetch', body: {'root': root});
+      _request('POST', '/git/fetch', body: {'root': root}, timeout: hostdLongRequestTimeout);
 
   Future<Map<String, dynamic>> gitPull({required String root}) =>
-      _request('POST', '/git/pull', body: {'root': root});
+      _request('POST', '/git/pull', body: {'root': root}, timeout: hostdLongRequestTimeout);
 
   Future<Map<String, dynamic>> gitPush({required String root}) =>
-      _request('POST', '/git/push', body: {'root': root});
+      _request('POST', '/git/push', body: {'root': root}, timeout: hostdLongRequestTimeout);
 
   /// D7 Part A.2's diagnostics routes (`aura_hostd/lib/src/diagnostics_service.dart`) -- direct,
   /// human-only batch linting, entirely independent of the agent-facing RPC surface (same
@@ -232,7 +250,7 @@ class HostdControlClient {
       _request('GET', '/diagnostics/detect?root=${Uri.encodeQueryComponent(root)}');
 
   Future<Map<String, dynamic>> diagnosticsRun({required String root, required String tool}) =>
-      _request('POST', '/diagnostics/run', body: {'root': root, 'tool': tool});
+      _request('POST', '/diagnostics/run', body: {'root': root, 'tool': tool}, timeout: hostdLongRequestTimeout);
 
   /// D9's "Agent Review" panel routes (`aura_hostd/lib/src/control_server.dart` +
   /// `isolated_task_registry.dart`) -- every isolated per-task worktree this daemon currently
@@ -258,7 +276,12 @@ class HostdControlClient {
     required String taskBranch,
     bool squash = false,
   }) =>
-      _request('POST', '/git/merge-task', body: {'root': root, 'task_branch': taskBranch, 'squash': squash});
+      _request(
+        'POST',
+        '/git/merge-task',
+        body: {'root': root, 'task_branch': taskBranch, 'squash': squash},
+        timeout: hostdLongRequestTimeout,
+      );
 
   Future<Map<String, dynamic>> gitDiscardTask({required String taskKey}) =>
       _request('POST', '/git/discard-task', body: {'task_key': taskKey});
