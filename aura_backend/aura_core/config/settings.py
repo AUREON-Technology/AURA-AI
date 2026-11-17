@@ -1708,6 +1708,10 @@ class SandboxSettings:
         )
 
 
+#: The voice-activity detectors ``AURA_VOICE_LIVE_VAD`` may name.
+LIVE_VAD_KINDS = frozenset({"energy", "silero"})
+
+
 @dataclass(frozen=True, slots=True)
 class VoiceSettings:
     """Self-hosted speech recognition and synthesis (Phase F2) -- both engines are only ever
@@ -1758,6 +1762,35 @@ class VoiceSettings:
     live_max_utterance_ms: int = 15_000
     live_max_output_tokens: int = 400
     live_playback_sample_rate: int = 22_050
+    #: Which voice-activity detector a live session uses (GAP-020). ``energy`` is the RMS +
+    #: zero-crossing detector in ``voice/vad.py``; ``silero`` is the Silero ONNX model that
+    #: faster-whisper ships, run frame by frame (``adapters/silero_vad.py``). It ignores noise
+    #: an energy threshold mistakes for speech. It needs a 16 kHz capture rate and falls back to
+    #: ``energy`` with a warning when it cannot load, so a session is never refused over it.
+    #: AURA_VOICE_LIVE_VAD.
+    live_vad: str = "energy"
+    #: Silero speech probability above which a frame counts as speech, and the higher bar used
+    #: while AURA is thinking or speaking, so its own playback leaking into the mic does not
+    #: barge in. AURA_VOICE_LIVE_VAD_THRESHOLD / AURA_VOICE_LIVE_VAD_BARGE_IN_THRESHOLD.
+    live_vad_threshold: float = 0.5
+    live_vad_barge_in_threshold: float = 0.7
+
+    def __post_init__(self) -> None:
+        if self.live_vad not in LIVE_VAD_KINDS:
+            raise ConfigurationError(
+                "AURA_VOICE_LIVE_VAD is not a known voice-activity detector",
+                details={"value": self.live_vad, "supported": sorted(LIVE_VAD_KINDS)},
+            )
+        if self.live_vad_barge_in_threshold < self.live_vad_threshold:
+            raise ConfigurationError(
+                "AURA_VOICE_LIVE_VAD_BARGE_IN_THRESHOLD cannot be below "
+                "AURA_VOICE_LIVE_VAD_THRESHOLD -- barge-in would trigger more easily than a "
+                "new utterance",
+                details={
+                    "threshold": self.live_vad_threshold,
+                    "barge_in_threshold": self.live_vad_barge_in_threshold,
+                },
+            )
 
     @classmethod
     def from_env(cls) -> "VoiceSettings":
@@ -1820,6 +1853,13 @@ class VoiceSettings:
             ),
             live_playback_sample_rate=_int(
                 "VOICE_LIVE_PLAYBACK_SAMPLE_RATE", 22_050, minimum=8_000, maximum=48_000,
+            ),
+            live_vad=(_env("VOICE_LIVE_VAD", "energy") or "energy").strip().lower(),
+            live_vad_threshold=_float(
+                "VOICE_LIVE_VAD_THRESHOLD", 0.5, minimum=0.05, maximum=0.95,
+            ),
+            live_vad_barge_in_threshold=_float(
+                "VOICE_LIVE_VAD_BARGE_IN_THRESHOLD", 0.7, minimum=0.05, maximum=0.99,
             ),
         )
 

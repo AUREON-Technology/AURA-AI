@@ -1,7 +1,9 @@
-"""Energy-based voice activity detection (Phase H).
+"""Voice activity detection for live voice (Phase H).
 
-Pure functions over PCM16 frames. Deterministic and free of vendor SDKs. Not equivalent to a
-neural VAD; barge-in while SPEAKING uses an elevated threshold via :class:`VadConfig`.
+:class:`VoiceActivityDetector` is what a live session asks for. :class:`EnergyVad` is the default:
+pure functions over PCM16 frames, deterministic and free of vendor SDKs. A neural detector
+(``adapters/silero_vad.py``) satisfies the same protocol and is chosen by the container, never
+imported here. Barge-in while SPEAKING uses an elevated threshold in both.
 """
 
 from __future__ import annotations
@@ -9,8 +11,9 @@ from __future__ import annotations
 import math
 import struct
 from dataclasses import dataclass
+from typing import Protocol
 
-__all__ = ["VadConfig", "EnergyVad", "VadDecision"]
+__all__ = ["VadConfig", "EnergyVad", "VadDecision", "VoiceActivityDetector", "frame_features"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +35,19 @@ class VadDecision:
     zero_crossings: int
 
 
+class VoiceActivityDetector(Protocol):
+    """Per-frame speech decisions for one live session. Stateful: one instance per session."""
+
+    def decide(self, frame: bytes, *, elevated: bool = False) -> VadDecision:
+        """Whether ``frame`` (PCM16 mono) is speech. ``elevated`` asks for the higher bar used
+        while the session is thinking or speaking, so playback echo does not barge in."""
+        ...
+
+    def reset(self) -> None:
+        """Forget what earlier frames taught the detector."""
+        ...
+
+
 class EnergyVad:
     """RMS + zero-crossing VAD over 20 ms PCM16 mono frames."""
 
@@ -48,7 +64,7 @@ class EnergyVad:
         self._noise_floor = self.config.noise_floor_rms
 
     def decide(self, frame: bytes, *, elevated: bool = False) -> VadDecision:
-        rms, zc = _frame_features(frame)
+        rms, zc = frame_features(frame)
         if rms < self._noise_floor * 1.2:
             # Slow adapt toward quieter floors.
             self._noise_floor = (0.95 * self._noise_floor) + (0.05 * max(rms, 1.0))
@@ -61,7 +77,7 @@ class EnergyVad:
         return VadDecision(is_speech=speech, rms=rms, zero_crossings=zc)
 
 
-def _frame_features(frame: bytes) -> tuple[float, int]:
+def frame_features(frame: bytes) -> tuple[float, int]:
     if len(frame) < 2:
         return 0.0, 0
     # Truncate odd trailing byte.

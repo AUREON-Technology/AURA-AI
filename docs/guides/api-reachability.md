@@ -131,7 +131,7 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | GET | `/api/v3/tools` | — | — | — | none | to wire: tool catalogue is not shown anywhere |
 | WS | `/api/v3/voice/live` | `aura_client/lib/core/ai/voice/live/live_voice_protocol.dart:1`, `aura_client/lib/core/ai/voice/live/live_voice_socket.dart:19` (+1) | — | — | called |  |
 | POST | `/api/v3/voice/speak` | `aura_client/lib/core/ai/voice/speech_text.dart:1`, `aura_client/lib/core/ai/voice/voice_client.dart:13` (+1) | — | — | called |  |
-| POST | `/api/v3/voice/transcribe` | `aura_client/lib/core/ai/voice/voice_client.dart:69`, `aura_client/lib/features/chat/presentation/widgets/voice_recorder_button.dart:17` | — | — | called |  |
+| POST | `/api/v3/voice/transcribe` | `aura_client/lib/core/ai/voice/voice_client.dart:76`, `aura_client/lib/features/chat/presentation/widgets/voice_recorder_button.dart:18` | — | — | called |  |
 | GET | `/api/v3/workspaces` | — | — | — | none | to wire: team workspaces (ADR-034) have no client or console screen yet -- SaaS P1 plan F |
 | POST | `/api/v3/workspaces` | — | — | — | none | to wire: team workspaces (ADR-034) have no client or console screen yet -- SaaS P1 plan F |
 | POST | `/api/v3/workspaces/invites/accept` | — | — | — | none | to wire: team workspaces (ADR-034) have no client or console screen yet -- SaaS P1 plan F |
