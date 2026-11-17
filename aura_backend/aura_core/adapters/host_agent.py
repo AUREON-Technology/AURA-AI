@@ -20,6 +20,7 @@ opinion on that; it is a transport, not a policy.
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 
@@ -27,6 +28,11 @@ from ..domain.identifiers import UserId
 from ..observability.logging import get_logger
 from ..ports.coding import FileWriteOp, SandboxHandle, SandboxOutputEvent, SandboxResult, StreamingSandboxRunner
 from .docker_sandbox import SandboxError
+
+#: What may name an isolated task's worktree directory on the user's machine: one plain path
+#: segment. The daemon checks the same shape (aura_hostd task_handler.dart) and contains the
+#: resolved path; this side refuses first so a free-form chat id never reaches it (G-04).
+_TASK_KEY = re.compile(r"[A-Za-z0-9._-]{1,128}")
 
 __all__ = ["HostAgentSession", "HostAgentRegistry", "HostAgentSandboxRunner", "CompositeSandboxRunner"]
 
@@ -297,6 +303,11 @@ class HostAgentSandboxRunner:
         # lets the daemon recognize "this is the same task, reuse the worktree" on turn 2+.
         params: dict[str, Any] = {}
         if isolate and session_id:
+            if not _TASK_KEY.fullmatch(session_id) or session_id in (".", ".."):
+                raise SandboxError(
+                    "this chat's session id cannot name an isolated worktree on the desktop; "
+                    "start a new chat"
+                )
             params["isolate"] = True
             params["task_key"] = session_id
         # FSA-006: the IDE's active root binds the task on the daemon (`task_handler.dart::

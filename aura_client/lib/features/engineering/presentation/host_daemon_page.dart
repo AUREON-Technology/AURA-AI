@@ -395,7 +395,7 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
         children: [
           Row(
             children: [
-              Expanded(child: Text('Workspace roots', style: Theme.of(context).textTheme.titleMedium)),
+              Expanded(child: Text(context.l10n.hostdWorkspaceRoots, style: Theme.of(context).textTheme.titleMedium)),
               AuraButton(label: 'Add', icon: Icons.add, variant: AuraButtonVariant.secondary, onPressed: _addRoot),
             ],
           ),
@@ -414,9 +414,7 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
               leading: const Icon(Icons.folder_outlined),
               title: Text(root.path, style: const TextStyle(fontFamily: 'Courier', fontSize: 13)),
               subtitle: Text(
-                root.trusted
-                    ? 'Trusted -- commands run without per-call confirmation (still confined to this folder)'
-                    : 'Untrusted -- only a read-only inspection allowlist runs',
+                root.trusted ? context.l10n.hostdRootTrustedHint : context.l10n.hostdRootUntrustedHint,
                 style: TextStyle(color: palette.textSecondary, fontSize: 11),
               ),
               trailing: Row(

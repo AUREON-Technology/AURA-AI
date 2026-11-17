@@ -739,6 +739,17 @@ class AppLocalizationsEn extends AppLocalizations {
   String get taskMarkNotDone => 'Mark as not done';
 
   @override
+  String get hostdWorkspaceRoots => 'Workspace roots';
+
+  @override
+  String get hostdRootTrustedHint =>
+      'Trusted -- the agent\'s commands run without asking, as you, and can reach anything your account can. Paths outside this folder and any git push ask first.';
+
+  @override
+  String get hostdRootUntrustedHint =>
+      'Untrusted -- read-only commands run; anything else asks you first';
+
+  @override
   String get hostdBrowseExecutable => 'Browse for the daemon executable';
 
   @override

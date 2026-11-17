@@ -1,6 +1,7 @@
 /// Implements the RPC methods the backend's `HostAgentSandboxRunner`
 /// (`aura_backend/aura_core/adapters/host_agent.py`) calls: `create_task`, `run`, `write_file`,
-/// `read_file`. Every filesystem/command operation goes through [WorkspaceRoots] for containment
+/// `write_files`, `read_file` (plus the `cancel` frame, `rpc_client.dart`). Every
+/// filesystem/command operation goes through [WorkspaceRoots] for containment
 /// before touching disk -- this class has no path-handling logic of its own that bypasses it.
 ///
 /// A "task" here does not own a single workspace root the way a Docker sandbox owns one
@@ -9,6 +10,7 @@
 /// outside every granted root is refused outright, matching ADR-011's "never merely confirmable."
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -18,6 +20,8 @@ import 'containment.dart';
 import 'diff_util.dart';
 import 'git_service.dart';
 import 'isolated_task_registry.dart';
+import 'process_env.dart';
+import 'process_tree.dart';
 
 class RpcError implements Exception {
   RpcError(this.message);
@@ -77,6 +81,14 @@ class TaskHandler {
   /// Non-isolated tasks bound to the IDE's active root at `create_task` (FSA-006); isolated
   /// tasks are bound through [_isolatedTasks] instead. Never reaped: a task_id is minted per
   /// turn and the entries are two strings each, like [_activeTaskIds].
+  /// What [minimalEnvironment] filters an agent command's environment from (G-06, SEC-04). The
+  /// daemon's own environment; a field so a test can plant a secret in it and check the command
+  /// never sees it.
+  Map<String, String> parentEnvironment = Platform.environment;
+
+  /// Running commands by the RPC call id that started them, so a `cancel` frame stops the command
+  /// itself and not only a pending approval (G-16, SEC-09).
+  final Map<String, void Function()> _runningByCall = {};
   final Map<String, WorkspaceRoot> _boundRoots = {};
   final Set<String> _activeTaskIds = {};
 
@@ -85,8 +97,9 @@ class TaskHandler {
     _activeTaskIds.add(taskId);
 
     final isolate = params['isolate'] == true;
-    final taskKey = params['task_key'] as String?;
-    if (isolate && taskKey != null) {
+    final rawTaskKey = params['task_key'];
+    final taskKey = isolate && rawTaskKey != null ? _requireSafeTaskKey(rawTaskKey) : null;
+    if (taskKey != null) {
       _isolatedTasks.registerConfig(taskId, taskKey: taskKey, baseBranch: params['base_branch'] as String?);
     }
     // FSA-006: the Desktop IDE's active workspace root, sent by the backend as `cwd`
@@ -102,23 +115,78 @@ class TaskHandler {
       if (root == null) {
         throw RpcError('no granted workspace root contains "$cwdParam" -- grant it first');
       }
-      if (isolate && taskKey != null) {
+      if (taskKey != null) {
         // The worktree is carved out of the root the IDE shows, not out of the first granted one.
-        await _isolatedTasks.resolve(taskId, cwdParam);
+        // G-04: a worktree that resolves outside the folder, or none at all, is an error -- not a
+        // task left unbound, whose writes would then land in the live checkout.
+        final WorkspaceRoot? worktree;
+        try {
+          worktree = await _isolatedTasks.resolve(taskId, cwdParam);
+        } on ContainmentViolation catch (error) {
+          throw RpcError(error.message);
+        }
+        if (worktree == null) throw _noWorktreeError(taskKey);
       } else {
         _boundRoots[taskId] = root;
       }
     }
-    return {'task_id': taskId, 'isolated': isolate && taskKey != null};
+    return {'task_id': taskId, 'isolated': taskKey != null};
   }
+
+  /// G-04 (SEC-03): see `isolated_task_registry.dart::isSafeTaskKey`.
+  String _requireSafeTaskKey(Object rawTaskKey) {
+    if (rawTaskKey is! String || !isSafeTaskKey(rawTaskKey)) {
+      throw RpcError(
+        'invalid task_key: it must be a single path segment of 1-128 letters, digits, ".", "_" '
+        'or "-", and not "." or ".."',
+      );
+    }
+    return rawTaskKey;
+  }
+
+  RpcError _noWorktreeError([String? taskKey]) => RpcError(
+        'isolation was requested${taskKey == null ? '' : ' (task_key "$taskKey")'} but no '
+        'granted folder could hold its worktree -- refusing rather than acting on the live checkout',
+      );
 
   /// The root a task_id was bound to at `create_task` (FSA-006): an isolated task's worktree, or
   /// the IDE root a non-isolated task was created with. `null` for a task created without one,
   /// whose RPCs each resolve their own root as they always have.
+  ///
+  /// The binding is re-checked against the current grants on every call (G-05, SEC-08): it names
+  /// *which* folder, never what that folder is still allowed to do. A revoked folder throws; a
+  /// folder whose trust changed comes back with its trust as it is now.
   WorkspaceRoot? _boundRootFor(String? taskId) {
     if (taskId == null) return null;
-    return _isolatedTasks.boundRoot(taskId) ?? _boundRoots[taskId];
+    final bound = _isolatedTasks.boundRoot(taskId) ?? _boundRoots[taskId];
+    return bound == null ? null : _requireStillGranted(bound);
   }
+
+  /// [root] as the grants stand now, or null if it is no longer granted (G-05, SEC-08). An
+  /// isolated task's worktree is not itself a granted root: it stands or falls with the folder it
+  /// was carved from, and takes that folder's current trust -- the same "never more permissive than
+  /// its project" rule `IsolatedTaskRegistry.resolve` applies when it binds one.
+  WorkspaceRoot? _currentGrantFor(WorkspaceRoot root) {
+    final granted = _roots.all;
+    for (final candidate in granted) {
+      if (candidate.canonicalPath == root.canonicalPath) return candidate;
+    }
+    final task = _isolatedTasks.parentOf(root.canonicalPath);
+    if (task == null) return null;
+    for (final candidate in granted) {
+      if (candidate.canonicalPath == task.parentRootPath) {
+        return task.root.copyWith(trusted: candidate.trusted);
+      }
+    }
+    return null;
+  }
+
+  WorkspaceRoot _requireStillGranted(WorkspaceRoot root) =>
+      _currentGrantFor(root) ??
+      (throw RpcError(
+        'workspace root ${root.canonicalPath} is no longer granted -- it was revoked after this '
+        'task started; grant it again to continue',
+      ));
 
   /// D6 plan section C.3 (the write-gating retrofit): the agent-facing write RPC now goes through
   /// the same trust/approval-queue gate `run()` already had since D5 -- previously this and
@@ -130,7 +198,9 @@ class TaskHandler {
     final taskId = params['task_id'] as String?;
     var root = _boundRootFor(taskId);
     if (root == null && _isolatedTasks.needsResolution(taskId)) {
-      root = await _isolatedTasks.resolve(taskId, path);
+      root = _requireStillGranted(
+        await _isolatedTasks.resolve(taskId, path) ?? (throw _noWorktreeError()),
+      );
     }
     root ??= _roots.findContainingRoot(path);
     if (root == null) {
@@ -180,7 +250,9 @@ class TaskHandler {
       final firstPath = rawOps.isNotEmpty && rawOps.first is Map
           ? (Map<String, dynamic>.from(rawOps.first as Map)['path'] as String?)
           : null;
-      taskRoot = await _isolatedTasks.resolve(taskId, firstPath);
+      taskRoot = _requireStillGranted(
+        await _isolatedTasks.resolve(taskId, firstPath) ?? (throw _noWorktreeError()),
+      );
     }
 
     WorkspaceRoot? sharedRoot = taskRoot;
@@ -252,7 +324,9 @@ class TaskHandler {
     final taskId = params['task_id'] as String?;
     var root = _boundRootFor(taskId);
     if (root == null && _isolatedTasks.needsResolution(taskId)) {
-      root = await _isolatedTasks.resolve(taskId, path);
+      root = _requireStillGranted(
+        await _isolatedTasks.resolve(taskId, path) ?? (throw _noWorktreeError()),
+      );
     }
     root ??= _roots.findContainingRoot(path);
     if (root == null) {
@@ -292,7 +366,9 @@ class TaskHandler {
     var root = _boundRootFor(taskId);
     final bound = root != null;
     if (root == null && _isolatedTasks.needsResolution(taskId)) {
-      root = await _isolatedTasks.resolve(taskId, cwdParam);
+      root = _requireStillGranted(
+        await _isolatedTasks.resolve(taskId, cwdParam) ?? (throw _noWorktreeError()),
+      );
     }
     root ??= cwdParam != null
         ? _roots.findContainingRoot(cwdParam)
@@ -309,25 +385,39 @@ class TaskHandler {
         : root.canonicalPath;
 
     final commandForPolicy = _effectiveShellCommand(commandArgv);
-    final verdict = evaluateCommand(commandForPolicy, workspaceTrusted: root.trusted);
+    final verdict = evaluateCommand(
+      commandForPolicy,
+      workspaceTrusted: root.trusted,
+      workspaceRoot: root.canonicalPath,
+      cwd: cwd,
+    );
     if (verdict.decision == CommandDecision.deny) {
       throw RpcError('command refused: ${verdict.reason}');
     }
     if (verdict.decision == CommandDecision.needsApproval) {
       await _awaitApproval(commandForPolicy, cwd: cwd, root: root, callId: callId);
     }
+    // G-17 (SEC-10): the untrusted tier's allowlisted git runs with the repository's own
+    // fsmonitor, hooks, external diff and textconv programs switched off. An approved command is
+    // left as the human saw it.
+    final argvToRun = verdict.isAllowed && !root.trusted
+        ? _hardenUntrustedGit(commandArgv, commandForPolicy)
+        : commandArgv;
 
     final timeout = Duration(
       milliseconds: (requestedTimeout * 1000).clamp(1000, _maxCommandTimeout.inMilliseconds).round(),
     );
 
-    final effectiveArgv = _resolveShellArgv(_lineBuffered(commandArgv));
-    final Process process;
+    final effectiveArgv = _resolveShellArgv(_lineBuffered(argvToRun));
+    final ProcessTree tree;
     try {
-      process = await Process.start(
-        effectiveArgv.first,
-        effectiveArgv.sublist(1),
+      // G-06 (SEC-04): a minimal allowlisted environment, never the daemon's own -- see
+      // `process_env.dart`. G-16 (SEC-09): started so a timeout or cancel can stop everything it
+      // spawns -- see `process_tree.dart`.
+      tree = await ProcessTree.start(
+        effectiveArgv,
         workingDirectory: cwd,
+        environment: minimalEnvironment(parentEnvironment),
       );
     } on ProcessException catch (exc) {
       // A bare ProcessException here gave no way to tell "the resolved shell path was wrong" from
@@ -342,6 +432,7 @@ class TaskHandler {
       );
     }
 
+    final process = tree.process;
     final stdoutBuf = StringBuffer();
     final stderrBuf = StringBuffer();
     var capturedChars = 0;
@@ -369,21 +460,40 @@ class TaskHandler {
 
     int exitCode;
     var timedOut = false;
+    var cancelled = false;
+    // Completed by the timeout or by `cancel`; either way the whole tree is killed (G-16).
+    final stop = Completer<void>();
+    final timer = Timer(timeout, () {
+      timedOut = true;
+      if (!stop.isCompleted) stop.complete();
+    });
+    if (callId != null) {
+      _runningByCall[callId] = () {
+        cancelled = true;
+        if (!stop.isCompleted) stop.complete();
+      };
+    }
     try {
-      exitCode = await process.exitCode.timeout(timeout, onTimeout: () {
-        timedOut = true;
-        process.kill(ProcessSignal.sigkill);
-        return -1;
-      });
+      exitCode = await Future.any<int>([
+        process.exitCode,
+        stop.future.then((_) async {
+          await tree.kill();
+          return -1;
+        }),
+      ]);
+      // The killed process's own exit can win the race above; a stopped command reports -1 either
+      // way, as it always has on timeout.
+      if (timedOut || cancelled) exitCode = -1;
     } finally {
-      // Killing `process` only signals the PID we started -- `sh -c '<command>'` may have forked
-      // rather than exec'd it (shell-dependent, not something this daemon controls), leaving an
-      // orphaned descendant that still holds the stdout/stderr pipe fds open. Waiting on
-      // stdoutDone/stderrDone unboundedly would then hang this whole call until that orphan exits
-      // on its own -- exactly as long as whatever it was doing (observed: a killed `sleep 30`
-      // held the pipes open for the full 30 seconds). Bounding this wait is the fix: a normally
-      // terminating process's streams close well within this window, and a still-running orphan
-      // does not get to stall the RPC response it's no longer even attached to.
+      timer.cancel();
+      if (callId != null) _runningByCall.remove(callId);
+      // A command that exits normally can still leave a background child holding the
+      // stdout/stderr pipe fds open (`sh -c 'server &'`). Waiting on stdoutDone/stderrDone
+      // unboundedly would then hang this whole call until that child exits on its own (observed: a
+      // `sleep 30` held the pipes for the full 30 seconds). Bounding this wait is the fix: a
+      // normally terminating process's streams close well within this window, and a still-running
+      // child does not get to stall the RPC response it's no longer even attached to. (On a
+      // timeout or cancel the whole process group is killed above, so nothing is left to wait on.)
       await Future.wait([stdoutDone, stderrDone]).timeout(
         const Duration(seconds: 2),
         onTimeout: () => const <void>[],
@@ -392,6 +502,8 @@ class TaskHandler {
 
     if (timedOut) {
       stderrBuf.write('\n[aura_hostd] command killed after ${timeout.inSeconds}s timeout');
+    } else if (cancelled) {
+      stderrBuf.write('\n[aura_hostd] command cancelled by the server and killed');
     }
     if (outputTruncated) {
       stderrBuf.write('\n[aura_hostd] output truncated after $_maxOutputCapChars characters');
@@ -405,11 +517,14 @@ class TaskHandler {
   }
 
   /// The server gave up on [callId] (its tool timed out or the turn was cancelled). If the call
-  /// is waiting for a human, the approval is cancelled and the call throws instead of executing;
-  /// a call that already ran is unaffected (audit FSA-041).
+  /// is waiting for a human, the approval is cancelled and the call throws instead of executing
+  /// (audit FSA-041); if it is a running command, the command and everything it started are killed
+  /// and the call returns what it had produced (G-16, SEC-09). A call that already finished is
+  /// unaffected.
   void cancel(String callId) {
     final approvalId = _approvalByCall.remove(callId);
     if (approvalId != null) _approvals.cancel(approvalId);
+    _runningByCall.remove(callId)?.call();
   }
 
   void _trackApproval(String? callId, PendingApproval approval) {
@@ -454,7 +569,9 @@ class TaskHandler {
       case ApprovalStatus.pending:
         throw RpcError('command approval resolved with no decision -- this should not happen');
     }
-    final currentRoot = _roots.findContainingRoot(cwd);
+    // G-05: re-derived from the grants as they are now -- with a live roots view this is what
+    // actually notices a revoke made while the human was deciding.
+    final currentRoot = _currentGrantFor(root);
     final currentHash = currentRoot == null
         ? null
         : PendingApproval.hashForCommand(command: command, cwd: cwd, rootPath: currentRoot.canonicalPath);
@@ -521,7 +638,9 @@ class TaskHandler {
         throw RpcError('write approval resolved with no decision -- this should not happen');
     }
 
-    final currentRoot = _roots.findContainingRoot(cwd);
+    // G-05: the root itself as granted now (an isolated worktree, not the folder it sits in, so
+    // relative paths are re-read where they will be written).
+    final currentRoot = _currentGrantFor(root);
     if (currentRoot == null) {
       throw RpcError('workspace root is no longer granted -- refusing approved write: $pathList');
     }
@@ -577,6 +696,34 @@ String _effectiveShellCommand(List<String> argv) {
       (argv[1] == '-c' || argv[1] == '/c');
   return looksLikeShellWrapper ? argv[2] : argv.join(' ');
 }
+
+/// [commandArgv] with [hardenUntrustedGitCommand] applied (G-17): the shell-wrapper shape the
+/// backend sends has its command string rewritten; a bare `["git", <verb>, ...]` argv gets the same
+/// options inserted as separate arguments. Anything else is returned unchanged.
+List<String> _hardenUntrustedGit(List<String> commandArgv, String commandForPolicy) {
+  final hooks = _emptyHooksDir();
+  if (commandArgv.length == 3 && commandArgv[2] == commandForPolicy) {
+    final hardened = hardenUntrustedGitCommand(commandForPolicy, emptyHooksDir: hooks);
+    return hardened == commandForPolicy ? commandArgv : [commandArgv[0], commandArgv[1], hardened];
+  }
+  if (commandArgv.length >= 2 && commandArgv.first == 'git') {
+    return [
+      'git',
+      ...untrustedGitGlobalArgs(hooks),
+      commandArgv[1],
+      ...untrustedGitVerbFlags(commandArgv[1]),
+      ...commandArgv.sublist(2),
+    ];
+  }
+  return commandArgv;
+}
+
+String? _emptyHooksDirCache;
+
+/// An empty directory, created once per daemon run, for `core.hooksPath` (G-17): pointing git at
+/// it means no hook the repository installed can run.
+String _emptyHooksDir() => _emptyHooksDirCache ??=
+    Directory.systemTemp.createTempSync('aura_hostd_no_hooks_').resolveSymbolicLinksSync();
 
 /// Make a missing executable name itself, whatever `stdbuf` said.
 ///

@@ -11,6 +11,7 @@ import 'package:aura_hostd/src/config.dart';
 import 'package:aura_hostd/src/control_server.dart';
 import 'package:aura_hostd/src/isolated_task_registry.dart';
 import 'package:aura_hostd/src/debug_session_manager.dart';
+import 'package:aura_hostd/src/task_handler.dart';
 import 'package:aura_hostd/src/terminal_session_manager.dart';
 import 'package:aura_hostd/src/workspace_store.dart';
 import 'package:test/test.dart';
@@ -523,6 +524,79 @@ void main() {
     await pairingServer.stop();
   });
 
+  group('folder changes reach the connected agent without a restart (G-05, SEC-08)', () {
+    // The agent's TaskHandler is wired the way bin/aura_hostd.dart wires it: on a live view of
+    // the same store these routes save to, created once before any change is made.
+    late TaskHandler agent;
+    late Directory laterDir;
+
+    setUp(() {
+      final live = workspaceStore.live();
+      agent = TaskHandler(live, approvalQueue, null, IsolatedTaskRegistry(live));
+      laterDir = Directory.systemTemp.createTempSync('aura_hostd_control_test_later_');
+    });
+
+    tearDown(() {
+      if (laterDir.existsSync()) laterDir.deleteSync(recursive: true);
+    });
+
+    test('revoke refuses the next write_file of a task bound before it', () async {
+      await client.request('POST', '/roots', body: {'action': 'trust', 'path': workspaceRoot});
+      final created = await agent.createTask({'cwd': workspaceRoot});
+      await agent.writeFile({'task_id': created['task_id'], 'path': 'one.txt', 'content': '1'});
+
+      final (status, _) =
+          await client.request('POST', '/roots', body: {'action': 'revoke', 'path': workspaceRoot});
+      expect(status, 200);
+
+      await expectLater(
+        agent.writeFile({'task_id': created['task_id'], 'path': 'two.txt', 'content': '2'}),
+        throwsA(isA<RpcError>()),
+      );
+      await expectLater(
+        agent.writeFile({'path': '$workspaceRoot/three.txt', 'content': '3'}),
+        throwsA(isA<RpcError>()),
+      );
+      expect(File('$workspaceRoot/two.txt').existsSync(), isFalse);
+      expect(File('$workspaceRoot/three.txt').existsSync(), isFalse);
+    });
+
+    test('untrust sends a command that ran automatically to approval', () async {
+      await client.request('POST', '/roots', body: {'action': 'trust', 'path': workspaceRoot});
+      final created = await agent.createTask({'cwd': workspaceRoot});
+      final first = await agent.run({
+        'task_id': created['task_id'],
+        'command': ['sh', '-c', 'mkdir auto'],
+        'timeout_s': 5.0,
+      });
+      expect(first['exit_code'], 0);
+
+      await client.request('POST', '/roots', body: {'action': 'untrust', 'path': workspaceRoot});
+      final second = agent.run({
+        'task_id': created['task_id'],
+        'command': ['sh', '-c', 'mkdir asked'],
+        'timeout_s': 5.0,
+      });
+      expect(approvalQueue.list(), hasLength(1));
+      approvalQueue.respond(approvalQueue.list().single.id, false);
+      await expectLater(second, throwsA(isA<RpcError>()));
+      expect(Directory('$workspaceRoot/asked').existsSync(), isFalse);
+    }, testOn: '!windows');
+
+    test('a folder granted after the agent connected is usable', () async {
+      final (status, body) = await client.request(
+        'POST',
+        '/roots',
+        body: {'action': 'grant', 'path': laterDir.path, 'trusted': true},
+      );
+      expect(status, 200);
+      final canonical = body['root']['path'] as String;
+      final created = await agent.createTask({'cwd': canonical});
+      await agent.writeFile({'task_id': created['task_id'], 'path': 'new.txt', 'content': 'hi'});
+      expect(File('$canonical/new.txt').readAsStringSync(), 'hi');
+    });
+  });
+
   group('diagnostics (D7 Part A.2)', () {
     test('GET /diagnostics/detect reports the marker-detected tool', () async {
       File('${workspaceDir.path}/pubspec.yaml').writeAsStringSync('name: fixture\n');
@@ -543,9 +617,24 @@ void main() {
       expect(body['error'], contains('not a granted root'));
     });
 
+    test('POST /diagnostics/run refuses an untrusted folder (G-17, SEC-10)', () async {
+      // A linter loads the repository's own config and plugins (`eslint.config.js`, a ruff or
+      // pyflakes plugin): repo-supplied code, which an untrusted folder never runs unasked.
+      File('${workspaceDir.path}/pubspec.yaml').writeAsStringSync('name: fixture\n');
+      final (status, body) = await client.request(
+        'POST',
+        '/diagnostics/run',
+        body: {'root': workspaceRoot, 'tool': 'dart_analyze'},
+      );
+      expect(status, 403);
+      expect(body['error'], contains('trusted'));
+    });
+
     test('POST /diagnostics/run reports a real tool run', () async {
       // dart_analyze is guaranteed available in this test environment (the Dart SDK running
       // these tests), so this exercises the real Process.run path end to end, not a fake.
+      // Diagnostics run only in a trusted folder (G-17).
+      await client.request('POST', '/roots', body: {'action': 'trust', 'path': workspaceRoot});
       File('${workspaceDir.path}/pubspec.yaml')
           .writeAsStringSync('name: fixture\nenvironment:\n  sdk: ^3.0.0\n');
       final (status, body) = await client.request(
@@ -560,6 +649,7 @@ void main() {
     });
 
     test('POST /diagnostics/run reports coherently whether or not the tool is installed', () async {
+      await client.request('POST', '/roots', body: {'action': 'trust', 'path': workspaceRoot});
       final (status, body) = await client.request(
         'POST',
         '/diagnostics/run',

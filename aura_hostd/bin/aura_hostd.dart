@@ -174,7 +174,9 @@ class _BackendConnection {
     if (_client != null) return;
     final config = configStore.load();
     if (config.authToken == null || config.authToken!.isEmpty) return;
-    final handler = TaskHandler(workspaceStore.load(), approvalQueue, null, isolatedTasks);
+    // G-05 (SEC-08): a live view, not a snapshot taken at connect time -- a grant, revoke or
+    // trust change saved by the control server or the CLI applies to the agent's next call.
+    final handler = TaskHandler(workspaceStore.live(), approvalQueue, null, isolatedTasks);
     final client = HostAgentClient(
       wsUrl: config.hostAgentWsUrl,
       authToken: config.authToken!,
@@ -216,7 +218,7 @@ Future<void> _runDaemon(ConfigStore configStore, WorkspaceStore workspaceStore) 
   // and ControlServer (human-facing "Agent Review" panel) -- see
   // isolated_task_registry.dart's own doc comment for why a separate instance per side would
   // silently break Part C.
-  final isolatedTasks = IsolatedTaskRegistry(roots);
+  final isolatedTasks = IsolatedTaskRegistry(workspaceStore.live());
   final backend = _BackendConnection(configStore, workspaceStore, approvalQueue, isolatedTasks);
   final controlServer = ControlServer(
     workspaceStore: workspaceStore,

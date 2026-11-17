@@ -49,6 +49,15 @@ class IsolatedTask {
       };
 }
 
+/// G-04 (SEC-03): a task_key names a directory under `<root>/.aura-workspaces/` and a branch
+/// `aura/task-<key>`, and it arrives from the backend as the chat's free-form `session_id` -- a
+/// value this daemon must not trust (ADR-011). Joined unchecked, an absolute key replaced the whole
+/// path and `..` climbed out of the folder, binding a task to any existing directory with the
+/// parent's trust. So a key is one plain path segment: no separator, no `.`/`..`, bounded length.
+final RegExp _safeTaskKey = RegExp(r'^[A-Za-z0-9._-]{1,128}$');
+
+bool isSafeTaskKey(String key) => key != '.' && key != '..' && _safeTaskKey.hasMatch(key);
+
 class TaskNotFoundError implements Exception {
   TaskNotFoundError(this.taskKey);
   final String taskKey;
@@ -68,20 +77,39 @@ class IsolatedTaskRegistry {
   final GitService _git;
 
   final Map<String, TaskIsolationConfig> _taskConfigs = {};
-  final Map<String, WorkspaceRoot> _taskRoots = {};
+  final Map<String, IsolatedTask> _taskRoots = {};
   final Map<String, IsolatedTask> _taskKeyWorktrees = {};
 
   /// Records that [taskId] wants isolation under [taskKey], and binds it immediately if
   /// [taskKey] already has a worktree (a later turn in the same chat session).
   void registerConfig(String taskId, {required String taskKey, String? baseBranch}) {
+    // `TaskHandler.createTask` refuses an unsafe key with a clear RPC error first; this is the
+    // floor for any other caller (G-04).
+    if (!isSafeTaskKey(taskKey)) {
+      throw ArgumentError.value(taskKey, 'taskKey', 'not a single safe path segment');
+    }
     _taskConfigs[taskId] = TaskIsolationConfig(taskKey: taskKey, baseBranch: baseBranch);
     final existing = _taskKeyWorktrees[taskKey];
-    if (existing != null) _taskRoots[taskId] = existing.root;
+    if (existing != null) _taskRoots[taskId] = existing;
   }
 
   /// Synchronous fast path -- see [needsResolution]'s doc comment for why callers must check
   /// this (and that) before ever awaiting [resolve], not call it unconditionally.
-  WorkspaceRoot? boundRoot(String? taskId) => taskId == null ? null : _taskRoots[taskId];
+  ///
+  /// The returned root carries the parent's trust *as it was when the worktree was bound*; the
+  /// caller must re-check the parent against the current grants before acting (G-05) -- see
+  /// [parentOf].
+  WorkspaceRoot? boundRoot(String? taskId) => taskId == null ? null : _taskRoots[taskId]?.root;
+
+  /// The isolated task whose worktree is exactly [canonicalPath], or null. Lets a caller holding
+  /// only a [WorkspaceRoot] find which granted folder it was carved from, so a revoke or untrust of
+  /// that folder applies to its worktrees too (G-05, SEC-08).
+  IsolatedTask? parentOf(String canonicalPath) {
+    for (final task in _taskKeyWorktrees.values) {
+      if (task.root.canonicalPath == canonicalPath) return task;
+    }
+    return null;
+  }
 
   /// `true` only when [taskId] is genuinely configured for isolation and not yet bound to a
   /// root -- i.e. the only case where [resolve] might need to do real async work (checking a
@@ -102,7 +130,7 @@ class IsolatedTaskRegistry {
   Future<WorkspaceRoot?> resolve(String? taskId, String? pathForRootLookup) async {
     if (taskId == null) return null;
     final bound = _taskRoots[taskId];
-    if (bound != null) return bound;
+    if (bound != null) return bound.root;
 
     final config = _taskConfigs[taskId];
     if (config == null) return null;
@@ -110,7 +138,7 @@ class IsolatedTaskRegistry {
 
     final existing = _taskKeyWorktrees[taskKey];
     if (existing != null) {
-      _taskRoots[taskId] = existing.root;
+      _taskRoots[taskId] = existing;
       return existing.root;
     }
 
@@ -119,7 +147,15 @@ class IsolatedTaskRegistry {
         : (_roots.all.isNotEmpty ? _roots.all.first : null);
     if (parentRoot == null) return null;
 
-    final worktreePath = p.join(parentRoot.canonicalPath, '.aura-workspaces', taskKey);
+    final workspacesDir = p.join(parentRoot.canonicalPath, '.aura-workspaces');
+    // G-04: a `.aura-workspaces` that is a link would carry `git worktree add` (and the existing-
+    // directory recovery below) out of the folder before any check could see the result.
+    if (FileSystemEntity.isLinkSync(workspacesDir)) {
+      throw ContainmentViolation(
+        '$workspacesDir is a symbolic link -- refusing to place an isolated worktree through it',
+      );
+    }
+    final worktreePath = p.join(workspacesDir, taskKey);
     final branch = 'aura/task-$taskKey';
     String canonicalWorktreePath;
     if (Directory(worktreePath).existsSync()) {
@@ -138,18 +174,28 @@ class IsolatedTaskRegistry {
       );
       canonicalWorktreePath = File(created['worktree_path'] as String).resolveSymbolicLinksSync();
     }
+    // G-04: fail closed unless the resolved worktree is still inside this folder's
+    // `.aura-workspaces/`. A recovered directory is whatever is on disk -- a symlink planted there
+    // used to become a bound root, with the parent's trust, anywhere on the machine.
+    if (!p.isWithin(workspacesDir, canonicalWorktreePath)) {
+      throw ContainmentViolation(
+        'the isolated worktree for task_key "$taskKey" resolves to $canonicalWorktreePath, '
+        'outside $workspacesDir -- refusing to bind it',
+      );
+    }
 
     // Inherits the parent root's trust exactly -- no widening, no narrowing (D8 plan, locked
     // decision: an isolated task must never be more permissive than the project it's isolated
     // from, and an already-trusted project should see no new friction).
     final ephemeralRoot = WorkspaceRoot(canonicalPath: canonicalWorktreePath, trusted: parentRoot.trusted);
-    _taskKeyWorktrees[taskKey] = IsolatedTask(
+    final task = IsolatedTask(
       taskKey: taskKey,
       root: ephemeralRoot,
       parentRootPath: parentRoot.canonicalPath,
       branch: branch,
     );
-    _taskRoots[taskId] = ephemeralRoot;
+    _taskKeyWorktrees[taskKey] = task;
+    _taskRoots[taskId] = task;
     return ephemeralRoot;
   }
 

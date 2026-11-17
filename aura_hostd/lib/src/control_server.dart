@@ -711,7 +711,7 @@ class ControlServer {
     }
     try {
       final root = _requireRoot(workspaceStore.load(), rootParam);
-      final result = await diagnosticsService.run(root.canonicalPath, tool);
+      final result = await diagnosticsService.run(root.canonicalPath, tool, trusted: root.trusted);
       await _respond(request, 200, {
         'tool': result.tool,
         'exit_code': result.exitCode,
@@ -719,7 +719,11 @@ class ControlServer {
         'stderr': result.stderr,
         'truncated': result.truncated,
         'not_found': result.notFound,
+        'timed_out': result.timedOut,
       });
+    } on DiagnosticsNotTrustedError catch (error) {
+      // G-17 (SEC-10): see `diagnostics_service.dart`'s doc comment.
+      await _respond(request, 403, {'error': error.toString()});
     } on RootNotFoundError {
       await _respond(request, 404, {'error': '$rootParam is not a granted root'});
     } on ArgumentError catch (error) {

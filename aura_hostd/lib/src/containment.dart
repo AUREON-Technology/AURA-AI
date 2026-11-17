@@ -162,15 +162,37 @@ String _resolveAsFarAsPossible(String rawPath) {
 /// Holds the set of roots the user has granted and answers the one question that matters:
 /// "is this path inside one of them, after resolving symlinks?"
 class WorkspaceRoots {
-  WorkspaceRoots(Iterable<WorkspaceRoot> initial) : _roots = List.of(initial);
+  WorkspaceRoots(Iterable<WorkspaceRoot> initial)
+      : _roots = List.of(initial),
+        _source = null;
+
+  /// A read-only view that asks [source] for the roots on every lookup (G-05, SEC-08).
+  ///
+  /// The connected agent's handler used to hold a snapshot taken when it connected, while the
+  /// control server and the CLI changed the store on disk -- so a revoke, untrust or grant never
+  /// reached the agent until the daemon reconnected. A view over the store cannot go stale; the
+  /// store stays the only writer, which is why the mutating methods refuse on a live view.
+  WorkspaceRoots.live(List<WorkspaceRoot> Function() source)
+      : _roots = const [],
+        _source = source;
 
   final List<WorkspaceRoot> _roots;
+  final List<WorkspaceRoot> Function()? _source;
 
-  List<WorkspaceRoot> get all => List.unmodifiable(_roots);
+  List<WorkspaceRoot> get _current => _source?.call() ?? _roots;
+
+  List<WorkspaceRoot> get all => List.unmodifiable(_current);
+
+  void _requireMutable() {
+    if (_source != null) {
+      throw StateError('a live WorkspaceRoots view is read-only -- change the WorkspaceStore');
+    }
+  }
 
   /// Validates and adds [rawPath] as a granted root. Throws [InvalidRootError] if the path is
   /// denylisted (directly or through a symlink), does not exist, or is not a directory.
   WorkspaceRoot addRoot(String rawPath, {bool trusted = false}) {
+    _requireMutable();
     if (!Directory(rawPath).existsSync()) {
       throw InvalidRootError('$rawPath does not exist or is not a directory');
     }
@@ -204,6 +226,7 @@ class WorkspaceRoots {
   }
 
   bool removeRoot(String rawPath) {
+    _requireMutable();
     final canonical = _tryResolve(rawPath) ?? p.normalize(rawPath);
     final before = _roots.length;
     _roots.removeWhere((r) => r.canonicalPath == canonical || r.canonicalPath == p.normalize(rawPath));
@@ -211,6 +234,7 @@ class WorkspaceRoots {
   }
 
   WorkspaceRoot? setTrusted(String rawPath, bool trusted) {
+    _requireMutable();
     final canonical = _tryResolve(rawPath) ?? p.normalize(rawPath);
     final index = _roots.indexWhere((r) => r.canonicalPath == canonical);
     if (index < 0) return null;
@@ -255,7 +279,7 @@ class WorkspaceRoots {
   /// trusted `/work` must not inherit the outer root's trust just because it was granted first.
   WorkspaceRoot? findContainingRoot(String rawPath) {
     WorkspaceRoot? best;
-    for (final root in _roots) {
+    for (final root in _current) {
       try {
         requireContained(root, rawPath);
       } on ContainmentViolation {

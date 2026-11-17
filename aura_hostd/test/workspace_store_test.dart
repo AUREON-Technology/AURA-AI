@@ -50,4 +50,33 @@ void main() {
     store.save(roots);
     expect(File(p.join(nested.path, 'workspaces.json')).existsSync(), isTrue);
   });
+
+  group('live() view (G-05, SEC-08)', () {
+    test('reflects grant, untrust and revoke saved after it was created', () {
+      final workspace = Directory(p.join(tempDir.path, 'project3'))..createSync();
+      final store = WorkspaceStore.forConfigDir(tempDir);
+      final live = store.live();
+      expect(live.all, isEmpty);
+
+      final roots = store.load()..addRoot(workspace.path, trusted: true);
+      store.save(roots);
+      expect(live.all.single.trusted, isTrue);
+      expect(live.findContainingRoot(p.join(workspace.path, 'x.txt')), isNotNull);
+
+      store.save(store.load()..setTrusted(workspace.path, false));
+      expect(live.all.single.trusted, isFalse);
+
+      store.save(store.load()..removeRoot(workspace.path));
+      expect(live.all, isEmpty);
+      expect(live.findContainingRoot(p.join(workspace.path, 'x.txt')), isNull);
+    });
+
+    test('cannot be mutated directly -- the store is the only writer', () {
+      final workspace = Directory(p.join(tempDir.path, 'project4'))..createSync();
+      final live = WorkspaceStore.forConfigDir(tempDir).live();
+      expect(() => live.addRoot(workspace.path), throwsStateError);
+      expect(() => live.removeRoot(workspace.path), throwsStateError);
+      expect(() => live.setTrusted(workspace.path, true), throwsStateError);
+    });
+  });
 }

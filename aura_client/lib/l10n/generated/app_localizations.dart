@@ -1432,6 +1432,24 @@ abstract class AppLocalizations {
   /// **'Mark as not done'**
   String get taskMarkNotDone;
 
+  /// Host daemon page: heading of the granted-folders card
+  ///
+  /// In en, this message translates to:
+  /// **'Workspace roots'**
+  String get hostdWorkspaceRoots;
+
+  /// Host daemon page: what a trusted workspace folder allows. Must not promise confinement (D-06).
+  ///
+  /// In en, this message translates to:
+  /// **'Trusted -- the agent\'s commands run without asking, as you, and can reach anything your account can. Paths outside this folder and any git push ask first.'**
+  String get hostdRootTrustedHint;
+
+  /// Host daemon page: what an untrusted workspace folder allows
+  ///
+  /// In en, this message translates to:
+  /// **'Untrusted -- read-only commands run; anything else asks you first'**
+  String get hostdRootUntrustedHint;
+
   /// Host daemon page: file browse button tooltip
   ///
   /// In en, this message translates to:

@@ -744,3 +744,54 @@ class TestWorkspaceRootBindsTheDaemonTask:
 
         await composite.write_file(handle, "a.txt", "hi")
         assert await composite.read_file(handle, "a.txt") == "hi"
+
+
+class TestIsolatedTaskKey:
+    """Module readiness G-04 / SEC-03: the chat's ``session_id`` becomes the daemon's
+    ``task_key``, which names a worktree directory under the granted folder. A free-form id
+    (``/home/user``, ``../..``) used to reach the daemon as-is; the daemon now refuses it too,
+    but the backend never sends one."""
+
+    @staticmethod
+    def _runner_recording(calls: list[dict]):
+        registry = HostAgentRegistry()
+
+        async def send(frame):
+            calls.append(frame)
+            session.resolve({"type": "result", "id": frame["id"], "result": {"task_id": "t1"}})
+
+        session = HostAgentSession(UserId("u1"), send)
+        return registry, session, HostAgentSandboxRunner(registry)
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "session_id", ["/home/user", "../..", "a/b", "..", ".", "C:\\Users\\x", "a" * 129, "x y"]
+    )
+    async def test_an_unsafe_session_id_is_refused_before_the_daemon_sees_it(
+        self, session_id: str
+    ) -> None:
+        calls: list[dict] = []
+        registry, session, runner = self._runner_recording(calls)
+        await registry.register(session)
+        with pytest.raises(SandboxError, match="session id"):
+            await runner.create_task(user_id=UserId("u1"), session_id=session_id, isolate=True)
+        assert calls == []
+
+    @pytest.mark.anyio
+    async def test_a_uuid_session_id_isolates_as_before(self) -> None:
+        calls: list[dict] = []
+        registry, session, runner = self._runner_recording(calls)
+        await registry.register(session)
+        sid = "3f1c2b9e-7a64-4b8e-9d2a-0c5e8f1a2b3c"
+        await runner.create_task(user_id=UserId("u1"), session_id=sid, isolate=True)
+        [frame] = calls
+        assert frame["params"]["task_key"] == sid and frame["params"]["isolate"] is True
+
+    @pytest.mark.anyio
+    async def test_without_isolation_any_session_id_is_irrelevant(self) -> None:
+        calls: list[dict] = []
+        registry, session, runner = self._runner_recording(calls)
+        await registry.register(session)
+        await runner.create_task(user_id=UserId("u1"), session_id="../..", isolate=False)
+        [frame] = calls
+        assert "task_key" not in frame["params"]

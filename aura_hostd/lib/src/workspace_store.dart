@@ -35,6 +35,12 @@ class WorkspaceStore {
     return WorkspaceRoots(roots);
   }
 
+  /// A view that re-reads this store on every lookup (G-05, SEC-08) -- what the agent-facing
+  /// `TaskHandler` and `IsolatedTaskRegistry` hold, so a grant, revoke or trust change saved by the
+  /// control server or the CLI applies to the connected agent's very next call. A store file that
+  /// cannot be parsed fails that call rather than falling back to anything.
+  WorkspaceRoots live() => WorkspaceRoots.live(() => load().all);
+
   void save(WorkspaceRoots roots) {
     _file.parent.createSync(recursive: true);
     final json = jsonEncode(roots.all.map((r) => r.toJson()).toList());

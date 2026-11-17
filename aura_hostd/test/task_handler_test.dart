@@ -746,6 +746,432 @@ void main() {
     });
   });
 
+  group('agent commands get a minimal environment (G-06, SEC-04)', () {
+    setUp(() => roots.setTrusted(workspaceDir.path, true));
+
+    test('a secret planted in the daemon environment is not visible to the command', () async {
+      handler.parentEnvironment = {
+        ...Platform.environment,
+        'AURA_TEST_PLANTED_SECRET': 'hunter2',
+        'GITHUB_TOKEN': 'ghp_planted',
+      };
+      final result = await handler.run({
+        'command': ['sh', '-c', 'env'],
+        'timeout_s': 5.0,
+      });
+      expect(result['exit_code'], 0);
+      final stdout = result['stdout'] as String;
+      expect(stdout, isNot(contains('hunter2')));
+      expect(stdout, isNot(contains('AURA_TEST_PLANTED_SECRET')));
+      expect(stdout, isNot(contains('ghp_planted')));
+      expect(stdout, contains('PATH='), reason: 'the allowlist still lets ordinary tools run');
+    }, testOn: '!windows');
+
+    test('variables really present in the daemon environment stay out unless allowlisted',
+        () async {
+      // The SEC-04 allowlist, restated here as the spec rather than imported from process_env.dart.
+      final allowed = RegExp(
+        r'^(PATH|HOME|USER|LOGNAME|LANG|LC_\w+|TERM|TMPDIR|TEMP|TMP|SHELL)$',
+      );
+      // Set by `stdbuf` itself for the command it wraps, not inherited from the daemon.
+      final setByWrapper = RegExp(r'^(LD_PRELOAD|_STDBUF_\w+|PWD|SHLVL|_)$');
+      final leakable = Platform.environment.keys
+          .where((k) => !allowed.hasMatch(k) && !setByWrapper.hasMatch(k))
+          .toList();
+      if (leakable.isEmpty) {
+        markTestSkipped('the test process has no non-allowlisted variable to check');
+        return;
+      }
+      final result = await handler.run({
+        'command': ['sh', '-c', 'env'],
+        'timeout_s': 5.0,
+      });
+      final seen = (result['stdout'] as String)
+          .split('\n')
+          .where((line) => line.contains('='))
+          .map((line) => line.substring(0, line.indexOf('=')))
+          .toSet();
+      expect(seen.intersection(leakable.toSet()), isEmpty);
+    }, testOn: '!windows');
+  });
+
+  group('trusted-folder path checks resolve against the real folder (G-06, SEC-05)', () {
+    late ApprovalQueue approvals;
+
+    setUp(() {
+      approvals = ApprovalQueue();
+      handler = TaskHandler(roots, approvals);
+      roots.setTrusted(workspaceDir.path, true);
+    });
+
+    test('an absolute path inside the folder runs without asking', () async {
+      final root = roots.all.single.canonicalPath;
+      File(p.join(root, 'f.txt')).writeAsStringSync('inside');
+      final future = handler.run({
+        'command': ['sh', '-c', 'cat ${p.join(root, 'f.txt')}'],
+        'timeout_s': 5.0,
+      });
+      expect(approvals.list(), isEmpty);
+      for (final pending in approvals.list()) {
+        approvals.respond(pending.id, false);
+      }
+      final result = await future;
+      expect(result['stdout'], 'inside');
+    }, testOn: '!windows');
+
+    for (final command in ['cat ~/.ssh/id_rsa', 'echo x > ~/.bashrc']) {
+      test('`$command` queues for approval and does not run when rejected', () async {
+        final future = handler.run({
+          'command': ['sh', '-c', command],
+          'timeout_s': 5.0,
+        });
+        expect(approvals.list(), hasLength(1));
+        approvals.respond(approvals.list().single.id, false);
+        await expectLater(future, throwsA(isA<RpcError>()));
+      });
+    }
+
+    test('an in-folder command still runs without asking', () async {
+      final result = await handler.run({
+        'command': ['sh', '-c', 'mkdir -p src && ls'],
+        'timeout_s': 5.0,
+      });
+      expect(result['exit_code'], 0);
+      expect(approvals.list(), isEmpty);
+    });
+  });
+
+  group('timeout and cancel stop the whole process tree (G-16, SEC-09)', () {
+    // A zombie (state Z) is dead -- this container's PID 1 may never reap an orphan.
+    bool alive(int pid) {
+      final stat = File('/proc/$pid/stat');
+      if (Platform.isLinux) {
+        try {
+          final text = stat.readAsStringSync();
+          final state = text.substring(text.lastIndexOf(')') + 2).split(' ').first;
+          return state != 'Z' && state != 'X';
+        } on FileSystemException {
+          return false;
+        }
+      }
+      return Process.runSync('kill', ['-0', '$pid']).exitCode == 0;
+    }
+
+    Future<int> pidFrom(String name) async {
+      final file = File(p.join(workspaceDir.path, name));
+      for (var i = 0; i < 250 && !(file.existsSync() && file.readAsStringSync().trim().isNotEmpty); i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      return int.parse(file.readAsStringSync().trim());
+    }
+
+    Future<void> expectGone(int pid) async {
+      for (var i = 0; i < 100 && alive(pid); i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      expect(alive(pid), isFalse, reason: 'pid $pid outlived its command');
+    }
+
+    setUp(() => roots.setTrusted(workspaceDir.path, true));
+
+    test('a timeout kills a background child the command left behind', () async {
+      final stopwatch = Stopwatch()..start();
+      final result = await handler.run({
+        'command': ['sh', '-c', r'(sleep 30 & echo $! > child.pid); sleep 30'],
+        'timeout_s': 1.0,
+      });
+      expect(result['exit_code'], isNot(0));
+      expect(result['stderr'], contains('timeout'));
+      await expectGone(await pidFrom('child.pid'));
+      expect(stopwatch.elapsed, lessThan(const Duration(seconds: 10)));
+    }, testOn: '!windows');
+
+    test('cancel stops a running command, its children included, and returns', () async {
+      final future = handler.run({
+        'command': ['sh', '-c', r'sleep 30 & echo $! > child.pid; wait'],
+        'timeout_s': 60.0,
+      }, callId: 'call-running');
+      final child = await pidFrom('child.pid');
+      final stopwatch = Stopwatch()..start();
+      handler.cancel('call-running');
+      final result = await future.timeout(const Duration(seconds: 10));
+      expect(stopwatch.elapsed, lessThan(const Duration(seconds: 10)));
+      expect(result['exit_code'], isNot(0));
+      expect(result['stderr'], contains('cancelled'));
+      await expectGone(child);
+    }, testOn: '!windows');
+
+    test('cancelling an unknown or finished call is harmless', () async {
+      final result = await handler.run({
+        'command': ['sh', '-c', 'echo done'],
+        'timeout_s': 5.0,
+      }, callId: 'call-done');
+      handler.cancel('call-done');
+      handler.cancel('never-seen');
+      expect(result['exit_code'], 0);
+    });
+  });
+
+  group('untrusted allowlisted git cannot run repo-configured programs (G-17, SEC-10)', () {
+    Future<ProcessResult> git(List<String> args) => Process.run('git', args, workingDirectory: workspaceDir.path);
+
+    test('git status, diff, log and show run without the repo\'s fsmonitor or external diff',
+        () async {
+      await git(['init', '-q', '-b', 'main']);
+      await git(['config', 'user.name', 'Test User']);
+      await git(['config', 'user.email', 'test@example.com']);
+      File(p.join(workspaceDir.path, 'a.txt')).writeAsStringSync('one\n');
+      await git(['add', '--', 'a.txt']);
+      await git(['commit', '-q', '-m', 'initial commit']);
+      File(p.join(workspaceDir.path, 'a.txt')).writeAsStringSync('two\n');
+
+      final marker = p.join(tempDir.path, 'pwned');
+      final evil = File(p.join(tempDir.path, 'evil.sh'))
+        ..writeAsStringSync('#!/bin/sh\ntouch "$marker"\n');
+      Process.runSync('chmod', ['+x', evil.path]);
+      await git(['config', 'core.fsmonitor', evil.path]);
+      await git(['config', 'diff.external', evil.path]);
+      File(p.join(workspaceDir.path, '.gitattributes')).writeAsStringSync('* diff=evil\n');
+      await git(['config', 'diff.evil.textconv', evil.path]);
+
+      for (final command in ['git status', 'git diff', 'git log -p -1', 'git show', 'git blame a.txt']) {
+        final result = await handler.run({
+          'command': ['sh', '-c', command],
+          'timeout_s': 10.0,
+        });
+        expect(result['exit_code'], 0, reason: '$command: ${result['stderr']}');
+        expect(File(marker).existsSync(), isFalse, reason: '$command ran a repo-configured program');
+      }
+    }, testOn: '!windows');
+  });
+
+  group('a bound task sees revoke and untrust on its next call (G-05, SEC-08)', () {
+    late ApprovalQueue approvals;
+
+    setUp(() {
+      approvals = ApprovalQueue();
+      handler = TaskHandler(roots, approvals);
+      roots.setTrusted(workspaceDir.path, true);
+    });
+
+    test('revoking the bound folder refuses the next write, read and run', () async {
+      final created = await handler.createTask({'cwd': workspaceDir.path});
+      final taskId = created['task_id'];
+      await handler.writeFile({'task_id': taskId, 'path': 'before.txt', 'content': 'ok'});
+
+      roots.removeRoot(workspaceDir.path);
+
+      await expectLater(
+        handler.writeFile({'task_id': taskId, 'path': 'after.txt', 'content': 'no'}),
+        throwsA(isA<RpcError>().having((e) => e.message, 'message', contains('no longer granted'))),
+      );
+      await expectLater(handler.readFile({'task_id': taskId, 'path': 'before.txt'}), throwsA(isA<RpcError>()));
+      await expectLater(
+        handler.run({
+          'task_id': taskId,
+          'command': ['sh', '-c', 'mkdir after'],
+          'timeout_s': 5.0,
+        }),
+        throwsA(isA<RpcError>()),
+      );
+      expect(File(p.join(workspaceDir.path, 'after.txt')).existsSync(), isFalse);
+      expect(Directory(p.join(workspaceDir.path, 'after')).existsSync(), isFalse);
+      expect(approvals.list(), isEmpty, reason: 'a revoked folder is refused, not queued');
+    });
+
+    test('untrusting the bound folder sends a once-automatic command to approval', () async {
+      final created = await handler.createTask({'cwd': workspaceDir.path});
+      final taskId = created['task_id'];
+      final first = await handler.run({
+        'task_id': taskId,
+        'command': ['sh', '-c', 'mkdir one'],
+        'timeout_s': 5.0,
+      });
+      expect(first['exit_code'], 0);
+
+      roots.setTrusted(workspaceDir.path, false);
+
+      final second = handler.run({
+        'task_id': taskId,
+        'command': ['sh', '-c', 'mkdir two'],
+        'timeout_s': 5.0,
+      });
+      expect(approvals.list(), hasLength(1));
+      expect(Directory(p.join(workspaceDir.path, 'two')).existsSync(), isFalse);
+      approvals.respond(approvals.list().single.id, false);
+      await expectLater(second, throwsA(isA<RpcError>()));
+      expect(Directory(p.join(workspaceDir.path, 'two')).existsSync(), isFalse);
+    });
+
+    group('isolated task', () {
+      Future<ProcessResult> git(List<String> args) =>
+          Process.run('git', args, workingDirectory: workspaceDir.path);
+
+      setUp(() async {
+        await git(['init', '-q', '-b', 'main']);
+        await git(['config', 'user.name', 'Test User']);
+        await git(['config', 'user.email', 'test@example.com']);
+        File(p.join(workspaceDir.path, 'a.txt')).writeAsStringSync('original');
+        await git(['add', '--', 'a.txt']);
+        await git(['commit', '-q', '-m', 'initial commit']);
+      });
+
+      test('revoking the parent folder refuses writes into its worktree', () async {
+        final created = await handler.createTask({
+          'isolate': true,
+          'task_key': 'g05-a',
+          'cwd': workspaceDir.path,
+        });
+        await handler.writeFile({'task_id': created['task_id'], 'path': 'a.txt', 'content': 'one'});
+        roots.removeRoot(workspaceDir.path);
+        await expectLater(
+          handler.writeFile({'task_id': created['task_id'], 'path': 'a.txt', 'content': 'two'}),
+          throwsA(isA<RpcError>()),
+        );
+        final worktree = p.join(workspaceDir.path, '.aura-workspaces', 'g05-a');
+        expect(File(p.join(worktree, 'a.txt')).readAsStringSync(), 'one');
+      });
+
+      test('untrusting the parent folder makes the worktree ask again', () async {
+        final created = await handler.createTask({
+          'isolate': true,
+          'task_key': 'g05-b',
+          'cwd': workspaceDir.path,
+        });
+        await handler.writeFile({'task_id': created['task_id'], 'path': 'a.txt', 'content': 'one'});
+        roots.setTrusted(workspaceDir.path, false);
+        final pending = handler.writeFile({'task_id': created['task_id'], 'path': 'a.txt', 'content': 'two'});
+        expect(approvals.list(), hasLength(1));
+        // Approving revalidates against the worktree itself, not the parent folder it sits in.
+        approvals.respond(approvals.list().single.id, true);
+        await pending;
+        final worktree = p.join(workspaceDir.path, '.aura-workspaces', 'g05-b');
+        expect(File(p.join(worktree, 'a.txt')).readAsStringSync(), 'two');
+        expect(File(p.join(workspaceDir.path, 'a.txt')).readAsStringSync(), 'original');
+      });
+    });
+  });
+
+  group('task_key is one safe path segment, contained in its folder (G-04, SEC-03)', () {
+    late ApprovalQueue approvals;
+    late Directory outsideDir;
+
+    Future<ProcessResult> git(List<String> args) => Process.run('git', args, workingDirectory: workspaceDir.path);
+
+    setUp(() async {
+      approvals = ApprovalQueue();
+      handler = TaskHandler(roots, approvals);
+      outsideDir = Directory(p.join(tempDir.path, 'outside'))..createSync();
+      File(p.join(outsideDir.path, 'secret.txt')).writeAsStringSync('not yours');
+      await git(['init', '-q', '-b', 'main']);
+      await git(['config', 'user.name', 'Test User']);
+      await git(['config', 'user.email', 'test@example.com']);
+      File(p.join(workspaceDir.path, 'a.txt')).writeAsStringSync('original');
+      await git(['add', '--', 'a.txt']);
+      await git(['commit', '-q', '-m', 'initial commit']);
+      roots.setTrusted(workspaceDir.path, true);
+    });
+
+    final unsafeKeys = <String, Object?>{
+      'an absolute key (it would replace the whole path)': null, // filled with outsideDir below
+      'a key climbing out with ../..': '../..',
+      'a key with a / separator': 'a/b',
+      r'a key with a \ separator': r'a\b',
+      'the key "."': '.',
+      'the key ".."': '..',
+      'an empty key': '',
+      'a key over 128 characters': 'k' * 129,
+      'a key with a space': 'a b',
+      'a non-string key': 42,
+    };
+    for (final entry in unsafeKeys.entries) {
+      test('refuses ${entry.key}', () async {
+        final key = entry.value ?? outsideDir.path;
+        for (final params in [
+          {'isolate': true, 'task_key': key},
+          {'isolate': true, 'task_key': key, 'cwd': workspaceDir.path},
+        ]) {
+          await expectLater(
+            handler.createTask(params),
+            throwsA(isA<RpcError>().having((e) => e.message, 'message', contains('task_key'))),
+            reason: '$params',
+          );
+        }
+        expect(
+          Directory(p.join(workspaceDir.path, '.aura-workspaces')).existsSync(),
+          isFalse,
+          reason: 'nothing is created for a refused key',
+        );
+      });
+    }
+
+    test('accepts an ordinary session id', () async {
+      final created = await handler.createTask({
+        'isolate': true,
+        'task_key': 'sess_01H.x-Y',
+        'cwd': workspaceDir.path,
+      });
+      expect(created['isolated'], isTrue);
+    });
+
+    test('refuses a worktree directory that already exists but resolves outside the folder',
+        () async {
+      // `.aura-workspaces/evil` is a symlink out of the folder: an existing directory used to be
+      // re-registered as a bound root with the parent's trust and no containment check.
+      Directory(p.join(workspaceDir.path, '.aura-workspaces')).createSync();
+      Link(p.join(workspaceDir.path, '.aura-workspaces', 'evil')).createSync(outsideDir.path);
+      await expectLater(
+        handler.createTask({'isolate': true, 'task_key': 'evil', 'cwd': workspaceDir.path}),
+        throwsA(isA<RpcError>()),
+      );
+      // Without a cwd the worktree is resolved lazily, on the first call; that must refuse too
+      // and must not fall back to reading through the link.
+      final lazy = await handler.createTask({'isolate': true, 'task_key': 'evil'});
+      await expectLater(
+        handler.readFile({'task_id': lazy['task_id'], 'path': 'secret.txt'}),
+        throwsA(isA<Exception>()),
+      );
+    }, testOn: '!windows');
+
+    test('refuses when .aura-workspaces itself resolves outside the folder', () async {
+      Link(p.join(workspaceDir.path, '.aura-workspaces')).createSync(outsideDir.path);
+      Directory(p.join(outsideDir.path, 'k1')).createSync();
+      await expectLater(
+        handler.createTask({'isolate': true, 'task_key': 'k1', 'cwd': workspaceDir.path}),
+        throwsA(isA<RpcError>()),
+      );
+    }, testOn: '!windows');
+
+    test('create_task fails instead of binding nothing when no worktree can be resolved', () async {
+      // The registry sees no granted folder (the bin/ wiring bug G-05 describes: two different
+      // snapshots of the roots). The handler's own roots still contain the cwd.
+      handler = TaskHandler(roots, approvals, null, IsolatedTaskRegistry(WorkspaceRoots(const [])));
+      await expectLater(
+        handler.createTask({'isolate': true, 'task_key': 'k2', 'cwd': workspaceDir.path}),
+        throwsA(isA<RpcError>()),
+      );
+    });
+
+    test('an isolated task whose worktree cannot be resolved never writes the live checkout',
+        () async {
+      handler = TaskHandler(roots, approvals, null, IsolatedTaskRegistry(WorkspaceRoots(const [])));
+      final created = await handler.createTask({'isolate': true, 'task_key': 'k3'});
+      await expectLater(
+        handler.writeFile({'task_id': created['task_id'], 'path': 'a.txt', 'content': 'leak'}),
+        throwsA(isA<RpcError>()),
+      );
+      await expectLater(
+        handler.run({
+          'task_id': created['task_id'],
+          'command': ['sh', '-c', 'echo leak > a.txt'],
+          'timeout_s': 5.0,
+        }),
+        throwsA(isA<RpcError>()),
+      );
+      expect(File(p.join(workspaceDir.path, 'a.txt')).readAsStringSync(), 'original');
+    });
+  });
+
   group('IsolatedTaskRegistry.discard (D9 primitive)', () {
     late IsolatedTaskRegistry isolatedTasks;
 
