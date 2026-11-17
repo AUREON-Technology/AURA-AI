@@ -146,6 +146,32 @@ Ingest, upload, delete and pin/unpin require `manage_knowledge` (Owner or Admin)
   subscription are ignored. A Fawry payment makes the subscription Fawry's again. Operations
   guide: `docs/deployment/billing-stores.md`.
 
+### 10. Shared chats, account deletion and operator tooling (SaaS P1-F1)
+
+- **Shared chats.** A member copies one of their own chats into a team workspace
+  (`aura_shared_conversations`, migration `0025`), and every member can read it. The copy comes
+  from the app, because the server's episodic memory is a short rolling window, not the
+  conversation.
+  - Sharing the same chat again replaces the copy.
+  - The sharer, the Owner or an Admin can unshare it, which deletes the copy.
+  - The member's own chat rows never become team-readable.
+  - A former member loses access, but the share stays with the team.
+- **Account deletion** answers 409 `owns_team_workspaces`, naming each team, while the person
+  owns any team. A team cannot lose its only Owner this way. Transfer or delete it first.
+- **Customer email.** An `EmailSender` port (SMTP, any provider) and a `Notifier` send:
+  - the invite link to the invitee;
+  - a receipt for each Fawry payment;
+  - the Fawry reference code for each reference-code renewal;
+  - one past-due notice when a Fawry subscription falls behind.
+
+  Billing email goes to the Owner's verified address, stored at checkout
+  (`aura_billing_contacts`, migration `0024`). A failed email never fails the invite or payment
+  behind it. Setup: `docs/deployment/email.md`.
+- **Operator tooling.** `GET /admin/customers` (SuperAdmin, read-only) lists every subscribed
+  workspace. `POST /admin/customers/{id}/extend-grace` is the operator's one write, and it is
+  audited. It applies only to a Fawry subscription that is behind or expired, because a store
+  owns its own subscriptions.
+
 ## Consequences
 
 - Tables `aura_workspaces`, `aura_workspace_members` and `aura_workspace_invites` arrive with Alembic
