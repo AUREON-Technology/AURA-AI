@@ -6,7 +6,7 @@ from datetime import timedelta
 
 import pytest
 
-from aura_core.adapters.billing import FakePaymentProvider, InMemoryPaymentStore, InMemorySubscriptionStore
+from aura_core.adapters.billing import FakePaymentProvider, InMemoryBillingLocks, InMemoryPaymentStore, InMemorySubscriptionStore
 from aura_core.billing import BillingService
 from aura_core.config.settings import BillingSettings
 from aura_core.domain.billing import DEFAULT_PRICES, PaymentStatus, SubscriptionStatus
@@ -28,7 +28,7 @@ def billing(container, provider, clock):
     return BillingService(
         subscriptions=InMemorySubscriptionStore(), payments=InMemoryPaymentStore(), provider=provider,
         plans=container.plans, tenancy=container.tenancy, clock=clock, audit=container.audit,
-        settings=BillingSettings(enabled=True), prices=DEFAULT_PRICES,
+        settings=BillingSettings(enabled=True), prices=DEFAULT_PRICES, locks=InMemoryBillingLocks(),
     )
 
 
@@ -159,16 +159,19 @@ async def test_unpaid_goes_grace_then_free(billing, provider, container) -> None
     assert (await container.plans.entitlement(ws))[0].id == "free"
 
 
-async def test_provider_down_during_cycle_changes_nothing_it_needs(billing, provider, container) -> None:
+async def test_provider_down_during_cycle_keeps_one_renewal_to_ask_about(billing, provider, container) -> None:
+    """No answer is not a refusal: the renewal may exist at Fawry, so it stays pending (and is asked
+    about by reconcile) rather than being issued again (review D1#1)."""
     ws, _ = await _paid_pro(billing, provider, container)
     sub = await billing.subscriptions.get(ws)
     container.clock.advance((sub.period_end - container.clock.now()).total_seconds() - 86400)
     provider.fail_with = DependencyUnavailableError("fawry down", dependency="fawry")
     counts = await billing.run_cycle()
     assert counts["renewals"] == 0 and counts["errors"] >= 1
-    assert [p for p in await billing.payments.pending(before=None) if p.purpose == "renewal"] == []
+    assert len([p for p in await billing.payments.pending(before=None) if p.purpose == "renewal"]) == 1
     provider.fail_with = None
-    assert (await billing.run_cycle())["renewals"] == 1
+    assert (await billing.run_cycle())["renewals"] == 0
+    assert len([p for p in await billing.payments.pending(before=None) if p.purpose == "renewal"]) == 1
 
 
 async def test_reconcile_applies_a_payment_whose_notification_was_lost(billing, provider, container) -> None:

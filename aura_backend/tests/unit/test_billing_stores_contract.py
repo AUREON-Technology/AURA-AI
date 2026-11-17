@@ -18,7 +18,10 @@ _PG_URL = os.environ.get("AURA_TEST_DATABASE_URL", "")
 
 class _Memory:
     async def __aenter__(self):
+        from aura_core.adapters.billing import InMemoryBillingLocks
+
         self.workspaces = [new_workspace_id(), new_workspace_id()]
+        self.locks = InMemoryBillingLocks()
         return InMemorySubscriptionStore(), InMemoryPaymentStore()
 
     async def __aexit__(self, *exc):
@@ -43,6 +46,9 @@ class _Postgres:
             ws = Workspace(new_workspace_id(), WorkspaceKind.PERSONAL, "P", owner, T0)
             await tenancy.create_workspace(ws, Membership(ws.id, owner, WorkspaceRole.OWNER, T0))
             self.workspaces.append(ws.id)
+        from aura_core.adapters.postgres_billing import PostgresBillingLocks
+
+        self.locks = PostgresBillingLocks(url, pool=self._pool)
         return PostgresSubscriptionStore(url, pool=self._pool), PostgresPaymentStore(url, pool=self._pool)
 
     async def __aexit__(self, *exc):
@@ -50,10 +56,16 @@ class _Postgres:
         await self._db.__aexit__(*exc)
 
 
+@pytest.fixture
+def backend_ref() -> dict:
+    return {}
+
+
 @pytest.fixture(params=[pytest.param(_Memory, id="memory"), pytest.param(_Postgres, id="postgres", marks=pytest.mark.load)])
-async def stores(request):
+async def stores(request, backend_ref):
     backend = request.param()
     async with backend as (subs, payments):
+        backend_ref["locks"] = backend.locks
         yield subs, payments, backend.workspaces
 
 
@@ -112,3 +124,47 @@ async def test_pending_and_recent(stores) -> None:
     assert {p.id for p in await payments.pending(before=None)} == {"old", "new"}
     assert [p.id for p in await payments.for_workspace(ws, limit=2)] == ["new", "done"] or \
         [p.id for p in await payments.for_workspace(ws, limit=2)] == ["done", "new"]
+
+
+async def test_mark_from_an_expected_status_keeps_paid_at(stores) -> None:
+    """Review D1#3/#4: pending -> received -> paid; a late payment from expired; paid_at survives."""
+    _s, payments, (ws, _) = stores
+    await payments.put(_payment(ws, "p"))
+    got = await payments.mark("p", PaymentStatus.RECEIVED, provider_ref="F-1", paid_at=T0)
+    assert got.status is PaymentStatus.RECEIVED
+    assert [x.id for x in await payments.received()] == ["p"]
+    assert await payments.mark("p", PaymentStatus.PAID, provider_ref=None, paid_at=None) is None  # not from pending
+    paid = await payments.mark("p", PaymentStatus.PAID, provider_ref=None, paid_at=None, expected=(PaymentStatus.RECEIVED,))
+    assert paid.status is PaymentStatus.PAID and paid.paid_at == T0 and paid.provider_ref == "F-1"
+    assert await payments.received() == []
+    await payments.put(_payment(ws, "late", status=PaymentStatus.EXPIRED))
+    late = await payments.mark("late", PaymentStatus.RECEIVED, provider_ref=None, paid_at=T0,
+                               expected=(PaymentStatus.EXPIRED, PaymentStatus.FAILED))
+    assert late.status is PaymentStatus.RECEIVED
+
+
+async def test_last_payment_id_roundtrips(stores) -> None:
+    subs, _p, (ws, _) = stores
+    await subs.put(_sub(ws, last_payment_id="pay-9"))
+    assert (await subs.get(ws)).last_payment_id == "pay-9"
+
+
+async def test_locks_serialise_a_workspace_and_admit_one_cycle(stores, backend_ref) -> None:
+    import asyncio
+
+    _s, _p, (ws, _) = stores
+    locks = backend_ref["locks"]
+    first = await locks.lock_workspace(ws)
+    waiter = asyncio.create_task(locks.lock_workspace(ws))
+    await asyncio.sleep(0.2)
+    assert not waiter.done()
+    await first.release()
+    second = await asyncio.wait_for(waiter, 5)
+    await second.release()
+    cycle = await locks.try_lock_cycle()
+    assert cycle is not None
+    assert await locks.try_lock_cycle() is None
+    await cycle.release()
+    again = await locks.try_lock_cycle()
+    assert again is not None
+    await again.release()

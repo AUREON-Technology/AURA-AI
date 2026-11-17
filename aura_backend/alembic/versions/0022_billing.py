@@ -36,6 +36,7 @@ UPGRADE_STATEMENTS = (
         period_start        TIMESTAMPTZ NOT NULL,
         period_end          TIMESTAMPTZ NOT NULL,
         grace_until         TIMESTAMPTZ,
+        last_payment_id     TEXT,
         card_token          TEXT,
         customer_profile_id TEXT,
         updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -51,7 +52,7 @@ UPGRADE_STATEMENTS = (
         method           TEXT        NOT NULL,
         purpose          TEXT        NOT NULL CHECK (purpose IN ('initial', 'renewal')),
         status           TEXT        NOT NULL CHECK (status IN
-                             ('pending', 'paid', 'expired', 'failed', 'mismatch', 'refunded')),
+                             ('pending', 'received', 'paid', 'expired', 'failed', 'mismatch', 'refunded')),
         provider_ref     TEXT,
         reference_number TEXT,
         created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),

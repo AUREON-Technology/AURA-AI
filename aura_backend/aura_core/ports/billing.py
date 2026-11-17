@@ -8,7 +8,7 @@ from typing import Protocol
 
 from ..domain.billing import Payment, PaymentStatus, StoreBinding, Subscription
 
-__all__ = ["StoreBindingStore", "StoreEventLog", "SubscriptionStore", "PaymentStore", "PaymentProvider", "ProviderCharge", "ProviderStatus", "ProviderNotification"]
+__all__ = ["BillingLock", "BillingLocks", "StoreBindingStore", "StoreEventLog", "SubscriptionStore", "PaymentStore", "PaymentProvider", "ProviderCharge", "ProviderStatus", "ProviderNotification"]
 
 
 class SubscriptionStore(Protocol):
@@ -34,11 +34,15 @@ class PaymentStore(Protocol):
         """Newest first."""
 
     async def mark(
-        self, payment_id: str, status: PaymentStatus, *, provider_ref: str | None, paid_at: datetime | None
+        self, payment_id: str, status: PaymentStatus, *, provider_ref: str | None, paid_at: datetime | None,
+        expected: tuple[PaymentStatus, ...] = (PaymentStatus.PENDING,),
     ) -> Payment | None:
-        """Move a payment out of ``pending``, atomically. Returns the updated payment, or None
-        when it was not pending (already settled) or does not exist -- the idempotency lock that
-        makes a duplicate notification a no-op."""
+        """Move a payment from one of ``expected`` to ``status``, atomically. Returns the updated
+        payment, or None when it was in another status or does not exist -- the idempotency lock
+        that makes a duplicate notification a no-op."""
+
+    async def received(self) -> list[Payment]:
+        """Payments whose money arrived but whose application did not finish (re-driven)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +80,21 @@ class PaymentProvider(Protocol):
     async def parse_notification(self, body: bytes) -> ProviderNotification:
         """Verify and parse a provider notification. AuthenticationError for a bad signature,
         ValidationError for a malformed body."""
+
+
+class BillingLock(Protocol):
+    async def release(self) -> None: ...
+
+
+class BillingLocks(Protocol):
+    """Serialises billing work across every worker: one cycle at a time, and one settlement or
+    cycle step per workspace at a time, so no stale read overwrites a payment (review D1#2/#6)."""
+
+    async def lock_workspace(self, workspace_id: str) -> BillingLock:
+        """Wait for the workspace's lock."""
+
+    async def try_lock_cycle(self) -> BillingLock | None:
+        """The cycle's lock, or None when another cycle holds it."""
 
 
 class StoreBindingStore(Protocol):

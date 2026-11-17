@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import secrets
 from dataclasses import replace
 from datetime import datetime
 
@@ -14,7 +15,7 @@ from ..domain.billing import Payment, PaymentStatus, StoreBinding, Subscription,
 from ..domain.errors import AuthenticationError, ValidationError
 from ..ports.billing import ProviderCharge, ProviderNotification, ProviderStatus
 
-__all__ = ["InMemoryStoreBindingStore", "InMemoryStoreEventLog", "InMemorySubscriptionStore", "InMemoryPaymentStore", "FakePaymentProvider"]
+__all__ = ["InMemoryBillingLocks", "InMemoryStoreBindingStore", "InMemoryStoreEventLog", "InMemorySubscriptionStore", "InMemoryPaymentStore", "FakePaymentProvider"]
 
 _LIVE = (SubscriptionStatus.ACTIVE, SubscriptionStatus.PAST_DUE, SubscriptionStatus.GRACE, SubscriptionStatus.CANCELED)
 
@@ -57,14 +58,18 @@ class InMemoryPaymentStore:
         rows = [p for p in self._rows.values() if p.workspace_id == workspace_id]
         return sorted(rows, key=lambda p: (p.created_at, p.id), reverse=True)[:limit]
 
-    async def mark(self, payment_id, status, *, provider_ref, paid_at) -> Payment | None:
+    async def mark(self, payment_id, status, *, provider_ref, paid_at, expected=(PaymentStatus.PENDING,)) -> Payment | None:
         async with self._lock:
             current = self._rows.get(payment_id)
-            if current is None or current.status is not PaymentStatus.PENDING:
+            if current is None or current.status not in expected:
                 return None
-            updated = replace(current, status=status, provider_ref=provider_ref or current.provider_ref, paid_at=paid_at)
+            updated = replace(current, status=status, provider_ref=provider_ref or current.provider_ref,
+                              paid_at=paid_at if paid_at is not None else current.paid_at)
             self._rows[payment_id] = updated
             return updated
+
+    async def received(self) -> list[Payment]:
+        return sorted((p for p in self._rows.values() if p.status is PaymentStatus.RECEIVED), key=lambda p: p.created_at)
 
 
 class FakePaymentProvider:
@@ -74,20 +79,21 @@ class FakePaymentProvider:
 
     name = "fake"
 
-    def __init__(self, secret: str = "fake-secret") -> None:
-        self._secret = secret.encode()
+    def __init__(self, secret: str | None = None) -> None:
+        # Random per instance: the fake can never accept a notification forged with a known key.
+        self._secret = (secret or secrets.token_hex(16)).encode()
         self.statuses: dict[str, ProviderStatus] = {}
         self.calls: list[tuple[str, str]] = []
         self.fail_with: Exception | None = None
 
     async def create_reference(self, payment: Payment, *, customer_profile_id: str, email: str | None) -> ProviderCharge:
+        self.calls.append(("reference", payment.id))  # recorded first: a timeout may still have reached it
         self._maybe_fail()
-        self.calls.append(("reference", payment.id))
         return ProviderCharge(reference_number=f"9{abs(hash(payment.id)) % 10**9:09d}", provider_ref=None)
 
     async def charge_card(self, payment: Payment, *, customer_profile_id: str, card_token: str) -> ProviderCharge:
+        self.calls.append(("card", payment.id))  # recorded first: a timeout may still have reached it
         self._maybe_fail()
-        self.calls.append(("card", payment.id))
         return ProviderCharge(reference_number=None, provider_ref=f"card-{payment.id}")
 
     async def status(self, payment_id: str) -> ProviderStatus:
@@ -144,3 +150,31 @@ class InMemoryStoreEventLog:
                 return False
             self._seen.add(key)
             return True
+
+
+class _Release:
+    def __init__(self, lock: asyncio.Lock) -> None:
+        self._lock = lock
+
+    async def release(self) -> None:
+        if self._lock.locked():
+            self._lock.release()
+
+
+class InMemoryBillingLocks:
+    """Process-local locks; production uses Postgres advisory locks (``postgres_billing.py``)."""
+
+    def __init__(self) -> None:
+        self._workspaces: dict[str, asyncio.Lock] = {}
+        self._cycle = asyncio.Lock()
+
+    async def lock_workspace(self, workspace_id: str) -> _Release:
+        lock = self._workspaces.setdefault(workspace_id, asyncio.Lock())
+        await lock.acquire()
+        return _Release(lock)
+
+    async def try_lock_cycle(self) -> _Release | None:
+        if self._cycle.locked():
+            return None
+        await self._cycle.acquire()
+        return _Release(self._cycle)

@@ -13,10 +13,10 @@ from typing import Any, Mapping
 from ..domain.billing import Payment, PaymentStatus, StoreBinding, Subscription, SubscriptionStatus
 from .postgres_store import PostgresPool
 
-__all__ = ["PostgresSubscriptionStore", "PostgresPaymentStore", "PostgresStoreBindingStore", "PostgresStoreEventLog"]
+__all__ = ["PostgresBillingLocks", "PostgresSubscriptionStore", "PostgresPaymentStore", "PostgresStoreBindingStore", "PostgresStoreEventLog"]
 
 _SUB = ("workspace_id, plan_id, seats, status, provider, period_start, period_end, grace_until, "
-        "card_token, customer_profile_id, updated_at")
+        "card_token, customer_profile_id, updated_at, last_payment_id")
 _PAY = ("id, workspace_id, plan_id, seats, amount_piastres, method, purpose, status, provider_ref, "
         "reference_number, created_at, expires_at, paid_at")
 
@@ -34,6 +34,7 @@ def _sub(row: Mapping[str, Any]) -> Subscription:
         period_start=_utc(row["period_start"]), period_end=_utc(row["period_end"]),
         updated_at=_utc(row["updated_at"]), grace_until=_utc(row["grace_until"]),
         card_token=row["card_token"], customer_profile_id=row["customer_profile_id"],
+        last_payment_id=row["last_payment_id"],
     )
 
 
@@ -61,14 +62,14 @@ class PostgresSubscriptionStore:
         pool = await self._pool._get_pool()
         async with pool.acquire() as conn:
             await conn.execute(
-                f"INSERT INTO aura_subscriptions ({_SUB}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) "
+                f"INSERT INTO aura_subscriptions ({_SUB}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) "
                 "ON CONFLICT (workspace_id) DO UPDATE SET plan_id = EXCLUDED.plan_id, seats = EXCLUDED.seats, "
                 "status = EXCLUDED.status, provider = EXCLUDED.provider, period_start = EXCLUDED.period_start, "
                 "period_end = EXCLUDED.period_end, grace_until = EXCLUDED.grace_until, "
                 "card_token = EXCLUDED.card_token, customer_profile_id = EXCLUDED.customer_profile_id, "
-                "updated_at = EXCLUDED.updated_at",
+                "updated_at = EXCLUDED.updated_at, last_payment_id = EXCLUDED.last_payment_id",
                 s.workspace_id, s.plan_id, s.seats, s.status.value, s.provider, s.period_start, s.period_end,
-                s.grace_until, s.card_token, s.customer_profile_id, s.updated_at,
+                s.grace_until, s.card_token, s.customer_profile_id, s.updated_at, s.last_payment_id,
             )
 
     async def due(self, before: datetime) -> list[Subscription]:
@@ -122,15 +123,21 @@ class PostgresPaymentStore:
             )
         return [_pay(r) for r in rows]
 
-    async def mark(self, payment_id, status, *, provider_ref, paid_at) -> Payment | None:
+    async def mark(self, payment_id, status, *, provider_ref, paid_at, expected=(PaymentStatus.PENDING,)) -> Payment | None:
         pool = await self._pool._get_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                f"UPDATE aura_payments SET status = $2, provider_ref = COALESCE($3, provider_ref), paid_at = $4 "
-                f"WHERE id = $1 AND status = 'pending' RETURNING {_PAY}",
-                payment_id, status.value, provider_ref, paid_at,
+                f"UPDATE aura_payments SET status = $2, provider_ref = COALESCE($3, provider_ref), "
+                f"paid_at = COALESCE($4, paid_at) WHERE id = $1 AND status = ANY($5::text[]) RETURNING {_PAY}",
+                payment_id, status.value, provider_ref, paid_at, [e.value for e in expected],
             )
         return _pay(row) if row else None
+
+    async def received(self) -> list[Payment]:
+        pool = await self._pool._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(f"SELECT {_PAY} FROM aura_payments WHERE status = 'received' ORDER BY created_at")
+        return [_pay(r) for r in rows]
 
 
 class PostgresStoreBindingStore:
@@ -170,3 +177,50 @@ class PostgresStoreEventLog:
                 provider, event_id, at,
             )
         return status.rsplit(" ", 1)[-1] == "1"
+
+
+class _AdvisoryLock:
+    def __init__(self, pool: Any, conn: Any, key: str) -> None:
+        self._pool, self._conn, self._key = pool, conn, key
+
+    async def release(self) -> None:
+        if self._conn is None:
+            return
+        try:
+            await self._conn.execute("SELECT pg_advisory_unlock(hashtextextended($1, 0))", self._key)
+        finally:
+            await self._pool.release(self._conn)
+            self._conn = None
+
+
+class PostgresBillingLocks:
+    """Session advisory locks, held on a dedicated pooled connection, so they serialise billing
+    work across every gateway worker and the cron process alike (review D1#2/#6)."""
+
+    def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
+        self._pool = pool or PostgresPool(url)
+
+    async def lock_workspace(self, workspace_id: str) -> _AdvisoryLock:
+        pool = await self._pool._get_pool()
+        conn = await pool.acquire()
+        key = f"aura-billing:workspace:{workspace_id}"
+        try:
+            await conn.execute("SELECT pg_advisory_lock(hashtextextended($1, 0))", key)
+        except BaseException:
+            await pool.release(conn)
+            raise
+        return _AdvisoryLock(pool, conn, key)
+
+    async def try_lock_cycle(self) -> _AdvisoryLock | None:
+        pool = await self._pool._get_pool()
+        conn = await pool.acquire()
+        key = "aura-billing:cycle"
+        try:
+            acquired = await conn.fetchval("SELECT pg_try_advisory_lock(hashtextextended($1, 0))", key)
+        except BaseException:
+            await pool.release(conn)
+            raise
+        if not acquired:
+            await pool.release(conn)
+            return None
+        return _AdvisoryLock(pool, conn, key)

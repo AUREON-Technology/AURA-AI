@@ -63,6 +63,9 @@ class Subscription:
     period_end: datetime
     updated_at: datetime
     grace_until: datetime | None = None
+    #: The payment applied last: re-applying it is a no-op, so a payment whose application was
+    #: interrupted can be safely re-driven (review D1#4).
+    last_payment_id: str | None = None
     #: Fawry card token for renewals, when the payer saved a card. Never returned by any route.
     card_token: str | None = None
     customer_profile_id: str | None = None
@@ -70,6 +73,8 @@ class Subscription:
 
 class PaymentStatus(str, Enum):
     PENDING = "pending"
+    #: Money received, not yet applied to the subscription; the cycle re-drives it (review D1#4).
+    RECEIVED = "received"
     PAID = "paid"
     EXPIRED = "expired"
     FAILED = "failed"
@@ -127,6 +132,8 @@ def apply_payment(sub: Subscription | None, payment: Payment, now: datetime) -> 
     """A paid payment: activate, or extend. Paid early, the new period follows the current one;
     paid after the period ended (past due or in grace), it starts now. The caller applies each
     payment once (``PaymentStore.mark`` from pending is the lock)."""
+    if sub is not None and sub.last_payment_id == payment.id:
+        return sub
     if sub is None or sub.status in (SubscriptionStatus.EXPIRED, SubscriptionStatus.PENDING) or sub.period_end <= now:
         start = now
     else:
@@ -141,6 +148,7 @@ def apply_payment(sub: Subscription | None, payment: Payment, now: datetime) -> 
         period_end=add_month(start),
         updated_at=now,
         grace_until=None,
+        last_payment_id=payment.id,
         card_token=sub.card_token if sub is not None else None,
         customer_profile_id=sub.customer_profile_id if sub is not None else None,
     )

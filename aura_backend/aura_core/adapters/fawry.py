@@ -131,7 +131,7 @@ class FawryPaymentProvider:
             "signature": _sha256(f"{self._merchant}{payment_id}{self._secret}"),
         })
         raw = str(data.get("paymentStatus") or data.get("orderStatus") or "").upper()
-        amount = data.get("paymentAmount")
+        amount = data.get("orderAmount", data.get("paymentAmount"))
         return ProviderStatus(
             status=_STATUS.get(raw, PaymentStatus.PENDING),
             amount_piastres=_piastres(amount) if amount is not None else None,
@@ -141,7 +141,7 @@ class FawryPaymentProvider:
     async def parse_notification(self, body: bytes) -> ProviderNotification:
         try:
             note = json.loads(body)
-        except (ValueError, UnicodeDecodeError) as exc:
+        except (ValueError, UnicodeDecodeError, RecursionError) as exc:
             raise ValidationError("notification is not JSON") from exc
         if not isinstance(note, dict):
             raise ValidationError("notification is not an object")
@@ -160,7 +160,9 @@ class FawryPaymentProvider:
         return ProviderNotification(
             payment_id=str(note["merchantRefNum"]),
             status=_STATUS.get(str(note["orderStatus"]).upper(), PaymentStatus.PENDING),
-            amount_piastres=_piastres(note["paymentAmount"]),
+            # orderAmount is what we asked for; paymentAmount can include Fawry's customer-borne fees
+            # (review D1#5), so it is compared only when no orderAmount is given.
+            amount_piastres=_piastres(note.get("orderAmount", note["paymentAmount"])),
             provider_ref=str(note["fawryRefNumber"]),
             card_token=note.get("cardToken") or None,
         )
@@ -173,8 +175,11 @@ class FawryPaymentProvider:
             raise DependencyUnavailableError("Fawry did not answer", dependency="fawry", cause=exc) from exc
         status_code = data.get("statusCode") if isinstance(data, dict) else None
         if response.status_code >= 400 or status_code not in (200, "200"):
+            # A definitive answer: Fawry looked at the request and said no, so no money moved.
+            # (No answer at all -- the branch above -- is not "refused": the charge may have run.)
             raise DependencyUnavailableError(
                 "Fawry refused the request", dependency="fawry",
-                details={"status_code": status_code, "description": str((data or {}).get("statusDescription", ""))[:200]},
+                details={"status_code": status_code, "refused": True,
+                         "description": str((data or {}).get("statusDescription", ""))[:200]},
             )
         return data

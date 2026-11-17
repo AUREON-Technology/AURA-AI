@@ -1362,27 +1362,36 @@ class Container:
 
         billing = self.settings.billing
         if self.settings.infrastructure.document_backend == "postgres":
-            from .adapters.postgres_billing import PostgresPaymentStore, PostgresSubscriptionStore
+            from .adapters.postgres_billing import PostgresBillingLocks, PostgresPaymentStore, PostgresSubscriptionStore
 
             url = self.settings.infrastructure.database_url
             subscriptions: Any = PostgresSubscriptionStore(url, pool=self._postgres_pool())
             payments: Any = PostgresPaymentStore(url, pool=self._postgres_pool())
+            # Advisory locks: one settle per workspace and one cycle at a time across every
+            # gateway worker and the cron process (review D1#2/#6).
+            locks: Any = PostgresBillingLocks(url, pool=self._postgres_pool())
         else:
-            from .adapters.billing import InMemoryPaymentStore, InMemorySubscriptionStore
+            from .adapters.billing import InMemoryBillingLocks, InMemoryPaymentStore, InMemorySubscriptionStore
 
-            subscriptions, payments = InMemorySubscriptionStore(), InMemoryPaymentStore()
+            subscriptions, payments, locks = InMemorySubscriptionStore(), InMemoryPaymentStore(), InMemoryBillingLocks()
         if billing.fawry_configured:
             from .adapters.fawry import FawryPaymentProvider
 
             provider: Any = FawryPaymentProvider(billing.fawry_base_url, billing.fawry_merchant_code, billing.fawry_secure_key)
         else:
             from .adapters.billing import FakePaymentProvider
+            from .config.settings import Environment
+            from .domain.errors import ConfigurationError
 
+            if billing.enabled and self.settings.environment is not Environment.LOCAL:
+                # The fake settles anything signed with its own key: never a payment path outside a
+                # developer's machine (review D1, minor).
+                raise ConfigurationError("billing is enabled with no Fawry credentials outside a local run")
             provider = FakePaymentProvider()
         return BillingService(
             subscriptions=subscriptions, payments=payments, provider=provider, plans=self.plans,
             tenancy=self.tenancy, clock=self.clock, audit=self.audit, settings=billing,
-            prices=load_prices(billing.prices_json),
+            prices=load_prices(billing.prices_json), locks=locks,
         )
 
     def _build_idempotency_store(self) -> Any:
