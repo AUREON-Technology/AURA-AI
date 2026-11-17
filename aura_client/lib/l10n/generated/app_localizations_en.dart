@@ -123,6 +123,11 @@ class AppLocalizationsEn extends AppLocalizations {
       'Capture from anywhere. Browse tasks, calendar, finance, and health in Life Hub. Account tools live under You.';
 
   @override
+  String hostdPairedToOtherServer(String appBackendUrl) {
+    return 'This app is signed in to $appBackendUrl. Pair again to move the daemon there.';
+  }
+
+  @override
   String get onboardingSkip => 'Skip';
 
   @override
