@@ -49,6 +49,14 @@ class TenancyService:
     clock: Any
     audit: Any
     settings: Any
+    #: ``async (workspace_id) -> int``: the team's seats from its plan (``PlanService.seat_limit``,
+    #: SaaS P1-C). Unset (tests, no plans wired): ``settings.default_team_seats``.
+    seat_limit: Any = None
+
+    async def _seats(self, workspace_id: str) -> int:
+        if self.seat_limit is not None:
+            return await self.seat_limit(workspace_id)
+        return self.settings.default_team_seats
 
     # -- reading --------------------------------------------------------------------------
 
@@ -125,7 +133,7 @@ class TenancyService:
         now = self.clock.now()
         members = await self.store.list_members(workspace_id)
         open_invites = [i for i in await self.store.list_invites(workspace_id) if i.is_open(now)]
-        if len(members) + len(open_invites) >= self.settings.default_team_seats:
+        if len(members) + len(open_invites) >= await self._seats(workspace_id):
             raise ConflictError("this workspace has no free seats")
         invite_id, token = new_invite_token()
         invite = Invite(
@@ -142,7 +150,7 @@ class TenancyService:
         if invite is None or not hmac.compare_digest(invite.digest, invite_digest(token)):
             raise ConflictError("this invite is no longer valid")
         member = await self.store.accept_invite(
-            invite_id, user_id=user_id, at=self.clock.now(), seat_limit=self.settings.default_team_seats
+            invite_id, user_id=user_id, at=self.clock.now(), seat_limit=await self._seats(invite.workspace_id)
         )
         await self._audit("join", user_id, member.role, member.workspace_id, {"invite_id": invite_id})
         return member

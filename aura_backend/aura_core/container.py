@@ -181,6 +181,8 @@ class Container:
         self.idempotency = self._build_idempotency_store()
         self.service_keys = self._build_service_keys()
         self.tenancy = self._build_tenancy()
+        self.plans = self._build_plans()
+        self.tenancy.seat_limit = self.plans.seat_limit
 
         self.providers = build_providers(
             settings.llm, model_allowlist=settings.security.model_allowlist
@@ -1327,6 +1329,27 @@ class Container:
 
             store = InMemoryTenancyStore()
         return TenancyService(store=store, clock=self.clock, audit=self.audit, settings=self.settings.tenancy)
+
+    def _build_plans(self) -> Any:
+        """Plans, entitlements and usage metering (SaaS P1-C). Postgres-backed with the other
+        stores, so every gateway worker shares one count; in-memory otherwise."""
+        from .domain.plans import load_catalogue
+        from .plans import PlanService
+
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_plans import PostgresEntitlementStore, PostgresUsageMeter
+
+            url = self.settings.infrastructure.database_url
+            entitlements: Any = PostgresEntitlementStore(url, pool=self._postgres_pool())
+            meter: Any = PostgresUsageMeter(url, pool=self._postgres_pool())
+        else:
+            from .adapters.plans import InMemoryEntitlementStore, InMemoryUsageMeter
+
+            entitlements, meter = InMemoryEntitlementStore(), InMemoryUsageMeter()
+        return PlanService(
+            entitlements=entitlements, meter=meter, tenancy=self.tenancy, clock=self.clock,
+            audit=self.audit, catalogue=load_catalogue(self.settings.tenancy.plan_catalogue_json),
+        )
 
     def _build_idempotency_store(self) -> Any:
         """`Idempotency-Key` bookkeeping (roadmap P1.4). Gated like the outbox: replay only means
