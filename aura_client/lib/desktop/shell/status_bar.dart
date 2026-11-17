@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart' hide HostdRoot;
 import 'package:aura_client/desktop/shell/editor_position.dart';
@@ -35,6 +36,10 @@ class StatusBar extends ConsumerWidget {
     // Nullable on purpose -- null means the daemon never reported `backend_connected`, i.e. an
     // aura_hostd older than the field itself. See HostdStatusSnapshot.backendConnected.
     final backendConnected = status?.backendConnected;
+    // Paired, but to a server other than the one this app is signed in to: the daemon will never
+    // connect, so "Reconnecting..." would be a permanent lie. See
+    // HostdStatusSnapshot.pairedToDifferentServer.
+    final otherServer = status?.pairedToDifferentServer(ref.watch(backendUrlProvider)) ?? false;
     final pendingApprovals = ref.watch(approvalNotifierProvider).pendingApprovals;
     final update = ref.watch(desktopUpdateProvider).value;
 
@@ -84,6 +89,8 @@ class StatusBar extends ConsumerWidget {
                 ? 'Host Not Running'
                 : !authenticated
                     ? 'Host Not Paired'
+                    : otherServer
+                    ? 'Host paired to a different server -- re-pair'
                     : switch (backendConnected) {
                         true => 'Host Connected',
                         false => 'Reconnecting to server...',

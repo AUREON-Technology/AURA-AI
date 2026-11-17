@@ -186,6 +186,20 @@ class _BackendConnection {
   }
 
   void stop() => _client?.stop();
+
+  /// Drops the live connection (if any) and dials again from the config on disk.
+  ///
+  /// [startIfAuthenticated] does nothing once a client exists, which is right at startup but
+  /// wrong after a re-pair: pairing saves a new `backend_url` and token, and a daemon still
+  /// retrying the *old* host (found live 2026-11-17, after the backend moved to
+  /// `api.aureon-ai.tech`) would keep doing so until someone restarted it -- the app showed a
+  /// successful pairing and the connection never moved. Called from `onPaired`, so a first
+  /// pairing (no client yet) behaves exactly as before.
+  void restart() {
+    _client?.stop();
+    _client = null;
+    startIfAuthenticated();
+  }
 }
 
 Future<void> _runDaemon(ConfigStore configStore, WorkspaceStore workspaceStore) async {
@@ -210,7 +224,7 @@ Future<void> _runDaemon(ConfigStore configStore, WorkspaceStore workspaceStore) 
     // A UI driving `/pair/start` + `/pair/status` (Unit 8, control_server.dart) pairs this
     // daemon without ever needing `run` restarted -- the control server exists before any token
     // does precisely so that path works.
-    onPaired: (_) => backend.startIfAuthenticated(),
+    onPaired: (_) => backend.restart(),
     terminalSessions: TerminalSessionManager(workspaceStore),
     debugSessions: DebugSessionManager(workspaceStore),
     approvalQueue: approvalQueue,
