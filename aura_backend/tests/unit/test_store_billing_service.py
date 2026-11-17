@@ -22,7 +22,13 @@ from aura_core.adapters.google_play import PlaySubscription, parse_push
 from aura_core.billing import BillingService, StoreBillingService
 from aura_core.config.settings import BillingSettings
 from aura_core.domain.billing import DEFAULT_PRICES, StoreBinding, SubscriptionStatus
-from aura_core.domain.errors import AuthenticationError, AuthorizationError, ConflictError, ValidationError
+from aura_core.domain.errors import (
+    AuthenticationError,
+    AuthorizationError,
+    ConflictError,
+    DependencyUnavailableError,
+    ValidationError,
+)
 
 DAY = 86400
 PKG = "tech.aureon.app"
@@ -317,3 +323,77 @@ async def test_google_refusals(env) -> None:
     env.play.states["p2"] = _play(env, "not-a-binding")
     assert await env.stores.handle_google("Bearer google", _push("p2")) == "ignored"
     assert await env.billing.subscriptions.get(ws) is None
+
+
+# -- review fixes (D2 final review) ------------------------------------------------------------
+
+async def test_permanently_bad_google_push_is_acknowledged_not_retried(env) -> None:
+    """#1: a malformed push or a purchase Play no longer knows is 'ignored' (200), not a 400 Pub/Sub
+    would redeliver for a week."""
+    assert await env.stores.handle_google("Bearer google", b"{not json") == "ignored"
+    assert await env.stores.handle_google("Bearer google", _push("unknown-to-play")) == "ignored"
+    assert "billing.store_ignored" in await _actions(env)
+
+
+async def test_store_suspension_takes_pro_away(env) -> None:
+    """#2: Play ON_HOLD / Apple billing failure without grace suspends access; recovery restores it."""
+    ws, token = await _bound(env)
+    env.play.states["p1"] = _play(env, token, acknowledged=True)
+    await env.stores.handle_google("Bearer google", _push("p1", "m-1"))
+    env.play.states["p1"] = _play(env, token, "on_hold", acknowledged=True)
+    await env.stores.handle_google("Bearer google", _push("p1", "m-2"))
+    assert await _plan(env, ws) == "free"
+    env.play.states["p1"] = _play(env, token, acknowledged=True)
+    await env.stores.handle_google("Bearer google", _push("p1", "m-3"))
+    assert await _plan(env, ws) == "pro"
+
+
+async def test_late_activation_after_a_refund_does_not_regrant(env) -> None:
+    """#3: a redelivered DID_RENEW signed before the refund."""
+    ws, token = await _bound(env)
+    renew = _apple(env, "n1", "DID_RENEW", token, days=30)
+    env.apple.events["n1-again"] = replace(env.apple.events[renew], event_id="n1-again")
+    await env.stores.handle_apple(renew)
+    env.clock.advance(60)
+    await env.stores.handle_apple(_apple(env, "n2", "REFUND", token, revoked=True))
+    assert await env.stores.handle_apple("n1-again") == "stale"
+    assert await _plan(env, ws) == "free"
+    env.clock.advance(DAY)  # a genuinely new purchase later is honoured
+    assert await env.stores.handle_apple(_apple(env, "n3", "SUBSCRIBED", token, days=30, tx="t-9")) == "applied"
+    assert await _plan(env, ws) == "pro"
+
+
+async def test_refund_of_an_older_renewal_keeps_the_current_period(env) -> None:
+    """#6."""
+    ws, token = await _bound(env)
+    await env.stores.handle_apple(_apple(env, "n1", "SUBSCRIBED", token, days=30, tx="t-1"))
+    await env.stores.handle_apple(_apple(env, "n2", "DID_RENEW", token, days=60, tx="t-2"))
+    assert await env.stores.handle_apple(_apple(env, "n3", "REFUND", token, days=30, tx="t-1", revoked=True)) == "stale"
+    assert await _plan(env, ws) == "pro"
+
+
+async def test_fawry_checkout_refused_while_a_store_renews(env) -> None:
+    """#7: paying Fawry on top of a live store subscription would bill twice."""
+    ws, token = await _bound(env)
+    env.play.states["p1"] = _play(env, token, acknowledged=True)
+    await env.stores.handle_google("Bearer google", _push("p1"))
+    with pytest.raises(ConflictError):
+        await env.billing.checkout("ann", ws, "pro", 1, email=None)
+
+
+async def test_failed_acknowledgement_is_retried_on_redelivery(env) -> None:
+    """#8."""
+    ws, token = await _bound(env)
+    env.play.states["p1"] = _play(env, token)
+    calls = []
+
+    async def flaky(product_id, purchase_token):
+        calls.append(purchase_token)
+        if len(calls) == 1:
+            raise DependencyUnavailableError("down", dependency="google_play")
+
+    env.play.acknowledge = flaky
+    with pytest.raises(DependencyUnavailableError):
+        await env.stores.handle_google("Bearer google", _push("p1"))
+    assert await env.stores.handle_google("Bearer google", _push("p1")) == "duplicate"
+    assert calls == ["p1", "p1"] and await _plan(env, ws) == "pro"

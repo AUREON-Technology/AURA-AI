@@ -1921,7 +1921,7 @@ class BillingSettings:
     reference_expiry_hours: int = 72
     #: In-app subscriptions (SaaS P1-D2). Each store is off until its fields are set.
     apple_bundle_id: str = ""
-    #: ``Production`` or ``Sandbox``; empty accepts either (useful while testing with TestFlight).
+    #: ``Production`` (also when empty) or ``Sandbox``. Sandbox purchases are free: testing only.
     apple_environment: str = ""
     google_package_name: str = ""
     #: The audience the Pub/Sub push subscription puts in its OIDC token (the notify URL).

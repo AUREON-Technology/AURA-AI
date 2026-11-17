@@ -7,7 +7,7 @@ about every change, and AURA keeps the same subscription record a Fawry payment 
 |---|---|---|
 | Subscribed, renewed, offer redeemed / Play `ACTIVE` | `active` until the store's expiry (never earlier than already held) | Pro |
 | Renewal failed, in Apple's or Play's grace period | `grace` | Pro |
-| Renewal failed, no grace / Play `ON_HOLD`, `PAUSED` | `past_due`, then AURA's own grace, then expired | Pro, then Free |
+| Renewal failed, no grace / Play `ON_HOLD`, `PAUSED` | `past_due` (access suspended, as the store does) | Free until the store recovers it |
 | Auto-renew turned off / Play `CANCELED` | `canceled`, access until the expiry | Pro until then |
 | Expired | `expired` | Free |
 | Refunded or revoked / Play voided purchase | `expired` at once | Free |
@@ -76,15 +76,19 @@ pinned in the code (`aura_core/adapters/apple_store.py`, SHA-256
 
 A push is trusted only when Google's OIDC token verifies for that audience and comes from the
 push service account. AURA then reads the purchase from the Play Developer API and acts only on
-that answer. If the API does not answer, the route returns 503, so Pub/Sub delivers the message
-again.
+that answer. If the API does not answer, or acknowledging the purchase fails, the route returns
+503, so Pub/Sub delivers the message again. A message that can never succeed (malformed, or a
+purchase Play no longer knows) is answered 200 `ignored` and audited, so Pub/Sub stops retrying.
+
+Paying with Fawry is refused while a store subscription is still renewing: the person must cancel
+it in the store first, or they would be billed twice.
 
 ## Railway variables (service `AURA-AI`)
 
 | Variable | Value |
 |---|---|
 | `AURA_APPLE_BUNDLE_ID` | the iOS bundle id |
-| `AURA_APPLE_ENVIRONMENT` | `Production`, `Sandbox`, or empty to accept both while testing |
+| `AURA_APPLE_ENVIRONMENT` | `Production` (the default when empty) or `Sandbox` for testing. Sandbox purchases are free, so never leave `Sandbox` on in production |
 | `AURA_GOOGLE_PACKAGE_NAME` | the Android package name |
 | `AURA_GOOGLE_PUSH_AUDIENCE` | the notify URL, exactly as set on the push subscription |
 | `AURA_GOOGLE_PUSH_SERVICE_ACCOUNT` | the push service account's email |

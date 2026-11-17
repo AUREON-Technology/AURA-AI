@@ -73,6 +73,10 @@ class BillingService:
             if (current is not None and current.status is SubscriptionStatus.ACTIVE
                     and (current.plan_id, current.seats) == (plan_id, seats)):
                 raise ConflictError("this workspace already has this plan")
+            if current is not None and current.provider in ("apple", "google") and current.status in (
+                    SubscriptionStatus.ACTIVE, SubscriptionStatus.PAST_DUE, SubscriptionStatus.GRACE):
+                # The store would keep renewing too: cancel there first (D2 review #7).
+                raise ConflictError("cancel the subscription in the app store before paying here")
             await self._void_pending_renewals(workspace_id)
         finally:
             await lock.release()

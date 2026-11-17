@@ -62,6 +62,9 @@ class _Change:
     expires_at: datetime | None
     #: Apple only: an event about a transaction that ended before the current period is stale.
     stale_check: bool = False
+    #: Apple only: when Apple signed it. An activation signed before the subscription last ended
+    #: (a redelivered DID_RENEW after a REFUND) is stale (D2 review #3).
+    signed_at: datetime | None = None
 
 
 @dataclass
@@ -108,7 +111,10 @@ class StoreBillingService:
             return "ignored"
         return await self._apply(_Change(
             "apple", event.event_id, tx.app_account_token, tx.product_id,
-            REVOKE if tx.revoked else action, tx.expires_at, stale_check=action not in (ACTIVATE, REVOKE),
+            REVOKE if tx.revoked else action, tx.expires_at,
+            # A refund of an older renewal leaves the current period alone (D2 review #6); the
+            # transaction that holds the period ends with it, so its refund is never stale.
+            stale_check=action != ACTIVATE or tx.revoked, signed_at=event.signed_at,
         ))
 
     @staticmethod
@@ -131,24 +137,32 @@ class StoreBillingService:
         if self.google_push is None or self.google_play is None:
             raise BillingUnavailableError("Google Play is not configured on this deployment")
         await self.google_push.verify(authorization)
-        push = self.google_push.parse(body)
+        try:
+            push = self.google_push.parse(body)
+        except ValidationError:
+            # Permanently bad: a 4xx would make Pub/Sub redeliver it for a week (D2 review #1).
+            await self._audit("billing.store_ignored", "google", "", {"reason": "malformed push"})
+            return "ignored"
         if push is None:
             return "ignored"
         if push.package_name != self.google_play.package_name:
             await self._audit("billing.store_ignored", "google", "", {"reason": "another package"})
             return "ignored"
-        state = await self.google_play.subscription(push.purchase_token)
+        try:
+            state = await self.google_play.subscription(push.purchase_token)
+        except ValidationError:
+            await self._audit("billing.store_ignored", "google", "", {"reason": "purchase unknown to Play"})
+            return "ignored"
         action = REVOKE if push.voided else _GOOGLE.get(state.state)
         if action is None:
             return "ignored"
         result = await self._apply(_Change(
             "google", push.message_id, state.external_account_id, state.product_id, action, state.expires_at,
         ))
-        if result == "applied" and action == ACTIVATE and not state.acknowledged and state.product_id:
-            try:
-                await self.google_play.acknowledge(state.product_id, push.purchase_token)
-            except Exception:
-                logger.warning("Play purchase could not be acknowledged; the app acknowledges too", exc_info=True)
+        if result in ("applied", "duplicate") and action == ACTIVATE and not state.acknowledged and state.product_id:
+            # A failure propagates (503), so Pub/Sub redelivers and the duplicate acknowledges again:
+            # Play refunds a purchase nobody acknowledged within three days (D2 review #8).
+            await self.google_play.acknowledge(state.product_id, push.purchase_token)
         return result
 
     # -- shared ---------------------------------------------------------------------------
@@ -188,6 +202,9 @@ class StoreBillingService:
         if change.action == ACTIVATE:
             if change.expires_at is None or change.expires_at <= now:
                 return "ignored"  # nothing left to grant
+            if (sub is not None and sub.provider == change.provider and sub.status is SubscriptionStatus.EXPIRED
+                    and change.signed_at is not None and change.signed_at <= sub.updated_at):
+                return "stale"  # signed before the subscription ended: a redelivery, not a new purchase
             live_elsewhere = (sub is not None and sub.provider != change.provider and sub.status in _LIVE
                               and sub.period_end > now)
             if live_elsewhere:
@@ -207,13 +224,13 @@ class StoreBillingService:
             return "applied"
         if sub is None or sub.provider != change.provider:
             return "ignored"  # this store does not own the workspace's subscription
+        if change.stale_check and change.expires_at is not None and change.expires_at < sub.period_end:
+            return "stale"  # about a transaction that ended before the period we already hold
         if change.action == REVOKE:
             await self.subscriptions.put(replace(sub, status=SubscriptionStatus.EXPIRED, updated_at=now))
             await self._downgrade(ws)
             await self._audit("billing.store_revoked", change.provider, ws, {})
             return "applied"
-        if change.stale_check and change.expires_at is not None and change.expires_at < sub.period_end:
-            return "stale"  # about a transaction that ended before the period we already hold
         if sub.status is SubscriptionStatus.EXPIRED and change.action != EXPIRE:
             return "ignored"
         if change.action == EXPIRE:
@@ -227,7 +244,10 @@ class StoreBillingService:
                 max(change.expires_at or now, now) + timedelta(days=self.settings.grace_days)
             await self.subscriptions.put(replace(sub, status=SubscriptionStatus.GRACE, grace_until=until, updated_at=now))
         elif change.action == PAST_DUE:
+            # The store suspended access (Play on hold or paused, Apple billing failure without a
+            # grace period): so does AURA; the store's recovery re-activates (D2 review #2).
             await self.subscriptions.put(replace(sub, status=SubscriptionStatus.PAST_DUE, updated_at=now))
+            await self._downgrade(ws)
         elif change.action == CANCEL:
             end = max(sub.period_end, change.expires_at) if change.expires_at else sub.period_end
             await self.subscriptions.put(replace(sub, status=SubscriptionStatus.CANCELED, period_end=end, updated_at=now))

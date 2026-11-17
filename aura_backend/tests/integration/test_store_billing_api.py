@@ -136,7 +136,9 @@ def test_google_push_over_http(client, stores, clock) -> None:
     signed = {"authorization": "Bearer google-signed"}
     assert client.post("/api/v3/billing/google/notify", content=_push("p1")).status_code == 403
     assert client.post("/api/v3/billing/google/notify", content=_push("p1"), headers={"authorization": "Bearer x"}).status_code == 403
-    assert client.post("/api/v3/billing/google/notify", content=b"{}", headers=signed).status_code == 400
+    # Permanently bad: acknowledged (200 "ignored"), or Pub/Sub would redeliver it for a week.
+    bad = client.post("/api/v3/billing/google/notify", content=b"{}", headers=signed)
+    assert bad.status_code == 200 and bad.json()["result"] == "ignored"
     stores.google_play.down = True
     assert client.post("/api/v3/billing/google/notify", content=_push("p1"), headers=signed).status_code == 503
     stores.google_play.down = False

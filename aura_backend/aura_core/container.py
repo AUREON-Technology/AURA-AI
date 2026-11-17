@@ -1416,7 +1416,8 @@ class Container:
         if billing.apple_configured:
             from .adapters.apple_store import AppleNotificationVerifier
 
-            apple = AppleNotificationVerifier(billing.apple_bundle_id, environment=billing.apple_environment or None)
+            # Production unless Sandbox is asked for: Sandbox purchases are free (D2 review #5).
+            apple = AppleNotificationVerifier(billing.apple_bundle_id, environment=billing.apple_environment or "Production")
         if billing.google_configured:
             from .adapters.google_play import GooglePlayClient, GooglePushVerifier
 

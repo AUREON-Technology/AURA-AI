@@ -168,3 +168,24 @@ async def test_nested_transaction_with_a_bad_signature_is_refused() -> None:
 async def test_malformed_payloads_are_4xx_errors(payload) -> None:
     with pytest.raises((ValidationError, AuthenticationError)):
         await _verifier(Chain()).verify(payload)
+
+
+@pytest.mark.parametrize("signed_date", [1e30, -1e30, float("inf")])
+async def test_absurd_signed_date_is_a_4xx_not_a_crash(signed_date) -> None:
+    """D2 review #4: checked before the signature, so anyone can send it."""
+    chain = Chain()
+    payload = chain.sign({"notificationUUID": "n", "notificationType": "TEST", "signedDate": signed_date})
+    with pytest.raises((ValidationError, AuthenticationError)):
+        await _verifier(chain).verify(payload)
+
+
+def test_container_defaults_apple_to_production(monkeypatch) -> None:
+    """D2 review #5: Sandbox (free, TestFlight) purchases only when explicitly configured."""
+    from dataclasses import replace as _replace
+
+    from aura_core.config.settings import AuraSettings
+    from aura_core.container import Container
+
+    settings = AuraSettings.from_env()
+    settings = _replace(settings, billing=_replace(settings.billing, apple_bundle_id=BUNDLE))
+    assert Container(settings).store_billing.apple._environment == "Production"

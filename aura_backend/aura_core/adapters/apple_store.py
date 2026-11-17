@@ -109,7 +109,10 @@ def _ms(value: Any) -> datetime | None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValidationError("timestamp is not a number")
-    return datetime.fromtimestamp(value / 1000, tz=timezone.utc)
+    try:
+        return datetime.fromtimestamp(value / 1000, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError) as exc:  # 1e30, inf, nan: refused, not a 500
+        raise ValidationError("timestamp is out of range") from exc
 
 
 class AppleNotificationVerifier:
