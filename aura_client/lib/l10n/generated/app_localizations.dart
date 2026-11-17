@@ -1743,6 +1743,102 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{step} — {status}'**
   String planStepWithStatus(String step, String status);
+
+  /// Shown at /ide on a platform without the Desktop IDE (macOS, mobile, web)
+  ///
+  /// In en, this message translates to:
+  /// **'The desktop IDE isn\'t available on this platform yet'**
+  String get desktopIdeUnavailableTitle;
+
+  /// Explains where the Desktop IDE runs
+  ///
+  /// In en, this message translates to:
+  /// **'It runs in AURA on Windows and Linux. Everything else in AURA works here as usual.'**
+  String get desktopIdeUnavailableBody;
+
+  /// Button from the desktop-IDE-unavailable page back to Home
+  ///
+  /// In en, this message translates to:
+  /// **'Go to Home'**
+  String get desktopIdeUnavailableGoHome;
+
+  /// Desktop toggle (WP8, D-10b) that lets phone and web Engineer turns use this computer
+  ///
+  /// In en, this message translates to:
+  /// **'Allow control from my phone and the web'**
+  String get hostdRemoteControlTitle;
+
+  /// One-line explanation under the remote-control toggle
+  ///
+  /// In en, this message translates to:
+  /// **'When on, the Engineer can work on this computer\'s granted folders from your phone or the web. Every change and command is approved on that device first. Turn it off here any time.'**
+  String get hostdRemoteControlExplanation;
+
+  /// Confirmation dialog title before remote control is turned on
+  ///
+  /// In en, this message translates to:
+  /// **'Allow control from your phone and the web?'**
+  String get hostdRemoteControlConfirmTitle;
+
+  /// Confirmation dialog body before remote control is turned on
+  ///
+  /// In en, this message translates to:
+  /// **'Anyone signed in to your AURA account on a phone or in a browser will be able to ask the Engineer to read, change and run commands in this computer\'s granted folders. Each change and command still waits for approval on that device. You can turn this off here at any time.'**
+  String get hostdRemoteControlConfirmBody;
+
+  /// Confirm button that turns remote control on
+  ///
+  /// In en, this message translates to:
+  /// **'Allow'**
+  String get hostdRemoteControlConfirmAllow;
+
+  /// Snackbar when the daemon refused or could not be reached
+  ///
+  /// In en, this message translates to:
+  /// **'Could not change remote control: {error}'**
+  String hostdRemoteControlFailed(String error);
+
+  /// Engineer chat desktop bar: no paired daemon is online
+  ///
+  /// In en, this message translates to:
+  /// **'Your computer isn\'t connected'**
+  String get engineerDesktopNotConnected;
+
+  /// Engineer chat desktop bar: the daemon is online but remote control is off
+  ///
+  /// In en, this message translates to:
+  /// **'Remote control is off on your computer — turn it on in AURA on the computer'**
+  String get engineerDesktopRemoteOff;
+
+  /// Engineer chat desktop bar: remote control is on but no folder is granted
+  ///
+  /// In en, this message translates to:
+  /// **'Your computer hasn\'t shared any folders yet — add one in AURA on the computer'**
+  String get engineerDesktopNoFolders;
+
+  /// Label of the folder picker in the Engineer chat desktop bar
+  ///
+  /// In en, this message translates to:
+  /// **'Folder on your computer'**
+  String get engineerDesktopFolderLabel;
+
+  /// Engineer chat desktop bar: GET /api/v3/host/folders failed
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t check your computer'**
+  String get engineerDesktopCheckFailed;
+
+  /// Tooltip of the desktop bar's refresh button
+  ///
+  /// In en, this message translates to:
+  /// **'Check again'**
+  String get engineerDesktopRefresh;
+
+  /// Confirmation card title for run_command (sandbox or the user's computer)
+  ///
+  /// In en, this message translates to:
+  /// **'Run a command'**
+  String get engineerConfirmRunCommand;
 }
 
 class _AppLocalizationsDelegate

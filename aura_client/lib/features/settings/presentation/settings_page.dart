@@ -230,7 +230,7 @@ class _RowDivider extends StatelessWidget {
 }
 
 /// Toggles the `desktop_use_ide` SharedPreferences flag the router checks
-/// (`core/routing/router.dart`) to decide whether a Windows user lands on
+/// (`core/routing/router.dart`) to decide whether a Windows or Linux user lands on
 /// AURA Home (`/today`) or the Desktop IDE (`/ide`) after signing in — never
 /// a forced redirect, per ADR-015. Without this control the IDE built under
 /// `desktop/` was unreachable: nothing else in the app ever wrote that key.

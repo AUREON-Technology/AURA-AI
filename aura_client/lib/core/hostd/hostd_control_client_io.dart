@@ -286,6 +286,14 @@ class HostdControlClient {
   Future<Map<String, dynamic>> gitDiscardTask({required String taskKey}) =>
       _request('POST', '/git/discard-task', body: {'task_key': taskKey});
 
+  /// WP8 (D-10b): whether phone and web Engineer turns may use this computer. Settable only
+  /// here, through the local control server -- never by the backend -- and off until the person
+  /// turns it on. Returns the daemon's own answer, which is what the UI then shows.
+  Future<bool> setRemoteControl(bool enabled) async {
+    final result = await _request('POST', '/remote_control', body: {'enabled': enabled});
+    return result['remote_control'] == true;
+  }
+
   Future<Map<String, dynamic>> startPairing({String? backendUrl}) =>
       _request('POST', '/pair/start', body: {'backend_url': ?backendUrl});
 

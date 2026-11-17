@@ -21,6 +21,7 @@ import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/hostd/hostd_error_messages.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart';
 import 'package:aura_client/core/hostd/hostd_supervisor.dart';
+import 'package:aura_client/features/engineering/presentation/remote_control_toggle.dart';
 
 class HostPanel extends ConsumerStatefulWidget {
   const HostPanel({super.key});
@@ -193,6 +194,11 @@ class _HostPanelState extends ConsumerState<HostPanel> {
               ),
           ],
         ),
+        // WP8 (D-10b): the remote-control switch lives on the computer, never on the phone.
+        if (isRunning) ...[
+          const SizedBox(height: AuraSpacing.md),
+          HostdRemoteControlToggle(enabled: status.remoteControl, compact: true),
+        ],
         if (isRunning && isPaired && status.roots.isNotEmpty) ...[
           const SizedBox(height: AuraSpacing.md),
           _buildRootsList(context, palette, status.roots),

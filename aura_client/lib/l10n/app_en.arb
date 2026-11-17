@@ -1239,5 +1239,74 @@
         "type": "String"
       }
     }
+  },
+  "desktopIdeUnavailableTitle": "The desktop IDE isn't available on this platform yet",
+  "@desktopIdeUnavailableTitle": {
+    "description": "Shown at /ide on a platform without the Desktop IDE (macOS, mobile, web)"
+  },
+  "desktopIdeUnavailableBody": "It runs in AURA on Windows and Linux. Everything else in AURA works here as usual.",
+  "@desktopIdeUnavailableBody": {
+    "description": "Explains where the Desktop IDE runs"
+  },
+  "desktopIdeUnavailableGoHome": "Go to Home",
+  "@desktopIdeUnavailableGoHome": {
+    "description": "Button from the desktop-IDE-unavailable page back to Home"
+  },
+  "hostdRemoteControlTitle": "Allow control from my phone and the web",
+  "@hostdRemoteControlTitle": {
+    "description": "Desktop toggle (WP8, D-10b) that lets phone and web Engineer turns use this computer"
+  },
+  "hostdRemoteControlExplanation": "When on, the Engineer can work on this computer's granted folders from your phone or the web. Every change and command is approved on that device first. Turn it off here any time.",
+  "@hostdRemoteControlExplanation": {
+    "description": "One-line explanation under the remote-control toggle"
+  },
+  "hostdRemoteControlConfirmTitle": "Allow control from your phone and the web?",
+  "@hostdRemoteControlConfirmTitle": {
+    "description": "Confirmation dialog title before remote control is turned on"
+  },
+  "hostdRemoteControlConfirmBody": "Anyone signed in to your AURA account on a phone or in a browser will be able to ask the Engineer to read, change and run commands in this computer's granted folders. Each change and command still waits for approval on that device. You can turn this off here at any time.",
+  "@hostdRemoteControlConfirmBody": {
+    "description": "Confirmation dialog body before remote control is turned on"
+  },
+  "hostdRemoteControlConfirmAllow": "Allow",
+  "@hostdRemoteControlConfirmAllow": {
+    "description": "Confirm button that turns remote control on"
+  },
+  "hostdRemoteControlFailed": "Could not change remote control: {error}",
+  "@hostdRemoteControlFailed": {
+    "description": "Snackbar when the daemon refused or could not be reached",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "engineerDesktopNotConnected": "Your computer isn't connected",
+  "@engineerDesktopNotConnected": {
+    "description": "Engineer chat desktop bar: no paired daemon is online"
+  },
+  "engineerDesktopRemoteOff": "Remote control is off on your computer — turn it on in AURA on the computer",
+  "@engineerDesktopRemoteOff": {
+    "description": "Engineer chat desktop bar: the daemon is online but remote control is off"
+  },
+  "engineerDesktopNoFolders": "Your computer hasn't shared any folders yet — add one in AURA on the computer",
+  "@engineerDesktopNoFolders": {
+    "description": "Engineer chat desktop bar: remote control is on but no folder is granted"
+  },
+  "engineerDesktopFolderLabel": "Folder on your computer",
+  "@engineerDesktopFolderLabel": {
+    "description": "Label of the folder picker in the Engineer chat desktop bar"
+  },
+  "engineerDesktopCheckFailed": "Couldn't check your computer",
+  "@engineerDesktopCheckFailed": {
+    "description": "Engineer chat desktop bar: GET /api/v3/host/folders failed"
+  },
+  "engineerDesktopRefresh": "Check again",
+  "@engineerDesktopRefresh": {
+    "description": "Tooltip of the desktop bar's refresh button"
+  },
+  "engineerConfirmRunCommand": "Run a command",
+  "@engineerConfirmRunCommand": {
+    "description": "Confirmation card title for run_command (sandbox or the user's computer)"
   }
 }

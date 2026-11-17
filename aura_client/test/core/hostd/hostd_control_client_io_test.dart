@@ -200,4 +200,62 @@ void main() {
     expect(seenUri?.queryParameters['root'], '/a b');
     expect(seenUri?.queryParameters['path'], 'sub dir');
   });
+
+  group('remote control (WP8, D-10b)', () {
+    test('setRemoteControl POSTs {enabled} to /remote_control with the token and returns the '
+        "daemon's answer", () async {
+      final seen = <String>[];
+      Map<String, dynamic>? seenBody;
+      final server = await _FakeControlServer.start(
+        respond: (request, body) {
+          seen.add('${request.method} ${request.uri.path}');
+          seenBody = body;
+          return {'remote_control': body['enabled']};
+        },
+      );
+      addTearDown(server.close);
+      final client = HostdControlClient(
+        discoverEndpoint: () async => HostdControlEndpoint(port: server._httpServer.port, token: 'tok'),
+      );
+
+      expect(await client.setRemoteControl(true), isTrue);
+      expect(seen.single, 'POST /remote_control');
+      expect(seenBody, {'enabled': true});
+      expect(server.receivedAuthHeaders.single, 'Bearer tok');
+
+      expect(await client.setRemoteControl(false), isFalse);
+      expect(seenBody, {'enabled': false});
+    });
+
+    test('the answer is what the daemon says, not what was asked for', () async {
+      final server = await _FakeControlServer.start(respond: (request, body) => {'remote_control': false});
+      addTearDown(server.close);
+      final client = HostdControlClient(
+        discoverEndpoint: () async => HostdControlEndpoint(port: server._httpServer.port, token: 't'),
+      );
+
+      expect(await client.setRemoteControl(true), isFalse);
+    });
+
+    test('an older daemon without the route reports the out-of-date hint', () async {
+      final httpServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      unawaited(() async {
+        await for (final request in httpServer) {
+          request.response.statusCode = 404;
+          request.response.headers.contentType = ContentType.json;
+          request.response.write(jsonEncode({'error': 'no such endpoint'}));
+          await request.response.close();
+        }
+      }());
+      addTearDown(() => httpServer.close(force: true));
+      final client = HostdControlClient(
+        discoverEndpoint: () async => HostdControlEndpoint(port: httpServer.port, token: 't'),
+      );
+
+      await expectLater(
+        client.setRemoteControl(true),
+        throwsA(isA<HostdControlError>().having((e) => e.message, 'message', contains('out of date'))),
+      );
+    });
+  });
 }

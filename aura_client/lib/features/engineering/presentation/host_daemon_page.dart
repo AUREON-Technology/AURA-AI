@@ -16,6 +16,8 @@ import 'package:aura_client/core/hostd/hostd_providers.dart';
 import 'package:aura_client/core/hostd/hostd_supervisor.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
+import 'remote_control_toggle.dart';
+
 /// The desktop Engineer daemon screen (ADR-011 Unit 8) -- supervise `aura_hostd`, pair it,
 /// grant/trust/revoke workspace roots, and browse them. Everything here talks to the daemon's
 /// local control server (`hostd_control_client.dart`), never to the AURA backend directly.
@@ -388,6 +390,11 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
                 ),
             ],
           ),
+          // WP8 (D-10b): set only here, on the computer itself.
+          if (status.reachable) ...[
+            const SizedBox(height: AuraSpacing.md),
+            HostdRemoteControlToggle(enabled: status.remoteControl),
+          ],
         ],
       ),
     );

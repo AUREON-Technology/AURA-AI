@@ -931,4 +931,62 @@ class AppLocalizationsEn extends AppLocalizations {
   String planStepWithStatus(String step, String status) {
     return '$step — $status';
   }
+
+  @override
+  String get desktopIdeUnavailableTitle =>
+      'The desktop IDE isn\'t available on this platform yet';
+
+  @override
+  String get desktopIdeUnavailableBody =>
+      'It runs in AURA on Windows and Linux. Everything else in AURA works here as usual.';
+
+  @override
+  String get desktopIdeUnavailableGoHome => 'Go to Home';
+
+  @override
+  String get hostdRemoteControlTitle =>
+      'Allow control from my phone and the web';
+
+  @override
+  String get hostdRemoteControlExplanation =>
+      'When on, the Engineer can work on this computer\'s granted folders from your phone or the web. Every change and command is approved on that device first. Turn it off here any time.';
+
+  @override
+  String get hostdRemoteControlConfirmTitle =>
+      'Allow control from your phone and the web?';
+
+  @override
+  String get hostdRemoteControlConfirmBody =>
+      'Anyone signed in to your AURA account on a phone or in a browser will be able to ask the Engineer to read, change and run commands in this computer\'s granted folders. Each change and command still waits for approval on that device. You can turn this off here at any time.';
+
+  @override
+  String get hostdRemoteControlConfirmAllow => 'Allow';
+
+  @override
+  String hostdRemoteControlFailed(String error) {
+    return 'Could not change remote control: $error';
+  }
+
+  @override
+  String get engineerDesktopNotConnected => 'Your computer isn\'t connected';
+
+  @override
+  String get engineerDesktopRemoteOff =>
+      'Remote control is off on your computer — turn it on in AURA on the computer';
+
+  @override
+  String get engineerDesktopNoFolders =>
+      'Your computer hasn\'t shared any folders yet — add one in AURA on the computer';
+
+  @override
+  String get engineerDesktopFolderLabel => 'Folder on your computer';
+
+  @override
+  String get engineerDesktopCheckFailed => 'Couldn\'t check your computer';
+
+  @override
+  String get engineerDesktopRefresh => 'Check again';
+
+  @override
+  String get engineerConfirmRunCommand => 'Run a command';
 }

@@ -97,7 +97,7 @@ class _CommandPaletteDialogState extends ConsumerState<_CommandPaletteDialog> {
 
   /// ADR-015's "Open Desktop IDE" command: with the landing preference no
   /// longer redirecting `/today`, this and the IDE's own "Leave IDE" are how
-  /// a Windows user moves between the two shells (audit F-34).
+  /// a Windows or Linux user moves between the two shells (audit F-34).
   List<_Destination> get _allDestinations => [
         ..._destinations,
         if (canRunDesktopIde)

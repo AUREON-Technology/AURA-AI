@@ -71,6 +71,7 @@ class HostdControlClient {
   }) async =>
       _unavailable();
   Future<Map<String, dynamic>> gitDiscardTask({required String taskKey}) async => _unavailable();
+  Future<bool> setRemoteControl(bool enabled) async => _unavailable();
   Future<Map<String, dynamic>> startPairing({String? backendUrl}) async => _unavailable();
   Future<Map<String, dynamic>> pairingStatus() async => _unavailable();
   Future<void> shutdown() async => _unavailable();

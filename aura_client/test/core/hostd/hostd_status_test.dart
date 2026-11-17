@@ -87,4 +87,15 @@ void main() {
     expect(snapshot.backendUrl, isNull);
     expect(snapshot.canPair, isTrue);
   });
+
+  test('remote_control is read from /status (WP8)', () {
+    expect(parseHostdStatusBody({'authenticated': true, 'remote_control': true}).remoteControl, isTrue);
+    expect(parseHostdStatusBody({'authenticated': true, 'remote_control': false}).remoteControl, isFalse);
+  });
+
+  test('a daemon too old to report remote_control reads as off', () {
+    // An older daemon has no remote control at all, so "off" is the truth, not a guess.
+    expect(parseHostdStatusBody({'authenticated': true}).remoteControl, isFalse);
+    expect(HostdStatusSnapshot(reachable: false).remoteControl, isFalse);
+  });
 }

@@ -36,6 +36,7 @@ class HostdStatusSnapshot {
     this.error,
     this.credentialsRejected = false,
     this.lastCloseCode,
+    this.remoteControl = false,
   });
 
   /// Whether the control server answered at all -- false means `aura_hostd run` isn't up (or
@@ -69,6 +70,11 @@ class HostdStatusSnapshot {
 
   /// The close code of the daemon's most recent backend connection, when it reports one.
   final int? lastCloseCode;
+
+  /// WP8 (D-10b): whether phone and web Engineer turns may use this computer. Off until the
+  /// person turns it on here; an `aura_hostd` too old to report the field has no remote control
+  /// at all, so it reads as off.
+  final bool remoteControl;
 
   /// Running and holding a token the backend will no longer accept: only pairing again helps.
   bool get needsRepair => reachable && credentialsRejected;
@@ -160,6 +166,7 @@ HostdStatusSnapshot parseHostdStatusBody(Map<String, dynamic> body) {
     roots: roots,
     credentialsRejected: body['credentials_rejected'] as bool? ?? false,
     lastCloseCode: (body['last_close_code'] as num?)?.toInt(),
+    remoteControl: body['remote_control'] == true,
   );
 }
 

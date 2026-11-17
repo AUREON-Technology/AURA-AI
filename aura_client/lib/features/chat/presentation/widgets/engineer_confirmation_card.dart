@@ -5,6 +5,7 @@ import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/features/chat/data/chat_repository.dart';
 import 'package:aura_client/features/chat/data/turn_meta.dart';
 import 'package:aura_client/features/chat/presentation/chat_view_model.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 import 'code_preview.dart';
 import 'github_branch_summary.dart';
@@ -375,7 +376,8 @@ class _RunCommandSummary extends StatelessWidget {
     final command = call.arguments['command']?.toString() ?? '';
     return _SummaryShell(
       icon: Icons.terminal,
-      title: 'Run command in sandbox',
+      // Not "in sandbox": a host-routed command runs on the user's own computer (WP8).
+      title: context.l10n.engineerConfirmRunCommand,
       children: [SandboxTerminalView(body: command)],
     );
   }

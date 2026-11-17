@@ -36,6 +36,7 @@ import '../../l10n/generated/app_localizations.dart';
 import '../../features/voice_live/presentation/live_voice_page.dart';
 import '../design_system/design_system.dart';
 import '../platform/aura_platform.dart';
+import '../../desktop/shell/desktop_ide_unavailable_page.dart';
 import '../../desktop/shell/desktop_shell.dart';
 import '../../desktop/workspace/workspace_welcome_page.dart';
 import '../../desktop/workspace/workspace_manager_page.dart';
@@ -450,8 +451,8 @@ class RouterTransitionNotifier extends ChangeNotifier {
   }
 }
 
-/// Whether this Windows user chose the Desktop IDE as their landing screen
-/// (Settings → Desktop IDE). Always false off Windows.
+/// Whether this Windows or Linux user chose the Desktop IDE as their landing
+/// screen (Settings → Desktop IDE). Always false where the IDE does not run.
 Future<bool> _prefersDesktopIde() async {
   if (!isDesktopIde) return false;
   final prefs = await SharedPreferences.getInstance();
@@ -492,6 +493,11 @@ Future<String?> resolveAppRedirect({
   }
   return null;
 }
+
+/// The `/ide` shell: the Desktop IDE on Windows and Linux (D-08, D-08b), and on every other
+/// platform a page that says so and offers Home -- not the blank `SizedBox.shrink()` it used to be.
+Widget desktopIdeShellBuilder(BuildContext context, GoRouterState state, Widget child) =>
+    isDesktopIde ? DesktopShell(child: child) : const DesktopIdeUnavailablePage();
 
 final routerProvider = Provider<GoRouter>((ref) {
   final notifier = RouterTransitionNotifier(ref);
@@ -621,10 +627,9 @@ final routerProvider = Provider<GoRouter>((ref) {
         ],
       ),
 
-      // Desktop IDE Shell Route (Windows only)
+      // Desktop IDE Shell Route (Windows and Linux; elsewhere a "not available" page)
       ShellRoute(
-        builder: (context, state, child) =>
-            isDesktopIde ? DesktopShell(child: child) : const SizedBox.shrink(),
+        builder: desktopIdeShellBuilder,
         routes: [
           GoRoute(
             path: '/ide',
