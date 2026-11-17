@@ -715,6 +715,8 @@ class Container:
                 model=model, dimension=dimension,
                 max_batch_size=self.settings.llm.embedding_batch_size,
                 revision=self.settings.llm.embedding_model_revision,
+                query_prefix=self.settings.llm.embedding_query_prefix,
+                document_prefix=self.settings.llm.embedding_document_prefix,
             )
         # Anything else is treated as the name of a configured provider whose base_url serves an
         # OpenAI-compatible /v1/embeddings endpoint.

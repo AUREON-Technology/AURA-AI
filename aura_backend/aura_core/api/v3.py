@@ -1130,11 +1130,19 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     @router.post("/voice/transcribe")
     async def transcribe_audio(
-        request: Request, file: UploadFile = File(...), caller: Principal = Depends(principal),
+        request: Request,
+        file: UploadFile = File(...),
+        language: str | None = Form(default=None, max_length=40),
+        caller: Principal = Depends(principal),
     ) -> JSONResponse:
         """Speech to text via the container's `SpeechToText` engine (self-hosted
         `faster-whisper`, Phase F2). 503s with a clear `dependency_unavailable` body when no
-        engine is configured, rather than pretending an empty transcript is a real answer."""
+        engine is configured, rather than pretending an empty transcript is a real answer.
+
+        ``language`` (optional, ISO-639-1 such as ``ar``) is a hint for a multilingual model;
+        without it the model detects the language itself. An English-only (``*.en``) model
+        ignores it, exactly as before the field existed (docs/plans/arabic-language_plan.md,
+        stage 4)."""
         await enforce_rate_limit(request, caller, "voice")
         if container.stt_engine is None:
             raise DependencyUnavailableError(
@@ -1146,7 +1154,19 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             raise ValidationError(
                 "uploaded audio exceeds the size limit", details={"limit_bytes": MAX_AUDIO_BYTES}
             )
-        text = await container.stt_engine.transcribe(data)
+        hint = None
+        if language:
+            from ..voice.session import normalise_language
+
+            hint = normalise_language(language)
+            if hint is None:
+                raise ValidationError(
+                    "language is not a supported language code; send an ISO-639-1 code such as ar",
+                    details={"reason": "language_unsupported"},
+                )
+            if settings.voice.stt_model.endswith(".en"):
+                hint = None
+        text = await container.stt_engine.transcribe(data, language=hint)
         return JSONResponse(content={"text": text, "engine": container.stt_engine.name})
 
     @router.post("/voice/speak")

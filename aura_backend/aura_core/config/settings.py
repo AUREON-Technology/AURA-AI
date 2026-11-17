@@ -128,6 +128,18 @@ def _env(key: str, default: str | None = None) -> str | None:
     return os.environ.get(f"AURA_{key}", default)
 
 
+def _embedding_prefix(kind: str) -> str:
+    """``AURA_EMBEDDING_<kind>_PREFIX`` if set (even to empty), else the model family's own:
+    ``query: `` / ``passage: `` for E5 models, nothing for anything else."""
+    explicit = _env(f"EMBEDDING_{kind}_PREFIX")
+    if explicit is not None:
+        return explicit
+    model = (_env("EMBEDDING_MODEL", "") or "").rsplit("/", 1)[-1].lower()
+    if model.startswith(("e5-", "multilingual-e5-")):
+        return "query: " if kind == "QUERY" else "passage: "
+    return ""
+
+
 def _bool(key: str, default: bool) -> bool:
     raw = _env(key)
     if raw is None:
@@ -728,6 +740,14 @@ class LLMSettings:
     embedding_model_revision: str = ""
     embedding_dimension: int = 384
     embedding_batch_size: int = 64
+    #: Asymmetric embedders want different text in front of queries and documents. E5 models
+    #: (``intfloat/multilingual-e5-*``) are trained with ``query: `` / ``passage: `` and lose
+    #: several points of recall without them, so those are the default for an E5 model; any
+    #: other model gets none unless ``AURA_EMBEDDING_QUERY_PREFIX`` / ``..._DOCUMENT_PREFIX`` say
+    #: so (an explicitly empty value means none). The document prefix is part of the index
+    #: identity (``SentenceTransformerProvider.model_id``): changing it builds a new index.
+    embedding_query_prefix: str = ""
+    embedding_document_prefix: str = ""
     request_timeout_s: float = 60.0
     max_fallbacks: int = 2
     circuit_failure_threshold: int = 5
@@ -802,6 +822,8 @@ class LLMSettings:
             embedding_model_revision=_env("EMBEDDING_MODEL_REVISION", "") or "",
             embedding_dimension=_int("EMBEDDING_DIMENSION", 384, minimum=16),
             embedding_batch_size=_int("EMBEDDING_BATCH_SIZE", 64, minimum=1, maximum=1024),
+            embedding_query_prefix=_embedding_prefix("QUERY"),
+            embedding_document_prefix=_embedding_prefix("DOCUMENT"),
             request_timeout_s=_float("LLM_TIMEOUT_S", 60.0, minimum=1.0),
             max_fallbacks=_int("LLM_MAX_FALLBACKS", 2, minimum=0, maximum=5),
             circuit_failure_threshold=_int("LLM_CIRCUIT_THRESHOLD", 5, minimum=1),
@@ -885,7 +907,10 @@ class KnowledgeSettings:
     #: PATH -- this flag lets an operator opt out even when it is, e.g. to keep CPU free for the
     #: generator; it can never opt *in* to an engine that was never present.
     ocr_enabled: bool = True
-    ocr_lang: str = "eng"
+    #: Tesseract languages, ``+``-joined. Arabic and English (decision 16): the image installs
+    #: ``tesseract-ocr-ara``; a host without it falls back to the installed subset
+    #: (``TesseractOcrEngine._installed_subset``).
+    ocr_lang: str = "ara+eng"
     #: Whether chunk text (and a memory's ``subject``) is copied into the vector payload (audit
     #: FSA-018 / CB-22). ``None`` decides by where the vector store runs
     #: (:func:`vector_payload_content_enabled`): on-host stores keep it for speed; an off-host
@@ -924,7 +949,7 @@ class KnowledgeSettings:
             max_document_bytes=_int("KNOWLEDGE_MAX_DOC_BYTES", 8 * 1024 * 1024, minimum=1024),
             prompt_chunk_max_chars=_int("KNOWLEDGE_PROMPT_CHUNK_CHARS", 280, minimum=64, maximum=4000),
             ocr_enabled=_bool("KNOWLEDGE_OCR_ENABLED", True),
-            ocr_lang=_env("KNOWLEDGE_OCR_LANG", "eng") or "eng",
+            ocr_lang=_env("KNOWLEDGE_OCR_LANG", "ara+eng") or "ara+eng",
         )
 
     def __post_init__(self) -> None:
