@@ -81,7 +81,7 @@ _ADMIN_UNSAFE_TO_PROBE: dict[str, str] = {
     "/api/v3/admin/index/rollback": "would roll the live index back to a previous generation",
     "/api/v3/admin/models/import": "would import a model into the live registry",
     "/api/v3/admin/local-models/pull": "would pull a model onto the inference host",
-    "/api/v3/admin/local-models/{name}": "DELETE would remove a model from the inference host",
+    "/api/v3/admin/local-models/{name:path}": "DELETE would remove a model from the inference host",
     "/api/v3/admin/learning/jobs": "POST would launch a training job",
     "/api/v3/admin/learning/request-approval": "would create a real approval request",
     "/api/v3/admin/approvals/{approval_id}/decide": "would decide a real pending approval",

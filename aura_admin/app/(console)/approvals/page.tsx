@@ -3,10 +3,15 @@
 import { useEffect, useState } from "react";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { api } from "@/lib/api";
-import type { Approval } from "@/lib/types";
+import { api, fetchMe } from "@/lib/api";
+import type { Approval, Me } from "@/lib/types";
+
+// Track AP's gates are a Super Admin's decision (ADR-021, ADR-024); the gateway refuses anyone
+// else with 403 (aura_core/api/admin.py, audit INT-006), so the console does not offer them.
+const SUPER_ADMIN_KINDS = new Set(["connector_registration", "blueprint_deployment"]);
 
 export default function ApprovalsPage() {
+  const [me, setMe] = useState<Me | null>(null);
   const [rows, setRows] = useState<Approval[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -16,7 +21,12 @@ export default function ApprovalsPage() {
       .catch((err: Error) => setError(err.message));
   }
 
-  useEffect(load, []);
+  useEffect(() => {
+    load();
+    fetchMe()
+      .then(setMe)
+      .catch((err: Error) => setError(err.message));
+  }, []);
 
   return (
     <>
@@ -59,13 +69,15 @@ export default function ApprovalsPage() {
                   )}
                 </td>
                 <td>
-                  {row.status === "pending" ? (
+                  {row.status === "pending" && SUPER_ADMIN_KINDS.has(row.kind) && !me?.is_super_admin ? (
+                    <span className="muted">SuperAdmin decides</span>
+                  ) : row.status === "pending" ? (
                     <>
                       <ConfirmDialog
                         title="Approve"
                         confirmText="approve"
                         onConfirm={async () => {
-                          await api(`/admin/approvals/${row.id}/decide`, {
+                          await api(`/admin/approvals/${encodeURIComponent(row.id)}/decide`, {
                             method: "POST",
                             body: JSON.stringify({ approved: true }),
                           });
@@ -79,7 +91,7 @@ export default function ApprovalsPage() {
                         title="Reject"
                         confirmText="reject"
                         onConfirm={async () => {
-                          await api(`/admin/approvals/${row.id}/decide`, {
+                          await api(`/admin/approvals/${encodeURIComponent(row.id)}/decide`, {
                             method: "POST",
                             body: JSON.stringify({ approved: false }),
                           });
