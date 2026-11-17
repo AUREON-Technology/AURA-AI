@@ -18,6 +18,7 @@ import asyncio
 import base64
 import binascii
 import json
+import os
 from datetime import datetime, timedelta
 from typing import Any, AsyncIterator, Mapping
 
@@ -43,6 +44,7 @@ from ..domain.untrusted import MAX_UNTRUSTED_CHARS
 from ..kernel.kernel import TurnRequest
 from ..observability.logging import get_logger
 from ..ports.runtime import AuditEvent
+from ..prompts import PIN_SYNC_INTERVAL_S
 from ..security.rate_limit import extract_client_ip
 from .admin import register_admin_ops
 
@@ -1565,6 +1567,16 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     # -- admin -------------------------------------------------------------------------
 
+    async def _shared_prompt_inventory() -> list[dict[str, Any]]:
+        """The prompt inventory with pins re-read from the shared store first, so whichever
+        worker answers reports the same pins (INT-004). A store error degrades to this worker's
+        last synced view rather than failing the whole status page."""
+        try:
+            await container.prompts.refresh_pins()
+        except Exception:
+            logger.warning("prompt pin refresh failed; reporting this worker's last synced pins")
+        return container.prompts.describe()
+
     @router.get("/admin/status")
     async def admin_status(caller: Principal = Depends(principal)) -> JSONResponse:
         require_admin(caller)
@@ -1575,7 +1587,11 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             content={
                 "health": await container.health(),
                 "providers": container.router.stats(),
-                "prompts": container.prompts.describe(),
+                # Circuit-breaker state above is this worker's own (INT-004); pins below are
+                # shared, re-read here so every worker reports the same thing.
+                "providers_scope": "worker",
+                "worker_pid": os.getpid(),
+                "prompts": await _shared_prompt_inventory(),
                 "tools": container.tools.describe(),
                 "settings": container.settings.as_dict(),
                 "learning": extra_payload.get("learning") or {},
@@ -1621,20 +1637,73 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         version: str = Body(embed=True),
         caller: Principal = Depends(principal),
     ) -> JSONResponse:
-        """Pin a prompt version -- the rollback mechanism for a bad prompt change (TD-11)."""
+        """Pin a prompt version -- the rollback mechanism for a bad prompt change (TD-11).
+
+        Written to the shared pin store (INT-004): this worker serves it at once, every other
+        worker within ``PIN_SYNC_INTERVAL_S``, and it survives a restart."""
         require_admin(caller)
-        container.prompts.pin(template_id, version)
+        await container.prompts.set_pin(template_id, version, pinned_by=str(caller.user_id))
         await audit_admin(request, caller, "admin.prompt.pin", f"{template_id}@{version}", "ok")
-        return JSONResponse(content={"pinned": f"{template_id}@{version}"})
+        return JSONResponse(
+            content={
+                "pinned": f"{template_id}@{version}",
+                "shared": container.prompts.pins_shared,
+                "propagation_s": PIN_SYNC_INTERVAL_S,
+            }
+        )
+
+    @router.delete("/admin/prompts/{template_id}/pin")
+    async def unpin_prompt(
+        request: Request, template_id: str, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Release a pin: the template goes back to its highest registered version everywhere.
+
+        Without this, the only way out of a rollback was pinning forward, which freezes the
+        template against the next release."""
+        require_admin(caller)
+        if template_id not in container.prompts:
+            raise HTTPException(status_code=404, detail=f"unknown prompt template {template_id!r}")
+        existed = await container.prompts.clear_pin(template_id)
+        await audit_admin(
+            request, caller, "admin.prompt.unpin", template_id, "ok" if existed else "noop"
+        )
+        return JSONResponse(
+            content={
+                "unpinned": template_id,
+                "was_pinned": existed,
+                "active": container.prompts.get(template_id).version,
+                "propagation_s": PIN_SYNC_INTERVAL_S,
+            }
+        )
 
     @router.post("/admin/providers/{name}/reset-circuit")
     async def reset_circuit(
         request: Request, name: str, caller: Principal = Depends(principal)
     ) -> JSONResponse:
+        """Close one provider's circuit breaker -- **in the worker that serves this request only**.
+
+        Breaker state is per worker by design: each worker opens its breaker from the failures
+        it observed itself, and every breaker half-opens on its own after
+        ``circuit_open_seconds``. A cross-worker reset would need a broadcast channel the router
+        does not have (and Redis is optional), so the response says what it did rather than
+        imply a fleet-wide reset (INT-004). Repeat it, or wait for the half-open probe."""
         require_admin(caller)
         container.router.reset_circuit(name)
-        await audit_admin(request, caller, "admin.provider.reset_circuit", name, "ok")
-        return JSONResponse(content={"reset": name})
+        await audit_admin(
+            request, caller, "admin.provider.reset_circuit", name, "ok",
+            detail={"scope": "worker", "worker_pid": os.getpid()},
+        )
+        return JSONResponse(
+            content={
+                "reset": name,
+                "scope": "worker",
+                "worker_pid": os.getpid(),
+                "note": (
+                    "Reset in this gateway worker only; other workers keep their own breaker "
+                    "state and half-open on their own after the circuit cool-down."
+                ),
+            }
+        )
 
     register_admin_ops(
         router,

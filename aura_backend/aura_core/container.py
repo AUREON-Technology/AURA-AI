@@ -76,7 +76,7 @@ from .rag import StrategyFacade, build_strategies
 from .observability.tracing import get_tracer
 from .planning.engine import PlanningEngine
 from .ports.runtime import Closeable
-from .prompts import build_default_registry
+from .prompts import PIN_SYNC_INTERVAL_S, build_default_registry
 from .reasoning.engine import ReasoningEngine
 from .safety.pipeline import SafetyPipeline
 from .tools.builtin import default_tools
@@ -226,7 +226,10 @@ class Container:
             metrics=self.metrics,
         )
 
-        self.prompts = build_default_registry()
+        # INT-004: pins live in a store every gateway worker reads, not in this worker's memory.
+        self.prompt_pins = self._build_prompt_pins()
+        self.prompts = build_default_registry(pins=self.prompt_pins)
+        self._prompt_pin_sync_task: asyncio.Task[None] | None = None
         self.agents = build_default_agent_registry()
         if settings.adaptation.enabled:
             # Track AP7: the same registry interface, over a snapshot a blueprint deploy can swap
@@ -1328,6 +1331,19 @@ class Container:
             store = InMemoryTenancyStore()
         return TenancyService(store=store, clock=self.clock, audit=self.audit, settings=self.settings.tenancy)
 
+    def _build_prompt_pins(self) -> Any:
+        """Prompt-version pins (INT-004). Postgres-backed with the other stores, so a pin reaches
+        every gateway worker within ``PIN_SYNC_INTERVAL_S`` and survives a restart."""
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_prompt_pins import PostgresPromptPinStore
+
+            return PostgresPromptPinStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        from .adapters.prompt_pins import InMemoryPromptPinStore
+
+        return InMemoryPromptPinStore()
+
     def _build_idempotency_store(self) -> Any:
         """`Idempotency-Key` bookkeeping (roadmap P1.4). Gated like the outbox: replay only means
         something if it survives a restart and is shared by every gateway worker, which only the
@@ -1698,6 +1714,15 @@ class Container:
             # Never raises: a blueprint that cannot load leaves the core personas serving.
             await self.blueprint_deployment.startup()
             self._blueprint_sync_task = asyncio.get_running_loop().create_task(self._sync_blueprints())
+        # Pins made before this process started (or by another worker) apply before the first
+        # turn; a store that is not answering must not stop the gateway from serving -- the
+        # templates' default versions are a working configuration, and the sync retries.
+        try:
+            await self.prompts.refresh_pins()
+        except Exception:
+            logger.exception("prompt pin load failed; serving default prompt versions until sync")
+        if self._prompt_pin_sync_task is None or self._prompt_pin_sync_task.done():
+            self._prompt_pin_sync_task = asyncio.get_running_loop().create_task(self._sync_prompt_pins())
         if self._should_warm_stt():
             # In the background: readiness must not wait on a Hub download, but the first
             # live-voice turn of a fresh container should not pay for it either (audit FSA-110).
@@ -1729,6 +1754,18 @@ class Container:
                 await self.blueprint_deployment.sync()
             except Exception:  # pragma: no cover - defensive; sync() already swallows store errors
                 logger.exception("blueprint sync failed")
+
+    async def _sync_prompt_pins(self) -> None:
+        """Keep this worker on the shared prompt pins (INT-004): one store read per interval, so
+        the per-turn ``prompts.get()`` stays an in-memory lookup."""
+        while True:
+            await asyncio.sleep(PIN_SYNC_INTERVAL_S)
+            try:
+                await self.prompts.refresh_pins()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("prompt pin sync failed; keeping the last known pins")
 
     async def shutdown(self) -> None:
         """Release every connection this container opened (R2.7). Idempotent; never raises.
@@ -1764,6 +1801,17 @@ class Container:
         warm, self._stt_warm_task = self._stt_warm_task, None
         if warm is not None and not warm.done():
             warm.cancel()
+        pin_sync, self._prompt_pin_sync_task = self._prompt_pin_sync_task, None
+        if pin_sync is not None:
+            pin_sync.cancel()
+
+            async def stop_prompt_pin_sync() -> None:
+                try:
+                    await pin_sync
+                except asyncio.CancelledError:
+                    pass
+
+            closers.append(("prompt pin sync", stop_prompt_pin_sync))
         task, self._blueprint_sync_task = self._blueprint_sync_task, None
         if task is not None:
             task.cancel()
