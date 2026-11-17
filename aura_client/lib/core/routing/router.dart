@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-
 import '../../features/analytics/presentation/analytics_page.dart';
 import '../../features/auth/presentation/auth_provider.dart';
 import '../../features/auth/presentation/login_page.dart';
@@ -19,9 +17,7 @@ import '../../features/engineering/presentation/github_connection_page.dart';
 import '../../features/engineering/presentation/host_daemon_page.dart';
 import '../../features/engineering/presentation/host_file_browser_page.dart';
 import '../../features/feedback/presentation/feedback_page.dart';
-import '../../features/home/presentation/home_page.dart';
 import '../../features/knowledge/presentation/knowledge_center_page.dart';
-import '../../features/life_hub/presentation/life_hub_page.dart';
 import '../../features/memory/presentation/memory_page.dart';
 import '../../features/models/presentation/model_manager_page.dart';
 import '../../features/onboarding/presentation/onboarding_gate.dart';
@@ -44,45 +40,77 @@ class ShellLayout extends ConsumerWidget {
   final Widget child;
   const ShellLayout({super.key, required this.child});
 
+  /// The shell's tabs. The Windows desktop app is the IDE and You; every other
+  /// build is the one AURA app: Copilot, Engineer and You.
+  static List<({IconData icon, IconData selected, String label})> _tabs(
+    AppLocalizations? l10n,
+  ) {
+    if (isDesktopIde) {
+      return [
+        (
+          icon: Icons.dashboard_customize_outlined,
+          selected: Icons.dashboard_customize,
+          label: l10n?.settingsDesktopIdeTitle ?? 'Desktop IDE',
+        ),
+        (
+          icon: Icons.person_outline,
+          selected: Icons.person,
+          label: l10n?.navYou ?? 'You',
+        ),
+      ];
+    }
+    return [
+      (
+        icon: Icons.auto_awesome_outlined,
+        selected: Icons.auto_awesome,
+        label: l10n?.navCopilot ?? 'Copilot',
+      ),
+      (
+        icon: Icons.code_outlined,
+        selected: Icons.code,
+        label: l10n?.settingsEngineerTitle ?? 'Engineer',
+      ),
+      (
+        icon: Icons.person_outline,
+        selected: Icons.person,
+        label: l10n?.navYou ?? 'You',
+      ),
+    ];
+  }
+
+  /// Engineer's pages, which the Engineer tab opens.
+  static bool _isEngineerPath(String path) =>
+      path.startsWith('/engineer-history') ||
+      path.startsWith('/github-connect') ||
+      path.startsWith('/engineer-daemon');
+
   int _calculateSelectedIndex(BuildContext context) {
     final path = GoRouterState.of(context).uri.path;
-    if (path.startsWith('/chat')) return 1;
-    if (path.startsWith('/life')) return 2;
-    if (path.startsWith('/you') ||
-        path.startsWith('/profile') ||
-        path.startsWith('/knowledge') ||
-        path.startsWith('/memory') ||
-        path.startsWith('/feedback') ||
-        path.startsWith('/models') ||
-        path.startsWith('/analytics') ||
-        path.startsWith('/automations') ||
-        path.startsWith('/appearance') ||
-        path.startsWith('/server-environment') ||
-        path.startsWith('/engineer-history') ||
-        path.startsWith('/github-connect') ||
-        path.startsWith('/engineer-daemon') ||
-        path.startsWith('/settings')) {
-      return 3;
-    }
-    return 0;
+    // The desktop shell only ever shows the IDE and You; You is index 1 there.
+    if (isDesktopIde) return 1;
+    if (path.startsWith('/chat')) return 0;
+    if (_isEngineerPath(path)) return 1;
+    return 2;
   }
 
   void _onDestinationSelected(BuildContext context, int index) {
+    if (isDesktopIde) {
+      context.go(index == 0 ? '/ide' : '/you');
+      return;
+    }
     switch (index) {
       case 0:
-        context.go('/today');
-      case 1:
         context.go('/chat');
+      case 1:
+        context.go('/engineer-history');
       case 2:
-        context.go('/life');
-      case 3:
         context.go('/you');
     }
   }
 
   bool _showCaptureFab(BuildContext context) {
     final path = GoRouterState.of(context).uri.path;
-    return !path.startsWith('/chat') && !path.startsWith('/life');
+    return !path.startsWith('/chat');
   }
 
   @override
@@ -133,26 +161,12 @@ class ShellLayout extends ConsumerWidget {
               onDestinationSelected: (index) =>
                   _onDestinationSelected(context, index),
               destinations: [
-                NavigationDestination(
-                  icon: const Icon(Icons.today_outlined),
-                  selectedIcon: const Icon(Icons.today),
-                  label: l10n?.navToday ?? 'Today',
-                ),
-                NavigationDestination(
-                  icon: const Icon(Icons.auto_awesome_outlined),
-                  selectedIcon: const Icon(Icons.auto_awesome),
-                  label: l10n?.navCopilot ?? 'Copilot',
-                ),
-                NavigationDestination(
-                  icon: const Icon(Icons.view_week_outlined),
-                  selectedIcon: const Icon(Icons.view_week),
-                  label: l10n?.navLifeHub ?? 'Life Hub',
-                ),
-                NavigationDestination(
-                  icon: const Icon(Icons.person_outline),
-                  selectedIcon: const Icon(Icons.person),
-                  label: l10n?.navYou ?? 'You',
-                ),
+                for (final tab in _tabs(l10n))
+                  NavigationDestination(
+                    icon: Icon(tab.icon),
+                    selectedIcon: Icon(tab.selected),
+                    label: tab.label,
+                  ),
               ],
             ),
           ),
@@ -185,26 +199,12 @@ class ShellLayout extends ConsumerWidget {
                 // A short window must not clip the shortcuts.
                 scrollable: true,
                 destinations: [
-                  NavigationRailDestination(
-                    icon: const Icon(Icons.today_outlined),
-                    selectedIcon: const Icon(Icons.today),
-                    label: Text(l10n?.navToday ?? 'Today'),
-                  ),
-                  NavigationRailDestination(
-                    icon: const Icon(Icons.auto_awesome_outlined),
-                    selectedIcon: const Icon(Icons.auto_awesome),
-                    label: Text(l10n?.navCopilot ?? 'Copilot'),
-                  ),
-                  NavigationRailDestination(
-                    icon: const Icon(Icons.view_week_outlined),
-                    selectedIcon: const Icon(Icons.view_week),
-                    label: Text(l10n?.navLifeHub ?? 'Life Hub'),
-                  ),
-                  NavigationRailDestination(
-                    icon: const Icon(Icons.person_outline),
-                    selectedIcon: const Icon(Icons.person),
-                    label: Text(l10n?.navYou ?? 'You'),
-                  ),
+                  for (final tab in _tabs(l10n))
+                    NavigationRailDestination(
+                      icon: Icon(tab.icon),
+                      selectedIcon: Icon(tab.selected),
+                      label: Text(tab.label),
+                    ),
                 ],
               ),
               VerticalDivider(thickness: 1, width: 1, color: palette.border),
@@ -314,11 +314,6 @@ class _RailShortcuts extends StatelessWidget {
         Icons.bolt_outlined,
         l10n?.settingsAutomationsTitle ?? 'Automations',
         '/automations',
-      ),
-      (
-        Icons.code_outlined,
-        l10n?.settingsEngineerTitle ?? 'Engineer',
-        '/engineer-history',
       ),
     ];
     return SizedBox(
@@ -438,61 +433,71 @@ class RouterTransitionNotifier extends ChangeNotifier {
   }
 }
 
-/// Whether this Windows user chose the Desktop IDE as their landing screen
-/// (Settings → Desktop IDE). Always false off Windows.
-Future<bool> _prefersDesktopIde() async {
-  if (!isDesktopIde) return false;
-  final prefs = await SharedPreferences.getInstance();
-  return prefs.getBool('desktop_use_ide') ?? false;
-}
-
 /// The app's redirect rules, apart from GoRouter so they can be tested.
 ///
 /// Signed out, everything goes to `/login` -- including a session the backend
 /// refused to renew, which `AuthNotifier.expireSession` ends so that this is
 /// where the user lands (audit F-33).
 ///
-/// The Desktop IDE preference picks where AURA *lands* -- the screen after
-/// sign-in or onboarding -- and nothing more. It used to redirect every visit
-/// to `/today` to `/ide`, so with the IDE on there was no way back to Home at
-/// all, against ADR-015's "no forced redirect" (audit F-34).
+/// The landing screen is the platform's home: Copilot on mobile, the IDE on
+/// Windows. It is where AURA lands after sign-in or onboarding. A screen the
+/// build does not show (Today, Life Hub, or the IDE on mobile) is sent there
+/// too, see [isReachableRoute].
 Future<String?> resolveAppRedirect({
   required bool isLoggedIn,
   required bool? onboarded,
   required String location,
-  required Future<bool> Function() prefersDesktopIde,
+  bool? desktop,
 }) async {
+  final isDesktop = desktop ?? isDesktopIde;
+  final landing = landingRouteFor(desktop: isDesktop);
   final isLoggingIn = location == '/login';
   final isOnboarding = location == '/onboarding';
 
-  Future<String> landing() async =>
-      await prefersDesktopIde() ? '/ide' : '/today';
-
   if (!isLoggedIn && !isLoggingIn) return '/login';
   if (isLoggedIn && isLoggingIn) {
-    return onboarded == false ? '/onboarding' : landing();
+    return onboarded == false ? '/onboarding' : landing;
   }
   if (isLoggedIn && onboarded == false && !isOnboarding) {
     return '/onboarding';
   }
   if (isLoggedIn && onboarded == true && isOnboarding) {
-    return landing();
+    return landing;
+  }
+  if (isLoggedIn && !isReachableRoute(location, desktop: isDesktop)) {
+    return landing;
   }
   return null;
+}
+
+/// Screens the Windows desktop app shows besides the IDE: account and
+/// settings, nothing else.
+const _desktopScreens = ['/you', '/profile', '/appearance', '/server-environment'];
+
+/// Whether a signed-in build shows this screen. The mobile app has Chat and
+/// Engineer, and no IDE; Today and Life Hub are hidden. The desktop app is
+/// the IDE and the screens in `_desktopScreens`. Anything else is sent to the
+/// landing screen.
+bool isReachableRoute(String location, {required bool desktop}) {
+  bool under(String root) => location == root || location.startsWith('$root/');
+  if (desktop) {
+    return under('/ide') || _desktopScreens.any(under);
+  }
+  if (under('/ide')) return false;
+  return !(under('/today') || under('/life'));
 }
 
 final routerProvider = Provider<GoRouter>((ref) {
   final notifier = RouterTransitionNotifier(ref);
 
   return GoRouter(
-    initialLocation: '/today',
+    initialLocation: appLandingRoute,
     refreshListenable: notifier,
     redirect: (context, state) async {
       return resolveAppRedirect(
         isLoggedIn: ref.read(authProvider).value != null,
         onboarded: ref.read(onboardingGateProvider),
         location: state.matchedLocation,
-        prefersDesktopIde: _prefersDesktopIde,
       );
     },
     routes: [
@@ -502,6 +507,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const OnboardingPage(),
       ),
       GoRoute(path: '/home', redirect: (context, state) => '/today'),
+      // Today and Life Hub are hidden. Their old links land on the platform's
+      // home screen (Copilot on mobile, the IDE on Windows).
+      GoRoute(path: '/today', redirect: (context, state) => appLandingRoute),
+      GoRoute(path: '/life', redirect: (context, state) => appLandingRoute),
       GoRoute(path: '/tasks', redirect: (context, state) => '/life?type=tasks'),
       GoRoute(
         path: '/calendar',
@@ -524,14 +533,6 @@ final routerProvider = Provider<GoRouter>((ref) {
       ShellRoute(
         builder: (context, state, child) => ShellLayout(child: child),
         routes: [
-          GoRoute(
-            path: '/today',
-            builder: (context, state) => const HomePage(),
-          ),
-          GoRoute(
-            path: '/life',
-            builder: (context, state) => const LifeHubPage(),
-          ),
           GoRoute(
             path: '/automations',
             builder: (context, state) => const AutomationsPage(),

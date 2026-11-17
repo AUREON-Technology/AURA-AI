@@ -7,7 +7,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/desktop/shell/activity_bar.dart';
 import 'package:aura_client/desktop/shell/bottom_panel.dart';
@@ -85,7 +84,6 @@ class _DesktopShellState extends ConsumerState<DesktopShell> {
       commands: buildDesktopCommands(
         ref,
         platform: Theme.of(context).platform,
-        onLeaveIde: () => GoRouter.of(context).go('/today'),
       ),
     );
   }

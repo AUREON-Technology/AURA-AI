@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/platform/aura_platform.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
 import 'onboarding_gate.dart';
@@ -49,7 +50,7 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
 
   Future<void> _finish() async {
     await ref.read(onboardingGateProvider.notifier).complete();
-    if (mounted) context.go('/today');
+    if (mounted) context.go(appLandingRoute);
   }
 
   @override

@@ -20,13 +20,8 @@ class _Destination {
 }
 
 const _destinations = [
-  _Destination('Today', Icons.today_outlined, '/today'),
   _Destination('Copilot', Icons.auto_awesome_outlined, '/chat'),
-  _Destination('Life Hub', Icons.view_week_outlined, '/life'),
-  _Destination('Tasks', Icons.check_circle_outline, '/life?type=tasks'),
-  _Destination('Calendar', Icons.calendar_month_outlined, '/life?type=calendar'),
-  _Destination('Finance', Icons.monetization_on_outlined, '/life?type=finance'),
-  _Destination('Health', Icons.favorite_outline, '/life?type=health'),
+  _Destination('Engineer', Icons.code_outlined, '/engineer-history'),
   _Destination('You', Icons.person_outline, '/you'),
   _Destination('Knowledge', Icons.folder_shared_outlined, '/knowledge'),
   _Destination('Memory', Icons.psychology_outlined, '/memory'),
@@ -95,11 +90,10 @@ class _CommandPaletteDialogState extends ConsumerState<_CommandPaletteDialog> {
     });
   }
 
-  /// ADR-015's "Open Desktop IDE" command: with the landing preference no
-  /// longer redirecting `/today`, this and the IDE's own "Leave IDE" are how
-  /// a Windows user moves between the two shells (audit F-34).
+  /// On Windows the app is the IDE and You, so Copilot and Engineer are not
+  /// offered there. "Open Desktop IDE" is the way back to the IDE from You.
   List<_Destination> get _allDestinations => [
-        ..._destinations,
+        ..._destinations.where((d) => !canRunDesktopIde || d.route == '/you'),
         if (canRunDesktopIde)
           const _Destination('Open Desktop IDE', Icons.dashboard_customize_outlined, '/ide'),
       ];
