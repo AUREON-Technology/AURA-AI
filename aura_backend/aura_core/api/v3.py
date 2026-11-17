@@ -139,7 +139,9 @@ class Principal:
     touches only the authenticator.
     """
 
-    __slots__ = ("user_id", "email", "role", "capabilities", "service_key", "workspace")
+    __slots__ = (
+        "user_id", "email", "role", "capabilities", "service_key", "workspace", "client_platform"
+    )
 
     def __init__(
         self,
@@ -150,6 +152,7 @@ class Principal:
         capabilities: tuple[str, ...] = (),
         service_key: Any = None,
         workspace: WorkspaceContext | None = None,
+        client_platform: str | None = None,
     ) -> None:
         self.user_id = user_id
         self.email = email
@@ -162,6 +165,15 @@ class Principal:
         # store by the authenticator. ``None`` is the caller's personal scope. It carries a
         # *workspace* role only -- never a platform role or a capability.
         self.workspace = workspace
+        # WP8: ``"desktop"`` only when the access token was issued to the desktop app (a signed
+        # claim the authenticator copies); ``None`` for phone, web and every other caller.
+        self.client_platform = client_platform
+
+    @property
+    def origin(self) -> str:
+        """``"desktop"`` for the desktop app, ``"remote"`` for anything else (WP8, D-10). Derived
+        only from the signed token, so a phone cannot claim to be the desktop in a request body."""
+        return "desktop" if self.client_platform == "desktop" else "remote"
 
     @property
     def knowledge_owner(self) -> UserId:
@@ -517,6 +529,8 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             temperature=payload.temperature,
             desktop_task_isolation=payload.desktop_task_isolation,
             workspace_root=payload.workspace_root,
+            # WP8: from the token's signed claim, never from the request body.
+            origin=caller.origin,
             # Defence in depth behind use_tools=False: an empty grant intersects to no tools.
             delegated_tool_grant=frozenset() if caller.is_service else None,
             caller_context=caller_context,
@@ -1584,6 +1598,44 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         store = _consent_store_or_refuse(caller)
         consent = await store.withdraw(caller.user_id, at=container.clock.now())
         return JSONResponse(content=_consent_body(consent))
+
+    @router.get("/host/folders")
+    async def host_folders(caller: Principal = Depends(principal)) -> JSONResponse:
+        """The paired computer's granted folders, for the phone and web folder picker (WP8).
+
+        Asked of the daemon itself (``list_roots``), through the cross-worker relay like every
+        other desktop call, so it is what the computer currently allows -- not a copy that could
+        go stale. ``connected: false`` when no paired desktop is online; ``remote_control`` is
+        whether the person allowed control from other devices *on the computer*.
+        """
+        if "engineer_agent" not in granted(caller):
+            raise HTTPException(
+                status_code=403,
+                detail=AuthorizationError("the Engineer is not available to this account").to_dict(),
+            )
+        offline = {"connected": False, "remote_control": None, "roots": []}
+        registry = getattr(container, "host_agent_registry", None)
+        session = await registry.resolve(caller.user_id) if registry is not None else None
+        if session is None:
+            return JSONResponse(content=offline)
+        try:
+            result = await session.call("list_roots", {}, timeout_s=10.0)
+        except Exception:
+            # An older daemon without list_roots, or one that went away mid-call: the picker
+            # shows "not connected" rather than an error the person cannot act on.
+            logger.info("desktop did not answer list_roots", exc_info=True)
+            return JSONResponse(content=offline)
+        payload = result if isinstance(result, dict) else {}
+        roots = [
+            {"path": str(r.get("path")), "trusted": bool(r.get("trusted"))}
+            for r in payload.get("roots") or []
+            if isinstance(r, dict) and r.get("path")
+        ]
+        return JSONResponse(content={
+            "connected": True,
+            "remote_control": bool(payload.get("remote_control", False)),
+            "roots": roots,
+        })
 
     @router.get("/engineering/runs")
     async def list_engineer_runs(

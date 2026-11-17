@@ -173,6 +173,12 @@ class TurnRequest:
     #: inside a granted root, and refuses it otherwise. `None` for every caller without an open
     #: desktop workspace, which leaves the daemon on its "first granted root" fallback.
     workspace_root: str | None = None
+    #: Where the person driving this turn is (module readiness WP8, D-10): ``"desktop"`` for the
+    #: desktop app (its access token carries the server-signed ``platform: desktop`` claim),
+    #: ``"remote"`` for phone and web. ``None`` (internal callers, evals) behaves as desktop. A
+    #: remote turn's work on the paired desktop is always held for confirmation, and the daemon
+    #: refuses it unless remote control was switched on at the computer itself.
+    origin: str | None = None
     #: Admission class for every generation this turn makes (roadmap P2.4). ``None`` derives it
     #: from ``route``/``agent`` (``llm/workload.py``): Engineer -> coder pool at priority 2,
     #: voice and chat -> general-fast at priority 1. Background callers set it explicitly.
@@ -1619,6 +1625,7 @@ class AIKernel:
                 "session_id": str(request.session_id) if request.session_id else None,
                 "desktop_task_isolation": request.desktop_task_isolation,
                 "workspace_root": request.workspace_root,
+                "origin": request.origin,
             },
         )
 

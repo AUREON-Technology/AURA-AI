@@ -125,6 +125,13 @@ def _build_authenticator(settings: Any, *, service_keys: Any = None, tenancy: An
             email=claims.get("email") or "",
             role=role,
             capabilities=capabilities_for_role(settings.security, role),
+            # WP8: a desktop-app token carries both a signed ``platform: desktop`` claim and its
+            # device id; require both, so a stray claim alone never makes a caller "desktop".
+            client_platform=(
+                "desktop"
+                if claims.get("platform") == "desktop" and claims.get("device_id")
+                else None
+            ),
         )
 
     return authenticate

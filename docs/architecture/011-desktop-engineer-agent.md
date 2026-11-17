@@ -527,3 +527,52 @@ that ties a new desktop device to an attested one, for instance a desktop device
 inactive until its owner approves it from the phone app, not with a lower gate.
 
 See `docs/AURA_UPGRADE_ROADMAP.md` for the up-to-date status of what is and is not built.
+
+## Amendment 2026-11-17: remote control from the phone and web (WP8)
+
+Owner decisions D-10, D-10b and D-10c
+(`docs/module-readiness/engineer-agent/desktop-github/2026-11-17/`): the Engineer may work on
+the person's paired computer from the phone and web app. It needs two guards. Remote control is
+off until switched on at the computer itself. Every change a remote turn makes there is approved
+on the remote device.
+
+**Origin.** A turn is `desktop` only when its access token carries the server-signed
+`platform: desktop` claim together with a device id. That claim is set only by
+`issue_desktop_session` / `issue_device_token`. Everything else is `remote`. The value is
+derived in the authenticator (`Principal.origin`) and never read from a request body. It travels
+on `TurnRequest.origin` → `ToolContext.metadata["origin"]` → `create_task.origin`. Delegation
+carries it to the sub-turn. An approval resumed from a phone is `remote`, because the device that
+approves is the one acting.
+
+**Backend hold.** `ToolPolicy` holds every desktop-routed (`workspace_local` and side-effecting)
+call of a remote turn for confirmation, tainted or not, with reason
+`side_effect_on_user_machine_from_remote_device`. The phone already renders held calls, through
+`EngineerConfirmationCard`. `ToolRegistry` marks the approved call (`TOOL_CALL_CONFIRMED`), and
+the runner sends `confirmed: true` with that `run` / `write_file` / `write_files` only.
+
+**Daemon.** `config.json` `remote_control`, off by default, is set only through the loopback
+control server (`POST /remote_control`) from the desktop app. No RPC can change it.
+- A `remote` `create_task` is refused unless it is on.
+- The flag is re-read on every later call, so switching it off stops a conversation at its next
+  call.
+- A remote task never uses the trusted tier and never queues a local approval, because nobody is
+  at the desk to answer one.
+- On a remote task, everything refused in every tier stays refused (hard denylist, protected
+  `.git` writes, containment). Every other write or command needs `confirmed: true`.
+- A `desktop` task ignores `confirmed`: the backend can never waive the desk's own consent.
+- `list_roots` returns the granted folders and the flag, for the phone's folder picker
+  (`GET /api/v3/host/folders`).
+
+**What it does and does not defend.**
+- **Stolen phone or web session, honest backend:** the attacker can act only if the person has
+  switched remote control on at the computer. Even then, every change goes through the approval
+  flow on that same stolen device. The owner accepted this residual risk in D-10c and declined
+  re-authentication per approval. Device revoke and the 15-minute access token bound it.
+- **Compromised backend:** origin is not a boundary. The backend can always claim `desktop`, as
+  before this amendment. With remote control on, it can also send `confirmed`. Leaving remote
+  control off keeps the pre-amendment posture.
+- **A second desktop computer:** any desktop-app token is `desktop`, whichever computer the
+  daemon runs on. The app's device is not linked to the daemon's.
+
+**Status.** Built and tested locally (backend, daemon, client), not CI-run, and never exercised
+between a real phone and a real computer. That proof belongs to the WP10 end-to-end report.

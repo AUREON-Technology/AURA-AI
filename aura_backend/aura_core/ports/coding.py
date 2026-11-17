@@ -8,6 +8,7 @@ here.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, AsyncIterator, Mapping, Protocol, Sequence, runtime_checkable
@@ -17,6 +18,7 @@ from ..domain.engineering import AgentWorkspace, EngineerConsent, EngineerRun
 from ..domain.identifiers import AgentRunId, UserId, WorkspaceId
 
 __all__ = [
+    "TOOL_CALL_CONFIRMED",
     "EngineerConsentStore",
     "McpToolDescriptor",
     "McpClient",
@@ -342,6 +344,13 @@ class StreamingSandboxRunner(Protocol):
         self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float
     ) -> AsyncIterator[SandboxOutputEvent]:
         ...
+
+
+#: Whether the tool call now executing was approved by the person in the backend's confirmation
+#: flow (WP8, D-10c). Set by ``ToolRegistry`` around each call; read by the desktop runner, which
+#: tells the daemon. For a remote turn the daemon runs a write or command only when this is true:
+#: the person approved it on their phone, since nobody is at the desk to answer a local prompt.
+TOOL_CALL_CONFIRMED: ContextVar[bool] = ContextVar("aura_tool_call_confirmed", default=False)
 
 
 @runtime_checkable

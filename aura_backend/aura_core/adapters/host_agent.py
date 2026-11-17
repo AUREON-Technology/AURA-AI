@@ -26,13 +26,29 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 
 from ..domain.identifiers import UserId
 from ..observability.logging import get_logger
-from ..ports.coding import FileWriteOp, SandboxHandle, SandboxOutputEvent, SandboxResult, StreamingSandboxRunner
+from ..ports.coding import (
+    TOOL_CALL_CONFIRMED,
+    FileWriteOp,
+    SandboxHandle,
+    SandboxOutputEvent,
+    SandboxResult,
+    StreamingSandboxRunner,
+)
 from .docker_sandbox import SandboxError
 
 #: What may name an isolated task's worktree directory on the user's machine: one plain path
 #: segment. The daemon checks the same shape (aura_hostd task_handler.dart) and contains the
 #: resolved path; this side refuses first so a free-form chat id never reaches it (G-04).
 _TASK_KEY = re.compile(r"[A-Za-z0-9._-]{1,128}")
+
+
+def _with_confirmation(params: dict[str, Any]) -> dict[str, Any]:
+    """Add ``confirmed: true`` when the person approved this call (WP8, D-10c). Sent only when
+    true, so a daemon that predates the field sees exactly the frame it always did. The daemon
+    ignores it for a desktop task -- it never lets this side waive the desk's own consent."""
+    if TOOL_CALL_CONFIRMED.get():
+        params["confirmed"] = True
+    return params
 
 __all__ = ["HostAgentSession", "HostAgentRegistry", "HostAgentSandboxRunner", "CompositeSandboxRunner"]
 
@@ -287,6 +303,7 @@ class HostAgentSandboxRunner:
         session_id: str | None = None,
         isolate: bool = False,
         workspace_root: str | None = None,
+        origin: str | None = None,
     ) -> SandboxHandle:
         if user_id is None:
             raise SandboxError("the host-agent sandbox requires a caller identity")
@@ -317,6 +334,10 @@ class HostAgentSandboxRunner:
         # The daemon resolves and contains the path; this side never interprets it.
         if workspace_root:
             params["cwd"] = workspace_root
+        # WP8: the daemon refuses a remote task unless remote control is on at the computer, and
+        # runs its writes and commands only when this side says the person approved them.
+        if origin in ("desktop", "remote"):
+            params["origin"] = origin
         result = await session.call("create_task", params, timeout_s=self._call_timeout_s)
         task_id = str((result or {}).get("task_id") or uuid.uuid4().hex)
         self._handle_owners[task_id] = user_id
@@ -335,7 +356,9 @@ class HostAgentSandboxRunner:
         session = await self._session_for(handle)
         result = await session.call(
             "run",
-            {"task_id": handle.task_id, "command": list(command), "timeout_s": timeout_s},
+            _with_confirmation(
+                {"task_id": handle.task_id, "command": list(command), "timeout_s": timeout_s}
+            ),
             # A little slack over the tool's own timeout so a daemon-side timeout response
             # (which the daemon is expected to enforce itself) has time to arrive before this
             # side gives up first and reports a less specific transport timeout instead. Also
@@ -356,7 +379,7 @@ class HostAgentSandboxRunner:
         session = await self._session_for(handle)
         await session.call(
             "write_file",
-            {"task_id": handle.task_id, "path": path, "content": content},
+            _with_confirmation({"task_id": handle.task_id, "path": path, "content": content}),
             # D6: an untrusted-workspace write now queues for interactive approval on the daemon
             # side (`task_handler.dart`'s gating retrofit), which can take as long as a human
             # takes to respond -- up to the daemon's own 5-minute approval timeout -- not just
@@ -397,7 +420,7 @@ class HostAgentSandboxRunner:
             payload.append(entry)
         await session.call(
             "write_files",
-            {"task_id": handle.task_id, "operations": payload},
+            _with_confirmation({"task_id": handle.task_id, "operations": payload}),
             timeout_s=max(self._call_timeout_s, 330.0),  # daemon-side approval can wait up to 5m
         )
 
@@ -412,7 +435,9 @@ class HostAgentSandboxRunner:
         session = await self._session_for(handle)
         async for frame in session.call_streaming(
             "run",
-            {"task_id": handle.task_id, "command": list(command), "timeout_s": timeout_s},
+            _with_confirmation(
+                {"task_id": handle.task_id, "command": list(command), "timeout_s": timeout_s}
+            ),
             # Idle timeout between frames, not an overall deadline -- see call_streaming's
             # docstring. The daemon is expected to send at least one frame (even just the
             # terminal result) well within this window once it has started the command -- except
@@ -476,11 +501,14 @@ class CompositeSandboxRunner:
         session_id: str | None = None,
         isolate: bool = False,
         workspace_root: str | None = None,
+        origin: str | None = None,
     ) -> SandboxHandle:
         if user_id is not None and await self._host.has_session(user_id):
             # `workspace_root` (FSA-006) is a path on the user's machine: meaningful to the paired
             # daemon, never to the server-side fallback below, which does not get it.
-            extra = {"workspace_root": workspace_root} if workspace_root else {}
+            extra: dict[str, Any] = {"workspace_root": workspace_root} if workspace_root else {}
+            if origin:
+                extra["origin"] = origin
             handle = await self._host.create_task(
                 user_id=user_id, session_id=session_id, isolate=isolate, **extra
             )

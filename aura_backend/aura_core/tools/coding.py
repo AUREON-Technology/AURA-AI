@@ -276,6 +276,11 @@ class _SandboxSessionCache:
                 # on this side interprets it.
                 root = (context.metadata or {}).get("workspace_root") or None
                 extra = {"workspace_root": root} if root else {}
+                # WP8: a phone or web turn says so, and the daemon refuses it unless remote
+                # control is on at the computer. Passed only when known, like the root above.
+                origin = (context.metadata or {}).get("origin")
+                if origin:
+                    extra["origin"] = origin
                 handle = await self._runner.create_task(
                     user_id=context.user_id,
                     session_id=context.metadata.get("session_id"),
