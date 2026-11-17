@@ -84,8 +84,11 @@ dashboard, so the same four variables must be set there (`docs/deployment/contro
   The Arabic corpus is written for this evaluation, not drawn from real user documents.
 - **Not evaluated:** `BAAI/bge-m3` (decision 10 keeps it as the future upgrade: 1024-dim, about
   5× the cost, a new collection).
-- The harness reports nDCG above 1.0 in some runs (visible with the gate off), so nDCG is left
-  out of this report; recall and MRR are unaffected. That is tracked as a separate fix.
+- nDCG is left out: these runs predate `bd4db5e`, which fixed the evaluator counting a relevant
+  document more than once (nDCG could exceed 1.0). Recall and MRR were not affected by that bug.
+- The runs also predate `024bce4`, which traced a small English MRR drop on `docs_corpus` to an
+  edit of ADR-005 (part of that suite's corpus). Every configuration here was measured on the
+  same corpus text, so the comparison between rows holds.
 
 ## Reproduce
 
