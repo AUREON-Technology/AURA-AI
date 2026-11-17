@@ -1,9 +1,6 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
-import 'package:aura_client/core/auth/token_manager.dart';
-import 'package:aura_client/core/config/backend_url_provider.dart';
+import 'package:aura_client/core/network/aura_api_client.dart';
 
 /// One persona from `GET /api/v3/agents` (`aura_core/agents/registry.py`'s
 /// `AgentRegistry`, plus any `bp_*` agents a deployed blueprint adds).
@@ -87,18 +84,17 @@ const Map<String, (String, IconData)> _knownPersonas = {
 /// hardcoded list, which named a non-existent "academic_coach" and was
 /// missing research_agent/coding_agent/decision_agent -- verified against
 /// aura_core/prompts/library.py's actual AGENT_PROMPT_IDS.
+///
+/// Through [AuraApiClient] (INT-024): attestation headers, one retry on 401, and a deadline --
+/// a bare `http.get` had none of the three, so an expired token showed as "failed to load".
 final agentsProvider = FutureProvider<List<AgentInfo>>((ref) async {
-  final token = await ref.read(tokenManagerProvider).getValidAccessToken();
-  final backendUrl = ref.read(backendUrlProvider);
-  final response = await http.get(
-    Uri.parse('$backendUrl/api/v3/agents'),
-    headers: {if (token != null) 'Authorization': 'Bearer $token'},
-  );
-  if (response.statusCode != 200) {
-    throw Exception('Failed to load agents: ${response.statusCode}');
-  }
-  final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-  return (decoded['agents'] as List<dynamic>? ?? [])
-      .map((a) => AgentInfo.fromJson(a as Map<String, dynamic>))
+  final decoded = await ref.read(auraApiClientProvider).json(
+        method: 'GET',
+        path: '/api/v3/agents',
+      );
+  final rows = decoded['agents'];
+  return (rows is List ? rows : const [])
+      .whereType<Map>()
+      .map((a) => AgentInfo.fromJson(a.map((k, v) => MapEntry(k.toString(), v))))
       .toList();
 });

@@ -6,7 +6,9 @@
 ///
 /// Binds `127.0.0.1` on an ephemeral port and writes `{port, token}` to `control.json` in the
 /// daemon's config dir so a same-machine process can discover it; the token (a random, per-run
-/// secret) is required on every request except `GET /status`, and is the only thing standing
+/// secret) is required on every request except a reduced `GET /status` (audit INT-037: without
+/// the token it says only whether the daemon is paired and connected -- never the granted root
+/// paths or the backend URL), and is the only thing standing
 /// between "any local process" and "this daemon's granted filesystem access" -- a real but
 /// disclosed limitation for v1 (a local process with filesystem access to the config dir can also
 /// read the token file; this is a convenience boundary against accidental cross-talk, not a
@@ -51,10 +53,16 @@ class ControlServer {
     required this.approvalQueue,
     required this.isolatedTasks,
     bool Function()? isBackendConnected,
+    bool Function()? isCredentialsRejected,
+    int? Function()? lastCloseCode,
+    Duration minPairingPollInterval = const Duration(seconds: 1),
     GitService? gitService,
     DiagnosticsService? diagnosticsService,
     ControlServerLogger? logger,
   })  : isBackendConnected = isBackendConnected ?? (() => false),
+        isCredentialsRejected = isCredentialsRejected ?? (() => false),
+        lastCloseCode = lastCloseCode ?? (() => null),
+        _minPairingPollInterval = minPairingPollInterval,
         gitService = gitService ?? GitService(),
         diagnosticsService = diagnosticsService ?? DiagnosticsService(),
         _logger = logger ?? _defaultLogger;
@@ -99,6 +107,20 @@ class ControlServer {
   /// all), which is the honest answer in both cases.
   final bool Function() isBackendConnected;
 
+  /// Whether the backend refused this daemon's stored token (WebSocket close 4401) and the
+  /// daemon stopped reconnecting (audit INT-003). `/status` reports it as `credentials_rejected`
+  /// so the UI can say "re-pair required" and offer pairing again, instead of "reconnecting..."
+  /// forever while `authenticated` (a token is stored) stays true.
+  final bool Function() isCredentialsRejected;
+
+  /// The close code of the daemon's most recent backend connection, reported as
+  /// `last_close_code` -- `null` before any connection has closed.
+  final int? Function() lastCloseCode;
+
+  /// The floor under the backend's advised poll interval for the daemon's own background
+  /// pairing poll (INT-038). Injected so a test need not wait a second per poll.
+  final Duration _minPairingPollInterval;
+
   final ControlServerLogger _logger;
 
   HttpServer? _server;
@@ -110,6 +132,16 @@ class ControlServer {
   /// juggle: `/pair/start` replaces whatever was here, `/pair/status` always means "this one."
   PairingSession? _pairingSession;
   String? _pairingBackendUrl;
+
+  /// How the most recent pairing session ended (`approved`/`expired` body), kept after the
+  /// session is cleared so a UI that polls `/pair/status` only after the daemon's own background
+  /// poll collected the token still learns it was approved (INT-038).
+  Map<String, Object?>? _pairingOutcome;
+
+  /// The one backend poll in flight, shared by the background poller and `/pair/status`, so the
+  /// two never race to consume the same one-shot approval.
+  Future<Map<String, Object?>?>? _pollInFlight;
+  Timer? _pairingTimer;
 
   int? get port => _server?.port;
 
@@ -125,6 +157,8 @@ class ControlServer {
   }
 
   Future<void> stop() async {
+    _pairingTimer?.cancel();
+    _pairingTimer = null;
     try {
       _controlFile?.deleteSync();
     } on FileSystemException {
@@ -135,6 +169,12 @@ class ControlServer {
 
   Future<void> _handle(HttpRequest request) async {
     try {
+      // DNS rebinding (INT-037): a web page whose hostname re-resolves to 127.0.0.1 can reach
+      // this port from the user's browser, but its requests still carry that page's own Host.
+      if (!_loopbackHost(request)) {
+        await _respond(request, 403, {'error': 'requests must address the loopback interface'});
+        return;
+      }
       if (request.uri.path != '/status' && !_authorized(request)) {
         await _respond(request, 401, {'error': 'missing or invalid control token'});
         return;
@@ -226,18 +266,36 @@ class ControlServer {
 
   bool _authorized(HttpRequest request) {
     final header = request.headers.value(HttpHeaders.authorizationHeader);
-    return header != null && header == 'Bearer $_token';
+    final token = _token;
+    if (header == null || token == null) return false;
+    return constantTimeEquals(header, 'Bearer $token');
+  }
+
+  /// Whether the request's Host header names this machine's loopback interface. Every
+  /// legitimate client (the desktop app, the CLI, a test) connects to `127.0.0.1:<port>` and
+  /// sends that; a missing Host (HTTP/1.0) is let through, since no browser sends one.
+  bool _loopbackHost(HttpRequest request) {
+    final host = request.headers.host;
+    if (host == null) return true;
+    final name = host.toLowerCase();
+    return name == '127.0.0.1' || name == 'localhost' || name == '::1' || name == '[::1]';
   }
 
   Future<void> _handleStatus(HttpRequest request) async {
     final config = configStore.load();
-    final roots = workspaceStore.load();
-    await _respond(request, 200, {
+    final body = <String, Object?>{
       'authenticated': config.authToken != null && config.authToken!.isNotEmpty,
       'backend_connected': isBackendConnected(),
-      'backend_url': config.backendUrl,
-      'roots': roots.all.map((r) => r.toJson()).toList(),
-    });
+      'credentials_rejected': isCredentialsRejected(),
+      'last_close_code': lastCloseCode(),
+    };
+    // Without the token, only the booleans above (INT-037): the granted root paths say what on
+    // this machine the agent can reach, and are no business of an arbitrary local process.
+    if (_authorized(request)) {
+      body['backend_url'] = config.backendUrl;
+      body['roots'] = workspaceStore.load().all.map((r) => r.toJson()).toList();
+    }
+    await _respond(request, 200, body);
   }
 
   Future<void> _handleListRoots(HttpRequest request) async {
@@ -858,6 +916,8 @@ class ControlServer {
       final session = await startPairing(backendUrl);
       _pairingSession = session;
       _pairingBackendUrl = backendUrl;
+      _pairingOutcome = null;
+      _scheduleBackgroundPoll(session, DateTime.now().add(Duration(seconds: session.expiresIn)));
       await _respond(request, 200, {
         'user_code': session.userCode,
         'expires_in': session.expiresIn,
@@ -868,32 +928,87 @@ class ControlServer {
     }
   }
 
-  /// Polls the in-flight session started by `/pair/start` exactly once (`pairing_client.dart
-  /// ::pollPairingOnce`) and reports where it stands -- the UI is responsible for calling this
-  /// again after the session's own `interval`, matching the discipline `pairWithCode`'s CLI path
-  /// applies to itself. On approval, saves the token (same as `auth set-token` would have) and
-  /// calls [onPaired] so the daemon connects to the backend without needing `run` restarted.
+  /// Reports where the session started by `/pair/start` stands. The daemon polls the backend
+  /// itself in the background (INT-038), so the token is collected even if the UI that started
+  /// pairing goes away; this route polls once more on top of that (sharing one in-flight poll
+  /// with the background loop) so a UI polling at the session's interval sees the outcome at
+  /// once. On approval the token is saved (as `auth set-token` would) and [onPaired] is called,
+  /// exactly once, whichever poll saw it first.
   Future<void> _handlePairStatus(HttpRequest request) async {
-    final session = _pairingSession;
-    final backendUrl = _pairingBackendUrl;
-    if (session == null || backendUrl == null) {
-      await _respond(request, 409, {'error': 'no pairing session in progress -- call /pair/start first'});
+    if (_pairingSession == null) {
+      final outcome = _pairingOutcome;
+      if (outcome != null) {
+        await _respond(request, 200, outcome);
+      } else {
+        await _respond(request, 409, {'error': 'no pairing session in progress -- call /pair/start first'});
+      }
       return;
     }
+    final outcome = await _pollPairing();
+    await _respond(request, 200, outcome ?? _pairingOutcome ?? {'status': 'pending'});
+  }
+
+  void _scheduleBackgroundPoll(PairingSession session, DateTime deadline) {
+    _pairingTimer?.cancel();
+    final advised = Duration(seconds: session.intervalS);
+    final interval = advised < _minPairingPollInterval ? _minPairingPollInterval : advised;
+    _pairingTimer = Timer(interval, () async {
+      _pairingTimer = null;
+      if (!identical(_pairingSession, session)) return;
+      if (DateTime.now().isAfter(deadline)) {
+        _pairingSession = null;
+        _pairingBackendUrl = null;
+        _pairingOutcome = {'status': 'expired', 'reason': 'pairing code expired before it was approved'};
+        return;
+      }
+      try {
+        await _pollPairing();
+      } catch (error) {
+        // A transient backend or network failure; keep polling until the code expires.
+        _logger('pairing poll failed: $error');
+      }
+      if (identical(_pairingSession, session)) _scheduleBackgroundPoll(session, deadline);
+    });
+  }
+
+  /// Polls the backend once for the current session, or joins the poll already in flight.
+  /// Returns the response body for a pending/approved/expired outcome, or `null` when the
+  /// session was replaced or finished while this poll was out.
+  Future<Map<String, Object?>?> _pollPairing() {
+    final inFlight = _pollInFlight;
+    if (inFlight != null) return inFlight;
+    final future = _pollPairingOnce();
+    _pollInFlight = future;
+    return future.whenComplete(() => _pollInFlight = null);
+  }
+
+  Future<Map<String, Object?>?> _pollPairingOnce() async {
+    final session = _pairingSession;
+    final backendUrl = _pairingBackendUrl;
+    if (session == null || backendUrl == null) return _pairingOutcome;
     final outcome = await pollPairingOnce(backendUrl, session);
+    if (!identical(_pairingSession, session)) return _pairingOutcome;
     switch (outcome) {
       case PairingPending():
-        await _respond(request, 200, {'status': 'pending'});
+        return {'status': 'pending'};
       case PairingApproved(result: final result):
         _pairingSession = null;
         _pairingBackendUrl = null;
+        _pairingTimer?.cancel();
+        _pairingTimer = null;
         configStore.save(DaemonConfig(backendUrl: backendUrl, authToken: result.accessToken));
+        final body = <String, Object?>{'status': 'approved', 'device_id': result.deviceId};
+        _pairingOutcome = body;
         onPaired(result.accessToken);
-        await _respond(request, 200, {'status': 'approved', 'device_id': result.deviceId});
+        return body;
       case PairingGone(reason: final reason):
         _pairingSession = null;
         _pairingBackendUrl = null;
-        await _respond(request, 200, {'status': 'expired', 'reason': reason});
+        _pairingTimer?.cancel();
+        _pairingTimer = null;
+        final body = <String, Object?>{'status': 'expired', 'reason': reason};
+        _pairingOutcome = body;
+        return body;
     }
   }
 
@@ -920,6 +1035,19 @@ class RootNotFoundError implements Exception {
 typedef ControlServerLogger = void Function(String message);
 
 void _defaultLogger(String message) => stdout.writeln('[aura_hostd] $message');
+
+/// Compares two strings in time that depends only on their lengths, not on where they first
+/// differ (INT-037), so the control token cannot be recovered a character at a time by timing.
+bool constantTimeEquals(String a, String b) {
+  final x = utf8.encode(a);
+  final y = utf8.encode(b);
+  var diff = x.length ^ y.length;
+  final n = x.length < y.length ? x.length : y.length;
+  for (var i = 0; i < n; i++) {
+    diff |= x[i] ^ y[i];
+  }
+  return diff == 0;
+}
 
 String _randomToken() {
   final random = Random.secure();

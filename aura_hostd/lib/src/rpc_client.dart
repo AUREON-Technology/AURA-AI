@@ -52,6 +52,21 @@ class HostAgentClient {
   WebSocket? _socket;
   bool _stopRequested = false;
   bool _isConnected = false;
+  bool _credentialsRejected = false;
+  int? _lastCloseCode;
+  bool _finished = false;
+
+  /// True once the server closed with [closeUnauthorized] and [run] gave up (audit INT-003).
+  /// Reported in the control server's `/status` so the desktop UI can offer a re-pair instead of
+  /// showing "reconnecting..." for a daemon that will never reconnect with this token.
+  bool get credentialsRejected => _credentialsRejected;
+
+  /// The close code of the most recent connection, or `null` before the first one closed.
+  int? get lastCloseCode => _lastCloseCode;
+
+  /// True once [run] has returned -- after [stop], or after a [closeUnauthorized] rejection. A
+  /// finished client never connects again; the daemon must build a new one (with a new token).
+  bool get isFinished => _finished;
 
   /// True while the outbound socket to the backend is open. This is the daemon's only signal
   /// that `HostAgentRegistry` (backend) currently has a live session for it -- the wire protocol
@@ -81,14 +96,24 @@ class HostAgentClient {
   /// only be refused again. Retrying used to hammer the server once a second forever, because a
   /// server-initiated close counted as a "clean" connection and reset the backoff.
   Future<void> run() async {
+    try {
+      await _runLoop();
+    } finally {
+      _finished = true;
+    }
+  }
+
+  Future<void> _runLoop() async {
     var backoff = minBackoff;
     while (!_stopRequested) {
       try {
         final connectedAt = DateTime.now();
         final closeCode = await _connectAndServe();
+        _lastCloseCode = closeCode;
         if (closeCode == closeUnauthorized) {
+          _credentialsRejected = true;
           logger('the server refused this daemon\'s credentials (expired, revoked, or not '
-              'permitted) -- pair it again with `aura_hostd auth pair`');
+              'permitted) -- pair it again from the AURA app or with `aura_hostd auth pair`');
           break;
         }
         // Only a connection that actually stayed up resets the backoff; one the server drops
@@ -153,6 +178,9 @@ class HostAgentClient {
       }
     } finally {
       _isConnected = false;
+      // INT-007: the backend has already failed every call on this connection; nothing still
+      // waiting for a human's approval may run after the drop.
+      taskHandler.cancelAll();
     }
     logger('disconnected');
     return socket.closeCode;
@@ -162,11 +190,31 @@ class HostAgentClient {
     final id = frame['id'];
     final method = frame['method'] as String?;
     final params = (frame['params'] as Map<String, dynamic>?) ?? const {};
+    Map<String, Object?> reply;
     try {
       final result = await _dispatch(socket, id, method, params);
-      socket.add(jsonEncode({'type': 'result', 'id': id, 'result': result}));
+      reply = {'type': 'result', 'id': id, 'result': result};
     } catch (error) {
-      socket.add(jsonEncode({'type': 'error', 'id': id, 'message': error.toString()}));
+      reply = {'type': 'error', 'id': id, 'message': error.toString()};
+    }
+    _send(socket, reply);
+  }
+
+  /// Sends [frame] on [socket] only while it is still open, and never lets a send failure escape
+  /// (audit INT-019). A call that finishes after its connection dropped -- a long `run`, or an
+  /// approval cancelled by the drop -- has nobody left to answer: the backend failed it when the
+  /// socket closed. Writing to the closed socket raised an error nothing awaited, which could
+  /// take the whole daemon down.
+  void _send(WebSocket socket, Map<String, Object?> frame) {
+    if (socket.readyState != WebSocket.open) {
+      logger('dropping a "${frame['type']}" frame for call ${frame['id']}: its connection has '
+          'closed');
+      return;
+    }
+    try {
+      socket.add(jsonEncode(frame));
+    } catch (error) {
+      logger('could not send a "${frame['type']}" frame for call ${frame['id']}: $error');
     }
   }
 
@@ -185,7 +233,7 @@ class HostAgentClient {
         return taskHandler.run(
           params,
           onChunk: (streamName, data) {
-            socket.add(jsonEncode({'type': 'stream', 'id': id, 'stream': streamName, 'data': data}));
+            _send(socket, {'type': 'stream', 'id': id, 'stream': streamName, 'data': data});
           },
           callId: id?.toString(),
         );

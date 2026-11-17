@@ -25,5 +25,9 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
   if (!me) {
     redirect("/login");
   }
+  if (!me.is_admin) {
+    // /admin/me admits Developer, but every page's data needs Admin (audit INT-042).
+    redirect("/login?reason=role");
+  }
   return <Shell me={me}>{children}</Shell>;
 }

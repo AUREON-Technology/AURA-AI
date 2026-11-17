@@ -10,7 +10,9 @@ class LiveTranscriptLine {
 
 @immutable
 class LiveVoiceState {
-  final String phase; // connecting | listening | thinking | speaking | awaiting_confirmation | idle
+  /// connecting | listening | thinking | speaking | awaiting_confirmation | idle | error.
+  /// `error` means the session ended on a failure (see [error]); the mic is stopped.
+  final String phase;
   final double micAmplitude;
   final double playbackAmplitude;
   final bool transcriptVisible;

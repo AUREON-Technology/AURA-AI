@@ -106,6 +106,16 @@ class ContainmentViolation implements Exception {
   String toString() => 'ContainmentViolation: $message';
 }
 
+/// Thrown when a call names (or was bound to) a workspace root that has since been revoked --
+/// the grant is checked at use, not only when the task was created (audit INT-002).
+class RootRevokedError implements Exception {
+  RootRevokedError(this.message);
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 /// Thrown by [WorkspaceRoots.addRoot] when the requested path is denylisted or otherwise unfit
 /// to be a workspace root (does not exist, is not a directory, or resolves to a denylisted path
 /// through a symlink).
@@ -162,37 +172,33 @@ String _resolveAsFarAsPossible(String rawPath) {
 /// Holds the set of roots the user has granted and answers the one question that matters:
 /// "is this path inside one of them, after resolving symlinks?"
 class WorkspaceRoots {
-  WorkspaceRoots(Iterable<WorkspaceRoot> initial)
-      : _roots = List.of(initial),
-        _source = null;
-
-  /// A read-only view that asks [source] for the roots on every lookup (G-05, SEC-08).
-  ///
-  /// The connected agent's handler used to hold a snapshot taken when it connected, while the
-  /// control server and the CLI changed the store on disk -- so a revoke, untrust or grant never
-  /// reached the agent until the daemon reconnected. A view over the store cannot go stale; the
-  /// store stays the only writer, which is why the mutating methods refuse on a live view.
-  WorkspaceRoots.live(List<WorkspaceRoot> Function() source)
-      : _roots = const [],
-        _source = source;
+  WorkspaceRoots(Iterable<WorkspaceRoot> initial) : _roots = List.of(initial);
 
   final List<WorkspaceRoot> _roots;
-  final List<WorkspaceRoot> Function()? _source;
 
-  List<WorkspaceRoot> get _current => _source?.call() ?? _roots;
+  List<WorkspaceRoot> get all => List.unmodifiable(_roots);
 
-  List<WorkspaceRoot> get all => List.unmodifiable(_current);
+  /// Replaces every grant with [roots], in place, so every holder of this instance sees the
+  /// change at once (`WorkspaceStore.live`, audit INT-002).
+  void replaceAll(Iterable<WorkspaceRoot> roots) {
+    final next = List.of(roots);
+    _roots
+      ..clear()
+      ..addAll(next);
+  }
 
-  void _requireMutable() {
-    if (_source != null) {
-      throw StateError('a live WorkspaceRoots view is read-only -- change the WorkspaceStore');
+  /// The granted root whose canonical path is exactly [canonicalPath], or `null` if it is no
+  /// longer granted. Used to re-read a root's current trust after it was bound to a task.
+  WorkspaceRoot? byCanonicalPath(String canonicalPath) {
+    for (final root in _roots) {
+      if (root.canonicalPath == canonicalPath) return root;
     }
+    return null;
   }
 
   /// Validates and adds [rawPath] as a granted root. Throws [InvalidRootError] if the path is
   /// denylisted (directly or through a symlink), does not exist, or is not a directory.
   WorkspaceRoot addRoot(String rawPath, {bool trusted = false}) {
-    _requireMutable();
     if (!Directory(rawPath).existsSync()) {
       throw InvalidRootError('$rawPath does not exist or is not a directory');
     }
@@ -226,7 +232,6 @@ class WorkspaceRoots {
   }
 
   bool removeRoot(String rawPath) {
-    _requireMutable();
     final canonical = _tryResolve(rawPath) ?? p.normalize(rawPath);
     final before = _roots.length;
     _roots.removeWhere((r) => r.canonicalPath == canonical || r.canonicalPath == p.normalize(rawPath));
@@ -234,7 +239,6 @@ class WorkspaceRoots {
   }
 
   WorkspaceRoot? setTrusted(String rawPath, bool trusted) {
-    _requireMutable();
     final canonical = _tryResolve(rawPath) ?? p.normalize(rawPath);
     final index = _roots.indexWhere((r) => r.canonicalPath == canonical);
     if (index < 0) return null;
@@ -279,7 +283,7 @@ class WorkspaceRoots {
   /// trusted `/work` must not inherit the outer root's trust just because it was granted first.
   WorkspaceRoot? findContainingRoot(String rawPath) {
     WorkspaceRoot? best;
-    for (final root in _current) {
+    for (final root in _roots) {
       try {
         requireContained(root, rawPath);
       } on ContainmentViolation {

@@ -385,3 +385,173 @@ async def test_a_deleted_message_keeps_no_ciphertext(migrated_url, monkeypatch) 
         row = (await api.pull())["data"]["messages"][0]
         assert row["deleted_at"] is not None
         assert row["content_enc"] == "" and row["citations_enc"] is None
+
+
+# -- INT-001: two changes to one row in the same second ------------------------------------------
+
+
+async def test_a_same_second_upsert_then_delete_in_one_batch_ends_deleted(migrated_url, monkeypatch) -> None:
+    """Save, then forget, within one second. The client's clock is stored in whole seconds, so
+    both mutations carry the same `client_updated_at`. Ties against another writer still lose,
+    but a later mutation in the same batch is the same device's newer change -- the outbox is
+    sent in the order the user made them -- so it must apply. Before, the delete came back
+    `conflict`, the client dropped it, and the row (for a memory, its ciphertext) stayed alive."""
+    async with _Api(migrated_url, monkeypatch) as api:
+        task_id = str(uuid.uuid4())
+        same = "2026-11-17T09:00:00Z"
+        delete = {"table": "tasks", "op": "delete", "id": task_id, "client_updated_at": same}
+        response = await api.push(_task(task_id, at=same), delete)
+        assert response.status_code == 200, response.text
+        assert [r["status"] for r in response.json()] == ["applied", "applied"]
+        rows = (await api.pull())["data"]["tasks"]
+        assert [r["id"] for r in rows] == [task_id]
+        assert rows[0]["deleted_at"] is not None and rows[0]["title_enc"] == ""
+
+
+async def test_a_same_second_double_edit_in_one_batch_keeps_the_second(migrated_url, monkeypatch) -> None:
+    async with _Api(migrated_url, monkeypatch) as api:
+        task_id = str(uuid.uuid4())
+        same = "2026-11-17T09:00:00Z"
+        response = await api.push(_task(task_id, at=same, priority="low"), _task(task_id, at=same, priority="high"))
+        assert [r["status"] for r in response.json()] == ["applied", "applied"]
+        assert (await api.pull())["data"]["tasks"][0]["priority"] == "high"
+
+
+async def test_a_tie_with_a_row_from_an_earlier_request_still_loses(migrated_url, monkeypatch) -> None:
+    """The batch rule must not become "ties win": across requests the server cannot tell the
+    same device's newer change from another device's concurrent one, so `>=` holds there (the
+    client keeps its own clock strictly increasing per row instead)."""
+    async with _Api(migrated_url, monkeypatch) as api:
+        task_id = str(uuid.uuid4())
+        same = "2026-11-17T09:00:00Z"
+        assert (await api.push(_task(task_id, at=same, priority="low"))).json()[0]["status"] == "applied"
+        assert (await api.push(_task(task_id, at=same, priority="high"))).json()[0]["status"] == "conflict"
+
+
+# -- INT-005: an edit that arrives after a delete ------------------------------------------------
+
+
+async def test_an_upsert_onto_a_tombstone_is_a_conflict_carrying_the_tombstone(migrated_url, monkeypatch) -> None:
+    """Device A deletes; device B, offline, edits later by its own clock. A deleted id is gone
+    for good -- the client never re-inserts one (`undoable_deletes.dart` defers the delete
+    instead) -- so the edit is refused as a conflict carrying the tombstone, which the client
+    applies as a local delete. Before, the server answered `applied` (the client dropped the edit
+    as saved), kept `deleted_at` (the next pull deleted it locally anyway), and wrote the edit's
+    ciphertext back onto the tombstone, undoing F-07."""
+    import asyncpg
+
+    async with _Api(migrated_url, monkeypatch) as api:
+        task_id = str(uuid.uuid4())
+        await api.push(_task(task_id, at="2026-01-01T00:00:00Z"))
+        delete = {"table": "tasks", "op": "delete", "id": task_id, "client_updated_at": "2026-01-02T00:00:00Z"}
+        assert (await api.push(delete)).json()[0]["status"] == "applied"
+
+        late = (await api.push(_task(task_id, at="2026-01-03T00:00:00Z", description_enc="gcm:iv:new"))).json()[0]
+        assert late["status"] == "conflict"
+        assert late["row"]["id"] == task_id and late["row"]["deleted_at"] is not None
+        assert late["row"]["title_enc"] == "" and late["row"]["description_enc"] is None
+
+        conn = await asyncpg.connect(migrated_url)
+        try:
+            stored = await conn.fetchrow(
+                "SELECT title_enc, description_enc, deleted_at FROM tasks WHERE id = $1", uuid.UUID(task_id),
+            )
+        finally:
+            await conn.close()
+        assert stored["deleted_at"] is not None
+        assert stored["title_enc"] == "" and stored["description_enc"] is None
+
+
+async def test_a_new_record_on_a_tombstoned_natural_key_still_revives_it(migrated_url, monkeypatch) -> None:
+    """The natural-key merge is a *new* id for the key, not an edit of the deleted one: it keeps
+    reviving the row, as the personal-OS adapter's `revive` does."""
+    async with _Api(migrated_url, monkeypatch) as api:
+        first = str(uuid.uuid4())
+        await api.push(_health(first, at="2026-10-27T08:00:00Z", water=500))
+        await api.push({"table": "health_records", "op": "delete", "id": first, "client_updated_at": "2026-10-27T09:00:00Z"})
+        merged = (await api.push(_health(str(uuid.uuid4()), at="2026-10-27T10:00:00Z", water=200))).json()[0]
+        assert merged["status"] == "applied" and merged["server_id"] == first
+        assert merged["row"]["deleted_at"] is None and merged["row"]["water_ml"] == 200
+
+
+# -- INT-013: a paged pull -----------------------------------------------------------------------
+
+
+async def _pull_all_pages(api: _Api, *, since: str | None, limit: int) -> tuple[dict[str, list[str]], str, int]:
+    params: dict = {"limit": limit}
+    if since:
+        params["since"] = since
+    seen: dict[str, list[str]] = {}
+    pages = 0
+    while True:
+        response = await api.http.get("/api/v3/sync", params=params)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        pages += 1
+        assert sum(len(rows) for rows in body["data"].values()) <= limit
+        for table, rows in body["data"].items():
+            seen.setdefault(table, []).extend(r["id"] for r in rows)
+        if not body["has_more"]:
+            return seen, body["cursor"], pages
+        params = {"limit": limit, "page": body["next_page"]}
+        assert pages < 100
+
+
+def _message(message_id: str) -> dict:
+    return {
+        "table": "messages", "op": "upsert", "id": message_id, "client_updated_at": "2026-10-28T09:00:00Z",
+        "payload": {"conversation_id": "s1", "role": "user", "content_enc": "gcm:iv:x"},
+    }
+
+
+async def test_a_full_pull_pages_through_every_row(migrated_url, monkeypatch) -> None:
+    async with _Api(migrated_url, monkeypatch) as api:
+        tasks = [str(uuid.uuid4()) for _ in range(7)]
+        messages = [str(uuid.uuid4()) for _ in range(5)]
+        await api.push(*(_task(t) for t in tasks))
+        await api.push(*(_message(m) for m in messages))
+
+        seen, cursor, pages = await _pull_all_pages(api, since=None, limit=3)
+        assert pages >= 4
+        assert sorted(seen["tasks"]) == sorted(tasks)
+        assert sorted(seen["messages"]) == sorted(messages)
+        assert cursor.startswith("txid:")
+        assert all(not rows for rows in (await api.pull(cursor))["data"].values())
+
+
+async def test_a_write_during_paging_reaches_the_next_pull(migrated_url, monkeypatch) -> None:
+    """The final cursor is the first page's snapshot xmin, so anything written while the pages
+    were being fetched is at or past it."""
+    async with _Api(migrated_url, monkeypatch) as api:
+        await api.push(*(_task(str(uuid.uuid4())) for _ in range(4)))
+        first = (await api.http.get("/api/v3/sync", params={"limit": 2})).json()
+        assert first["has_more"] is True
+        late = str(uuid.uuid4())
+        await api.push(_task(late))
+        params = {"limit": 2, "page": first["next_page"]}
+        while True:
+            body = (await api.http.get("/api/v3/sync", params=params)).json()
+            if not body["has_more"]:
+                break
+            params = {"limit": 2, "page": body["next_page"]}
+        assert late in _ids(await api.pull(body["cursor"]), "tasks")
+
+
+async def test_a_delta_pull_pages_too(migrated_url, monkeypatch) -> None:
+    async with _Api(migrated_url, monkeypatch) as api:
+        await api.push(*(_task(str(uuid.uuid4())) for _ in range(3)))
+        cursor = (await api.pull())["cursor"]
+        newer = [str(uuid.uuid4()) for _ in range(5)]
+        await api.push(*(_task(t, at="2026-02-01T00:00:00Z") for t in newer))
+        seen, _, pages = await _pull_all_pages(api, since=cursor, limit=2)
+        assert pages >= 3 and sorted(seen["tasks"]) == sorted(newer)
+
+
+async def test_a_pull_without_a_limit_is_one_response_for_older_clients(migrated_url, monkeypatch) -> None:
+    """An older client ignores `has_more`; it must keep getting everything in one response."""
+    async with _Api(migrated_url, monkeypatch) as api:
+        tasks = [str(uuid.uuid4()) for _ in range(5)]
+        await api.push(*(_task(t) for t in tasks))
+        body = await api.pull()
+        assert sorted(_ids(body, "tasks")) == sorted(tasks)
+        assert body["has_more"] is False and body.get("next_page") is None

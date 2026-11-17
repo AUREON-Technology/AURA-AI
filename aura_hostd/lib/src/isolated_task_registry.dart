@@ -77,7 +77,7 @@ class IsolatedTaskRegistry {
   final GitService _git;
 
   final Map<String, TaskIsolationConfig> _taskConfigs = {};
-  final Map<String, IsolatedTask> _taskRoots = {};
+  final Map<String, WorkspaceRoot> _taskRoots = {};
   final Map<String, IsolatedTask> _taskKeyWorktrees = {};
 
   /// Records that [taskId] wants isolation under [taskKey], and binds it immediately if
@@ -90,20 +90,43 @@ class IsolatedTaskRegistry {
     }
     _taskConfigs[taskId] = TaskIsolationConfig(taskKey: taskKey, baseBranch: baseBranch);
     final existing = _taskKeyWorktrees[taskKey];
-    if (existing != null) _taskRoots[taskId] = existing;
+    if (existing != null) _taskRoots[taskId] = existing.root;
   }
 
   /// Synchronous fast path -- see [needsResolution]'s doc comment for why callers must check
   /// this (and that) before ever awaiting [resolve], not call it unconditionally.
   ///
-  /// The returned root carries the parent's trust *as it was when the worktree was bound*; the
-  /// caller must re-check the parent against the current grants before acting (G-05) -- see
-  /// [parentOf].
-  WorkspaceRoot? boundRoot(String? taskId) => taskId == null ? null : _taskRoots[taskId]?.root;
+  /// The returned root is re-derived from the *current* grants (audit INT-002): if the parent
+  /// root the worktree was carved out of has since been revoked this throws [RootRevokedError],
+  /// and the worktree's trust always follows the parent's trust as it is now, not as it was when
+  /// the worktree was created -- so untrusting a project immediately restores the approval gate
+  /// for its isolated tasks too.
+  WorkspaceRoot? boundRoot(String? taskId) {
+    if (taskId == null) return null;
+    final bound = _taskRoots[taskId];
+    if (bound == null) return null;
+    return _live(bound, _taskConfigs[taskId]?.taskKey);
+  }
+
+  WorkspaceRoot _live(WorkspaceRoot bound, String? taskKey) {
+    final info = taskKey == null ? null : _taskKeyWorktrees[taskKey];
+    // Discarded (or never recorded): nothing to re-derive the parent from. The worktree itself
+    // is gone with it, so any filesystem call against it fails on its own.
+    if (info == null) return bound;
+    final parent = _roots.byCanonicalPath(info.parentRootPath);
+    if (parent == null) {
+      throw RootRevokedError(
+        'workspace root ${info.parentRootPath} was revoked -- its isolated task workspace can no '
+        'longer be used; grant the folder again to continue',
+      );
+    }
+    return parent.trusted == bound.trusted ? bound : bound.copyWith(trusted: parent.trusted);
+  }
 
   /// The isolated task whose worktree is exactly [canonicalPath], or null. Lets a caller holding
-  /// only a [WorkspaceRoot] find which granted folder it was carved from, so a revoke or untrust of
-  /// that folder applies to its worktrees too (G-05, SEC-08).
+  /// only a [WorkspaceRoot] -- `TaskHandler`'s post-approval revalidation -- re-derive it from the
+  /// folder it was carved from, rather than from whichever granted folder happens to contain its
+  /// path (G-05, SEC-08).
   IsolatedTask? parentOf(String canonicalPath) {
     for (final task in _taskKeyWorktrees.values) {
       if (task.root.canonicalPath == canonicalPath) return task;
@@ -130,7 +153,7 @@ class IsolatedTaskRegistry {
   Future<WorkspaceRoot?> resolve(String? taskId, String? pathForRootLookup) async {
     if (taskId == null) return null;
     final bound = _taskRoots[taskId];
-    if (bound != null) return bound.root;
+    if (bound != null) return _live(bound, _taskConfigs[taskId]?.taskKey);
 
     final config = _taskConfigs[taskId];
     if (config == null) return null;
@@ -138,8 +161,8 @@ class IsolatedTaskRegistry {
 
     final existing = _taskKeyWorktrees[taskKey];
     if (existing != null) {
-      _taskRoots[taskId] = existing;
-      return existing.root;
+      _taskRoots[taskId] = existing.root;
+      return _live(existing.root, taskKey);
     }
 
     final parentRoot = pathForRootLookup != null
@@ -188,14 +211,13 @@ class IsolatedTaskRegistry {
     // decision: an isolated task must never be more permissive than the project it's isolated
     // from, and an already-trusted project should see no new friction).
     final ephemeralRoot = WorkspaceRoot(canonicalPath: canonicalWorktreePath, trusted: parentRoot.trusted);
-    final task = IsolatedTask(
+    _taskKeyWorktrees[taskKey] = IsolatedTask(
       taskKey: taskKey,
       root: ephemeralRoot,
       parentRootPath: parentRoot.canonicalPath,
       branch: branch,
     );
-    _taskKeyWorktrees[taskKey] = task;
-    _taskRoots[taskId] = task;
+    _taskRoots[taskId] = ephemeralRoot;
     return ephemeralRoot;
   }
 

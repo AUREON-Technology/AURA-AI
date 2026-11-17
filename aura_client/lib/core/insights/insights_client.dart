@@ -108,11 +108,23 @@ class InsightsClient {
     }
   }
 
-  Future<void> dismiss(String id) async {
+  /// Dismisses an insight; returns whether the server recorded it (INT-023).
+  ///
+  /// Goes through [_send] like every other call, so an expired access token is refreshed and
+  /// retried once rather than silently failing. A false return means the insight will come back
+  /// on the next fetch, so the caller should say so instead of pretending it is gone.
+  Future<bool> dismiss(String id) async {
     try {
-      await _post(Uri.parse("$_baseUrl/$id/dismiss"), await _headers()).timeout(const Duration(seconds: 10));
+      final response = await _send(() async {
+        return _post(Uri.parse("$_baseUrl/$id/dismiss"), await _headers())
+            .timeout(const Duration(seconds: 10));
+      });
+      if (response.statusCode >= 200 && response.statusCode < 300) return true;
+      debugPrint("[InsightsClient] dismiss refused: ${response.statusCode}");
+      return false;
     } catch (e) {
       debugPrint("[InsightsClient] dismiss failed: $e");
+      return false;
     }
   }
 }

@@ -1,8 +1,5 @@
-import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
-import 'package:aura_client/core/auth/token_manager.dart';
-import 'package:aura_client/core/config/backend_url_provider.dart';
+import 'package:aura_client/core/network/aura_api_client.dart';
 
 /// `GET /api/v3/integrations/github/status` -- whether the signed-in user has connected a
 /// personal GitHub account through the engineer agent's OAuth flow. Distinct from whatever admin
@@ -35,18 +32,16 @@ class GithubConnectionStatus {
 
 /// `autoDispose` so the connection page always re-checks on open rather than showing a stale
 /// "not connected" from before the user finished the browser round trip.
+///
+/// All three calls here go through [AuraApiClient] (INT-024): attestation headers, one retry on
+/// 401, a deadline, and a typed [AuraApiError] on failure.
 final githubConnectionStatusProvider =
     FutureProvider.autoDispose<GithubConnectionStatus>((ref) async {
-  final backendUrl = ref.read(backendUrlProvider);
-  final token = await ref.read(tokenManagerProvider).getValidAccessToken();
-  final response = await http.get(
-    Uri.parse('$backendUrl/api/v3/integrations/github/status'),
-    headers: {if (token != null) 'Authorization': 'Bearer $token'},
-  );
-  if (response.statusCode != 200) {
-    throw Exception('Failed to load GitHub connection status: ${response.statusCode}');
-  }
-  return GithubConnectionStatus.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  final decoded = await ref.read(auraApiClientProvider).json(
+        method: 'GET',
+        path: '/api/v3/integrations/github/status',
+      );
+  return GithubConnectionStatus.fromJson(decoded);
 });
 
 /// `GET /api/v3/integrations/github/connect` -- returns the GitHub authorization URL to open in
@@ -54,18 +49,14 @@ final githubConnectionStatusProvider =
 /// redirect: the backend authenticates this call by bearer JWT, which a browser navigation would
 /// not carry, so the client has to be the one to open the URL it gets back.
 ///
-/// Takes the backend URL and access token directly rather than a Riverpod `Ref` -- this is
-/// called from a `ConsumerState`'s `WidgetRef` as well as from providers, and passing plain
-/// values sidesteps needing both ref flavours to satisfy the same parameter type.
-Future<String> fetchGithubAuthorizeUrl({required String backendUrl, String? accessToken}) async {
-  final response = await http.get(
-    Uri.parse('$backendUrl/api/v3/integrations/github/connect'),
-    headers: {if (accessToken != null) 'Authorization': 'Bearer $accessToken'},
+/// Takes the [AuraApiClient] rather than a Riverpod `Ref` -- this is called from a
+/// `ConsumerState`'s `WidgetRef` as well as from providers, and both can read
+/// [auraApiClientProvider].
+Future<String> fetchGithubAuthorizeUrl(AuraApiClient api) async {
+  final decoded = await api.json(
+    method: 'GET',
+    path: '/api/v3/integrations/github/connect',
   );
-  if (response.statusCode != 200) {
-    throw Exception('Failed to start the GitHub connection: ${response.statusCode}');
-  }
-  final decoded = jsonDecode(response.body) as Map<String, dynamic>;
   final url = decoded['authorize_url']?.toString();
   if (url == null || url.isEmpty) {
     throw Exception('Server did not return a GitHub authorization URL.');
@@ -76,12 +67,9 @@ Future<String> fetchGithubAuthorizeUrl({required String backendUrl, String? acce
 /// `POST /api/v3/integrations/github/disconnect` -- revokes AURA's stored copy of the token.
 /// Does not revoke the GitHub App's own authorization (the user does that from github.com if
 /// they want it gone entirely); this only removes what the engineer agent can use.
-Future<void> disconnectGithub({required String backendUrl, String? accessToken}) async {
-  final response = await http.post(
-    Uri.parse('$backendUrl/api/v3/integrations/github/disconnect'),
-    headers: {if (accessToken != null) 'Authorization': 'Bearer $accessToken'},
+Future<void> disconnectGithub(AuraApiClient api) async {
+  await api.json(
+    method: 'POST',
+    path: '/api/v3/integrations/github/disconnect',
   );
-  if (response.statusCode != 200) {
-    throw Exception('Failed to disconnect GitHub: ${response.statusCode}');
-  }
 }

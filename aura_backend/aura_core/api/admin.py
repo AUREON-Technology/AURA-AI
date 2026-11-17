@@ -9,10 +9,16 @@ from typing import Any, Callable
 
 from ..domain.errors import AuthorizationError, ValidationError
 from ..domain.knowledge import IndexIdentity, KnowledgeSource, SourceType, TrustTier
+from ..learning.approval import ApprovalKind
 from ..mlops.model_registry import ModelStage
 from ..observability.logging import get_logger
 
 logger = get_logger("api.v3.admin")
+
+#: Approval kinds only a Super Admin may decide (approve or reject).
+_SUPER_ADMIN_APPROVAL_KINDS = frozenset(
+    {ApprovalKind.CONNECTOR_REGISTRATION, ApprovalKind.BLUEPRINT_DEPLOYMENT}
+)
 
 
 def _source_payload(source: KnowledgeSource) -> dict[str, Any]:
@@ -76,7 +82,12 @@ def register_admin_ops(
     from pydantic import BaseModel, Field
 
     class SourceCreateRequest(BaseModel):
-        id: str = Field(min_length=1, max_length=128)
+        # The id becomes a path segment (PATCH/DELETE /admin/sources/{source_id}), so it may not
+        # contain anything a URL path treats specially -- '/', '?', '#', '%' -- nor be '.' or
+        # '..' (audit INT-030). Starting with a letter or digit rules out the last two.
+        id: str = Field(
+            min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        )
         type: str = "web"
         uri: str = Field(min_length=8, max_length=2000)
         trust_tier: int = 2
@@ -350,6 +361,13 @@ def register_admin_ops(
         caller=Depends(principal),
     ) -> JSONResponse:
         require_admin(caller)
+        # Track AP's gates are a Super Admin's decision by design (ADR-021 section 5, ADR-024
+        # section 3; ``learning/approval.py``). Activate and deploy already require SuperAdmin;
+        # without this an Admin could still be the person who approved or rejected them (audit
+        # INT-006). Rejecting is a decision too, so both directions are refused.
+        existing = await container.approvals.get(approval_id)
+        if existing is not None and existing.kind in _SUPER_ADMIN_APPROVAL_KINDS:
+            require_super_admin(caller)
         decided = await container.approvals.decide(
             approval_id,
             approved=payload.approved,
@@ -597,7 +615,10 @@ def register_admin_ops(
         await audit_admin(request, caller, "admin.local_model.pull", payload.name, "ok")
         return JSONResponse(content={"pulled": payload.name, "progress": last})
 
-    @router.delete("/admin/local-models/{name}")
+    # ``:path`` so a namespaced Ollama tag (``library/llama3:8b``, ``user/model``) reaches the
+    # handler: the gateway sees the path already percent-decoded, so ``%2F`` is a real '/'
+    # by the time routing runs (audit INT-031).
+    @router.delete("/admin/local-models/{name:path}")
     async def delete_local_model(
         request: Request, name: str, caller=Depends(principal)
     ) -> JSONResponse:

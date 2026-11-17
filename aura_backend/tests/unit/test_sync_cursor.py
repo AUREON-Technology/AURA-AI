@@ -9,16 +9,22 @@ rather than a guess, and that every syncable table actually carries the column t
 from __future__ import annotations
 
 import importlib.util
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from api.v2.sync import (
+    _PULL_TABLES,
     CLIENT_CLOCK_SKEW_ALLOWANCE,
+    PageToken,
     bounded_client_clock,
     decode_cursor,
+    decode_page,
     encode_cursor,
+    encode_page,
+    is_stale,
 )
-from infrastructure.db.models import SYNC_TXID_SQL, SYNCABLE_MODELS
+from infrastructure.db.models import SYNC_TXID_SQL, SYNCABLE_MODELS, Task
 
 NOW = datetime(2026, 10, 28, 12, 0, tzinfo=timezone.utc)
 _MIGRATION = Path(__file__).resolve().parents[2] / "alembic" / "versions" / "0014_sync_txid_cursor.py"
@@ -87,3 +93,50 @@ class TestSyncTxidColumn:
         assert set(migration._SYNCABLE_TABLES) == set(SYNCABLE_MODELS)
         assert migration.SYNC_TXID_SQL == SYNC_TXID_SQL
         assert migration.down_revision == "0013"
+
+
+class TestPageToken:
+    """The paged pull's continuation token (INT-013). The paging itself, against real rows, is in
+    ``tests/load/test_sync_postgres.py``."""
+
+    _ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
+
+    def test_round_trip(self) -> None:
+        token = PageToken(since=40, cursor=812, table=3, after_txid=700, after_id=self._ID)
+        assert decode_page(encode_page(token), xmax=900) == token
+
+    def test_a_full_sync_at_a_table_boundary_round_trips(self) -> None:
+        token = PageToken(since=None, cursor=812, table=1)
+        assert decode_page(encode_page(token), xmax=900) == token
+
+    def test_no_token_or_garbage_starts_over(self) -> None:
+        for page in (None, "", "txid:5", "page1.", "page1.a.b.c.d.e", "page1.-.812.0.700.-",
+                     "page1.-.812.0.-." + str(self._ID), f"page1.-.812.{len(_PULL_TABLES)}.-.-",
+                     "page1.-.812.-1.-.-", "page1.900.812.0.-.-"):
+            assert decode_page(page, xmax=900) is None, page
+
+    def test_a_token_ahead_of_the_database_starts_over(self) -> None:
+        """Same reasoning as a cursor from another cluster."""
+        assert decode_page(encode_page(PageToken(since=None, cursor=901, table=0)), xmax=900) is None
+
+    def test_tables_are_walked_in_a_fixed_order_covering_every_one(self) -> None:
+        assert list(_PULL_TABLES) == sorted(SYNCABLE_MODELS)
+
+
+class TestSameBatchTie:
+    """INT-001: ties lose, except to a row this same batch wrote with that clock."""
+
+    def _row(self, clock: datetime) -> Task:
+        return Task(id=uuid.uuid4(), user_id=uuid.uuid4(), title_enc="x", updated_at=NOW, client_updated_at=clock)
+
+    def test_a_tie_with_another_writer_is_stale(self) -> None:
+        assert is_stale(self._row(NOW), NOW)
+
+    def test_a_tie_with_this_batchs_own_write_is_not(self) -> None:
+        assert not is_stale(self._row(NOW), NOW, written_in_batch=NOW)
+
+    def test_an_older_clock_is_stale_even_within_the_batch(self) -> None:
+        assert is_stale(self._row(NOW), NOW - timedelta(seconds=1), written_in_batch=NOW)
+
+    def test_a_newer_clock_applies(self) -> None:
+        assert not is_stale(self._row(NOW), NOW + timedelta(seconds=1))
