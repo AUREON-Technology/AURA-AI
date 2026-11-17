@@ -55,7 +55,11 @@ _SETEXT_UNDERLINE = re.compile(r"^(=+|-{2,})\s*$")
 # Candidate sentence boundary: terminal punctuation, optional closers, whitespace, then an
 # opening character. Abbreviations are excluded in Python rather than with a look-behind --
 # `re` only supports fixed-width look-behind, and the abbreviation list is not fixed width.
-_SENTENCE_BOUNDARY = re.compile(r"([.!?][\"')\]]*)\s+(?=[A-Z0-9\u00C0-\u024F])")
+# Arabic has no capitals, so a boundary followed by an Arabic letter (or an opening guillemet)
+# counts too, and the Arabic question mark and full stop end a sentence like their Latin forms.
+_SENTENCE_BOUNDARY = re.compile(
+    r"([.!?\u061F\u06D4][\"')\]\u00BB]*)\s+(?=[A-Z0-9\u00C0-\u024F\u0621-\u064A\u0660-\u0669\u00AB])"
+)
 _ABBREVIATIONS = frozenset(
     """Mr Mrs Ms Dr Prof Sr Jr St vs etc cf Fig No Inc Ltd Co Corp approx al Ave Rd
     Jan Feb Mar Apr Jun Jul Aug Sep Sept Oct Nov Dec""".split()

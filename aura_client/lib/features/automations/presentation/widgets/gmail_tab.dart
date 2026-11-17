@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import '../../data/automation_repository.dart';
 import '../gmail_view_model.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class GmailTab extends ConsumerWidget {
   final bool isMock;
@@ -23,12 +24,12 @@ class GmailTab extends ConsumerWidget {
               Icon(Icons.lock_outline, size: 64, color: palette.warning),
               const SizedBox(height: 16),
               Text(
-                'Live Gmail Integration Unavailable',
+                context.l10n.automationsGmailUnavailableTitle,
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: palette.textPrimary),
               ),
               const SizedBox(height: 8),
               Text(
-                'You are signed in via a mock developer profile. Real unread emails can only be fetched when logged in with a real Google Account.',
+                context.l10n.automationsGmailUnavailableBody,
                 textAlign: TextAlign.center,
                 style: TextStyle(color: palette.textSecondary, fontSize: 13),
               ),
@@ -48,7 +49,7 @@ class GmailTab extends ConsumerWidget {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(
-              'Recent Unread Emails',
+              context.l10n.automationsGmailRecentUnread,
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: palette.textPrimary),
             ),
             ui.loading
@@ -67,7 +68,7 @@ class GmailTab extends ConsumerWidget {
                       }
                     },
                     icon: const Icon(Icons.refresh),
-                    label: const Text('Fetch Unread'),
+                    label: Text(context.l10n.automationsGmailFetchUnread),
                   ),
           ],
         ),
@@ -76,7 +77,7 @@ class GmailTab extends ConsumerWidget {
           child: ui.emails.isEmpty
               ? Center(
                   child: Text(
-                    ui.loading ? 'Fetching...' : 'No unread emails loaded. Click Fetch.',
+                    ui.loading ? context.l10n.automationsGmailFetching : context.l10n.automationsGmailEmpty,
                     style: TextStyle(color: palette.textSecondary),
                   ),
                 )
@@ -138,7 +139,7 @@ class _EmailCard extends ConsumerWidget {
                     children: [
                       Text(email.subject, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                       const SizedBox(height: 4),
-                      Text('From: ${email.sender}', style: TextStyle(color: palette.textSecondary, fontSize: 12)),
+                      Text(context.l10n.automationsGmailFrom(email.sender), style: TextStyle(color: palette.textSecondary, fontSize: 12)),
                     ],
                   ),
                 ),
@@ -148,7 +149,7 @@ class _EmailCard extends ConsumerWidget {
                       : OutlinedButton.icon(
                           onPressed: onAnalyze,
                           icon: const Icon(Icons.auto_awesome, size: 14),
-                          label: const Text('AI Analyze'),
+                          label: Text(context.l10n.automationsGmailAnalyze),
                         ),
               ],
             ),
@@ -186,7 +187,7 @@ class EmailAnalysisPanel extends ConsumerWidget {
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
-                'Category: ${analysis.category}',
+                context.l10n.automationsGmailCategory(analysis.category),
                 style: TextStyle(color: palette.brandOnSurfaceText, fontSize: 11, fontWeight: FontWeight.bold),
               ),
             ),
@@ -198,19 +199,19 @@ class EmailAnalysisPanel extends ConsumerWidget {
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
-                isUrgent ? 'URGENT' : 'Low Urgency',
+                isUrgent ? context.l10n.automationsGmailUrgent : context.l10n.automationsGmailLowUrgency,
                 style: TextStyle(color: isUrgent ? palette.danger : palette.success, fontSize: 11, fontWeight: FontWeight.bold),
               ),
             ),
           ],
         ),
         const SizedBox(height: 12),
-        Text('AI Summary', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: palette.textPrimary)),
+        Text(context.l10n.automationsGmailAiSummary, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: palette.textPrimary)),
         const SizedBox(height: 4),
         Text(analysis.summary, style: TextStyle(color: palette.textSecondary, fontSize: 13)),
         const SizedBox(height: 16),
         if (analysis.actionItems.isNotEmpty) ...[
-          Text('Action Items Extracted', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: palette.textPrimary)),
+          Text(context.l10n.automationsGmailActionItems, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: palette.textPrimary)),
           const SizedBox(height: 8),
           ...analysis.actionItems.map((item) {
             return Container(
@@ -229,7 +230,7 @@ class EmailAnalysisPanel extends ConsumerWidget {
                         Text(item.title, style: const TextStyle(fontSize: 13)),
                         if (item.dueDate != null)
                           Text(
-                            'Suggested Deadline: ${DateFormat('yyyy-MM-dd').format(item.dueDate!)}',
+                            context.l10n.automationsGmailSuggestedDeadline(DateFormat('yyyy-MM-dd').format(item.dueDate!)),
                             style: TextStyle(color: palette.warning, fontSize: 11),
                           ),
                       ],
@@ -237,11 +238,12 @@ class EmailAnalysisPanel extends ConsumerWidget {
                   ),
                   IconButton(
                     icon: Icon(Icons.playlist_add, color: palette.success),
-                    tooltip: 'Import as AURA Task',
+                    tooltip: context.l10n.automationsGmailImportTask,
                     onPressed: () async {
                       final messenger = ScaffoldMessenger.of(context);
+                      final l10n = context.l10n;
                       await vm.importActionItem(item, urgent: isUrgent, category: analysis.category);
-                      messenger.showSnackBar(SnackBar(content: Text('Imported task: ${item.title}')));
+                      messenger.showSnackBar(SnackBar(content: Text(l10n.automationsGmailImportedTask(item.title))));
                     },
                   ),
                 ],
@@ -251,7 +253,7 @@ class EmailAnalysisPanel extends ConsumerWidget {
         ],
         if (analysis.shouldCreateEvent && analysis.eventTitle != null && analysis.eventStart != null) ...[
           const SizedBox(height: 12),
-          Text('Suggested Calendar Event', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: palette.textPrimary)),
+          Text(context.l10n.automationsGmailSuggestedEvent, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: palette.textPrimary)),
           const SizedBox(height: 8),
           Container(
             padding: const EdgeInsets.all(8),
@@ -277,11 +279,12 @@ class EmailAnalysisPanel extends ConsumerWidget {
                 ),
                 IconButton(
                   icon: Icon(Icons.event, color: palette.brandOnSurfaceText),
-                  tooltip: 'Schedule Event',
+                  tooltip: context.l10n.automationsGmailScheduleEvent,
                   onPressed: () async {
                     final messenger = ScaffoldMessenger.of(context);
+                    final l10n = context.l10n;
                     await vm.importSuggestedEvent(analysis);
-                    messenger.showSnackBar(SnackBar(content: Text('Scheduled event: ${analysis.eventTitle}')));
+                    messenger.showSnackBar(SnackBar(content: Text(l10n.automationsGmailScheduledEvent(analysis.eventTitle!))));
                   },
                 ),
               ],

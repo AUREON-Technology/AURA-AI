@@ -9,10 +9,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:aura_client/l10n/l10n.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'hostd_control_client_io.dart' show HostdControlEndpoint, discoverHostdControlEndpoint;
+import 'hostd_error_codes.dart';
 
 class HostdTerminalUnavailable implements Exception {
   HostdTerminalUnavailable(this.message);
@@ -55,7 +57,7 @@ class HostdTerminalClient {
   Future<void> connect({required String rootPath, required int cols, required int rows}) async {
     final endpoint = await _discoverEndpoint();
     if (endpoint == null) {
-      throw HostdTerminalUnavailable('aura_hostd is not running.');
+      throw HostdTerminalUnavailable(currentL10n.coreHostdNotRunning);
     }
     final uri = Uri.parse(
       'ws://127.0.0.1:${endpoint.port}/terminal?root=${Uri.encodeQueryComponent(rootPath)}',
@@ -125,7 +127,11 @@ class HostdTerminalClient {
         _resolved = true;
         if (!_exitCode.isClosed) _exitCode.add(code);
       case 'error':
-        final message = msg['message'] as String? ?? 'unknown terminal error';
+        final message = hostdCodeMessage(
+          msg['code'] as String?,
+          msg['message'] as String? ?? 'unknown terminal error',
+          detail: msg['detail'] as String?,
+        );
         _resolved = true;
         if (!_errors.isClosed) _errors.add(message);
     }

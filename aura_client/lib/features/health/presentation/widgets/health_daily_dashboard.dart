@@ -6,6 +6,7 @@ import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/theme/theme.dart';
 import '../health_view_model.dart';
 import 'health_progress_bar.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class HealthDailyDashboard extends ConsumerWidget {
   final HealthRecord? record;
@@ -41,7 +42,7 @@ class HealthDailyDashboard extends ConsumerWidget {
                       runSpacing: 8,
                       children: [
                         Text(
-                          'Daily Goals Progress',
+                          context.l10n.healthDailyGoalsTitle,
                           style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: palette.textPrimary),
                         ),
                         if (weight != null)
@@ -53,7 +54,7 @@ class HealthDailyDashboard extends ConsumerWidget {
                               border: Border.all(color: palette.brand.withValues(alpha: 0.3)),
                             ),
                             child: Text(
-                              'Weight: ${weight.toStringAsFixed(1)} kg',
+                              context.l10n.healthWeightBadge(weight.toStringAsFixed(1)),
                               style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: palette.textPrimary),
                             ),
                           ),
@@ -62,38 +63,38 @@ class HealthDailyDashboard extends ConsumerWidget {
                   ),
                   const SizedBox(height: 20),
                   HealthProgressBar(
-                    title: 'Water Intake',
+                    title: context.l10n.healthWaterIntake,
                     current: water,
                     target: HealthGoals.waterGoalMl,
-                    unit: 'ml',
+                    unit: context.l10n.healthUnitMl,
                     color: Colors.cyan,
                     icon: Icons.local_drink_outlined,
                   ),
                   const SizedBox(height: 16),
                   HealthProgressBar(
-                    title: 'Sleep Duration',
+                    title: context.l10n.healthSleepDuration,
                     current: sleep,
                     target: HealthGoals.sleepGoalMins,
-                    unit: 'mins',
+                    unit: context.l10n.healthUnitMins,
                     color: palette.brand,
                     icon: Icons.nightlight_round_outlined,
-                    customSubtitle: '${(sleep / 60).toStringAsFixed(1)} / 8.0 hrs',
+                    customSubtitle: context.l10n.healthSleepHoursProgress((sleep / 60).toStringAsFixed(1)),
                   ),
                   const SizedBox(height: 16),
                   HealthProgressBar(
-                    title: 'Exercise Duration',
+                    title: context.l10n.healthExerciseDuration,
                     current: exercise,
                     target: HealthGoals.exerciseGoalMins,
-                    unit: 'mins',
+                    unit: context.l10n.healthUnitMins,
                     color: palette.warning,
                     icon: Icons.fitness_center_outlined,
                   ),
                   const SizedBox(height: 16),
                   HealthProgressBar(
-                    title: 'Calories Consumed',
+                    title: context.l10n.healthCaloriesConsumed,
                     current: calories,
                     target: HealthGoals.calorieGoalKcal,
-                    unit: 'kcal',
+                    unit: context.l10n.healthUnitKcal,
                     color: Colors.pinkAccent,
                     icon: Icons.restaurant_outlined,
                   ),
@@ -109,7 +110,7 @@ class HealthDailyDashboard extends ConsumerWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Quick Logger Panel',
+                    context.l10n.healthQuickLoggerTitle,
                     style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: palette.textPrimary),
                   ),
                   const SizedBox(height: 16),
@@ -120,7 +121,7 @@ class HealthDailyDashboard extends ConsumerWidget {
                       ElevatedButton.icon(
                         onPressed: () => vm.logWater(250),
                         icon: const Icon(Icons.add, size: 16),
-                        label: const Text('+250ml Water'),
+                        label: Text(context.l10n.healthAddWater250),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.cyan,
                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -129,7 +130,7 @@ class HealthDailyDashboard extends ConsumerWidget {
                       ElevatedButton.icon(
                         onPressed: () => vm.logWater(500),
                         icon: const Icon(Icons.add, size: 16),
-                        label: const Text('+500ml Water'),
+                        label: Text(context.l10n.healthAddWater500),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.cyan.shade700,
                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -139,9 +140,9 @@ class HealthDailyDashboard extends ConsumerWidget {
                         onPressed: () {
                           showHealthLogDialog(
                             context: context,
-                            title: 'Log Sleep Duration',
-                            labelText: 'Sleep Minutes',
-                            hintText: 'e.g. 480 for 8 hours',
+                            title: context.l10n.healthLogSleepTitle,
+                            labelText: context.l10n.healthSleepMinutesLabel,
+                            hintText: context.l10n.healthSleepMinutesHint,
                             keyboardType: TextInputType.number,
                             onSubmit: (input) {
                               final mins = int.tryParse(input);
@@ -150,7 +151,7 @@ class HealthDailyDashboard extends ConsumerWidget {
                           );
                         },
                         icon: const Icon(Icons.nightlight_outlined, size: 16),
-                        label: const Text('Log Sleep'),
+                        label: Text(context.l10n.healthLogSleep),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: palette.brand,
                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -160,9 +161,9 @@ class HealthDailyDashboard extends ConsumerWidget {
                         onPressed: () {
                           showHealthLogDialog(
                             context: context,
-                            title: 'Log Exercise Duration',
-                            labelText: 'Exercise Minutes',
-                            hintText: 'e.g. 30',
+                            title: context.l10n.healthLogExerciseTitle,
+                            labelText: context.l10n.healthExerciseMinutesLabel,
+                            hintText: context.l10n.healthExampleHint('30'),
                             keyboardType: TextInputType.number,
                             onSubmit: (input) {
                               final mins = int.tryParse(input);
@@ -171,7 +172,7 @@ class HealthDailyDashboard extends ConsumerWidget {
                           );
                         },
                         icon: const Icon(Icons.fitness_center, size: 16),
-                        label: const Text('Log Exercise'),
+                        label: Text(context.l10n.healthLogExercise),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AuraTheme.accentAmber,
                           foregroundColor: Colors.black87,
@@ -182,9 +183,9 @@ class HealthDailyDashboard extends ConsumerWidget {
                         onPressed: () {
                           showHealthLogDialog(
                             context: context,
-                            title: 'Log Calories',
-                            labelText: 'Kcal Consumed',
-                            hintText: 'e.g. 500',
+                            title: context.l10n.healthLogCaloriesTitle,
+                            labelText: context.l10n.healthKcalConsumedLabel,
+                            hintText: context.l10n.healthExampleHint('500'),
                             keyboardType: TextInputType.number,
                             onSubmit: (input) {
                               final kcal = int.tryParse(input);
@@ -193,7 +194,7 @@ class HealthDailyDashboard extends ConsumerWidget {
                           );
                         },
                         icon: const Icon(Icons.restaurant, size: 16),
-                        label: const Text('Log Calories'),
+                        label: Text(context.l10n.healthLogCalories),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.pinkAccent,
                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -203,9 +204,9 @@ class HealthDailyDashboard extends ConsumerWidget {
                         onPressed: () {
                           showHealthLogDialog(
                             context: context,
-                            title: 'Log Current Weight',
-                            labelText: 'Weight (kg)',
-                            hintText: 'e.g. 74.5',
+                            title: context.l10n.healthLogWeightTitle,
+                            labelText: context.l10n.healthWeightKgLabel,
+                            hintText: context.l10n.healthExampleHint('74.5'),
                             keyboardType: const TextInputType.numberWithOptions(decimal: true),
                             onSubmit: (input) {
                               final w = double.tryParse(input);
@@ -214,7 +215,7 @@ class HealthDailyDashboard extends ConsumerWidget {
                           );
                         },
                         icon: const Icon(Icons.monitor_weight_outlined, size: 16),
-                        label: const Text('Log Weight'),
+                        label: Text(context.l10n.healthLogWeight),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AuraTheme.accentTeal,
                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),

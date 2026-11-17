@@ -21,6 +21,7 @@ import 'package:aura_client/desktop/events/ide_event.dart';
 import 'package:aura_client/desktop/events/ide_event_bus.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 import 'package:aura_client/desktop/workspace/workspace_file_service.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// Prompts for a name via a simple text-field dialog. Returns the trimmed text, or `null` if
 /// cancelled or left blank.
@@ -37,7 +38,7 @@ Future<String?> promptForName(
       context: context,
       title: title,
       confirmLabel: confirmLabel,
-      cancelLabel: 'Cancel',
+      cancelLabel: context.l10n.cancel,
       onConfirm: () => Navigator.of(context).pop(controller.text.trim()),
       child: AuraTextField(
         controller: controller,
@@ -57,15 +58,15 @@ Future<String?> promptForName(
 Future<bool> _confirmDelete(BuildContext context, {required String name, required bool isDirectory}) async {
   final confirmed = await AuraDialog.show<bool>(
     context: context,
-    title: 'Delete ${isDirectory ? 'folder' : 'file'}?',
-    confirmLabel: 'Delete',
-    cancelLabel: 'Cancel',
+    title: isDirectory ? context.l10n.explorerDeleteFolderTitle : context.l10n.explorerDeleteFileTitle,
+    confirmLabel: context.l10n.commonDelete,
+    cancelLabel: context.l10n.cancel,
     confirmDestructive: true,
     onConfirm: () => Navigator.of(context).pop(true),
     child: Text(
       isDirectory
-          ? '"$name" and everything inside it will be permanently deleted.'
-          : '"$name" will be permanently deleted.',
+          ? context.l10n.explorerDeleteFolderBody(name)
+          : context.l10n.explorerDeleteFileBody(name),
     ),
   );
   return confirmed == true;
@@ -86,9 +87,9 @@ Future<void> renameEntry(
 }) async {
   final newName = await promptForName(
     context,
-    title: 'Rename ${isDirectory ? 'folder' : 'file'}',
-    label: 'New name',
-    confirmLabel: 'Rename',
+    title: isDirectory ? context.l10n.explorerRenameFolderTitle : context.l10n.explorerRenameFileTitle,
+    label: context.l10n.explorerNewName,
+    confirmLabel: context.l10n.explorerRename,
     initialValue: currentName,
   );
   if (newName == null || newName == currentName || !context.mounted) return;
@@ -99,7 +100,7 @@ Future<void> renameEntry(
     onDone();
   } catch (e) {
     if (context.mounted) {
-      AuraSnackbar.show(context, message: 'Could not rename: $e', kind: AuraSnackbarKind.error);
+      AuraSnackbar.show(context, message: context.l10n.explorerRenameFailed(e.toString()), kind: AuraSnackbarKind.error);
     }
   }
 }
@@ -123,7 +124,7 @@ Future<void> deleteEntry(
     onDone();
   } catch (e) {
     if (context.mounted) {
-      AuraSnackbar.show(context, message: 'Could not delete: $e', kind: AuraSnackbarKind.error);
+      AuraSnackbar.show(context, message: context.l10n.explorerDeleteFailed(e.toString()), kind: AuraSnackbarKind.error);
     }
   }
 }
@@ -137,7 +138,12 @@ Future<void> createFileIn(
   required String parentAbsolutePath,
   required VoidCallback onDone,
 }) async {
-  final name = await promptForName(context, title: 'New file', label: 'File name', confirmLabel: 'Create');
+  final name = await promptForName(
+    context,
+    title: context.l10n.explorerNewFileTitle,
+    label: context.l10n.explorerFileName,
+    confirmLabel: context.l10n.explorerCreate,
+  );
   if (name == null || !context.mounted) return;
   final path = p.join(parentAbsolutePath, name);
   try {
@@ -146,7 +152,7 @@ Future<void> createFileIn(
     onDone();
   } catch (e) {
     if (context.mounted) {
-      AuraSnackbar.show(context, message: 'Could not create file: $e', kind: AuraSnackbarKind.error);
+      AuraSnackbar.show(context, message: context.l10n.explorerCreateFileFailed(e.toString()), kind: AuraSnackbarKind.error);
     }
   }
 }
@@ -160,7 +166,12 @@ Future<void> createFolderIn(
   required String parentAbsolutePath,
   required VoidCallback onDone,
 }) async {
-  final name = await promptForName(context, title: 'New folder', label: 'Folder name', confirmLabel: 'Create');
+  final name = await promptForName(
+    context,
+    title: context.l10n.explorerNewFolderTitle,
+    label: context.l10n.explorerFolderName,
+    confirmLabel: context.l10n.explorerCreate,
+  );
   if (name == null || !context.mounted) return;
   final path = p.join(parentAbsolutePath, name);
   try {
@@ -169,7 +180,7 @@ Future<void> createFolderIn(
     onDone();
   } catch (e) {
     if (context.mounted) {
-      AuraSnackbar.show(context, message: 'Could not create folder: $e', kind: AuraSnackbarKind.error);
+      AuraSnackbar.show(context, message: context.l10n.explorerCreateFolderFailed(e.toString()), kind: AuraSnackbarKind.error);
     }
   }
 }

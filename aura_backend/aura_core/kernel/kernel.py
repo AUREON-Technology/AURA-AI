@@ -86,6 +86,7 @@ from ..llm.sensitivity import DataScope, data_scope, escalate
 from ..llm.workload import effective_workload, workload_for_turn, workload_scope
 from ..observability.logging import LogContext, get_logger
 from ..ports.runtime import ToolContext
+from ..prompts.language import reply_language
 from ..prompts.library import AGENT_PROMPT_IDS
 from ..agents.registry import AgentRegistry, AgentSpec
 from ..reasoning.engine import ReasoningRequest
@@ -190,6 +191,11 @@ class TurnRequest:
     #: Redacting ``Credential`` values, carried for this turn only into ``ToolContext.credentials``
     #: and from there to that one connector's reads; nothing stores a ``TurnRequest``.
     connector_tokens: Mapping[str, Credential] | None = None
+    #: The language the app is displaying (``"ar"``/``"en"``), from ``X-Client-Language``. Only a
+    #: fallback: the reply mirrors the language the message is written in, and this decides only
+    #: when the message has no clear language (a link, a number, code). ``None`` -- an old app,
+    #: a service key -- leaves such a message to the model, as before.
+    preferred_language: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1998,6 +2004,11 @@ class AIKernel:
                     "capabilities": self._format_tool_capabilities(tools),
                     "desktop_paired": "true" if desktop_active else "",
                     "sandbox_mode": "" if desktop_active else "true",
+                    "arabic_reply": (
+                        "true"
+                        if reply_language(request.message, request.preferred_language) == "ar"
+                        else ""
+                    ),
                 },
             )
             return rendered.text

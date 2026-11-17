@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { api } from "@/lib/api";
+import { useI18n } from "@/lib/i18n/context";
 import type { AuditEvent } from "@/lib/types";
 
 export default function AuditPage() {
+  const { t, errorText } = useI18n();
   const [rows, setRows] = useState<AuditEvent[]>([]);
   const [action, setAction] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
 
   // Stable across renders (state setters are), so the mount-time effect below can list it as its
   // one dependency instead of silencing react-hooks/exhaustive-deps (audit G-10 lint gate).
@@ -16,7 +18,7 @@ export default function AuditPage() {
     const query = next ? `?action=${encodeURIComponent(next)}` : "";
     api<{ events: AuditEvent[] }>(`/admin/audit${query}`)
       .then((body) => setRows(body.events))
-      .catch((err: Error) => setError(err.message));
+      .catch((err: unknown) => setError(err));
   }, []);
 
   useEffect(() => {
@@ -25,23 +27,23 @@ export default function AuditPage() {
 
   return (
     <>
-      <h1>Audit</h1>
-      <p className="sub">Append-only. Arguments are digests, never verbatim user content.</p>
-      {error ? <div className="banner">{error}</div> : null}
+      <h1>{t("nav.audit")}</h1>
+      <p className="sub">{t("audit.sub")}</p>
+      {error ? <div className="banner">{errorText(error)}</div> : null}
       <div className="row">
-        <input value={action} onChange={(e) => setAction(e.target.value)} placeholder="action prefix" />
+        <input value={action} onChange={(e) => setAction(e.target.value)} placeholder={t("audit.actionPlaceholder")} />
         <button className="btn" type="button" onClick={() => load(action)}>
-          Filter
+          {t("audit.filter")}
         </button>
       </div>
       <table className="table">
         <thead>
           <tr>
-            <th>When</th>
-            <th>Actor</th>
-            <th>Action</th>
-            <th>Resource</th>
-            <th>Outcome</th>
+            <th>{t("audit.colWhen")}</th>
+            <th>{t("audit.colActor")}</th>
+            <th>{t("audit.colAction")}</th>
+            <th>{t("audit.colResource")}</th>
+            <th>{t("audit.colOutcome")}</th>
           </tr>
         </thead>
         <tbody>

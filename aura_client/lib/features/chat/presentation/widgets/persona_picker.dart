@@ -62,13 +62,14 @@ class PersonaChip extends ConsumerWidget {
 /// A short human label for a capability gate, falling back to the raw name for anything not
 /// explicitly known -- so a new backend-declared capability never breaks this UI, it just reads
 /// a little less polished until this map is updated.
-const Map<String, String> _knownCapabilityLabels = {
-  'engineer_agent': 'the Engineer capability',
-};
+Map<String, String> _knownCapabilityLabels(AppLocalizations l10n) => {
+      'engineer_agent': l10n.chatCapabilityEngineer,
+    };
 
-String _capabilityLabel(Set<String> capabilities) {
-  if (capabilities.isEmpty) return 'an additional capability';
-  return capabilities.map((c) => _knownCapabilityLabels[c] ?? c).join(', ');
+String _capabilityLabel(AppLocalizations l10n, Set<String> capabilities) {
+  if (capabilities.isEmpty) return l10n.chatCapabilityAdditional;
+  final known = _knownCapabilityLabels(l10n);
+  return capabilities.map((c) => known[c] ?? c).join(l10n.chatListSeparator);
 }
 
 void showPersonaPicker(BuildContext context) {
@@ -133,7 +134,9 @@ class PersonaPickerSheet extends ConsumerWidget {
                           icon: locked ? Icons.lock_outline : icon,
                           title: label,
                           subtitle: locked
-                              ? 'Requires ${_capabilityLabel(agent.requiredCapabilities)} -- not available on this account'
+                              ? context.l10n.chatPersonaRequires(
+                                  _capabilityLabel(context.l10n, agent.requiredCapabilities),
+                                )
                               : (agent.description.isEmpty ? null : agent.description),
                           selected: isActive,
                           trailing: !locked && agent.id == 'engineer'

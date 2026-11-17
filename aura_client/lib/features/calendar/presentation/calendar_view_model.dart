@@ -10,8 +10,13 @@ int daysInMonth(DateTime date) {
 }
 
 /// Monday = 0 … Sunday = 6
-int firstDayOffset(DateTime date) {
-  return DateTime(date.year, date.month, 1).weekday - 1;
+/// How many leading cells the month grid leaves before day 1, for a week starting on
+/// [firstDayOfWeekIndex] (0 = Sunday ... 6 = Saturday, as `MaterialLocalizations` gives it; the
+/// default 1 is Monday). Arabic weeks start on Saturday (docs/plans/arabic-language_plan.md,
+/// decision 14).
+int firstDayOffset(DateTime date, {int firstDayOfWeekIndex = 1}) {
+  final weekday = DateTime(date.year, date.month, 1).weekday % 7; // Sunday = 0
+  return (weekday - firstDayOfWeekIndex + 7) % 7;
 }
 
 String dayKey(DateTime date) {

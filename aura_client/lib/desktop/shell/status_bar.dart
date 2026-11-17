@@ -16,6 +16,7 @@ import 'package:aura_client/desktop/state/state_notifiers.dart';
 import 'package:aura_client/desktop/update/desktop_update.dart';
 import 'package:aura_client/desktop/update/desktop_update_providers.dart';
 import 'package:aura_client/features/chat/presentation/widgets/sandbox_diff_view.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class StatusBar extends ConsumerWidget {
   const StatusBar({super.key});
@@ -71,7 +72,7 @@ class StatusBar extends ConsumerWidget {
           // neither gets rendered as one.
           _StatusItem(
             icon: Icons.source_outlined,
-            text: branch ?? 'No branch',
+            text: branch ?? context.l10n.ideStatusNoBranch,
             color: branch == null ? palette.textDisabled : null,
             density: ideDensity,
           ),
@@ -86,15 +87,15 @@ class StatusBar extends ConsumerWidget {
                 ? Icons.cloud_off
                 : (authenticated && backendConnected != true ? Icons.cloud_sync : Icons.cloud_done),
             text: !reachable
-                ? 'Host Not Running'
+                ? context.l10n.ideStatusHostNotRunning
                 : !authenticated
-                    ? 'Host Not Paired'
+                    ? context.l10n.ideStatusHostNotPaired
                     : otherServer
-                    ? 'Host paired to a different server -- re-pair'
+                    ? context.l10n.ideStatusHostOtherServer
                     : switch (backendConnected) {
-                        true => 'Host Connected',
-                        false => 'Reconnecting to server...',
-                        null => 'Host Status Unknown (update aura_hostd)',
+                        true => context.l10n.ideStatusHostConnected,
+                        false => context.l10n.ideStatusReconnecting,
+                        null => context.l10n.ideStatusHostUnknown,
                       },
             color: !reachable
                 ? palette.danger
@@ -109,7 +110,7 @@ class StatusBar extends ConsumerWidget {
               onTap: () => _showApprovalsDialog(context, ref),
               child: _StatusItem(
                 icon: Icons.pending_actions_outlined,
-                text: '${pendingApprovals.length} pending approval${pendingApprovals.length == 1 ? '' : 's'}',
+                text: context.l10n.ideStatusPendingApprovals(pendingApprovals.length),
                 color: palette.warning,
                 density: ideDensity,
               ),
@@ -127,13 +128,15 @@ class StatusBar extends ConsumerWidget {
           if (update != null)
             Tooltip(
               message: update.isRollback
-                  ? 'This version was rolled back to ${update.version}'
-                  : 'AURA ${update.version} is available',
+                  ? context.l10n.ideStatusRolledBackTooltip(update.version.toString())
+                  : context.l10n.ideStatusUpdateAvailableTooltip(update.version.toString()),
               child: InkWell(
                 onTap: () => _confirmUpdate(context, ref, update),
                 child: _StatusItem(
                   icon: update.isRollback ? Icons.history : Icons.system_update_alt,
-                  text: update.isRollback ? 'Roll back to ${update.version}' : 'Update to ${update.version}',
+                  text: update.isRollback
+                      ? context.l10n.ideStatusRollBackTo(update.version.toString())
+                      : context.l10n.ideStatusUpdateTo(update.version.toString()),
                   color: palette.warning,
                   density: ideDensity,
                 ),
@@ -145,7 +148,7 @@ class StatusBar extends ConsumerWidget {
           if (position != null)
             _StatusItem(
               icon: Icons.text_fields_outlined,
-              text: 'Ln ${position.line}, Col ${position.column}',
+              text: context.l10n.ideStatusLineColumn(position.line, position.column),
               density: ideDensity,
             ),
           // UTF-8 is a genuine constant, not another placeholder:
@@ -161,7 +164,9 @@ class StatusBar extends ConsumerWidget {
           if (lineEnding != null)
             _StatusItem(
               icon: Icons.format_align_left_outlined,
-              text: lineEnding,
+              // `Mixed` is the one label that is a word rather than a
+              // terminator's conventional name (LF/CRLF/CR stay as they are).
+              text: lineEnding == 'Mixed' ? context.l10n.ideStatusLineEndingMixed : lineEnding,
               density: ideDensity,
             ),
         ],
@@ -180,18 +185,26 @@ Future<void> _confirmUpdate(BuildContext context, WidgetRef ref, AvailableUpdate
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
-      title: Text(update.isRollback ? 'Roll back to AURA ${update.version}?' : 'Update to AURA ${update.version}?'),
+      title: Text(
+        update.isRollback
+            ? dialogContext.l10n.ideUpdateRollbackTitle(update.version.toString())
+            : dialogContext.l10n.ideUpdateTitle(update.version.toString()),
+      ),
       content: Text(
         windows
-            ? '${update.isRollback ? 'This version has been rolled back. ' : ''}AURA will close, '
-                'install ${update.version} and reopen. Unsaved changes are kept and restored.'
-            : 'Download AURA ${update.version} for Linux in your browser.',
+            ? (update.isRollback
+                ? dialogContext.l10n.ideUpdateWindowsRollbackBody(update.version.toString())
+                : dialogContext.l10n.ideUpdateWindowsBody(update.version.toString()))
+            : dialogContext.l10n.ideUpdateLinuxBody(update.version.toString()),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Not now')),
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: Text(dialogContext.l10n.ideNotNow),
+        ),
         TextButton(
           onPressed: () => Navigator.of(dialogContext).pop(true),
-          child: Text(windows ? 'Install and restart' : 'Download'),
+          child: Text(windows ? dialogContext.l10n.ideUpdateInstallRestart : dialogContext.l10n.ideUpdateDownload),
         ),
       ],
     ),
@@ -206,11 +219,11 @@ Future<void> _confirmUpdate(BuildContext context, WidgetRef ref, AvailableUpdate
   showDialog<void>(
     context: context,
     barrierDismissible: false,
-    builder: (_) => const AlertDialog(
+    builder: (progressContext) => AlertDialog(
       content: Row(children: [
-        SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
-        SizedBox(width: AuraSpacing.md),
-        Expanded(child: Text('Downloading the update...')),
+        const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+        const SizedBox(width: AuraSpacing.md),
+        Expanded(child: Text(progressContext.l10n.ideUpdateDownloading)),
       ]),
     ),
   );
@@ -225,8 +238,8 @@ Future<void> _confirmUpdate(BuildContext context, WidgetRef ref, AvailableUpdate
     AuraSnackbar.show(
       context,
       message: error is UpdateIntegrityException
-          ? 'The download did not match the release checksum and was deleted. Nothing was installed.'
-          : 'Could not update: $error',
+          ? context.l10n.ideUpdateChecksumFailed
+          : context.l10n.ideUpdateFailed(error.toString()),
       kind: AuraSnackbarKind.error,
     );
   }
@@ -245,7 +258,7 @@ void _showApprovalsDialog(BuildContext context, WidgetRef ref) {
         if (approvals.isEmpty) Navigator.of(dialogContext).pop();
         return AlertDialog(
           backgroundColor: palette.surface,
-          title: const Text('Pending Approvals'),
+          title: Text(context.l10n.idePendingApprovalsTitle),
           content: SizedBox(
             width: 480,
             child: ConstrainedBox(
@@ -268,7 +281,9 @@ void _showApprovalsDialog(BuildContext context, WidgetRef ref) {
                     children: [
                       if (isWrite) ...[
                         Text(
-                          '${paths?.length ?? 0} file(s)${root != null ? ' in $root' : ''}',
+                          root != null
+                              ? context.l10n.ideApprovalFilesInRoot(paths?.length ?? 0, root)
+                              : context.l10n.ideApprovalFiles(paths?.length ?? 0),
                           style: TextStyle(fontSize: 12, color: palette.textSecondary, fontWeight: FontWeight.w600),
                         ),
                         const SizedBox(height: AuraSpacing.xs),
@@ -288,12 +303,12 @@ void _showApprovalsDialog(BuildContext context, WidgetRef ref) {
                       Row(
                         children: [
                           AuraButton(
-                            label: 'Approve',
+                            label: context.l10n.ideApprove,
                             onPressed: () => dialogRef.read(approvalNotifierProvider.notifier).respond(approval.id, true),
                           ),
                           const SizedBox(width: AuraSpacing.sm),
                           AuraButton(
-                            label: 'Reject',
+                            label: context.l10n.pendingActionsReject,
                             variant: AuraButtonVariant.destructive,
                             onPressed: () => dialogRef.read(approvalNotifierProvider.notifier).respond(approval.id, false),
                           ),
@@ -306,7 +321,7 @@ void _showApprovalsDialog(BuildContext context, WidgetRef ref) {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('Close')),
+            TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: Text(context.l10n.close)),
           ],
         );
       },

@@ -73,23 +73,23 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | POST | `/api/v3/admin/twin/versions/{version}/compile` | — | — | — | none | to wire: Console twin browser and diff are Track AP phase AP9 |
 | GET | `/api/v3/admin/twin/versions/{version}/plan` | — | — | — | none | to wire: Console twin browser and diff are Track AP phase AP9 |
 | POST | `/api/v3/admin/users/{subject}/forget` | — | `aura_admin/app/(console)/access/page.tsx:161` | — | called |  |
-| GET | `/api/v3/agents` | `aura_client/lib/features/chat/data/agents_repository.dart:5`, `aura_client/lib/features/chat/data/agents_repository.dart:93` | — | — | called |  |
+| GET | `/api/v3/agents` | `aura_client/lib/features/chat/data/agents_repository.dart:6`, `aura_client/lib/features/chat/data/agents_repository.dart:95` | — | — | called |  |
 | GET | `/api/v3/agents/runs` | — | — | — | none | to wire: agent-run history (wave 2) has no client or admin view yet |
 | GET | `/api/v3/agents/runs/{run_id}` | — | — | — | none | to wire: agent-run history (wave 2) has no client or admin view yet |
 | GET | `/api/v3/auth/desktop/devices` | `aura_client/lib/core/auth/desktop_devices_client.dart:41` | — | — | called |  |
 | POST | `/api/v3/auth/desktop/devices/revoke` | `aura_client/lib/core/auth/desktop_devices_client.dart:41` | — | — | called |  |
-| POST | `/api/v3/auth/desktop/exchange` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:17`, `aura_client/lib/core/auth/desktop_oauth_client_io.dart:71` (+1) | — | — | called |  |
-| POST | `/api/v3/auth/desktop/login` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:59`, `aura_client/lib/core/auth/token_manager.dart:48` (+2) | — | — | called |  |
-| POST | `/api/v3/auth/desktop/pair/approve` | `aura_client/lib/desktop/host/host_panel.dart:330`, `aura_client/lib/features/engineering/presentation/host_daemon_page.dart:148` | — | — | called |  |
+| POST | `/api/v3/auth/desktop/exchange` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:17`, `aura_client/lib/core/auth/desktop_oauth_client_io.dart:72` (+1) | — | — | called |  |
+| POST | `/api/v3/auth/desktop/login` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:60`, `aura_client/lib/core/auth/token_manager.dart:48` (+2) | — | — | called |  |
+| POST | `/api/v3/auth/desktop/pair/approve` | `aura_client/lib/desktop/host/host_panel.dart:335`, `aura_client/lib/features/engineering/presentation/host_daemon_page.dart:149` | — | — | called |  |
 | POST | `/api/v3/auth/desktop/pair/poll` | — | — | `aura_hostd/lib/src/pairing_client.dart:129` | called |  |
 | POST | `/api/v3/auth/desktop/pair/start` | — | — | `aura_hostd/lib/src/pairing_client.dart:98` | called |  |
-| POST | `/api/v3/auth/nonce` | `aura_client/lib/core/security/device_validation_service.dart:158` | — | — | called |  |
+| POST | `/api/v3/auth/nonce` | `aura_client/lib/core/security/device_validation_service.dart:162` | — | — | called |  |
 | POST | `/api/v3/auth/refresh` | `aura_client/lib/core/auth/token_manager.dart:93`, `aura_client/lib/core/auth/token_manager.dart:117` (+3) | `aura_admin/src/lib/refresh.ts:76` | — | called |  |
 | POST | `/api/v3/auth/revoke` | `aura_client/lib/core/auth/desktop_devices_client.dart:41`, `aura_client/lib/core/auth/desktop_devices_client.dart:82` (+1) | `aura_admin/app/api/auth/login/route.ts:10`, `aura_admin/app/api/auth/logout/route.ts:14` | — | called |  |
-| POST | `/api/v3/auth/token` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:65`, `aura_client/lib/core/auth/token_manager.dart:61` (+7) | — | — | called |  |
+| POST | `/api/v3/auth/token` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:66`, `aura_client/lib/core/auth/token_manager.dart:61` (+7) | — | — | called |  |
 | POST | `/api/v3/auth/web/token` | `aura_client/lib/core/auth/token_manager.dart:440`, `aura_client/lib/core/auth/token_manager.dart:446` | `aura_admin/app/api/auth/login/route.ts:38` | — | called |  |
-| POST | `/api/v3/automation/analyze-email` | `aura_client/lib/features/automations/data/automation_repository.dart:263` | — | — | called |  |
-| POST | `/api/v3/automation/analyze-issue` | `aura_client/lib/features/automations/data/automation_repository.dart:302` | — | — | called |  |
+| POST | `/api/v3/automation/analyze-email` | `aura_client/lib/features/automations/data/automation_repository.dart:264` | — | — | called |  |
+| POST | `/api/v3/automation/analyze-issue` | `aura_client/lib/features/automations/data/automation_repository.dart:303` | — | — | called |  |
 | GET | `/api/v3/capabilities` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:44`, `aura_client/lib/core/ai/knowledge/knowledge_center.dart:76` (+4) | — | — | called |  |
 | POST | `/api/v3/chat` | — | — | — | none | server-to-server: the non-streaming turn is for integrating systems (ADR-029 service keys, AR-6 structured output); the app streams via /chat/stream |
 | POST | `/api/v3/chat/stream` | `aura_client/lib/core/ai/online_agents/llm_timeouts.dart:10`, `aura_client/lib/core/ai/online_agents/sse_agent_client.dart:16` (+4) | — | — | called |  |
@@ -129,9 +129,9 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | GET | `/api/v3/sync` | `aura_client/lib/core/database/database.dart:228`, `aura_client/lib/core/database/database.dart:255` (+2) | — | — | called |  |
 | POST | `/api/v3/sync` | `aura_client/lib/core/database/database.dart:228`, `aura_client/lib/core/database/database.dart:255` (+2) | — | — | called |  |
 | GET | `/api/v3/tools` | — | — | — | none | to wire: tool catalogue is not shown anywhere |
-| WS | `/api/v3/voice/live` | `aura_client/lib/core/ai/voice/live/live_voice_protocol.dart:1`, `aura_client/lib/core/ai/voice/live/live_voice_socket.dart:19` (+1) | — | — | called |  |
-| POST | `/api/v3/voice/speak` | `aura_client/lib/core/ai/voice/speech_text.dart:1`, `aura_client/lib/core/ai/voice/voice_client.dart:13` (+1) | — | — | called |  |
-| POST | `/api/v3/voice/transcribe` | `aura_client/lib/core/ai/voice/voice_client.dart:69`, `aura_client/lib/features/chat/presentation/widgets/voice_recorder_button.dart:17` | — | — | called |  |
+| WS | `/api/v3/voice/live` | `aura_client/lib/core/ai/voice/live/live_voice_protocol.dart:1`, `aura_client/lib/core/ai/voice/live/live_voice_socket.dart:20` (+1) | — | — | called |  |
+| POST | `/api/v3/voice/speak` | `aura_client/lib/core/ai/voice/speech_text.dart:1`, `aura_client/lib/core/ai/voice/voice_client.dart:15` (+1) | — | — | called |  |
+| POST | `/api/v3/voice/transcribe` | `aura_client/lib/core/ai/voice/voice_client.dart:71`, `aura_client/lib/features/chat/presentation/widgets/voice_recorder_button.dart:17` | — | — | called |  |
 | GET | `/api/v3/workspaces` | — | — | — | none | to wire: team workspaces (ADR-034) have no client or console screen yet -- SaaS P1 plan F |
 | POST | `/api/v3/workspaces` | — | — | — | none | to wire: team workspaces (ADR-034) have no client or console screen yet -- SaaS P1 plan F |
 | POST | `/api/v3/workspaces/invites/accept` | — | — | — | none | to wire: team workspaces (ADR-034) have no client or console screen yet -- SaaS P1 plan F |

@@ -5,6 +5,8 @@ library;
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:aura_client/l10n/l10n.dart';
+
 class HostdDebugUnavailable implements Exception {
   HostdDebugUnavailable(this.message);
   final String message;
@@ -27,7 +29,7 @@ class HostdDebugClient {
     required String scriptPath,
     List<String> args = const [],
   }) async {
-    throw HostdDebugUnavailable('The desktop Engineer daemon is not available on web.');
+    throw HostdDebugUnavailable(currentL10n.coreHostdNotOnWeb);
   }
 
   void sendDap(Uint8List bytes) {}

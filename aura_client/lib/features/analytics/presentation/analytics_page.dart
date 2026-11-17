@@ -20,14 +20,15 @@ class AnalyticsPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final logsAsync = ref.watch(telemetryLogsFutureProvider);
     final isMobile = MediaQuery.of(context).size.width < 768;
+    final l10n = context.l10n;
 
     return Scaffold(
       backgroundColor: AuraTheme.background,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: const Text(
-          "System Analytics Dashboard",
+        title: Text(
+          context.l10n.analyticsTitle,
           style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
         ),
         actions: [
@@ -41,7 +42,7 @@ class AnalyticsPage extends ConsumerWidget {
       body: logsAsync.when(
         data: (logs) {
           if (logs.isEmpty) {
-            return _buildEmptyState();
+            return _buildEmptyState(l10n);
           }
 
           // Compute telemetry details
@@ -66,18 +67,18 @@ class AnalyticsPage extends ConsumerWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   // KPI Indicator cards row
-                  _buildKPISection(isMobile, totalRequests, failovers, averageLatency, errors),
+                  _buildKPISection(l10n, isMobile, totalRequests, failovers, averageLatency, errors),
                   const SizedBox(height: 28),
                   
                   // Charts Grid
                   isMobile
                       ? Column(
                           children: [
-                            _buildLatencyChartCard(logs),
+                            _buildLatencyChartCard(l10n, logs),
                             const SizedBox(height: 20),
-                            _buildModelDistributionCard(serverSseCount, failoverCount),
+                            _buildModelDistributionCard(l10n, serverSseCount, failoverCount),
                             const SizedBox(height: 20),
-                            _buildFailoverChartCard(totalRequests, failovers),
+                            _buildFailoverChartCard(l10n, totalRequests, failovers),
                           ],
                         )
                       : GridView.count(
@@ -88,10 +89,10 @@ class AnalyticsPage extends ConsumerWidget {
                           mainAxisSpacing: 20,
                           childAspectRatio: 1.4,
                           children: [
-                            _buildLatencyChartCard(logs),
-                            _buildModelDistributionCard(serverSseCount, failoverCount),
-                            _buildFailoverChartCard(totalRequests, failovers),
-                            _buildTelemetriesHistoryCard(logs),
+                            _buildLatencyChartCard(l10n, logs),
+                            _buildModelDistributionCard(l10n, serverSseCount, failoverCount),
+                            _buildFailoverChartCard(l10n, totalRequests, failovers),
+                            _buildTelemetriesHistoryCard(l10n, logs),
                           ],
                         ),
                 ],
@@ -109,27 +110,27 @@ class AnalyticsPage extends ConsumerWidget {
     );
   }
 
-  Widget _buildEmptyState() {
+  Widget _buildEmptyState(AppLocalizations l10n) {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(Icons.bar_chart, size: 72, color: Colors.white.withValues(alpha: 0.3)),
           const SizedBox(height: 16),
-          const Text("No telemetry metrics collected yet", style: TextStyle(color: AuraTheme.textSecondary, fontSize: 16)),
+          Text(l10n.analyticsEmptyTitle, style: TextStyle(color: AuraTheme.textSecondary, fontSize: 16)),
           const SizedBox(height: 8),
-          const Text("Metrics will appear once you stream prompts.", style: TextStyle(color: Colors.white30, fontSize: 13)),
+          Text(l10n.analyticsEmptyMessage, style: TextStyle(color: Colors.white30, fontSize: 13)),
         ],
       ),
     );
   }
 
-  Widget _buildKPISection(bool isMobile, int total, int failovers, double latency, int errors) {
+  Widget _buildKPISection(AppLocalizations l10n, bool isMobile, int total, int failovers, double latency, int errors) {
     final cards = [
-      _buildKPICard("Total Requests", total.toString(), Icons.forum, AuraTheme.accentIndigo),
-      _buildKPICard("Avg Latency", "${latency.toStringAsFixed(0)} ms", Icons.speed, AuraTheme.accentAmber),
-      _buildKPICard("Failovers", failovers.toString(), Icons.loop, AuraTheme.accentTeal),
-      _buildKPICard("Errors Logged", errors.toString(), Icons.error_outline, Colors.redAccent),
+      _buildKPICard(l10n.analyticsTotalRequests, total.toString(), Icons.forum, AuraTheme.accentIndigo),
+      _buildKPICard(l10n.analyticsAvgLatency, "${latency.toStringAsFixed(0)} ms", Icons.speed, AuraTheme.accentAmber),
+      _buildKPICard(l10n.analyticsFailovers, failovers.toString(), Icons.loop, AuraTheme.accentTeal),
+      _buildKPICard(l10n.analyticsErrorsLogged, errors.toString(), Icons.error_outline, Colors.redAccent),
     ];
 
     if (isMobile) {
@@ -177,7 +178,7 @@ class AnalyticsPage extends ConsumerWidget {
     );
   }
 
-  Widget _buildLatencyChartCard(List<TelemetryLog> logs) {
+  Widget _buildLatencyChartCard(AppLocalizations l10n, List<TelemetryLog> logs) {
     final spots = <FlSpot>[];
     final reqs = logs.where((l) => l.eventType == 'request').toList();
     
@@ -196,11 +197,11 @@ class AnalyticsPage extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("Latency History (Last 10 Request Streams)", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
+            Text(l10n.analyticsLatencyHistory, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
             const SizedBox(height: 24),
             Expanded(
               child: spots.isEmpty
-                  ? const Center(child: Text("Insufficient data", style: TextStyle(color: Colors.white24)))
+                  ? Center(child: Text(l10n.analyticsInsufficientData, style: const TextStyle(color: Colors.white24)))
                   : LineChart(
                       LineChartData(
                         gridData: const FlGridData(show: false),
@@ -228,7 +229,7 @@ class AnalyticsPage extends ConsumerWidget {
     );
   }
 
-  Widget _buildModelDistributionCard(int serverSseCount, int failoverCount) {
+  Widget _buildModelDistributionCard(AppLocalizations l10n, int serverSseCount, int failoverCount) {
     final sections = <PieChartSectionData>[
       if (serverSseCount > 0)
         PieChartSectionData(
@@ -255,11 +256,11 @@ class AnalyticsPage extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("Inference Path Distribution", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
+            Text(l10n.analyticsInferencePaths, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
             const SizedBox(height: 24),
             Expanded(
               child: sections.isEmpty
-                  ? const Center(child: Text("No inference data", style: TextStyle(color: Colors.white24)))
+                  ? Center(child: Text(l10n.analyticsNoInferenceData, style: const TextStyle(color: Colors.white24)))
                   : PieChart(PieChartData(sections: sections)),
             ),
           ],
@@ -268,7 +269,7 @@ class AnalyticsPage extends ConsumerWidget {
     );
   }
 
-  Widget _buildFailoverChartCard(int total, int failovers) {
+  Widget _buildFailoverChartCard(AppLocalizations l10n, int total, int failovers) {
     final success = total - failovers;
     return Card(
       color: AuraTheme.cardBg,
@@ -277,25 +278,25 @@ class AnalyticsPage extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("API Failover Statistics", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
+            Text(l10n.analyticsFailoverStats, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
             const SizedBox(height: 24),
             Expanded(
               child: total == 0
-                  ? const Center(child: Text("No failover events", style: TextStyle(color: Colors.white24)))
+                  ? Center(child: Text(l10n.analyticsNoFailoverEvents, style: const TextStyle(color: Colors.white24)))
                   : PieChart(
                       PieChartData(
                         sections: [
                           PieChartSectionData(
                             color: AuraTheme.accentTeal,
                             value: success.toDouble(),
-                            title: 'Success ($success)',
+                            title: l10n.analyticsSuccessCount(success),
                             radius: 50,
                             titleStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white),
                           ),
                           PieChartSectionData(
                             color: AuraTheme.accentAmber,
                             value: failovers.toDouble(),
-                            title: 'Failovers ($failovers)',
+                            title: l10n.analyticsFailoversCount(failovers),
                             radius: 50,
                             titleStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white),
                           ),
@@ -309,7 +310,7 @@ class AnalyticsPage extends ConsumerWidget {
     );
   }
 
-  Widget _buildTelemetriesHistoryCard(List<TelemetryLog> logs) {
+  Widget _buildTelemetriesHistoryCard(AppLocalizations l10n, List<TelemetryLog> logs) {
     // Reverse logs to show latest first
     final latest = logs.reversed.take(5).toList();
 
@@ -320,7 +321,7 @@ class AnalyticsPage extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("Latest Telemetry Logs", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
+            Text(l10n.analyticsLatestLogs, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
             const SizedBox(height: 16),
             Expanded(
               child: ListView.builder(

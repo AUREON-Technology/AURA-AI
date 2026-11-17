@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:http/http.dart' as http;
 
-import '../../../core/network/aura_failure.dart';
 
 /// Prefix stored on assistant rows when no backend path could serve the turn.
 /// The chat UI uses this to show the Retry card.
@@ -14,7 +13,12 @@ const kChatConnectionErrorMessage =
 /// Assistant-row text for a turn the backend refused for its content class
 /// (`capability_unavailable`). Deliberately does not start with
 /// [kChatConnectionErrorPrefix], so the transcript shows no Retry card.
-const kChatFeatureUnavailableText = '$kFeatureUnavailableTitle. $kFeatureUnavailableMessage';
+/// Stored as the row's text and matched by `message_bubble.dart`, which shows the localized
+/// `chatFeatureUnavailableNotice` in its place; so it is a fixed marker, never translated (a
+/// row saved while the app was in Arabic must still match after switching to English).
+const kChatFeatureUnavailableText = "This needs a feature that isn't available yet. "
+    'AURA can answer plain questions right now. Answers that use your memory, '
+    'documents, tools or images are coming soon.';
 
 /// Assistant-row text for an answer the output guard withheld after it had streamed
 /// (`safety_violation`, `post_hoc`). Replaces the streamed text rather than keeping it: the

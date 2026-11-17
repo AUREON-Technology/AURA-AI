@@ -56,6 +56,17 @@ class HeuristicTokenizer:
     _DIGIT_RUN = re.compile(r"\d+")
     _PUNCT = re.compile(r"[^\w\s]")
     _CJK = re.compile(r"[぀-ヿ㐀-䶿一-鿿가-힯]")
+    #: Arabic letter runs (main block letters, extended blocks and presentation forms; harakat are
+    #: left to ``_PUNCT``, which counts them high). BPE vocabularies trained mostly on English split
+    #: Arabic into far more pieces per word than English, so these are costed per letter, not per
+    #: word: before this an Arabic prompt counted as almost nothing and could overflow the context
+    #: window the budget was supposed to protect (docs/plans/arabic-language_plan.md, stage 1).
+    _ARABIC = re.compile(
+        r"[\u0620-\u064A\u066E-\u06D3\u06FA-\u06FF\u0750-\u077F\u08A0-\u08C9\uFB50-\uFDFB\uFE70-\uFEFC]+"
+    )
+    #: Letters of Arabic per token, deliberately pessimistic (measured BPE ratios run ~2.5-4 for
+    #: current multilingual vocabularies and lower for English-centric ones).
+    ARABIC_CHARS_PER_TOKEN = 2.0
 
     #: Tokens of framing per message (role marker, separators). Matches the ~4-token overhead
     #: OpenAI documents for chat formats; other vendors are within one or two of this.
@@ -90,6 +101,9 @@ class HeuristicTokenizer:
             else:
                 # Long words break into roughly one piece per 3.5 characters.
                 tokens += 1.0 + (length - 4) / 3.5
+
+        for run in self._ARABIC.findall(text):
+            tokens += max(1.0, len(run) / self.ARABIC_CHARS_PER_TOKEN)
 
         for run in self._DIGIT_RUN.findall(text):
             # Digits tokenise much more finely than letters: ~1 token per 1-3 digits.

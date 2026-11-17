@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/features/chat/data/turn_meta.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class TurnStatusRow extends StatelessWidget {
   final TurnMeta meta;
@@ -13,6 +14,8 @@ class TurnStatusRow extends StatelessWidget {
     required this.hasCitations,
   });
 
+  // The English copies below are what tests look up; the row itself renders the
+  // localized strings (chatTurn* keys), whose English text is identical.
   static const libraryEmptyCopy =
       'Searched your library — nothing relevant was found.';
 
@@ -35,6 +38,7 @@ class TurnStatusRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
+    final l10n = context.l10n;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -44,43 +48,43 @@ class TurnStatusRow extends StatelessWidget {
           _Note(
             icon: Icons.gpp_maybe_outlined,
             color: palette.warning,
-            text: quarantinedContextCopy,
+            text: l10n.chatTurnQuarantined,
           ),
         if (meta.interrupted)
           _Note(
             icon: Icons.stop_circle_outlined,
             color: palette.warning,
-            text: interruptedCopy,
+            text: l10n.chatTurnInterrupted,
           ),
         if (meta.revised)
           _Note(
             icon: Icons.shield_outlined,
             color: palette.warning,
-            text: 'This answer was redacted by a safety check.',
+            text: l10n.chatTurnRedacted,
           ),
         if (meta.showLowConfidence)
           _Note(
             icon: Icons.speed_outlined,
             color: palette.warning,
-            text: 'Low confidence (${(meta.confidence! * 100).round()}%).',
+            text: l10n.chatTurnLowConfidence((meta.confidence! * 100).round()),
           ),
         if (meta.degraded && meta.searchedButEmpty)
           _Note(
             icon: Icons.link_off,
             color: palette.textSecondary,
-            text: libraryEmptyCopy,
+            text: l10n.chatTurnLibraryEmpty,
           )
         else if (meta.degraded)
           _Note(
             icon: Icons.cloud_queue,
             color: palette.textSecondary,
-            text: reducedModeCopy,
+            text: l10n.chatTurnReducedMode,
           )
         else if (!hasCitations)
           _Note(
             icon: Icons.link_off,
             color: palette.textSecondary,
-            text: meta.searchedButEmpty ? libraryEmptyCopy : ungroundedCopy,
+            text: meta.searchedButEmpty ? l10n.chatTurnLibraryEmpty : l10n.chatTurnUngrounded,
           ),
       ],
     );

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../auth/presentation/auth_provider.dart';
 import '../data/task_repository.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 @immutable
 class TasksUiState {
@@ -63,3 +64,36 @@ class TasksViewModel extends Notifier<TasksUiState> {
 }
 
 final tasksViewModelProvider = NotifierProvider<TasksViewModel, TasksUiState>(TasksViewModel.new);
+
+/// Display label for a task category value ('All' filter included). The stored value and the
+/// filter value stay English; unknown values are shown as stored.
+String taskCategoryLabel(AppLocalizations l10n, String category) {
+  switch (category.toLowerCase()) {
+    case 'all':
+      return l10n.tasksCategoryAll;
+    case 'personal':
+      return l10n.tasksCategoryPersonal;
+    case 'academic':
+      return l10n.tasksCategoryAcademic;
+    case 'client':
+      return l10n.tasksCategoryClient;
+    case 'project':
+      return l10n.tasksCategoryProject;
+    default:
+      return category;
+  }
+}
+
+/// Display label for a stored task priority; unknown values are shown as stored.
+String taskPriorityLabel(AppLocalizations l10n, String priority) {
+  switch (priority.toLowerCase()) {
+    case 'low':
+      return l10n.tasksPriorityLow;
+    case 'medium':
+      return l10n.tasksPriorityMedium;
+    case 'high':
+      return l10n.tasksPriorityHigh;
+    default:
+      return priority;
+  }
+}

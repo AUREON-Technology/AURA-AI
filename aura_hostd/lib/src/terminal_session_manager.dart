@@ -14,6 +14,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'error_codes.dart';
 import 'pty_session.dart';
 import 'pty_session_interface.dart';
 import 'posix_pty_session.dart';
@@ -50,13 +51,14 @@ class TerminalSessionManager {
       }
     }
     if (root == null) {
-      await _sendError(socket, '$rootPath is not a granted root');
+      await _sendError(socket, HostdErrorCode.rootNotGranted, '$rootPath is not a granted root');
       await socket.close();
       return;
     }
     if (!root.trusted) {
       await _sendError(
         socket,
+        HostdErrorCode.workspaceNotTrusted,
         'workspace is not trusted -- run `aura_hostd trust "$rootPath"` first',
       );
       await socket.close();
@@ -110,7 +112,12 @@ class TerminalSessionManager {
               await s.start();
             } catch (error) {
               _logger('terminal $sessionId failed to start: $error');
-              await _sendError(socket, 'failed to start terminal: $error');
+              await _sendError(
+                socket,
+                HostdErrorCode.terminalStartFailed,
+                'failed to start terminal: $error',
+                detail: '$error',
+              );
               continue;
             }
             _sessions[sessionId] = s;
@@ -149,9 +156,17 @@ class TerminalSessionManager {
     }
   }
 
-  Future<void> _sendError(WebSocket socket, String message) async {
+  /// [message] is the English text apps predating codes show; [code] (`error_codes.dart`) is
+  /// what a newer app translates.
+  /// [detail] is the underlying error alone (no English prefix), for a message that wraps one.
+  Future<void> _sendError(WebSocket socket, String code, String message, {String? detail}) async {
     try {
-      socket.add(jsonEncode({'type': 'error', 'message': message}));
+      socket.add(jsonEncode({
+        'type': 'error',
+        'message': message,
+        'code': code,
+        if (detail != null) 'detail': detail,
+      }));
     } catch (_) {
       // Socket already closed -- nothing to notify.
     }

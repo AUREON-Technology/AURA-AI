@@ -117,3 +117,56 @@ class TestReadinessNamesTheEmbedder:
         assert embedding["dimension"] == container.embedder.dimension
         # The in-memory test container runs the hash embedder on purpose; readiness says so.
         assert embedding["semantic"] is False
+
+
+class _RecordingStt:
+    """Records the language hint each transcription received."""
+
+    name = "recording-stt"
+
+    def __init__(self) -> None:
+        self.hints: list[str | None] = []
+
+    async def transcribe(self, audio: bytes, *, language: str | None = None) -> str:
+        self.hints.append(language)
+        return "ok"
+
+
+class TestTranscribeLanguageHint:
+    """``language`` on ``/voice/transcribe`` (docs/plans/arabic-language_plan.md, stage 4): a hint
+    for a multilingual model, ignored by an English-only one, absent means auto-detect."""
+
+    def _post(self, container, stt_model: str, **form):
+        import dataclasses
+
+        container.settings = dataclasses.replace(
+            container.settings, voice=dataclasses.replace(container.settings.voice, stt_model=stt_model)
+        )
+        recorder = _RecordingStt()
+        container.stt_engine = recorder
+        with _client(container) as client:
+            response = client.post(
+                "/api/v3/voice/transcribe",
+                files={"file": ("note.wav", b"RIFF....", "audio/wav")}, data=form,
+            )
+        return response, recorder.hints
+
+    async def test_a_multilingual_model_gets_the_hint(self, container) -> None:
+        await container.startup()
+        response, hints = self._post(container, "small", language="ar-EG")
+        assert response.status_code == 200 and hints == ["ar"]
+
+    async def test_no_hint_means_detect(self, container) -> None:
+        await container.startup()
+        response, hints = self._post(container, "small")
+        assert response.status_code == 200 and hints == [None]
+
+    async def test_an_english_only_model_ignores_it(self, container) -> None:
+        await container.startup()
+        response, hints = self._post(container, "tiny.en", language="ar")
+        assert response.status_code == 200 and hints == [None]
+
+    async def test_a_bad_code_is_refused(self, container) -> None:
+        await container.startup()
+        response, hints = self._post(container, "small", language="klingon")
+        assert response.status_code == 422 and hints == []

@@ -29,7 +29,7 @@ void showTaskSyncLogsSheet(BuildContext context, List<String> logs) {
                 children: [
                   Expanded(
                     child: Text(
-                      'Tasks Sync Activity Log',
+                      context.l10n.tasksSyncLogTitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.titleLarge,
@@ -47,7 +47,7 @@ void showTaskSyncLogsSheet(BuildContext context, List<String> logs) {
                 child: logs.isEmpty
                     ? Center(
                         child: Text(
-                          'No logs recorded yet. Press sync to begin.',
+                          context.l10n.tasksSyncLogEmpty,
                           style: TextStyle(color: palette.textSecondary),
                         ),
                       )

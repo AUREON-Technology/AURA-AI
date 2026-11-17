@@ -17,6 +17,7 @@
 /// direction to fail in.
 library;
 
+import 'package:aura_client/l10n/l10n.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -92,7 +93,7 @@ void deleteWithUndo(
   final controller = AuraSnackbar.show(
     context,
     message: message,
-    actionLabel: 'Undo',
+    actionLabel: context.l10n.commonUndo,
   );
   controller.closed.then((reason) {
     if (reason == SnackBarClosedReason.action) {
