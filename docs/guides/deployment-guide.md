@@ -354,8 +354,11 @@ Credentials come from `deploy/secrets/rclone.conf` or `backup_s3_access_key` /
 generate the key pair and configure the public key, or the sidecar refuses to run
 (`AuraBackupMisconfigured`). Procedure, key storage, restore and rotation:
 [maintenance-guide.md → Backup encryption keys](maintenance-guide.md#backup-encryption-keys).
-`AuraBackupStale`, `AuraBackupOffsiteFailed`, `AuraBackupMisconfigured` and
-`AuraBackupUnencrypted` scrape the textfile metrics the sidecar writes.
+`AuraBackupStale`, `AuraBackupOffsiteFailed`, `AuraBackupUnderReplicated`,
+`AuraBackupOffsiteStale`, `AuraBackupSingleKey`, `AuraBackupMisconfigured` and `AuraBackupUnencrypted` scrape the
+textfile metrics the sidecar writes. Offsite copies go to every remote in
+`BACKUP_OFFSITE_TARGETS` and need two verified providers by default; setup is in
+[maintenance-guide.md → Offsite providers](maintenance-guide.md#offsite-providers-multi-target).
 
 ```bash
 ls -lh backups/
@@ -386,7 +389,9 @@ database needs its index rebuilt.
 
 ### Monitoring
 
-The operator console is at `https://$AURA_DOMAIN/console/`. Grafana is at
+On this stack the operator console is at `https://$AURA_DOMAIN/console/` (the compose files build
+it with that base path; the Railway deploy serves it from the root of `console.aureon-ai.tech`
+instead). Grafana is at
 `https://$AURA_DOMAIN/grafana/` and is gated by an Nginx `auth_request` against the console
 session (Developer+). `/metrics` stays denied on the public edge.
 

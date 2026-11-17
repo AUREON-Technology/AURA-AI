@@ -316,6 +316,12 @@ abstract class AppLocalizations {
   /// **'Capture from anywhere. Browse tasks, calendar, finance, and health in Life Hub. Account tools live under You.'**
   String get onboardingTourBody;
 
+  /// Host daemon status card: the daemon is paired to a different server than the one this app uses
+  ///
+  /// In en, this message translates to:
+  /// **'This app is signed in to {appBackendUrl}. Pair again to move the daemon there.'**
+  String hostdPairedToOtherServer(String appBackendUrl);
+
   /// Onboarding button that skips the remaining intro pages
   ///
   /// In en, this message translates to:
@@ -1443,12 +1449,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Save executable path'**
   String get hostdSaveExecutable;
-
-  /// Host daemon page: warning when the daemon is paired to a different backend than the app
-  ///
-  /// In en, this message translates to:
-  /// **'This app is signed in to {appBackendUrl}. Pair again to move the daemon there.'**
-  String hostdPairedToOtherServer(String appBackendUrl);
 
   /// Live voice page close button tooltip
   ///

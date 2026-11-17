@@ -45,6 +45,10 @@ and healthcheck. Railway does not support declaring four services with different
 in one config file today — the other three are dashboard/CLI service creations pointed at the
 same repo, using the commands in the table above.
 
+**Backups are a separate, sixth service.** Nothing above backs up Railway's Postgres or Redis,
+or Qdrant Cloud. A cron service built from `deploy/backup/railway.Dockerfile` does it nightly, to
+Backblaze B2 and Cloudflare R2: see [backups.md](backups.md).
+
 ## 3. Environment variables (Control Plane)
 
 Set these as Railway **service variables** (encrypted at rest by Railway, never committed).
