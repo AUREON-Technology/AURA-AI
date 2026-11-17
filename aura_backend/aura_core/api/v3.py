@@ -387,6 +387,10 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         if workspace_id is None:
             return None, turn
         plan, _seats = await plans.entitlement(workspace_id)
+        if plan.engineer and container.settings.security.engineer_for_customers \
+                and "engineer_agent" not in turn.capabilities:
+            # SaaS P1-E: a customer's Engineer comes from their workspace's plan, not a role.
+            turn = replace(turn, capabilities=(*turn.capabilities, "engineer_agent"))
         if not plan.engineer:
             if agent == "engineer":
                 await plans.require_engineer(workspace_id)

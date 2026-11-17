@@ -100,6 +100,15 @@ class PlanService:
         reservation.released = True
         await self.meter.release(reservation.workspace_id, reservation.metric, reservation.period, reservation.amount)
 
+    async def engineer_entitled(self, subject: str) -> bool:
+        """Whether ``subject`` belongs to any workspace whose plan includes the Engineer (SaaS
+        P1-E): the gate on a customer's desktop sign-in, pairing, refresh and daemon socket."""
+        for workspace, _membership in await self.tenancy.list_for(subject):
+            plan, _seats = await self.entitlement(workspace.id)
+            if plan.engineer:
+                return True
+        return False
+
     async def require_engineer(self, workspace_id: str) -> None:
         plan, _ = await self.entitlement(workspace_id)
         if not plan.engineer:
