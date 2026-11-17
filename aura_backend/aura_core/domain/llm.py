@@ -418,6 +418,12 @@ class ProviderCapabilities:
     #: than the request's plain ``max_output_tokens``. That is the conservative default the
     #: CPU-only provider's planner sizing depends on.
     tokens_per_second: float = 0.0
+    #: The workload classes this provider may serve; empty means all of them (module readiness
+    #: WP6a, G-26). A ceiling says *how private* content may be; this says *whose* it may be. An
+    #: unhinted generation has no pool, so pool tiering never fences a pooled provider out of it
+    #: -- a Claude slot raised to ``sensitive`` for the Engineer would otherwise also receive
+    #: every unclassified (hence SENSITIVE) background generation.
+    workloads: frozenset[WorkloadClass] = frozenset()
 
     def __post_init__(self) -> None:
         if self.context_window <= 0:
@@ -460,6 +466,9 @@ class ProviderCapabilities:
     def resource_cost(self) -> float:
         """The two operator-assigned resource costs as one relative number."""
         return self.gpu_cost + 0.5 * self.memory_cost
+
+    def serves_workload(self, workload: WorkloadClass) -> bool:
+        return not self.workloads or workload in self.workloads
 
     def serves_language(self, language: str | None) -> bool:
         if not language or not self.languages:

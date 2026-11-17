@@ -338,6 +338,10 @@ class ProviderRouter:
         hint = hint or effective_workload(request)
         if not caps.is_generative:
             return "not_generative"
+        # Before anything else content-related: an unhinted request is INTERACTIVE here
+        # (DEFAULT_WORKLOAD), so a provider fenced to the Engineer never receives it (WP6a).
+        if not caps.serves_workload(hint.workload):
+            return "workload_not_allowed"
         if hint.modalities and not set(hint.modalities) <= caps.effective_modalities:
             return "modality_unsupported"
         if request.images:
