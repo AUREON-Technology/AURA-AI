@@ -1750,7 +1750,11 @@ class VoiceSettings:
     """
 
     stt_enabled: bool = True
-    stt_model: str = "tiny.en"
+    #: faster-whisper size. ``small`` is multilingual: Egyptian Arabic and English, measured on
+    #: FLEURS (docs/reports/STT_WER_ARABIC_ENGLISH_2026-11-17.md): English WER 6.5% (``tiny.en``
+    #: was 12.0%), Egyptian Arabic 25.0%, at ~0.3 real-time factor on 4 CPU cores (``tiny.en``
+    #: ~0.1). An ``.en`` model keeps live voice English-only (``LiveVoiceConfig.english_only_stt``).
+    stt_model: str = "small"
     #: Hub commit of the Whisper weights (audit FSA-110); empty loads the repo's head.
     stt_model_revision: str = ""
     #: Load Whisper at container startup instead of on the first transcription of every fresh
@@ -1788,7 +1792,7 @@ class VoiceSettings:
     def from_env(cls) -> "VoiceSettings":
         return cls(
             stt_enabled=_bool("VOICE_STT_ENABLED", True),
-            stt_model=_env("VOICE_STT_MODEL", "tiny.en") or "tiny.en",
+            stt_model=_env("VOICE_STT_MODEL", "small") or "small",
             stt_model_revision=_env("VOICE_STT_MODEL_REVISION", "") or "",
             stt_warm_on_startup=(
                 None if not _env("VOICE_STT_WARM_ON_STARTUP", "") else _bool("VOICE_STT_WARM_ON_STARTUP", True)
