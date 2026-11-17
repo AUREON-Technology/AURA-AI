@@ -9,9 +9,15 @@
 #
 # For a backup set it first verifies CHECKSUMS.sha256, decrypts with the offline private key and
 # checks every artifact (Qdrant/Redis too) against the set's decrypted manifest -- the same path
-# restore.sh takes. Then it starts an ephemeral postgres:16-alpine container, pg_restore --list,
-# restores into an empty database, asserts TABLE DATA count >= 1 and rows >= 1, then destroys
-# the container.
+# restore.sh takes. Then it starts an ephemeral Postgres container (DRILL_PG_IMAGE, default
+# postgres:18-alpine), pg_restore --list, restores into an empty database, asserts TABLE DATA
+# count >= 1 and rows >= 1, then destroys the container.
+#
+# The drill's Postgres must be at least as new as the pg_dump that wrote the set: pg_restore
+# cannot read an archive from a newer pg_dump. Railway's production server is Postgres 18 (its
+# backups come from pg_dump 18); the VPS stack's are Postgres 16. pg_restore 18 reads both, so
+# the default is 18. Pinned by deploy/scripts/tests/test_backup_crypto.sh against the Railway
+# backup image's PG_MAJOR.
 #
 # RTO evidence: it prints the wall-clock time of each phase (verify+decrypt, container ready,
 # pg_restore, total) and, when DRILL_RECORD is set, appends one tab-separated line to that file:
@@ -23,6 +29,7 @@ set -eu
 
 SOURCE=${1:-}
 DUMP=""
+DRILL_PG_IMAGE=${DRILL_PG_IMAGE:-postgres:18-alpine}
 DRILL_RECORD=${DRILL_RECORD:-}
 t_start=$(date +%s)
 
@@ -105,12 +112,12 @@ elif [ -n "$SOURCE" ]; then
     bytes=$(wc -c < "$DUMP" | tr -d ' ')
 fi
 
-echo "starting throwaway postgres (not the compose 'postgres' service)..."
+echo "starting throwaway $DRILL_PG_IMAGE (not the compose 'postgres' service)..."
 CID=$(docker run -d --rm \
     -e POSTGRES_USER=drill \
     -e POSTGRES_PASSWORD=drill \
     -e POSTGRES_DB=drill \
-    postgres:16-alpine)
+    "$DRILL_PG_IMAGE")
 
 i=0
 while [ "$i" -lt 40 ]; do
