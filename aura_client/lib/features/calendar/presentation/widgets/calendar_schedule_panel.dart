@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import 'package:aura_client/core/database/database.dart';
-import 'package:aura_client/core/theme/theme.dart';
+import 'package:aura_client/core/design_system/design_system.dart';
 import '../calendar_view_model.dart';
 import 'add_event_dialog.dart';
 import 'package:aura_client/l10n/l10n.dart';
@@ -16,6 +16,7 @@ class CalendarSchedulePanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final ui = ref.watch(calendarViewModelProvider);
     final vm = ref.read(calendarViewModelProvider.notifier);
+    final palette = AuraPalette.of(context);
 
     return Card(
       child: Padding(
@@ -33,7 +34,7 @@ class CalendarSchedulePanel extends ConsumerWidget {
                       Text(DateFormat('EEEE').format(ui.selectedDate), style: Theme.of(context).textTheme.titleMedium),
                       Text(
                         DateFormat('MMMM d, yyyy').format(ui.selectedDate),
-                        style: const TextStyle(color: AuraTheme.textSecondary, fontSize: 13),
+                        style: TextStyle(color: palette.textSecondary, fontSize: 13),
                       ),
                     ],
                   ),
@@ -41,26 +42,26 @@ class CalendarSchedulePanel extends ConsumerWidget {
                 IconButton(
                   tooltip: context.l10n.eventAdd,
                   onPressed: () => showAddEventDialog(context, ref, ui.selectedDate),
-                  icon: const Icon(Icons.add, color: Colors.white),
+                  icon: Icon(Icons.add, color: palette.onBrand),
                   style: IconButton.styleFrom(
-                    backgroundColor: AuraTheme.accentIndigo,
+                    backgroundColor: palette.brand,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                   ),
                 ),
               ],
             ),
-            const Divider(color: Color(0x1F94A3B8), height: 24),
+            Divider(color: palette.border, height: 24),
             Expanded(
               child: dayEvents.isEmpty
                   ? Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.calendar_today, size: 48, color: AuraTheme.textSecondary.withValues(alpha: 0.4)),
+                          Icon(Icons.calendar_today, size: 48, color: palette.textSecondary.withValues(alpha: 0.4)),
                           const SizedBox(height: 12),
-                          const Text(
+                          Text(
                             'No events scheduled for today',
-                            style: TextStyle(color: AuraTheme.textSecondary, fontSize: 13),
+                            style: TextStyle(color: palette.textSecondary, fontSize: 13),
                             textAlign: TextAlign.center,
                           ),
                         ],
@@ -76,9 +77,9 @@ class CalendarSchedulePanel extends ConsumerWidget {
                           margin: const EdgeInsets.only(bottom: 12),
                           padding: const EdgeInsets.all(14),
                           decoration: BoxDecoration(
-                            color: const Color(0x0DFFFFFF),
+                            color: palette.surfaceVariant,
                             borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: const Color(0x0F94A3B8)),
+                            border: Border.all(color: palette.border),
                           ),
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -87,7 +88,7 @@ class CalendarSchedulePanel extends ConsumerWidget {
                                 width: 4,
                                 height: 45,
                                 decoration: BoxDecoration(
-                                  gradient: AuraTheme.primaryGradient,
+                                  gradient: palette.brandGradient,
                                   borderRadius: BorderRadius.circular(2),
                                 ),
                               ),
@@ -99,19 +100,19 @@ class CalendarSchedulePanel extends ConsumerWidget {
                                     Text(event.title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                                     if (event.description != null) ...[
                                       const SizedBox(height: 2),
-                                      Text(event.description!, style: const TextStyle(color: AuraTheme.textSecondary, fontSize: 12)),
+                                      Text(event.description!, style: TextStyle(color: palette.textSecondary, fontSize: 12)),
                                     ],
                                     const SizedBox(height: 6),
                                     Row(
                                       children: [
-                                        const Icon(Icons.access_time, size: 12, color: AuraTheme.textSecondary),
+                                        Icon(Icons.access_time, size: 12, color: palette.textSecondary),
                                         const SizedBox(width: 4),
-                                        Text('$startText - $endText', style: const TextStyle(color: AuraTheme.textSecondary, fontSize: 11)),
+                                        Text('$startText - $endText', style: TextStyle(color: palette.textSecondary, fontSize: 11)),
                                         if (event.googleEventId != null) ...[
                                           const SizedBox(width: 12),
-                                          const Icon(Icons.cloud_done_outlined, size: 12, color: AuraTheme.accentTeal),
+                                          Icon(Icons.cloud_done_outlined, size: 12, color: palette.success),
                                           const SizedBox(width: 4),
-                                          const Text('Cloud Synced', style: TextStyle(color: AuraTheme.accentTeal, fontSize: 11)),
+                                          Text('Cloud Synced', style: TextStyle(color: palette.success, fontSize: 11)),
                                         ],
                                       ],
                                     ),
@@ -120,22 +121,22 @@ class CalendarSchedulePanel extends ConsumerWidget {
                               ),
                               IconButton(
                                 tooltip: context.l10n.eventDelete,
-                                icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
+                                icon: Icon(Icons.delete_outline, color: palette.danger, size: 18),
                                 onPressed: () async {
                                   final confirm = await showDialog<bool>(
                                     context: context,
                                     builder: (context) => AlertDialog(
-                                      backgroundColor: const Color(0xFF0F0C1B),
+                                      backgroundColor: palette.surface,
                                       title: const Text('Delete Event'),
                                       content: Text("Are you sure you want to delete '${event.title}'?"),
                                       actions: [
                                         TextButton(
                                           onPressed: () => Navigator.pop(context, false),
-                                          child: const Text('Cancel', style: TextStyle(color: AuraTheme.textSecondary)),
+                                          child: Text('Cancel', style: TextStyle(color: palette.textSecondary)),
                                         ),
                                         ElevatedButton(
                                           onPressed: () => Navigator.pop(context, true),
-                                          style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                                          style: ElevatedButton.styleFrom(backgroundColor: palette.danger),
                                           child: const Text('Delete'),
                                         ),
                                       ],

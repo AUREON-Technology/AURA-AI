@@ -1,25 +1,26 @@
 import 'package:flutter/material.dart';
 
-import 'package:aura_client/core/theme/theme.dart';
+import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
 void showTaskSyncLogsSheet(BuildContext context, List<String> logs) {
   showModalBottomSheet(
     context: context,
-    backgroundColor: const Color(0xFF0F0C1B),
+    backgroundColor: AuraPalette.of(context).background,
     isScrollControlled: true,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
     ),
     builder: (context) {
+      final palette = AuraPalette.of(context);
       return SizedBox(
         height: MediaQuery.sizeOf(context).height * 0.5,
         child: Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
-            color: AuraTheme.cardBg,
+            color: palette.surface,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-            border: Border.all(color: const Color(0x1F94A3B8)),
+            border: Border.all(color: palette.border),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -36,18 +37,18 @@ void showTaskSyncLogsSheet(BuildContext context, List<String> logs) {
                   ),
                   IconButton(
                     tooltip: context.l10n.close,
-                    icon: const Icon(Icons.close, color: Colors.white),
+                    icon: Icon(Icons.close, color: palette.textPrimary),
                     onPressed: () => Navigator.pop(context),
                   ),
                 ],
               ),
-              const Divider(color: Color(0x1F94A3B8), height: 24),
+              Divider(color: palette.border, height: 24),
               Expanded(
                 child: logs.isEmpty
-                    ? const Center(
+                    ? Center(
                         child: Text(
                           'No logs recorded yet. Press sync to begin.',
-                          style: TextStyle(color: AuraTheme.textSecondary),
+                          style: TextStyle(color: palette.textSecondary),
                         ),
                       )
                     : ListView.builder(
@@ -55,19 +56,19 @@ void showTaskSyncLogsSheet(BuildContext context, List<String> logs) {
                         itemBuilder: (context, index) {
                           final log = logs[index];
                           IconData logIcon = Icons.info_outline;
-                          Color logColor = AuraTheme.textSecondary;
+                          Color logColor = palette.textSecondary;
 
                           if (log.toLowerCase().contains('error') ||
                               log.toLowerCase().contains('failed')) {
                             logIcon = Icons.error_outline;
-                            logColor = Colors.redAccent;
+                            logColor = palette.danger;
                           } else if (log.toLowerCase().contains('success')) {
                             logIcon = Icons.check_circle_outline;
-                            logColor = AuraTheme.accentTeal;
+                            logColor = palette.success;
                           } else if (log.toLowerCase().contains('import') ||
                               log.toLowerCase().contains('upload')) {
                             logIcon = Icons.cloud_sync_outlined;
-                            logColor = AuraTheme.accentIndigo;
+                            logColor = palette.brandOnSurfaceText;
                           }
 
                           return Padding(

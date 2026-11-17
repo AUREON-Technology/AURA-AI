@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'package:aura_client/core/theme/theme.dart';
+import 'package:aura_client/core/design_system/design_system.dart';
 import '../data/health_repository.dart';
 import 'health_view_model.dart';
 import 'widgets/health_daily_dashboard.dart';
@@ -17,16 +17,18 @@ class HealthPage extends ConsumerWidget {
     final selectedDate = ref.watch(healthViewModelProvider);
     final dailyRecordAsync = ref.watch(dailyHealthStreamProvider(selectedDate));
     final weeklyRecordsAsync = ref.watch(weeklyHealthStreamProvider);
+    final palette = AuraPalette.of(context);
 
     return Scaffold(
+      backgroundColor: palette.background,
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: RadialGradient(
-            center: Alignment(-0.6, 0.6),
+            center: const Alignment(-0.6, 0.6),
             radius: 1.5,
             colors: [
-              Color(0xFF1E1B4B),
-              Color(0xFF0F0C1B),
+              palette.brand.withValues(alpha: 0.12),
+              Colors.transparent,
             ],
           ),
         ),
@@ -48,13 +50,13 @@ class HealthPage extends ConsumerWidget {
                     builder: (context, constraints) {
                       final isDesktop = constraints.maxWidth > 900;
                       final dailySummary = dailyRecordAsync.when(
-                        loading: () => const Center(child: CircularProgressIndicator(color: AuraTheme.accentIndigo)),
+                        loading: () => Center(child: CircularProgressIndicator(color: palette.brand)),
                         error: (err, stack) =>
                             AuraFailureView(failure: AuraFailure.from(err), compact: true),
                         data: (record) => HealthDailyDashboard(record: record),
                       );
                       final chartsWidget = weeklyRecordsAsync.when(
-                        loading: () => const Center(child: CircularProgressIndicator(color: AuraTheme.accentIndigo)),
+                        loading: () => Center(child: CircularProgressIndicator(color: palette.brand)),
                         error: (err, stack) =>
                             AuraFailureView(failure: AuraFailure.from(err), compact: true),
                         data: (records) => HealthTrendCharts(records: records),

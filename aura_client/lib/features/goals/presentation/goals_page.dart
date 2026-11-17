@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:aura_client/core/database/database.dart';
-import 'package:aura_client/core/theme/theme.dart';
+import 'package:aura_client/core/design_system/design_system.dart';
 import '../../auth/presentation/auth_provider.dart';
 import '../../auth/presentation/sign_out_confirmation.dart';
 import '../data/goal_providers.dart';
@@ -20,16 +20,17 @@ class GoalsPage extends ConsumerWidget {
     ref.watch(goalsViewModelProvider);
     final vm = ref.read(goalsViewModelProvider.notifier);
     final user = authState.value;
+    final palette = AuraPalette.of(context);
 
     return Scaffold(
-      backgroundColor: AuraTheme.background,
+      backgroundColor: palette.background,
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: RadialGradient(
-            center: Alignment(0.8, -0.6),
+            center: const Alignment(0.8, -0.6),
             radius: 1.2,
             colors: [
-              Color(0x1F6366F1),
+              palette.brand.withValues(alpha: 0.12),
               Colors.transparent,
             ],
           ),
@@ -50,8 +51,8 @@ class GoalsPage extends ConsumerWidget {
                     else
                       CircleAvatar(
                         radius: 24,
-                        backgroundColor: AuraTheme.accentIndigo.withValues(alpha: 0.2),
-                        child: const Icon(Icons.person, color: AuraTheme.accentIndigo),
+                        backgroundColor: palette.brand.withValues(alpha: 0.2),
+                        child: Icon(Icons.person, color: palette.brandOnSurfaceText),
                       ),
                     const SizedBox(width: 16),
                     Expanded(
@@ -61,7 +62,7 @@ class GoalsPage extends ConsumerWidget {
                           Text(
                             'Welcome back,',
                             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                  color: AuraTheme.textSecondary,
+                                  color: palette.textSecondary,
                                 ),
                           ),
                           Text(
@@ -74,7 +75,7 @@ class GoalsPage extends ConsumerWidget {
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.logout, color: Colors.redAccent),
+                      icon: Icon(Icons.logout, color: palette.danger),
                       tooltip: 'Sign Out',
                       onPressed: () => confirmAndSignOut(context, ref),
                     ),
@@ -100,7 +101,7 @@ class GoalsPage extends ConsumerWidget {
                         Text(
                           'Track your aspirations and progress',
                           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: AuraTheme.textSecondary,
+                                color: palette.textSecondary,
                               ),
                         ),
                       ],
@@ -117,15 +118,15 @@ class GoalsPage extends ConsumerWidget {
                   child: goalsAsync.when(
                     data: (goals) {
                       if (goals.isEmpty) {
-                        return const Center(
+                        return Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.flag, size: 64, color: Colors.grey),
-                              SizedBox(height: 16),
-                              Text('No goals yet', style: TextStyle(fontSize: 18, color: Colors.grey)),
-                              SizedBox(height: 8),
-                              Text('Create your first goal to get started', style: TextStyle(color: Colors.grey)),
+                              Icon(Icons.flag, size: 64, color: palette.textSecondary),
+                              const SizedBox(height: 16),
+                              Text('No goals yet', style: TextStyle(fontSize: 18, color: palette.textSecondary)),
+                              const SizedBox(height: 8),
+                              Text('Create your first goal to get started', style: TextStyle(color: palette.textSecondary)),
                             ],
                           ),
                         );
@@ -250,30 +251,31 @@ class _GoalCard extends StatelessWidget {
 
   const _GoalCard({required this.goal, required this.onDelete});
 
-  Color _statusColor(String status) {
+  Color _statusColor(AuraPalette palette, String status) {
     switch (status) {
       case 'achieved':
-        return Colors.green;
+        return palette.success;
       case 'abandoned':
-        return Colors.grey;
+        return palette.textSecondary;
       default:
-        return Colors.blue;
+        return palette.info;
     }
   }
 
-  Color _priorityColor(String priority) {
+  Color _priorityColor(AuraPalette palette, String priority) {
     switch (priority) {
       case 'high':
-        return Colors.red;
+        return palette.danger;
       case 'low':
-        return Colors.green;
+        return palette.success;
       default:
-        return Colors.orange;
+        return palette.warning;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
@@ -284,8 +286,8 @@ class _GoalCard extends StatelessWidget {
             Row(
               children: [
                 CircleAvatar(
-                  backgroundColor: _statusColor(goal.status).withValues(alpha: 0.2),
-                  child: Icon(Icons.flag, color: _statusColor(goal.status)),
+                  backgroundColor: _statusColor(palette, goal.status).withValues(alpha: 0.2),
+                  child: Icon(Icons.flag, color: _statusColor(palette, goal.status)),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -294,7 +296,7 @@ class _GoalCard extends StatelessWidget {
                     children: [
                       Text(goal.title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
                       if (goal.description != null && goal.description!.isNotEmpty)
-                        Text(goal.description!, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+                        Text(goal.description!, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: palette.textSecondary)),
                     ],
                   ),
                 ),
@@ -304,7 +306,7 @@ class _GoalCard extends StatelessWidget {
                   },
                   itemBuilder: (context) => [
                     const PopupMenuItem(value: 'edit', child: Text('Edit')),
-                    const PopupMenuItem(value: 'delete', child: Text('Delete', style: TextStyle(color: Colors.red))),
+                    PopupMenuItem(value: 'delete', child: Text('Delete', style: TextStyle(color: palette.danger))),
                   ],
                 ),
               ],
@@ -317,17 +319,17 @@ class _GoalCard extends StatelessWidget {
                     padding: const EdgeInsetsDirectional.only(end: 8),
                     child: Chip(
                       label: Text(goal.category!, style: const TextStyle(fontSize: 11)),
-                      backgroundColor: Colors.blue.withValues(alpha: 0.1),
+                      backgroundColor: palette.info.withValues(alpha: 0.1),
                     ),
                   ),
                 Chip(
-                  label: Text(goal.status, style: TextStyle(fontSize: 11, color: _statusColor(goal.status))),
-                  backgroundColor: _statusColor(goal.status).withValues(alpha: 0.1),
+                  label: Text(goal.status, style: TextStyle(fontSize: 11, color: _statusColor(palette, goal.status))),
+                  backgroundColor: _statusColor(palette, goal.status).withValues(alpha: 0.1),
                 ),
                 const SizedBox(width: 8),
                 Chip(
-                  label: Text(goal.priority, style: TextStyle(fontSize: 11, color: _priorityColor(goal.priority))),
-                  backgroundColor: _priorityColor(goal.priority).withValues(alpha: 0.1),
+                  label: Text(goal.priority, style: TextStyle(fontSize: 11, color: _priorityColor(palette, goal.priority))),
+                  backgroundColor: _priorityColor(palette, goal.priority).withValues(alpha: 0.1),
                 ),
               ],
             ),
@@ -337,8 +339,8 @@ class _GoalCard extends StatelessWidget {
                 Expanded(
                   child: LinearProgressIndicator(
                     value: goal.progressPct / 100,
-                    backgroundColor: Colors.grey[200],
-                    valueColor: AlwaysStoppedAnimation<Color>(_statusColor(goal.status)),
+                    backgroundColor: palette.surfaceVariant,
+                    valueColor: AlwaysStoppedAnimation<Color>(_statusColor(palette, goal.status)),
                     minHeight: 8,
                   ),
                 ),
@@ -348,7 +350,7 @@ class _GoalCard extends StatelessWidget {
             ),
             if (goal.targetDate != null) ...[
               const SizedBox(height: 8),
-              Text('Target: ${goal.targetDate!.toLocal().toString().split(' ')[0]}', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+              Text('Target: ${goal.targetDate!.toLocal().toString().split(' ')[0]}', style: TextStyle(fontSize: 12, color: palette.textSecondary)),
             ],
           ],
         ),

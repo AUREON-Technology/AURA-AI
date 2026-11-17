@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'package:aura_client/core/theme/theme.dart';
+import 'package:aura_client/core/design_system/design_system.dart';
 import '../data/finance_repository.dart';
 import 'widgets/finance_charts.dart';
 import 'widgets/finance_summary_cards.dart';
@@ -17,16 +17,18 @@ class FinancePage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final statsAsync = ref.watch(financeStatsProvider);
     final transactionsAsync = ref.watch(financeTransactionsStreamProvider);
+    final palette = AuraPalette.of(context);
 
     return Scaffold(
+      backgroundColor: palette.background,
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: RadialGradient(
-            center: Alignment(-0.6, -0.6),
+            center: const Alignment(-0.6, -0.6),
             radius: 1.5,
             colors: [
-              Color(0xFF1E1B4B),
-              Color(0xFF0F0C1B),
+              palette.brand.withValues(alpha: 0.12),
+              Colors.transparent,
             ],
           ),
         ),
@@ -38,13 +40,13 @@ class FinancePage extends ConsumerWidget {
               children: [
                 Text('Finance Ledger', style: Theme.of(context).textTheme.displayLarge?.copyWith(fontSize: 28)),
                 const SizedBox(height: 4),
-                const Text(
+                Text(
                   'Track incomes, expenses, and analyze financial distributions',
-                  style: TextStyle(color: AuraTheme.textSecondary, fontSize: 14),
+                  style: TextStyle(color: palette.textSecondary, fontSize: 14),
                 ),
                 const SizedBox(height: 24),
                 statsAsync.when(
-                  loading: () => const Center(child: CircularProgressIndicator(color: AuraTheme.accentIndigo)),
+                  loading: () => Center(child: CircularProgressIndicator(color: palette.brand)),
                   error: (err, stack) => AuraFailureView(
                     failure: AuraFailure.from(err),
                     compact: true,
