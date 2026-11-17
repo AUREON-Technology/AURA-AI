@@ -244,6 +244,83 @@ void main() {
       expect(state.ingestMessage, contains('8 MB'));
     });
 
+    // The limit is the server's setting (`KNOWLEDGE_MAX_DOC_BYTES`), advertised at
+    // `/capabilities` `knowledge.max_upload_bytes`. A fixed 8 MiB would refuse files a server
+    // configured higher accepts.
+    http.Response capabilities(int maxUploadBytes) => http.Response(
+          jsonEncode({
+            'vision': {'enabled': false},
+            'knowledge': {'max_upload_bytes': maxUploadBytes},
+          }),
+          200,
+        );
+
+    test('a server that allows more than 8 MB gets the larger PDF', () async {
+      var uploads = 0;
+      final client = MockClient((request) async {
+        if (request.url.path.endsWith('/api/v3/capabilities')) {
+          return capabilities(16 * 1024 * 1024);
+        }
+        if (request.method == 'GET') {
+          return request.url.path.endsWith('/cag') ? _cag() : _libraryPage(request, 0);
+        }
+        uploads++;
+        return http.Response(jsonEncode({'document_id': 'd1', 'status': 'active'}), 200);
+      });
+      final container = _container(client);
+      final vm = await _viewModel(container);
+      await vm.uploadPdf(
+        title: 'big but allowed',
+        bytes: List<int>.filled(KnowledgeCenter.defaultMaxDocumentBytes + 1, 0),
+      );
+
+      expect(uploads, 1);
+      expect(container.read(knowledgeViewModelProvider).ingestError, isFalse);
+    });
+
+    test('a server that allows less is checked before sending', () async {
+      var posts = 0;
+      final client = MockClient((request) async {
+        if (request.url.path.endsWith('/api/v3/capabilities')) return capabilities(1024);
+        if (request.method == 'GET') {
+          return request.url.path.endsWith('/cag') ? _cag() : _libraryPage(request, 0);
+        }
+        posts++;
+        return http.Response('{}', 200);
+      });
+      final container = _container(client);
+      final center = container.read(knowledgeCenterProvider);
+      final result = await center.ingestDocumentResult(title: 't', content: 'x' * 2048);
+
+      expect(posts, 0);
+      expect(result.failure, KnowledgeIngestFailure.tooLarge);
+      expect(result.limitBytes, 1024);
+    });
+
+    test('when /capabilities cannot be read, the documented default applies', () async {
+      var uploads = 0;
+      final client = MockClient((request) async {
+        if (request.url.path.endsWith('/api/v3/capabilities')) {
+          return http.Response('upstream unavailable', 503);
+        }
+        if (request.method == 'GET') {
+          return request.url.path.endsWith('/cag') ? _cag() : _libraryPage(request, 0);
+        }
+        uploads++;
+        return http.Response('{}', 200);
+      });
+      final container = _container(client);
+      final center = container.read(knowledgeCenterProvider);
+      final result = await center.uploadPdf(
+        title: 'big',
+        bytes: List<int>.filled(KnowledgeCenter.defaultMaxDocumentBytes + 1, 0),
+      );
+
+      expect(uploads, 0);
+      expect(result.failure, KnowledgeIngestFailure.tooLarge);
+      expect(result.limitBytes, KnowledgeCenter.defaultMaxDocumentBytes);
+    });
+
     test('a failed delete is reported, not thrown', () async {
       final client = MockClient((request) async {
         if (request.method == 'DELETE') {

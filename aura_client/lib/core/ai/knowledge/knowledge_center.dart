@@ -40,8 +40,10 @@ class KnowledgeCenter {
   static const searchTimeout = Duration(seconds: 10);
 
   /// The server's per-document limit (`KNOWLEDGE_MAX_DOC_BYTES`, default 8 MiB,
-  /// `aura_core/config/settings.py`). `/api/v3/capabilities` does not advertise it, so the
-  /// client starts from the documented default and adopts whatever `limit_bytes` a 422 reports.
+  /// `aura_core/config/settings.py`) as a fallback only: the client reads the real value from
+  /// `/api/v3/capabilities` `knowledge.max_upload_bytes` before its first size check, and still
+  /// adopts whatever `limit_bytes` a 422 reports. Used as-is only when neither is available (an
+  /// older gateway, or the capabilities call failed).
   static const defaultMaxDocumentBytes = 8 * 1024 * 1024;
 
   /// The server's page-size ceiling for `GET /knowledge/documents` (`le=100`).
@@ -49,10 +51,46 @@ class KnowledgeCenter {
 
   int _maxDocumentBytes = defaultMaxDocumentBytes;
 
+  /// Set once `/capabilities` has answered with a limit, so it is asked at most once per
+  /// successful read; a failed read is retried on the next size check.
+  bool _limitFromServer = false;
+
   /// The byte limit this client checks before sending (INT-021).
   int get maxDocumentBytes => _maxDocumentBytes;
 
   String get _backendUrl => '${_ref.read(backendUrlProvider)}/api/v3/knowledge';
+
+  /// Upper bound on the limit lookup. It runs in front of the write the user is waiting on, so a
+  /// stalled server must not add more than this before that write's own timeout starts.
+  static const capabilitiesTimeout = Duration(seconds: 3);
+
+  /// Adopts the server's advertised upload limit (`knowledge.max_upload_bytes`), so a file the
+  /// server accepts is never refused here because of a fixed client-side constant. Any failure
+  /// keeps the current value: the server enforces the limit regardless. Waits at most
+  /// [capabilitiesTimeout], or [operationTimeout] if that is shorter.
+  Future<void> _ensureServerLimit(Duration operationTimeout) async {
+    if (_limitFromServer) return;
+    try {
+      final token = await _ref.read(tokenManagerProvider).getValidAccessToken();
+      final headers = await _headers(token)..remove('Content-Type');
+      final uri = Uri.parse('${_ref.read(backendUrlProvider)}/api/v3/capabilities');
+      final client = _http;
+      final response = await (client != null
+              ? client.get(uri, headers: headers)
+              : http.get(uri, headers: headers))
+          .timeout(operationTimeout < capabilitiesTimeout ? operationTimeout : capabilitiesTimeout);
+      if (response.statusCode != 200) return;
+      final decoded = jsonDecode(response.body);
+      final knowledge = decoded is Map<String, dynamic> ? decoded['knowledge'] : null;
+      final limit = knowledge is Map<String, dynamic> ? knowledge['max_upload_bytes'] : null;
+      if (limit is num && limit > 0) {
+        _maxDocumentBytes = limit.toInt();
+        _limitFromServer = true;
+      }
+    } catch (e) {
+      debugPrint('KnowledgeCenter: upload limit unavailable, using $_maxDocumentBytes: $e');
+    }
+  }
 
   Future<Map<String, String>> _headers(String? token) async {
     final headers = <String, String>{"Content-Type": "application/json"};
@@ -203,6 +241,7 @@ class KnowledgeCenter {
     String? documentId,
     String? idempotencyKey,
   }) async {
+    await _ensureServerLimit(ingestTimeout);
     if (utf8.encode(content).length > _maxDocumentBytes) {
       return KnowledgeIngestResult.failed(
         KnowledgeIngestFailure.tooLarge,
@@ -307,6 +346,7 @@ class KnowledgeCenter {
   }) async {
     // The server reads the whole upload before refusing it (`upload_document`), so an
     // oversized file is checked here rather than sent (INT-021).
+    await _ensureServerLimit(uploadTimeout);
     if (bytes.length > _maxDocumentBytes) {
       return KnowledgeIngestResult.failed(
         KnowledgeIngestFailure.tooLarge,
