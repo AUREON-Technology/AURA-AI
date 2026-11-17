@@ -16,6 +16,10 @@ async function loginAs(page: Page, button: "Developer mock login" | "SuperAdmin 
 async function confirm(page: Page, text: string) {
   await page.getByLabel(`Type ${text}`).fill(text);
   await page.getByRole("button", { name: "Confirm" }).click();
+  // ConfirmDialog is modal: while it is open the page behind it is aria-hidden, so a role query
+  // for something the action removes would pass before the request was even sent. It closes
+  // only once onConfirm has finished, so its closing is the "request done" signal.
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 }
 
 test.describe("BFF proxy and auth routes refuse cross-site writes (INT-009)", () => {

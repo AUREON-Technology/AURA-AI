@@ -148,15 +148,6 @@
   "@onboardingTourBody": {
     "description": "Onboarding page 3 body"
   },
-  "hostdPairedToOtherServer": "This app is signed in to {appBackendUrl}. Pair again to move the daemon there.",
-  "@hostdPairedToOtherServer": {
-    "description": "Host daemon status card: the daemon is paired to a different server than the one this app uses",
-    "placeholders": {
-      "appBackendUrl": {
-        "type": "String"
-      }
-    }
-  },
   "onboardingSkip": "Skip",
   "@onboardingSkip": {
     "description": "Onboarding button that skips the remaining intro pages"

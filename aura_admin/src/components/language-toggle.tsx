@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 import { LANG_COOKIE } from "@/lib/i18n";
 import { useI18n } from "@/lib/i18n/context";
 
@@ -15,9 +16,10 @@ export function LanguageToggle() {
   const { lang, t } = useI18n();
   const next = lang === "ar" ? "en" : "ar";
   return (
-    <button
-      className="btn ghost lang-toggle"
-      type="button"
+    <Button
+      variant="outline"
+      size="sm"
+      className="min-w-9 px-2.5 font-semibold"
       aria-label={t("lang.switch")}
       title={t("lang.switch")}
       data-testid="lang-toggle"
@@ -27,6 +29,6 @@ export function LanguageToggle() {
       }}
     >
       <span lang={next}>{next === "ar" ? "ع" : "EN"}</span>
-    </button>
+    </Button>
   );
 }
