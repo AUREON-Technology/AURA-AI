@@ -4,6 +4,7 @@
 import 'dart:convert';
 
 import 'package:aura_client/core/ai/engineer/engineer_consent_repository.dart';
+import 'package:aura_client/core/ai/engineer/host_folders_client.dart';
 import 'package:aura_client/core/ai/online_agents/sse_agent_client.dart';
 import 'package:aura_client/core/ai/vision/chat_images.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
@@ -18,6 +19,7 @@ import 'package:aura_client/desktop/events/ide_event_bus.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 import 'package:aura_client/features/chat/data/agent_config_repository.dart';
 import 'package:aura_client/features/chat/data/agents_repository.dart';
+import 'package:aura_client/features/chat/data/engineer_remote_folder.dart';
 import 'package:aura_client/features/chat/presentation/chat_page.dart';
 import 'package:aura_client/features/engineering/presentation/engineer_consent_tile.dart';
 import 'package:aura_client/l10n/generated/app_localizations.dart';
@@ -164,6 +166,9 @@ void main() {
         engineerConsentRepositoryProvider
             .overrideWith((ref) => EngineerConsentRepository(ref, httpClient: server.client)),
         sseAgentClientProvider.overrideWith((ref) => _ScriptedSseClient(ref, server)),
+        // The Engineer chat's desktop bar (WP8) asks about the user's computer; none is online.
+        hostFoldersProvider.overrideWith((ref) async => const HostFolders(connected: false)),
+        engineerFolderAccountProvider.overrideWithValue('user-1'),
       ];
 
   Widget app(Widget home) => MaterialApp(

@@ -19,3 +19,12 @@ bool get isDesktopIde =>
 
 /// Whether the current platform can run the desktop IDE (Windows and Linux).
 bool get canRunDesktopIde => isDesktopIde;
+
+/// Whether this is the native desktop app (Windows, Linux or macOS), whose sign-in issues a
+/// desktop token. Its Engineer turns count as desktop-origin on the server (WP8), so the
+/// phone-and-web "remote control" opt-in does not apply to them.
+bool get isDesktopApp =>
+    !kIsWeb &&
+    (defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.linux ||
+        defaultTargetPlatform == TargetPlatform.macOS);

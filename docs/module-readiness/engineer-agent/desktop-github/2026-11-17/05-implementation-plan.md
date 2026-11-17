@@ -7,6 +7,23 @@
 - **File paths** below were located in the code during PLAN; line numbers move. "New" means the
   file does not exist yet.
 
+## Progress (2026-11-17)
+
+Built and tested locally on PR #251. Nothing here ran in CI (no runners, CB-44), and nothing is
+proven live.
+
+| WP | Status | Commits |
+|---|---|---|
+| WP0 | Done | `806534d` |
+| WP6a | Done | `b5126b6` |
+| WP3 | Done | `5cfb982`, merged with main's INT-002 in `d5c1791` |
+| WP5 | Done | `2c3f9cb` (backend); the daemon half is in `5cfb982` |
+| WP1 | Done; the notice text awaits the owner's review (O-03) | `bcdc378` (backend), `8ea3e45` + `8cc0e10` (client) |
+| WP2 | Done | `bcdc378` (backend), client in `8cc0e10` |
+| WP7 | Done in code; no real-machine Ubuntu check yet (that belongs to WP10a) | the client commit after `5c7022a` |
+| WP8 | Done; ADR-011 amendment recorded | `b297dfb` (backend), `b3460c2` (daemon), client in the commit after `5c7022a` |
+| WP4, WP6, WP9, WP10a, WP11, WP12, WP10b | Not started | — |
+
 ## 0. Ground rules for every work package
 
 - **One work package (WP) = one PR**, drafted, with a test that fails before the fix. No test is

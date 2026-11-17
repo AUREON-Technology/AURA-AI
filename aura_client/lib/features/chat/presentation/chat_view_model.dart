@@ -102,7 +102,8 @@ class ChatViewModel extends Notifier<ChatUiState> {
   }
 
   /// Auto-sends the Home capture-bar query once. Returns false if already consumed.
-  Future<bool> consumeInitialQuery(String query) async {
+  /// [workspaceRoot] as for [sendMessage].
+  Future<bool> consumeInitialQuery(String query, {String? workspaceRoot}) async {
     if (!state.canConsumeInitialQuery(query)) return false;
     state = state.copyWith(consumedInitialQuery: true, sendInFlight: true);
     try {
@@ -113,6 +114,7 @@ class ChatViewModel extends Notifier<ChatUiState> {
             useRag: state.useRag,
             useMemory: state.useMemory,
             useTools: state.useTools,
+            workspaceRoot: workspaceRoot,
           );
       return true;
     } finally {
@@ -124,8 +126,10 @@ class ChatViewModel extends Notifier<ChatUiState> {
   /// (`pendingChatImagesProvider`) go with this message and are cleared once it is sent; with
   /// images and no text, the question defaults to [kDefaultImageQuestion].
   ///
-  /// [workspaceRoot] is the Desktop IDE's active workspace root (FSA-006): the backend forwards
-  /// it to the paired daemon as the `cwd` of every command. Null from any surface without one.
+  /// [workspaceRoot] is the folder on the user's computer the turn works in: the Desktop IDE's
+  /// active workspace root (FSA-006), or the folder a phone or web Engineer chat picked in its
+  /// desktop bar (WP8). The backend forwards it to the paired daemon as the `cwd` of every
+  /// command. Null from any surface without one.
   Future<bool> sendMessage(String text, {String? workspaceRoot}) async {
     final isStreaming = ref.read(streamingMessageIdProvider) != null;
     final images = ref.read(pendingChatImagesProvider);

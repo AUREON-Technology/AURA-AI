@@ -11,11 +11,13 @@ import 'package:aura_client/core/database/database.dart';
 import '../../engineering/presentation/engineer_consent_sheet.dart';
 import '../data/agent_config_repository.dart';
 import '../data/chat_repository.dart';
+import '../data/engineer_remote_folder.dart';
 import 'chat_view_model.dart';
 import 'widgets/chat_composer.dart';
 import 'widgets/chat_header.dart';
 import 'widgets/chat_sidebar.dart';
 import 'widgets/empty_state_chat.dart';
+import 'widgets/engineer_desktop_bar.dart';
 import 'widgets/message_bubble.dart';
 import 'widgets/pending_actions_card.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
@@ -59,7 +61,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     // The query stays in the composer when the user declines the Engineer notice.
     if (!await _engineerConsentGiven() || !mounted) return;
     _messageController.clear();
-    unawaited(ref.read(chatViewModelProvider.notifier).consumeInitialQuery(query));
+    unawaited(ref
+        .read(chatViewModelProvider.notifier)
+        .consumeInitialQuery(query, workspaceRoot: _remoteWorkspaceRoot()));
   }
 
   @override
@@ -79,6 +83,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
   }
 
+  /// WP8 (D-10): an Engineer turn from here works in the folder the desktop bar shows, on the
+  /// user's own computer. Null for any other persona, and whenever the computer offers none.
+  String? _remoteWorkspaceRoot() => ref.read(activeAgentIdProvider) == kEngineerAgentId
+      ? ref.read(engineerRemoteWorkspaceRootProvider)
+      : null;
+
   /// D-03: an Engineer send waits for consent. Any other persona sends at once, with no request.
   Future<bool> _engineerConsentGiven() async {
     if (ref.read(activeAgentIdProvider) != kEngineerAgentId) return true;
@@ -97,7 +107,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _messageController.clear();
     if (mounted) FocusScope.of(context).unfocus();
 
-    final sent = await ref.read(chatViewModelProvider.notifier).sendMessage(text);
+    final sent = await ref
+        .read(chatViewModelProvider.notifier)
+        .sendMessage(text, workspaceRoot: _remoteWorkspaceRoot());
     if (!sent || !mounted) return;
     Future.delayed(const Duration(milliseconds: 100), () {
       if (mounted) _scrollToBottom();
@@ -116,6 +128,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final visibleLimit = ref.watch(chatVisibleMessageLimitProvider(activeSessionId));
     final sessionsAsync = ref.watch(conversationsStreamProvider);
     final isMobile = MediaQuery.of(context).size.width < 768;
+    final isEngineer = ref.watch(activeAgentIdProvider) == kEngineerAgentId;
 
     ref.listen<AsyncValue<List<Message>>>(
       chatMessagesStreamProvider(activeSessionId),
@@ -231,6 +244,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       ),
                     ),
                     const PendingActionsCard(),
+                    // WP8: which folder on the user's computer an Engineer turn works in.
+                    if (isEngineer) const EngineerDesktopBar(),
                     ChatComposer(
                       controller: _messageController,
                       isMobile: isMobile,

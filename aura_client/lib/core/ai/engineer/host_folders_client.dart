@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 
 import '../../network/aura_api_client.dart';
 import '../../network/aura_api_error.dart';
+import '../../platform/aura_platform.dart';
 
 /// One folder the paired computer has granted the Engineer.
 class HostFolder {
@@ -59,7 +60,10 @@ class HostFolders {
 
   HostFoldersState get state {
     if (!connected) return HostFoldersState.notConnected;
-    if (remoteControl != true) return HostFoldersState.remoteControlOff;
+    // The desktop app's own turns are desktop-origin (its token says so), so the computer's
+    // "allow control from my phone and the web" setting is not what decides them: telling
+    // someone at their desk that remote control is off would only mislead.
+    if (remoteControl != true && !isDesktopApp) return HostFoldersState.remoteControlOff;
     if (roots.isEmpty) return HostFoldersState.noFolders;
     return HostFoldersState.available;
   }
