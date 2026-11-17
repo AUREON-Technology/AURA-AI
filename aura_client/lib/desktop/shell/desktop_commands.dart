@@ -36,13 +36,11 @@ String modifierLabel(TargetPlatform platform) =>
 /// state is a snapshot of the moment the palette was summoned, and the palette
 /// does not outlive that moment.
 ///
-/// [onLeaveIde] adds "Leave IDE", the way back to AURA Home (ADR-015: the
-/// IDE is a choice, not a place the app keeps you -- audit F-34). It is a
-/// callback because leaving is navigation, which needs the shell's context.
+/// The Windows app is the IDE, so there is no "Leave IDE" command: there is
+/// no other screen to leave to.
 List<AuraCommandItem> buildDesktopCommands(
   WidgetRef ref, {
   required TargetPlatform platform,
-  VoidCallback? onLeaveIde,
 }) {
   final mod = modifierLabel(platform);
   final layout = ref.read(layoutNotifierProvider);
@@ -181,13 +179,5 @@ List<AuraCommandItem> buildDesktopCommands(
             }
           : null,
     ),
-    if (onLeaveIde != null)
-      AuraCommandItem(
-        id: 'aura.leaveIde',
-        group: 'AURA',
-        title: l10n.ideCmdLeaveIde,
-        icon: Icons.today_outlined,
-        onInvoke: onLeaveIde,
-      ),
   ];
 }
