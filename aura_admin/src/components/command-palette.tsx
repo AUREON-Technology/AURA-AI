@@ -3,18 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-const DESTINATIONS = [
-  ["/", "Overview"],
-  ["/providers", "Providers"],
-  ["/knowledge", "Knowledge"],
-  ["/prompts", "Prompts"],
-  ["/models", "Models"],
-  ["/approvals", "Approvals"],
-  ["/learning", "Learning"],
-  ["/audit", "Audit"],
-  ["/access", "Access"],
-  ["/settings", "Settings"],
-] as const;
+import { Icon } from "@/components/icons";
+import { NAV_ITEMS, OPEN_PALETTE_EVENT } from "@/lib/nav";
 
 export function CommandPalette() {
   const router = useRouter();
@@ -31,40 +21,53 @@ export function CommandPalette() {
         setOpen(false);
       }
     }
+    function onOpen() {
+      setOpen(true);
+    }
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener(OPEN_PALETTE_EVENT, onOpen);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener(OPEN_PALETTE_EVENT, onOpen);
+    };
   }, []);
 
   if (!open) {
     return null;
   }
 
-  const matches = DESTINATIONS.filter(([, label]) =>
-    label.toLowerCase().includes(query.toLowerCase()),
-  );
+  const matches = NAV_ITEMS.filter((item) => item.label.toLowerCase().includes(query.toLowerCase()));
+
+  function go(href: string) {
+    router.push(href);
+    setOpen(false);
+    setQuery("");
+  }
 
   return (
-    <div className="palette" role="dialog" aria-label="Command palette">
-      <input
-        autoFocus
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        placeholder="Go to…"
-      />
-      {matches.map(([href, label]) => (
-        <button
-          key={href}
-          className="btn"
-          type="button"
-          onClick={() => {
-            router.push(href);
-            setOpen(false);
-            setQuery("");
+    <>
+      <div className="palette-backdrop" aria-hidden="true" onClick={() => setOpen(false)} />
+      <div className="palette" role="dialog" aria-label="Command palette">
+        <input
+          autoFocus
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && matches[0]) {
+              go(matches[0].href);
+            }
           }}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
+          placeholder="Go to…"
+          aria-label="Go to page"
+        />
+        {matches.map((item) => (
+          <button key={item.href} className="btn" type="button" onClick={() => go(item.href)}>
+            <Icon name={item.icon} size={16} />
+            {item.label}
+          </button>
+        ))}
+        {matches.length === 0 ? <p className="empty">No page matches “{query}”.</p> : null}
+      </div>
+    </>
   );
 }

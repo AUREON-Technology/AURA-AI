@@ -280,6 +280,12 @@ abstract class AppLocalizations {
   /// **'Next'**
   String get onboardingNext;
 
+  /// Onboarding button that skips the remaining intro pages
+  ///
+  /// In en, this message translates to:
+  /// **'Skip'**
+  String get onboardingSkip;
+
   /// Onboarding finish button
   ///
   /// In en, this message translates to:
@@ -315,6 +321,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Your AURA'**
   String get settingsSectionYourAura;
+
+  /// You screen section label: the Engineer agent's history and its GitHub connection
+  ///
+  /// In en, this message translates to:
+  /// **'Engineer'**
+  String get settingsSectionEngineer;
+
+  /// You screen section label: AI engine status and on-device usage
+  ///
+  /// In en, this message translates to:
+  /// **'System'**
+  String get settingsSectionSystem;
 
   /// You screen section label
   ///

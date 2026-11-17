@@ -102,6 +102,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get onboardingNext => 'Next';
 
   @override
+  String get onboardingSkip => 'Skip';
+
+  @override
   String get onboardingGetStarted => 'Get started';
 
   @override
@@ -120,6 +123,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsSectionYourAura => 'Your AURA';
+
+  @override
+  String get settingsSectionEngineer => 'Engineer';
+
+  @override
+  String get settingsSectionSystem => 'System';
 
   @override
   String get settingsSectionAbout => 'About';

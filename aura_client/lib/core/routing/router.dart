@@ -88,23 +88,23 @@ class ShellLayout extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final selectedIndex = _calculateSelectedIndex(context);
-    final isMobile = MediaQuery.of(context).size.width < 768;
+    final width = MediaQuery.of(context).size.width;
+    final isMobile = width < 768;
+    final isWide = width >= 1100;
     final palette = AuraPalette.of(context);
     final l10n = AppLocalizations.of(context);
 
     final shortcuts = <ShortcutActivator, VoidCallback>{
-      const SingleActivator(LogicalKeyboardKey.keyK, control: true):
-          () => showCommandPalette(context, ref),
-      const SingleActivator(LogicalKeyboardKey.keyK, meta: true):
-          () => showCommandPalette(context, ref),
+      const SingleActivator(LogicalKeyboardKey.keyK, control: true): () =>
+          showCommandPalette(context, ref),
+      const SingleActivator(LogicalKeyboardKey.keyK, meta: true): () =>
+          showCommandPalette(context, ref),
     };
 
     final fab = _showCaptureFab(context)
         ? FloatingActionButton(
             heroTag: 'capture_fab',
             tooltip: 'Ask Copilot',
-            backgroundColor: palette.brand,
-            foregroundColor: palette.onBrand,
             onPressed: () => showCaptureSheet(context),
             child: const Icon(Icons.auto_awesome),
           )
@@ -172,31 +172,18 @@ class ShellLayout extends ConsumerWidget {
                 selectedIndex: selectedIndex,
                 onDestinationSelected: (index) =>
                     _onDestinationSelected(context, index),
-                labelType: NavigationRailLabelType.all,
-                leading: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: AuraSpacing.lg),
-                  child: Column(
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(AuraRadius.sm),
-                        child: Image.asset(
-                          'assets/app_icon.png',
-                          width: 42,
-                          height: 42,
-                          fit: BoxFit.contain,
-                        ),
-                      ),
-                      const SizedBox(height: AuraSpacing.sm),
-                      Text(
-                        'AURA',
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 1.0,
-                            ),
-                      ),
-                    ],
-                  ),
-                ),
+                // Wide windows get a labelled sidebar plus direct links into
+                // the pages that otherwise sit two taps deep under You; a
+                // narrower window keeps the compact rail.
+                extended: isWide,
+                minExtendedWidth: 232,
+                labelType: isWide
+                    ? NavigationRailLabelType.none
+                    : NavigationRailLabelType.all,
+                leading: _RailBrand(extended: isWide),
+                trailing: isWide ? const _RailShortcuts() : null,
+                // A short window must not clip the shortcuts.
+                scrollable: true,
                 destinations: [
                   NavigationRailDestination(
                     icon: const Icon(Icons.today_outlined),
@@ -230,6 +217,207 @@ class ShellLayout extends ConsumerWidget {
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The brand mark at the top of the wide-layout rail: the app icon on a
+/// brand-gradient tile, with the wordmark beside it once the rail is extended.
+class _RailBrand extends StatelessWidget {
+  final bool extended;
+  const _RailBrand({required this.extended});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
+    final mark = Container(
+      width: 40,
+      height: 40,
+      padding: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        gradient: palette.brandGradient,
+        borderRadius: BorderRadius.circular(AuraRadius.md),
+        boxShadow: [
+          BoxShadow(
+            color: palette.brand.withValues(alpha: 0.35),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Image.asset('assets/app_icon.png', fit: BoxFit.contain),
+    );
+    final wordmark = Text(
+      'AURA',
+      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+        fontWeight: FontWeight.w800,
+        letterSpacing: 2.0,
+      ),
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AuraSpacing.lg,
+        AuraSpacing.xl,
+        AuraSpacing.lg,
+        AuraSpacing.xl,
+      ),
+      child: extended
+          ? SizedBox(
+              width: 200,
+              child: Row(
+                children: [
+                  mark,
+                  const SizedBox(width: AuraSpacing.md),
+                  wordmark,
+                ],
+              ),
+            )
+          : Column(
+              children: [
+                mark,
+                const SizedBox(height: AuraSpacing.sm),
+                Text(
+                  'AURA',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.0,
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+/// Direct links, under the extended rail, to the most-used pages that live
+/// under You. On a wide screen there is room for them, and they save the trip
+/// through the You list for the pages people open every day.
+class _RailShortcuts extends StatelessWidget {
+  const _RailShortcuts();
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
+    final l10n = AppLocalizations.of(context);
+    final path = GoRouterState.of(context).uri.path;
+    final links = <(IconData, String, String)>[
+      (
+        Icons.folder_shared_outlined,
+        l10n?.knowledgeTitle ?? 'Knowledge',
+        '/knowledge',
+      ),
+      (Icons.psychology_outlined, l10n?.memoryTitle ?? 'Memory', '/memory'),
+      (
+        Icons.bolt_outlined,
+        l10n?.settingsAutomationsTitle ?? 'Automations',
+        '/automations',
+      ),
+      (
+        Icons.code_outlined,
+        l10n?.settingsEngineerTitle ?? 'Engineer',
+        '/engineer-history',
+      ),
+    ];
+    return SizedBox(
+      width: 232,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          AuraSpacing.md,
+          AuraSpacing.xl,
+          AuraSpacing.md,
+          0,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsetsDirectional.only(
+                start: AuraSpacing.md,
+                bottom: AuraSpacing.sm,
+              ),
+              child: Text(
+                (l10n?.settingsSectionYourAura ?? 'Your AURA').toUpperCase(),
+                style: TextStyle(
+                  color: palette.textDisabled,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.8,
+                ),
+              ),
+            ),
+            for (final link in links)
+              _RailShortcut(
+                icon: link.$1,
+                label: link.$2,
+                selected: path.startsWith(link.$3),
+                onTap: () => context.go(link.$3),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RailShortcut extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _RailShortcut({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
+    final color = selected ? palette.textPrimary : palette.textSecondary;
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: Material(
+        color: selected
+            ? palette.brand.withValues(alpha: 0.14)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(AuraRadius.sm),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AuraRadius.sm),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AuraSpacing.md,
+              vertical: AuraSpacing.sm + 2,
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  icon,
+                  size: 18,
+                  color: selected
+                      ? palette.brandOnSurfaceText
+                      : palette.textSecondary,
+                ),
+                const SizedBox(width: AuraSpacing.md),
+                Expanded(
+                  child: Text(
+                    label,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 13,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -277,7 +465,8 @@ Future<String?> resolveAppRedirect({
   final isLoggingIn = location == '/login';
   final isOnboarding = location == '/onboarding';
 
-  Future<String> landing() async => await prefersDesktopIde() ? '/ide' : '/today';
+  Future<String> landing() async =>
+      await prefersDesktopIde() ? '/ide' : '/today';
 
   if (!isLoggedIn && !isLoggingIn) return '/login';
   if (isLoggedIn && isLoggingIn) {
@@ -307,10 +496,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       );
     },
     routes: [
-      GoRoute(
-        path: '/login',
-        builder: (context, state) => const LoginPage(),
-      ),
+      GoRoute(path: '/login', builder: (context, state) => const LoginPage()),
       GoRoute(
         path: '/onboarding',
         builder: (context, state) => const OnboardingPage(),
@@ -325,7 +511,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/finance',
         redirect: (context, state) => '/life?type=finance',
       ),
-      GoRoute(path: '/health', redirect: (context, state) => '/life?type=health'),
+      GoRoute(
+        path: '/health',
+        redirect: (context, state) => '/life?type=health',
+      ),
       GoRoute(path: '/settings', redirect: (context, state) => '/you'),
       GoRoute(path: '/learning', redirect: (context, state) => '/feedback'),
       GoRoute(
@@ -349,9 +538,8 @@ final routerProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(
             path: '/chat',
-            builder: (context, state) => ChatPage(
-              initialQuery: chatInitialQueryFromExtra(state.extra),
-            ),
+            builder: (context, state) =>
+                ChatPage(initialQuery: chatInitialQueryFromExtra(state.extra)),
           ),
           GoRoute(
             path: '/you',
@@ -407,7 +595,8 @@ final routerProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(
             path: '/engineer-daemon/browse',
-            builder: (context, state) => HostFileBrowserPage(root: state.extra as String),
+            builder: (context, state) =>
+                HostFileBrowserPage(root: state.extra as String),
           ),
           GoRoute(
             path: '/projects',
@@ -422,9 +611,8 @@ final routerProvider = Provider<GoRouter>((ref) {
 
       // Desktop IDE Shell Route (Windows only)
       ShellRoute(
-        builder: (context, state, child) => isDesktopIde
-            ? DesktopShell(child: child)
-            : const SizedBox.shrink(),
+        builder: (context, state, child) =>
+            isDesktopIde ? DesktopShell(child: child) : const SizedBox.shrink(),
         routes: [
           GoRoute(
             path: '/ide',

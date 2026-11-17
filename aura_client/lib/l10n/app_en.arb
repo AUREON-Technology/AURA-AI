@@ -124,6 +124,10 @@
   "@onboardingNext": {
     "description": "Onboarding next button"
   },
+  "onboardingSkip": "Skip",
+  "@onboardingSkip": {
+    "description": "Onboarding button that skips the remaining intro pages"
+  },
   "onboardingGetStarted": "Get started",
   "@onboardingGetStarted": {
     "description": "Onboarding finish button"
@@ -152,6 +156,14 @@
   "settingsSectionYourAura": "Your AURA",
   "@settingsSectionYourAura": {
     "description": "You screen section label"
+  },
+  "settingsSectionEngineer": "Engineer",
+  "@settingsSectionEngineer": {
+    "description": "You screen section label: the Engineer agent's history and its GitHub connection"
+  },
+  "settingsSectionSystem": "System",
+  "@settingsSectionSystem": {
+    "description": "You screen section label: AI engine status and on-device usage"
   },
   "settingsSectionAbout": "About",
   "@settingsSectionAbout": {
