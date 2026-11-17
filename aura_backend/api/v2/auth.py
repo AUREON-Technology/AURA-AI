@@ -6,6 +6,7 @@ API call going forward instead of re-sending the Google/Firebase token.
 """
 import logging
 import secrets
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -27,6 +28,7 @@ from services.jwt_auth import (
 )
 from services.rbac import (
     CONSOLE_MIN_ROLE,
+    CONSUMER_WEB_CHANNEL,
     console_operators_configured,
     is_console_operator,
     stamp_role,
@@ -180,6 +182,47 @@ async def exchange_web_token(
     user_info = await verify_identity_token(request, authorization)
     await stamp_role(user_info)
     _require_operator(user_info, what="console login", where="the console")
+    await _persist_user(user_info)
+    return issue_token_pair(user_info)
+
+
+#: Customer web sign-ins per client IP per minute. In-process and per worker, so the bound is
+#: this many per worker; it still caps how fast one address can mint sessions.
+CONSUMER_SIGN_INS_PER_MINUTE = 10
+_consumer_hits: dict[str, list[float]] = {}
+
+
+def _reset_consumer_rate_limit() -> None:
+    _consumer_hits.clear()
+
+
+def _consumer_rate_limit(request: Request) -> None:
+    now = time.monotonic()
+    ip = request.client.host if request.client else "unknown"
+    recent = [t for t in _consumer_hits.get(ip, []) if now - t < 60.0]
+    if len(recent) >= CONSUMER_SIGN_INS_PER_MINUTE:
+        _consumer_hits[ip] = recent
+        raise HTTPException(status_code=429, detail="Too many sign-in attempts; try again in a minute.")
+    recent.append(now)
+    _consumer_hits[ip] = recent
+
+
+@router.post("/consumer/token", response_model=TokenResponse)
+async def exchange_consumer_web_token(
+    request: Request,
+    authorization: HTTPAuthorizationCredentials | None = Depends(_web_bearer),
+):
+    """Customer browser sign-in (SaaS P1-B): a verified Google or Firebase ID token, no device
+    attestation (a browser has none).
+
+    The session is a customer's whatever the identity: ``channel=consumer_web`` caps its platform
+    role at ``User`` here, on every refresh and in the gateway's per-request resolution
+    (``services.rbac.get_user_role``). Operators keep using ``/web/token``.
+    """
+    _consumer_rate_limit(request)
+    user_info = await verify_identity_token(request, authorization)
+    user_info["channel"] = CONSUMER_WEB_CHANNEL
+    await stamp_role(user_info)
     await _persist_user(user_info)
     return issue_token_pair(user_info)
 

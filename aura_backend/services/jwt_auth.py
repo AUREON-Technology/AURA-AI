@@ -382,6 +382,10 @@ def create_access_token(
         "iat": now,
         "exp": now + ttl,
     }
+    if user_info.get("channel"):
+        # Server-set, never client-set: rbac.get_user_role caps a consumer_web identity at User
+        # on every request, so this claim must survive into the access token (SaaS P1-B).
+        payload["channel"] = user_info["channel"]
     if extra_claims:
         payload.update(extra_claims)
     # After extra_claims so a caller can never mint a token bound to another deployment (F-03).
@@ -821,4 +825,5 @@ async def verify_access_token(
         "picture": payload.get("picture"),
         "role": payload.get("role"),
         "device_id": device_id,
+        "channel": payload.get("channel"),
     }

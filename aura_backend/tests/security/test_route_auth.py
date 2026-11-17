@@ -60,6 +60,7 @@ PUBLIC = {
 IDENTITY_EXCHANGE = {
     ("POST", "/api/v3/auth/token"),
     ("POST", "/api/v3/auth/web/token"),
+    ("POST", "/api/v3/auth/consumer/token"),
     ("POST", "/api/v3/auth/desktop/login"),
 }
 
