@@ -362,7 +362,7 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
           if (otherServer) ...[
             const SizedBox(height: AuraSpacing.xs),
             Text(
-              'This app is signed in to $appBackendUrl. Pair again to move the daemon there.',
+              context.l10n.hostdPairedToOtherServer(appBackendUrl),
               style: TextStyle(color: palette.warning, fontSize: 12),
             ),
           ],
