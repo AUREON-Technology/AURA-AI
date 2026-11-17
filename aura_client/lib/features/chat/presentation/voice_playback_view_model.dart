@@ -5,6 +5,8 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'package:aura_client/l10n/l10n.dart';
+
 import '../../../core/ai/voice/voice_client.dart';
 
 enum VoicePlaybackStatus { idle, loading, playing }
@@ -54,7 +56,7 @@ class VoicePlaybackViewModel {
     final result = await _client.speak(text);
     if (!result.ok) {
       _status = VoicePlaybackStatus.idle;
-      _errorMessage = result.errorMessage ?? 'Could not generate speech for this reply.';
+      _errorMessage = result.errorMessage ?? currentL10n.chatSpeechGenerateFailed;
       _onChanged();
       return;
     }
@@ -66,7 +68,7 @@ class VoicePlaybackViewModel {
     } catch (e) {
       debugPrint("[VoicePlayback] play failed: $e");
       _status = VoicePlaybackStatus.idle;
-      _errorMessage = 'Could not play the generated speech.';
+      _errorMessage = currentL10n.chatSpeechPlayFailed;
       _onChanged();
     }
   }

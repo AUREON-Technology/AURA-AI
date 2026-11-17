@@ -7,7 +7,7 @@ API call going forward instead of re-sending the Google/Firebase token.
 import logging
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
@@ -39,6 +39,7 @@ from services.rbac import (
     stamp_role,
 )
 from services.security import store_nonce, verify_identity_token, verify_token
+from services.user_language import LANGUAGE_HEADER, remember_language
 
 logger = logging.getLogger("aura.auth")
 
@@ -170,13 +171,17 @@ async def issue_nonce():
     return {"nonce": nonce}
 
 
-async def _persist_user(user_info: dict) -> None:
+async def _persist_user(user_info: dict, *, client_language: str | None = None) -> None:
     """Write the verified subject into ``users`` so Access can list operators.
 
     Token exchange used to issue JWTs only. SuperAdmin then existed solely via
     ``SUPERADMIN_EMAILS`` and never appeared in ``GET /admin/operators``.
     Skip when Postgres is unset so unit tests and local-without-DB still login.
     Persistence failures are logged and do not block token issue.
+
+    Also remembers the app's display language (``X-Client-Language``) when sent, so the daily
+    briefing can be written in it (``services/user_language.py``); an absent or unknown value
+    leaves the stored one alone.
     """
     from infrastructure.db.base import get_session_factory, is_configured
 
@@ -185,14 +190,19 @@ async def _persist_user(user_info: dict) -> None:
     try:
         factory = get_session_factory()
         async with factory() as db:
-            await get_or_create_user(db, user_info)
+            user = await get_or_create_user(db, user_info)
+            remember_language(user, client_language)
             await db.commit()
     except Exception:
         logger.exception("failed to persist authenticated user")
 
 
 @router.post("/token", response_model=TokenResponse)
-async def exchange_token(request: Request, user_info: dict = Depends(verify_token)):
+async def exchange_token(
+    request: Request,
+    user_info: dict = Depends(verify_token),
+    client_language: str | None = Header(default=None, alias=LANGUAGE_HEADER),
+):
     """Exchanges a verified Google/Firebase ID token (+ device attestation,
     both checked by verify_token) for a backend-issued access/refresh pair.
 
@@ -205,7 +215,7 @@ async def exchange_token(request: Request, user_info: dict = Depends(verify_toke
             raise HTTPException(status_code=401, detail=dict(ACCOUNT_DELETED_DETAIL))
         mark_account_reinstated(uid)
     await stamp_role(user_info)
-    await _persist_user(user_info)
+    await _persist_user(user_info, client_language=client_language)
     return issue_token_pair(user_info)
 
 

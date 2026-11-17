@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:aura_client/l10n/l10n.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -58,28 +59,17 @@ class LiveVoiceSocket {
   /// Maps the server's close code to the error frame the screen shows. Each code has its own
   /// message: they ask the user for different things (sign in, wait, give up, report it).
   static LiveErrorFrame errorForCloseCode(int? code) {
+    // Worded in the language on screen (docs/plans/arabic-language_plan.md); the `error` codes
+    // are what the view model branches on and never change.
+    final l10n = currentL10n;
     return switch (code) {
-      closeUnauthorized => const LiveErrorFrame(
-          error: 'session_expired',
-          message: 'Live voice ended because your sign-in needs renewing. Start it again.',
-        ),
-      closeUnavailable => const LiveErrorFrame(
-          error: 'feature_unavailable',
-          message: 'Live voice is not available on this server.',
-        ),
-      closeTooMany => const LiveErrorFrame(
-          error: 'too_many_sessions',
-          message: 'Live voice is already open on another device, or you have started it too '
-              'often. Close it elsewhere or wait a few minutes, then try again.',
-        ),
-      closeBadRequest => const LiveErrorFrame(
-          error: 'bad_request',
-          message: 'The server could not start live voice with these settings.',
-        ),
-      _ => const LiveErrorFrame(
-          error: 'socket_closed',
-          message: 'Live voice was disconnected. Start it again.',
-        ),
+      closeUnauthorized =>
+        LiveErrorFrame(error: 'session_expired', message: l10n.voiceSocketSessionExpired),
+      closeUnavailable =>
+        LiveErrorFrame(error: 'feature_unavailable', message: l10n.voiceSocketUnavailable),
+      closeTooMany => LiveErrorFrame(error: 'too_many_sessions', message: l10n.voiceSocketTooMany),
+      closeBadRequest => LiveErrorFrame(error: 'bad_request', message: l10n.voiceSocketBadRequest),
+      _ => LiveErrorFrame(error: 'socket_closed', message: l10n.voiceSocketDisconnected),
     };
   }
 

@@ -1,14 +1,17 @@
 import 'package:flutter/foundation.dart';
 
+import 'package:aura_client/l10n/l10n.dart';
+
 String pendingActionLabel(dynamic type, dynamic params) {
   final t = type?.toString() ?? '';
   final p = params is Map ? params : const {};
-  if (t == 'add_task') return 'Create Task: ${p['title']}';
-  if (t == 'add_event') return 'Schedule Event: ${p['title']}';
-  if (t == 'add_expense') return 'Log Expense: \$${p['amount']}';
-  if (t == 'add_income') return 'Log Income: \$${p['amount']}';
-  if (t == 'log_health') return 'Log Health';
-  return 'Unknown Action: $t';
+  final l10n = currentL10n;
+  if (t == 'add_task') return l10n.chatActionCreateTask('${p['title']}');
+  if (t == 'add_event') return l10n.chatActionScheduleEvent('${p['title']}');
+  if (t == 'add_expense') return l10n.chatActionLogExpense('${p['amount']}');
+  if (t == 'add_income') return l10n.chatActionLogIncome('${p['amount']}');
+  if (t == 'log_health') return l10n.chatActionLogHealth;
+  return l10n.chatActionUnknownNamed(t);
 }
 
 class PendingActionsOutcome {
@@ -77,7 +80,7 @@ class PendingActionsExecutor {
 
     for (final act in actions) {
       if (act is! Map) {
-        failed.add('Unknown Action');
+        failed.add(currentL10n.chatActionUnknown);
         continue;
       }
       final type = act['type'] ?? '';

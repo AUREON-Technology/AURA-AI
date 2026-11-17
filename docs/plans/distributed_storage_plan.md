@@ -130,7 +130,7 @@ Deviations from the plan above, and why:
 Railway cron service (decisions 8-9), added the same day:
 
 - `backup.sh` run-once mode (`BACKUP_RUN_ONCE=1`): one cycle, exit 0 only when the set is durable. Inputs from env for hosts with no secret files: `BACKUP_DATABASE_URL`, `BACKUP_REDIS_URL`, `QDRANT_API_KEY`, `BACKUP_RCLONE_CONFIG`. `BACKUP_HEARTBEAT_URL` is pinged only on a durable run (dead man's switch, since nothing scrapes metrics on Railway).
-- `deploy/backup/railway.Dockerfile`: the VPS image's packages with the scripts copied in; `PG_MAJOR` build argument; `deploy/.dockerignore` allows only `scripts/` into its build context.
+- `deploy/backup/railway.Dockerfile`: the VPS image's packages with the scripts copied in; `PG_MAJOR` build argument, default **18**: Railway's Postgres is 18.6 (owner, 2026-11-17), and `pg_dump` refuses a newer server. `restore-drill.sh` moved to `postgres:18-alpine` (`DRILL_PG_IMAGE`) because a 16 drill cannot read pg_dump 18 archives; 18 still reads the VPS's 16 dumps. Both verified with real containers; `deploy/.dockerignore` allows only `scripts/` into its build context.
 - Two pre-existing bugs fixed in `backup_qdrant`, affecting the VPS too: a greedy `sed` kept only the LAST collection name, so all other collections were silently skipped; and snapshots were never deleted from Qdrant after download, so they accumulated on its disk nightly.
 - Proven locally end to end with the built image (stock Postgres 16, Redis 7, Qdrant v1.12.4, local folders as remotes): both copies verified; fetched from one remote; restored with key B alone into a throwaway Postgres; a read-only remote gave exit 1 and no heartbeat. Stub tests for the same paths are in the shell suite (118 assertions).
 

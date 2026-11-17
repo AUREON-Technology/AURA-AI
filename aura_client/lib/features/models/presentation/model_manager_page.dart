@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:aura_client/core/ai/ai_router/aura_ai_router.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class ModelManagerPage extends ConsumerWidget {
   const ModelManagerPage({super.key});
@@ -18,7 +19,7 @@ class ModelManagerPage extends ConsumerWidget {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: Text('Engine status', style: Theme.of(context).textTheme.headlineMedium),
+        title: Text(context.l10n.engineStatusTitle, style: Theme.of(context).textTheme.headlineMedium),
       ),
       body: ListView(
         padding: const EdgeInsets.all(AuraSpacing.lg),
@@ -42,13 +43,13 @@ class ModelManagerPage extends ConsumerWidget {
                 const SizedBox(height: AuraSpacing.sm),
                 Text(
                   status.latencyMs > 0
-                      ? 'Last response in ${status.latencyMs.toStringAsFixed(0)} ms'
-                      : 'No requests yet this session',
+                      ? context.l10n.modelsLastResponse(status.latencyMs.toStringAsFixed(0))
+                      : context.l10n.modelsNoRequestsYet,
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: AuraSpacing.md),
                 AuraButton(
-                  label: 'Check again',
+                  label: context.l10n.modelsCheckAgain,
                   variant: AuraButtonVariant.secondary,
                   onPressed: () => ref.read(aiRouter).probeGateway(),
                 ),
@@ -58,7 +59,7 @@ class ModelManagerPage extends ConsumerWidget {
           const SizedBox(height: AuraSpacing.lg),
           AuraCard(
             child: Text(
-              'Requests are processed on AURA’s servers. There is nothing to download or configure on this device.',
+              context.l10n.modelsServerNote,
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ),

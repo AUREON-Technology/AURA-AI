@@ -39,6 +39,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:aura_client/l10n/l10n.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -115,16 +116,14 @@ Future<DesktopOAuthResult> signInWithGoogleLoopback({
 
     final opened = await doLaunch(authUri);
     if (!opened) {
-      throw DesktopOAuthCancelledException('Could not open the system browser.');
+      throw DesktopOAuthCancelledException(currentL10n.coreDesktopSignInBrowserFailed);
     }
 
     final HttpRequest request;
     try {
       request = await server.first.timeout(timeout);
     } on TimeoutException {
-      throw DesktopOAuthCancelledException(
-        'Timed out waiting for the browser sign-in to complete.',
-      );
+      throw DesktopOAuthCancelledException(currentL10n.coreDesktopSignInTimedOut);
     }
 
     final params = request.uri.queryParameters;
@@ -133,17 +132,23 @@ Future<DesktopOAuthResult> signInWithGoogleLoopback({
     final error = params['error'];
 
     if (error != null) {
-      await _respond(request, success: false, message: 'Sign-in was cancelled ($error).');
-      throw DesktopOAuthCancelledException('Google returned an error: $error');
+      await _respond(
+        request,
+        success: false,
+        message: currentL10n.coreDesktopSignInPageCancelled(error),
+      );
+      throw DesktopOAuthCancelledException(currentL10n.coreDesktopSignInGoogleError(error));
     }
     if (code == null || returnedState != state) {
-      await _respond(request, success: false, message: 'Sign-in failed: invalid response.');
-      throw DesktopOAuthCancelledException(
-        'Missing authorization code or a state mismatch (possible CSRF).',
+      await _respond(
+        request,
+        success: false,
+        message: currentL10n.coreDesktopSignInPageInvalidResponse,
       );
+      throw DesktopOAuthCancelledException(currentL10n.coreDesktopSignInInvalidRedirect);
     }
 
-    await _respond(request, success: true, message: 'Signed in -- you can close this tab.');
+    await _respond(request, success: true, message: currentL10n.coreDesktopSignInPageSuccess);
 
     final String idToken;
     if (backendExchangeEndpoint != null && clientSecret.isEmpty) {
@@ -264,21 +269,13 @@ Future<String> _exchangeCodeViaBackend({
       status = response.statusCode;
       raw = await response.transform(utf8.decoder).join().timeout(const Duration(seconds: 30));
     } on SocketException {
-      throw DesktopOAuthCancelledException(
-        'Could not reach the AURA server to finish signing in. Check your connection and try again.',
-      );
+      throw DesktopOAuthCancelledException(currentL10n.coreDesktopSignInServerUnreachable);
     } on HandshakeException {
-      throw DesktopOAuthCancelledException(
-        'Could not make a secure connection to the AURA server to finish signing in.',
-      );
+      throw DesktopOAuthCancelledException(currentL10n.coreDesktopSignInServerInsecure);
     } on HttpException {
-      throw DesktopOAuthCancelledException(
-        'The AURA server did not answer properly while finishing sign-in. Try again.',
-      );
+      throw DesktopOAuthCancelledException(currentL10n.coreDesktopSignInServerBadAnswer);
     } on TimeoutException {
-      throw DesktopOAuthCancelledException(
-        'The AURA server took too long to finish signing in. Try again.',
-      );
+      throw DesktopOAuthCancelledException(currentL10n.coreDesktopSignInServerTimedOut);
     }
 
     Object? decoded;
@@ -294,12 +291,12 @@ Future<String> _exchangeCodeViaBackend({
       throw DesktopOAuthCancelledException(
         detail is String && detail.isNotEmpty
             ? detail
-            : 'The AURA server could not finish signing in (HTTP $status).',
+            : currentL10n.coreDesktopSignInServerFailed(status),
       );
     }
     final idToken = body['id_token'];
     if (idToken is! String || idToken.isEmpty) {
-      throw DesktopOAuthCancelledException('The AURA server returned no identity token.');
+      throw DesktopOAuthCancelledException(currentL10n.coreDesktopSignInNoIdentityToken);
     }
     return idToken;
   } finally {
@@ -318,7 +315,7 @@ String _resultPage({required bool success, required String message}) => '''
 <html>
 <head><meta charset="utf-8"><title>AURA</title></head>
 <body style="font-family: sans-serif; text-align: center; margin-top: 3rem;">
-<h2>${success ? 'Signed in' : 'Sign-in failed'}</h2>
+<h2>${success ? currentL10n.coreDesktopSignInPageSignedIn : currentL10n.coreDesktopSignInPageFailed}</h2>
 <p>$message</p>
 </body>
 </html>

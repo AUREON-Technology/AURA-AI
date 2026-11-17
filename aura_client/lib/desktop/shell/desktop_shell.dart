@@ -26,6 +26,7 @@ import 'package:aura_client/desktop/events/ide_event.dart';
 import 'package:aura_client/desktop/events/ide_event_bus.dart';
 import 'package:aura_client/desktop/state/desktop_application_state.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// [child] is the currently routed `/ide/*` page (welcome or workspace
 /// manager) — shown in the main content area only while no file is open,
@@ -312,7 +313,7 @@ class _OverlayScrim extends StatelessWidget {
   Widget build(BuildContext context) {
     return Semantics(
       button: true,
-      label: 'Close panel',
+      label: context.l10n.ideClosePanel,
       child: GestureDetector(
         onTap: onDismiss,
         child: ColoredBox(color: Colors.black.withValues(alpha: 0.32)),

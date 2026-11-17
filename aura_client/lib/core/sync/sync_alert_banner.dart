@@ -20,6 +20,7 @@
 /// server, whatever the engine last reported.
 library;
 
+import 'package:aura_client/l10n/l10n.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -45,13 +46,9 @@ class SyncAlertBanner extends ConsumerWidget {
     return AuraBanner(
       icon: Icons.cloud_upload_outlined,
       tone: AuraStateTone.warning,
-      message: parked == 1
-          ? "1 change hasn't reached the server. It's saved on this device."
-          : "$parked changes haven't reached the server. They're saved on this device.",
-      semanticLabel: parked == 1
-          ? "1 change has not reached the server. It is saved on this device."
-          : "$parked changes have not reached the server. They are saved on this device.",
-      actionLabel: onReview == null ? null : 'Review',
+      message: context.l10n.coreSyncParkedBanner(parked),
+      semanticLabel: context.l10n.coreSyncParkedBannerSemantic(parked),
+      actionLabel: onReview == null ? null : context.l10n.coreSyncReview,
       onAction: onReview,
     );
   }

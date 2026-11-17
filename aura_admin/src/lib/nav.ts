@@ -1,40 +1,42 @@
 import type { IconName } from "@/components/icons";
+import type { MessageKey } from "@/lib/i18n";
 
-export type NavItem = { href: string; label: string; icon: IconName };
-export type NavGroup = { label: string; items: NavItem[] };
+/** Labels are dictionary keys (src/lib/i18n), translated where they are rendered. */
+export type NavItem = { href: string; label: MessageKey; icon: IconName };
+export type NavGroup = { label: MessageKey; items: NavItem[] };
 
 /** The one list of console destinations: the sidebar and the command palette both read it. */
 export const NAV_GROUPS: NavGroup[] = [
   {
-    label: "Operate",
+    label: "nav.group.operate",
     items: [
-      { href: "/", label: "Overview", icon: "overview" },
-      { href: "/providers", label: "Providers", icon: "providers" },
-      { href: "/models", label: "Models", icon: "models" },
-      { href: "/knowledge", label: "Knowledge", icon: "knowledge" },
+      { href: "/", label: "nav.overview", icon: "overview" },
+      { href: "/providers", label: "nav.providers", icon: "providers" },
+      { href: "/models", label: "nav.models", icon: "models" },
+      { href: "/knowledge", label: "nav.knowledge", icon: "knowledge" },
     ],
   },
   {
-    label: "Intelligence",
+    label: "nav.group.intelligence",
     items: [
-      { href: "/prompts", label: "Prompts", icon: "prompts" },
-      { href: "/learning", label: "Learning", icon: "learning" },
+      { href: "/prompts", label: "nav.prompts", icon: "prompts" },
+      { href: "/learning", label: "nav.learning", icon: "learning" },
     ],
   },
   {
-    label: "Governance",
+    label: "nav.group.governance",
     items: [
-      { href: "/approvals", label: "Approvals", icon: "approvals" },
-      { href: "/audit", label: "Audit", icon: "audit" },
-      { href: "/access", label: "Access", icon: "access" },
-      { href: "/settings", label: "Settings", icon: "settings" },
+      { href: "/approvals", label: "nav.approvals", icon: "approvals" },
+      { href: "/audit", label: "nav.audit", icon: "audit" },
+      { href: "/access", label: "nav.access", icon: "access" },
+      { href: "/settings", label: "nav.settings", icon: "settings" },
     ],
   },
 ];
 
 export const NAV_ITEMS: NavItem[] = NAV_GROUPS.flatMap((group) => group.items);
 
-export function groupFor(pathname: string): { group: string; item: NavItem } | null {
+export function groupFor(pathname: string): { group: MessageKey; item: NavItem } | null {
   for (const group of NAV_GROUPS) {
     const item = group.items.find((entry) =>
       entry.href === "/" ? pathname === "/" : pathname === entry.href || pathname.startsWith(`${entry.href}/`),

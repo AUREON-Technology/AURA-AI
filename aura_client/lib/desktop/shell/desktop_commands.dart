@@ -24,6 +24,7 @@ import 'package:aura_client/desktop/events/ide_event.dart';
 import 'package:aura_client/desktop/events/ide_event_bus.dart';
 import 'package:aura_client/desktop/shell/desktop_actions.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// Platform-appropriate modifier name for the shortcut hints.
 String modifierLabel(TargetPlatform platform) =>
@@ -49,14 +50,20 @@ List<AuraCommandItem> buildDesktopCommands(
   final eventBus = ref.read(ideEventBusProvider);
   final hasWorkspace = workspace != null;
   final activeTab = editor.activeTab;
+  // No BuildContext here: the palette is built at the moment it opens, so the
+  // strings of the language on screen right now are the right ones.
+  final l10n = currentL10n;
 
-  const noWorkspace = 'No workspace is open';
+  final noWorkspace = l10n.ideCmdNoWorkspace;
+  final noFileOpen = l10n.ideCmdNoFileOpen;
+  final groupFile = l10n.ideCmdGroupFile;
+  final groupView = l10n.ideCmdGroupView;
 
   return [
     AuraCommandItem(
       id: 'file.goToFile',
-      group: 'File',
-      title: 'Go to File...',
+      group: groupFile,
+      title: l10n.ideCmdGoToFile,
       icon: Icons.insert_drive_file_outlined,
       trailing: '$mod+P',
       disabledReason: hasWorkspace ? null : noWorkspace,
@@ -66,13 +73,13 @@ List<AuraCommandItem> buildDesktopCommands(
     ),
     AuraCommandItem(
       id: 'file.save',
-      group: 'File',
-      title: 'Save File',
+      group: groupFile,
+      title: l10n.ideCmdSaveFile,
       icon: Icons.save_outlined,
       trailing: '$mod+S',
       disabledReason: activeTab == null
-          ? 'No file is open'
-          : (!activeTab.isDirty ? 'No unsaved changes' : null),
+          ? noFileOpen
+          : (!activeTab.isDirty ? l10n.ideCmdNoUnsavedChanges : null),
       onInvoke: activeTab != null && activeTab.isDirty
           // The same function Ctrl/Cmd+S runs -- see desktop_actions.dart.
           ? () => saveActiveFile(ref)
@@ -80,57 +87,57 @@ List<AuraCommandItem> buildDesktopCommands(
     ),
     AuraCommandItem(
       id: 'file.closeTab',
-      group: 'File',
-      title: 'Close Editor',
+      group: groupFile,
+      title: l10n.ideCmdCloseEditor,
       icon: Icons.close,
       trailing: '$mod+W',
-      disabledReason: activeTab == null ? 'No file is open' : null,
+      disabledReason: activeTab == null ? noFileOpen : null,
       onInvoke: activeTab == null
           ? null
           : () => ref.read(editorNotifierProvider.notifier).closeTab(activeTab.id),
     ),
     AuraCommandItem(
       id: 'view.explorer',
-      group: 'View',
-      title: 'Show Explorer',
+      group: groupView,
+      title: l10n.ideCmdShowExplorer,
       icon: Icons.folder_outlined,
       trailing: '$mod+B',
       onInvoke: layoutNotifier.showExplorerPanel,
     ),
     AuraCommandItem(
       id: 'view.sourceControl',
-      group: 'View',
-      title: 'Show Source Control',
+      group: groupView,
+      title: l10n.ideCmdShowSourceControl,
       icon: Icons.source_outlined,
       onInvoke: layoutNotifier.showSourceControlPanel,
     ),
     AuraCommandItem(
       id: 'view.controlCenter',
-      group: 'View',
-      title: 'Show AURA Control Center',
+      group: groupView,
+      title: l10n.ideCmdShowControlCenter,
       icon: Icons.auto_awesome_outlined,
       onInvoke: layoutNotifier.showControlCenterPanel,
     ),
     AuraCommandItem(
       id: 'view.toggleSidebar',
-      group: 'View',
-      title: layout.showPrimarySidebar ? 'Hide Side Bar' : 'Show Side Bar',
+      group: groupView,
+      title: layout.showPrimarySidebar ? l10n.ideCmdHideSidebar : l10n.ideCmdShowSidebar,
       icon: Icons.vertical_split_outlined,
       trailing: '$mod+B',
       onInvoke: layoutNotifier.togglePrimarySidebar,
     ),
     AuraCommandItem(
       id: 'view.togglePanel',
-      group: 'View',
-      title: layout.showBottomPanel ? 'Hide Panel' : 'Show Panel',
+      group: groupView,
+      title: layout.showBottomPanel ? l10n.ideCmdHidePanel : l10n.ideCmdShowPanel,
       icon: Icons.terminal_outlined,
       trailing: '$mod+Shift+J',
       onInvoke: layoutNotifier.toggleBottomPanel,
     ),
     AuraCommandItem(
       id: 'view.focusTerminal',
-      group: 'View',
-      title: 'Focus Terminal',
+      group: groupView,
+      title: l10n.ideCmdFocusTerminal,
       icon: Icons.keyboard_command_key,
       trailing: '$mod+`',
       onInvoke: () {
@@ -143,7 +150,7 @@ List<AuraCommandItem> buildDesktopCommands(
     AuraCommandItem(
       id: 'aura.toggleAgentPanel',
       group: 'AURA',
-      title: layout.showSecondarySidebar ? 'Hide AURA Agent' : 'Show AURA Agent',
+      title: layout.showSecondarySidebar ? l10n.ideCmdHideAgent : l10n.ideCmdShowAgent,
       icon: Icons.smart_toy_outlined,
       trailing: '$mod+J',
       onInvoke: layoutNotifier.toggleSecondarySidebar,
@@ -151,10 +158,10 @@ List<AuraCommandItem> buildDesktopCommands(
     AuraCommandItem(
       id: 'aura.inlineCompletion',
       group: 'AURA',
-      title: 'Request Inline Completion',
+      title: l10n.ideCmdInlineCompletion,
       icon: Icons.auto_fix_high_outlined,
       trailing: '$mod+Space',
-      disabledReason: activeTab == null ? 'No file is open' : null,
+      disabledReason: activeTab == null ? noFileOpen : null,
       onInvoke: activeTab == null
           ? null
           : () => eventBus.publish(const RequestInlineCompletionRequested()),
@@ -162,7 +169,7 @@ List<AuraCommandItem> buildDesktopCommands(
     AuraCommandItem(
       id: 'git.refresh',
       group: 'Git',
-      title: 'Refresh Source Control',
+      title: l10n.ideCmdRefreshSourceControl,
       icon: Icons.refresh,
       disabledReason: hasWorkspace ? null : noWorkspace,
       onInvoke: hasWorkspace

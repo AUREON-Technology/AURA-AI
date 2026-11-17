@@ -11,6 +11,7 @@ import 'package:aura_client/desktop/events/ide_event.dart';
 import 'package:aura_client/desktop/events/ide_event_bus.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 import 'package:aura_client/desktop/workspace/workspace_file_service.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class EditorTabBar extends ConsumerWidget {
   const EditorTabBar({super.key});
@@ -65,20 +66,20 @@ class EditorTabBar extends ConsumerWidget {
     final choice = await showDialog<_UnsavedChoice>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Unsaved changes'),
-        content: Text('"${tab.title}" has unsaved changes.'),
+        title: Text(dialogContext.l10n.editorUnsavedTitle),
+        content: Text(dialogContext.l10n.editorUnsavedBody(tab.title)),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Cancel'),
+            child: Text(dialogContext.l10n.cancel),
           ),
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(_UnsavedChoice.discard),
-            child: const Text('Discard'),
+            child: Text(dialogContext.l10n.editorDiscard),
           ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(_UnsavedChoice.save),
-            child: const Text('Save'),
+            child: Text(dialogContext.l10n.commonSave),
           ),
         ],
       ),

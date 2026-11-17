@@ -1,6 +1,8 @@
+import 'package:aura_client/core/locale/text_direction.dart';
 import 'package:flutter/material.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// Renders one file's proposed new content for a pending engineer-agent tool call.
 ///
@@ -24,7 +26,7 @@ class CodePreview extends StatelessWidget {
     final truncated = lines.length > _maxLines;
     final visible = truncated ? lines.take(_maxLines).toList() : lines;
 
-    return Container(
+    return LtrContent(child: Container(
       margin: const EdgeInsets.only(top: AuraSpacing.xs),
       decoration: BoxDecoration(
         color: palette.background,
@@ -67,12 +69,12 @@ class CodePreview extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(top: AuraSpacing.xs),
               child: Text(
-                '… ${lines.length - _maxLines} more line(s)',
+                context.l10n.chatMoreLines(lines.length - _maxLines),
                 style: TextStyle(fontSize: 12, color: palette.textSecondary),
               ),
             ),
         ],
       ),
-    );
+    ));
   }
 }

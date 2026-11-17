@@ -2,6 +2,16 @@
 
 import { useState, type ReactNode } from "react";
 
+import { useI18n } from "@/lib/i18n/context";
+
+/**
+ * Fold the Arabic letter variants a keyboard makes easy to mix up (أ إ آ → ا, ى → ي), so a typed
+ * Arabic confirmation word matches whichever spelling the dictionary uses. Latin text is untouched.
+ */
+function foldConfirm(value: string): string {
+  return value.replace(/[أإآ]/g, "ا").replace(/ى/g, "ي");
+}
+
 export function ConfirmDialog({
   title,
   confirmText,
@@ -17,24 +27,28 @@ export function ConfirmDialog({
   danger?: boolean;
   disabled?: boolean;
 }) {
+  const { t, errorText } = useI18n();
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [mismatch, setMismatch] = useState(false);
+  const [error, setError] = useState<unknown>(null);
 
   async function run() {
-    if (typed !== confirmText) {
-      setError(`Type ${confirmText} to confirm. This writes an audit event.`);
+    if (foldConfirm(typed) !== foldConfirm(confirmText)) {
+      setMismatch(true);
+      setError(null);
       return;
     }
     setBusy(true);
+    setMismatch(false);
     setError(null);
     try {
       await onConfirm();
       setOpen(false);
       setTyped("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Request failed");
+      setError(err ?? new Error(t("errors.requestFailed")));
     } finally {
       setBusy(false);
     }
@@ -53,18 +67,19 @@ export function ConfirmDialog({
       {open ? (
         <div className="card" style={{ marginTop: 12 }}>
           <strong>{title}</strong>
-          <p className="muted">This writes an audit event.</p>
+          <p className="muted">{t("confirm.auditNote")}</p>
           <label className="field">
-            Type {confirmText}
+            {t("confirm.typeLabel", { text: confirmText })}
             <input value={typed} onChange={(e) => setTyped(e.target.value)} />
           </label>
-          {error ? <p className="banner">{error}</p> : null}
+          {mismatch ? <p className="banner">{t("confirm.mismatch", { text: confirmText })}</p> : null}
+          {error ? <p className="banner">{errorText(error)}</p> : null}
           <div className="row" style={{ marginTop: 10 }}>
             <button className="btn primary" type="button" disabled={busy} onClick={run}>
-              Confirm
+              {t("common.confirm")}
             </button>
             <button className="btn" type="button" onClick={() => setOpen(false)}>
-              Cancel
+              {t("common.cancel")}
             </button>
           </div>
         </div>

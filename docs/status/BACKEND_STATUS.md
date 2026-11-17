@@ -81,6 +81,7 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 | Workspaces / team scopes (SaaS P1-A, ADR-034) | BUILT and TESTED locally (pytest 4915 passed, legacy unittest, real PG16 contract + migration round-trip); **not CI-run, not deployed** | Branch `claude/saas-production-readiness-f5i61d`: migration `0020` (workspaces, members, invites), `TenancyService`, `X-Aura-Workspace` resolved per request, `/api/v3/workspaces` routes, knowledge/graph/CAG scoped by `Principal.knowledge_owner` (AST fitness test), HTTP isolation + IDOR scenarios. Also `/metrics` now fails closed in production without `AURA_METRICS_TOKEN`. No client/console screens, no invite email, no RLS yet |
 | Learning / fine-tuning | BUILT | GAP-017; GAP-018 fixed in code (`finetune.py` records a failed train as failed; FSA-120 correction 2026-11-08), `built_not_proven` |
 | Voice | BUILT | GAP-020: speech-to-text is English-only while an Arabic voice ships |
+| Arabic text handling and reply language (Arabic plan, stage 1) | BUILT; TESTED locally 2026-11-17, not CI-run (CB-44), not deployed | `aura_core/text/`: BM25 tokenizer, token counter, chunker, groundedness guard, complexity, adaptive routing and curation read Arabic; migration `0021` (`users.language`, from `X-Client-Language`); persona prompts tell an Arabic reply to be Egyptian (English prompts unchanged). Whether a real model follows the line is untested. `docs/plans/arabic-language_plan.md` |
 | Track AP: AP1–AP8 | TESTED (`built_not_proven`) | GAP-049…057; held at BUILT until M0 |
 | Track AP: AP10 | In progress | GAP-059 |
 | Track AP: AP9, AP11–AP13 | OPEN | GAP-058, GAP-060…062 |
@@ -195,6 +196,7 @@ That needs a check in the Firebase console.
 - #187, #185, #188, #143, #165: listed above; #143 is client-only (failure classifier on every
   `AsyncValue.error`), #165 docs-only.
 - PRs #78 and #88 closed as superseded (both features are on `main` in reworked form).
+- 2026-11-17, branch `anas/kind-rubin-dpm0sq`, unmerged: Arabic plan stage 1 (above). Adds migration `0022`; after it merges, `/health/ready`'s `schema.revision` should read `0022` (the first merge adding a migration since the pre-deploy fix).
 - #252 (open, 2026-11-17): multi-provider offsite backups with a two-copy quorum, configuration
   checks, `backup-fetch.sh`, and the `AuraBackupUnderReplicated` / `AuraBackupOffsiteStale`
   alerts. Deploy-stack only; no backend code. Local checks pass; CI ran with no logs (CB-44).

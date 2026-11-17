@@ -52,6 +52,33 @@ class TesseractOcrEngine:
                 "the tesseract binary is not on PATH", dependency="tesseract",
             ) from exc
         self._name = f"tesseract-{version}"
+        self._lang = self._installed_subset(pytesseract, lang)
+
+    @staticmethod
+    def _installed_subset(pytesseract: object, lang: str) -> str:
+        """``lang`` minus any language whose traineddata is not installed.
+
+        The default is ``ara+eng`` (docs/plans/arabic-language_plan.md, decision 16), and the
+        image installs ``tesseract-ocr-ara``; a host without the Arabic pack would otherwise fail
+        *every* OCR call, English included, because Tesseract refuses the whole request. Missing
+        languages are logged and dropped; if the installed list cannot be read, or none of the
+        requested languages is installed, ``lang`` is kept as configured so the error surfaces
+        where it belongs.
+        """
+        try:
+            installed = set(pytesseract.get_languages(config=""))  # type: ignore[attr-defined]
+        except Exception:
+            return lang
+        wanted = [code for code in lang.split("+") if code]
+        usable = [code for code in wanted if code in installed]
+        missing = [code for code in wanted if code not in installed]
+        if missing and usable:
+            logger.warning(
+                "tesseract language data missing; OCR continues without it",
+                extra={"missing": missing, "using": usable},
+            )
+            return "+".join(usable)
+        return lang
 
     @property
     def name(self) -> str:

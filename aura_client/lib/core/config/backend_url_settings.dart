@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:aura_client/core/config/backend_url_policy.dart';
 import 'package:aura_client/core/config/config.dart';
 import 'package:aura_client/core/security/aura_secure_storage.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// Preset server environments the app may switch between at runtime.
 enum BackendEnvironment {
@@ -57,8 +58,8 @@ class BackendUrlSettings {
   }
 
   static String labelFor(BackendEnvironment environment) => switch (environment) {
-        BackendEnvironment.production => 'Production',
-        BackendEnvironment.development => 'Development',
+        BackendEnvironment.production => currentL10n.coreBackendEnvironmentProduction,
+        BackendEnvironment.development => currentL10n.coreBackendEnvironmentDevelopment,
       };
 
   static bool isPresetUrl(String url) => _urlToEnvironment.containsKey(_normalizeUrl(url));

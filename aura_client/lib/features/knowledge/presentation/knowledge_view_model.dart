@@ -7,6 +7,7 @@ import '../../../core/ai/knowledge/knowledge_center.dart';
 import '../../../core/network/aura_api_error.dart';
 import '../../../core/network/idempotency.dart';
 import '../domain/knowledge_document.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class KnowledgeUiState {
   final bool loading;
@@ -76,31 +77,25 @@ class KnowledgeViewModel extends Notifier<KnowledgeUiState> {
 
   /// The message for an ingest or upload that did not succeed (INT-021).
   String _failureMessage(KnowledgeIngestResult result, {required bool pdf}) {
-    final what = pdf ? 'this PDF' : 'this document';
+    // In the language on screen (docs/plans/arabic-language_plan.md); `kind` selects the
+    // document/PDF wording inside each message.
+    final l10n = currentL10n;
+    final kind = pdf ? 'pdf' : 'document';
     final limit = result.limitBytes ?? ref.read(knowledgeCenterProvider).maxDocumentBytes;
     return switch (result.failure) {
-      KnowledgeIngestFailure.tooLarge =>
-        '${pdf ? 'This PDF' : 'This document'} is larger than the server\'s '
-            '${_megabytes(limit)} limit.',
-      KnowledgeIngestFailure.rateLimited =>
-        'Too many uploads right now. Wait a minute, then try again.',
-      KnowledgeIngestFailure.unavailable =>
-        'The knowledge library is unavailable right now. Try again later.',
-      KnowledgeIngestFailure.inProgress =>
-        'AURA is still saving $what. Refresh in a moment before trying again.',
-      KnowledgeIngestFailure.timeout =>
-        'AURA is taking a long time with $what. It may still be saved: refresh to check. '
-            'Trying again will not add it twice.',
-      KnowledgeIngestFailure.network =>
-        'Could not reach AURA. Trying again will not add it twice.',
-      KnowledgeIngestFailure.unauthorized => 'Sign in again to continue.',
-      KnowledgeIngestFailure.forbidden => 'You do not have permission to add documents.',
-      KnowledgeIngestFailure.server =>
-        'AURA could not save $what. Trying again will not add it twice.',
+      KnowledgeIngestFailure.tooLarge => l10n.knowledgeErrTooLarge(kind, _megabytes(limit)),
+      KnowledgeIngestFailure.rateLimited => l10n.knowledgeErrRateLimited,
+      KnowledgeIngestFailure.unavailable => l10n.knowledgeErrUnavailable,
+      KnowledgeIngestFailure.inProgress => l10n.knowledgeErrInProgress(kind),
+      KnowledgeIngestFailure.timeout => l10n.knowledgeErrTimeout(kind),
+      KnowledgeIngestFailure.network => l10n.knowledgeErrNetwork,
+      KnowledgeIngestFailure.unauthorized => l10n.knowledgeErrSignIn,
+      KnowledgeIngestFailure.forbidden => l10n.knowledgeErrForbidden,
+      KnowledgeIngestFailure.server => l10n.knowledgeErrServer(kind),
       KnowledgeIngestFailure.rejected || null =>
         (result.failureMessage?.isNotEmpty ?? false)
-            ? 'Could not add $what: ${result.failureMessage}'
-            : (pdf ? 'Could not upload this PDF.' : 'Could not add this document.'),
+            ? l10n.knowledgeErrRejected(kind, result.failureMessage!)
+            : (pdf ? l10n.knowledgePdfUploadFailed : l10n.knowledgeAddFailed),
     };
   }
 
@@ -110,29 +105,25 @@ class KnowledgeViewModel extends Notifier<KnowledgeUiState> {
   }
 
   /// Reports a 2xx outcome; returns whether the library changed and should be reloaded.
-  bool _reportSaved(KnowledgeIngestResult result, {required String savedWord}) {
+  bool _reportSaved(KnowledgeIngestResult result, {required bool pdf}) {
+    final l10n = currentL10n;
     switch (result.skippedReason) {
       case null || '':
+        final saved = pdf ? l10n.knowledgeUploaded : l10n.knowledgeSaved;
         final quarantine = result.quarantinedChunks > 0
-            ? ' ${result.quarantinedChunks} passage(s) were held back.'
+            ? ' ${l10n.knowledgePassagesHeldBack(result.quarantinedChunks)}'
             : '';
-        state = state.copyWith(ingestMessage: '$savedWord.$quarantine', ingestError: false);
+        state = state.copyWith(ingestMessage: '$saved$quarantine', ingestError: false);
         return true;
       case 'unchanged_content':
-        state = state.copyWith(
-          ingestMessage: 'Already in your library, unchanged. Nothing new was saved.',
-          ingestError: false,
-        );
+        state = state.copyWith(ingestMessage: l10n.knowledgeAlreadyUnchanged, ingestError: false);
         return false;
       case 'fully_quarantined':
-        state = state.copyWith(
-          ingestMessage: 'Not saved: every passage was held back by the safety check.',
-          ingestError: true,
-        );
+        state = state.copyWith(ingestMessage: l10n.knowledgeNotSavedQuarantined, ingestError: true);
         return false;
       default:
         state = state.copyWith(
-          ingestMessage: 'Not saved (${result.skippedReason}).',
+          ingestMessage: l10n.knowledgeNotSavedReason(result.skippedReason!),
           ingestError: true,
         );
         return false;
@@ -187,7 +178,7 @@ class KnowledgeViewModel extends Notifier<KnowledgeUiState> {
       );
       return;
     }
-    if (_reportSaved(result, savedWord: 'Saved')) await refresh();
+    if (_reportSaved(result, pdf: false)) await refresh();
   }
 
   Future<void> uploadPdf({
@@ -210,7 +201,7 @@ class KnowledgeViewModel extends Notifier<KnowledgeUiState> {
       );
       return;
     }
-    if (_reportSaved(result, savedWord: 'Uploaded')) await refresh();
+    if (_reportSaved(result, pdf: true)) await refresh();
   }
 
   Future<void> search(String query) async {
@@ -225,13 +216,13 @@ class KnowledgeViewModel extends Notifier<KnowledgeUiState> {
       await ref.read(knowledgeCenterProvider).deleteDocument(documentId);
     } on AuraApiError catch (e) {
       state = state.copyWith(
-        ingestMessage: 'Could not delete this document: ${e.message}',
+        ingestMessage: currentL10n.knowledgeDeleteFailedReason(e.message),
         ingestError: true,
       );
       return;
     } catch (_) {
       state = state.copyWith(
-        ingestMessage: 'Could not reach AURA to delete this document.',
+        ingestMessage: currentL10n.knowledgeDeleteUnreachable,
         ingestError: true,
       );
       return;

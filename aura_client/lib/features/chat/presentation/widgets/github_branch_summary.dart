@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// Dedicated view for a `github_create_branch` confirmation -- previously fell through to the
 /// generic key/value dump.
@@ -32,7 +33,9 @@ class GithubBranchSummary extends StatelessWidget {
               const SizedBox(width: AuraSpacing.xs),
               Expanded(
                 child: Text(
-                  'Create branch${repo != null ? ' on $repo' : ''}',
+                  repo != null
+                      ? context.l10n.chatCreateBranchOnRepo(repo)
+                      : context.l10n.chatCreateBranch,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         fontWeight: FontWeight.w600,
                         color: palette.textSecondary,

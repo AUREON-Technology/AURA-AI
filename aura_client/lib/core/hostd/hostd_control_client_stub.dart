@@ -2,6 +2,8 @@
 /// on web for this to talk to.
 library;
 
+import 'package:aura_client/l10n/l10n.dart';
+
 class HostdControlUnavailable implements Exception {
   HostdControlUnavailable(this.message);
 
@@ -12,10 +14,17 @@ class HostdControlUnavailable implements Exception {
 }
 
 class HostdControlError implements Exception {
-  HostdControlError(this.statusCode, this.message);
+  HostdControlError(this.statusCode, this.message, {this.code});
 
   final int statusCode;
+
+  /// Text for a person, in the language on screen when the daemon sent a [code] this app knows;
+  /// otherwise the daemon's own English.
   final String message;
+
+  /// The daemon's stable machine code for this error (`hostd_error_codes.dart`), or null for a
+  /// daemon that predates codes.
+  final String? code;
 
   @override
   String toString() => 'HTTP $statusCode: $message';
@@ -25,7 +34,7 @@ class HostdControlClient {
   HostdControlClient();
 
   Never _unavailable() =>
-      throw HostdControlUnavailable('The desktop Engineer daemon is not available on web.');
+      throw HostdControlUnavailable(currentL10n.coreHostdNotOnWeb);
 
   Future<Map<String, dynamic>> status() async => _unavailable();
   Future<List<Map<String, dynamic>>> roots() async => _unavailable();

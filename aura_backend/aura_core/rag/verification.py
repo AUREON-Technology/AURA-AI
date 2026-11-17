@@ -22,11 +22,12 @@ from dataclasses import replace
 from typing import Any
 
 from ..domain.knowledge import RetrievalResult
+from ..text import ARABIC_STOPWORDS, fold, is_arabic_token, light_stem
 from .base import BaseStrategy, RetrievalOutcome, RetrievalRequest, StrategyTrace
 
 __all__ = ["EvidenceGrade", "grade_evidence", "CorrectiveRAG", "SelfRAG"]
 
-_WORD = re.compile(r"[a-z0-9]+")
+_WORD = re.compile(r"[a-z0-9]+|[\u0621-\u064A]+")
 
 #: Words too common to indicate topical overlap. Deliberately short -- a long stop list starts
 #: removing content words ("no", "not") that change what a passage means.
@@ -39,7 +40,17 @@ _STOP = frozenset({
 
 
 def _terms(text: str) -> set[str]:
-    return {w for w in _WORD.findall(text.lower()) if w not in _STOP and len(w) > 2}
+    """Content words; Arabic ones folded and light-stemmed, the same way retrieval sees them."""
+    terms: set[str] = set()
+    for word in _WORD.findall(fold(text.lower())):
+        if len(word) <= 2:
+            continue
+        if is_arabic_token(word):
+            if word not in ARABIC_STOPWORDS:
+                terms.add(light_stem(word))
+        elif word not in _STOP:
+            terms.add(word)
+    return terms
 
 
 class EvidenceGrade:

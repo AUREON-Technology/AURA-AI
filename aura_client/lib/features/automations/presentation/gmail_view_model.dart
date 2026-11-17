@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
 
+import 'package:aura_client/l10n/l10n.dart';
+
 import '../../calendar/data/calendar_repository.dart';
 import '../../tasks/data/task_repository.dart';
 import '../data/automation_repository.dart';
@@ -54,7 +56,7 @@ class GmailViewModel extends Notifier<GmailUiState> {
       return null;
     } catch (e) {
       state = state.copyWith(loading: false);
-      return 'Gmail Fetch Error: $e';
+      return currentL10n.automationsGmailFetchError('$e');
     }
   }
 
@@ -69,7 +71,7 @@ class GmailViewModel extends Notifier<GmailUiState> {
     } catch (e) {
       final analyzing = Set<String>.from(state.analyzingIds)..remove(email.id);
       state = state.copyWith(analyzingIds: analyzing);
-      return 'Analysis failed: $e';
+      return currentL10n.automationsGmailAnalysisFailed('$e');
     }
   }
 
