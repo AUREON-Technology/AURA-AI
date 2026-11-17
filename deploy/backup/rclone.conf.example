@@ -1,0 +1,40 @@
+# rclone remotes for the two offsite providers: Backblaze B2 and Cloudflare R2
+# (docs/plans/distributed_storage_plan.md, decision 6).
+#
+# Copy to deploy/secrets/backup/rclone.conf (gitignored), chmod 600, and replace every <...>.
+# Then set, in the environment compose reads:
+#
+#   BACKUP_OFFSITE_TARGETS="b2-aura:<b2-bucket> r2-aura:<r2-bucket>"
+#   BACKUP_OFFSITE_MIN_COPIES=2
+#
+# The two remote names must differ: backup.sh refuses two targets on one remote, because two
+# buckets behind one provider account are not independent copies.
+#
+# Do not set disable_checksum on either remote. rclone stores an MD5 (R2) or SHA1 (B2) of each
+# large, multipart upload in its metadata, and that is what lets the nightly `rclone check`
+# compare real hashes rather than only sizes.
+#
+# Credentials: give each provider a key that can reach ONLY the backup bucket.
+# Setup and deletion protection (object lock): docs/guides/maintenance-guide.md
+# "Offsite providers (multi-target)".
+
+[b2-aura]
+type = b2
+# keyID and applicationKey of a B2 application key restricted to the backup bucket.
+account = <B2_KEY_ID>
+key = <B2_APPLICATION_KEY>
+# Retention pruning deletes for real. Without this, B2 only hides a deleted file and keeps
+# storing (and billing) every pruned set.
+hard_delete = true
+
+[r2-aura]
+type = s3
+provider = Cloudflare
+# An R2 API token with Object Read & Write, scoped to the backup bucket.
+access_key_id = <R2_ACCESS_KEY_ID>
+secret_access_key = <R2_SECRET_ACCESS_KEY>
+endpoint = https://<CLOUDFLARE_ACCOUNT_ID>.r2.cloudflarestorage.com
+acl = private
+# A bucket-scoped token cannot list or create buckets; without this, every upload fails while
+# rclone checks that the bucket exists.
+no_check_bucket = true
