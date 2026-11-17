@@ -32,7 +32,7 @@ from ..agents.registry import AgentRegistry
 from ..domain.connectors import CONNECTOR_TOKEN_PREFIX
 from ..domain.errors import ToolExecutionError
 from ..domain.identifiers import CorrelationId
-from ..domain.tools import ToolCategory, ToolSensitivity
+from ..domain.tools import ToolCategory, ToolSensitivity, intersect_tool_grants
 from ..ports.runtime import Tool, ToolContext
 from .base import param, tool
 
@@ -122,13 +122,13 @@ def build_delegation_tools(
                 tool="delegate_to_agent",
             )
 
-        caller_tools = context.allowed_tools
-        if caller_tools is None:
-            child_tools = target_spec.allowed_tools
-        elif target_spec.allowed_tools is None:
-            child_tools = caller_tools
-        else:
-            child_tools = caller_tools & target_spec.allowed_tools
+        # Names and prefixes together (audit T-03): the engineer's `mcp_` prefix reaches the
+        # child only when the caller holds it too, so delegating to the engineer never hands
+        # MCP tools to a caller that could not call them itself.
+        child_tools, child_prefixes = intersect_tool_grants(
+            context.allowed_tools, context.allowed_tool_prefixes,
+            target_spec.allowed_tools, target_spec.allowed_tool_prefixes,
+        )
 
         caller_ceiling = context.max_sensitivity
         child_ceiling = (
@@ -150,6 +150,7 @@ def build_delegation_tools(
             capabilities=context.capabilities,
             delegation_depth=context.delegation_depth + 1,
             delegated_tool_grant=child_tools,
+            delegated_tool_prefixes=child_prefixes,
             delegated_risk_ceiling=child_ceiling,
             # ADR-006 across the hop: a tainted parent produces a tainted child, so a persona
             # whose CRUD tools would run unconfirmed on clean input still needs confirmation

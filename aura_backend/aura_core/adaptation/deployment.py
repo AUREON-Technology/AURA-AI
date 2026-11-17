@@ -212,19 +212,19 @@ class BlueprintDeployment:
             if pointer is None:
                 self._agents.reset()
                 self._grants = {}
-                self._loaded_version = None
+                self._set_loaded(None)
                 self._status = {"state": "core_only"}
                 return
             record = await self._store.get(self._project_id, pointer.version)
             if record is None or record.digest != pointer.digest or record.state is not BlueprintState.ACTIVE:
                 raise ValidationError("the active pointer does not match a live blueprint")
-            names = [] if self._materializer.names_of(record.version) else self._materializer.register(record.blueprint)
+            names = self._materializer.activate(record.blueprint)
             try:
                 self._swap_agents(record)
             except Exception:
                 self._materializer.unregister(names)
                 raise
-            self._loaded_version = record.version
+            self._set_loaded(record.version)
             self._status = {"state": "active", "version": record.version, "digest": record.digest}
             self._observe_active(record.version)
         except Exception as exc:
@@ -234,7 +234,7 @@ class BlueprintDeployment:
                            extra={"error": type(exc).__name__})
             self._agents.reset()
             self._grants = {}
-            self._loaded_version = None
+            self._set_loaded(None)
             self._status = {"state": "degraded", "reason": type(exc).__name__}
             self._observe_active(0)
 
@@ -251,14 +251,17 @@ class BlueprintDeployment:
     async def _go_live_locked(self, record: BlueprintRecord, *, by: str, action: str) -> ActivePointer:
         started = time.perf_counter()
         previous = await self._store.active(self._project_id)
-        names = self._materializer.register(record.blueprint)
+        names = self._materializer.activate(record.blueprint)
         try:
             pointer = await self._store.activate(self._project_id, record.version, by=by, at=self._now())
         except Exception:
-            self._materializer.unregister(names)
+            if names:
+                self._materializer.unregister(names)
+            else:  # reused a retiring version's tools: put its retirement back
+                self._materializer.retire(record.version)
             raise
         self._swap_agents(record)
-        self._loaded_version = record.version
+        self._set_loaded(record.version)
         if previous is not None and previous.version != record.version:
             self._materializer.retire(previous.version)
         self._status = {"state": "active", "version": record.version, "digest": record.digest}
@@ -293,6 +296,10 @@ class BlueprintDeployment:
             logger.warning("project knowledge sync failed", extra={"error": type(exc).__name__})
             return {"version": record.version, "error": type(exc).__name__}
         return report.summary()
+
+    def _set_loaded(self, version: int | None) -> None:
+        self._loaded_version = version
+        self._materializer.mark_live(version)
 
     def _swap_agents(self, record: BlueprintRecord) -> None:
         bp = record.blueprint

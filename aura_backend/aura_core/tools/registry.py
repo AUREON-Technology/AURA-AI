@@ -127,7 +127,8 @@ class ToolRegistry:
         self._audit = audit
         # Whether a call for this context runs on the user's paired desktop rather than in the
         # sandbox; None when no desktop routing exists. Only asked for workspace_local side
-        # effects, the one place the answer changes the policy (ToolPolicy.evaluate).
+        # effects, the one place the answer changes the policy (ToolPolicy.evaluate) and the
+        # timeout (call_timeout) -- the latter for confirmed calls too (tool audit T-02).
         self._host_routed = host_routed
         #: The least a host-routed call may wait: the daemon's approval window plus slack.
         self.host_approval_window_s = HOST_APPROVAL_WINDOW_S
@@ -164,6 +165,25 @@ class ToolRegistry:
     def names(self) -> tuple[str, ...]:
         """Every registered tool name, sorted (no capability filtering -- see ``available``)."""
         return tuple(sorted(self._tools))
+
+    # -- budgets -----------------------------------------------------------------------
+
+    def call_timeout(self, spec: ToolSpec, context: ToolContext, *, host_routed: bool) -> float:
+        """Server-side seconds one call of ``spec`` may take for this caller.
+
+        The tool's own budget, capped by the caller's per-call ``deadline_s`` (set per persona by
+        ``AIKernel._tool_context``). On the user's own machine the daemon may first hold the call
+        for up to its approval window (aura_hostd approval_queue.dart) and only then run it, so
+        that wait is added on top. It used to be ``max(budget, window)``, which left a command
+        approved after a minute four minutes to run, not its declared ten (tool audit T-01). The
+        older bug was worse: cutting the call off at 15 s told the model a write had failed
+        while the daemon kept waiting, and a late Approve then executed with nothing upstream
+        expecting it (FSA-041).
+        """
+        timeout = min(spec.timeout_s or self._default_timeout, context.deadline_s or spec.timeout_s)
+        if host_routed:
+            timeout += self.host_approval_window_s
+        return timeout
 
     # -- discovery ---------------------------------------------------------------------
 
@@ -319,13 +339,20 @@ class ToolRegistry:
             )
 
         # 3. Policy
-        host_routed = bool(
+        # Where the call runs and what policy is told are two questions (tool audit T-02).
+        # ``on_desktop`` is routing: it sizes the timeout and keeps the call off the sandbox
+        # semaphore. A server-side confirmation does not change it -- the daemon still applies
+        # its own command policy and may hold the call for a local human's approval, so a
+        # confirmed call needs the approval window as much as any other (otherwise FSA-041
+        # reopens: the server gives up at 15 s while the daemon keeps waiting). The policy input
+        # keeps its old meaning, False once confirmed, so no decision or audit record changes.
+        on_desktop = bool(
             self._host_routed is not None
             and spec.workspace_local
             and spec.side_effecting
-            and not confirmed
             and await self._host_routed(context)
         )
+        host_routed = on_desktop and not confirmed
         decision: ToolPolicyDecision = self._policy.evaluate(
             spec, context=context, capabilities=capabilities, confirmed=confirmed,
             host_routed=host_routed,
@@ -366,16 +393,9 @@ class ToolRegistry:
             )
 
         # 4. Sandboxed execution
-        timeout = min(spec.timeout_s or self._default_timeout, context.deadline_s or spec.timeout_s)
-        if host_routed:
-            # On the user's own machine the daemon queues this call for a human's approval and
-            # waits up to its five-minute window (aura_hostd approval_queue.dart). The spec's
-            # timeout is sized for a sandbox write or command, not for a person: cutting the
-            # call off at 15 s told the model the write had failed while the daemon kept waiting
-            # -- and a late Approve then executed with nothing upstream expecting it (FSA-041).
-            timeout = max(timeout, self.host_approval_window_s)
+        timeout = self.call_timeout(spec, context, host_routed=on_desktop)
         try:
-            if host_routed:
+            if on_desktop:
                 # The work happens on the user's own machine, and most of the wait is a human
                 # deciding. Holding one of this process's few sandbox slots for that would let a
                 # handful of pending approvals stall every other user's tool calls here.

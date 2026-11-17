@@ -30,6 +30,8 @@ __all__ = [
     "ToolSpec",
     "ToolPolicyDecision",
     "ToolInvocation",
+    "tool_grant_permits",
+    "intersect_tool_grants",
 ]
 
 
@@ -265,3 +267,51 @@ class ToolInvocation:
     policy_reason: str = ""
     result_chars: int = 0
     tainted_context: bool = False
+
+
+# --------------------------------------------------------------------------- agent tool grants
+
+
+def tool_grant_permits(
+    name: str, allowed_tools: frozenset[str] | None, allowed_prefixes: frozenset[str] = frozenset()
+) -> bool:
+    """Whether an agent-level tool grant permits the tool called ``name``.
+
+    The one answer every checkpoint uses (``AgentSpec``, ``ToolContext``/``ToolPolicy``, the
+    kernel's declarations, ``delegate_to_agent``), so an exact name and a prefix are honoured
+    the same everywhere. ``allowed_tools=None`` is "no agent-level restriction" and ignores
+    ``allowed_prefixes``. Otherwise a name is permitted when it is listed or starts with one of
+    the prefixes -- the shape a tool family named only at runtime needs (audit T-03: the
+    ``mcp_{server}_{tool}`` tools the MCP bridge registers at container startup).
+    """
+    if allowed_tools is None:
+        return True
+    return name in allowed_tools or any(name.startswith(p) for p in allowed_prefixes)
+
+
+def intersect_tool_grants(
+    a_tools: frozenset[str] | None,
+    a_prefixes: frozenset[str],
+    b_tools: frozenset[str] | None,
+    b_prefixes: frozenset[str],
+) -> tuple[frozenset[str] | None, frozenset[str]]:
+    """The grant both ``a`` and ``b`` permit: never wider than either.
+
+    ``None`` on one side is unrestricted, so the other side's grant (names *and* prefixes) is the
+    answer. Otherwise a name survives when both grants permit it, and a prefix survives when both
+    grants cover every name it could match -- i.e. it starts with a prefix from each side, which
+    keeps the narrower of two nested prefixes and drops a prefix only one side holds.
+    """
+    if a_tools is None:
+        return b_tools, (frozenset(b_prefixes) if b_tools is not None else frozenset())
+    if b_tools is None:
+        return a_tools, frozenset(a_prefixes)
+    names = frozenset(
+        n for n in a_tools | b_tools
+        if tool_grant_permits(n, a_tools, a_prefixes) and tool_grant_permits(n, b_tools, b_prefixes)
+    )
+    prefixes = frozenset(
+        p for p in a_prefixes | b_prefixes
+        if any(p.startswith(q) for q in a_prefixes) and any(p.startswith(q) for q in b_prefixes)
+    )
+    return names, prefixes
