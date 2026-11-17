@@ -186,7 +186,11 @@ The flag nulls `deps.tools`, but the resume path executes its stored plan throug
 - Production's `PostgresSyncedPersonalOsStore` rejects bad dates (`_parse_datetime`), so this is not live corruption. But the in-memory adapter, the substrate the whole default suite runs on, accepts what production refuses, so no test can catch a bad-date path.
 - `propose_*` output is not stored by the server at all: the client's `DateTime.tryParse(...) ?? DateTime.now()` silently turns a bad `startTime` into "now".
 
-**T-16 · GAP · The `delegate_to_agent` target enum is frozen at container build.** (CODE; C-06, **still open**)
+**T-16 · FIXED on `main` by #241 · The `delegate_to_agent` target enum is frozen at container build.** (CODE; C-06)
+
+> `delegate_to_agent` now reads its target enum from the live agent registry (`tools/delegation.py::_LiveTargetsTool`), so blueprint `bp_*` agents can be targets. This branch's name+prefix grant intersection (T-03) composes with it unchanged.
+
+Original finding:
 Blueprint agents (`bp_*`) can never be delegation targets.
 
 **T-17 · GAP · Routes with no client caller.** (CODE; C-07, **still open**)
@@ -207,7 +211,7 @@ It arrives as a generic SSE `error`, with no prompt to re-ask.
 | C-03 engineer tools reachable via orchestrator | ❌ Open | **T-07** |
 | C-04 `remember_fact` granted to every persona | ✅ **Fixed** | split into `_MEMORY_WRITE_TOOLS`; `decision_agent` excluded (`registry.py:129-135,210`) |
 | C-05 `max_calls_per_turn` never enforced | ⚠ Partly fixed | **T-08** |
-| C-06 delegation enum frozen | ❌ Open | **T-16** |
+| C-06 delegation enum frozen | ✅ Fixed on `main` (#241), after this audit's baseline | **T-16** |
 | C-07 `GET /tools` has no caller | ❌ Open | **T-17** |
 | C-08 opt-in tools have no wiring | ❌ Open | **T-06** |
 
