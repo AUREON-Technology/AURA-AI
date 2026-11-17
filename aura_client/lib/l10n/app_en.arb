@@ -124,6 +124,30 @@
   "@onboardingNext": {
     "description": "Onboarding next button"
   },
+  "onboardingCopilotTitle": "AURA is your copilot",
+  "@onboardingCopilotTitle": {
+    "description": "Onboarding page 1 title"
+  },
+  "onboardingCopilotBody": "Talk to it. It remembers, searches your documents, and proposes actions — you confirm the writes.",
+  "@onboardingCopilotBody": {
+    "description": "Onboarding page 1 body"
+  },
+  "onboardingPrivacyTitle": "Your private data stays with AURA",
+  "@onboardingPrivacyTitle": {
+    "description": "Onboarding page 2 title: where requests are processed"
+  },
+  "onboardingPrivacyBody": "Nothing is processed on this phone. Your documents, memories and files are only read by AI models AURA runs itself. Other messages may be answered by an approved hosted AI provider, if the server’s operator allows it.",
+  "@onboardingPrivacyBody": {
+    "description": "Onboarding page 2 body. Must match the backend's data-classification routing (ADR-030): sensitive content stays on self-hosted models; hosted providers are opt-in and see only internal-classified requests"
+  },
+  "onboardingTourTitle": "Today, Copilot, Life Hub, You",
+  "@onboardingTourTitle": {
+    "description": "Onboarding page 3 title: the four main tabs"
+  },
+  "onboardingTourBody": "Capture from anywhere. Browse tasks, calendar, finance, and health in Life Hub. Account tools live under You.",
+  "@onboardingTourBody": {
+    "description": "Onboarding page 3 body"
+  },
   "onboardingSkip": "Skip",
   "@onboardingSkip": {
     "description": "Onboarding button that skips the remaining intro pages"
@@ -335,7 +359,7 @@
   "@settingsAboutTitle": {
     "description": "About card title"
   },
-  "settingsAboutBody": "Requests are processed on AURA’s own servers. They are never sent to a third-party AI service, and never processed on this device.",
+  "settingsAboutBody": "Requests are processed on AURA’s servers, never on this device. Your documents, memories, files and tool results are only read by AI models AURA runs itself. If the server’s operator turns it on, your other messages may be answered by an approved hosted AI provider.",
   "@settingsAboutBody": {
     "description": "About card body"
   },

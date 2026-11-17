@@ -280,6 +280,42 @@ abstract class AppLocalizations {
   /// **'Next'**
   String get onboardingNext;
 
+  /// Onboarding page 1 title
+  ///
+  /// In en, this message translates to:
+  /// **'AURA is your copilot'**
+  String get onboardingCopilotTitle;
+
+  /// Onboarding page 1 body
+  ///
+  /// In en, this message translates to:
+  /// **'Talk to it. It remembers, searches your documents, and proposes actions — you confirm the writes.'**
+  String get onboardingCopilotBody;
+
+  /// Onboarding page 2 title: where requests are processed
+  ///
+  /// In en, this message translates to:
+  /// **'Your private data stays with AURA'**
+  String get onboardingPrivacyTitle;
+
+  /// Onboarding page 2 body. Must match the backend's data-classification routing (ADR-030): sensitive content stays on self-hosted models; hosted providers are opt-in and see only internal-classified requests
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing is processed on this phone. Your documents, memories and files are only read by AI models AURA runs itself. Other messages may be answered by an approved hosted AI provider, if the server’s operator allows it.'**
+  String get onboardingPrivacyBody;
+
+  /// Onboarding page 3 title: the four main tabs
+  ///
+  /// In en, this message translates to:
+  /// **'Today, Copilot, Life Hub, You'**
+  String get onboardingTourTitle;
+
+  /// Onboarding page 3 body
+  ///
+  /// In en, this message translates to:
+  /// **'Capture from anywhere. Browse tasks, calendar, finance, and health in Life Hub. Account tools live under You.'**
+  String get onboardingTourBody;
+
   /// Onboarding button that skips the remaining intro pages
   ///
   /// In en, this message translates to:
@@ -583,7 +619,7 @@ abstract class AppLocalizations {
   /// About card body
   ///
   /// In en, this message translates to:
-  /// **'Requests are processed on AURA’s own servers. They are never sent to a third-party AI service, and never processed on this device.'**
+  /// **'Requests are processed on AURA’s servers, never on this device. Your documents, memories, files and tool results are only read by AI models AURA runs itself. If the server’s operator turns it on, your other messages may be answered by an approved hosted AI provider.'**
   String get settingsAboutBody;
 
   /// Theme mode option

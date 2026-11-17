@@ -18,23 +18,28 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
   final _controller = PageController();
   int _index = 0;
 
-  static const _pages = [
-    (
-      Icons.auto_awesome_outlined,
-      'AURA is your copilot',
-      'Talk to it. It remembers, searches your documents, and proposes actions — you confirm the writes.',
-    ),
-    (
-      Icons.cloud_outlined,
-      'Your data stays on your server',
-      'Inference runs on AURA’s own machines. Nothing is sent to a third-party AI service, and nothing is processed on this phone.',
-    ),
-    (
-      Icons.view_week_outlined,
-      'Today, Copilot, Life Hub, You',
-      'Capture from anywhere. Browse tasks, calendar, finance, and health in Life Hub. Account tools live under You.',
-    ),
-  ];
+  static const _pageCount = 3;
+
+  List<(IconData, String, String)> _pages(BuildContext context) {
+    final l10n = context.l10n;
+    return [
+      (
+        Icons.auto_awesome_outlined,
+        l10n.onboardingCopilotTitle,
+        l10n.onboardingCopilotBody,
+      ),
+      (
+        Icons.cloud_outlined,
+        l10n.onboardingPrivacyTitle,
+        l10n.onboardingPrivacyBody,
+      ),
+      (
+        Icons.view_week_outlined,
+        l10n.onboardingTourTitle,
+        l10n.onboardingTourBody,
+      ),
+    ];
+  }
 
   @override
   void dispose() {
@@ -60,10 +65,10 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
               Align(
                 alignment: AlignmentDirectional.centerEnd,
                 child: AnimatedOpacity(
-                  opacity: _index == _pages.length - 1 ? 0 : 1,
+                  opacity: _index == _pageCount - 1 ? 0 : 1,
                   duration: AuraMotion.respecting(context, AuraMotion.fast),
                   child: TextButton(
-                    onPressed: _index == _pages.length - 1 ? null : _finish,
+                    onPressed: _index == _pageCount - 1 ? null : _finish,
                     child: Text(context.l10n.onboardingSkip),
                   ),
                 ),
@@ -71,10 +76,10 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
               Expanded(
                 child: PageView.builder(
                   controller: _controller,
-                  itemCount: _pages.length,
+                  itemCount: _pageCount,
                   onPageChanged: (i) => setState(() => _index = i),
                   itemBuilder: (context, i) {
-                    final page = _pages[i];
+                    final page = _pages(context)[i];
                     return Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -130,7 +135,7 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  for (var i = 0; i < _pages.length; i++)
+                  for (var i = 0; i < _pageCount; i++)
                     AnimatedContainer(
                       duration: AuraMotion.respecting(
                         context,
@@ -150,12 +155,12 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
               ),
               const SizedBox(height: AuraSpacing.xl),
               AuraButton(
-                label: _index == _pages.length - 1
+                label: _index == _pageCount - 1
                     ? context.l10n.onboardingGetStarted
                     : context.l10n.onboardingNext,
                 expand: true,
                 onPressed: () {
-                  if (_index == _pages.length - 1) {
+                  if (_index == _pageCount - 1) {
                     _finish();
                   } else {
                     _controller.nextPage(
