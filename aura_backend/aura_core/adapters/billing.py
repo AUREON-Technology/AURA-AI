@@ -134,12 +134,12 @@ class FakePaymentProvider:
 
 class InMemoryBillingContactStore:
     def __init__(self) -> None:
-        self._rows: dict[str, str] = {}
+        self._rows: dict[str, tuple[str, str]] = {}
 
-    async def put(self, workspace_id: str, email: str, at: datetime) -> None:
-        self._rows[workspace_id] = email
+    async def put(self, workspace_id: str, email: str, at: datetime, set_by: str = "") -> None:
+        self._rows[workspace_id] = (email, set_by)
 
-    async def get(self, workspace_id: str) -> str | None:
+    async def get(self, workspace_id: str) -> tuple[str, str] | None:
         return self._rows.get(workspace_id)
 
 

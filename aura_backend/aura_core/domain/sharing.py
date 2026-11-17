@@ -17,6 +17,7 @@ from .errors import ValidationError
 __all__ = [
     "MAX_SHARED_CHARS",
     "MAX_SHARED_MESSAGES",
+    "MAX_SHARES_PER_MEMBER",
     "MAX_TITLE_CHARS",
     "SharedConversation",
     "SharedMessage",
@@ -26,6 +27,8 @@ __all__ = [
 MAX_SHARED_MESSAGES = 200
 MAX_SHARED_CHARS = 200_000
 MAX_TITLE_CHARS = 120
+#: Distinct chats one member may have shared into one team at a time (review F1#5).
+MAX_SHARES_PER_MEMBER = 50
 _ROLES = ("user", "assistant")
 
 
@@ -58,6 +61,8 @@ def parse_shared_messages(raw: Any) -> tuple[SharedMessage, ...]:
         text = item.get("text") if isinstance(item, dict) else None
         if role not in _ROLES or not isinstance(text, str):
             raise ValidationError("each message needs a role (user or assistant) and text")
+        if "\x00" in text:
+            raise ValidationError("a message cannot contain a NUL character")
         total += len(text)
         if total > MAX_SHARED_CHARS:
             raise ValidationError(f"a shared chat can hold at most {MAX_SHARED_CHARS} characters")

@@ -305,6 +305,10 @@ async def _erase_core(
     await step("personal_os_records", personal_os)
     await step("conversations", conversations)
     await step("telemetry_turns", lambda: container.telemetry_sink.purge_sessions(conversation_ids))
+    sharing = getattr(container, "sharing", None)
+    if sharing is not None:
+        # Copies they shared into teams are theirs to take back (review F1#7).
+        await step("shared_chats", lambda: sharing.store.delete_by_sharer(owner))
     await step("audit_events_pseudonymised", audit_actor)
     return counts, failed
 
@@ -333,6 +337,16 @@ async def erase_account(container, subject: str, *, unknown_user_ok: bool = Fals
     failed: list = []
 
     async def erase_everything_but_the_row(auth_subject: str, conversation_ids: set, email: str | None = None) -> None:
+        tenancy = getattr(container, "tenancy", None)
+        if tenancy is not None:
+            # A team cannot lose its only Owner to an erasure, the operator's included (SaaS
+            # P1-F1 review #7): hand the team over or delete it first. Nothing is erased here.
+            owned = await tenancy.sole_ownerships(auth_subject)
+            if owned:
+                raise HTTPException(status_code=409, detail={
+                    "error": "owns_team_workspaces",
+                    "workspaces": [{"id": ws.id, "name": ws.name} for ws in owned],
+                })
         if container is not None:
             core, core_failed = await _erase_core(
                 container, auth_subject, conversation_ids, aliases={email} if email else frozenset(),

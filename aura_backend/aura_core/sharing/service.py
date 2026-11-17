@@ -14,8 +14,8 @@ import secrets
 from dataclasses import dataclass
 from typing import Any
 
-from ..domain.errors import AuthorizationError, NotFoundError, ValidationError
-from ..domain.sharing import MAX_TITLE_CHARS, SharedConversation, parse_shared_messages
+from ..domain.errors import AuthorizationError, ConflictError, NotFoundError, ValidationError
+from ..domain.sharing import MAX_SHARES_PER_MEMBER, MAX_TITLE_CHARS, SharedConversation, parse_shared_messages
 from ..domain.tenancy import WorkspaceKind, WorkspaceRole
 from ..ports.runtime import AuditEvent
 
@@ -36,12 +36,18 @@ class SharingService:
         if workspace.kind is not WorkspaceKind.TEAM:
             raise ValidationError("chats are shared with a team; this is a personal workspace")
         source = str(source_id or "").strip()
-        if not source or len(source) > 200:
+        if not source or len(source) > 200 or "\x00" in source:
             raise ValidationError("source_id is required (at most 200 characters)")
+        if "\x00" in str(title or ""):
+            raise ValidationError("a title cannot contain a NUL character")
         clean_title = " ".join(str(title or "").split())[:MAX_TITLE_CHARS] or "Shared chat"
+        parsed = parse_shared_messages(messages)
+        if await self.store.find_source(workspace_id, actor, source) is None \
+                and await self.store.count_by(workspace_id, actor) >= MAX_SHARES_PER_MEMBER:
+            raise ConflictError(f"you can share at most {MAX_SHARES_PER_MEMBER} chats with a team; unshare one first")
         stored = await self.store.put(SharedConversation(
             id=secrets.token_hex(12), workspace_id=workspace_id, shared_by=actor, source_id=source,
-            title=clean_title, messages=parse_shared_messages(messages), created_at=self.clock.now(),
+            title=clean_title, messages=parsed, created_at=self.clock.now(),
         ))
         await self._audit("workspace.share", actor, workspace_id, {"shared_id": stored.id, "messages": len(stored.messages)})
         return stored

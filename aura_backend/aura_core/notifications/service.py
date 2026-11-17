@@ -8,6 +8,7 @@ message's ``tag`` -- never its body, which for an invite holds a single-use toke
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -20,6 +21,9 @@ from ..ports.runtime import AuditEvent
 __all__ = ["Notifier"]
 
 logger = logging.getLogger("aura.notifications")
+#: An email is sent from inside billing locks: a slow or silent SMTP host must not hold them
+#: (review F1#3). The thread finishes on its own; nobody waits for it.
+SEND_TIMEOUT_S = 10.0
 
 
 def _egp(piastres: int) -> str:
@@ -89,7 +93,8 @@ class Notifier:
         try:
             if not _valid_address(to):
                 raise ValueError("not a single valid address")
-            await self.sender.send(EmailMessage(to=to, subject=subject, text=text, tag=tag))
+            await asyncio.wait_for(self.sender.send(EmailMessage(to=to, subject=subject, text=text, tag=tag)),
+                                   timeout=SEND_TIMEOUT_S)
         except Exception as exc:
             logger.warning("email could not be sent", extra={"tag": tag, "error": type(exc).__name__})
             try:

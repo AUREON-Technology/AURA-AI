@@ -110,7 +110,7 @@ def register_billing_ops(
             raise RateLimitedError("too many checkout requests", retry_after=decision.retry_after_s)
         token = await stores.issue_token(str(caller.user_id), workspace_id)
         if caller.email and billing.contacts is not None:
-            await billing.contacts.put(workspace_id, caller.email, billing.clock.now())
+            await billing.contacts.put(workspace_id, caller.email, billing.clock.now(), set_by=str(caller.user_id))
         return JSONResponse(status_code=201, content={"token": token}, headers={"Cache-Control": "no-store"})
 
     async def _store_answer(handle) -> JSONResponse:

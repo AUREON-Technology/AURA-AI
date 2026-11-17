@@ -104,9 +104,11 @@ class BillingLocks(Protocol):
 class BillingContactStore(Protocol):
     """Where a workspace's billing email goes (SaaS P1-F1)."""
 
-    async def put(self, workspace_id: str, email: str, at: datetime) -> None: ...
+    async def put(self, workspace_id: str, email: str, at: datetime, set_by: str = "") -> None: ...
 
-    async def get(self, workspace_id: str) -> str | None: ...
+    async def get(self, workspace_id: str) -> tuple[str, str] | None:
+        """``(email, set_by)``: whose address it is, so a former Owner's is never used."""
+        ...
 
 
 class StoreBindingStore(Protocol):

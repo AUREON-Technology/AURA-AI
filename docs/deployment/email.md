@@ -12,7 +12,8 @@ Firebase's.
 
 The **billing contact** is the Owner's verified address. It is stored when they check out or start
 an in-app purchase. App Store and Google Play customers get their receipts and reminders from the
-store.
+store. After an ownership transfer, billing email stops until the new Owner
+checks out. It is never sent to the former Owner.
 
 Email is **off** until `AURA_EMAIL_ENABLED=true`. With it off, nothing is sent and nothing fails:
 an invite's token is still returned by the API, as before.
@@ -38,7 +39,8 @@ spec leaves the choice to the owner (§8 #4). On the sending domain (for example
 | `AURA_SMTP_STARTTLS` | `true` (default) |
 | `AURA_APP_BASE_URL` | where the customer app is served, for invite links |
 
-Startup refuses `AURA_EMAIL_ENABLED` without a host, a from-address and the app URL.
+Startup refuses `AURA_EMAIL_ENABLED` without a host, a from-address and the app URL. Each send
+is given at most 10 seconds, so a slow SMTP host cannot hold up a payment.
 
 ## Checking it
 

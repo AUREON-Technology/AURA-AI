@@ -72,7 +72,7 @@ class BillingService:
         await self.plans.validate_plan(workspace_id, plan_id, seats)
         amount = price_for(self.prices, plan_id, seats)
         if email and self.contacts is not None:
-            await self.contacts.put(workspace_id, email, self.clock.now())
+            await self.contacts.put(workspace_id, email, self.clock.now(), set_by=actor)
         lock = await self.locks.lock_workspace(workspace_id)
         try:
             current = await self.subscriptions.get(workspace_id)
@@ -163,12 +163,23 @@ class BillingService:
             behind = (SubscriptionStatus.PAST_DUE, SubscriptionStatus.GRACE, SubscriptionStatus.EXPIRED)
             if sub is None or sub.provider != "fawry" or sub.status not in behind:
                 raise ConflictError("only a Fawry subscription that is past due, in grace or expired can get more grace")
+            last = await self.payments.get(sub.last_payment_id) if sub.last_payment_id else None
+            if last is not None and last.status is PaymentStatus.REFUNDED:
+                raise ConflictError("this subscription's last payment was refunded")
             now = self.clock.now()
-            start = max(sub.grace_until or now, now)
-            until = start + timedelta(days=days)
-            await self.subscriptions.put(replace(sub, status=SubscriptionStatus.GRACE, grace_until=until, updated_at=now))
-            if sub.status is SubscriptionStatus.EXPIRED:
+            automatic = sub.grace_until or (sub.period_end + timedelta(days=self.settings.grace_days))
+            until = max(automatic, now) + timedelta(days=days)  # never shorter than automatic (F1#8)
+            # The plan first, so a failure leaves nothing a retry cannot repair (F1#2); and on
+            # every call, not only from EXPIRED, unless an operator set it by hand.
+            current = await self.plans.entitlements.get(workspace_id)
+            if current is None or (current.source != "manual" and (current.plan_id, current.seats) != (sub.plan_id, sub.seats)):
                 await self.plans.set_entitlement(actor, workspace_id, sub.plan_id, sub.seats, source="subscription")
+            restored = replace(sub, status=SubscriptionStatus.GRACE, grace_until=until, updated_at=now)
+            if sub.status is SubscriptionStatus.EXPIRED:
+                # Brought back by a person, not by a payment: never charge a saved card for it
+                # (the customer may have cancelled). Renewal falls back to a reference code (F1#1).
+                restored = replace(restored, card_token=None)
+            await self.subscriptions.put(restored)
         finally:
             await lock.release()
         await self._audit("billing.grace_extended", actor, workspace_id,
@@ -404,10 +415,17 @@ class BillingService:
         if self.notifier is None or self.contacts is None:
             return
         try:
-            to = await self.contacts.get(workspace_id)
-            if not to:
+            contact = await self.contacts.get(workspace_id)
+            if not contact:
                 return
+            to, set_by = contact
             workspace = await self.tenancy.store.get_workspace(workspace_id)
+            if set_by:
+                # Only while whoever gave the address still owns the workspace: after a
+                # transfer, no billing email rather than the former Owner's (review F1#4).
+                membership = await self.tenancy.store.get_membership(workspace_id, set_by)
+                if membership is None or membership.role.value != "owner":
+                    return
             await send(to, workspace.name if workspace is not None else "your workspace")
         except Exception:
             logger.warning("billing email could not be prepared", exc_info=True)

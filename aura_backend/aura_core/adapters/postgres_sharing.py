@@ -64,6 +64,28 @@ class PostgresSharedConversationStore:
             )
         return [_row(r, with_messages=False) for r in rows]
 
+    async def find_source(self, workspace_id: str, shared_by: str, source_id: str) -> str | None:
+        pool = await self._pool._get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT id FROM aura_shared_conversations WHERE workspace_id = $1 AND shared_by = $2 AND source_id = $3",
+                workspace_id, shared_by, source_id,
+            )
+
+    async def count_by(self, workspace_id: str, shared_by: str) -> int:
+        pool = await self._pool._get_pool()
+        async with pool.acquire() as conn:
+            return int(await conn.fetchval(
+                "SELECT count(*) FROM aura_shared_conversations WHERE workspace_id = $1 AND shared_by = $2",
+                workspace_id, shared_by,
+            ))
+
+    async def delete_by_sharer(self, shared_by: str) -> int:
+        pool = await self._pool._get_pool()
+        async with pool.acquire() as conn:
+            status = await conn.execute("DELETE FROM aura_shared_conversations WHERE shared_by = $1", shared_by)
+        return int(status.rsplit(" ", 1)[-1])
+
     async def delete(self, workspace_id: str, conversation_id: str) -> bool:
         pool = await self._pool._get_pool()
         async with pool.acquire() as conn:

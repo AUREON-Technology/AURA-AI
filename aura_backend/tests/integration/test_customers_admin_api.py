@@ -85,8 +85,10 @@ async def test_extend_grace_from_past_due_and_expired_restores_plan(client, cont
     await _set(container, ws, status=SubscriptionStatus.PAST_DUE)
     ok = client.post(f"/api/v3/admin/customers/{ws}/extend-grace", headers=_as("sa"), json={"days": 5})
     assert ok.status_code == 200, ok.text
+    before = await container.billing.subscriptions.get(ws)
     sub = await container.billing.subscriptions.get(ws)
-    assert sub.status is SubscriptionStatus.GRACE and sub.grace_until == clock.now() + timedelta(days=5)
+    automatic = before.period_end + timedelta(days=container.billing.settings.grace_days)
+    assert sub.status is SubscriptionStatus.GRACE and sub.grace_until == max(automatic, clock.now()) + timedelta(days=5)
     await _set(container, ws, status=SubscriptionStatus.EXPIRED)
     await container.plans.set_entitlement("billing", ws, "free", 1, source="subscription")
     assert client.post(f"/api/v3/admin/customers/{ws}/extend-grace", headers=_as("sa"), json={"days": 2}).status_code == 200

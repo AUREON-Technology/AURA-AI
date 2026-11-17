@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 __all__ = ["EmailMessage", "EmailSender"]
@@ -12,7 +12,8 @@ __all__ = ["EmailMessage", "EmailSender"]
 class EmailMessage:
     to: str
     subject: str
-    text: str
+    #: Not in ``repr``: an invite's body carries a single-use token (review F1#9).
+    text: str = field(repr=False)
     #: What kind of email this is (``invite``, ``receipt`` ...): logged and audited instead of
     #: the content, which can carry a single-use token.
     tag: str

@@ -71,3 +71,17 @@ async def test_members_and_personal_only_users_unaffected(client, container) -> 
     assert _delete(client, "amy").status_code == 200
     await container.tenancy.ensure_personal("solo")
     assert _delete(client, "solo").status_code == 200
+
+
+async def test_operator_forget_refuses_a_team_owner_too(container, monkeypatch) -> None:
+    """F1 review #7: the operator's erasure must not orphan a team either."""
+    from fastapi import HTTPException
+
+    from api.admin_platform import erase_account
+
+    await _team(container)
+    await container.memory.remember(owner_id=UserId("own"), content="keep me", subject="s")
+    with pytest.raises(HTTPException) as refused:
+        await erase_account(container, "own", unknown_user_ok=True)
+    assert refused.value.status_code == 409 and refused.value.detail["error"] == "owns_team_workspaces"
+    assert len(await container.memory._store.list_for_owner(UserId("own"), include_superseded=True)) == 1

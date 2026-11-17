@@ -22,6 +22,7 @@ UPGRADE_STATEMENTS = (
     CREATE TABLE IF NOT EXISTS aura_billing_contacts (
         workspace_id TEXT        PRIMARY KEY REFERENCES aura_workspaces (id) ON DELETE CASCADE,
         email        TEXT        NOT NULL,
+        set_by       TEXT        NOT NULL DEFAULT '',
         updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,

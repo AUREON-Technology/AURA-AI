@@ -57,8 +57,8 @@ async def test_contact_roundtrip_and_replace(env) -> None:
     contacts, backend = env
     assert await contacts.get(backend.workspace) is None
     await contacts.put(backend.workspace, "own@example.com", T0)
-    await contacts.put(backend.workspace, "new@example.com", T0)
-    assert await contacts.get(backend.workspace) == "new@example.com"
+    await contacts.put(backend.workspace, "new@example.com", T0, set_by="u2")
+    assert await contacts.get(backend.workspace) == ("new@example.com", "u2")
 
 
 async def test_contact_goes_with_the_workspace(env) -> None:
