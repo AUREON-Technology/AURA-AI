@@ -1,12 +1,8 @@
-import 'dart:convert';
-
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
-import 'package:aura_client/core/network/idempotency.dart';
 
-import '../../auth/token_manager.dart';
-import '../../config/backend_url_provider.dart';
-import '../../security/device_validation_service.dart';
+import '../../network/aura_api_client.dart';
+import '../../network/aura_api_error.dart';
 
 /// One persistent engineer-agent workspace: a real git checkout on the server plus the
 /// container that works on it, scoped to a single repository.
@@ -56,6 +52,7 @@ class EngineerWorkspace {
 /// [enabled] is false on a deployment that has not switched the engineer agent on. That is a
 /// state to render rather than an error: the endpoint answers 200 with an empty list, so the UI
 /// can say "not available here" instead of showing a failure for a feature nobody enabled.
+/// Only that answer means "disabled"; a failed request is an error (INT-025).
 class EngineerWorkspaceList {
   const EngineerWorkspaceList({
     required this.enabled,
@@ -76,40 +73,30 @@ class EngineerWorkspaceList {
 
 /// Client for the engineer agent's workspace endpoints (`/api/v3/engineering/workspaces`).
 ///
-/// Deliberately shaped like [VoiceClient] and the other `core/ai/*` clients -- JWT from
-/// [TokenManager], device attestation headers from [DeviceValidationService] -- rather than
-/// inventing a second way to authenticate a request.
+/// Goes through [AuraApiClient] -- JWT, device attestation, one retry on 401, a deadline and an
+/// idempotency key on the DELETE -- rather than a second way to authenticate a request. It used
+/// to build a fresh `http.Client` per call and never close it (INT-025); now an injected client
+/// is reused, and without one each request uses `package:http`'s self-closing top-level calls.
 class EngineerWorkspacesClient {
-  EngineerWorkspacesClient(this._ref, {http.Client? httpClient}) : _http = httpClient;
+  EngineerWorkspacesClient(Ref ref, {http.Client? httpClient})
+      : _api = httpClient == null
+            ? ref.read(auraApiClientProvider)
+            : AuraApiClient(ref, httpClient: httpClient);
 
-  final Ref _ref;
-  final http.Client? _http;
+  final AuraApiClient _api;
 
-  String get _baseUrl => '${_ref.read(backendUrlProvider)}/api/v3/engineering/workspaces';
-
-  Future<Map<String, String>> _headers() async {
-    final token = await _ref.read(tokenManagerProvider).getValidAccessToken();
-    final headers = <String, String>{'Content-Type': 'application/json'};
-    if (token != null) headers['Authorization'] = 'Bearer $token';
-    headers.addAll(
-      await DeviceValidationService.getAttestationHeaders(
-        backendUrl: _ref.read(backendUrlProvider),
-      ),
-    );
-    return headers;
-  }
-
-  http.Client get _client => _http ?? http.Client();
+  static const _path = '/api/v3/engineering/workspaces';
 
   /// Lists the caller's workspaces, most recently used first.
   ///
-  /// Returns [EngineerWorkspaceList.empty] on any failure rather than throwing: this drives a
-  /// secondary panel, and a transient network error should leave the rest of the screen usable.
+  /// Throws [AuraApiError] when the request fails and [FormatException] when the answer is not
+  /// the documented shape. It used to fold every failure -- a 401, a 5xx, no network, a parse
+  /// error -- into [EngineerWorkspaceList.empty], which the panel shows as "Workspaces are not
+  /// enabled": a wrong statement about the server, and no hint to retry (INT-025). Only the
+  /// server's own `enabled: false` means disabled now; the panel renders errors separately.
   Future<EngineerWorkspaceList> list() async {
+    final body = await _api.json(method: 'GET', path: _path);
     try {
-      final response = await _client.get(Uri.parse(_baseUrl), headers: await _headers());
-      if (response.statusCode != 200) return EngineerWorkspaceList.empty;
-      final body = jsonDecode(response.body) as Map<String, dynamic>;
       final rows = (body['workspaces'] as List<dynamic>? ?? <dynamic>[])
           .map((row) => EngineerWorkspace.fromJson(row as Map<String, dynamic>))
           .toList();
@@ -118,8 +105,9 @@ class EngineerWorkspacesClient {
         workspaces: rows,
         ttlHours: (body['ttl_hours'] as num?)?.toDouble() ?? 72,
       );
-    } catch (_) {
-      return EngineerWorkspaceList.empty;
+    } catch (e) {
+      // A cast or date parse failed: the body is not the documented shape.
+      throw FormatException('Unexpected workspaces response: $e');
     }
   }
 
@@ -129,13 +117,14 @@ class EngineerWorkspacesClient {
   /// with the user first -- this is not recoverable, and the server will not ask again.
   Future<bool> destroy(String workspaceId) async {
     try {
-      final response = await _client.delete(
-        Uri.parse('$_baseUrl/$workspaceId'),
-        // Audit FSA-046: the route deduplicates by key; a retried destroy is one destroy.
-        headers: {...await _headers(), idempotencyKeyHeader: newIdempotencyKey()},
+      // Audit FSA-046: [AuraApiClient] keys every DELETE, and reuses the key on its 401 re-send,
+      // so a retried destroy is one destroy.
+      final response = await _api.request(
+        method: 'DELETE',
+        path: '$_path/${Uri.encodeComponent(workspaceId)}',
       );
       return response.statusCode == 200;
-    } catch (_) {
+    } on AuraApiError {
       return false;
     }
   }

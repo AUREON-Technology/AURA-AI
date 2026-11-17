@@ -24,9 +24,21 @@ class LearningLogSchema(BaseModel):
 
 
 @router.post("/log")
-async def log_learning_record(request: LearningLogSchema, user_info: dict = Depends(verify_access_token)):
-    """Logs a learning record on the backend."""
-    success = learning_pipeline.log_feedback_record(request.dict())
+async def log_learning_record(
+    request: LearningLogSchema, user_info: dict = Depends(require_role("Admin"))
+):
+    """Adds one curated record to the training corpus (INT-039).
+
+    Admin only, and stamped with the caller. It used to accept any signed-in user's arbitrary
+    prompt/response pairs, unattributed, straight into the data ``/export`` and
+    ``/build_dataset`` turn into a LoRA set -- a training-data poisoning inlet with no client
+    caller at all (the app's own learning logs are local-only). Keeping it for operators rather
+    than deleting it leaves the route the platform tests pin mounted, and ``submitted_by`` comes
+    from the token, never the body: the schema has no such field, and extra keys are dropped.
+    """
+    record = request.model_dump()
+    record["submitted_by"] = str(user_info.get("uid") or user_info.get("sub") or "")
+    success = learning_pipeline.log_feedback_record(record)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to log learning record")
     return {"status": "success"}
