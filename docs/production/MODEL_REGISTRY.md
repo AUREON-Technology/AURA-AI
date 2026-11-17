@@ -94,10 +94,10 @@ Verified against tree `11abb50` on 2026-09-24.
 | quantization | CTranslate2, compute type per adapter config. NOT MEASURED |
 | VRAM requirement | N/A (CPU) |
 | tool-calling support | N/A |
-| language coverage | **English only.** Arabic speech input unsupported by default (GAP-020) |
-| benchmark results | WER NOT MEASURED. Phase F2 proved a synthesize→transcribe round trip works, but didn't measure WER |
+| language coverage | **English only.** Arabic speech input unsupported by default (GAP-020). Phase V plans `AURA_VOICE_STT_MODEL=base` (multilingual) on Railway; the route refuses `language=ar` with 422 while a `*.en` size is configured |
+| benchmark results | WER NOT MEASURED on human speech. `scripts/measure_stt_wer.py` produces the report. Smoke on synthetic speech only (`docs/reports/STT_WER_SMOKE_2026-11-17.md`): `base`, 4 Piper Arabic clips 22% WER; 2 espeak English clips 0% |
 | latency / throughput | NOT MEASURED |
-| known limitations | Smallest Whisper size. Energy-based VAD (`aura_core/voice/vad.py`) |
+| known limitations | Smallest Whisper size. Energy-based VAD by default (`aura_core/voice/vad.py`); Silero (`AURA_VOICE_LIVE_VAD=silero`, ships inside faster-whisper, MIT) is opt-in |
 | status | **production** |
 
 ### 1.5 Text-to-speech: Piper (primary) + espeak-ng (fallback)

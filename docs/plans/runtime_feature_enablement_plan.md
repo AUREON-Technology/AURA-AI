@@ -1,6 +1,6 @@
 # Plan: enable built runtime features on Railway, then build Arabic/live voice, vision and ops
 
-**Status:** Draft, awaiting owner approval · **Date:** 2026-11-17 · **Base:** `main@446e004`
+**Status:** Approved 2026-11-17; Phase V built (see its progress note) · **Date:** 2026-11-17 · **Base:** `main@446e004`
 (the SHA live on Railway) · **Branch:** `anas/laughing-hamilton-glfevj`
 
 ## Goal
@@ -44,6 +44,10 @@ Recorded 2026-11-17.
 7. Priority areas for new work, in this order: **voice (Arabic + live), vision, reliability and
    operations**. Deferred: workspaces/teams UI, Track AP, the GPU inference plane, branch protection
    (the owner's own setting).
+8. **Voice language is chosen on the live voice screen** (added 2026-11-17, during Phase V): an
+   English / العربية toggle that starts from the device locale (`ar*` → Arabic, else English)
+   and is remembered on the device. The chat mic button uses the same choice. The app's UI
+   stays English only; this sets only what the server's Whisper listens for.
 
 ## Phase 0: fix and enable on Railway (owner actions, no code)
 
@@ -93,6 +97,24 @@ Kept as they are, on purpose: `retrieval_strategy=simple` until R6 measures `ada
   unavailable" state, not a spinner (to be checked).
 - Tests: view-model test that the locale `ar` → start frame `language: 'ar'`; a voice-client
   request test. Run `flutter analyze` and `flutter test` with the pinned SDK (CLAUDE.md recipe).
+
+### Phase V progress (2026-11-17)
+
+Built and tested locally on this branch (not CI-run, not deployed):
+- Backend: the `language` form field and response field on `/voice/transcribe`, with a 422 on
+  an unknown code or on a non-English code with an English-only model;
+  `LanguageAwareSpeechToText` (port); `SileroVad` + `AURA_VOICE_LIVE_VAD` / `_THRESHOLD` /
+  `_BARGE_IN_THRESHOLD`; `/health/ready.voice.vad`; `scripts/measure_stt_wer.py`.
+- Client: `VoiceLanguage` store, an English / العربية toggle on the live screen (switching
+  restarts the session in the same conversation), the chat mic sending the language, and a
+  clear message when the server refuses Arabic.
+- Checks: backend pytest 5156 passed / 42 skipped / 0 failed after the matrix refresh;
+  legacy unittest 146 OK; client `flutter analyze` clean, `flutter test` 794 passed.
+- Smoke WER (synthetic, not evidence): `docs/reports/STT_WER_SMOKE_2026-11-17.md`.
+
+Still to do: the owner's Railway change (`AURA_VOICE_STT_MODEL=base`, revision,
+`AURA_VOICE_LIVE_ENABLED=true`, optionally `AURA_VOICE_LIVE_VAD=silero`), then the device test.
+A human-speech WER report is what closes GAP-020.
 
 ## Phase I: vision (mostly configuration + proof)
 

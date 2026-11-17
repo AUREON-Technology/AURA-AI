@@ -7,6 +7,17 @@
 
 ## Summary
 
+**Update 2026-11-17 (live probe of `api.aureon-ai.tech` at `446e004`, plus Phase V on branch
+`anas/laughing-hamilton-glfevj`).** `/health/ready`: healthy, schema `0021`, `hfspace` 503. **The
+knowledge alias still points at the `hash-embed-v1` index while the embedder is bge-small**, so
+`resolve_for_read()` refuses it and every retrieval returns `strategy="unavailable"`: RAG is off
+live until an admin runs `POST /api/v3/admin/index/rebuild` (plan Phase 0.2,
+`docs/plans/runtime_feature_enablement_plan.md`). The apex `aureon-ai.tech` answers Railway's
+`Application not found`. Phase V, TESTED locally (pytest 5156 passed / 42 skipped, legacy
+unittest 146 OK), not CI-run or deployed: an optional `language` on `/voice/transcribe` (422 on a
+language the model cannot hear), an opt-in Silero VAD (`AURA_VOICE_LIVE_VAD=silero`, reported as
+`voice.vad` on `/health/ready`) and `scripts/measure_stt_wer.py` (GAP-020 now `in_progress`).
+
 **Update 2026-11-07 (`main` at `772f9ef`, live probe):** production serves `ffbbb9f` and
 `/health/ready` reports **`schema.revision 0019`**, so open issue 0 below is resolved live and the
 pre-deploy migration path has now (by one route or another) applied real revisions; confirm which in

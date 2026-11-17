@@ -598,17 +598,23 @@ gaps:
     component: voice/stt-language
     severity: P2
     current_state: >-
-      STT default is faster-whisper `tiny.en` (aura_core/config/settings.py:1048, :1080),
-      English-only, while TTS ships an Arabic Piper voice (ar_JO-kareem-medium,
-      aura_backend/Dockerfile:54-57). Arabic speech input is not supported by default. Live-voice
-      VAD is energy-based (aura_core/voice/vad.py); Phase H is scaffolding, not device-proven.
+      Phase V (2026-11-17, branch anas/laughing-hamilton-glfevj; tested locally, not CI-run, not
+      deployed). Built: `POST /api/v3/voice/transcribe` takes an optional `language` and refuses
+      one an English-only model cannot hear (422); the client sends the user's voice language
+      (EN / Arabic toggle, device default) on both voice surfaces; an opt-in Silero VAD
+      (`AURA_VOICE_LIVE_VAD=silero`, adapters/silero_vad.py) that ignores a steady hum the energy
+      VAD takes for speech; `scripts/measure_stt_wer.py`. Still the default and live on Railway:
+      `tiny.en` (English-only) and the energy VAD -- switching to multilingual `base` is the
+      owner's Railway change (docs/plans/runtime_feature_enablement_plan.md). Smoke only, not
+      evidence: `base` on 4 Piper-synthesised Arabic clips 22% WER, language detected 4/4
+      (docs/reports/STT_WER_SMOKE_2026-11-17.md). No WER on human speech yet.
     target_state: Multilingual self-hosted ASR (Arabic + English) with measured WER; neural VAD.
     owner: ml
     dependencies: [GAP-012]
     test: synthesize->transcribe round trip in Arabic and English with WER threshold
     metric: WER per language; voice round-trip latency
     exit_condition: WER report in docs/reports/ for both languages on the production ASR model.
-    status: open
+    status: in_progress
 
   - gap_id: GAP-021
     component: evaluation/real-model-quality

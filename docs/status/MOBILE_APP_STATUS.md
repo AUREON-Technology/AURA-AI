@@ -42,6 +42,22 @@ Fixed:
 Still the owner's: the iOS OAuth client values, the same setup for macOS (plus its keychain
 entitlement), the Firebase console check (SEC-08), and Sign in with Apple.
 
+## Update 2026-11-17 (Phase V voice language, branch `anas/laughing-hamilton-glfevj`)
+
+**TESTED locally** (Flutter 3.44.6: `flutter analyze` clean, `flutter test` 794 passed, 4
+skipped). Not CI-run, not released, not tried on a device.
+
+- An English / العربية toggle on the live voice screen chooses the language the server listens
+  for (`core/ai/voice/voice_language.dart`). It starts from the device locale and is remembered
+  on the device. Switching restarts an open session in the same conversation. The live start
+  frame used to hard-code `'en'`.
+- The chat mic sends the same choice as the new `language` field of
+  `POST /api/v3/voice/transcribe`.
+- When the server refuses Arabic (English-only Whisper), the screen says to switch to English
+  instead of the generic "could not start live voice".
+- Needs the backend half (same branch) deployed, plus `AURA_VOICE_STT_MODEL=base` on Railway,
+  before Arabic works end to end. An older app keeps sending `en` and still works.
+
 ## Update 2026-11-14 (release readiness pass, on `b655421`)
 
 A contract and release audit of the app against everything merged since 2026-10-28. Everything
