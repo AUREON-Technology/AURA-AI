@@ -112,9 +112,14 @@ class CodeHostClient(Protocol):
     async def create_branch(self, repo: str, *, branch: str, from_ref: str) -> str:
         ...
 
+    async def default_branch(self, repo: str) -> str:
+        """The repository's default branch, which ``github_commit_files`` refuses (D-07)."""
+        ...
+
     async def commit_files(
         self, repo: str, *, branch: str, message: str, files: Mapping[str, str]
     ) -> str:
+        """Every file in one commit on ``branch``, fast-forward only."""
         ...
 
     async def create_draft_pull_request(

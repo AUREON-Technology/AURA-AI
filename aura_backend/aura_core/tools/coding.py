@@ -1216,7 +1216,8 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
 
     @tool(
         "github_commit_files",
-        "Commit one or more file changes directly to a branch in a GitHub repository.",
+        "Commit one or more file changes to a feature branch in a GitHub repository, as one "
+        "commit. The repository's default branch is refused: open a pull request instead.",
         param("branch", "string", "Branch to commit to.", max_length=200),
         param("message", "string", "Commit message.", max_length=2000),
         param("files", "object", "Mapping of file path to its full new text content."),
@@ -1233,9 +1234,19 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         repo: str | None = None,
     ) -> str:
         client = await _client(context)
-        return await client.commit_files(
-            _repo(repo), branch=branch, message=message, files=files
-        )
+        slug = _repo(repo)
+        # D-07 / SEC-06, as `git_push` does: never the default branch. Changes reach it only
+        # through a pull request a human merges. Compared on the bare name, so neither
+        # `refs/heads/main` nor stray whitespace slips past it.
+        target = branch.strip().removeprefix("refs/heads/")
+        default_branch = await client.default_branch(slug)
+        if target == default_branch:
+            raise ToolExecutionError(
+                f"refusing to commit to {default_branch!r}, the default branch. Create a feature "
+                "branch with github_create_branch and open a pull request from it.",
+                tool="github_commit_files",
+            )
+        return await client.commit_files(slug, branch=target, message=message, files=files)
 
     @tool(
         "github_create_draft_pull_request",
