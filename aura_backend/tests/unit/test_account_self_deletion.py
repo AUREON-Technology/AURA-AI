@@ -91,7 +91,7 @@ def test_live_access_tokens_of_the_account_stop_working(app, local_sessions, mon
                 "/api/v3/account/delete", json={"confirm": "DELETE"}, headers=_bearer(token),
             )
             assert response.status_code == 401
-            assert "deleted" in response.json()["detail"]
+            assert response.json()["detail"]["error"] == "account_deleted"
         # Nobody else is affected.
         assert client.post(
             "/api/v3/account/delete", json={"confirm": "nope"}, headers=_bearer(bob["access_token"]),
