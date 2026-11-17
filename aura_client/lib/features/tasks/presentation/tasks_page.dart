@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'package:aura_client/core/theme/theme.dart';
+import 'package:aura_client/core/design_system/design_system.dart';
 import '../../auth/presentation/auth_provider.dart';
 import '../../auth/presentation/sign_out_confirmation.dart';
 import '../data/task_repository.dart';
@@ -24,16 +24,17 @@ class TasksPage extends ConsumerWidget {
     final ui = ref.watch(tasksViewModelProvider);
     final vm = ref.read(tasksViewModelProvider.notifier);
     final user = authState.value;
+    final palette = AuraPalette.of(context);
 
     return Scaffold(
-      backgroundColor: AuraTheme.background,
+      backgroundColor: palette.background,
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: RadialGradient(
-            center: Alignment(0.8, -0.6),
+            center: const Alignment(0.8, -0.6),
             radius: 1.2,
             colors: [
-              Color(0x1F6366F1),
+              palette.brand.withValues(alpha: 0.12),
               Colors.transparent,
             ],
           ),
@@ -54,8 +55,8 @@ class TasksPage extends ConsumerWidget {
                     else
                       CircleAvatar(
                         radius: 24,
-                        backgroundColor: AuraTheme.accentIndigo.withValues(alpha: 0.2),
-                        child: const Icon(Icons.person, color: AuraTheme.accentIndigo),
+                        backgroundColor: palette.brand.withValues(alpha: 0.2),
+                        child: Icon(Icons.person, color: palette.brandOnSurfaceText),
                       ),
                     const SizedBox(width: 16),
                     Expanded(
@@ -65,7 +66,7 @@ class TasksPage extends ConsumerWidget {
                           Text(
                             'Welcome back,',
                             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                  color: AuraTheme.textSecondary,
+                                  color: palette.textSecondary,
                                 ),
                           ),
                           Text(
@@ -78,7 +79,7 @@ class TasksPage extends ConsumerWidget {
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.logout, color: Colors.redAccent),
+                      icon: Icon(Icons.logout, color: palette.danger),
                       tooltip: 'Sign Out',
                       onPressed: () => confirmAndSignOut(context, ref),
                     ),
@@ -102,9 +103,9 @@ class TasksPage extends ConsumerWidget {
                               ),
                         ),
                         const SizedBox(height: 4),
-                        const Text(
+                        Text(
                           'Prioritize and manage your goals',
-                          style: TextStyle(color: AuraTheme.textSecondary, fontSize: 13),
+                          style: TextStyle(color: palette.textSecondary, fontSize: 13),
                         ),
                       ],
                     ),
@@ -115,7 +116,7 @@ class TasksPage extends ConsumerWidget {
                       children: [
                         if (ui.syncLogs.isNotEmpty)
                           IconButton(
-                            icon: const Icon(Icons.receipt_long, color: AuraTheme.textSecondary),
+                            icon: Icon(Icons.receipt_long, color: palette.textSecondary),
                             tooltip: 'View Sync Logs',
                             onPressed: () => showTaskSyncLogsSheet(context, ui.syncLogs),
                           ),
@@ -123,20 +124,20 @@ class TasksPage extends ConsumerWidget {
                             ? Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                                 decoration: BoxDecoration(
-                                  color: AuraTheme.cardBg,
+                                  color: palette.surfaceVariant,
                                   borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(color: const Color(0x1F94A3B8)),
+                                  border: Border.all(color: palette.border),
                                 ),
-                                child: const Row(
+                                child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     SizedBox(
                                       width: 16,
                                       height: 16,
-                                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                      child: CircularProgressIndicator(strokeWidth: 2, color: palette.brandOnSurfaceText),
                                     ),
-                                    SizedBox(width: 12),
-                                    Text('Syncing...', style: TextStyle(fontSize: 14)),
+                                    const SizedBox(width: 12),
+                                    Text('Syncing...', style: TextStyle(fontSize: 14, color: palette.textPrimary)),
                                   ],
                                 ),
                               )
@@ -152,14 +153,15 @@ class TasksPage extends ConsumerWidget {
                                             ? 'Tasks sync encountered errors.'
                                             : 'Google Tasks sync completed successfully!',
                                       ),
-                                      backgroundColor: hadErrors ? Colors.redAccent : AuraTheme.accentTeal,
+                                      backgroundColor: hadErrors ? palette.danger : palette.success,
                                     ),
                                   );
                                 },
                                 icon: const Icon(Icons.sync),
                                 label: const Text('Sync Tasks'),
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor: AuraTheme.accentIndigo,
+                                  backgroundColor: palette.brand,
+                                  foregroundColor: palette.onBrand,
                                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                                 ),
                               ),
@@ -195,17 +197,17 @@ class TasksPage extends ConsumerWidget {
                             duration: const Duration(milliseconds: 200),
                             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                             decoration: BoxDecoration(
-                              gradient: isSelected ? AuraTheme.primaryGradient : null,
-                              color: isSelected ? null : AuraTheme.cardBg,
+                              gradient: isSelected ? palette.brandGradient : null,
+                              color: isSelected ? null : palette.surfaceVariant,
                               borderRadius: BorderRadius.circular(20),
                               border: Border.all(
-                                color: isSelected ? Colors.transparent : const Color(0x1F94A3B8),
+                                color: isSelected ? Colors.transparent : palette.border,
                               ),
                             ),
                             child: Text(
                               category,
                               style: TextStyle(
-                                color: isSelected ? Colors.white : AuraTheme.textSecondary,
+                                color: isSelected ? palette.onBrand : palette.textSecondary,
                                 fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
                               ),
                             ),
@@ -229,8 +231,8 @@ class TasksPage extends ConsumerWidget {
                         },
                       );
                     },
-                    loading: () => const Center(
-                      child: CircularProgressIndicator(color: AuraTheme.accentIndigo),
+                    loading: () => Center(
+                      child: CircularProgressIndicator(color: palette.brand),
                     ),
                     error: (err, stack) => Center(
                       child: SingleChildScrollView(

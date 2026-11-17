@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
-import 'package:aura_client/core/theme/theme.dart';
+import 'package:aura_client/core/design_system/design_system.dart';
 import '../../data/task_repository.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
@@ -36,16 +36,18 @@ class _AddTaskDialogState extends ConsumerState<AddTaskDialog> {
       firstDate: DateTime.now(),
       lastDate: DateTime.now().add(const Duration(days: 365)),
       builder: (context, child) {
+        final palette = AuraPalette.of(context);
+        final theme = Theme.of(context);
         return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.dark(
-              primary: AuraTheme.accentIndigo,
-              onPrimary: Colors.white,
-              surface: Color(0xFF1E1B4B),
-              onSurface: Colors.white,
+          data: theme.copyWith(
+            colorScheme: theme.colorScheme.copyWith(
+              primary: palette.brand,
+              onPrimary: palette.onBrand,
+              surface: palette.surface,
+              onSurface: palette.textPrimary,
             ),
-            dialogTheme: const DialogThemeData(
-              backgroundColor: AuraTheme.background,
+            dialogTheme: DialogThemeData(
+              backgroundColor: palette.surface,
             ),
           ),
           child: child!,
@@ -61,11 +63,12 @@ class _AddTaskDialogState extends ConsumerState<AddTaskDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
     return Dialog(
-      backgroundColor: const Color(0xFF120E25),
+      backgroundColor: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(20),
-        side: const BorderSide(color: Color(0x1F94A3B8)),
+        side: BorderSide(color: palette.border),
       ),
       child: Container(
         width: 500,
@@ -90,7 +93,7 @@ class _AddTaskDialogState extends ConsumerState<AddTaskDialog> {
                     labelText: 'Task Title',
                     hintText: 'What needs to be done?',
                   ),
-                  style: const TextStyle(color: Colors.white),
+                  style: TextStyle(color: palette.textPrimary),
                   validator: (val) {
                     if (val == null || val.trim().isEmpty) {
                       return 'Please enter a title';
@@ -105,7 +108,7 @@ class _AddTaskDialogState extends ConsumerState<AddTaskDialog> {
                     labelText: 'Description',
                     hintText: 'Add details (optional)',
                   ),
-                  style: const TextStyle(color: Colors.white),
+                  style: TextStyle(color: palette.textPrimary),
                   maxLines: 3,
                 ),
                 const SizedBox(height: 20),
@@ -115,7 +118,7 @@ class _AddTaskDialogState extends ConsumerState<AddTaskDialog> {
                       child: DropdownButtonFormField<String>(
                         initialValue: _category,
                         decoration: const InputDecoration(labelText: 'Category'),
-                        dropdownColor: const Color(0xFF1E1B4B),
+                        dropdownColor: palette.surface,
                         items: ['personal', 'academic', 'client', 'project']
                             .map((cat) => DropdownMenuItem(
                                   value: cat,
@@ -134,7 +137,7 @@ class _AddTaskDialogState extends ConsumerState<AddTaskDialog> {
                       child: DropdownButtonFormField<String>(
                         initialValue: _priority,
                         decoration: const InputDecoration(labelText: 'Priority'),
-                        dropdownColor: const Color(0xFF1E1B4B),
+                        dropdownColor: palette.surface,
                         items: ['low', 'medium', 'high']
                             .map((prio) => DropdownMenuItem(
                                   value: prio,
@@ -157,13 +160,13 @@ class _AddTaskDialogState extends ConsumerState<AddTaskDialog> {
                   child: Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: const Color(0x0DFFFFFF),
+                      color: palette.surfaceVariant,
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color(0x1F94A3B8)),
+                      border: Border.all(color: palette.border),
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.calendar_today, size: 18, color: AuraTheme.textSecondary),
+                        Icon(Icons.calendar_today, size: 18, color: palette.textSecondary),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Text(
@@ -171,14 +174,14 @@ class _AddTaskDialogState extends ConsumerState<AddTaskDialog> {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              color: _dueDate == null ? AuraTheme.textSecondary : Colors.white,
+                              color: _dueDate == null ? palette.textSecondary : palette.textPrimary,
                             ),
                           ),
                         ),
                         if (_dueDate != null)
                           IconButton(
                             tooltip: context.l10n.clearDueDate,
-                            icon: const Icon(Icons.close, size: 16, color: Colors.white54),
+                            icon: Icon(Icons.close, size: 16, color: palette.textSecondary),
                             onPressed: () {
                               setState(() {
                                 _dueDate = null;
@@ -195,7 +198,7 @@ class _AddTaskDialogState extends ConsumerState<AddTaskDialog> {
                   children: [
                     TextButton(
                       onPressed: () => Navigator.pop(context),
-                      child: const Text('Cancel', style: TextStyle(color: AuraTheme.textSecondary)),
+                      child: Text('Cancel', style: TextStyle(color: palette.textSecondary)),
                     ),
                     const SizedBox(width: 12),
                     ElevatedButton(

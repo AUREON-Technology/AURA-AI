@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:aura_client/core/database/database.dart';
-import 'package:aura_client/core/theme/theme.dart';
+import 'package:aura_client/core/design_system/design_system.dart';
 import '../../auth/presentation/auth_provider.dart';
 import '../../auth/presentation/sign_out_confirmation.dart';
 import '../data/project_providers.dart';
@@ -21,16 +21,17 @@ class ProjectsPage extends ConsumerWidget {
     ref.watch(projectsViewModelProvider);
     final vm = ref.read(projectsViewModelProvider.notifier);
     final user = authState.value;
+    final palette = AuraPalette.of(context);
 
     return Scaffold(
-      backgroundColor: AuraTheme.background,
+      backgroundColor: palette.background,
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: RadialGradient(
-            center: Alignment(0.8, -0.6),
+            center: const Alignment(0.8, -0.6),
             radius: 1.2,
             colors: [
-              Color(0x1F6366F1),
+              palette.brand.withValues(alpha: 0.12),
               Colors.transparent,
             ],
           ),
@@ -51,8 +52,8 @@ class ProjectsPage extends ConsumerWidget {
                     else
                       CircleAvatar(
                         radius: 24,
-                        backgroundColor: AuraTheme.accentIndigo.withValues(alpha: 0.2),
-                        child: const Icon(Icons.person, color: AuraTheme.accentIndigo),
+                        backgroundColor: palette.brand.withValues(alpha: 0.2),
+                        child: Icon(Icons.person, color: palette.brandOnSurfaceText),
                       ),
                     const SizedBox(width: 16),
                     Expanded(
@@ -62,7 +63,7 @@ class ProjectsPage extends ConsumerWidget {
                           Text(
                             'Welcome back,',
                             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                  color: AuraTheme.textSecondary,
+                                  color: palette.textSecondary,
                                 ),
                           ),
                           Text(
@@ -75,7 +76,7 @@ class ProjectsPage extends ConsumerWidget {
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.logout, color: Colors.redAccent),
+                      icon: Icon(Icons.logout, color: palette.danger),
                       tooltip: 'Sign Out',
                       onPressed: () => confirmAndSignOut(context, ref),
                     ),
@@ -101,7 +102,7 @@ class ProjectsPage extends ConsumerWidget {
                         Text(
                           'Organize your work into projects',
                           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: AuraTheme.textSecondary,
+                                color: palette.textSecondary,
                               ),
                         ),
                       ],
@@ -118,15 +119,15 @@ class ProjectsPage extends ConsumerWidget {
                   child: projectsAsync.when(
                     data: (projects) {
                       if (projects.isEmpty) {
-                        return const Center(
+                        return Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.folder_open, size: 64, color: Colors.grey),
-                              SizedBox(height: 16),
-                              Text('No projects yet', style: TextStyle(fontSize: 18, color: Colors.grey)),
-                              SizedBox(height: 8),
-                              Text('Create your first project to get started', style: TextStyle(color: Colors.grey)),
+                              Icon(Icons.folder_open, size: 64, color: palette.textSecondary),
+                              const SizedBox(height: 16),
+                              Text('No projects yet', style: TextStyle(fontSize: 18, color: palette.textSecondary)),
+                              const SizedBox(height: 8),
+                              Text('Create your first project to get started', style: TextStyle(color: palette.textSecondary)),
                             ],
                           ),
                         );
@@ -231,27 +232,28 @@ class _ProjectCard extends StatelessWidget {
 
   const _ProjectCard({required this.project, required this.onDelete});
 
-  Color _statusColor(String status) {
+  Color _statusColor(AuraPalette palette, String status) {
     switch (status) {
       case 'completed':
-        return Colors.green;
+        return palette.success;
       case 'archived':
-        return Colors.grey;
+        return palette.textSecondary;
       case 'on_hold':
-        return Colors.orange;
+        return palette.warning;
       default:
-        return Colors.blue;
+        return palette.info;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: ListTile(
         leading: CircleAvatar(
-          backgroundColor: _statusColor(project.status).withValues(alpha: 0.2),
-          child: Icon(Icons.folder, color: _statusColor(project.status)),
+          backgroundColor: _statusColor(palette, project.status).withValues(alpha: 0.2),
+          child: Icon(Icons.folder, color: _statusColor(palette, project.status)),
         ),
         title: Text(project.title, style: const TextStyle(fontWeight: FontWeight.w600)),
         subtitle: Column(
@@ -260,7 +262,7 @@ class _ProjectCard extends StatelessWidget {
             if (project.description != null && project.description!.isNotEmpty)
               Text(project.description!, maxLines: 1, overflow: TextOverflow.ellipsis),
             if (project.targetDate != null)
-              Text('Due: ${project.targetDate!.toLocal().toString().split(' ')[0]}', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+              Text('Due: ${project.targetDate!.toLocal().toString().split(' ')[0]}', style: TextStyle(fontSize: 12, color: palette.textSecondary)),
           ],
         ),
         trailing: PopupMenuButton<String>(
@@ -270,7 +272,7 @@ class _ProjectCard extends StatelessWidget {
           },
           itemBuilder: (context) => [
             const PopupMenuItem(value: 'edit', child: Text('Edit')),
-            const PopupMenuItem(value: 'delete', child: Text('Delete', style: TextStyle(color: Colors.red))),
+            PopupMenuItem(value: 'delete', child: Text('Delete', style: TextStyle(color: palette.danger))),
           ],
         ),
       ),
