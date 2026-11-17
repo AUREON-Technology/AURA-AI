@@ -7,6 +7,7 @@ import 'package:aura_client/core/config/backend_url_settings.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/platform/aura_platform.dart';
 import 'package:aura_client/features/auth/presentation/delete_account_confirmation.dart';
+import 'package:aura_client/features/engineering/presentation/engineer_consent_tile.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
 /// "You" — grouped as Account, (Desktop,) Your AURA, Engineer, System and
@@ -144,6 +145,8 @@ class SettingsPage extends ConsumerWidget {
                       subtitle: l10n.settingsGithubSubtitle,
                       onTap: () => context.push('/github-connect'),
                     ),
+                    const _RowDivider(),
+                    const EngineerConsentTile(),
                   ],
                 ),
               ),

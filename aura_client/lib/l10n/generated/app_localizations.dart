@@ -292,16 +292,16 @@ abstract class AppLocalizations {
   /// **'Talk to it. It remembers, searches your documents, and proposes actions — you confirm the writes.'**
   String get onboardingCopilotBody;
 
-  /// Onboarding page 2 title: where requests are processed
+  /// Onboarding page 2 title: where requests are processed. Must not claim that everything stays with AURA: Engineer turns go to Anthropic after consent (D-02, D-03)
   ///
   /// In en, this message translates to:
-  /// **'Your private data stays with AURA'**
+  /// **'Where your requests are processed'**
   String get onboardingPrivacyTitle;
 
-  /// Onboarding page 2 body. Must match the backend's data-classification routing (ADR-030): sensitive content stays on self-hosted models; hosted providers are opt-in and see only internal-classified requests
+  /// Onboarding page 2 body. Must match the backend's routing: sensitive content stays on self-hosted models (ADR-030), except Engineer turns, which go to Claude (Anthropic) only after the user's in-app consent (ADR-033 amendment, D-02/D-03); hosted open-weight providers are opt-in and see only internal-classified requests
   ///
   /// In en, this message translates to:
-  /// **'Nothing is processed on this phone. Your documents, memories and files are only read by AI models AURA runs itself. Other messages may be answered by an approved hosted AI provider, if the server’s operator allows it.'**
+  /// **'Nothing is processed on this phone. Your documents, memories and files are only read by AI models AURA runs itself. The exception is the Engineer: once you agree in the app, the messages you send it, the files it opens and the output of the commands it runs go to Claude, an AI model run by Anthropic. Other messages may be answered by an approved hosted AI provider, if the server’s operator allows it.'**
   String get onboardingPrivacyBody;
 
   /// Onboarding page 3 title: the four main tabs
@@ -562,6 +562,162 @@ abstract class AppLocalizations {
   /// **'Connect your own GitHub account'**
   String get settingsGithubSubtitle;
 
+  /// Engineer consent notice, version 2026-11-17 (kEngineerConsentNoticeVersion). Owner-reviewed wording: change it only together with that constant and the backend's CURRENT_NOTICE_VERSION. Title.
+  ///
+  /// In en, this message translates to:
+  /// **'The Engineer uses Claude, by Anthropic'**
+  String get engineerConsentTitle;
+
+  /// Engineer consent notice, version 2026-11-17 (kEngineerConsentNoticeVersion). Owner-reviewed wording: change it only together with that constant and the backend's CURRENT_NOTICE_VERSION. Paragraph 1.
+  ///
+  /// In en, this message translates to:
+  /// **'To work on your code, the Engineer sends what it reads and runs to Claude, an AI model run by Anthropic, a company outside AURA.'**
+  String get engineerConsentBodyWhat;
+
+  /// Engineer consent notice, version 2026-11-17 (kEngineerConsentNoticeVersion). Owner-reviewed wording: change it only together with that constant and the backend's CURRENT_NOTICE_VERSION. Paragraph 2.
+  ///
+  /// In en, this message translates to:
+  /// **'That includes the messages you send the Engineer, the contents of files it opens in folders you granted or repositories you connected, and the output of commands it runs — which can include anything those commands print.'**
+  String get engineerConsentBodyIncludes;
+
+  /// Engineer consent notice, version 2026-11-17 (kEngineerConsentNoticeVersion). Owner-reviewed wording: change it only together with that constant and the backend's CURRENT_NOTICE_VERSION. Paragraph 3.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing is sent until you agree. You can withdraw in Settings → Engineer at any time; the Engineer then stops until you agree again. Other AURA features are not affected.'**
+  String get engineerConsentBodyChoice;
+
+  /// Consent sheet: accept the notice and send
+  ///
+  /// In en, this message translates to:
+  /// **'Agree and continue'**
+  String get engineerConsentAgree;
+
+  /// Consent sheet: decline for now; nothing is sent
+  ///
+  /// In en, this message translates to:
+  /// **'Not now'**
+  String get engineerConsentNotNow;
+
+  /// Consent sheet: the accept request failed; the message was not sent
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t save your answer. {reason}'**
+  String engineerConsentSaveFailed(String reason);
+
+  /// Shown instead of the notice when the server's current notice version is not the one this app carries
+  ///
+  /// In en, this message translates to:
+  /// **'Update AURA to use the Engineer'**
+  String get engineerConsentUpdateTitle;
+
+  /// Body for engineerConsentUpdateTitle
+  ///
+  /// In en, this message translates to:
+  /// **'The notice about what the Engineer sends to Anthropic has changed, and this version of the app can’t show the new one. Update the app to read it and continue.'**
+  String get engineerConsentUpdateBody;
+
+  /// Dismisses the update-the-app notice
+  ///
+  /// In en, this message translates to:
+  /// **'OK'**
+  String get engineerConsentUpdateOk;
+
+  /// Transcript row for a turn the server refused with consent_required. No Retry: agreeing in the sheet resends it
+  ///
+  /// In en, this message translates to:
+  /// **'The Engineer didn’t run this: it needs your agreement before it sends anything to Anthropic. Nothing was sent to Anthropic.'**
+  String get engineerConsentNeededNotice;
+
+  /// Transcript row for a turn refused with user_quota_exhausted; time is the reset moment in the device's local time
+  ///
+  /// In en, this message translates to:
+  /// **'You’ve reached today’s Engineer limit. It resets at {time}.'**
+  String engineerLimitReached(String time);
+
+  /// Same as engineerLimitReached when the server did not say when the limit resets
+  ///
+  /// In en, this message translates to:
+  /// **'You’ve reached today’s Engineer limit. Try again after it resets.'**
+  String get engineerLimitReachedNoTime;
+
+  /// Settings → Engineer: consent row title while loading or on error
+  ///
+  /// In en, this message translates to:
+  /// **'Sharing code with Anthropic'**
+  String get engineerConsentStatusTitle;
+
+  /// Settings → Engineer: consent is current
+  ///
+  /// In en, this message translates to:
+  /// **'Sharing code with Anthropic: on since {date}'**
+  String engineerConsentStatusOn(String date);
+
+  /// Settings → Engineer: consent is on but the server sent no date
+  ///
+  /// In en, this message translates to:
+  /// **'Sharing code with Anthropic: on'**
+  String get engineerConsentStatusOnNoDate;
+
+  /// Settings → Engineer: no current consent
+  ///
+  /// In en, this message translates to:
+  /// **'Sharing code with Anthropic: off'**
+  String get engineerConsentStatusOff;
+
+  /// Subtitle when consent is on
+  ///
+  /// In en, this message translates to:
+  /// **'The Engineer sends what it reads and runs to Claude'**
+  String get engineerConsentStatusOnSubtitle;
+
+  /// Subtitle when consent is off
+  ///
+  /// In en, this message translates to:
+  /// **'The Engineer asks before it sends anything'**
+  String get engineerConsentStatusOffSubtitle;
+
+  /// Subtitle while the consent status loads
+  ///
+  /// In en, this message translates to:
+  /// **'Checking…'**
+  String get engineerConsentStatusLoading;
+
+  /// Subtitle when the consent status failed to load
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t check. Tap to try again.'**
+  String get engineerConsentStatusError;
+
+  /// Settings → Engineer: withdraw consent button
+  ///
+  /// In en, this message translates to:
+  /// **'Withdraw'**
+  String get engineerConsentWithdraw;
+
+  /// Withdraw confirmation dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'Stop sharing code with Anthropic?'**
+  String get engineerConsentWithdrawTitle;
+
+  /// Withdraw confirmation dialog body
+  ///
+  /// In en, this message translates to:
+  /// **'The Engineer stops until you agree again. Other AURA features are not affected.'**
+  String get engineerConsentWithdrawBody;
+
+  /// Snackbar after a successful withdraw
+  ///
+  /// In en, this message translates to:
+  /// **'Withdrawn. The Engineer will ask before it sends anything again.'**
+  String get engineerConsentWithdrawn;
+
+  /// Snackbar when withdraw failed
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t withdraw. {reason}'**
+  String engineerConsentWithdrawFailed(String reason);
+
   /// You screen row subtitle
   ///
   /// In en, this message translates to:
@@ -616,10 +772,10 @@ abstract class AppLocalizations {
   /// **'Where AURA runs'**
   String get settingsAboutTitle;
 
-  /// About card body
+  /// About card body ("Where AURA runs"). Same routing facts as onboardingPrivacyBody: Engineer turns go to Anthropic only after consent
   ///
   /// In en, this message translates to:
-  /// **'Requests are processed on AURA’s servers, never on this device. Your documents, memories, files and tool results are only read by AI models AURA runs itself. If the server’s operator turns it on, your other messages may be answered by an approved hosted AI provider.'**
+  /// **'Requests are handled by AURA’s servers, never on this device. Your documents, memories, files and tool results are only read by AI models AURA runs itself. The exception is the Engineer: once you agree in the app, what it reads and runs goes to Claude, an AI model run by Anthropic. If the server’s operator turns it on, your other messages may be answered by an approved hosted AI provider.'**
   String get settingsAboutBody;
 
   /// Theme mode option

@@ -132,13 +132,13 @@
   "@onboardingCopilotBody": {
     "description": "Onboarding page 1 body"
   },
-  "onboardingPrivacyTitle": "Your private data stays with AURA",
+  "onboardingPrivacyTitle": "Where your requests are processed",
   "@onboardingPrivacyTitle": {
-    "description": "Onboarding page 2 title: where requests are processed"
+    "description": "Onboarding page 2 title: where requests are processed. Must not claim that everything stays with AURA: Engineer turns go to Anthropic after consent (D-02, D-03)"
   },
-  "onboardingPrivacyBody": "Nothing is processed on this phone. Your documents, memories and files are only read by AI models AURA runs itself. Other messages may be answered by an approved hosted AI provider, if the server’s operator allows it.",
+  "onboardingPrivacyBody": "Nothing is processed on this phone. Your documents, memories and files are only read by AI models AURA runs itself. The exception is the Engineer: once you agree in the app, the messages you send it, the files it opens and the output of the commands it runs go to Claude, an AI model run by Anthropic. Other messages may be answered by an approved hosted AI provider, if the server’s operator allows it.",
   "@onboardingPrivacyBody": {
-    "description": "Onboarding page 2 body. Must match the backend's data-classification routing (ADR-030): sensitive content stays on self-hosted models; hosted providers are opt-in and see only internal-classified requests"
+    "description": "Onboarding page 2 body. Must match the backend's routing: sensitive content stays on self-hosted models (ADR-030), except Engineer turns, which go to Claude (Anthropic) only after the user's in-app consent (ADR-033 amendment, D-02/D-03); hosted open-weight providers are opt-in and see only internal-classified requests"
   },
   "onboardingTourTitle": "Today, Copilot, Life Hub, You",
   "@onboardingTourTitle": {
@@ -323,6 +323,130 @@
   "@settingsGithubSubtitle": {
     "description": "You screen row subtitle"
   },
+  "engineerConsentTitle": "The Engineer uses Claude, by Anthropic",
+  "@engineerConsentTitle": {
+    "description": "Engineer consent notice, version 2026-11-17 (kEngineerConsentNoticeVersion). Owner-reviewed wording: change it only together with that constant and the backend's CURRENT_NOTICE_VERSION. Title."
+  },
+  "engineerConsentBodyWhat": "To work on your code, the Engineer sends what it reads and runs to Claude, an AI model run by Anthropic, a company outside AURA.",
+  "@engineerConsentBodyWhat": {
+    "description": "Engineer consent notice, version 2026-11-17 (kEngineerConsentNoticeVersion). Owner-reviewed wording: change it only together with that constant and the backend's CURRENT_NOTICE_VERSION. Paragraph 1."
+  },
+  "engineerConsentBodyIncludes": "That includes the messages you send the Engineer, the contents of files it opens in folders you granted or repositories you connected, and the output of commands it runs — which can include anything those commands print.",
+  "@engineerConsentBodyIncludes": {
+    "description": "Engineer consent notice, version 2026-11-17 (kEngineerConsentNoticeVersion). Owner-reviewed wording: change it only together with that constant and the backend's CURRENT_NOTICE_VERSION. Paragraph 2."
+  },
+  "engineerConsentBodyChoice": "Nothing is sent until you agree. You can withdraw in Settings → Engineer at any time; the Engineer then stops until you agree again. Other AURA features are not affected.",
+  "@engineerConsentBodyChoice": {
+    "description": "Engineer consent notice, version 2026-11-17 (kEngineerConsentNoticeVersion). Owner-reviewed wording: change it only together with that constant and the backend's CURRENT_NOTICE_VERSION. Paragraph 3."
+  },
+  "engineerConsentAgree": "Agree and continue",
+  "@engineerConsentAgree": {
+    "description": "Consent sheet: accept the notice and send"
+  },
+  "engineerConsentNotNow": "Not now",
+  "@engineerConsentNotNow": {
+    "description": "Consent sheet: decline for now; nothing is sent"
+  },
+  "engineerConsentSaveFailed": "Couldn’t save your answer. {reason}",
+  "@engineerConsentSaveFailed": {
+    "description": "Consent sheet: the accept request failed; the message was not sent",
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "engineerConsentUpdateTitle": "Update AURA to use the Engineer",
+  "@engineerConsentUpdateTitle": {
+    "description": "Shown instead of the notice when the server's current notice version is not the one this app carries"
+  },
+  "engineerConsentUpdateBody": "The notice about what the Engineer sends to Anthropic has changed, and this version of the app can’t show the new one. Update the app to read it and continue.",
+  "@engineerConsentUpdateBody": {
+    "description": "Body for engineerConsentUpdateTitle"
+  },
+  "engineerConsentUpdateOk": "OK",
+  "@engineerConsentUpdateOk": {
+    "description": "Dismisses the update-the-app notice"
+  },
+  "engineerConsentNeededNotice": "The Engineer didn’t run this: it needs your agreement before it sends anything to Anthropic. Nothing was sent to Anthropic.",
+  "@engineerConsentNeededNotice": {
+    "description": "Transcript row for a turn the server refused with consent_required. No Retry: agreeing in the sheet resends it"
+  },
+  "engineerLimitReached": "You’ve reached today’s Engineer limit. It resets at {time}.",
+  "@engineerLimitReached": {
+    "description": "Transcript row for a turn refused with user_quota_exhausted; time is the reset moment in the device's local time",
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "engineerLimitReachedNoTime": "You’ve reached today’s Engineer limit. Try again after it resets.",
+  "@engineerLimitReachedNoTime": {
+    "description": "Same as engineerLimitReached when the server did not say when the limit resets"
+  },
+  "engineerConsentStatusTitle": "Sharing code with Anthropic",
+  "@engineerConsentStatusTitle": {
+    "description": "Settings → Engineer: consent row title while loading or on error"
+  },
+  "engineerConsentStatusOn": "Sharing code with Anthropic: on since {date}",
+  "@engineerConsentStatusOn": {
+    "description": "Settings → Engineer: consent is current",
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "engineerConsentStatusOnNoDate": "Sharing code with Anthropic: on",
+  "@engineerConsentStatusOnNoDate": {
+    "description": "Settings → Engineer: consent is on but the server sent no date"
+  },
+  "engineerConsentStatusOff": "Sharing code with Anthropic: off",
+  "@engineerConsentStatusOff": {
+    "description": "Settings → Engineer: no current consent"
+  },
+  "engineerConsentStatusOnSubtitle": "The Engineer sends what it reads and runs to Claude",
+  "@engineerConsentStatusOnSubtitle": {
+    "description": "Subtitle when consent is on"
+  },
+  "engineerConsentStatusOffSubtitle": "The Engineer asks before it sends anything",
+  "@engineerConsentStatusOffSubtitle": {
+    "description": "Subtitle when consent is off"
+  },
+  "engineerConsentStatusLoading": "Checking…",
+  "@engineerConsentStatusLoading": {
+    "description": "Subtitle while the consent status loads"
+  },
+  "engineerConsentStatusError": "Couldn’t check. Tap to try again.",
+  "@engineerConsentStatusError": {
+    "description": "Subtitle when the consent status failed to load"
+  },
+  "engineerConsentWithdraw": "Withdraw",
+  "@engineerConsentWithdraw": {
+    "description": "Settings → Engineer: withdraw consent button"
+  },
+  "engineerConsentWithdrawTitle": "Stop sharing code with Anthropic?",
+  "@engineerConsentWithdrawTitle": {
+    "description": "Withdraw confirmation dialog title"
+  },
+  "engineerConsentWithdrawBody": "The Engineer stops until you agree again. Other AURA features are not affected.",
+  "@engineerConsentWithdrawBody": {
+    "description": "Withdraw confirmation dialog body"
+  },
+  "engineerConsentWithdrawn": "Withdrawn. The Engineer will ask before it sends anything again.",
+  "@engineerConsentWithdrawn": {
+    "description": "Snackbar after a successful withdraw"
+  },
+  "engineerConsentWithdrawFailed": "Couldn’t withdraw. {reason}",
+  "@engineerConsentWithdrawFailed": {
+    "description": "Snackbar when withdraw failed",
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
   "settingsEngineStatusSubtitle": "Whether AURA’s server is reachable",
   "@settingsEngineStatusSubtitle": {
     "description": "You screen row subtitle"
@@ -359,9 +483,9 @@
   "@settingsAboutTitle": {
     "description": "About card title"
   },
-  "settingsAboutBody": "Requests are processed on AURA’s servers, never on this device. Your documents, memories, files and tool results are only read by AI models AURA runs itself. If the server’s operator turns it on, your other messages may be answered by an approved hosted AI provider.",
+  "settingsAboutBody": "Requests are handled by AURA’s servers, never on this device. Your documents, memories, files and tool results are only read by AI models AURA runs itself. The exception is the Engineer: once you agree in the app, what it reads and runs goes to Claude, an AI model run by Anthropic. If the server’s operator turns it on, your other messages may be answered by an approved hosted AI provider.",
   "@settingsAboutBody": {
-    "description": "About card body"
+    "description": "About card body (\"Where AURA runs\"). Same routing facts as onboardingPrivacyBody: Engineer turns go to Anthropic only after consent"
   },
   "themeSystem": "System",
   "@themeSystem": {

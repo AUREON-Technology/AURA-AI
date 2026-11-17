@@ -10,6 +10,7 @@ import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:aura_client/core/ai/engineer/engineer_consent_repository.dart';
 import 'package:aura_client/core/ai/vision/chat_images.dart';
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
@@ -22,9 +23,10 @@ import 'package:aura_client/features/chat/presentation/chat_view_model.dart';
 import 'package:aura_client/features/chat/presentation/widgets/chat_composer.dart';
 import 'package:aura_client/features/chat/presentation/widgets/message_bubble.dart';
 import 'package:aura_client/features/chat/presentation/widgets/pending_actions_card.dart';
+import 'package:aura_client/features/engineering/presentation/engineer_consent_sheet.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 
-const _engineerAgentId = 'engineer';
+const _engineerAgentId = kEngineerAgentId;
 
 class AgentPanel extends ConsumerStatefulWidget {
   const AgentPanel({super.key});
@@ -109,6 +111,9 @@ class _AgentPanelState extends ConsumerState<AgentPanel> {
     final isStreaming = ref.read(streamingMessageIdProvider) != null;
     final hasImages = ref.read(pendingChatImagesProvider).isNotEmpty;
     if (!chat.canSend(text, isStreaming: isStreaming, hasImages: hasImages)) return;
+    // D-03: everything sent from here is an Engineer turn, so it waits for consent -- before
+    // the composer is cleared, so "Not now" leaves the message there to send later.
+    if (!await ensureEngineerConsent(context, ref) || !mounted) return;
 
     _controller.clear();
     // FSA-006: the workspace this panel sits beside is where the Engineer's commands run.
@@ -147,108 +152,110 @@ class _AgentPanelState extends ConsumerState<AgentPanel> {
       },
     );
 
-    return Container(
-      color: palette.surface,
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.md, vertical: AuraSpacing.sm),
-            decoration: BoxDecoration(border: Border(bottom: BorderSide(color: palette.border))),
-            child: Row(
-              children: [
-                Icon(personaIcon, size: 16, color: palette.brandOnSurfaceText),
-                const SizedBox(width: AuraSpacing.xs),
-                Expanded(
-                  child: Text(
-                    personaLabel,
-                    style: TextStyle(fontWeight: FontWeight.w600, color: palette.textPrimary, fontSize: 13),
-                  ),
-                ),
-                _TaskSwitcher(activeSessionId: conversationId),
-              ],
-            ),
-          ),
-          if (workspaceRoot != null)
+    return EngineerConsentPromptListener(
+      child: Container(
+        color: palette.surface,
+        child: Column(
+          children: [
             Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.md, vertical: 6),
-              color: palette.surfaceVariant,
-              child: Text(
-                'Workspace: $workspaceRoot',
-                style: TextStyle(fontSize: 10.5, color: palette.textSecondary, fontFamily: 'Courier'),
-                overflow: TextOverflow.ellipsis,
+              padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.md, vertical: AuraSpacing.sm),
+              decoration: BoxDecoration(border: Border(bottom: BorderSide(color: palette.border))),
+              child: Row(
+                children: [
+                  Icon(personaIcon, size: 16, color: palette.brandOnSurfaceText),
+                  const SizedBox(width: AuraSpacing.xs),
+                  Expanded(
+                    child: Text(
+                      personaLabel,
+                      style: TextStyle(fontWeight: FontWeight.w600, color: palette.textPrimary, fontSize: 13),
+                    ),
+                  ),
+                  _TaskSwitcher(activeSessionId: conversationId),
+                ],
               ),
             ),
-          if (locked)
-            const Expanded(
-              child: Center(
-                child: SingleChildScrollView(
-                  child: AuraEmptyState(
-                    icon: Icons.lock_outline,
-                    title: 'Engineer is not available on this account',
-                    message: 'Engineer needs the engineer_agent capability. Ask an operator to '
-                        'grant it; until then, messages from here would be answered by the '
-                        'general assistant instead.',
-                  ),
+            if (workspaceRoot != null)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.md, vertical: 6),
+                color: palette.surfaceVariant,
+                child: Text(
+                  'Workspace: $workspaceRoot',
+                  style: TextStyle(fontSize: 10.5, color: palette.textSecondary, fontFamily: 'Courier'),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-            )
-          else ...[
-          Expanded(
-            child: messagesAsync.when(
-              data: (messages) {
-                if (messages.isEmpty) {
-                  // Was a one-line grey Text, which reads as a screen that
-                  // failed to load rather than one waiting for you to start.
-                  return const Center(
-                    child: SingleChildScrollView(
-                      child: AuraEmptyState(
-                        icon: Icons.auto_awesome_outlined,
-                        title: 'No messages yet',
-                        message: 'Ask Engineer about this workspace — it can read your files, '
-                            'run commands and propose changes for you to review before anything '
-                            'is applied.',
-                      ),
+            if (locked)
+              const Expanded(
+                child: Center(
+                  child: SingleChildScrollView(
+                    child: AuraEmptyState(
+                      icon: Icons.lock_outline,
+                      title: 'Engineer is not available on this account',
+                      message: 'Engineer needs the engineer_agent capability. Ask an operator to '
+                          'grant it; until then, messages from here would be answered by the '
+                          'general assistant instead.',
                     ),
-                  );
-                }
-                return ListView.builder(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.sm, vertical: AuraSpacing.md),
-                  itemCount: messages.length,
-                  itemBuilder: (context, index) {
-                    final msg = messages[index];
-                    String? userPrompt;
-                    if (msg.role != 'user') {
-                      for (var i = index - 1; i >= 0; i--) {
-                        if (messages[i].role == 'user') {
-                          userPrompt = messages[i].content;
-                          break;
+                  ),
+                ),
+              )
+            else ...[
+            Expanded(
+              child: messagesAsync.when(
+                data: (messages) {
+                  if (messages.isEmpty) {
+                    // Was a one-line grey Text, which reads as a screen that
+                    // failed to load rather than one waiting for you to start.
+                    return const Center(
+                      child: SingleChildScrollView(
+                        child: AuraEmptyState(
+                          icon: Icons.auto_awesome_outlined,
+                          title: 'No messages yet',
+                          message: 'Ask Engineer about this workspace — it can read your files, '
+                              'run commands and propose changes for you to review before anything '
+                              'is applied.',
+                        ),
+                      ),
+                    );
+                  }
+                  return ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.sm, vertical: AuraSpacing.md),
+                    itemCount: messages.length,
+                    itemBuilder: (context, index) {
+                      final msg = messages[index];
+                      String? userPrompt;
+                      if (msg.role != 'user') {
+                        for (var i = index - 1; i >= 0; i--) {
+                          if (messages[i].role == 'user') {
+                            userPrompt = messages[i].content;
+                            break;
+                          }
                         }
                       }
-                    }
-                    return MessageBubble(message: msg, isUser: msg.role == 'user', userPrompt: userPrompt);
-                  },
-                );
-              },
-              loading: () => Center(child: CircularProgressIndicator(color: palette.brand)),
-              // Was a bare red line with no way out of it. Classified now, so
-              // a rate limit, an expired session and a dead model each say
-              // their own thing and offer Retry only where retrying helps.
-              error: (err, _) => Center(
-                child: SingleChildScrollView(
-                  child: AuraFailureView(
-                    failure: AuraFailure.from(err),
-                    onRetry: () => ref.invalidate(chatMessagesStreamProvider(conversationId)),
+                      return MessageBubble(message: msg, isUser: msg.role == 'user', userPrompt: userPrompt);
+                    },
+                  );
+                },
+                loading: () => Center(child: CircularProgressIndicator(color: palette.brand)),
+                // Was a bare red line with no way out of it. Classified now, so
+                // a rate limit, an expired session and a dead model each say
+                // their own thing and offer Retry only where retrying helps.
+                error: (err, _) => Center(
+                  child: SingleChildScrollView(
+                    child: AuraFailureView(
+                      failure: AuraFailure.from(err),
+                      onRetry: () => ref.invalidate(chatMessagesStreamProvider(conversationId)),
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-          const PendingActionsCard(),
-          ChatComposer(controller: _controller, isMobile: true, onSend: _send),
+            const PendingActionsCard(),
+            ChatComposer(controller: _controller, isMobile: true, onSend: _send),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }

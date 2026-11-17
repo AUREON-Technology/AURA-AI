@@ -109,11 +109,11 @@ class AppLocalizationsEn extends AppLocalizations {
       'Talk to it. It remembers, searches your documents, and proposes actions — you confirm the writes.';
 
   @override
-  String get onboardingPrivacyTitle => 'Your private data stays with AURA';
+  String get onboardingPrivacyTitle => 'Where your requests are processed';
 
   @override
   String get onboardingPrivacyBody =>
-      'Nothing is processed on this phone. Your documents, memories and files are only read by AI models AURA runs itself. Other messages may be answered by an approved hosted AI provider, if the server’s operator allows it.';
+      'Nothing is processed on this phone. Your documents, memories and files are only read by AI models AURA runs itself. The exception is the Engineer: once you agree in the app, the messages you send it, the files it opens and the output of the commands it runs go to Claude, an AI model run by Anthropic. Other messages may be answered by an approved hosted AI provider, if the server’s operator allows it.';
 
   @override
   String get onboardingTourTitle => 'Today, Copilot, Life Hub, You';
@@ -256,6 +256,103 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsGithubSubtitle => 'Connect your own GitHub account';
 
   @override
+  String get engineerConsentTitle => 'The Engineer uses Claude, by Anthropic';
+
+  @override
+  String get engineerConsentBodyWhat =>
+      'To work on your code, the Engineer sends what it reads and runs to Claude, an AI model run by Anthropic, a company outside AURA.';
+
+  @override
+  String get engineerConsentBodyIncludes =>
+      'That includes the messages you send the Engineer, the contents of files it opens in folders you granted or repositories you connected, and the output of commands it runs — which can include anything those commands print.';
+
+  @override
+  String get engineerConsentBodyChoice =>
+      'Nothing is sent until you agree. You can withdraw in Settings → Engineer at any time; the Engineer then stops until you agree again. Other AURA features are not affected.';
+
+  @override
+  String get engineerConsentAgree => 'Agree and continue';
+
+  @override
+  String get engineerConsentNotNow => 'Not now';
+
+  @override
+  String engineerConsentSaveFailed(String reason) {
+    return 'Couldn’t save your answer. $reason';
+  }
+
+  @override
+  String get engineerConsentUpdateTitle => 'Update AURA to use the Engineer';
+
+  @override
+  String get engineerConsentUpdateBody =>
+      'The notice about what the Engineer sends to Anthropic has changed, and this version of the app can’t show the new one. Update the app to read it and continue.';
+
+  @override
+  String get engineerConsentUpdateOk => 'OK';
+
+  @override
+  String get engineerConsentNeededNotice =>
+      'The Engineer didn’t run this: it needs your agreement before it sends anything to Anthropic. Nothing was sent to Anthropic.';
+
+  @override
+  String engineerLimitReached(String time) {
+    return 'You’ve reached today’s Engineer limit. It resets at $time.';
+  }
+
+  @override
+  String get engineerLimitReachedNoTime =>
+      'You’ve reached today’s Engineer limit. Try again after it resets.';
+
+  @override
+  String get engineerConsentStatusTitle => 'Sharing code with Anthropic';
+
+  @override
+  String engineerConsentStatusOn(String date) {
+    return 'Sharing code with Anthropic: on since $date';
+  }
+
+  @override
+  String get engineerConsentStatusOnNoDate => 'Sharing code with Anthropic: on';
+
+  @override
+  String get engineerConsentStatusOff => 'Sharing code with Anthropic: off';
+
+  @override
+  String get engineerConsentStatusOnSubtitle =>
+      'The Engineer sends what it reads and runs to Claude';
+
+  @override
+  String get engineerConsentStatusOffSubtitle =>
+      'The Engineer asks before it sends anything';
+
+  @override
+  String get engineerConsentStatusLoading => 'Checking…';
+
+  @override
+  String get engineerConsentStatusError => 'Couldn’t check. Tap to try again.';
+
+  @override
+  String get engineerConsentWithdraw => 'Withdraw';
+
+  @override
+  String get engineerConsentWithdrawTitle =>
+      'Stop sharing code with Anthropic?';
+
+  @override
+  String get engineerConsentWithdrawBody =>
+      'The Engineer stops until you agree again. Other AURA features are not affected.';
+
+  @override
+  String get engineerConsentWithdrawn =>
+      'Withdrawn. The Engineer will ask before it sends anything again.';
+
+  @override
+  String engineerConsentWithdrawFailed(String reason) {
+    return 'Couldn’t withdraw. $reason';
+  }
+
+  @override
   String get settingsEngineStatusSubtitle =>
       'Whether AURA’s server is reachable';
 
@@ -286,7 +383,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsAboutBody =>
-      'Requests are processed on AURA’s servers, never on this device. Your documents, memories, files and tool results are only read by AI models AURA runs itself. If the server’s operator turns it on, your other messages may be answered by an approved hosted AI provider.';
+      'Requests are handled by AURA’s servers, never on this device. Your documents, memories, files and tool results are only read by AI models AURA runs itself. The exception is the Engineer: once you agree in the app, what it reads and runs goes to Claude, an AI model run by Anthropic. If the server’s operator turns it on, your other messages may be answered by an approved hosted AI provider.';
 
   @override
   String get themeSystem => 'System';

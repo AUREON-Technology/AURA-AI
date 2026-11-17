@@ -12,6 +12,7 @@ import 'package:aura_client/core/sync/remote_deletes.dart';
 import 'package:aura_client/core/sync/sync_payloads.dart';
 import 'package:aura_client/core/undo/undoable_deletes.dart';
 import 'package:aura_client/core/network/aura_api_error.dart';
+import 'package:aura_client/core/ai/engineer/engineer_consent_repository.dart';
 import 'agent_config_repository.dart';
 import 'chat_connection_error.dart';
 import 'turn_meta.dart';
@@ -20,13 +21,34 @@ import 'turn_meta.dart';
 // arrived was kept, marked [TurnMeta.interrupted] -- never replaced by the error bubble.
 /// `unavailable`: the backend refused the turn's content class (`capability_unavailable`, the
 /// chat-only launch). Not a connection error, so it gets plain copy and no Retry card.
-enum _SseSendOutcome { succeeded, failed, interrupted, unavailable, withheld, blocked }
+/// `consentRequired` / `quotaExhausted`: the Engineer refusals of D-03 and D-05
+/// (`consent_required`, `user_quota_exhausted`, both `retryable: false`). Retrying reaches the
+/// same refusal, so neither gets a Retry card: the first asks for consent, the second says when
+/// the daily limit resets.
+enum _SseSendOutcome {
+  succeeded,
+  failed,
+  interrupted,
+  unavailable,
+  withheld,
+  blocked,
+  consentRequired,
+  quotaExhausted,
+}
 
 class _SseResult {
   final _SseSendOutcome outcome;
   final String? message;
-  const _SseResult(this.outcome, [this.message]);
+  final Object? details;
+  const _SseResult(this.outcome, [this.message, this.details]);
 }
+
+/// The outcome for a refusal the server marks as needing something other than a retry, or null.
+_SseSendOutcome? _engineerRefusal(String? errorKind) => switch (errorKind) {
+      'consent_required' => _SseSendOutcome.consentRequired,
+      'user_quota_exhausted' => _SseSendOutcome.quotaExhausted,
+      _ => null,
+    };
 
 class PendingActions extends Notifier<List<dynamic>> {
   @override
@@ -242,6 +264,7 @@ class ChatRepository {
     // from episodic memory keyed by session_id. SSE errors stay a retry bubble;
     // there is no v1 orchestrator fallback.
     _ref.read(streamingMessageIdProvider.notifier).set(assistantMsgId);
+    EngineerConsentPrompt? consentPrompt;
     try {
       final sseOutcome = await _sendViaSse(
         message: userContent,
@@ -266,6 +289,19 @@ class ChatRepository {
         // Deliberately without `kChatConnectionErrorPrefix`: that prefix is what puts a Retry
         // card on the row, and retrying this turn reaches the same refusal.
         await _updateMessageText(assistantMsgId, kChatFeatureUnavailableText);
+      } else if (sseOutcome.outcome == _SseSendOutcome.consentRequired) {
+        // Consent was withdrawn elsewhere, or the notice changed: what this app knew is stale.
+        await _updateMessageText(assistantMsgId, kChatEngineerConsentNeededText);
+        _ref.invalidate(engineerConsentProvider);
+        final details = sseOutcome.details;
+        final current = details is Map ? details['current_version'] : null;
+        consentPrompt = EngineerConsentPrompt(
+          conversationId: conversationId,
+          messageId: assistantMsgId,
+          currentVersion: current is String ? current : null,
+        );
+      } else if (sseOutcome.outcome == _SseSendOutcome.quotaExhausted) {
+        await _updateMessageText(assistantMsgId, engineerLimitReachedText(sseOutcome.details));
       } else if (sseOutcome.message != null) {
         await _updateMessageText(
           assistantMsgId,
@@ -279,6 +315,11 @@ class ChatRepository {
       if (_ref.read(streamingMessageIdProvider) == assistantMsgId) {
         _ref.read(streamingMessageIdProvider.notifier).set(null);
       }
+    }
+    // After the stream is released: agreeing in the sheet resends this turn, and a send is
+    // ignored while a stream is still marked in flight.
+    if (consentPrompt != null) {
+      _ref.read(engineerConsentPromptProvider.notifier).request(consentPrompt);
     }
   }
 
@@ -499,6 +540,18 @@ class ChatRepository {
               );
               return _SseResult(withheld ? _SseSendOutcome.withheld : _SseSendOutcome.blocked);
             }
+            final engineerRefusal = _engineerRefusal(event.errorKind);
+            if (engineerRefusal != null) {
+              // Refused before any provider call, so there is no partial text to keep.
+              await _logTelemetry(
+                eventType: "error",
+                isOffline: false,
+                latencyMs: stopwatch.elapsedMilliseconds.toDouble(),
+                modelUsed: "server-sse",
+                errorMessage: event.errorKind,
+              );
+              return _SseResult(engineerRefusal, null, event.details);
+            }
             if (displayText.isNotEmpty) {
               return keepPartial("stream_error", error: event.message);
             }
@@ -568,6 +621,18 @@ class ChatRepository {
       return const _SseResult(_SseSendOutcome.succeeded);
     } on AuraApiError catch (e) {
       debugPrint("[ChatRepository] SSE path failed: $e");
+      // The same refusals as an HTTP status (403 / 429) before the stream opened.
+      final engineerRefusal = _engineerRefusal(e.error);
+      if (engineerRefusal != null && displayText.isEmpty) {
+        await _logTelemetry(
+          eventType: "error",
+          isOffline: false,
+          latencyMs: stopwatch.elapsedMilliseconds.toDouble(),
+          modelUsed: "server-sse",
+          errorMessage: e.error,
+        );
+        return _SseResult(engineerRefusal, null, e.details);
+      }
       if (displayText.isNotEmpty || _stoppedMessageId == assistantMsgId) {
         return keepPartial("stream_failed", error: e.message);
       }

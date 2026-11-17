@@ -23,6 +23,10 @@ class AgentInfo {
   // is this persona's actual tool grant.
   final List<String>? allowedTools;
   final String riskCeiling;
+  // True on the `engineer` row while this caller has no current Anthropic consent (D-03). The
+  // send gate asks `/api/v3/engineering/consent` itself, which also says which notice version
+  // the server requires; this is the same fact for anything that only has the agent list.
+  final bool consentRequired;
 
   const AgentInfo({
     required this.id,
@@ -32,6 +36,7 @@ class AgentInfo {
     this.requiredCapabilities = const {},
     this.allowedTools,
     this.riskCeiling = '',
+    this.consentRequired = false,
   });
 
   factory AgentInfo.fromJson(Map<String, dynamic> json) {
@@ -49,6 +54,8 @@ class AgentInfo {
           : const {},
       allowedTools: rawAllowed is List ? rawAllowed.map((t) => t.toString()).toList() : null,
       riskCeiling: json['risk_ceiling'] as String? ?? '',
+      // Absent on a backend without consent (and on every persona but Engineer).
+      consentRequired: json['consent_required'] as bool? ?? false,
     );
   }
 }

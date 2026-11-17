@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
 
 import '../../../core/network/aura_failure.dart';
+import '../../../l10n/generated/app_localizations_en.dart';
 
 /// Prefix stored on assistant rows when no backend path could serve the turn.
 /// The chat UI uses this to show the Retry card.
@@ -24,6 +26,36 @@ const kChatWithheldText = 'This response was withheld by a safety check.';
 
 /// Assistant-row text for a request a guard refused before anything was generated.
 const kChatBlockedText = 'AURA did not answer this request: it was stopped by a safety check.';
+
+// The transcript stores refusal rows as text and syncs them, like the constants above, so they
+// are written in the app's one shipped language. The words live in app_en.arb all the same.
+final _en = AppLocalizationsEn();
+
+/// Assistant-row text for an Engineer turn refused with `consent_required` (D-03). Not a
+/// connection error, so no Retry card: the consent sheet is the remedy, and agreeing resends.
+final String kChatEngineerConsentNeededText = _en.engineerConsentNeededNotice;
+
+/// Assistant-row text for an Engineer turn refused with `user_quota_exhausted` (D-05), naming
+/// the reset moment from `details.reset_at` in this device's local time. No Retry card: the
+/// same turn is refused until then.
+String engineerLimitReachedText(Object? details, {DateTime? now}) {
+  final raw = details is Map ? details['reset_at'] : null;
+  var reset = raw is String ? DateTime.tryParse(raw) : null;
+  if (reset == null) return _en.engineerLimitReachedNoTime;
+  // The contract says UTC. Dart parses any offset into a UTC DateTime, so a non-UTC result means
+  // the timestamp had none: read it as UTC, not as this device's local time.
+  if (!reset.isUtc) {
+    reset = DateTime.utc(reset.year, reset.month, reset.day, reset.hour, reset.minute,
+        reset.second, reset.millisecond, reset.microsecond);
+  }
+  return _en.engineerLimitReached(formatLimitReset(reset.toLocal(), now: now ?? DateTime.now()));
+}
+
+/// "1:00 AM" when [local] falls on [now]'s day, "Wed 1:00 AM" otherwise.
+String formatLimitReset(DateTime local, {required DateTime now}) {
+  final sameDay = local.year == now.year && local.month == now.month && local.day == now.day;
+  return sameDay ? DateFormat.jm().format(local) : DateFormat('EEE').add_jm().format(local);
+}
 
 bool isChatConnectionErrorText(String text) =>
     text.startsWith(kChatConnectionErrorPrefix);
