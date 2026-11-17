@@ -168,6 +168,53 @@ expect_fail "backup-open.sh --verify rejects a tampered set" sh "$HERE/../backup
 expect_ok "backup-open.sh decrypts into an empty dir" sh "$HERE/../backup-open.sh" "$SET" "$T/out-cli"
 
 # ---------------------------------------------------------------------------------------------
+echo "# two key pairs: each private key alone opens a set sealed to both public keys"
+age-keygen -o "$T/second.key" 2>/dev/null
+SECOND=$(age-keygen -y "$T/second.key")
+printf '# key pair A\n%s\n# key pair B\n%s\n' "$RECIPIENT" "$SECOND" > "$T/two-recipients.txt"
+seal_two() (
+    unset BACKUP_AGE_RECIPIENT
+    BACKUP_AGE_RECIPIENTS_FILE="$T/two-recipients.txt"; export BACKUP_AGE_RECIPIENTS_FILE
+    bk_seal_set "$@"
+)
+open_with() ( BACKUP_AGE_IDENTITY_FILE=$1; export BACKUP_AGE_IDENTITY_FILE; bk_open_set "$2" "$3" )
+# count_with <recipients-file or ""> [BACKUP_AGE_RECIPIENT value]
+count_with() (
+    unset BACKUP_AGE_RECIPIENT BACKUP_AGE_RECIPIENTS_FILE
+    if [ -n "$1" ]; then BACKUP_AGE_RECIPIENTS_FILE=$1; export BACKUP_AGE_RECIPIENTS_FILE; fi
+    if [ -n "${2:-}" ]; then BACKUP_AGE_RECIPIENT=$2; export BACKUP_AGE_RECIPIENT; fi
+    bk_recipient_count
+)
+
+make_staging "$T/staging-two"
+cp -R "$T/staging-two" "$T/original-two"
+mkdir -p "$T/backups-two"
+SET_TWO="$T/backups-two/aura-$STAMP"
+expect_ok "a set seals to both public keys" seal_two "$T/staging-two" "$SET_TWO"
+expect_ok "private key A alone opens it" open_with "$T/id.key" "$SET_TWO" "$T/out-two-a"
+expect_ok "private key B alone opens it" open_with "$T/second.key" "$SET_TWO" "$T/out-two-b"
+if cmp -s "$T/original-two/postgres-$STAMP.dump" "$T/out-two-a/postgres-$STAMP.dump" \
+    && cmp -s "$T/original-two/postgres-$STAMP.dump" "$T/out-two-b/postgres-$STAMP.dump" \
+    && cmp -s "$T/original-two/redis-$STAMP.rdb" "$T/out-two-b/redis-$STAMP.rdb"; then
+    ok "...and each recovers byte-identical data"
+else
+    bad "a key recovered different data"
+fi
+expect_fail "a third key that was not listed cannot open it" open_with "$T/other.key" "$SET_TWO" "$T/out-two-x"
+
+[ "$(count_with "$T/two-recipients.txt")" = 2 ] && ok "two distinct public keys count as 2" \
+    || bad "two keys counted as $(count_with "$T/two-recipients.txt")"
+printf '%s\n%s\n' "$RECIPIENT" "$RECIPIENT" > "$T/dup-recipients.txt"
+[ "$(count_with "$T/dup-recipients.txt")" = 1 ] && ok "the same key listed twice counts as 1" \
+    || bad "a duplicated key counted as $(count_with "$T/dup-recipients.txt")"
+[ "$(count_with "" "$RECIPIENT,$RECIPIENT")" = 1 ] && ok "...also when repeated in BACKUP_AGE_RECIPIENT" \
+    || bad "repeated BACKUP_AGE_RECIPIENT counted as $(count_with "" "$RECIPIENT,$RECIPIENT")"
+[ "$(count_with "$T/dup-recipients.txt" "$SECOND")" = 2 ] && ok "the file and BACKUP_AGE_RECIPIENT combine" \
+    || bad "file + env counted as $(count_with "$T/dup-recipients.txt" "$SECOND")"
+[ "$(count_with "" "not-a-key")" = 0 ] && ok "an invalid recipient list counts as 0" \
+    || bad "invalid list counted as $(count_with "" "not-a-key")"
+
+# ---------------------------------------------------------------------------------------------
 echo "# explicit plaintext opt-out"
 BACKUP_ENCRYPTION=none; export BACKUP_ENCRYPTION
 make_staging "$T/staging-none"

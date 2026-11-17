@@ -181,6 +181,18 @@ groups:
           description: >
             Plaintext backup sets on the host, and offsite copy is refused for them.
 
+      - alert: AuraBackupSingleKey
+        expr: aura_backup_encryption_enabled == 1 and aura_backup_age_recipients < 2
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "New backups can be decrypted by fewer than two age keys"
+          description: >
+            Every set on the VPS, B2 and R2 is readable only with the offline private key(s).
+            With a single key pair, losing that one key loses every backup on every provider.
+            Put both public keys in deploy/secrets/backup/backup_age_recipients.txt
+            (maintenance-guide "Backup encryption keys").
+
       - alert: AuraBackupOffsiteFailed
         expr: aura_backup_offsite_configured == 1 and aura_backup_offsite_last_exit_code != 0
         for: 15m

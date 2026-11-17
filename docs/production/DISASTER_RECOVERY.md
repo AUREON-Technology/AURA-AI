@@ -18,7 +18,7 @@ that it still shows `/opt/aura/...` paths, while the VPS checkout is at `/opt/au
 | `restore-drill.sh` | Throwaway `postgres:16-alpine`. Refuses to run if `PGHOST`/`PGDATABASE`/`PGUSER` is set. Restores and asserts both tables **and rows** | `deploy/scripts/restore-drill.sh` |
 | `pre-migration-backup.sh` | Backup before migrations | `deploy/scripts/pre-migration-backup.sh` |
 | `backup-fetch.sh` | Pulls a set back from offsite: the newest set held by any `BACKUP_OFFSITE_TARGETS` remote, from the first provider whose copy verifies keyless. Built and stub-tested (#252), not yet run against a real provider | `deploy/scripts/backup-fetch.sh` |
-| Alerts | `AuraBackupStale`, `AuraBackupOffsiteFailed`, `AuraBackupUnderReplicated` (last set on fewer than `BACKUP_OFFSITE_MIN_COPIES` providers), `AuraBackupOffsiteStale` (no durable offsite set in 36 h) on `aura_backup_last_success_timestamp_seconds`, `aura_backup_offsite_*` | `deploy/monitoring/alerts/aura.yml` |
+| Alerts | `AuraBackupStale`, `AuraBackupOffsiteFailed`, `AuraBackupUnderReplicated` (last set on fewer than `BACKUP_OFFSITE_MIN_COPIES` providers), `AuraBackupOffsiteStale` (no durable offsite set in 36 h), `AuraBackupSingleKey` (fewer than two age keys can decrypt new sets) on `aura_backup_last_success_timestamp_seconds`, `aura_backup_offsite_*` | `deploy/monitoring/alerts/aura.yml` |
 | Host rebuild | Runbooks for moving or provisioning a host | `docs/guides/host-migration-runbook.md`, `provisioning-runbook.md` |
 
 ## 2. What is proven

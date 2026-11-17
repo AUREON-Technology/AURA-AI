@@ -18,6 +18,7 @@ Explicitly not the goal: pooling many free-tier accounts for capacity. Storage c
 4. Recovery target: **nightly, 24h max data loss.** Hourly or continuous is out of scope for now.
 5. A second VPS exists that the user runs. It is the candidate target for the deferred replication phase. Not used in this plan.
 6. (2026-11-17) Offsite providers: **Backblaze B2 and Cloudflare R2**, as rclone remotes `b2-aura` and `r2-aura` (`deploy/backup/rclone.conf.example`), each with a bucket-scoped key and a 6-day object lock.
+7. (2026-11-17) Encryption keys: **two independent age key pairs**. Both public keys go in `backup_age_recipients.txt`, so either private key alone restores any set. The two private keys are kept offline in separate places. `AuraBackupSingleKey` fires while fewer than two distinct keys are configured.
 
 ## Current state (from code)
 
@@ -86,7 +87,7 @@ Gap: **one remote, not two.** Offsite may also be unset in production; the plan 
 
 ## Open items for the user (needed for rollout, not for the code)
 
-1. Where is the age private key kept, and is there a second copy? **(needed before any restore can be trusted)**
+1. ~~Age key custody~~ Two key pairs (decision 7). Still needed: the owner generates both off the VPS, stores the private keys apart, and installs both public keys.
 2. ~~Which two providers?~~ B2 and R2 (decision 6). Still needed: both buckets and keys created per the maintenance guide.
 3. Is `BACKUP_S3_URI` set on the VPS right now? (Needed for rollout step 1.)
 4. ~~Approve this plan~~ Approved 2026-11-17.

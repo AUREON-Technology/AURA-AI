@@ -39,7 +39,8 @@ Package IDs that Play Integrity / App Attest verify:
       `BACKUP_OFFSITE_TARGETS`, or `$BACKUP_S3_URI`) shows a set newer than 26 hours
 - [ ] `aura_backup_offsite_copies_verified` equals `aura_backup_offsite_copies_required` (2 by default)
 - [ ] `AuraBackupStale` / `AuraBackupOffsiteFailed` / `AuraBackupUnderReplicated` /
-      `AuraBackupOffsiteStale` not firing
+      `AuraBackupOffsiteStale` / `AuraBackupSingleKey` not firing
+- [ ] Both age private keys tested: one restore drill with key A and one with key B
 - [ ] v1 AI routes return **410**: `/api/chat/*`, `/api/rag/*`, `/api/memory/*`, `/api/telemetry/*` (v2 sync/auth/insights and automations/learning stay mounted)
 - [ ] `GET /health/ready` is green (`healthy: true`)
 

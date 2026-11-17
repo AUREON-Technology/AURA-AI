@@ -248,6 +248,8 @@ write_backup_metrics() {
     offsite_last=$(cat "$BACKUP_DIR/.last_offsite_success" 2>/dev/null || echo 0)
     encrypted=0
     [ "$(bk_encryption_mode 2>/dev/null || echo invalid)" = age ] && encrypted=1
+    recipients=0
+    [ "$encrypted" -eq 1 ] && recipients=$(bk_recipient_count)
     tmp="$metrics_dir/aura_backup.prom.$$"
     cat > "$tmp" <<EOF
 # HELP aura_backup_last_success_timestamp_seconds Unix time of last verified local backup set.
@@ -256,6 +258,9 @@ aura_backup_last_success_timestamp_seconds $last
 # HELP aura_backup_encryption_enabled 1 when backup sets are age-encrypted (BACKUP_ENCRYPTION=age).
 # TYPE aura_backup_encryption_enabled gauge
 aura_backup_encryption_enabled $encrypted
+# HELP aura_backup_age_recipients Distinct age public keys each new set is encrypted to (0 when unencrypted or misconfigured).
+# TYPE aura_backup_age_recipients gauge
+aura_backup_age_recipients $recipients
 # HELP aura_backup_config_error 1 when the last cycle refused to run on invalid backup configuration.
 # TYPE aura_backup_config_error gauge
 aura_backup_config_error $config_error
@@ -424,6 +429,8 @@ run_cycle() {
     log "set verified: $(basename "$set_dir"), $(du -sh "$set_dir" | cut -f1)"
     if [ "$(bk_encryption_mode)" = none ]; then
         log "WARNING: BACKUP_ENCRYPTION=none -- this set is PLAINTEXT on disk and will not be shipped offsite"
+    elif [ "$(bk_recipient_count)" -lt 2 ]; then
+        log "WARNING: this set is decryptable by only ONE age key; losing it loses every backup. Add a second public key to backup_age_recipients.txt (maintenance-guide \"Backup encryption keys\")"
     fi
     return 0
 }

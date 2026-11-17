@@ -302,17 +302,33 @@ detection of corruption or tampering (age's AEAD plus the two manifests). It doe
 fully compromised host from deleting sets or writing new forged ones -- anyone holding a public
 key can encrypt to it. Offsite object lock / versioning is the defence against deletion.
 
-### Generate the key pair (once, on a trusted machine -- not the VPS)
+### Generate two key pairs (once, on trusted machines -- never the VPS)
+
+AURA uses **two independent key pairs** (decision recorded in
+`docs/plans/distributed_storage_plan.md`). Every set is encrypted to both public keys, and either
+private key alone can decrypt it. Losing one key, or the place it was kept, then loses no backup.
+`AuraBackupSingleKey` fires while fewer than two distinct public keys are configured.
 
 ```bash
-age-keygen -o aura-backup.agekey          # prints "Public key: age1..."
-age-keygen -y aura-backup.agekey          # re-print the public key at any time
+# Key pair A -- e.g. on the owner's own computer
+age-keygen -o aura-backup-A.agekey        # prints "Public key: age1..."
+# Key pair B -- ideally made by, or for, whoever keeps the second copy
+age-keygen -o aura-backup-B.agekey
+age-keygen -y aura-backup-A.agekey        # re-print a public key at any time
 ```
 
-Store `aura-backup.agekey` offline: a password manager entry plus a printed or USB copy in a
-separate physical place -- alongside the offline copy of `data_encryption_keys` (below), never in
-the backup bucket or on the VPS. It is small text; paper works. Then delete it from the machine you
-generated it on if that machine is not one of the storage places.
+Keep the two private keys **apart**. That is the whole point of having two:
+
+- **A:** a password-manager entry the owner controls.
+- **B:** a different place that does not fail with A, such as a printed copy in a safe, or a
+  trusted second person's password manager.
+
+Neither goes in a backup bucket, the repository or the VPS. Each is small text, so paper works.
+Keep the offline copy of `data_encryption_keys` (below) with them. Delete the key files from the
+machines you generated them on unless that machine is one of the storage places.
+
+Test each key once before relying on it. After the first nightly set, run the restore drill once
+with `aura-backup-A.agekey` and once with `aura-backup-B.agekey` (*Practise a restore* above).
 
 ### Configure the VPS (public key only)
 
@@ -323,10 +339,19 @@ BACKUP_ENCRYPTION=age
 BACKUP_AGE_RECIPIENT=age1...your-public-key...
 ```
 
-or (preferred for multiple keys) one public key per line in
-`deploy/secrets/backup/backup_age_recipients.txt` (gitignored; the `backup/` subdirectory is the
-only part of `deploy/secrets` the sidecar can see -- `deploy/scripts/bootstrap-secrets.sh` creates it
-and moves a file left at the old flat `deploy/secrets/` location). Then:
+or (preferred, and what the two-key setup uses) one public key per line in
+`deploy/secrets/backup/backup_age_recipients.txt`, comments allowed:
+
+```text
+# key pair A -- owner's password manager
+age1...public-key-A...
+# key pair B -- printed copy in the safe
+age1...public-key-B...
+```
+
+The file is gitignored. The `backup/` subdirectory is the only part of `deploy/secrets` the sidecar
+can see. `deploy/scripts/bootstrap-secrets.sh` creates it, and moves a file left at the old flat
+`deploy/secrets/` location into it. Then:
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build backup
@@ -341,8 +366,9 @@ public key belongs. `BACKUP_ENCRYPTION=none` is an explicit, alerted opt-out
 
 ### Restore
 
-Bring the private key to the host for the restore only, mount it read-only into the one-off
-container (see *Practise a restore* above), and delete it from the host afterwards:
+Either private key works; bring **one** of them to the host for the restore only, mount it
+read-only into the one-off container (see *Practise a restore* above), and delete it from the host
+afterwards:
 
 ```bash
 shred -u /path/to/aura-backup.agekey 2>/dev/null || rm -f /path/to/aura-backup.agekey
@@ -354,8 +380,9 @@ untouched. `backup-open.sh --verify` checks a set's integrity without the key.
 
 ### Rotate
 
-Rotate yearly, when anyone who had access to the private key leaves, or at once if it may have
-been exposed.
+Rotate yearly, when anyone who had access to a private key leaves, or at once if it may have
+been exposed. Rotate **one key pair at a time**, so the other keeps every existing set readable
+throughout. During the rotation the recipients file briefly holds three public keys.
 
 1. Generate a new pair (as above) and store the new private key offline.
 2. Put **both** public keys in `deploy/secrets/backup/backup_age_recipients.txt` (new sets are then
