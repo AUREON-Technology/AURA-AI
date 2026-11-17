@@ -14,7 +14,7 @@ Plan and user decisions: [`docs/plans/console-subdomain-plan.md`](../plans/conso
 | --- | --- | --- |
 | Image defaults to the root base path; `/console`, `/console/*` → 308 to the unprefixed path when the base path is empty | TESTED locally (2026-11-18), not CI-run | `aura_admin/Dockerfile`, `next.config.ts`; `tests/e2e/legacy-path.spec.ts`; full suite 33 passed; `tsc`, lint, and both builds (root, and `/console` showing `basePath: '/console'` with no redirects) clean |
 | VPS prod/dev stacks unchanged at `/console` | BUILT (no change) | Both compose files pass `/console` as build args and runtime env |
-| Railway custom domain `console.aureon-ai.tech` on `AURA-Admin` (port 3000) | BUILT 2026-11-18 | Custom domain `a9c3ee6b-…`; Hostinger `CNAME console → mdgyf063.up.railway.app` and `TXT _railway-verify.console`, both resolving on the Hostinger NS and 8.8.8.8 |
+| Railway custom domain `console.aureon-ai.tech` on `AURA-Admin` (port 3000) | LIVE 2026-11-18 | Custom domain `a9c3ee6b-…` verified, Let's Encrypt cert valid to 2027-02-15; Hostinger `CNAME console → mdgyf063.up.railway.app` and `TXT _railway-verify.console`. Before the switch, `https://console.aureon-ai.tech/console/login` → 200 and `/login` → 404 |
 | Railway variables `NEXT_BASE_PATH` / `NEXT_PUBLIC_BASE_PATH` (`/console`) removed | OPEN | Do this only after the PR is merged; it is the step that moves the console to the root. Rollback: set both back to `/console` |
 | Google OAuth Authorized JavaScript origin `https://console.aureon-ai.tech` | OPEN (owner) | Without it the Google sign-in button does not load on the new host |
 | Live: `/login` 200, `/console/login` 308 → `/login`, operator sign-in | OPEN | Not proven until checked on the live host |
