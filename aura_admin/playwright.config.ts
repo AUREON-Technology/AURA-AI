@@ -12,6 +12,10 @@ process.env.PLAYWRIGHT_BASE_URL = baseURL;
 export default defineConfig({
   testDir: "tests",
   timeout: 60_000,
+  // `next dev` compiles each route on its first request: a cold sign-in compiles the login
+  // route, the middleware and the console layout in turn, which on a 4-core runner exceeds
+  // Playwright's default 5 s for the first heading to appear.
+  expect: { timeout: 15_000 },
   use: {
     baseURL,
     // For a host whose preinstalled Chromium is a different revision from this @playwright/test.

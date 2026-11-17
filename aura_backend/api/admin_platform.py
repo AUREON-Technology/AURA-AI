@@ -135,7 +135,18 @@ async def list_operators(user_info: dict = Depends(require_role("Admin"))):
     except HTTPException:
         raise
     except Exception:
-        return {"operators": []}
+        # Not ``[]`` with 200: the Access page would show "nobody has access", which is
+        # indistinguishable from a real, empty directory (audit INT-034). The cause stays in the
+        # log, not in the response.
+        logger.exception("operator directory lookup failed")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "operator_directory_unavailable",
+                "message": "The operator directory could not be read. Try again shortly.",
+                "retryable": True,
+            },
+        )
 
 
 @router.patch("/operators/{email}/role")

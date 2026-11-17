@@ -9,8 +9,8 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | Method | Path | Flutter caller | Admin caller | hostd caller | Status | Triage |
 | --- | --- | --- | --- | --- | --- | --- |
 | POST | `/api/v3/account/delete` | `aura_client/lib/core/auth/account_client.dart:11`, `aura_client/lib/core/auth/account_client.dart:43` | — | — | called |  |
-| GET | `/api/v3/admin/approvals` | — | `aura_admin/app/(console)/approvals/page.tsx:14`, `aura_admin/app/(console)/models/page.tsx:28` (+1) | — | called |  |
-| POST | `/api/v3/admin/approvals/{approval_id}/decide` | — | `aura_admin/app/(console)/approvals/page.tsx:68`, `aura_admin/app/(console)/approvals/page.tsx:82` | — | called |  |
+| GET | `/api/v3/admin/approvals` | — | `aura_admin/app/(console)/approvals/page.tsx:19`, `aura_admin/app/(console)/models/page.tsx:28` (+1) | — | called |  |
+| POST | `/api/v3/admin/approvals/{approval_id}/decide` | — | `aura_admin/app/(console)/approvals/page.tsx:80`, `aura_admin/app/(console)/approvals/page.tsx:94` | — | called |  |
 | GET | `/api/v3/admin/audit` | — | `aura_admin/app/(console)/audit/page.tsx:17` | — | called |  |
 | GET | `/api/v3/admin/blueprints` | — | — | — | none | to wire: Console blueprint review and deploy are Track AP phase AP9 |
 | GET | `/api/v3/admin/blueprints/active` | — | — | — | none | to wire: Console blueprint review and deploy are Track AP phase AP9 |
@@ -29,8 +29,8 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | POST | `/api/v3/admin/connectors/{connector_id}/disable` | — | — | — | none | to wire: Console Project Factory is Track AP phase AP9 |
 | POST | `/api/v3/admin/connectors/{connector_id}/discover` | — | — | — | none | to wire: Console Project Factory is Track AP phase AP9 |
 | POST | `/api/v3/admin/connectors/{connector_id}/health` | — | — | — | none | to wire: Console Project Factory is Track AP phase AP9 |
-| POST | `/api/v3/admin/index/rebuild` | — | `aura_admin/app/(console)/knowledge/page.tsx:119` | — | called |  |
-| POST | `/api/v3/admin/index/rollback` | — | `aura_admin/app/(console)/knowledge/page.tsx:144` | — | called |  |
+| POST | `/api/v3/admin/index/rebuild` | — | `aura_admin/app/(console)/knowledge/page.tsx:136` | — | called |  |
+| POST | `/api/v3/admin/index/rollback` | — | `aura_admin/app/(console)/knowledge/page.tsx:161` | — | called |  |
 | GET | `/api/v3/admin/indexes` | — | `aura_admin/app/(console)/knowledge/page.tsx:21` | — | called |  |
 | GET | `/api/v3/admin/jobs/{task_id}` | — | — | — | none | to wire: admin console page missing for this route |
 | DELETE | `/api/v3/admin/knowledge/documents/{document_id}/cag-pin` | — | — | — | none | to wire: admin console page missing for this route |
@@ -43,8 +43,8 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | POST | `/api/v3/admin/learning/request-approval` | — | `aura_admin/app/(console)/learning/page.tsx:132` | — | called |  |
 | GET | `/api/v3/admin/local-models` | — | `aura_admin/app/(console)/models/page.tsx:27` | — | called |  |
 | POST | `/api/v3/admin/local-models/pull` | — | `aura_admin/app/(console)/models/page.tsx:265` | — | called |  |
-| DELETE | `/api/v3/admin/local-models/{name}` | — | `aura_admin/app/(console)/models/page.tsx:246`, `aura_admin/app/(console)/models/page.tsx:265` | — | called |  |
-| GET | `/api/v3/admin/me` | — | `aura_admin/app/(console)/layout.tsx:13`, `aura_admin/app/api/auth/session/route.ts:11` (+1) | — | called |  |
+| DELETE | `/api/v3/admin/local-models/{name:path}` | — | `aura_admin/app/(console)/models/page.tsx:246`, `aura_admin/app/(console)/models/page.tsx:265` | — | called |  |
+| GET | `/api/v3/admin/me` | — | `aura_admin/app/(console)/layout.tsx:13`, `aura_admin/app/api/auth/login/route.ts:47` (+2) | — | called |  |
 | GET | `/api/v3/admin/models` | — | `aura_admin/app/(console)/models/page.tsx:26` | — | called |  |
 | POST | `/api/v3/admin/models/import` | — | `aura_admin/app/(console)/models/page.tsx:216` | — | called |  |
 | POST | `/api/v3/admin/models/{model_id}/request-promotion` | — | `aura_admin/app/(console)/models/page.tsx:111` | — | called |  |
@@ -53,25 +53,25 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | GET | `/api/v3/admin/operators` | — | `aura_admin/app/(console)/access/page.tsx:21` | — | called |  |
 | POST | `/api/v3/admin/operators/{email}/revoke-sessions` | — | `aura_admin/app/(console)/access/page.tsx:126` | — | called |  |
 | PATCH | `/api/v3/admin/operators/{email}/role` | — | `aura_admin/app/(console)/access/page.tsx:61`, `aura_admin/app/(console)/access/page.tsx:97` (+1) | — | called |  |
-| POST | `/api/v3/admin/prompts/{template_id}/pin` | — | `aura_admin/app/(console)/prompts/page.tsx:50` | — | called |  |
-| POST | `/api/v3/admin/providers/{name}/reset-circuit` | — | `aura_admin/app/(console)/providers/page.tsx:51` | — | called |  |
+| POST | `/api/v3/admin/prompts/{template_id}/pin` | — | `aura_admin/app/(console)/prompts/page.tsx:57`, `aura_admin/app/(console)/prompts/page.tsx:76` | — | called |  |
+| POST | `/api/v3/admin/providers/{name}/reset-circuit` | — | `aura_admin/app/(console)/providers/page.tsx:70` | — | called |  |
 | GET | `/api/v3/admin/refresh/latest` | — | — | — | none | to wire: admin console page missing for this route |
 | GET | `/api/v3/admin/scorecard` | — | — | — | none | to wire: admin console page missing for this route |
 | GET | `/api/v3/admin/service-keys` | — | — | — | none | to wire: admin console page missing for this route |
 | POST | `/api/v3/admin/service-keys` | — | — | — | none | to wire: admin console page missing for this route |
 | POST | `/api/v3/admin/service-keys/{key_id}/revoke` | — | — | — | none | to wire: admin console page missing for this route |
-| GET | `/api/v3/admin/sources` | — | `aura_admin/app/(console)/knowledge/page.tsx:20`, `aura_admin/app/(console)/knowledge/page.tsx:100` | — | called |  |
-| POST | `/api/v3/admin/sources` | — | `aura_admin/app/(console)/knowledge/page.tsx:20`, `aura_admin/app/(console)/knowledge/page.tsx:100` | — | called |  |
-| DELETE | `/api/v3/admin/sources/{source_id}` | — | `aura_admin/app/(console)/knowledge/page.tsx:59`, `aura_admin/app/(console)/knowledge/page.tsx:74` | — | called |  |
-| PATCH | `/api/v3/admin/sources/{source_id}` | — | `aura_admin/app/(console)/knowledge/page.tsx:59`, `aura_admin/app/(console)/knowledge/page.tsx:74` | — | called |  |
-| GET | `/api/v3/admin/status` | — | `aura_admin/app/(console)/page.tsx:15`, `aura_admin/app/(console)/prompts/page.tsx:14` (+2) | — | called |  |
+| GET | `/api/v3/admin/sources` | — | `aura_admin/app/(console)/knowledge/page.tsx:20`, `aura_admin/app/(console)/knowledge/page.tsx:117` | — | called |  |
+| POST | `/api/v3/admin/sources` | — | `aura_admin/app/(console)/knowledge/page.tsx:20`, `aura_admin/app/(console)/knowledge/page.tsx:117` | — | called |  |
+| DELETE | `/api/v3/admin/sources/{source_id}` | — | `aura_admin/app/(console)/knowledge/page.tsx:62`, `aura_admin/app/(console)/knowledge/page.tsx:84` | — | called |  |
+| PATCH | `/api/v3/admin/sources/{source_id}` | — | `aura_admin/app/(console)/knowledge/page.tsx:62`, `aura_admin/app/(console)/knowledge/page.tsx:84` | — | called |  |
+| GET | `/api/v3/admin/status` | — | `aura_admin/app/(console)/page.tsx:15`, `aura_admin/app/(console)/prompts/page.tsx:15` (+2) | — | called |  |
 | GET | `/api/v3/admin/twin/diff` | — | — | — | none | to wire: Console twin browser and diff are Track AP phase AP9 |
 | POST | `/api/v3/admin/twin/snapshot` | — | — | — | none | to wire: Console twin browser and diff are Track AP phase AP9 |
 | GET | `/api/v3/admin/twin/versions` | — | — | — | none | to wire: Console twin browser and diff are Track AP phase AP9 |
 | GET | `/api/v3/admin/twin/versions/{version}` | — | — | — | none | to wire: Console twin browser and diff are Track AP phase AP9 |
 | POST | `/api/v3/admin/twin/versions/{version}/compile` | — | — | — | none | to wire: Console twin browser and diff are Track AP phase AP9 |
 | GET | `/api/v3/admin/twin/versions/{version}/plan` | — | — | — | none | to wire: Console twin browser and diff are Track AP phase AP9 |
-| POST | `/api/v3/admin/users/{subject}/forget` | — | `aura_admin/app/(console)/access/page.tsx:157` | — | called |  |
+| POST | `/api/v3/admin/users/{subject}/forget` | — | `aura_admin/app/(console)/access/page.tsx:161` | — | called |  |
 | GET | `/api/v3/agents` | `aura_client/lib/features/chat/data/agents_repository.dart:8`, `aura_client/lib/features/chat/data/agents_repository.dart:94` | — | — | called |  |
 | GET | `/api/v3/agents/runs` | — | — | — | none | to wire: agent-run history (wave 2) has no client or admin view yet |
 | GET | `/api/v3/agents/runs/{run_id}` | — | — | — | none | to wire: agent-run history (wave 2) has no client or admin view yet |
@@ -83,9 +83,9 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | POST | `/api/v3/auth/desktop/pair/start` | — | — | `aura_hostd/lib/src/pairing_client.dart:98` | called |  |
 | POST | `/api/v3/auth/nonce` | `aura_client/lib/core/security/device_validation_service.dart:139` | — | — | called |  |
 | POST | `/api/v3/auth/refresh` | `aura_client/lib/core/auth/token_manager.dart:86`, `aura_client/lib/core/auth/token_manager.dart:143` (+2) | `aura_admin/src/lib/refresh.ts:76` | — | called |  |
-| POST | `/api/v3/auth/revoke` | `aura_client/lib/core/auth/desktop_devices_client.dart:41`, `aura_client/lib/core/auth/desktop_devices_client.dart:82` (+1) | `aura_admin/app/api/auth/logout/route.ts:8` | — | called |  |
+| POST | `/api/v3/auth/revoke` | `aura_client/lib/core/auth/desktop_devices_client.dart:41`, `aura_client/lib/core/auth/desktop_devices_client.dart:82` (+1) | `aura_admin/app/api/auth/login/route.ts:10`, `aura_admin/app/api/auth/logout/route.ts:14` | — | called |  |
 | POST | `/api/v3/auth/token` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:63`, `aura_client/lib/core/auth/token_manager.dart:86` (+4) | — | — | called |  |
-| POST | `/api/v3/auth/web/token` | `aura_client/lib/core/auth/token_manager.dart:337`, `aura_client/lib/core/auth/token_manager.dart:343` | `aura_admin/app/api/auth/login/route.ts:10` | — | called |  |
+| POST | `/api/v3/auth/web/token` | `aura_client/lib/core/auth/token_manager.dart:337`, `aura_client/lib/core/auth/token_manager.dart:343` | `aura_admin/app/api/auth/login/route.ts:38` | — | called |  |
 | POST | `/api/v3/automation/analyze-email` | `aura_client/lib/features/automations/data/automation_repository.dart:218` | — | — | called |  |
 | POST | `/api/v3/automation/analyze-issue` | `aura_client/lib/features/automations/data/automation_repository.dart:256` | — | — | called |  |
 | GET | `/api/v3/capabilities` | `aura_client/lib/core/ai/vision/chat_images.dart:40`, `aura_client/lib/core/ai/vision/chat_images.dart:74` (+2) | — | — | called |  |
