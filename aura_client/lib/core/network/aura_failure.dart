@@ -67,6 +67,11 @@ enum AuraFailureKind {
   /// Out of budget.
   budgetExceeded,
 
+  /// The workspace's plan does not allow this (SaaS P1-C, HTTP 402 `plan_limit`): this month's
+  /// messages, the Engineer agent, storage or team seats. Retrying is refused the same way until
+  /// the month resets or the plan changes.
+  planLimit,
+
   /// Refused on safety grounds. Retrying unchanged will refuse again, so this
   /// must not offer a retry.
   blocked,
@@ -129,6 +134,59 @@ class AuraFailure {
       message: 'AURA hit an error it could not classify. Your work is unaffected.',
       canRetry: true,
       detail: error?.toString(),
+    );
+  }
+
+  static const _months = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ];
+
+  static AuraFailure _planLimit(Map<String, dynamic> details, String? detail) {
+    final upgrade = 'Upgrade the plan to raise the limit.';
+    switch (details['limit']) {
+      case 'messages':
+        final resets = DateTime.tryParse('${details['resets_at']}')?.toUtc();
+        final when = resets == null ? 'next month' : 'on ${_months[resets.month - 1]} ${resets.day}';
+        return AuraFailure(
+          kind: AuraFailureKind.planLimit,
+          title: "You've used this month's messages",
+          message: 'This workspace has sent all the messages its plan includes. They come back '
+              '$when. $upgrade',
+          canRetry: false,
+          detail: detail,
+        );
+      case 'engineer':
+        return AuraFailure(
+          kind: AuraFailureKind.planLimit,
+          title: 'The Engineer agent is on Pro and Team plans',
+          message: "This workspace's plan doesn't include it. Everything else keeps working. $upgrade",
+          canRetry: false,
+          detail: detail,
+        );
+      case 'storage':
+        return AuraFailure(
+          kind: AuraFailureKind.planLimit,
+          title: 'Knowledge storage is full',
+          message: 'Delete documents you no longer need to make room, or upgrade the plan for more storage.',
+          canRetry: false,
+          detail: detail,
+        );
+      case 'seats':
+        return AuraFailure(
+          kind: AuraFailureKind.planLimit,
+          title: 'This team has no free seats',
+          message: 'Remove a member or a pending invite, or add seats to the plan.',
+          canRetry: false,
+          detail: detail,
+        );
+    }
+    return AuraFailure(
+      kind: AuraFailureKind.planLimit,
+      title: "This isn't included in your plan",
+      message: upgrade,
+      canRetry: false,
+      detail: detail,
     );
   }
 
@@ -210,6 +268,8 @@ class AuraFailure {
           canRetry: false,
           detail: detail,
         );
+      case 'plan_limit':
+        return _planLimit(error.details, detail);
       case 'budget_exceeded':
         return AuraFailure(
           kind: AuraFailureKind.budgetExceeded,
@@ -249,6 +309,7 @@ class AuraFailure {
 
     // No recognised slug — fall back to the status code.
     final status = error.statusCode;
+    if (status == 402) return _planLimit(error.details, detail);
     if (status == null) {
       return AuraFailure(
         kind: AuraFailureKind.unreachable,

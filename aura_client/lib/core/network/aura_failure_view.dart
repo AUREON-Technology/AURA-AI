@@ -56,6 +56,7 @@ class AuraFailureView extends StatelessWidget {
         AuraFailureKind.authRequired => Icons.lock_outline,
         AuraFailureKind.forbidden => Icons.block_outlined,
         AuraFailureKind.budgetExceeded => Icons.account_balance_wallet_outlined,
+        AuraFailureKind.planLimit => Icons.workspace_premium_outlined,
         AuraFailureKind.blocked => Icons.gpp_maybe_outlined,
         AuraFailureKind.indexing => Icons.hourglass_empty_outlined,
         AuraFailureKind.degraded => Icons.warning_amber_outlined,
@@ -68,7 +69,7 @@ class AuraFailureView extends StatelessWidget {
   static AuraStateTone toneFor(AuraFailureKind kind) => switch (kind) {
         AuraFailureKind.unreachable => AuraStateTone.offline,
         // Nothing is broken and nothing to fix: a limitation, stated plainly.
-        AuraFailureKind.featureUnavailable => AuraStateTone.neutral,
+        AuraFailureKind.featureUnavailable || AuraFailureKind.planLimit => AuraStateTone.neutral,
         AuraFailureKind.busy ||
         AuraFailureKind.rateLimited ||
         AuraFailureKind.turnInFlight ||
