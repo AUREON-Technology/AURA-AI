@@ -33,6 +33,9 @@ __all__ = [
     "apply_payment",
     "advance",
     "BillingUnavailableError",
+    "StoreBinding",
+    "STORE_PROVIDERS",
+    "load_store_products",
 ]
 
 #: Plans priced per seat (the rest are flat per workspace).
@@ -162,3 +165,45 @@ class BillingUnavailableError(AuraError):
 
     kind = "billing_unavailable"
     http_status = 503
+
+
+#: The app stores AURA accepts subscriptions from (SaaS P1-D2).
+STORE_PROVIDERS = ("apple", "google")
+
+
+@dataclass(frozen=True, slots=True)
+class StoreBinding:
+    """A token AURA issued before an in-app purchase. The app passes it to the store (Apple's
+    ``appAccountToken``, Google's ``obfuscatedExternalAccountId``) and every store event names it
+    -- the only way a store event is tied to a workspace."""
+
+    token: str
+    workspace_id: str
+    created_by: str
+    created_at: datetime
+
+
+def load_store_products(raw_json: str, catalogue: Mapping[str, object]) -> dict[str, dict[str, str]]:
+    """``AURA_STORE_PRODUCTS``: ``{"apple": {productId: plan}, "google": {productId: plan}}``.
+    Only plans for personal workspaces may be sold in the apps (Team is sold on the web)."""
+    if not raw_json.strip():
+        return {provider: {} for provider in STORE_PROVIDERS}
+    try:
+        data = json.loads(raw_json)
+    except json.JSONDecodeError as exc:
+        raise ConfigurationError("AURA_STORE_PRODUCTS is not valid JSON") from exc
+    if not isinstance(data, dict) or set(data) - set(STORE_PROVIDERS):
+        raise ConfigurationError(f"AURA_STORE_PRODUCTS keys must be among {STORE_PROVIDERS}")
+    products: dict[str, dict[str, str]] = {provider: {} for provider in STORE_PROVIDERS}
+    for provider, mapping in data.items():
+        if not isinstance(mapping, dict):
+            raise ConfigurationError(f"AURA_STORE_PRODUCTS[{provider!r}] must map product ids to plans")
+        for product_id, plan_id in mapping.items():
+            plan = catalogue.get(plan_id)
+            if plan is None:
+                raise ConfigurationError(f"store product {product_id!r} names unknown plan {plan_id!r}")
+            kinds = {getattr(k, "value", k) for k in getattr(plan, "workspace_kinds", ())}
+            if kinds != {"personal"}:
+                raise ConfigurationError(f"store product {product_id!r}: only personal plans are sold in the apps")
+            products[provider][str(product_id)] = str(plan_id)
+    return products

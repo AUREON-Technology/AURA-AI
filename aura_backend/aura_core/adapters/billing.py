@@ -10,11 +10,11 @@ import json
 from dataclasses import replace
 from datetime import datetime
 
-from ..domain.billing import Payment, PaymentStatus, Subscription, SubscriptionStatus
+from ..domain.billing import Payment, PaymentStatus, StoreBinding, Subscription, SubscriptionStatus
 from ..domain.errors import AuthenticationError, ValidationError
 from ..ports.billing import ProviderCharge, ProviderNotification, ProviderStatus
 
-__all__ = ["InMemorySubscriptionStore", "InMemoryPaymentStore", "FakePaymentProvider"]
+__all__ = ["InMemoryStoreBindingStore", "InMemoryStoreEventLog", "InMemorySubscriptionStore", "InMemoryPaymentStore", "FakePaymentProvider"]
 
 _LIVE = (SubscriptionStatus.ACTIVE, SubscriptionStatus.PAST_DUE, SubscriptionStatus.GRACE, SubscriptionStatus.CANCELED)
 
@@ -119,3 +119,28 @@ class FakePaymentProvider:
         if not hmac.compare_digest(expected, str(signature)):
             raise AuthenticationError("notification signature does not match")
         return ProviderNotification(payment_id, status, amount, data.get("provider_ref"), data.get("card_token"))
+
+
+class InMemoryStoreBindingStore:
+    def __init__(self) -> None:
+        self._rows: dict[str, StoreBinding] = {}
+
+    async def put(self, binding: StoreBinding) -> None:
+        self._rows[binding.token] = binding
+
+    async def get(self, token: str) -> StoreBinding | None:
+        return self._rows.get(token)
+
+
+class InMemoryStoreEventLog:
+    def __init__(self) -> None:
+        self._seen: set[tuple[str, str]] = set()
+        self._lock = asyncio.Lock()
+
+    async def record(self, provider: str, event_id: str, at: datetime) -> bool:
+        async with self._lock:
+            key = (provider, event_id)
+            if key in self._seen:
+                return False
+            self._seen.add(key)
+            return True

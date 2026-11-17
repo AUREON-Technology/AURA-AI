@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from ..domain.billing import Payment, PaymentStatus, Subscription
+from ..domain.billing import Payment, PaymentStatus, StoreBinding, Subscription
 
-__all__ = ["SubscriptionStore", "PaymentStore", "PaymentProvider", "ProviderCharge", "ProviderStatus", "ProviderNotification"]
+__all__ = ["StoreBindingStore", "StoreEventLog", "SubscriptionStore", "PaymentStore", "PaymentProvider", "ProviderCharge", "ProviderStatus", "ProviderNotification"]
 
 
 class SubscriptionStore(Protocol):
@@ -76,3 +76,14 @@ class PaymentProvider(Protocol):
     async def parse_notification(self, body: bytes) -> ProviderNotification:
         """Verify and parse a provider notification. AuthenticationError for a bad signature,
         ValidationError for a malformed body."""
+
+
+class StoreBindingStore(Protocol):
+    async def put(self, binding: StoreBinding) -> None: ...
+
+    async def get(self, token: str) -> StoreBinding | None: ...
+
+
+class StoreEventLog(Protocol):
+    async def record(self, provider: str, event_id: str, at: datetime) -> bool:
+        """True the first time ``(provider, event_id)`` is seen, False for a replay. Atomic."""

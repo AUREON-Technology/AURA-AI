@@ -10,10 +10,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
-from ..domain.billing import Payment, PaymentStatus, Subscription, SubscriptionStatus
+from ..domain.billing import Payment, PaymentStatus, StoreBinding, Subscription, SubscriptionStatus
 from .postgres_store import PostgresPool
 
-__all__ = ["PostgresSubscriptionStore", "PostgresPaymentStore"]
+__all__ = ["PostgresSubscriptionStore", "PostgresPaymentStore", "PostgresStoreBindingStore", "PostgresStoreEventLog"]
 
 _SUB = ("workspace_id, plan_id, seats, status, provider, period_start, period_end, grace_until, "
         "card_token, customer_profile_id, updated_at")
@@ -131,3 +131,42 @@ class PostgresPaymentStore:
                 payment_id, status.value, provider_ref, paid_at,
             )
         return _pay(row) if row else None
+
+
+class PostgresStoreBindingStore:
+    """Tables owned by Alembic revision 0023."""
+
+    def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
+        self._pool = pool or PostgresPool(url)
+
+    async def put(self, b: StoreBinding) -> None:
+        pool = await self._pool._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO aura_store_bindings (token, workspace_id, created_by, created_at) VALUES ($1,$2,$3,$4) "
+                "ON CONFLICT (token) DO NOTHING",
+                b.token, b.workspace_id, b.created_by, b.created_at,
+            )
+
+    async def get(self, token: str) -> StoreBinding | None:
+        pool = await self._pool._get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT token, workspace_id, created_by, created_at FROM aura_store_bindings WHERE token = $1", token
+            )
+        return StoreBinding(row["token"], row["workspace_id"], row["created_by"], _utc(row["created_at"])) if row else None
+
+
+class PostgresStoreEventLog:
+    def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
+        self._pool = pool or PostgresPool(url)
+
+    async def record(self, provider: str, event_id: str, at: datetime) -> bool:
+        pool = await self._pool._get_pool()
+        async with pool.acquire() as conn:
+            status = await conn.execute(
+                "INSERT INTO aura_store_events (provider, event_id, received_at) VALUES ($1,$2,$3) "
+                "ON CONFLICT (provider, event_id) DO NOTHING",
+                provider, event_id, at,
+            )
+        return status.rsplit(" ", 1)[-1] == "1"
