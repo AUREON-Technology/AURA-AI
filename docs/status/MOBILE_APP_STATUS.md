@@ -185,7 +185,8 @@ capability rows below that cite those findings as open describe `dc87beb`; treat
 6. ~~**F-09 (Medium).** Attestation bypass.~~ Closed in code on 2026-11-16: desktop sign-in is for operators only (ADR-011 amendment). Not deployed or CI-run.
 7. **F-36 (Medium).** Foundation built on 2026-10-30 and TESTED locally (analyze clean, 513 passed /
    3 skipped). It is not proven. Still open: a screen-reader pass on a real device (R4.6 acceptance),
-   extracting the remaining features' strings (ratchet at 209), and an Arabic locale.
+   extracting the remaining features' strings (ratchet at 209), and an Arabic locale
+   (system-wide Arabic plan with owner decisions, 2026-11-17: `docs/plans/arabic-language_plan.md`).
    **F-33 and F-34** fixed on 2026-10-30, TESTED locally
    only (CI has no runners, CB-44), not proven on a device:
    - F-33: an expired session ends and routes to login; the Memory page shows its error state
