@@ -345,7 +345,9 @@ Each item needs its named evidence, not just a merged PR.
    - a document/RAG turn served end to end on production.
 10. **Desktop Engineer opened safely.** Evidence: the ADR-011 threat-model amendment merged; tests
     showing a Free or downgraded workspace cannot pair or refresh a desktop session; tests showing
-    a customer desktop session never reaches a console route.
+    a customer desktop session never reaches a console route. (Built in Plan E: ADR-011
+    "Customers"; `tests/integration/test_desktop_engineer_customers.py`. The amendment is merged
+    once that PR merges.)
 
 ### 6.2 Can follow launch
 
