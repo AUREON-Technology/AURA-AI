@@ -43,7 +43,7 @@ def _app(container):
         header = request.headers.get("authorization", "")
         if not header.startswith("Bearer ") or header[7:] not in (ALICE, BOB):
             raise AuthenticationError("unknown principal")
-        return Principal(user_id=UserId(header[7:]), email=f"{header[7:]}@example.com")
+        return Principal(user_id=UserId(header[7:]), email=f"{header[7:]}@example.com", email_verified=True)
 
     return build_app(container, authenticator=authenticator)
 

@@ -16,7 +16,7 @@ and an invented one.
 # function, and FastAPI must resolve their annotations at decoration time (as in v3.py).
 from typing import Any, Callable
 
-from ..domain.errors import RateLimitedError, ValidationError
+from ..domain.errors import AuthorizationError, RateLimitedError, ValidationError
 from ..domain.tenancy import Invite, Membership, Workspace, WorkspaceRole
 
 __all__ = ["register_workspace_ops"]
@@ -89,6 +89,12 @@ def register_workspace_ops(
     def person(caller: Any) -> str:
         return str(caller.user_id)
 
+    def require_verified_email(caller: Any) -> None:
+        # Spec 5.1: an email/password account proves its address before it can create or join a
+        # team (Google and Apple sign-ins arrive verified).
+        if not getattr(caller, "email_verified", False):
+            raise AuthorizationError("verify your email address before creating or joining a team")
+
     async def invite_budget(caller: Any) -> None:
         decision = await limiter.check_limit(
             key=person(caller), scope="workspace_invite", limit=INVITE_BUDGET_PER_MINUTE
@@ -103,6 +109,7 @@ def register_workspace_ops(
 
     @router.post("/workspaces", dependencies=idempotent)
     async def create_workspace(payload: CreateRequest, caller=Depends(principal)) -> JSONResponse:
+        require_verified_email(caller)
         ws = await tenancy.create_team(person(caller), payload.name)
         return JSONResponse(status_code=201, content=_workspace(ws, WorkspaceRole.OWNER))
 
@@ -155,6 +162,7 @@ def register_workspace_ops(
 
     @router.post("/workspaces/invites/accept")
     async def accept_invite(payload: AcceptRequest, caller=Depends(principal)) -> JSONResponse:
+        require_verified_email(caller)
         await invite_budget(caller)
         member = await tenancy.accept(person(caller), payload.token)
         ws, _ = await tenancy.resolve(person(caller), member.workspace_id)

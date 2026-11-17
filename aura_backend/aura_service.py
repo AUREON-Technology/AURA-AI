@@ -65,7 +65,7 @@ def _build_authenticator(settings: Any, *, service_keys: Any = None, tenancy: An
             # Reachable only in local/development: production settings validation refuses this
             # combination, and the metric `aura_insecure_mode{bypass="mock_auth"}` reports it.
             logger.warning("mock authentication is enabled; this must never run in production")
-            return Principal(user_id=UserId("mock-user"), email="mock@local", role="Admin")
+            return Principal(user_id=UserId("mock-user"), email="mock@local", role="Admin", email_verified=True)
 
         header = request.headers.get("authorization", "")
         if not header.lower().startswith("bearer "):
@@ -136,6 +136,7 @@ def _build_authenticator(settings: Any, *, service_keys: Any = None, tenancy: An
             email=claims.get("email") or "",
             role=role,
             capabilities=tuple(capabilities),
+            email_verified=claims.get("email_verified") is True,
         )
 
     return authenticate

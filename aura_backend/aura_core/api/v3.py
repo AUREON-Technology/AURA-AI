@@ -135,7 +135,7 @@ class Principal:
     touches only the authenticator.
     """
 
-    __slots__ = ("user_id", "email", "role", "capabilities", "service_key", "workspace")
+    __slots__ = ("user_id", "email", "role", "capabilities", "service_key", "workspace", "email_verified")
 
     def __init__(
         self,
@@ -146,6 +146,7 @@ class Principal:
         capabilities: tuple[str, ...] = (),
         service_key: Any = None,
         workspace: WorkspaceContext | None = None,
+        email_verified: bool = False,
     ) -> None:
         self.user_id = user_id
         self.email = email
@@ -158,6 +159,9 @@ class Principal:
         # store by the authenticator. ``None`` is the caller's personal scope. It carries a
         # *workspace* role only -- never a platform role or a capability.
         self.workspace = workspace
+        # Whether the identity provider vouched for ``email`` (SaaS P1-B). Creating or joining a
+        # team requires it; personal use does not.
+        self.email_verified = email_verified
 
     @property
     def knowledge_owner(self) -> UserId:

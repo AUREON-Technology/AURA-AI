@@ -12,7 +12,11 @@ from aura_service import _build_authenticator
 @pytest.fixture(autouse=True)
 def _people(monkeypatch):
     async def verify(request, credentials):
-        return {"uid": credentials.credentials, "email": f"{credentials.credentials}@example.com"}
+        person = credentials.credentials
+        # Plan B: a token text starting "unverified-" stands for an email/password account whose
+        # address is not verified yet; everyone else signed in with a verified address.
+        return {"uid": person, "email": f"{person}@example.com",
+                "email_verified": not person.startswith("unverified-")}
 
     monkeypatch.setattr(jwt_auth, "verify_access_token", verify)
     monkeypatch.setattr(rbac, "get_user_role", lambda claims: "User")
@@ -153,3 +157,28 @@ async def test_service_key_refused_on_workspace_routes(client, container) -> Non
     _key, token = await container.service_keys.issue(name="svc-test", by="sa@example.com")
     response = client.get("/api/v3/workspaces", headers={"authorization": f"Bearer {token}"})
     assert response.status_code == 403
+
+
+def test_unverified_cannot_create_team(client) -> None:
+    response = client.post("/api/v3/workspaces", headers=_as("unverified-dana"), json={"name": "Dana Co"})
+    assert response.status_code == 403
+    assert "verify your email" in response.text
+
+
+def test_unverified_cannot_accept_invite(client) -> None:
+    ws = _team(client)
+    invited = client.post(
+        f"/api/v3/workspaces/{ws}/invites", headers=_as("alice"), json={"email": "dana@example.com", "role": "member"}
+    )
+    accepted = client.post(
+        "/api/v3/workspaces/invites/accept", headers=_as("unverified-dana"), json={"token": invited.json()["token"]}
+    )
+    assert accepted.status_code == 403 and "verify your email" in accepted.text
+    # The invite stays usable once the address is verified.
+    assert client.post("/api/v3/workspaces/invites/accept", headers=_as("dana"), json={"token": invited.json()["token"]}).status_code == 200
+
+
+def test_unverified_can_list_personal_workspace(client) -> None:
+    response = client.get("/api/v3/workspaces", headers=_as("unverified-dana"))
+    assert response.status_code == 200
+    assert [w["kind"] for w in response.json()["workspaces"]] == ["personal"]
