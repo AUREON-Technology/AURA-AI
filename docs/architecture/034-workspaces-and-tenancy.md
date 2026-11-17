@@ -82,6 +82,17 @@ Ingest, upload, delete and pin/unpin require `manage_knowledge` (Owner or Admin)
 - **Membership changes.** They are conditional on the role the decision was made against, so a
   concurrent ownership transfer can never be overwritten into a team with no Owner.
 
+### 6. Who may create or join a team, and from which sign-in (SaaS P1-B)
+
+- **Verified email.** Creating a team or accepting an invite requires a verified email
+  (`Principal.email_verified`, carried on the access token from the identity provider's
+  `email_verified`). Google and Apple sign-ins arrive verified; an email/password account must
+  verify first.
+- **Customer web sessions.** They come from `/api/v3/auth/consumer/token` and are capped at the
+  `User` platform role (`channel=consumer_web`). Workspace roles never change that.
+- **Setup.** `docs/deployment/customer-sign-in.md` lists the setup steps for the Firebase-backed
+  sign-in methods.
+
 ## Consequences
 
 - Tables `aura_workspaces`, `aura_workspace_members` and `aura_workspace_invites` arrive with Alembic
