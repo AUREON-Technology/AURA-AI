@@ -87,7 +87,8 @@ def quota_limits_from_settings(settings: LLMSettings) -> dict[str, QuotaLimits]:
     limits: dict[str, QuotaLimits] = {}
     for config in settings.enabled_providers:
         declared = QuotaLimits(
-            rpm=config.rpm, rpd=config.rpd, tpm=config.tpm, tpd=config.tpd
+            rpm=config.rpm, rpd=config.rpd, tpm=config.tpm, tpd=config.tpd,
+            user_tpd=config.user_tpd,
         )
         if declared.declared:
             limits[config.name] = declared

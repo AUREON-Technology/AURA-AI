@@ -303,6 +303,9 @@ class ProviderConfig:
     rpd: int = 0
     tpm: int = 0
     tpd: int = 0
+    # AURA_PROVIDER_<NAME>_USER_TPD (module readiness WP2, D-05): tokens one user may spend on
+    # this provider per UTC day. 0 = no per-user cap.
+    user_tpd: int = 0
     #: The liveness probe's path under base_url. ``/models`` is universal for OpenAI-compatible
     #: servers; override it for a hosted API that does not serve it at the chat base URL.
     health_path: str = "/models"
@@ -729,6 +732,7 @@ class ProviderConfig:
             rpd=_int(f"{p}_RPD", 0, minimum=0),
             tpm=_int(f"{p}_TPM", 0, minimum=0),
             tpd=_int(f"{p}_TPD", 0, minimum=0),
+            user_tpd=_int(f"{p}_USER_TPD", 0, minimum=0),
             health_path=_env(f"{p}_HEALTH_PATH", "/models") or "/models",
             max_data_classification=(_env(f"{p}_MAX_DATA_CLASSIFICATION", "") or "").lower(),
             tokens_per_second=_float(f"{p}_TOKENS_PER_SECOND", 0.0, minimum=0.0),

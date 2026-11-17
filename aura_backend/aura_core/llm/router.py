@@ -50,9 +50,11 @@ from typing import Any, AsyncIterator, Callable, Mapping, Sequence
 
 from ..domain.errors import (
     AllProvidersFailedError,
+    AuraError,
     BudgetExceededError,
     CapabilityUnavailableError,
     ProviderError,
+    UserQuotaExhaustedError,
     ValidationError,
 )
 from ..domain.events import ProviderFailedOver, ProviderHealthChanged
@@ -98,14 +100,28 @@ _CONTENT_EXCLUSIONS = frozenset({"data_classification", "third_party_image"})
 
 
 def _exhausted(
-    message: str, decision: "RoutingDecision", attempts: Sequence[Mapping[str, Any]]
-) -> AllProvidersFailedError:
+    message: str,
+    decision: "RoutingDecision",
+    attempts: Sequence[Mapping[str, Any]],
+    quota: QuotaTracker | None = None,
+) -> AuraError:
     """The error for a request no provider answered, naming content refusals when there were any.
 
     A provider excluded for content would have been tried had the turn not contained what it
     does, so "the model is not answering, retry" is the wrong thing to tell the user: retrying
     sends the same content to the same refusal.
     """
+    over_allowance = sorted(
+        {n for n, r in decision.excluded.items() if r == "user_quota_tpd"}
+        | {str(a.get("provider")) for a in attempts if a.get("error") == "user_quota_tpd"}
+    )
+    if over_allowance and quota is not None:
+        # Checked before content refusals: the provider this person's allowance took out would
+        # otherwise have answered, so "come back after the reset" is the true answer (WP2).
+        return UserQuotaExhaustedError(
+            f"{message}; today's token allowance for this user is spent",
+            details=quota.user_quota_details(over_allowance),
+        )
     refused = sorted(n for n, r in decision.excluded.items() if r in _CONTENT_EXCLUSIONS)
     if refused:
         return CapabilityUnavailableError(
@@ -484,7 +500,9 @@ class ProviderRouter:
             if stats.breaker.state is CircuitState.OPEN:
                 excluded[name] = "circuit_open"
                 continue
-            refusal = self._quota.refusal(name, self._estimated_tokens(request, provider))
+            refusal = self._quota.refusal(
+                name, self._estimated_tokens(request, provider), user_key=hint.user_key
+            )
             if refusal is not None:
                 excluded[name] = refusal
                 continue
@@ -548,7 +566,10 @@ class ProviderRouter:
         return {"provider": name, "error": "rate_limited", "cooldown_s": round(applied, 1)}
 
     def _reserve(self, name: str, request: CompletionRequest) -> tuple[QuotaReservation | None, str | None]:
-        return self._quota.try_reserve(name, self._estimated_tokens(request, self._providers[name]))
+        return self._quota.try_reserve(
+            name, self._estimated_tokens(request, self._providers[name]),
+            user_key=effective_workload(request).user_key,
+        )
 
     @property
     def restricts_data_classification(self) -> bool:
@@ -716,6 +737,7 @@ class ProviderRouter:
                 "no provider satisfies this request's requirements",
                 decision,
                 [{"provider": n, "reason": r} for n, r in decision.excluded.items()],
+                quota=self._quota,
             )
 
         attempts: list[dict[str, Any]] = []
@@ -834,6 +856,7 @@ class ProviderRouter:
             f"all {len(attempts)} provider attempt(s) failed" + _attempt_summary(attempts),
             decision,
             attempts,
+            quota=self._quota,
         )
 
     def _note_fallback(self, failed_provider: str, attempts: Sequence[Mapping[str, Any]]) -> None:
@@ -871,6 +894,7 @@ class ProviderRouter:
                 "no provider satisfies this request's requirements",
                 decision,
                 [{"provider": n, "reason": r} for n, r in decision.excluded.items()],
+                quota=self._quota,
             )
 
         attempts: list[dict[str, Any]] = []
@@ -1050,6 +1074,7 @@ class ProviderRouter:
             + _attempt_summary(attempts),
             decision,
             attempts,
+            quota=self._quota,
         )
 
     # -- introspection and lifecycle ---------------------------------------------------

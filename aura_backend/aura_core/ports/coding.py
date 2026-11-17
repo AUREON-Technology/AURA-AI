@@ -13,10 +13,11 @@ from datetime import datetime
 from typing import Any, AsyncIterator, Mapping, Protocol, Sequence, runtime_checkable
 
 from ..domain.agent_runs import AgentRun, AgentStep
-from ..domain.engineering import AgentWorkspace, EngineerRun
+from ..domain.engineering import AgentWorkspace, EngineerConsent, EngineerRun
 from ..domain.identifiers import AgentRunId, UserId, WorkspaceId
 
 __all__ = [
+    "EngineerConsentStore",
     "McpToolDescriptor",
     "McpClient",
     "RepoFile",
@@ -340,6 +341,31 @@ class StreamingSandboxRunner(Protocol):
     def run_streaming(
         self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float
     ) -> AsyncIterator[SandboxOutputEvent]:
+        ...
+
+
+@runtime_checkable
+class EngineerConsentStore(Protocol):
+    """Who agreed to the Engineer's Anthropic notice, and when (module readiness D-03, WP1).
+
+    Owner-scoped by construction: every method takes the ``user_id`` it acts on. Read on every
+    Engineer turn, so an adapter answers from one indexed row.
+    """
+
+    async def get(self, user_id: UserId) -> EngineerConsent | None:
+        """The person's latest answer, withdrawn or not; ``None`` if they never answered."""
+        ...
+
+    async def accept(self, user_id: UserId, notice_version: str, *, at: datetime) -> EngineerConsent:
+        """Record agreement to ``notice_version``, replacing any earlier answer."""
+        ...
+
+    async def withdraw(self, user_id: UserId, *, at: datetime) -> EngineerConsent | None:
+        """Mark the answer withdrawn (kept on record). ``None`` if there was none."""
+        ...
+
+    async def delete_for_owner(self, user_id: UserId) -> int:
+        """Erase the row entirely (account erasure). Returns rows removed."""
         ...
 
 

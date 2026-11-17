@@ -34,7 +34,9 @@ from ..domain.errors import (
 from ..domain.caller_context import MAX_CALLER_CONTEXT, CallerContext
 from ..domain.connectors import CONNECTOR_ID_PATTERN, Credential
 from ..domain.identifiers import CorrelationId, DocumentId, SessionId, UserId
-from ..domain.llm import RoutingPolicy
+from ..domain.engineering import ENGINEER_CONSENT_NOTICE_VERSION
+from ..domain.llm import RoutingPolicy, WorkloadClass
+from ..llm.workload import workload_class_for_turn
 from ..domain.memory import MemoryKind, MemoryQuery
 from ..domain.output_schema import check_output_schema
 from ..domain.reasoning import ReasoningStrategy
@@ -618,6 +620,21 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 # F-04: a confirmation naming no pending call this caller may resume. One-shot,
                 # so not retryable as sent -- the turn has to be asked again.
                 status = 409
+            if result.telemetry.error_kind in ("consent_required", "user_quota_exhausted"):
+                # D-03 / D-05: refused before anything was sent. Neither clears by retrying the
+                # same request -- one needs the person to agree in the app, the other the next
+                # UTC day (details.reset_at) -- so neither is offered as retryable.
+                error_status = {"consent_required": 403, "user_quota_exhausted": 429}
+                return JSONResponse(
+                    status_code=error_status[result.telemetry.error_kind],
+                    content={
+                        "error": result.telemetry.error_kind,
+                        "message": "The turn did not run.",
+                        "retryable": False,
+                        "details": dict(result.error_details or {}),
+                        "correlation_id": result.telemetry.correlation_id.value,
+                    },
+                )
             # Admission refusals (P2.4) carry a Retry-After: 503 for a saturated pool, 429 for
             # a user over their concurrent-generation quota (outcome rate_limited above).
             retry_after = result.retry_after_s
@@ -1406,9 +1423,19 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             }
         )
 
+    async def _engineer_consent_current(caller: Principal) -> bool:
+        store = getattr(container, "engineer_consent", None)
+        if store is None:
+            return True
+        consent = await store.get(caller.user_id)
+        return consent is not None and consent.is_current(ENGINEER_CONSENT_NOTICE_VERSION)
+
     @router.get("/agents")
     async def list_agents(caller: Principal = Depends(principal)) -> JSONResponse:
         caps = frozenset(granted(caller))
+        # D-03: whether this caller must agree to the Anthropic notice before the persona runs,
+        # so a client can show the notice before the first send instead of after a refusal.
+        consent_current = await _engineer_consent_current(caller)
         return JSONResponse(
             content={
                 "agents": [
@@ -1432,6 +1459,10 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                         # at turn time (AgentRegistry.resolve), so surfacing it here lets a client
                         # grey it out instead of offering a choice that quietly does something else.
                         "usable": spec.required_capabilities.issubset(caps),
+                        "consent_required": (
+                            workload_class_for_turn("chat", spec.id) is WorkloadClass.ENGINEER
+                            and not consent_current
+                        ),
                     }
                     for spec in container.agents
                 ]
@@ -1491,6 +1522,68 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             raise HTTPException(status_code=404, detail="workspace not found")
         await container.workspace_manager.destroy(target)
         return JSONResponse(content={"deleted": workspace_id, "repo": target.repo})
+
+    class EngineerConsentRequest(BaseModel):
+        notice_version: str = Field(min_length=1, max_length=64)
+
+    def _consent_body(consent: Any) -> dict[str, Any]:
+        current = consent is not None and consent.is_current(ENGINEER_CONSENT_NOTICE_VERSION)
+        return {
+            "accepted": current,
+            "notice_version": consent.notice_version if current else None,
+            "current_version": ENGINEER_CONSENT_NOTICE_VERSION,
+            "accepted_at": consent.accepted_at.isoformat() if current else None,
+        }
+
+    def _consent_store_or_refuse(caller: Principal) -> Any:
+        if caller.is_service:
+            # A service key is not a person; it cannot agree to anything on someone's behalf.
+            raise HTTPException(
+                status_code=403,
+                detail=AuthorizationError("a service key cannot give consent").to_dict(),
+            )
+        store = getattr(container, "engineer_consent", None)
+        if store is None:
+            raise HTTPException(
+                status_code=503,
+                detail=DependencyUnavailableError("consent store is not configured").to_dict(),
+            )
+        return store
+
+    @router.get("/engineering/consent")
+    async def get_engineer_consent(caller: Principal = Depends(principal)) -> JSONResponse:
+        """Whether the caller agreed to the current Engineer notice (D-03, WP1)."""
+        store = _consent_store_or_refuse(caller)
+        return JSONResponse(content=_consent_body(await store.get(caller.user_id)))
+
+    @router.post("/engineering/consent")
+    async def accept_engineer_consent(
+        payload: EngineerConsentRequest, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Record agreement to the notice the client showed. Only the current version counts: an
+        out-of-date client must not record agreement to text the server no longer presents."""
+        store = _consent_store_or_refuse(caller)
+        if payload.notice_version != ENGINEER_CONSENT_NOTICE_VERSION:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "consent_version_mismatch",
+                    "message": "This app shows an older Engineer notice; update the app.",
+                    "retryable": False,
+                    "details": {"current_version": ENGINEER_CONSENT_NOTICE_VERSION},
+                },
+            )
+        consent = await store.accept(
+            caller.user_id, payload.notice_version, at=container.clock.now()
+        )
+        return JSONResponse(content=_consent_body(consent))
+
+    @router.delete("/engineering/consent")
+    async def withdraw_engineer_consent(caller: Principal = Depends(principal)) -> JSONResponse:
+        """Withdraw agreement. Idempotent; the next Engineer turn is refused until agreed again."""
+        store = _consent_store_or_refuse(caller)
+        consent = await store.withdraw(caller.user_id, at=container.clock.now())
+        return JSONResponse(content=_consent_body(consent))
 
     @router.get("/engineering/runs")
     async def list_engineer_runs(

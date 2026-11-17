@@ -316,6 +316,10 @@ async def _erase_core(
     await step("personal_os_records", personal_os)
     await step("conversations", conversations)
     await step("telemetry_turns", lambda: container.telemetry_sink.purge_sessions(conversation_ids))
+    consent_store = getattr(container, "engineer_consent", None)
+    if consent_store is not None:
+        # D-03: the record of agreeing to send code to Anthropic is personal data too.
+        await step("engineer_consent", lambda: consent_store.delete_for_owner(owner_id))
     await step("audit_events_pseudonymised", audit_actor)
     return counts, failed
 

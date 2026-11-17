@@ -118,3 +118,36 @@ Built and tested with no network:
 **Not proven:** no call has reached Anthropic's API from a deployed gateway. Proof is one
 complex turn on the live target that `/api/v3/chat` attributes to the Claude provider, with the
 audit record present, plus one everyday turn that is still answered locally.
+
+## Amendment 2026-11-17: Claude for the Engineer, behind consent and a fence
+
+Owner decision D-02 (`docs/module-readiness/engineer-agent/desktop-github/2026-11-17/`) serves
+Engineer turns from a Claude slot. Every Engineer turn starts SENSITIVE (`kernel.py`
+`_baseline_classification`), so §2's `internal` default would refuse all of them. The slot is
+therefore raised to `MAX_DATA_CLASSIFICATION=sensitive`, which this ADR's §2 allows with a boot
+warning. Three things keep that from becoming "Anthropic sees everything sensitive":
+
+1. **A workload fence (WP6a).** `AURA_PROVIDER_<NAME>_WORKLOADS=engineer` excludes the slot from
+   every other workload, including an unhinted generation (`DEFAULT_WORKLOAD` is INTERACTIVE with
+   no pool, which pool tiering alone would not exclude). The router reports
+   `workload_not_allowed`. A sensitive Claude slot with no fence logs a boot warning.
+2. **Consent (WP1, D-03).** The kernel refuses an Engineer turn (`consent_required`, 403, not
+   retryable) unless the person has a current, server-held agreement to the notice version the
+   server presents (`ENGINEER_CONSENT_NOTICE_VERSION`). The check sits where the persona is
+   resolved, after an approval resume restores the held turn's persona, and delegation runs the
+   kernel again, so no path reaches the fenced slot without it. `GET/POST/DELETE
+   /api/v3/engineering/consent`; table `aura_engineer_consents` (migration `0022`); erased with
+   the account.
+3. **A per-user daily allowance (WP2, D-05).** `AURA_PROVIDER_<NAME>_USER_TPD` caps the tokens one
+   person may spend on the slot per UTC day, shared across workers through the cache's atomic
+   `incr`. Over it, the turn fails with `user_quota_exhausted` (429, not retryable,
+   `details.reset_at`) before anything is sent. The provider-wide `TPD` stays the hard ceiling.
+
+Unchanged from §2: no images, third-party audit records, never `is_local`. Changed from the
+Context above: Claude is no longer only for "complex requests"; for the Engineer it is the
+serving model, and ADR-030 §8's "sensitive content stays on self-hosted models" no longer holds
+for Engineer turns once the slot exists.
+
+**Not proven.** No Engineer turn has reached Anthropic from a deployed gateway; WP6 configures
+the slot only after WP1, WP2 and WP6a are deployed. The notice text (version `2026-11-17`) is
+awaiting the owner's review against Anthropic's data terms (open item O-03).
