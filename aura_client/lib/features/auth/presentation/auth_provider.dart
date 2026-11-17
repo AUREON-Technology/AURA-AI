@@ -8,6 +8,7 @@ import 'package:aura_client/core/auth/desktop_oauth_client.dart';
 import 'package:aura_client/core/auth/platform_login_support.dart';
 import 'package:aura_client/core/auth/sign_in_refused.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
+import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/config/config.dart';
 import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/security/aura_secure_storage.dart';
@@ -197,9 +198,13 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
   Future<void> signInWithDesktopOAuth() async {
     state = const AsyncValue.loading();
     try {
+      // The code exchange runs on the backend (it holds the OAuth client secret Google demands
+      // and this binary must not carry): same base URL every other v3 call uses.
+      final backendUrl = ref.read(backendUrlProvider);
       final oauthResult = await signInWithGoogleLoopback(
         clientId: AppConfig.googleDesktopClientId,
         clientSecret: AppConfig.googleDesktopClientSecret,
+        backendExchangeEndpoint: Uri.parse('$backendUrl/api/v3/auth/desktop/exchange'),
       );
       final tokens = ref.read(tokenManagerProvider);
       final deviceToken = await tokens.exchangeDesktopLogin(

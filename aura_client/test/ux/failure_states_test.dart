@@ -11,6 +11,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:aura_client/core/auth/desktop_oauth_client.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/network/aura_api_error.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
@@ -73,6 +74,20 @@ void main() {
       expect(failure.kind, AuraFailureKind.unknown);
       expect(failure.canRetry, isTrue);
       expect(failure.detail, contains('boom'));
+    });
+
+    // Found live: desktop sign-in completed in the browser, then failed in the code exchange,
+    // and the screen said only "could not classify" -- indistinguishable from a crash, with the
+    // real reason (Google wanting a client secret) thrown away. The flow's own failures carry a
+    // message written to be read, so it has to reach the person.
+    test('a desktop sign-in failure shows its own reason, not the generic copy', () {
+      final failure = AuraFailure.from(
+        DesktopOAuthCancelledException('Desktop sign-in is not configured on this server.'),
+      );
+      expect(failure.title, "Couldn't finish signing in");
+      expect(failure.message, 'Desktop sign-in is not configured on this server.');
+      expect(failure.message, isNot(contains('could not classify')));
+      expect(failure.canRetry, isTrue);
     });
   });
 
