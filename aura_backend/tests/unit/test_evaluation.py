@@ -92,6 +92,37 @@ class TestMetricDefinitions:
         """Two relevant documents but only one retrieval slot is a perfect score, not 0.5."""
         assert _ndcg(["a"], {"a", "b"}) == pytest.approx(1.0)
 
+    def test_ndcg_counts_a_relevant_document_once_however_many_chunks_return(self) -> None:
+        """``retrieved`` holds one document id per *chunk*; relevance is per *document*.
+
+        Three chunks of the one relevant document used to add three gains against an ideal of one
+        (1 + 1/log2(3) + 1/log2(4) = 2.13), which is how a threshold-0 run reported nDCG 1.19.
+        """
+        assert _ndcg(["a", "a", "a"], {"a"}) == pytest.approx(1.0)
+        assert _ndcg(["a", "a", "a", "x", "y"], {"a"}) == pytest.approx(1.0)
+
+    def test_ndcg_later_chunks_of_a_found_document_neither_add_nor_subtract(self) -> None:
+        """A repeat occupies its slot without gain, so the next relevant document keeps its rank."""
+        import math
+
+        score = _ndcg(["a", "a", "b"], {"a", "b"})
+        expected = (1.0 + 1.0 / math.log2(4)) / (1.0 + 1.0 / math.log2(3))
+        assert score == pytest.approx(expected)
+        assert score < 1.0
+
+    @pytest.mark.parametrize(
+        "retrieved, relevant",
+        [
+            (["a", "a"], {"a"}),
+            (["a", "b", "a", "b", "a"], {"a", "b"}),
+            (["x", "a", "a", "a", "a"], {"a"}),
+            (["a", "b", "c", "a", "b"], {"a", "b", "c", "d"}),
+            (["b", "b", "b", "b", "b"], {"a", "b"}),
+        ],
+    )
+    def test_ndcg_never_exceeds_one(self, retrieved, relevant) -> None:
+        assert 0.0 <= _ndcg(retrieved, relevant) <= 1.0
+
     def test_token_f1_is_multiset_aware(self) -> None:
         assert _token_f1("21 days of annual leave", "21 days of annual leave") == pytest.approx(1.0)
         assert _token_f1("", "anything") == 0.0
@@ -122,6 +153,38 @@ class TestRetrievalEvaluator:
         assert result.mean("recall_at_k") == pytest.approx(1.0)
         assert "mrr" in result.metrics()
         assert result.duration_ms >= 0.0
+
+    async def test_several_chunks_of_one_relevant_document_keep_ndcg_at_most_one(
+        self, knowledge, user
+    ) -> None:
+        """The case that reported nDCG > 1: one relevant document, many of its chunks returned."""
+        paragraphs = [
+            f"Section {n}. Annual leave days accrue monthly; annual leave days carry over once. "
+            f"Clause {n} repeats that annual leave days are approved by a manager."
+            for n in range(1, 61)
+        ]
+        await knowledge.ingest(
+            content="\n\n".join(paragraphs), title="Leave policy",
+            document_id=DocumentId("leave-policy"), owner_id=user,
+        )
+        suite = EvalSuite(
+            name="multi-chunk",
+            cases=(
+                EvalCase(
+                    id="leave", query="annual leave days",
+                    relevant_documents=("leave-policy",), owner_id=str(user),
+                ),
+            ),
+        )
+        retrieval = await knowledge.retrieve("annual leave days", owner_id=user, limit=5)
+        returned = [c.chunk.document_id.value for c in retrieval.chunks]
+        # The precondition this test exists for: several chunks of the one document came back.
+        assert returned.count("leave-policy") >= 2, returned
+
+        result = await RetrievalEvaluator(knowledge, k=5).run(suite)
+
+        assert result.mean("ndcg") <= 1.0
+        assert result.mean("ndcg") == pytest.approx(1.0)
 
     async def test_a_case_with_no_relevant_documents_asserts_silence(
         self, knowledge, user, handbook

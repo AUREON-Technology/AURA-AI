@@ -57,23 +57,69 @@ class _RecordingRemoteDeletes extends RemoteDeletes {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  group('Desktop IDE preference (ADR-015: no forced redirect)', () {
-    Future<String?> redirect(String location, {required bool prefersIde}) {
+  group('Landing and reachable screens per build', () {
+    Future<String?> redirect(String location, {required bool desktop}) {
       return resolveAppRedirect(
         isLoggedIn: true,
         onboarded: true,
         location: location,
-        prefersDesktopIde: () async => prefersIde,
+        desktop: desktop,
       );
     }
 
-    test('/today stays /today with the IDE preference on', () async {
-      expect(await redirect('/today', prefersIde: true), isNull);
+    test('mobile: Today and Life Hub are hidden and land on Copilot', () async {
+      expect(await redirect('/today', desktop: false), '/chat');
+      expect(await redirect('/life', desktop: false), '/chat');
     });
 
-    test('the preference still picks where AURA lands after sign-in', () async {
-      expect(await redirect('/login', prefersIde: true), '/ide');
-      expect(await redirect('/login', prefersIde: false), '/today');
+    test('mobile: the IDE is not shown', () async {
+      expect(await redirect('/ide', desktop: false), '/chat');
+    });
+
+    test('mobile: Copilot, Engineer, You and the other screens stay reachable', () async {
+      for (final location in [
+        '/chat',
+        '/engineer-history',
+        '/github-connect',
+        '/engineer-daemon',
+        '/you',
+        '/knowledge',
+      ]) {
+        expect(await redirect(location, desktop: false), isNull, reason: location);
+      }
+    });
+
+    test('desktop: the IDE, You and its own settings are reachable', () async {
+      for (final location in ['/ide', '/ide/workspace', '/you', '/appearance']) {
+        expect(await redirect(location, desktop: true), isNull, reason: location);
+      }
+    });
+
+    test('desktop: every other screen goes to the IDE', () async {
+      for (final location in ['/chat', '/engineer-history', '/life', '/knowledge']) {
+        expect(await redirect(location, desktop: true), '/ide', reason: location);
+      }
+    });
+
+    test('sign-in lands on the platform home', () async {
+      expect(
+        await resolveAppRedirect(
+          isLoggedIn: true,
+          onboarded: true,
+          location: '/login',
+          desktop: true,
+        ),
+        '/ide',
+      );
+      expect(
+        await resolveAppRedirect(
+          isLoggedIn: true,
+          onboarded: true,
+          location: '/login',
+          desktop: false,
+        ),
+        '/chat',
+      );
     });
 
     test('signed out still goes to login', () async {
@@ -81,8 +127,8 @@ void main() {
         await resolveAppRedirect(
           isLoggedIn: false,
           onboarded: true,
-          location: '/today',
-          prefersDesktopIde: () async => true,
+          location: '/chat',
+          desktop: true,
         ),
         '/login',
       );

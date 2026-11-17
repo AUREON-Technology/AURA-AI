@@ -23,6 +23,9 @@ Qdrant v1.12.4 (with an API key), with two local folders standing in for B2 and 
 - `backup-fetch.sh` fetched the set from the R2 copy alone;
 - `restore-drill.sh` with **key B alone** restored the table and both of its rows;
 - with one remote read-only: exit 1, both errors logged, no heartbeat.
+- re-run against **Postgres 18.7** (production reports 18.6) with the image at its default
+  `PG_MAJOR=18`: dumped, both copies verified, and drilled with key B on `postgres:18-alpine`
+  (both rows back). The old 16 drill failed on that set, which is why the drill now uses 18.
 
 Still unproven, because it needs the real services: Railway's Postgres and Redis, Qdrant Cloud,
 and real B2/R2 buckets.
@@ -51,7 +54,7 @@ them if yours are named differently.
 
 | Variable | Value | Secret |
 |---|---|---|
-| `PG_MAJOR` | Postgres server **major** version, e.g. `16`. Must be ≥ the server's: `pg_dump` refuses a newer server. Find it with `SHOW server_version;` | no |
+| `PG_MAJOR` | Leave unset: the image defaults to `18`, matching production (`18.6`, owner, 2026-11-17). Must be ≥ the server's major version, because `pg_dump` refuses a newer server; set it **before** Railway's Postgres is upgraded to 19. Check with `SHOW server_version;` | no |
 | `BACKUP_DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (the private URL) | yes |
 | `BACKUP_REDIS_URL` | `${{Redis.REDIS_URL}}` | yes |
 | `QDRANT_URL` | the Qdrant Cloud cluster URL, e.g. `https://xyz.cloud.qdrant.io:6333` (same as the app's `AURA_QDRANT_URL`) | no |
@@ -102,15 +105,17 @@ fetched=$(RCLONE_CONFIG_FILE=/path/to/rclone.conf \
 BACKUP_AGE_IDENTITY_FILE=/path/to/aura-backup-B.agekey ./deploy/scripts/restore-drill.sh "$fetched"
 ```
 
-Repeat with the B2 target and key A. `restore-drill.sh` restores into a throwaway Postgres, never
-into production.
+Repeat with the B2 target and key A. `restore-drill.sh` restores into a throwaway Postgres
+(`postgres:18-alpine` by default, override with `DRILL_PG_IMAGE`), never into production. Its
+Postgres must be at least as new as the dump's `pg_dump`.
 
 ## 6. Real restore into Railway
 
 This is destructive, so practise with the drill first. Railway's Postgres service exposes `PGHOST`, `PGPORT`,
 `PGUSER`, `PGPASSWORD` and `PGDATABASE`. With those set to the target database (its public
 proxy values, when restoring from outside Railway), run `restore.sh` on the fetched set with one
-private key, from a Postgres client of the same major version:
+private key, from a Postgres **18** client (the backup image built from `railway.Dockerfile` is
+one). An older client cannot read the archive: `pg_restore: error: unsupported version (1.16) in file header`.
 
 ```bash
 BACKUP_AGE_IDENTITY_FILE=/path/to/aura-backup-A.agekey ./deploy/scripts/restore.sh "$fetched"
