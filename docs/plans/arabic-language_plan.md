@@ -456,3 +456,55 @@ Known costs:
 
 On the CPU tier, both leave Arabic turns less room for retrieved context than English ones.
 That is the honest price of counting Arabic at all; before, it overflowed silently.
+
+---
+
+## Stage 2: as built (2026-11-17)
+
+**Evidence: BUILT and TESTED locally.**
+- `flutter analyze`: clean.
+- `flutter test`: 726 passed, 4 skipped, no failures. `main` has 2 failures from the hard-coded text ratchet; this branch has none.
+- Not CI-run (CB-44) and not checked on a device.
+- Every Arabic string is a draft to be reviewed by a native speaker (decision 8).
+
+What changed:
+- **Language choice:**
+  - `core/locale/app_language.dart` stores System / English / العربية the same way as the theme mode.
+  - Settings → Appearance has a Language section. Each language is written in its own script.
+  - The choice sets `MaterialApp.locale`, `Intl.defaultLocale`, the web page's `<html lang>`, and `X-Client-Language` (`ClientLanguage.override`).
+- **Strings:**
+  - 1,131 keys in `app_en.arb`, every one translated in `app_ar.arb`.
+  - Arabic plurals use the six ICU forms.
+  - `currentL10n` serves code that has no `BuildContext`, such as `AuraFailure`, notifiers and services.
+  - Hard-coded `Text('...')` literals under `lib/features` went from 209 to 28, and the ratchet was lowered to 28. The 28 left are data interpolation.
+- **Kept in English on purpose:**
+  - Program output and logs.
+  - Stored markers that the code matches, such as the connection-error prefix and the "feature unavailable" row text. These are displayed translated.
+  - Sync log lines whose words drive icon choice.
+  - Data values and brand names.
+  - Git and debugger vocabulary (decision 6).
+- **Digits and formatting:**
+  - Arabic is `ar` with no region, so `intl` uses Western digits (decision 7). `ar_EG` would switch to ٠-٩.
+  - Fixed English date patterns were replaced with locale skeletons.
+  - The calendar starts the week on the locale's first day (Saturday in Arabic), with localized day names.
+  - `relativeDay()` replaces the hand-built "Today / Yesterday / N days ago".
+  - Currency is formatted with `en_US` everywhere (decision 15). Without it, `simpleCurrency` prints E£ under `ar`.
+- **Font:** Cairo (OFL, four weights, about 360 KB) is bundled and set as the Arabic fallback in both themes.
+- **Direction:**
+  - `LtrContent` pins left-to-right on the terminal, editor, output, debug console, sandbox diff, file and code views, and on fenced code inside chat messages. Chat splits closed code fences out of the markdown.
+  - Chat messages and the composer follow their own first strong letter (`directionOfText`).
+- **Platforms:**
+  - iOS and macOS: `CFBundleLocalizations` and `knownRegions` include `ar`.
+  - Android: `supportsRtl` and `locales_config.xml` (Android 13 per-app language).
+  - Web: `<html lang>` is kept in step with the app language.
+
+Deviations from the plan:
+- **iOS and macOS permission prompts are still English.** Translating them needs `ar.lproj/InfoPlist.strings` registered as variant-group resources in `project.pbxproj`. That should be done in Xcode, because a hand-edited pbxproj that nobody can build here risks breaking the iOS build.
+- **Live voice still sends `language: 'en'`.** Production speech-to-text is `tiny.en` and rejects `ar` with `language_unsupported`. Sending the app language now would break live voice for every Arabic-UI user. The switch moves to stage 4, together with Whisper `small`.
+- **The web page gets `lang`, not `dir`.** Flutter does its own right-to-left layout, and setting `dir` on the page could move the engine's semantics overlay.
+
+Worth a native-speaker review:
+- Memory-kind names (`memoryKind*`).
+- Plural forms in commit and file counts.
+- The "Discard" wording, which is «مسح» in one place and «تجاهل» in another.
+- The persona names.
