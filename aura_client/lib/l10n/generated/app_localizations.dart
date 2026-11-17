@@ -6887,6 +6887,204 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Session Operations'**
   String get authSessionOperations;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code command_hard_denied)
+  ///
+  /// In en, this message translates to:
+  /// **'This command is blocked in every workspace because it could cause serious damage.'**
+  String get hostdCodeCommandHardDenied;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code destructive_path_outside_workspace)
+  ///
+  /// In en, this message translates to:
+  /// **'This command deletes or changes files outside the workspace, so it was refused, even though the workspace is trusted.'**
+  String get hostdCodeDestructivePathOutsideWorkspace;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code destructive_after_leaving_workspace)
+  ///
+  /// In en, this message translates to:
+  /// **'This command leaves the workspace folder and then deletes or changes files, so it was refused, even though the workspace is trusted.'**
+  String get hostdCodeDestructiveAfterLeavingWorkspace;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code untrusted_shell_syntax)
+  ///
+  /// In en, this message translates to:
+  /// **'An untrusted workspace only runs one simple read-only command: no chaining (&&, ;, |), redirection or substitution.'**
+  String get hostdCodeUntrustedShellSyntax;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code command_needs_approval)
+  ///
+  /// In en, this message translates to:
+  /// **'This workspace isn\'t trusted, so this command is waiting for your approval.'**
+  String get hostdCodeCommandNeedsApproval;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code command_not_allowlisted)
+  ///
+  /// In en, this message translates to:
+  /// **'This workspace isn\'t trusted and this command isn\'t a read-only one. Trust the workspace, or open the Desktop IDE to approve it.'**
+  String get hostdCodeCommandNotAllowlisted;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code write_needs_approval)
+  ///
+  /// In en, this message translates to:
+  /// **'This workspace isn\'t trusted, so this file change is waiting for your approval.'**
+  String get hostdCodeWriteNeedsApproval;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code protected_git_hooks)
+  ///
+  /// In en, this message translates to:
+  /// **'Writing under .git/hooks is never allowed: a hook is a program Git runs on the next commit, checkout or push.'**
+  String get hostdCodeProtectedGitHooks;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code protected_git_config)
+  ///
+  /// In en, this message translates to:
+  /// **'Writing to .git/config is never allowed: it can make Git run another program.'**
+  String get hostdCodeProtectedGitConfig;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code root_not_a_directory)
+  ///
+  /// In en, this message translates to:
+  /// **'That folder doesn\'t exist, or it isn\'t a folder.'**
+  String get hostdCodeRootNotADirectory;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code root_is_filesystem_root)
+  ///
+  /// In en, this message translates to:
+  /// **'A whole drive can\'t be a workspace. Choose a project folder inside it instead.'**
+  String get hostdCodeRootIsFilesystemRoot;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code root_denylisted)
+  ///
+  /// In en, this message translates to:
+  /// **'This system folder can never be a workspace. Choose a project folder inside it instead.'**
+  String get hostdCodeRootDenylisted;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code outside_workspace)
+  ///
+  /// In en, this message translates to:
+  /// **'That path is outside the workspace. Add it as its own workspace to use it.'**
+  String get hostdCodeOutsideWorkspace;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code unauthorized)
+  ///
+  /// In en, this message translates to:
+  /// **'The Host Daemon refused the request because its access key didn\'t match. Restart the Host Daemon and try again.'**
+  String get hostdCodeUnauthorized;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code internal_error)
+  ///
+  /// In en, this message translates to:
+  /// **'The Host Daemon ran into a problem: {detail}'**
+  String hostdCodeInternalError(String detail);
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code missing_parameter)
+  ///
+  /// In en, this message translates to:
+  /// **'The request to the Host Daemon was missing something it needs. Update the app and try again.'**
+  String get hostdCodeMissingParameter;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code unknown_action)
+  ///
+  /// In en, this message translates to:
+  /// **'The Host Daemon doesn\'t know this action. It may be out of date.'**
+  String get hostdCodeUnknownAction;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code root_not_granted)
+  ///
+  /// In en, this message translates to:
+  /// **'This folder isn\'t one of your workspaces anymore. Add it again and try again.'**
+  String get hostdCodeRootNotGranted;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code path_not_found)
+  ///
+  /// In en, this message translates to:
+  /// **'That file or folder doesn\'t exist.'**
+  String get hostdCodePathNotFound;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code file_not_utf8)
+  ///
+  /// In en, this message translates to:
+  /// **'This file isn\'t text, so it can\'t be shown here.'**
+  String get hostdCodeFileNotUtf8;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code approval_not_found)
+  ///
+  /// In en, this message translates to:
+  /// **'This request was already answered or has expired.'**
+  String get hostdCodeApprovalNotFound;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code not_a_git_repository)
+  ///
+  /// In en, this message translates to:
+  /// **'This folder isn\'t a Git repository.'**
+  String get hostdCodeNotAGitRepository;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code git_output_not_utf8)
+  ///
+  /// In en, this message translates to:
+  /// **'Git returned something that isn\'t text, so it can\'t be shown here.'**
+  String get hostdCodeGitOutputNotUtf8;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code git_command_failed)
+  ///
+  /// In en, this message translates to:
+  /// **'Git failed: {detail}'**
+  String hostdCodeGitCommandFailed(String detail);
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code unknown_diagnostics_tool)
+  ///
+  /// In en, this message translates to:
+  /// **'The Host Daemon doesn\'t know this diagnostics tool.'**
+  String get hostdCodeUnknownDiagnosticsTool;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code task_not_found)
+  ///
+  /// In en, this message translates to:
+  /// **'This agent task\'s workspace no longer exists.'**
+  String get hostdCodeTaskNotFound;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code pairing_failed)
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t start pairing with the server: {detail}'**
+  String hostdCodePairingFailed(String detail);
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code no_pairing_session)
+  ///
+  /// In en, this message translates to:
+  /// **'No pairing is in progress. Start pairing again.'**
+  String get hostdCodeNoPairingSession;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code pairing_ended)
+  ///
+  /// In en, this message translates to:
+  /// **'Pairing ended before it was approved.'**
+  String get hostdCodePairingEnded;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code workspace_not_trusted)
+  ///
+  /// In en, this message translates to:
+  /// **'This workspace isn\'t trusted. Trust it first to open a terminal or debugger here.'**
+  String get hostdCodeWorkspaceNotTrusted;
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code terminal_start_failed)
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t start the terminal: {detail}'**
+  String hostdCodeTerminalStartFailed(String detail);
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code debug_start_failed)
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t start the debugger (debugpy): {detail}'**
+  String hostdCodeDebugStartFailed(String detail);
+
+  /// Host Daemon refusal/error shown in the desktop app (daemon code debug_unreachable)
+  ///
+  /// In en, this message translates to:
+  /// **'The debugger (debugpy) started but couldn\'t be reached: {detail}'**
+  String hostdCodeDebugUnreachable(String detail);
 }
 
 class _AppLocalizationsDelegate

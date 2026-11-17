@@ -16,6 +16,8 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import 'error_codes.dart';
+
 /// Absolute paths that can never be granted as a workspace root, regardless of what the user
 /// asks for. This is a hard floor under the user's own consent -- granting one of these as a root
 /// would make "contained to the workspace" meaningless, so the daemon refuses at grant time
@@ -102,6 +104,9 @@ class ContainmentViolation implements Exception {
   ContainmentViolation(this.message);
   final String message;
 
+  /// Stable machine code for [message] (`error_codes.dart`).
+  String get code => HostdErrorCode.outsideWorkspace;
+
   @override
   String toString() => 'ContainmentViolation: $message';
 }
@@ -110,8 +115,13 @@ class ContainmentViolation implements Exception {
 /// to be a workspace root (does not exist, is not a directory, or resolves to a denylisted path
 /// through a symlink).
 class InvalidRootError implements Exception {
-  InvalidRootError(this.message);
+  InvalidRootError(this.message, {required this.code});
+
+  /// English, for the CLI and for apps that predate [code].
   final String message;
+
+  /// Stable machine code for [message] (`error_codes.dart`), which an app translates.
+  final String code;
 
   @override
   String toString() => 'InvalidRootError: $message';
@@ -172,16 +182,23 @@ class WorkspaceRoots {
   /// denylisted (directly or through a symlink), does not exist, or is not a directory.
   WorkspaceRoot addRoot(String rawPath, {bool trusted = false}) {
     if (!Directory(rawPath).existsSync()) {
-      throw InvalidRootError('$rawPath does not exist or is not a directory');
+      throw InvalidRootError(
+        '$rawPath does not exist or is not a directory',
+        code: HostdErrorCode.rootNotADirectory,
+      );
     }
     final canonical = File(rawPath).resolveSymbolicLinksSync();
     if (!Directory(canonical).existsSync()) {
-      throw InvalidRootError('$rawPath does not resolve to a directory');
+      throw InvalidRootError(
+        '$rawPath does not resolve to a directory',
+        code: HostdErrorCode.rootNotADirectory,
+      );
     }
     if (isFilesystemRoot(canonical)) {
       throw InvalidRootError(
         '$rawPath resolves to $canonical, a filesystem root, which is on the denylist and can '
         'never be a workspace root -- grant a project folder inside it instead',
+        code: HostdErrorCode.rootIsFilesystemRoot,
       );
     }
     final normalized = _normalizeForCompare(canonical);
@@ -190,6 +207,7 @@ class WorkspaceRoots {
         throw InvalidRootError(
           '$rawPath resolves to $canonical, which is on the denylist and can never be a '
           'workspace root -- grant a project folder inside it instead',
+          code: HostdErrorCode.rootDenylisted,
         );
       }
     }

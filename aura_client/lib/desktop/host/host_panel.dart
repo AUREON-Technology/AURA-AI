@@ -18,6 +18,7 @@ import 'package:http/http.dart' as http;
 import 'package:aura_client/core/auth/token_manager.dart';
 import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/hostd/hostd_error_codes.dart';
 import 'package:aura_client/core/hostd/hostd_error_messages.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart';
 import 'package:aura_client/core/hostd/hostd_supervisor.dart';
@@ -344,7 +345,9 @@ class _HostPanelState extends ConsumerState<HostPanel> {
         }
         if (statusValue != 'pending') {
           outcome = 'failed';
-          failureReason = status['reason'] as String? ?? statusValue;
+          // A newer daemon sends a `code` next to the English `reason` (hostd_error_codes.dart).
+          final rawReason = status['reason'] as String? ?? statusValue;
+          failureReason = rawReason == null ? null : hostdCodeMessage(status['code'] as String?, rawReason);
           break;
         }
       }

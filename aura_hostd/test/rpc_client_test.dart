@@ -11,6 +11,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:aura_hostd/src/containment.dart';
+import 'package:aura_hostd/src/error_codes.dart';
 import 'package:aura_hostd/src/rpc_client.dart';
 import 'package:aura_hostd/src/task_handler.dart';
 import 'package:test/test.dart';
@@ -194,6 +195,39 @@ void main() {
 
     expect(response['type'], 'error');
     expect(response['id'], 'w1');
+  });
+
+  test('a refused command carries its policy code next to the English message', () async {
+    final tempDir = Directory.systemTemp.createTempSync('aura_hostd_rpc_code_test_');
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+    final roots = WorkspaceRoots(const [])..addRoot(tempDir.path);
+    final client = HostAgentClient(
+      wsUrl: server.wsUrl,
+      authToken: 't',
+      taskHandler: TaskHandler(roots),
+      logger: (_) {},
+    );
+    unawaited(client.run());
+    addTearDown(client.stop);
+
+    final socket = await server.clientSocket;
+    final frames = StreamQueue(socket.map((m) => jsonDecode(m as String) as Map<String, dynamic>));
+    await frames.next; // auth frame
+
+    socket.add(jsonEncode({
+      'type': 'call',
+      'id': 'c1',
+      'method': 'run',
+      'params': {
+        'command': ['sh', '-c', 'rm -rf /'],
+        'cwd': roots.all.single.canonicalPath,
+      },
+    }));
+    final response = await frames.next;
+
+    expect(response['type'], 'error');
+    expect(response['message'], contains('command refused'));
+    expect(response['code'], HostdErrorCode.commandHardDenied);
   });
 
   test('a run call sends stream frames before the terminal result frame', () async {

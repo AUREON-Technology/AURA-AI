@@ -14,10 +14,17 @@ class HostdControlUnavailable implements Exception {
 }
 
 class HostdControlError implements Exception {
-  HostdControlError(this.statusCode, this.message);
+  HostdControlError(this.statusCode, this.message, {this.code});
 
   final int statusCode;
+
+  /// Text for a person, in the language on screen when the daemon sent a [code] this app knows;
+  /// otherwise the daemon's own English.
   final String message;
+
+  /// The daemon's stable machine code for this error (`hostd_error_codes.dart`), or null for a
+  /// daemon that predates codes.
+  final String? code;
 
   @override
   String toString() => 'HTTP $statusCode: $message';

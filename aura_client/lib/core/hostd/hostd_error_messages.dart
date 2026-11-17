@@ -12,10 +12,10 @@ import 'hostd_control_client.dart' show HostdControlError, HostdControlUnavailab
 
 String describeHostdError(Object error) {
   if (error is HostdControlError) {
-    // Already plain language for the cases hostd_control_client_io.dart itself enriches (e.g.
-    // the "no such endpoint" -> "may be out of date" hint); a daemon-reported business message
-    // (a containment refusal, a missing root) is written for a person too, so passing it through
-    // unchanged is correct, not a fallback.
+    // Already plain language: hostd_control_client_io.dart translates a daemon-reported message
+    // (a containment refusal, a missing root) by its `code` (hostd_error_codes.dart) into the
+    // language on screen, and keeps the daemon's English only for a daemon that predates codes
+    // or a code this app does not know yet.
     return error.message;
   }
   if (error is HostdControlUnavailable) {

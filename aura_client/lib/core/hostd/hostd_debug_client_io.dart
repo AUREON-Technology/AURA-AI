@@ -14,6 +14,7 @@ import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'hostd_control_client_io.dart' show discoverHostdControlEndpoint;
+import 'hostd_error_codes.dart';
 
 class HostdDebugUnavailable implements Exception {
   HostdDebugUnavailable(this.message);
@@ -120,7 +121,11 @@ class HostdDebugClient {
       case 'debugpy_disconnected':
         if (!_processExitCode.isClosed) _processExitCode.add(-1);
       case 'error':
-        final message = msg['message'] as String? ?? 'unknown debug error';
+        final message = hostdCodeMessage(
+          msg['code'] as String?,
+          msg['message'] as String? ?? 'unknown debug error',
+          detail: msg['detail'] as String?,
+        );
         if (!_errors.isClosed) _errors.add(message);
     }
   }

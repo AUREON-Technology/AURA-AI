@@ -14,6 +14,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'hostd_config_paths_io.dart';
+import 'hostd_error_codes.dart';
 
 /// Thrown when `aura_hostd` isn't reachable at all -- no control file, or nothing listening on
 /// the port it names (the daemon crashed or was killed without cleaning up after itself).
@@ -29,10 +30,17 @@ class HostdControlUnavailable implements Exception {
 /// Thrown when the control server answered but rejected the call (bad path, containment
 /// violation, pairing not started yet, ...).
 class HostdControlError implements Exception {
-  HostdControlError(this.statusCode, this.message);
+  HostdControlError(this.statusCode, this.message, {this.code});
 
   final int statusCode;
+
+  /// Text for a person, in the language on screen when the daemon sent a [code] this app knows;
+  /// otherwise the daemon's own English.
   final String message;
+
+  /// The daemon's stable machine code for this error (`hostd_error_codes.dart`), or null for a
+  /// daemon that predates codes.
+  final String? code;
 
   @override
   String toString() => 'HTTP $statusCode: $message';
@@ -129,7 +137,10 @@ class HostdControlClient {
           currentL10n.coreHostdOutOfDate,
         );
       }
-      throw HostdControlError(response.statusCode, message);
+      // Newer daemons send a stable `code` next to the English `error`; translate by it, and
+      // keep the English for an older daemon or a code this app does not know yet.
+      final code = decodedMap['code'] as String?;
+      throw HostdControlError(response.statusCode, hostdCodeMessage(code, message), code: code);
     }
     return decodedMap;
   }

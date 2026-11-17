@@ -4040,4 +4040,140 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get authSessionOperations => 'Session Operations';
+
+  @override
+  String get hostdCodeCommandHardDenied =>
+      'This command is blocked in every workspace because it could cause serious damage.';
+
+  @override
+  String get hostdCodeDestructivePathOutsideWorkspace =>
+      'This command deletes or changes files outside the workspace, so it was refused, even though the workspace is trusted.';
+
+  @override
+  String get hostdCodeDestructiveAfterLeavingWorkspace =>
+      'This command leaves the workspace folder and then deletes or changes files, so it was refused, even though the workspace is trusted.';
+
+  @override
+  String get hostdCodeUntrustedShellSyntax =>
+      'An untrusted workspace only runs one simple read-only command: no chaining (&&, ;, |), redirection or substitution.';
+
+  @override
+  String get hostdCodeCommandNeedsApproval =>
+      'This workspace isn\'t trusted, so this command is waiting for your approval.';
+
+  @override
+  String get hostdCodeCommandNotAllowlisted =>
+      'This workspace isn\'t trusted and this command isn\'t a read-only one. Trust the workspace, or open the Desktop IDE to approve it.';
+
+  @override
+  String get hostdCodeWriteNeedsApproval =>
+      'This workspace isn\'t trusted, so this file change is waiting for your approval.';
+
+  @override
+  String get hostdCodeProtectedGitHooks =>
+      'Writing under .git/hooks is never allowed: a hook is a program Git runs on the next commit, checkout or push.';
+
+  @override
+  String get hostdCodeProtectedGitConfig =>
+      'Writing to .git/config is never allowed: it can make Git run another program.';
+
+  @override
+  String get hostdCodeRootNotADirectory =>
+      'That folder doesn\'t exist, or it isn\'t a folder.';
+
+  @override
+  String get hostdCodeRootIsFilesystemRoot =>
+      'A whole drive can\'t be a workspace. Choose a project folder inside it instead.';
+
+  @override
+  String get hostdCodeRootDenylisted =>
+      'This system folder can never be a workspace. Choose a project folder inside it instead.';
+
+  @override
+  String get hostdCodeOutsideWorkspace =>
+      'That path is outside the workspace. Add it as its own workspace to use it.';
+
+  @override
+  String get hostdCodeUnauthorized =>
+      'The Host Daemon refused the request because its access key didn\'t match. Restart the Host Daemon and try again.';
+
+  @override
+  String hostdCodeInternalError(String detail) {
+    return 'The Host Daemon ran into a problem: $detail';
+  }
+
+  @override
+  String get hostdCodeMissingParameter =>
+      'The request to the Host Daemon was missing something it needs. Update the app and try again.';
+
+  @override
+  String get hostdCodeUnknownAction =>
+      'The Host Daemon doesn\'t know this action. It may be out of date.';
+
+  @override
+  String get hostdCodeRootNotGranted =>
+      'This folder isn\'t one of your workspaces anymore. Add it again and try again.';
+
+  @override
+  String get hostdCodePathNotFound => 'That file or folder doesn\'t exist.';
+
+  @override
+  String get hostdCodeFileNotUtf8 =>
+      'This file isn\'t text, so it can\'t be shown here.';
+
+  @override
+  String get hostdCodeApprovalNotFound =>
+      'This request was already answered or has expired.';
+
+  @override
+  String get hostdCodeNotAGitRepository =>
+      'This folder isn\'t a Git repository.';
+
+  @override
+  String get hostdCodeGitOutputNotUtf8 =>
+      'Git returned something that isn\'t text, so it can\'t be shown here.';
+
+  @override
+  String hostdCodeGitCommandFailed(String detail) {
+    return 'Git failed: $detail';
+  }
+
+  @override
+  String get hostdCodeUnknownDiagnosticsTool =>
+      'The Host Daemon doesn\'t know this diagnostics tool.';
+
+  @override
+  String get hostdCodeTaskNotFound =>
+      'This agent task\'s workspace no longer exists.';
+
+  @override
+  String hostdCodePairingFailed(String detail) {
+    return 'Couldn\'t start pairing with the server: $detail';
+  }
+
+  @override
+  String get hostdCodeNoPairingSession =>
+      'No pairing is in progress. Start pairing again.';
+
+  @override
+  String get hostdCodePairingEnded => 'Pairing ended before it was approved.';
+
+  @override
+  String get hostdCodeWorkspaceNotTrusted =>
+      'This workspace isn\'t trusted. Trust it first to open a terminal or debugger here.';
+
+  @override
+  String hostdCodeTerminalStartFailed(String detail) {
+    return 'Couldn\'t start the terminal: $detail';
+  }
+
+  @override
+  String hostdCodeDebugStartFailed(String detail) {
+    return 'Couldn\'t start the debugger (debugpy): $detail';
+  }
+
+  @override
+  String hostdCodeDebugUnreachable(String detail) {
+    return 'The debugger (debugpy) started but couldn\'t be reached: $detail';
+  }
 }

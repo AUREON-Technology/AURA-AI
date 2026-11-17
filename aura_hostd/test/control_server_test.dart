@@ -9,6 +9,7 @@ import 'dart:io';
 import 'package:aura_hostd/src/approval_queue.dart';
 import 'package:aura_hostd/src/config.dart';
 import 'package:aura_hostd/src/control_server.dart';
+import 'package:aura_hostd/src/error_codes.dart';
 import 'package:aura_hostd/src/isolated_task_registry.dart';
 import 'package:aura_hostd/src/debug_session_manager.dart';
 import 'package:aura_hostd/src/terminal_session_manager.dart';
@@ -234,6 +235,7 @@ void main() {
         await client.request('POST', '/roots', body: {'action': 'grant', 'path': denylisted});
     expect(status, 400);
     expect(body['error'], contains('denylist'));
+    expect(body['code'], HostdErrorCode.rootDenylisted);
   });
 
   test('GET /list returns entries inside the granted root', () async {
@@ -250,6 +252,7 @@ void main() {
     );
     expect(status, 403);
     expect(body['error'], contains('outside the granted workspace root'));
+    expect(body['code'], HostdErrorCode.outsideWorkspace);
   });
 
   test('GET /read returns file content inside the granted root', () async {
@@ -313,6 +316,7 @@ void main() {
         await client.request('POST', '/approvals/appr_does_not_exist/respond', body: {'approved': true});
     expect(status, 404);
     expect(body['error'], contains('no such pending approval'));
+    expect(body['code'], HostdErrorCode.approvalNotFound);
   });
 
   test('POST /approvals/<id>/respond is idempotent on an already-resolved id', () async {
@@ -350,6 +354,7 @@ void main() {
     final (status, body) = await client.request('GET', '/git/status?root=${Uri.encodeComponent(workspaceRoot)}');
     expect(status, 409);
     expect(body['error'], contains('not a git repository'));
+    expect(body['code'], HostdErrorCode.notAGitRepository);
   });
 
   test('GET /git/status reports a real change after init', () async {
@@ -471,6 +476,7 @@ void main() {
     final (status, body) = await client.request('GET', '/pair/status');
     expect(status, 409);
     expect(body['error'], contains('/pair/start'));
+    expect(body['code'], HostdErrorCode.noPairingSession);
   });
 
   test('GET /pair/status reports pending then approved, and calls onPaired on approval', () async {
@@ -541,6 +547,7 @@ void main() {
       final (status, body) = await client.request('GET', '/diagnostics/detect?root=/not/granted');
       expect(status, 404);
       expect(body['error'], contains('not a granted root'));
+      expect(body['code'], HostdErrorCode.rootNotGranted);
     });
 
     test('POST /diagnostics/run reports a real tool run', () async {
@@ -580,6 +587,7 @@ void main() {
       );
       expect(status, 400);
       expect(body['error'], contains('unknown diagnostics tool'));
+      expect(body['code'], HostdErrorCode.unknownDiagnosticsTool);
     });
 
     test('POST /diagnostics/run refuses an ungranted root', () async {
@@ -590,6 +598,7 @@ void main() {
       );
       expect(status, 404);
       expect(body['error'], contains('not a granted root'));
+      expect(body['code'], HostdErrorCode.rootNotGranted);
     });
   });
 
@@ -608,6 +617,7 @@ void main() {
       final decoded = jsonDecode(iterator.current as String) as Map<String, dynamic>;
       expect(decoded['type'], 'error');
       expect(decoded['message'], contains('not trusted'));
+      expect(decoded['code'], HostdErrorCode.workspaceNotTrusted);
     });
 
     test('start spawns a real debugpy process and tunnels DAP bytes both ways', () async {
@@ -740,6 +750,7 @@ void main() {
       );
       expect(status, 404);
       expect(body['error'], contains('no isolated workspace'));
+      expect(body['code'], HostdErrorCode.taskNotFound);
     });
 
     test('POST /git/merge-task merges the task branch into the main worktree, locally only',
@@ -827,6 +838,7 @@ void main() {
       final (status, body) = await client.request('POST', '/git/discard-task', body: {'task_key': 'nope'});
       expect(status, 404);
       expect(body['error'], contains('no isolated workspace'));
+      expect(body['code'], HostdErrorCode.taskNotFound);
     });
   });
 }

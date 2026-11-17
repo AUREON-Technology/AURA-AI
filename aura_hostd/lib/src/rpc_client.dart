@@ -17,6 +17,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'containment.dart';
 import 'task_handler.dart';
 
 typedef Logger = void Function(String message);
@@ -166,7 +167,18 @@ class HostAgentClient {
       final result = await _dispatch(socket, id, method, params);
       socket.add(jsonEncode({'type': 'result', 'id': id, 'result': result}));
     } catch (error) {
-      socket.add(jsonEncode({'type': 'error', 'id': id, 'message': error.toString()}));
+      // `code` is additive (`error_codes.dart`): the backend reads only `message`.
+      final code = switch (error) {
+        RpcError(code: final String code) => code,
+        ContainmentViolation() => error.code,
+        _ => null,
+      };
+      socket.add(jsonEncode({
+        'type': 'error',
+        'id': id,
+        'message': error.toString(),
+        if (code != null) 'code': code,
+      }));
     }
   }
 

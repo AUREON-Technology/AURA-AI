@@ -4076,4 +4076,139 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get authSessionOperations => 'إدارة الجلسة';
+
+  @override
+  String get hostdCodeCommandHardDenied =>
+      'الأمر ده ممنوع في أي مساحة شغل لأنه ممكن يعمل ضرر كبير.';
+
+  @override
+  String get hostdCodeDestructivePathOutsideWorkspace =>
+      'الأمر ده بيمسح أو بيغيّر ملفات برّه مساحة الشغل، علشان كده اترفض حتى لو مساحة الشغل موثوقة.';
+
+  @override
+  String get hostdCodeDestructiveAfterLeavingWorkspace =>
+      'الأمر ده بيخرج من فولدر مساحة الشغل وبعدين بيمسح أو بيغيّر ملفات، علشان كده اترفض حتى لو مساحة الشغل موثوقة.';
+
+  @override
+  String get hostdCodeUntrustedShellSyntax =>
+      'مساحة الشغل اللي مش موثوقة بتشغّل أمر واحد بسيط للقراية بس: من غير ربط أوامر (&&، ;، |) ولا redirection ولا substitution.';
+
+  @override
+  String get hostdCodeCommandNeedsApproval =>
+      'مساحة الشغل دي مش موثوقة، علشان كده الأمر ده مستني موافقتك.';
+
+  @override
+  String get hostdCodeCommandNotAllowlisted =>
+      'مساحة الشغل دي مش موثوقة والأمر ده مش أمر قراية بس. خلّي مساحة الشغل موثوقة، أو افتح الـ Desktop IDE علشان توافق عليه.';
+
+  @override
+  String get hostdCodeWriteNeedsApproval =>
+      'مساحة الشغل دي مش موثوقة، علشان كده تعديل الملف ده مستني موافقتك.';
+
+  @override
+  String get hostdCodeProtectedGitHooks =>
+      'الكتابة جوّه .git/hooks ممنوعة دايمًا: الـ hook برنامج Git بيشغّله مع أول Commit أو Checkout أو Push.';
+
+  @override
+  String get hostdCodeProtectedGitConfig =>
+      'الكتابة في .git/config ممنوعة دايمًا: ممكن تخلّي Git يشغّل برنامج تاني.';
+
+  @override
+  String get hostdCodeRootNotADirectory =>
+      'الفولدر ده مش موجود، أو مش فولدر أصلًا.';
+
+  @override
+  String get hostdCodeRootIsFilesystemRoot =>
+      'مينفعش درايف كامل يبقى مساحة شغل. اختار فولدر مشروع جوّاه.';
+
+  @override
+  String get hostdCodeRootDenylisted =>
+      'فولدر السيستم ده مينفعش يبقى مساحة شغل خالص. اختار فولدر مشروع جوّاه.';
+
+  @override
+  String get hostdCodeOutsideWorkspace =>
+      'المسار ده برّه مساحة الشغل. ضيفه كمساحة شغل لوحده علشان تستخدمه.';
+
+  @override
+  String get hostdCodeUnauthorized =>
+      'الـ Host Daemon رفض الطلب علشان مفتاح الوصول مش مطابق. شغّل الـ Host Daemon من الأول وجرّب تاني.';
+
+  @override
+  String hostdCodeInternalError(String detail) {
+    return 'الـ Host Daemon حصلت عنده مشكلة: $detail';
+  }
+
+  @override
+  String get hostdCodeMissingParameter =>
+      'الطلب اللي راح للـ Host Daemon كان ناقصه حاجة. حدّث التطبيق وجرّب تاني.';
+
+  @override
+  String get hostdCodeUnknownAction =>
+      'الـ Host Daemon مش عارف الإجراء ده. ممكن يكون قديم.';
+
+  @override
+  String get hostdCodeRootNotGranted =>
+      'الفولدر ده مبقاش من مساحات الشغل بتاعتك. ضيفه تاني وجرّب تاني.';
+
+  @override
+  String get hostdCodePathNotFound => 'الملف أو الفولدر ده مش موجود.';
+
+  @override
+  String get hostdCodeFileNotUtf8 =>
+      'الملف ده مش نص، علشان كده مينفعش يتعرض هنا.';
+
+  @override
+  String get hostdCodeApprovalNotFound =>
+      'الطلب ده اترد عليه قبل كده أو انتهت مدته.';
+
+  @override
+  String get hostdCodeNotAGitRepository => 'الفولدر ده مش ريبو Git.';
+
+  @override
+  String get hostdCodeGitOutputNotUtf8 =>
+      'Git رجّع حاجة مش نص، علشان كده مينفعش تتعرض هنا.';
+
+  @override
+  String hostdCodeGitCommandFailed(String detail) {
+    return 'Git فشل: $detail';
+  }
+
+  @override
+  String get hostdCodeUnknownDiagnosticsTool =>
+      'الـ Host Daemon مش عارف أداة الفحص دي.';
+
+  @override
+  String get hostdCodeTaskNotFound =>
+      'مساحة الشغل بتاعة مهمة المهندس دي مبقتش موجودة.';
+
+  @override
+  String hostdCodePairingFailed(String detail) {
+    return 'مقدرناش نبدأ الربط مع السيرفر: $detail';
+  }
+
+  @override
+  String get hostdCodeNoPairingSession =>
+      'مفيش ربط شغّال دلوقتي. ابدأ الربط من الأول.';
+
+  @override
+  String get hostdCodePairingEnded => 'الربط خلص قبل ما يتوافق عليه.';
+
+  @override
+  String get hostdCodeWorkspaceNotTrusted =>
+      'مساحة الشغل دي مش موثوقة. خلّيها موثوقة الأول علشان تفتح التيرمينال أو الـ Debugger هنا.';
+
+  @override
+  String hostdCodeTerminalStartFailed(String detail) {
+    return 'مقدرناش نشغّل التيرمينال: $detail';
+  }
+
+  @override
+  String hostdCodeDebugStartFailed(String detail) {
+    return 'مقدرناش نشغّل الـ Debugger (debugpy): $detail';
+  }
+
+  @override
+  String hostdCodeDebugUnreachable(String detail) {
+    return 'الـ Debugger (debugpy) اشتغل بس مقدرناش نوصله: $detail';
+  }
 }

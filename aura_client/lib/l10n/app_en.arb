@@ -5460,5 +5460,173 @@
   "authSessionOperations": "Session Operations",
   "@authSessionOperations": {
     "description": "Profile page: title of the sign-out card"
+  },
+  "hostdCodeCommandHardDenied": "This command is blocked in every workspace because it could cause serious damage.",
+  "@hostdCodeCommandHardDenied": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code command_hard_denied)"
+  },
+  "hostdCodeDestructivePathOutsideWorkspace": "This command deletes or changes files outside the workspace, so it was refused, even though the workspace is trusted.",
+  "@hostdCodeDestructivePathOutsideWorkspace": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code destructive_path_outside_workspace)"
+  },
+  "hostdCodeDestructiveAfterLeavingWorkspace": "This command leaves the workspace folder and then deletes or changes files, so it was refused, even though the workspace is trusted.",
+  "@hostdCodeDestructiveAfterLeavingWorkspace": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code destructive_after_leaving_workspace)"
+  },
+  "hostdCodeUntrustedShellSyntax": "An untrusted workspace only runs one simple read-only command: no chaining (&&, ;, |), redirection or substitution.",
+  "@hostdCodeUntrustedShellSyntax": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code untrusted_shell_syntax)"
+  },
+  "hostdCodeCommandNeedsApproval": "This workspace isn't trusted, so this command is waiting for your approval.",
+  "@hostdCodeCommandNeedsApproval": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code command_needs_approval)"
+  },
+  "hostdCodeCommandNotAllowlisted": "This workspace isn't trusted and this command isn't a read-only one. Trust the workspace, or open the Desktop IDE to approve it.",
+  "@hostdCodeCommandNotAllowlisted": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code command_not_allowlisted)"
+  },
+  "hostdCodeWriteNeedsApproval": "This workspace isn't trusted, so this file change is waiting for your approval.",
+  "@hostdCodeWriteNeedsApproval": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code write_needs_approval)"
+  },
+  "hostdCodeProtectedGitHooks": "Writing under .git/hooks is never allowed: a hook is a program Git runs on the next commit, checkout or push.",
+  "@hostdCodeProtectedGitHooks": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code protected_git_hooks)"
+  },
+  "hostdCodeProtectedGitConfig": "Writing to .git/config is never allowed: it can make Git run another program.",
+  "@hostdCodeProtectedGitConfig": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code protected_git_config)"
+  },
+  "hostdCodeRootNotADirectory": "That folder doesn't exist, or it isn't a folder.",
+  "@hostdCodeRootNotADirectory": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code root_not_a_directory)"
+  },
+  "hostdCodeRootIsFilesystemRoot": "A whole drive can't be a workspace. Choose a project folder inside it instead.",
+  "@hostdCodeRootIsFilesystemRoot": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code root_is_filesystem_root)"
+  },
+  "hostdCodeRootDenylisted": "This system folder can never be a workspace. Choose a project folder inside it instead.",
+  "@hostdCodeRootDenylisted": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code root_denylisted)"
+  },
+  "hostdCodeOutsideWorkspace": "That path is outside the workspace. Add it as its own workspace to use it.",
+  "@hostdCodeOutsideWorkspace": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code outside_workspace)"
+  },
+  "hostdCodeUnauthorized": "The Host Daemon refused the request because its access key didn't match. Restart the Host Daemon and try again.",
+  "@hostdCodeUnauthorized": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code unauthorized)"
+  },
+  "hostdCodeInternalError": "The Host Daemon ran into a problem: {detail}",
+  "@hostdCodeInternalError": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code internal_error)",
+    "placeholders": {
+      "detail": {
+        "type": "String",
+        "description": "The underlying error, untranslated (tool or system output)"
+      }
+    }
+  },
+  "hostdCodeMissingParameter": "The request to the Host Daemon was missing something it needs. Update the app and try again.",
+  "@hostdCodeMissingParameter": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code missing_parameter)"
+  },
+  "hostdCodeUnknownAction": "The Host Daemon doesn't know this action. It may be out of date.",
+  "@hostdCodeUnknownAction": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code unknown_action)"
+  },
+  "hostdCodeRootNotGranted": "This folder isn't one of your workspaces anymore. Add it again and try again.",
+  "@hostdCodeRootNotGranted": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code root_not_granted)"
+  },
+  "hostdCodePathNotFound": "That file or folder doesn't exist.",
+  "@hostdCodePathNotFound": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code path_not_found)"
+  },
+  "hostdCodeFileNotUtf8": "This file isn't text, so it can't be shown here.",
+  "@hostdCodeFileNotUtf8": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code file_not_utf8)"
+  },
+  "hostdCodeApprovalNotFound": "This request was already answered or has expired.",
+  "@hostdCodeApprovalNotFound": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code approval_not_found)"
+  },
+  "hostdCodeNotAGitRepository": "This folder isn't a Git repository.",
+  "@hostdCodeNotAGitRepository": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code not_a_git_repository)"
+  },
+  "hostdCodeGitOutputNotUtf8": "Git returned something that isn't text, so it can't be shown here.",
+  "@hostdCodeGitOutputNotUtf8": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code git_output_not_utf8)"
+  },
+  "hostdCodeGitCommandFailed": "Git failed: {detail}",
+  "@hostdCodeGitCommandFailed": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code git_command_failed)",
+    "placeholders": {
+      "detail": {
+        "type": "String",
+        "description": "The underlying error, untranslated (tool or system output)"
+      }
+    }
+  },
+  "hostdCodeUnknownDiagnosticsTool": "The Host Daemon doesn't know this diagnostics tool.",
+  "@hostdCodeUnknownDiagnosticsTool": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code unknown_diagnostics_tool)"
+  },
+  "hostdCodeTaskNotFound": "This agent task's workspace no longer exists.",
+  "@hostdCodeTaskNotFound": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code task_not_found)"
+  },
+  "hostdCodePairingFailed": "Couldn't start pairing with the server: {detail}",
+  "@hostdCodePairingFailed": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code pairing_failed)",
+    "placeholders": {
+      "detail": {
+        "type": "String",
+        "description": "The underlying error, untranslated (tool or system output)"
+      }
+    }
+  },
+  "hostdCodeNoPairingSession": "No pairing is in progress. Start pairing again.",
+  "@hostdCodeNoPairingSession": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code no_pairing_session)"
+  },
+  "hostdCodePairingEnded": "Pairing ended before it was approved.",
+  "@hostdCodePairingEnded": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code pairing_ended)"
+  },
+  "hostdCodeWorkspaceNotTrusted": "This workspace isn't trusted. Trust it first to open a terminal or debugger here.",
+  "@hostdCodeWorkspaceNotTrusted": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code workspace_not_trusted)"
+  },
+  "hostdCodeTerminalStartFailed": "Couldn't start the terminal: {detail}",
+  "@hostdCodeTerminalStartFailed": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code terminal_start_failed)",
+    "placeholders": {
+      "detail": {
+        "type": "String",
+        "description": "The underlying error, untranslated (tool or system output)"
+      }
+    }
+  },
+  "hostdCodeDebugStartFailed": "Couldn't start the debugger (debugpy): {detail}",
+  "@hostdCodeDebugStartFailed": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code debug_start_failed)",
+    "placeholders": {
+      "detail": {
+        "type": "String",
+        "description": "The underlying error, untranslated (tool or system output)"
+      }
+    }
+  },
+  "hostdCodeDebugUnreachable": "The debugger (debugpy) started but couldn't be reached: {detail}",
+  "@hostdCodeDebugUnreachable": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code debug_unreachable)",
+    "placeholders": {
+      "detail": {
+        "type": "String",
+        "description": "The underlying error, untranslated (tool or system output)"
+      }
+    }
   }
 }
