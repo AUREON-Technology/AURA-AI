@@ -858,11 +858,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get hostdSaveExecutable => 'Save executable path';
 
   @override
-  String hostdPairedToOtherServer(String appBackendUrl) {
-    return 'This app is signed in to $appBackendUrl. Pair again to move the daemon there.';
-  }
-
-  @override
   String get liveVoiceEnd => 'End live voice';
 
   @override
