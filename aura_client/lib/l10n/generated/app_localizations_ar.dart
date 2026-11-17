@@ -263,7 +263,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get settingsAutomationsTitle => 'الأتمتة';
 
   @override
-  String get settingsAutomationsSubtitle => 'مساعدين Gmail وGitHub وDrive';
+  String get settingsAutomationsSubtitle => 'مساعدين Gmail و GitHub و Drive';
 
   @override
   String get settingsUsageTitle => 'الاستخدام على الجهاز ده';
@@ -3960,7 +3960,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get voiceLiveEndShort => 'إنهاء';
 
   @override
-  String get voiceLiveUnsupported => 'الصوت المباشر متاح على Android وiOS بس';
+  String get voiceLiveUnsupported => 'الصوت المباشر متاح على Android و iOS بس';
 
   @override
   String get homeAskAuraLabel => 'اسأل AURA أي حاجة';

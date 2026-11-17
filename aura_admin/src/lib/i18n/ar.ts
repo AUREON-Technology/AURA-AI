@@ -87,7 +87,7 @@ export const ar: Dictionary = {
     "كونسول المشغّلين محتاج دور Admin، وحسابك دوره أقل. اطلب من SuperAdmin يديك Admin من صفحة الصلاحيات، وبعدين سجّل دخول تاني.",
 
   // Overview
-  "overview.sub": "صحة الـ Gateway، وآخر تحديث، وGrafana.",
+  "overview.sub": "صحة الـ Gateway، وآخر تحديث، و Grafana.",
   "overview.insecure": "الوضع غير الآمن شغّال. في الـ Production لازم يبان aura_insecure_mode = 0.",
   "overview.ready": "جاهز",
   "overview.environment": "البيئة",
@@ -253,7 +253,7 @@ export const ar: Dictionary = {
 
   // Tailwind console: card help text, empty states and palette hints
   "grafana.dashboard": "لوحة Grafana",
-  "palette.hint": "اكتب علشان تفلتر الصفحات، وEnter علشان تفتح.",
+  "palette.hint": "اكتب علشان تفلتر الصفحات، و Enter علشان تفتح.",
   "palette.navigate": "تنقّل",
   "palette.open": "افتح",
   "overview.providersHelp": "حالة الـ Circuit لكل مزوّد، زي ما الراوتر شايفها.",
