@@ -546,6 +546,14 @@ for s in backup.sh backup-lib.sh backup-fetch.sh backup-open.sh restore.sh resto
     grep -q "scripts/$s" "$RAIL_DF" || missing="$missing $s"
 done
 [ -z "$missing" ] && ok "the Railway image copies every backup script" || bad "not copied into the Railway image:$missing"
+rail_major=$(sed -n 's/^ARG PG_MAJOR=\([0-9]*\)$/\1/p' "$RAIL_DF")
+# shellcheck disable=SC2016 # the ${...} is matched literally in restore-drill.sh's text
+drill_major=$(sed -n 's/^DRILL_PG_IMAGE=\${DRILL_PG_IMAGE:-postgres:\([0-9]*\)-alpine}$/\1/p' "$HERE/../restore-drill.sh")
+if [ -n "$rail_major" ] && [ -n "$drill_major" ] && [ "$drill_major" -ge "$rail_major" ]; then
+    ok "the restore drill's Postgres ($drill_major) can read what the Railway image's pg_dump ($rail_major) writes"
+else
+    bad "restore-drill.sh Postgres '$drill_major' is older than the Railway image's PG_MAJOR '$rail_major'"
+fi
 
 # ---------------------------------------------------------------------------------------------
 echo "# library functions do not clobber caller variables"
