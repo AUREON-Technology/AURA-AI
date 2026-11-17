@@ -20,7 +20,7 @@ import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from api.v2.sync import _SERVER_OWNED_COLUMNS, conflict_comparand
+from api.v2.sync import _SERVER_OWNED_COLUMNS, conflict_comparand, is_stale
 from infrastructure.db.models import Task
 
 JAN_1 = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -40,8 +40,8 @@ def _row(*, updated_at, client_updated_at=None) -> Task:
 
 
 def _would_apply(row, incoming: datetime) -> bool:
-    """Mirrors the conflict branch in push_sync."""
-    return not (conflict_comparand(row) >= incoming)
+    """The conflict branch in push_sync, for a row no earlier mutation of the batch wrote."""
+    return not is_stale(row, incoming)
 
 
 class TestConflictComparand(unittest.TestCase):
