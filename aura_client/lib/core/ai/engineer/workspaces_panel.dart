@@ -19,12 +19,15 @@ class EngineerWorkspacesPanel extends ConsumerWidget {
 
     return async.when(
       loading: () => const AuraSkeleton(height: 96),
-      // A failed fetch of a secondary panel should not shout. The client already degrades to an
-      // empty list, so this branch is for the unexpected rather than the routine.
-      error: (_, _) => const AuraEmptyState(
+      // A failed fetch is an error, not "not enabled" (INT-025): the client used to fold every
+      // failure into an empty, disabled list. Kept quiet -- this is a secondary panel -- but it
+      // says the right thing and offers a retry.
+      error: (_, _) => AuraEmptyState(
         icon: Icons.cloud_off_outlined,
         title: 'Workspaces unavailable',
-        message: 'Could not reach the server. Your work is not lost -- try again shortly.',
+        message: 'Could not load your workspaces. Your work is not lost -- try again shortly.',
+        actionLabel: 'Retry',
+        onAction: () => ref.invalidate(engineerWorkspacesProvider),
       ),
       data: (list) => _body(context, ref, list),
     );

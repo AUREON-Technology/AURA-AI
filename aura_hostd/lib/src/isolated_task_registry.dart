@@ -81,7 +81,33 @@ class IsolatedTaskRegistry {
 
   /// Synchronous fast path -- see [needsResolution]'s doc comment for why callers must check
   /// this (and that) before ever awaiting [resolve], not call it unconditionally.
-  WorkspaceRoot? boundRoot(String? taskId) => taskId == null ? null : _taskRoots[taskId];
+  ///
+  /// The returned root is re-derived from the *current* grants (audit INT-002): if the parent
+  /// root the worktree was carved out of has since been revoked this throws [RootRevokedError],
+  /// and the worktree's trust always follows the parent's trust as it is now, not as it was when
+  /// the worktree was created -- so untrusting a project immediately restores the approval gate
+  /// for its isolated tasks too.
+  WorkspaceRoot? boundRoot(String? taskId) {
+    if (taskId == null) return null;
+    final bound = _taskRoots[taskId];
+    if (bound == null) return null;
+    return _live(bound, _taskConfigs[taskId]?.taskKey);
+  }
+
+  WorkspaceRoot _live(WorkspaceRoot bound, String? taskKey) {
+    final info = taskKey == null ? null : _taskKeyWorktrees[taskKey];
+    // Discarded (or never recorded): nothing to re-derive the parent from. The worktree itself
+    // is gone with it, so any filesystem call against it fails on its own.
+    if (info == null) return bound;
+    final parent = _roots.byCanonicalPath(info.parentRootPath);
+    if (parent == null) {
+      throw RootRevokedError(
+        'workspace root ${info.parentRootPath} was revoked -- its isolated task workspace can no '
+        'longer be used; grant the folder again to continue',
+      );
+    }
+    return parent.trusted == bound.trusted ? bound : bound.copyWith(trusted: parent.trusted);
+  }
 
   /// `true` only when [taskId] is genuinely configured for isolation and not yet bound to a
   /// root -- i.e. the only case where [resolve] might need to do real async work (checking a
@@ -102,7 +128,7 @@ class IsolatedTaskRegistry {
   Future<WorkspaceRoot?> resolve(String? taskId, String? pathForRootLookup) async {
     if (taskId == null) return null;
     final bound = _taskRoots[taskId];
-    if (bound != null) return bound;
+    if (bound != null) return _live(bound, _taskConfigs[taskId]?.taskKey);
 
     final config = _taskConfigs[taskId];
     if (config == null) return null;
@@ -111,7 +137,7 @@ class IsolatedTaskRegistry {
     final existing = _taskKeyWorktrees[taskKey];
     if (existing != null) {
       _taskRoots[taskId] = existing.root;
-      return existing.root;
+      return _live(existing.root, taskKey);
     }
 
     final parentRoot = pathForRootLookup != null

@@ -1,8 +1,5 @@
-import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
-import 'package:aura_client/core/auth/token_manager.dart';
-import 'package:aura_client/core/config/backend_url_provider.dart';
+import 'package:aura_client/core/network/aura_api_client.dart';
 
 /// One row from `GET /api/v3/engineering/runs` -- a durable record of what an engineer-agent
 /// tool call did (PR opened, branch created, sandbox command run), outliving the chat turn that
@@ -62,18 +59,17 @@ class EngineerRun {
 /// Engineer Task History: every engineer-agent tool outcome for the signed-in user, newest
 /// first. `autoDispose` so opening the history screen always sees fresh data rather than a stale
 /// cached list from a much earlier session.
+///
+/// Through [AuraApiClient] (INT-024): attestation headers, one retry on 401, a deadline, and a
+/// typed [AuraApiError] on failure rather than a bare `Exception`.
 final engineerRunsProvider = FutureProvider.autoDispose<List<EngineerRun>>((ref) async {
-  final token = await ref.read(tokenManagerProvider).getValidAccessToken();
-  final backendUrl = ref.read(backendUrlProvider);
-  final response = await http.get(
-    Uri.parse('$backendUrl/api/v3/engineering/runs'),
-    headers: {if (token != null) 'Authorization': 'Bearer $token'},
-  );
-  if (response.statusCode != 200) {
-    throw Exception('Failed to load engineer runs: ${response.statusCode}');
-  }
-  final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-  return (decoded['runs'] as List<dynamic>? ?? [])
-      .map((r) => EngineerRun.fromJson(r as Map<String, dynamic>))
+  final decoded = await ref.read(auraApiClientProvider).json(
+        method: 'GET',
+        path: '/api/v3/engineering/runs',
+      );
+  final rows = decoded['runs'];
+  return (rows is List ? rows : const [])
+      .whereType<Map>()
+      .map((r) => EngineerRun.fromJson(r.map((k, v) => MapEntry(k.toString(), v))))
       .toList();
 });

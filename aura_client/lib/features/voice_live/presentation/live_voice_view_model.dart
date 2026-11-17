@@ -27,6 +27,9 @@ class LiveVoicePending extends Notifier<List<PendingToolCall>> {
 final liveVoicePendingProvider =
     NotifierProvider<LiveVoicePending, List<PendingToolCall>>(LiveVoicePending.new);
 
+/// The mic a live-voice session records with; overridden in tests (no platform recorder).
+final liveMicSourceFactoryProvider = Provider<LiveMicSourceFactory>((ref) => LiveMicSource.new);
+
 class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
   LiveVoiceSocket? _socket;
   LiveMicSource? _mic;
@@ -40,8 +43,7 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
   @override
   LiveVoiceState build() {
     ref.onDispose(_teardown);
-    final mic = LiveMicSource();
-    return LiveVoiceState(supported: mic.isSupported);
+    return LiveVoiceState(supported: LiveMicSource.platformSupported);
   }
 
   Future<void> startSession({String? conversationId}) async {
@@ -58,27 +60,64 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
         : (activeId.isEmpty ? 'voice_${_uuid.v4()}' : activeId);
     ref.read(activeConversationIdProvider.notifier).setSession(sessionId);
 
-    _socket = LiveVoiceSocket(ref);
-    _mic = LiveMicSource();
+    final socket = ref.read(liveVoiceSocketFactoryProvider)(ref);
+    _socket = socket;
+    _mic = ref.read(liveMicSourceFactoryProvider)();
     _sink = await createLiveAudioSink();
 
-    try {
-      await _socket!.connectAndAuth();
-      _framesSub = _socket!.frames.listen(_onFrame);
-      _pcmOutSub = _socket!.pcm.listen((bytes) async {
-        await _sink?.pushPcm(bytes);
-      });
-      _socket!.start(sessionId: sessionId, language: 'en');
-      state = state.copyWith(sessionId: sessionId, phase: 'listening');
+    // Listen before connecting: a server that refuses the socket outright (4503 feature off,
+    // 4429 session already held) closes it before connectAndAuth returns, and the frames
+    // stream is broadcast -- an error nobody is subscribed to yet is dropped and the screen
+    // would sit on "listening" (INT-015).
+    _framesSub = socket.frames.listen(_onFrame);
+    _pcmOutSub = socket.pcm.listen((bytes) async {
+      await _sink?.pushPcm(bytes);
+    });
 
-      await _mic!.start(sampleRate: 16000);
-      _micSub = _mic!.pcm.listen((chunk) => _socket?.sendPcm(chunk));
-      _micAmpSub = _mic!.amplitude.listen((a) {
-        state = state.copyWith(micAmplitude: a);
-      });
+    try {
+      await socket.connectAndAuth();
+      // Torn down while connecting (the server closed the socket, or the user left).
+      if (!identical(_socket, socket) || !socket.isConnected) return;
+      socket.start(sessionId: sessionId, language: 'en');
+      // Still "connecting": the mic starts, and the phase becomes "listening", only once the
+      // server's `ready` frame has said which capture rate it expects (INT-020).
+      state = state.copyWith(sessionId: sessionId);
     } catch (e) {
-      state = state.copyWith(phase: 'idle', error: e.toString());
-      await _teardown();
+      if (!identical(_socket, socket)) return;
+      await _fail(e.toString());
+    }
+  }
+
+  /// Ends the session in the error phase: mic and playback stopped, the socket closed.
+  Future<void> _fail(String message) async {
+    await _teardown();
+    state = state.copyWith(
+      phase: 'error',
+      error: message,
+      micAmplitude: 0,
+      playbackAmplitude: 0,
+      assistantDraft: '',
+    );
+  }
+
+  /// Starts the mic at the rate the server's `ready` frame announced (INT-020).
+  Future<void> _startCapture(int sampleRate) async {
+    final mic = _mic;
+    if (mic == null || _micSub != null) return;
+    try {
+      await mic.start(sampleRate: sampleRate);
+    } catch (e) {
+      _socket?.stop();
+      await _fail(e.toString());
+      return;
+    }
+    if (!identical(_mic, mic)) return;
+    _micSub = mic.pcm.listen((chunk) => _socket?.sendPcm(chunk));
+    _micAmpSub = mic.amplitude.listen((a) {
+      state = state.copyWith(micAmplitude: a);
+    });
+    if (state.phase == 'connecting') {
+      state = state.copyWith(phase: 'listening');
     }
   }
 
@@ -123,9 +162,12 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
 
   void _onFrame(LiveServerFrame frame) {
     switch (frame) {
-      case LiveReadyFrame(:final playback):
+      case LiveReadyFrame(:final capture, :final playback):
         unawaited(_sink?.start(sampleRate: playback.sampleRate));
+        unawaited(_startCapture(capture.sampleRate));
       case LiveStateFrame(state: final phaseName):
+        // Before `ready` the mic is not running yet; stay on "connecting" until it is.
+        if (_micSub == null && state.phase == 'connecting') break;
         state = state.copyWith(phase: phaseName.toLowerCase());
       case LiveTranscriptFrame(:final text, :final final_):
         if (final_ && text.isNotEmpty) {
@@ -179,17 +221,10 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
       case LiveCancelledFrame():
         state = state.copyWith(phase: 'listening', assistantDraft: '');
       case LiveErrorFrame(:final error, :final message)
-          when error == 'session_expired' || error == 'socket_closed':
+          when LiveVoiceSocket.terminalErrors.contains(error):
         // The socket is gone: stop the mic and playback rather than leave the screen
-        // "listening" to nothing.
-        unawaited(_teardown());
-        state = state.copyWith(
-          phase: 'idle',
-          error: message,
-          micAmplitude: 0,
-          playbackAmplitude: 0,
-          assistantDraft: '',
-        );
+        // "listening" to nothing. Each close code carries its own message (INT-015).
+        unawaited(_fail(message));
       case LiveErrorFrame(:final message):
         state = state.copyWith(error: message);
       case LivePlaybackHintFrame(:final sampleRate):

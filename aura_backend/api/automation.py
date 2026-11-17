@@ -4,7 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from api.http_errors import http_internal_error
-from services.automation import AnalysisUnavailable, automation_service
+from services.automation import (
+    AnalysisUnavailable,
+    EmailAnalysis,
+    IssueAnalysis,
+    automation_service,
+)
 from services.budget import InferenceBudgetExceededException
 from services.jwt_auth import verify_access_token
 
@@ -38,7 +43,7 @@ def _unavailable(exc: AnalysisUnavailable) -> HTTPException:
     )
 
 
-@router.post("/analyze-email")
+@router.post("/analyze-email", response_model=EmailAnalysis)
 async def analyze_email(
     request: EmailAnalyzeRequest, http_request: Request,
     user_info: dict = Depends(verify_access_token),
@@ -64,7 +69,7 @@ async def analyze_email(
         )
 
 
-@router.post("/analyze-issue")
+@router.post("/analyze-issue", response_model=IssueAnalysis)
 async def analyze_issue(
     request: IssueAnalyzeRequest, http_request: Request,
     user_info: dict = Depends(verify_access_token),

@@ -1444,6 +1444,12 @@ abstract class AppLocalizations {
   /// **'Save executable path'**
   String get hostdSaveExecutable;
 
+  /// Host daemon page: warning when the daemon is paired to a different backend than the app
+  ///
+  /// In en, this message translates to:
+  /// **'This app is signed in to {appBackendUrl}. Pair again to move the daemon there.'**
+  String hostdPairedToOtherServer(String appBackendUrl);
+
   /// Live voice page close button tooltip
   ///
   /// In en, this message translates to:

@@ -51,9 +51,27 @@ class SyncClient {
     return headers;
   }
 
+  /// What having no access token means for this attempt (INT-028).
+  ///
+  /// [TokenManager] keeps the refresh token when a renewal fails on the
+  /// network and deletes it when the server refuses it, so a refresh token
+  /// still on disk means "could not renew right now" -- offline, not signed
+  /// out. Reporting that as `unauthorized` showed a sync error (and, for a
+  /// push, skipped the pull) every time the device went offline with an
+  /// expired access token.
+  Future<SyncFailureKind> _noTokenFailure() async {
+    try {
+      final resumable = await _ref.read(tokenManagerProvider).hasCachedRefreshToken();
+      return resumable ? SyncFailureKind.network : SyncFailureKind.unauthorized;
+    } catch (_) {
+      return SyncFailureKind.unauthorized;
+    }
+  }
+
   /// One 401 retry after dropping the cached access token. Returns null when
   /// there is no JWT so callers skip the HTTP round-trip (a 403 attestation
-  /// failure cannot be retried into existence).
+  /// failure cannot be retried into existence); [_noTokenFailure] says what
+  /// that null means.
   Future<http.Response?> _send(
     Future<http.Response> Function(Map<String, String> headers) send,
   ) async {
@@ -135,11 +153,41 @@ class SyncClient {
   /// so a large backlog cannot turn into a request that is refused forever.
   static const int pushBatchSize = 100;
 
+  /// Rows per pull page (INT-013): small enough that one page finishes well
+  /// inside the request timeout on a slow link, however large the account.
+  static const int pullPageSize = 500;
+
+  /// The clock last sent for each record, keyed by table and id (INT-001).
+  final Map<String, DateTime> _sentClocks = {};
+
+  /// The `client_updated_at` to send for [e]: its own clock, unless this
+  /// client already sent that record a clock at least as new, in which case
+  /// one second past that.
+  ///
+  /// Drift stores the outbox clock in whole seconds, and the server keeps
+  /// what it has on a tie (`api/v2/sync.py::is_stale`), so a record changed
+  /// twice within a second -- save, then forget; a quick double edit -- sent
+  /// its second change with the first one's clock, and the server refused it
+  /// as a conflict the client then dropped: the newest edit was lost and a
+  /// deleted row stayed alive. Changes to one record go out in the order they
+  /// were made (`AppDatabase.pendingOutbox`), so the later send is the newer
+  /// change and may claim the later clock. Only a burst of same-second changes
+  /// moves a record's clock ahead of the wall clock, by a second per change,
+  /// well inside the server's skew allowance.
+  DateTime _sendClock(OutboxEntry e) {
+    final key = '${e.targetTable}:${e.recordId}';
+    final own = e.clientUpdatedAt.toUtc();
+    final last = _sentClocks[key];
+    final clock = last != null && !own.isAfter(last) ? last.add(const Duration(seconds: 1)) : own;
+    _sentClocks[key] = clock;
+    return clock;
+  }
+
   Map<String, dynamic> _mutationJson(OutboxEntry e) => {
         "table": e.targetTable,
         "op": e.operation,
         "id": e.recordId,
-        "client_updated_at": e.clientUpdatedAt.toUtc().toIso8601String(),
+        "client_updated_at": _sendClock(e).toIso8601String(),
         "payload": e.payloadJson != null ? jsonDecode(e.payloadJson!) : null,
       };
 
@@ -176,9 +224,10 @@ class SyncClient {
   /// is found and the others still land.
   Future<SyncResult> _pushBatch(List<OutboxEntry> batch) async {
     final response = await _postMutations(batch);
+    if (response == null) return SyncResult.fail(await _noTokenFailure());
     final refused = _refusal(response);
     if (refused != null) return refused;
-    if (response!.statusCode == 200) {
+    if (response.statusCode == 200) {
       return _acknowledge(batch, response.body);
     }
     debugPrint("[SyncClient] push batch failed: ${response.statusCode}; retrying rows one by one");
@@ -190,9 +239,10 @@ class SyncClient {
     var anyAccepted = false;
     for (final entry in batch) {
       final single = await _postMutations([entry]);
+      if (single == null) return SyncResult.fail(await _noTokenFailure());
       final refusedSingle = _refusal(single);
       if (refusedSingle != null) return refusedSingle;
-      if (single!.statusCode == 200) {
+      if (single.statusCode == 200) {
         anyAccepted = true;
         final acked = await _acknowledge([entry], single.body);
         if (!acked.ok) return acked;
@@ -207,9 +257,9 @@ class SyncClient {
   }
 
   /// A failure that is about the session or the server, not a row.
-  SyncResult? _refusal(http.Response? response) {
-    if (response == null || response.statusCode == 401) {
-      debugPrint("[SyncClient] push unauthorized: ${response?.statusCode}");
+  SyncResult? _refusal(http.Response response) {
+    if (response.statusCode == 401) {
+      debugPrint("[SyncClient] push unauthorized: ${response.statusCode}");
       return const SyncResult.fail(SyncFailureKind.unauthorized);
     }
     if (response.statusCode == 503) {
@@ -268,32 +318,61 @@ class SyncClient {
     return const SyncResult.success();
   }
 
+  /// Pulls everything changed since the stored cursor, one page at a time
+  /// (INT-013).
+  ///
+  /// A first sync on a new device used to be one response holding every row
+  /// of the account, against a 20 s timeout; a large account could time out
+  /// on every attempt and never finish. Each page is applied in its own
+  /// transaction, and the cursor is stored only from the last page, so a pull
+  /// cut off midway starts again from the old cursor -- the rows already
+  /// applied are simply applied again. A server that predates paging ignores
+  /// `limit` and answers in one response without `has_more`.
   Future<SyncResult> pull() async {
     final cursor = await _db.getSyncCursor();
-    final uri = Uri.parse(_syncUrl).replace(queryParameters: cursor != null ? {"since": cursor} : null);
+    String? page;
 
     try {
-      final response = await _send((headers) => _get(uri, headers: headers));
-      if (response == null || response.statusCode == 401) {
-        debugPrint("[SyncClient] pull unauthorized: ${response?.statusCode}");
-        return const SyncResult.fail(SyncFailureKind.unauthorized);
-      }
-      if (response.statusCode == 503) {
-        debugPrint("[SyncClient] Postgres sync not configured on the backend yet.");
-        return const SyncResult.fail(SyncFailureKind.unavailable);
-      }
-      if (response.statusCode != 200) {
-        debugPrint("[SyncClient] pull failed: ${response.statusCode} ${response.body}");
-        return const SyncResult.fail(SyncFailureKind.unknown);
-      }
+      while (true) {
+        final uri = Uri.parse(_syncUrl).replace(queryParameters: {
+          "limit": "$pullPageSize",
+          // Sent with `page` too: a server that cannot honour the token
+          // starts over from here rather than from a full sync.
+          "since": ?cursor,
+          "page": ?page,
+        });
+        final response = await _send((headers) => _get(uri, headers: headers));
+        if (response == null) return SyncResult.fail(await _noTokenFailure());
+        if (response.statusCode == 401) {
+          debugPrint("[SyncClient] pull unauthorized: ${response.statusCode}");
+          return const SyncResult.fail(SyncFailureKind.unauthorized);
+        }
+        if (response.statusCode == 503) {
+          debugPrint("[SyncClient] Postgres sync not configured on the backend yet.");
+          return const SyncResult.fail(SyncFailureKind.unavailable);
+        }
+        if (response.statusCode != 200) {
+          debugPrint("[SyncClient] pull failed: ${response.statusCode} ${response.body}");
+          return const SyncResult.fail(SyncFailureKind.unknown);
+        }
 
-      final body = jsonDecode(response.body) as Map<String, dynamic>;
-      final data = body["data"] as Map<String, dynamic>;
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = body["data"] as Map<String, dynamic>;
 
-      await _db.transaction(() => _applyRows(data));
+        await _db.transaction(() => _applyRows(data));
 
-      await _db.setSyncCursor(body["cursor"] as String);
-      return const SyncResult.success();
+        final next = body["next_page"];
+        if (body["has_more"] == true && next is String) {
+          if (next == page) {
+            debugPrint("[SyncClient] pull did not advance; stopping before the last page");
+            return const SyncResult.fail(SyncFailureKind.unknown);
+          }
+          page = next;
+          continue;
+        }
+        await _db.setSyncCursor(body["cursor"] as String);
+        return const SyncResult.success();
+      }
     } catch (e) {
       debugPrint("[SyncClient] pull error: $e");
       return const SyncResult.fail(SyncFailureKind.network);

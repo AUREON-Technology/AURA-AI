@@ -104,7 +104,7 @@ class _HostPanelState extends ConsumerState<HostPanel> {
           children: [
             Icon(
               isRunning ? Icons.circle : Icons.circle_outlined,
-              color: gaveUp
+              color: gaveUp || status.needsRepair
                   ? palette.danger
                   : restarting
                       ? palette.warning
@@ -123,6 +123,10 @@ class _HostPanelState extends ConsumerState<HostPanel> {
                   ? 'Not running'
                   : !isPaired
                       ? 'Running, not paired'
+                      // INT-003: the backend refused the stored token and the daemon stopped
+                      // trying. Saying "reconnecting" here left the user waiting forever.
+                      : status.needsRepair
+                          ? 'Re-pair required'
                       : otherServer
                       ? 'Running, paired to a different server'
                       : switch (isConnected) {
@@ -134,6 +138,14 @@ class _HostPanelState extends ConsumerState<HostPanel> {
             ),
           ],
         ),
+        if (status.needsRepair) ...[
+          const SizedBox(height: AuraSpacing.xs),
+          Text(
+            'The server no longer accepts this device (expired, revoked, or your account lacks '
+            'Engineer access). Pair again to reconnect.',
+            style: TextStyle(fontSize: 10, color: palette.danger),
+          ),
+        ],
         if (gaveUp && supervisorState.reason != null) ...[
           const SizedBox(height: AuraSpacing.xs),
           Text(supervisorState.reason!, style: TextStyle(fontSize: 10, color: palette.danger)),
@@ -172,9 +184,9 @@ class _HostPanelState extends ConsumerState<HostPanel> {
                 variant: AuraButtonVariant.secondary,
                 onPressed: () => _stopDaemon(context, ref, supervisor),
               ),
-            if (isRunning && (!isPaired || otherServer))
+            if (status.canPair || (isRunning && otherServer))
               _SmallAuraButton(
-                label: _pairing ? 'Pairing...' : (otherServer ? 'Re-pair' : 'Pair'),
+                label: _pairing ? 'Pairing...' : (status.needsRepair || otherServer ? 'Re-pair' : 'Pair'),
                 icon: Icons.link,
                 variant: AuraButtonVariant.secondary,
                 onPressed: _pairing ? null : () => _pairDevice(context, ref),

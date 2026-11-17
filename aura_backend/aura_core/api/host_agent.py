@@ -23,6 +23,7 @@ from typing import Any, Callable, Mapping
 from ..adapters.host_agent import HostAgentSession
 from ..domain.errors import AuthenticationError
 from ..observability.logging import get_logger
+from ..security.role_capabilities import ENGINEER_AGENT
 from . import ws_auth
 from .ws_auth import LiveCredential
 
@@ -50,8 +51,10 @@ class _HeaderCarrier:
         self.client = None
 
 
-def _may_host(principal: Any) -> bool:
-    return "engineer_agent" in principal.capabilities
+def may_host(principal: Any) -> bool:
+    """Whether ``principal`` may serve this socket. Also what ``/auth/desktop/pair/approve``
+    checks before pairing a daemon (audit INT-003), so the two can never disagree."""
+    return ENGINEER_AGENT in principal.capabilities
 
 
 def register_host_agent(
@@ -84,7 +87,7 @@ def register_host_agent(
             await websocket.close(code=_CLOSE_UNAUTHORIZED)
             return
 
-        if not _may_host(principal):
+        if not may_host(principal):
             # A daemon can only ever be usefully paired to an account the server would actually
             # route engineer-agent tool calls to -- refuse it here rather than registering a
             # session nothing will ever call.
@@ -109,7 +112,7 @@ def register_host_agent(
                     )
                 except asyncio.TimeoutError:
                     message = None
-                if not await credential.still_valid(_may_host):
+                if not await credential.still_valid(may_host):
                     # Expired, device revoked, or the account no longer may host: the same
                     # answer an HTTP request with this token would now get.
                     await websocket.close(code=_CLOSE_UNAUTHORIZED)
@@ -144,7 +147,7 @@ def register_host_agent(
                         # The session is registered under the original user; a token for anyone
                         # else must end it, not quietly extend it (same rule as voice_live.py).
                         break
-                    if not _may_host(renewed):
+                    if not may_host(renewed):
                         break
                     credential.renew(str(frame.get("token") or ""), renewed)
                 # Any other frame type is ignored -- forward compatible with a newer daemon that

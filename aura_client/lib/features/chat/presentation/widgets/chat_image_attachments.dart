@@ -61,6 +61,10 @@ class AttachImageButton extends ConsumerWidget {
         final mb = (limits.maxImageBytes / (1024 * 1024)).toStringAsFixed(0);
         problem = '${file.name} is larger than $mb MB.';
       }
+      if (rejection == AttachRejection.totalTooLarge) {
+        final mb = (limits.maxRequestImageBytes / (1024 * 1024)).toStringAsFixed(0);
+        problem = '${file.name} was not added: one message can carry at most $mb MB of images.';
+      }
     }
     if (problem != null && context.mounted) {
       AuraSnackbar.show(context, message: problem, kind: AuraSnackbarKind.error);

@@ -52,4 +52,39 @@ void main() {
     // snapshot from `reachable` alone; it must not claim to know the connection state either.
     expect(HostdStatusSnapshot(reachable: false).backendConnected, isNull);
   });
+
+  test('credentials_rejected: true means re-pair is required and Pair is offered (INT-003)', () {
+    final snapshot = parseHostdStatusBody({
+      'authenticated': true,
+      'backend_connected': false,
+      'credentials_rejected': true,
+      'last_close_code': 4401,
+    });
+
+    expect(snapshot.credentialsRejected, isTrue);
+    expect(snapshot.lastCloseCode, 4401);
+    expect(snapshot.needsRepair, isTrue);
+    expect(snapshot.canPair, isTrue, reason: 'a stored-but-refused token must not hide Pair');
+  });
+
+  test('a paired, accepted daemon -- or an older one without the field -- needs no re-pair', () {
+    final current = parseHostdStatusBody({
+      'authenticated': true,
+      'backend_connected': false,
+      'credentials_rejected': false,
+    });
+    final old = parseHostdStatusBody({'authenticated': true, 'backend_connected': true});
+
+    for (final snapshot in [current, old]) {
+      expect(snapshot.needsRepair, isFalse);
+      expect(snapshot.canPair, isFalse);
+    }
+  });
+
+  test('a status without roots or backend_url (sent without the token, INT-037) still parses', () {
+    final snapshot = parseHostdStatusBody({'authenticated': false, 'backend_connected': false});
+    expect(snapshot.roots, isEmpty);
+    expect(snapshot.backendUrl, isNull);
+    expect(snapshot.canPair, isTrue);
+  });
 }

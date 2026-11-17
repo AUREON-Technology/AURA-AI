@@ -317,6 +317,44 @@ watch for and recover from a crash); and a bundled `aura_hostd` binary (there is
 configures the executable path themselves, the same disclosed-until-configured shape
 `google_desktop_client_id` already uses on the backend).
 
+**Integration audit fixes (2026-11-17, INT-002/003/007/019/036–038).** These change the
+contract described above:
+
+- **Grants are live.** Before, the daemon built `TaskHandler` and `IsolatedTaskRegistry` from a
+  start-up snapshot of the roots, while `/roots` wrote a fresh copy to disk. A revoke, trust or
+  untrust in the UI therefore didn't reach the agent until a restart.
+  - Now `WorkspaceStore.live` is the one set every agent RPC resolves against. It is updated on
+    save and re-read from disk before each request, so a CLI change from another process also
+    applies.
+  - A task bound to a root at `create_task` re-checks that root, and its current trust, on every
+    call.
+- **A refused token is visible.** After the backend closes the socket with 4401 (token expired,
+  device revoked, or the account lacks `engineer_agent`), the daemon stops reconnecting.
+  - `/status` reports `credentials_rejected: true` and `last_close_code`, and a new pairing
+    replaces the refused connection.
+  - The app shows "Re-pair required" with a Pair button. Before this it showed "reconnecting…"
+    indefinitely.
+  - The backend also refuses `/desktop/pair/approve` with 403 when the approver lacks
+    `engineer_agent` (the same `host_agent.may_host` check the socket uses), so that case fails at
+    pairing.
+- **Disconnects cancel pending approvals.** When the socket closes, every approval an in-flight
+  call is waiting on is cancelled. The backend has already failed those calls, so approving one
+  later would run a side effect nobody is waiting for.
+- **Sends are guarded.** Every socket send checks that the socket is open, and `run` executes
+  inside `runZonedGuarded`.
+- **`read_file` is capped at 2 MiB**, the same limit as the control server's `/read`.
+- **The control server is narrower.**
+  - Every route except `/status` needs the token. `/status` without the token returns only status
+    flags: no root paths and no backend URL.
+  - A request whose `Host` header is not loopback gets 403 (DNS rebinding).
+  - The token is compared in constant time.
+- **The daemon collects an approved pairing itself**, not only when the UI polls `/pair/status`.
+- **The app's control calls time out:** 30 s by default, 10 minutes for git network operations and
+  lint.
+
+Tests: `aura_hostd/test/daemon_wiring_test.dart` runs the real `ControlServer` over HTTP, and the
+real `BackendConnection` over WebSocket to a fake backend, on one store on disk.
+
 **Interactive tiered consent (D5) — now built.** Three tiers, `lib/src/command_policy.dart`: a
 hard denylist that no tier can lift (`rm -rf`, fork bombs, `mkfs`, pipe-to-shell, ...); a
 read-only inspection allowlist (`ls`/`cat`/`grep`/`git status`/... — `find`/`env` deliberately

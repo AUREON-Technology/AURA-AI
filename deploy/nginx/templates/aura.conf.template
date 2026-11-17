@@ -25,6 +25,24 @@
 # unrestricted envsubst would otherwise do by replacing every $name it finds with an empty
 # string.
 
+# Grafana session refresh (audit INT-033). The console's session route rotates the operator's
+# tokens when its access token has expired, but only for a caller that sends
+# X-Aura-Session-Refresh: 1 -- see aura_admin/app/api/auth/session/route.ts. Refresh tokens are
+# single use and nginx drops an auth_request subrequest's response headers, so the rotated pair
+# is captured below (auth_request_set in `location /grafana/`) and re-emitted here. An empty map
+# value makes nginx skip the add_header, so an ordinary check that did not refresh sends no
+# Set-Cookie at all. Attributes match aura_admin/src/lib/session.ts; Max-Age=900 is the access
+# token's lifetime (expires_in), 2592000 the console's REFRESH_MAX_AGE_S (30 days).
+# tests/unit/test_nginx_grafana_session_refresh.py pins both halves and these attributes.
+map $aura_access_cookie $aura_access_set_cookie {
+    ""      "";
+    default "aura_access=$aura_access_cookie; Max-Age=900; Path=/; HttpOnly; Secure; SameSite=Strict";
+}
+map $aura_refresh_cookie $aura_refresh_set_cookie {
+    ""      "";
+    default "aura_refresh=$aura_refresh_cookie; Max-Age=2592000; Path=/; HttpOnly; Secure; SameSite=Strict";
+}
+
 # Coarse connection-level limits. Zones are shared across workers.
 limit_req_zone $binary_remote_addr zone=aura_general:10m rate=30r/s;
 limit_req_zone $binary_remote_addr zone=aura_chat:10m rate=2r/s;
@@ -257,6 +275,9 @@ server {
         proxy_pass_request_body off;
         proxy_set_header Content-Length "";
         proxy_set_header Cookie $http_cookie;
+        # Lets the session route refresh an expired access token (INT-033). Safe only because
+        # `location /grafana/` carries the rotated cookies back -- see the maps at the top.
+        proxy_set_header X-Aura-Session-Refresh "1";
         include /etc/nginx/conf.d/proxy_headers.inc;
     }
 
@@ -276,6 +297,8 @@ server {
     # ------------------------------------------------------------ Grafana, operator session only
     location /grafana/ {
         auth_request /_grafana_auth;
+        auth_request_set $aura_access_cookie  $upstream_cookie_aura_access;
+        auth_request_set $aura_refresh_cookie $upstream_cookie_aura_refresh;
         error_page 401 403 = @grafana_unauth;
 
         # No trailing slash — GF_SERVER_SERVE_FROM_SUB_PATH mounts Grafana at
@@ -292,6 +315,9 @@ server {
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
         add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
         add_header Content-Security-Policy "default-src 'self' 'unsafe-inline' 'unsafe-eval'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'self'" always;
+        # The tokens the session check rotated, if it did (empty otherwise, so nothing is sent).
+        add_header Set-Cookie $aura_access_set_cookie always;
+        add_header Set-Cookie $aura_refresh_set_cookie always;
     }
 
     location / {
