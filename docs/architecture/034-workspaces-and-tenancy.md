@@ -93,6 +93,20 @@ Ingest, upload, delete and pin/unpin require `manage_knowledge` (Owner or Admin)
 - **Setup.** `docs/deployment/customer-sign-in.md` lists the setup steps for the Firebase-backed
   sign-in methods.
 
+### 7. Plans and metering (SaaS P1-C)
+
+- **One plan per workspace.** It comes from `aura_workspace_entitlements` (migration `0021`); no
+  row means Free. The plan catalogue is data (`domain/plans.py`; `AURA_PLAN_CATALOGUE` replaces
+  it).
+- **Metering.**
+  - `aura_usage_counters` checks the limit and increments in one upsert, so no two requests on any
+    worker can both take the last unit.
+  - The gateway reserves a message before a turn and gives it back if the turn fails. It reserves
+    storage before an ingest and settles to what the store kept.
+  - Team seats come from the plan (`PlanService.seat_limit`).
+- **Refusals.** HTTP 402 `plan_limit`. Operators and service keys are unmetered. Operations guide:
+  `docs/deployment/plans-and-limits.md`.
+
 ## Consequences
 
 - Tables `aura_workspaces`, `aura_workspace_members` and `aura_workspace_invites` arrive with Alembic
