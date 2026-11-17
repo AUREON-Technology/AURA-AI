@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/intl.dart' as intl;
 
+import 'app_localizations_ar.dart';
 import 'app_localizations_en.dart';
 
 // ignore_for_file: type=lint
@@ -92,7 +93,10 @@ abstract class AppLocalizations {
       ];
 
   /// A list of this localizations delegate's supported locales.
-  static const List<Locale> supportedLocales = <Locale>[Locale('en')];
+  static const List<Locale> supportedLocales = <Locale>[
+    Locale('ar'),
+    Locale('en'),
+  ];
 
   /// Today screen header, shown before noon
   ///
@@ -1563,6 +1567,150 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{step} — {status}'**
   String planStepWithStatus(String step, String status);
+
+  /// Appearance page: heading above the language choices
+  ///
+  /// In en, this message translates to:
+  /// **'Language'**
+  String get languageSectionTitle;
+
+  /// Language option: follow the device language
+  ///
+  /// In en, this message translates to:
+  /// **'System'**
+  String get languageSystem;
+
+  /// Subtitle under the System language option
+  ///
+  /// In en, this message translates to:
+  /// **'Use your device\'s language'**
+  String get languageSystemSubtitle;
+
+  /// Persistent banner after device attestation was rejected
+  ///
+  /// In en, this message translates to:
+  /// **'This device could not be verified. Some features may be unavailable.'**
+  String get deviceUnverifiedBanner;
+
+  /// Generic button: close a banner or notice
+  ///
+  /// In en, this message translates to:
+  /// **'Dismiss'**
+  String get commonDismiss;
+
+  /// Generic button: save changes
+  ///
+  /// In en, this message translates to:
+  /// **'Save'**
+  String get commonSave;
+
+  /// Generic button: delete an item
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get commonDelete;
+
+  /// Generic button: edit an item
+  ///
+  /// In en, this message translates to:
+  /// **'Edit'**
+  String get commonEdit;
+
+  /// Generic button: add an item
+  ///
+  /// In en, this message translates to:
+  /// **'Add'**
+  String get commonAdd;
+
+  /// Generic button: acknowledge
+  ///
+  /// In en, this message translates to:
+  /// **'OK'**
+  String get commonOk;
+
+  /// Generic button: confirm an action
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm'**
+  String get commonConfirm;
+
+  /// Generic snackbar action: undo the last change
+  ///
+  /// In en, this message translates to:
+  /// **'Undo'**
+  String get commonUndo;
+
+  /// Generic button/tooltip: go back
+  ///
+  /// In en, this message translates to:
+  /// **'Back'**
+  String get commonBack;
+
+  /// Generic button: next step
+  ///
+  /// In en, this message translates to:
+  /// **'Next'**
+  String get commonNext;
+
+  /// Generic button: finish
+  ///
+  /// In en, this message translates to:
+  /// **'Done'**
+  String get commonDone;
+
+  /// Generic button/tooltip: copy to clipboard
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get commonCopy;
+
+  /// Snackbar after copying to clipboard
+  ///
+  /// In en, this message translates to:
+  /// **'Copied'**
+  String get commonCopied;
+
+  /// Generic button/tooltip: reload
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh'**
+  String get commonRefresh;
+
+  /// Generic search field hint or tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Search'**
+  String get commonSearch;
+
+  /// Generic loading label
+  ///
+  /// In en, this message translates to:
+  /// **'Loading…'**
+  String get commonLoading;
+
+  /// Generic error title
+  ///
+  /// In en, this message translates to:
+  /// **'Something went wrong'**
+  String get commonSomethingWentWrong;
+
+  /// Shown when a value is empty
+  ///
+  /// In en, this message translates to:
+  /// **'None'**
+  String get commonNone;
+
+  /// Generic answer
+  ///
+  /// In en, this message translates to:
+  /// **'Yes'**
+  String get commonYes;
+
+  /// Generic answer
+  ///
+  /// In en, this message translates to:
+  /// **'No'**
+  String get commonNo;
 }
 
 class _AppLocalizationsDelegate
@@ -1576,7 +1724,7 @@ class _AppLocalizationsDelegate
 
   @override
   bool isSupported(Locale locale) =>
-      <String>['en'].contains(locale.languageCode);
+      <String>['ar', 'en'].contains(locale.languageCode);
 
   @override
   bool shouldReload(_AppLocalizationsDelegate old) => false;
@@ -1585,6 +1733,8 @@ class _AppLocalizationsDelegate
 AppLocalizations lookupAppLocalizations(Locale locale) {
   // Lookup logic when only language code is specified.
   switch (locale.languageCode) {
+    case 'ar':
+      return AppLocalizationsAr();
     case 'en':
       return AppLocalizationsEn();
   }

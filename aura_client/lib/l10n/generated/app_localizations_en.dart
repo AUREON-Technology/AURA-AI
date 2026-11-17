@@ -818,4 +818,77 @@ class AppLocalizationsEn extends AppLocalizations {
   String planStepWithStatus(String step, String status) {
     return '$step — $status';
   }
+
+  @override
+  String get languageSectionTitle => 'Language';
+
+  @override
+  String get languageSystem => 'System';
+
+  @override
+  String get languageSystemSubtitle => 'Use your device\'s language';
+
+  @override
+  String get deviceUnverifiedBanner =>
+      'This device could not be verified. Some features may be unavailable.';
+
+  @override
+  String get commonDismiss => 'Dismiss';
+
+  @override
+  String get commonSave => 'Save';
+
+  @override
+  String get commonDelete => 'Delete';
+
+  @override
+  String get commonEdit => 'Edit';
+
+  @override
+  String get commonAdd => 'Add';
+
+  @override
+  String get commonOk => 'OK';
+
+  @override
+  String get commonConfirm => 'Confirm';
+
+  @override
+  String get commonUndo => 'Undo';
+
+  @override
+  String get commonBack => 'Back';
+
+  @override
+  String get commonNext => 'Next';
+
+  @override
+  String get commonDone => 'Done';
+
+  @override
+  String get commonCopy => 'Copy';
+
+  @override
+  String get commonCopied => 'Copied';
+
+  @override
+  String get commonRefresh => 'Refresh';
+
+  @override
+  String get commonSearch => 'Search';
+
+  @override
+  String get commonLoading => 'Loading…';
+
+  @override
+  String get commonSomethingWentWrong => 'Something went wrong';
+
+  @override
+  String get commonNone => 'None';
+
+  @override
+  String get commonYes => 'Yes';
+
+  @override
+  String get commonNo => 'No';
 }

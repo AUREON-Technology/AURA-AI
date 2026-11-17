@@ -1087,5 +1087,101 @@
         "type": "String"
       }
     }
+  },
+  "languageSectionTitle": "Language",
+  "@languageSectionTitle": {
+    "description": "Appearance page: heading above the language choices"
+  },
+  "languageSystem": "System",
+  "@languageSystem": {
+    "description": "Language option: follow the device language"
+  },
+  "languageSystemSubtitle": "Use your device's language",
+  "@languageSystemSubtitle": {
+    "description": "Subtitle under the System language option"
+  },
+  "deviceUnverifiedBanner": "This device could not be verified. Some features may be unavailable.",
+  "@deviceUnverifiedBanner": {
+    "description": "Persistent banner after device attestation was rejected"
+  },
+  "commonDismiss": "Dismiss",
+  "@commonDismiss": {
+    "description": "Generic button: close a banner or notice"
+  },
+  "commonSave": "Save",
+  "@commonSave": {
+    "description": "Generic button: save changes"
+  },
+  "commonDelete": "Delete",
+  "@commonDelete": {
+    "description": "Generic button: delete an item"
+  },
+  "commonEdit": "Edit",
+  "@commonEdit": {
+    "description": "Generic button: edit an item"
+  },
+  "commonAdd": "Add",
+  "@commonAdd": {
+    "description": "Generic button: add an item"
+  },
+  "commonOk": "OK",
+  "@commonOk": {
+    "description": "Generic button: acknowledge"
+  },
+  "commonConfirm": "Confirm",
+  "@commonConfirm": {
+    "description": "Generic button: confirm an action"
+  },
+  "commonUndo": "Undo",
+  "@commonUndo": {
+    "description": "Generic snackbar action: undo the last change"
+  },
+  "commonBack": "Back",
+  "@commonBack": {
+    "description": "Generic button/tooltip: go back"
+  },
+  "commonNext": "Next",
+  "@commonNext": {
+    "description": "Generic button: next step"
+  },
+  "commonDone": "Done",
+  "@commonDone": {
+    "description": "Generic button: finish"
+  },
+  "commonCopy": "Copy",
+  "@commonCopy": {
+    "description": "Generic button/tooltip: copy to clipboard"
+  },
+  "commonCopied": "Copied",
+  "@commonCopied": {
+    "description": "Snackbar after copying to clipboard"
+  },
+  "commonRefresh": "Refresh",
+  "@commonRefresh": {
+    "description": "Generic button/tooltip: reload"
+  },
+  "commonSearch": "Search",
+  "@commonSearch": {
+    "description": "Generic search field hint or tooltip"
+  },
+  "commonLoading": "Loading…",
+  "@commonLoading": {
+    "description": "Generic loading label"
+  },
+  "commonSomethingWentWrong": "Something went wrong",
+  "@commonSomethingWentWrong": {
+    "description": "Generic error title"
+  },
+  "commonNone": "None",
+  "@commonNone": {
+    "description": "Shown when a value is empty"
+  },
+  "commonYes": "Yes",
+  "@commonYes": {
+    "description": "Generic answer"
+  },
+  "commonNo": "No",
+  "@commonNo": {
+    "description": "Generic answer"
   }
 }
