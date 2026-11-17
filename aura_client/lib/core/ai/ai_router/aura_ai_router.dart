@@ -76,6 +76,8 @@ class AuraAIRouter {
     final stopwatch = Stopwatch()..start();
     final notifier = _ref.read(aiRouterStatusProvider.notifier);
     try {
+      // Bounded by [AuraApiClient.healthTimeout] (INT-028): a gateway that accepts the
+      // connection and never answers used to leave the status at "Initializing" indefinitely.
       final response = await _ref.read(auraApiClientProvider).probeHealth();
       final ok = response.statusCode == 200;
       notifier.updateStatus(AIRouterStatus(

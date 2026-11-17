@@ -45,11 +45,16 @@ class VisionCapabilities {
   final int maxImages;
   final int maxImageBytes;
 
+  /// The decoded total `/chat` accepts across one turn's images (INT-026). Zero when the
+  /// server does not say (an older gateway), in which case only the per-image limit is checked.
+  final int maxRequestImageBytes;
+
   const VisionCapabilities({
     required this.enabled,
     required this.available,
     required this.maxImages,
     required this.maxImageBytes,
+    this.maxRequestImageBytes = 0,
   });
 
   /// What a client assumes when it cannot ask: no images. An old gateway without the route
@@ -65,6 +70,7 @@ class VisionCapabilities {
       available: vision['available'] == true,
       maxImages: (vision['max_images'] as num?)?.toInt() ?? 0,
       maxImageBytes: (vision['max_image_bytes'] as num?)?.toInt() ?? 0,
+      maxRequestImageBytes: (vision['max_request_image_bytes'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -112,7 +118,10 @@ final visionCapabilitiesProvider = FutureProvider<VisionCapabilities>(
 );
 
 /// Why an attachment was not added, for the composer to explain.
-enum AttachRejection { tooMany, tooLarge }
+///
+/// [totalTooLarge]: the image is within the per-image limit, but with the ones already attached
+/// the turn would exceed the server's per-request total, which it refuses as a whole.
+enum AttachRejection { tooMany, tooLarge, totalTooLarge }
 
 /// Images waiting to go with the next message.
 class PendingChatImages extends Notifier<List<ChatImageAttachment>> {
@@ -124,6 +133,10 @@ class PendingChatImages extends Notifier<List<ChatImageAttachment>> {
     if (state.length >= limits.maxImages) return AttachRejection.tooMany;
     if (limits.maxImageBytes > 0 && image.bytes.length > limits.maxImageBytes) {
       return AttachRejection.tooLarge;
+    }
+    if (limits.maxRequestImageBytes > 0) {
+      final total = state.fold<int>(0, (sum, i) => sum + i.bytes.length) + image.bytes.length;
+      if (total > limits.maxRequestImageBytes) return AttachRejection.totalTooLarge;
     }
     state = [...state, image];
     return null;

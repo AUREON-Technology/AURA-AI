@@ -72,7 +72,7 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | POST | `/api/v3/admin/twin/versions/{version}/compile` | — | — | — | none | to wire: Console twin browser and diff are Track AP phase AP9 |
 | GET | `/api/v3/admin/twin/versions/{version}/plan` | — | — | — | none | to wire: Console twin browser and diff are Track AP phase AP9 |
 | POST | `/api/v3/admin/users/{subject}/forget` | — | `aura_admin/app/(console)/access/page.tsx:157` | — | called |  |
-| GET | `/api/v3/agents` | `aura_client/lib/features/chat/data/agents_repository.dart:8`, `aura_client/lib/features/chat/data/agents_repository.dart:94` | — | — | called |  |
+| GET | `/api/v3/agents` | `aura_client/lib/features/chat/data/agents_repository.dart:5`, `aura_client/lib/features/chat/data/agents_repository.dart:93` | — | — | called |  |
 | GET | `/api/v3/agents/runs` | — | — | — | none | to wire: agent-run history (wave 2) has no client or admin view yet |
 | GET | `/api/v3/agents/runs/{run_id}` | — | — | — | none | to wire: agent-run history (wave 2) has no client or admin view yet |
 | GET | `/api/v3/auth/desktop/devices` | `aura_client/lib/core/auth/desktop_devices_client.dart:41` | — | — | called |  |
@@ -86,25 +86,25 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | POST | `/api/v3/auth/revoke` | `aura_client/lib/core/auth/desktop_devices_client.dart:41`, `aura_client/lib/core/auth/desktop_devices_client.dart:82` (+1) | `aura_admin/app/api/auth/logout/route.ts:8` | — | called |  |
 | POST | `/api/v3/auth/token` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:63`, `aura_client/lib/core/auth/token_manager.dart:86` (+4) | — | — | called |  |
 | POST | `/api/v3/auth/web/token` | `aura_client/lib/core/auth/token_manager.dart:337`, `aura_client/lib/core/auth/token_manager.dart:343` | `aura_admin/app/api/auth/login/route.ts:10` | — | called |  |
-| POST | `/api/v3/automation/analyze-email` | `aura_client/lib/features/automations/data/automation_repository.dart:218` | — | — | called |  |
-| POST | `/api/v3/automation/analyze-issue` | `aura_client/lib/features/automations/data/automation_repository.dart:256` | — | — | called |  |
-| GET | `/api/v3/capabilities` | `aura_client/lib/core/ai/vision/chat_images.dart:40`, `aura_client/lib/core/ai/vision/chat_images.dart:74` (+2) | — | — | called |  |
+| POST | `/api/v3/automation/analyze-email` | `aura_client/lib/features/automations/data/automation_repository.dart:263` | — | — | called |  |
+| POST | `/api/v3/automation/analyze-issue` | `aura_client/lib/features/automations/data/automation_repository.dart:302` | — | — | called |  |
+| GET | `/api/v3/capabilities` | `aura_client/lib/core/ai/vision/chat_images.dart:40`, `aura_client/lib/core/ai/vision/chat_images.dart:80` (+2) | — | — | called |  |
 | POST | `/api/v3/chat` | — | — | — | none | server-to-server: the non-streaming turn is for integrating systems (ADR-029 service keys, AR-6 structured output); the app streams via /chat/stream |
 | POST | `/api/v3/chat/stream` | `aura_client/lib/core/ai/online_agents/llm_timeouts.dart:10`, `aura_client/lib/core/ai/online_agents/sse_agent_client.dart:16` (+4) | — | — | called |  |
 | POST | `/api/v3/complete` | `aura_client/lib/core/ai/inline_completion_client.dart:9`, `aura_client/lib/core/ai/inline_completion_client.dart:25` | — | — | called |  |
-| GET | `/api/v3/engineering/runs` | `aura_client/lib/features/engineering/data/engineer_run_repository.dart:7`, `aura_client/lib/features/engineering/data/engineer_run_repository.dart:69` | — | — | called |  |
-| GET | `/api/v3/engineering/workspaces` | `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:54`, `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:77` (+1) | — | — | called |  |
-| DELETE | `/api/v3/engineering/workspaces/{workspace_id}` | `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:133` | — | — | called |  |
+| GET | `/api/v3/engineering/runs` | `aura_client/lib/features/engineering/data/engineer_run_repository.dart:4`, `aura_client/lib/features/engineering/data/engineer_run_repository.dart:68` | — | — | called |  |
+| GET | `/api/v3/engineering/workspaces` | `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:50`, `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:74` (+1) | — | — | called |  |
+| DELETE | `/api/v3/engineering/workspaces/{workspace_id}` | `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:124` | — | — | called |  |
 | POST | `/api/v3/feedback` | `aura_client/lib/features/chat/data/feedback_repository.dart:33` | — | — | called |  |
 | WS | `/api/v3/host/agent` | — | — | `aura_hostd/lib/src/config.dart:21`, `aura_hostd/lib/src/config.dart:26` (+1) | called |  |
 | GET | `/api/v3/insights` | `aura_client/lib/core/insights/insights_client.dart:11`, `aura_client/lib/core/insights/insights_client.dart:48` | — | — | called |  |
 | POST | `/api/v3/insights/generate` | `aura_client/lib/core/insights/insights_client.dart:100` | — | — | called |  |
-| POST | `/api/v3/insights/{insight_id}/dismiss` | `aura_client/lib/core/insights/insights_client.dart:113` | — | — | called |  |
+| POST | `/api/v3/insights/{insight_id}/dismiss` | `aura_client/lib/core/insights/insights_client.dart:119` | — | — | called |  |
 | GET | `/api/v3/integrations/github/callback` | — | — | — | none | server-only: OAuth redirect target, reached by the browser |
 | POST | `/api/v3/integrations/github/callback/confirm` | — | — | — | none | server-only: OAuth redirect target, reached by the browser |
-| GET | `/api/v3/integrations/github/connect` | `aura_client/lib/features/engineering/data/github_integration_repository.dart:52`, `aura_client/lib/features/engineering/data/github_integration_repository.dart:62` | — | — | called |  |
-| POST | `/api/v3/integrations/github/disconnect` | `aura_client/lib/features/engineering/data/github_integration_repository.dart:76`, `aura_client/lib/features/engineering/data/github_integration_repository.dart:81` | — | — | called |  |
-| GET | `/api/v3/integrations/github/status` | `aura_client/lib/features/engineering/data/github_integration_repository.dart:7`, `aura_client/lib/features/engineering/data/github_integration_repository.dart:43` | — | — | called |  |
+| GET | `/api/v3/integrations/github/connect` | `aura_client/lib/features/engineering/data/github_integration_repository.dart:47`, `aura_client/lib/features/engineering/data/github_integration_repository.dart:58` | — | — | called |  |
+| POST | `/api/v3/integrations/github/disconnect` | `aura_client/lib/features/engineering/data/github_integration_repository.dart:67`, `aura_client/lib/features/engineering/data/github_integration_repository.dart:73` | — | — | called |  |
+| GET | `/api/v3/integrations/github/status` | `aura_client/lib/features/engineering/data/github_integration_repository.dart:4`, `aura_client/lib/features/engineering/data/github_integration_repository.dart:42` | — | — | called |  |
 | GET | `/api/v3/keys/data` | `aura_client/lib/core/security/data_key_client.dart:12`, `aura_client/lib/core/security/data_key_client.dart:44` (+2) | — | — | called |  |
 | GET | `/api/v3/knowledge/cag` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:293` | — | — | called |  |
 | GET | `/api/v3/knowledge/documents` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:114`, `aura_client/lib/core/ai/knowledge/knowledge_center.dart:152` (+1) | — | — | called |  |
@@ -133,7 +133,7 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | GET | `/api/v3/workspaces` | — | — | — | none | to wire: team workspaces (ADR-034) have no client or console screen yet -- SaaS P1 plan F |
 | POST | `/api/v3/workspaces` | — | — | — | none | to wire: team workspaces (ADR-034) have no client or console screen yet -- SaaS P1 plan F |
 | POST | `/api/v3/workspaces/invites/accept` | — | — | — | none | to wire: team workspaces (ADR-034) have no client or console screen yet -- SaaS P1 plan F |
-| DELETE | `/api/v3/workspaces/{workspace_id}` | `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:133` | — | — | called |  |
+| DELETE | `/api/v3/workspaces/{workspace_id}` | `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:124` | — | — | called |  |
 | GET | `/api/v3/workspaces/{workspace_id}/invites` | — | — | — | none | to wire: team workspaces (ADR-034) have no client or console screen yet -- SaaS P1 plan F |
 | POST | `/api/v3/workspaces/{workspace_id}/invites` | — | — | — | none | to wire: team workspaces (ADR-034) have no client or console screen yet -- SaaS P1 plan F |
 | DELETE | `/api/v3/workspaces/{workspace_id}/invites/{invite_id}` | — | — | — | none | to wire: team workspaces (ADR-034) have no client or console screen yet -- SaaS P1 plan F |
@@ -144,7 +144,7 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | GET | `/docs` | — | — | — | infra |  |
 | GET | `/docs/oauth2-redirect` | — | — | — | infra |  |
 | GET | `/health/live` | — | — | — | infra |  |
-| GET | `/health/ready` | `aura_client/lib/core/network/aura_api_client.dart:128` | — | — | infra |  |
+| GET | `/health/ready` | `aura_client/lib/core/network/aura_api_client.dart:160` | — | — | infra |  |
 | GET | `/health/version` | — | — | — | infra |  |
 | GET | `/metrics` | — | — | — | infra |  |
 | GET | `/openapi.json` | — | — | — | infra |  |

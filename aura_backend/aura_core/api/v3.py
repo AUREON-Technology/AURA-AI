@@ -666,10 +666,25 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         """What optional features this deployment can serve right now, for any signed-in
         caller -- the client hides an attach-image button rather than offering one that 503s
         (ADR-031). ``available`` reflects configuration and provider declarations, not a probe.
+
+        ``max_request_image_bytes`` is the decoded total ``/chat`` enforces across one turn's
+        images (INT-026); without it a client checking only the per-image limit could build a
+        turn of individually-fine images that the server refuses as a whole.
+
+        ``knowledge.max_upload_bytes`` is the size ``/knowledge/documents/upload`` refuses above
+        (its 422 reports the same number as ``limit_bytes``), read from the same setting so a
+        client can check a file before sending it.
         """
-        return JSONResponse(content={"vision": {**vision_status(),
-                                                "max_images": settings.vision.max_images,
-                                                "max_image_bytes": settings.vision.max_image_bytes}})
+        vision = settings.vision
+        return JSONResponse(content={
+            "vision": {
+                **vision_status(),
+                "max_images": vision.max_images,
+                "max_image_bytes": vision.max_image_bytes,
+                "max_request_image_bytes": vision.max_request_image_bytes,
+            },
+            "knowledge": {"max_upload_bytes": settings.knowledge.max_document_bytes},
+        })
 
     @router.post("/chat/stream")
     async def chat_stream(
@@ -1170,17 +1185,24 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         caller: Principal = Depends(principal),
         query: str = Query(default="", max_length=500),
         limit: int = Query(default=20, ge=1, le=100),
+        # The client pages with ``offset`` (INT-043); it used to be dropped, so every page was
+        # page one. Bounded so a ranked search cannot be asked to over-fetch without limit.
+        offset: int = Query(default=0, ge=0, le=1000),
     ) -> JSONResponse:
         await enforce_rate_limit(request, caller, "read")
         if container.memory is None:
             return JSONResponse(content={"memories": [], "enabled": False})
         if query:
+            # Recall ranks rather than pages, so take the first ``offset + limit`` by rank and
+            # drop the ones already shown: the same ordering as the page before it.
             hits = await container.memory.recall(
-                MemoryQuery(owner_id=caller.user_id, text=query, limit=limit)
+                MemoryQuery(owner_id=caller.user_id, text=query, limit=offset + limit)
             )
-            records = [h.record for h in hits]
+            records = [h.record for h in hits][offset:offset + limit]
         else:
-            records = await container.memory_store.list_for_owner(caller.user_id, limit=limit)
+            records = await container.memory_store.list_for_owner(
+                caller.user_id, limit=limit, offset=offset
+            )
         return JSONResponse(
             content={
                 "enabled": True,
