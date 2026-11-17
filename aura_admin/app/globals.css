@@ -103,8 +103,9 @@
 }
 
 @theme {
-  /* No font is fetched: Inter is used when installed, then the platform UI font. */
-  --font-sans: Inter, "SF Pro Text", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+  /* No font is fetched at build time: Inter when installed, then Cairo (app/layout.tsx, committed
+     files, Arabic script only via unicode-range: plan decision 13), then the platform UI font. */
+  --font-sans: Inter, var(--font-cairo), "SF Pro Text", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
 
   --radius-sm: 8px;
@@ -180,7 +181,15 @@
     font-size: 14px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
+  }
+  /* Inter's character variants; Arabic pages render in Cairo, which they are not meant for. */
+  html:not(:lang(ar)),
+  html:not(:lang(ar)) body {
     font-feature-settings: "cv11", "ss01";
+  }
+  /* Tracking breaks Arabic letter joining, and uppercase is a no-op there. */
+  :lang(ar) * {
+    letter-spacing: 0 !important;
   }
   :focus-visible {
     outline: 2px solid var(--accent);
@@ -190,6 +199,9 @@
   pre,
   kbd {
     font-family: var(--font-mono);
+    /* Code, digests, JSON and the ⌘K hint read left to right inside an RTL page. */
+    direction: ltr;
+    unicode-bidi: isolate;
   }
   ::selection {
     background: var(--brand-soft);

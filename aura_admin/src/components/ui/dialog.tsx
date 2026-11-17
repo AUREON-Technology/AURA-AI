@@ -40,7 +40,7 @@ export function DialogContent({
         {hideClose ? null : (
           <DialogPrimitive.Close
             aria-label="Close"
-            className="absolute top-3.5 right-3.5 grid size-7 place-items-center rounded-sm text-faint transition-colors hover:bg-surface-variant hover:text-fg"
+            className="absolute top-3.5 end-3.5 grid size-7 place-items-center rounded-sm text-faint transition-colors hover:bg-surface-variant hover:text-fg"
           >
             <X aria-hidden="true" className="size-4" />
           </DialogPrimitive.Close>
@@ -51,7 +51,7 @@ export function DialogContent({
 }
 
 export function DialogTitle({ className, ...props }: ComponentPropsWithoutRef<typeof DialogPrimitive.Title>) {
-  return <DialogPrimitive.Title className={cn("pr-8 text-base leading-snug font-semibold", className)} {...props} />;
+  return <DialogPrimitive.Title className={cn("pe-8 text-base leading-snug font-semibold", className)} {...props} />;
 }
 
 export function DialogDescription({

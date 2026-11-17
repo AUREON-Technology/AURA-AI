@@ -9,7 +9,7 @@ export function Alert({ className, children, ...props }: HTMLAttributes<HTMLDivE
     <div
       role="alert"
       className={cn(
-        "mb-4 flex items-start gap-2.5 rounded-sm border border-bad/40 border-l-[3px] border-l-bad bg-bad-soft px-3.5 py-2.5 text-[13.5px] text-fg",
+        "mb-4 flex items-start gap-2.5 rounded-sm border border-bad/40 border-s-[3px] border-s-bad bg-bad-soft px-3.5 py-2.5 text-[13.5px] text-fg",
         "motion-safe:animate-fade-up",
         className,
       )}

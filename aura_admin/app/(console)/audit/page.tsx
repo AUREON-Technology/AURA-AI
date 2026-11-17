@@ -9,13 +9,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/ui/page-header";
 import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow, TableSkeleton } from "@/components/ui/table";
+import { useI18n } from "@/lib/i18n/context";
 import { api } from "@/lib/api";
 import type { AuditEvent } from "@/lib/types";
 
 export default function AuditPage() {
+  const { t, errorText } = useI18n();
   const [rows, setRows] = useState<AuditEvent[]>([]);
   const [action, setAction] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [loaded, setLoaded] = useState(false);
 
   // Stable across renders (state setters are), so the mount-time effect below can list it as its
@@ -24,7 +26,7 @@ export default function AuditPage() {
     const query = next ? `?action=${encodeURIComponent(next)}` : "";
     api<{ events: AuditEvent[] }>(`/admin/audit${query}`)
       .then((body) => setRows(body.events))
-      .catch((err: Error) => setError(err.message))
+      .catch((err: unknown) => setError(err))
       .finally(() => setLoaded(true));
   }, []);
 
@@ -34,8 +36,8 @@ export default function AuditPage() {
 
   return (
     <>
-      <PageHeader title="Audit">Append-only. Arguments are digests, never verbatim user content.</PageHeader>
-      {error ? <Alert>{error}</Alert> : null}
+      <PageHeader title={t("nav.audit")}>{t("audit.sub")}</PageHeader>
+      {error ? <Alert>{errorText(error)}</Alert> : null}
       <form
         className="mb-4 flex flex-wrap items-center gap-2"
         onSubmit={(event) => {
@@ -47,22 +49,22 @@ export default function AuditPage() {
           className="w-full max-w-xs"
           value={action}
           onChange={(e) => setAction(e.target.value)}
-          placeholder="action prefix"
-          aria-label="Action prefix"
+          placeholder={t("audit.actionPlaceholder")}
+          aria-label={t("audit.actionPlaceholder")}
         />
         <Button type="submit">
           <ListFilter aria-hidden="true" />
-          Filter
+          {t("audit.filter")}
         </Button>
       </form>
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>When</TableHead>
-            <TableHead>Actor</TableHead>
-            <TableHead>Action</TableHead>
-            <TableHead>Resource</TableHead>
-            <TableHead>Outcome</TableHead>
+            <TableHead>{t("audit.colWhen")}</TableHead>
+            <TableHead>{t("audit.colActor")}</TableHead>
+            <TableHead>{t("audit.colAction")}</TableHead>
+            <TableHead>{t("audit.colResource")}</TableHead>
+            <TableHead>{t("audit.colOutcome")}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -80,7 +82,7 @@ export default function AuditPage() {
             </TableRow>
           ))}
           {!loaded ? <TableSkeleton cols={5} /> : null}
-          {loaded && rows.length === 0 && !error ? <TableEmpty colSpan={5}>No audit events match.</TableEmpty> : null}
+          {loaded && rows.length === 0 && !error ? <TableEmpty colSpan={5}>{t("audit.empty")}</TableEmpty> : null}
         </TableBody>
       </Table>
     </>

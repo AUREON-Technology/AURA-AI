@@ -21,7 +21,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
   { className, ...props },
   ref,
 ) {
-  return <select ref={ref} className={cn(control, "cursor-pointer pr-8", className)} {...props} />;
+  return <select ref={ref} className={cn(control, "cursor-pointer pe-8", className)} {...props} />;
 });
 
 /** A label wrapping its control, so the control's accessible name is the label text. */

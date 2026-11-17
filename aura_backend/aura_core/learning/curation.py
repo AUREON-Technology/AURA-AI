@@ -48,6 +48,12 @@ logger = get_logger("learning.curation")
 _DEGENERATE = (
     re.compile(r"^\s*\[?(error|internal server error|failed|unavailable)\b", re.I),
     re.compile(r"\b(?:I'm sorry, (?:but )?I (?:can't|cannot)|as an AI language model)\b", re.I),
+    # The same in Arabic (فصحى and Egyptian). Matched against the raw text, so each letter that
+    # writers vary (hamza forms, ى/ي, ة/ه) is a class here rather than relying on folding.
+    re.compile(
+        r"(?:(?:[اأإآ]سف|معل[هة]?ش)[،,]?\s*(?:بس\s*|ولكن\s*|لكن\s*)?(?:لا\s*[أاإ]ستطيع|مش\s*هقدر|مقدرش|ما\s*[أا]قدرش)"
+        r"|بصفتي\s*نموذج\s*(?:لغ[وة]ي|ذكاء\s*اصطناعي))"
+    ),
     re.compile(r"^\s*$"),
 )
 

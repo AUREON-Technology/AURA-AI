@@ -3,6 +3,7 @@
 /// Full workspace management UI with recent list, open folder, remove recent.
 library;
 
+import 'package:aura_client/core/locale/relative_time.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
@@ -11,6 +12,7 @@ import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart' hide HostdRoot;
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 import 'package:aura_client/desktop/state/desktop_application_state.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class WorkspaceManagerPage extends ConsumerWidget {
   const WorkspaceManagerPage({super.key});
@@ -23,12 +25,12 @@ class WorkspaceManagerPage extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Workspaces'),
+        title: Text(context.l10n.workspaceManagerTitle),
         actions: [
           IconButton(
             icon: const Icon(Icons.add),
             onPressed: () => _openFolder(context, ref),
-            tooltip: 'Open Folder',
+            tooltip: context.l10n.workspaceOpenFolder,
           ),
         ],
       ),
@@ -41,14 +43,14 @@ class WorkspaceManagerPage extends ConsumerWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'Recent Workspaces',
+                    context.l10n.workspaceRecentWorkspaces,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),
                 AuraButton(
-                  label: 'Open Folder',
+                  label: context.l10n.workspaceOpenFolder,
                   icon: Icons.folder_open,
                   variant: AuraButtonVariant.secondary,
                   onPressed: () => _openFolder(context, ref),
@@ -105,7 +107,7 @@ class WorkspaceManagerPage extends ConsumerWidget {
                                               borderRadius: BorderRadius.circular(AuraRadius.pill),
                                             ),
                                             child: Text(
-                                              'Active',
+                                              context.l10n.workspaceActive,
                                               style: TextStyle(
                                                 fontSize: 10,
                                                 color: palette.brand,
@@ -128,7 +130,7 @@ class WorkspaceManagerPage extends ConsumerWidget {
                                     ),
                                     const SizedBox(height: 2),
                                     Text(
-                                      'Last opened: ${_formatDate(ws.lastOpenedAt)}',
+                                      context.l10n.workspaceLastOpened(relativeDay(context.l10n, ws.lastOpenedAt)),
                                       style: TextStyle(
                                         fontSize: 11,
                                         color: palette.textDisabled,
@@ -142,7 +144,7 @@ class WorkspaceManagerPage extends ConsumerWidget {
                                 children: [
                                   if (!isActive)
                                     AuraButton(
-                                      label: 'Open',
+                                      label: context.l10n.workspaceOpen,
                                       variant: AuraButtonVariant.secondary,
                                       onPressed: () => ref.read(workspaceNotifierProvider.notifier).setActiveWorkspace(ws.id),
                                     ),
@@ -150,7 +152,7 @@ class WorkspaceManagerPage extends ConsumerWidget {
                                   IconButton(
                                     icon: Icon(Icons.delete_outline, size: 18, color: palette.textDisabled),
                                     onPressed: () => _confirmRemove(context, ref, ws),
-                                    tooltip: 'Remove from recent',
+                                    tooltip: context.l10n.workspaceRemoveFromRecent,
                                   ),
                                 ],
                               ),
@@ -193,7 +195,7 @@ class WorkspaceManagerPage extends ConsumerWidget {
           );
         } catch (e) {
           if (context.mounted) {
-            AuraSnackbar.show(context, message: 'Could not grant root: $e', kind: AuraSnackbarKind.error);
+            AuraSnackbar.show(context, message: context.l10n.explorerGrantFailed(e.toString()), kind: AuraSnackbarKind.error);
           }
         }
       }
@@ -203,10 +205,10 @@ class WorkspaceManagerPage extends ConsumerWidget {
   Future<bool?> _showGrantDialog(BuildContext context, String path) {
     return AuraDialog.show<bool>(
       context: context,
-      title: 'Grant workspace to hostd?',
-      child: Text('This allows the AURA agent to read/write files in "$path".'),
-      confirmLabel: 'Grant',
-      cancelLabel: 'Not Now',
+      title: context.l10n.explorerGrantTitle,
+      child: Text(context.l10n.workspaceGrantBody(path)),
+      confirmLabel: context.l10n.explorerGrant,
+      cancelLabel: context.l10n.workspaceNotNow,
       onConfirm: () => Navigator.of(context).pop(true),
     );
   }
@@ -214,29 +216,15 @@ class WorkspaceManagerPage extends ConsumerWidget {
   Future<void> _confirmRemove(BuildContext context, WidgetRef ref, DesktopWorkspace ws) async {
     final confirmed = await AuraDialog.show<bool>(
       context: context,
-      title: 'Remove workspace?',
-      child: Text('This will remove "${ws.displayName}" from your recent workspaces.'),
-      confirmLabel: 'Remove',
-      cancelLabel: 'Cancel',
+      title: context.l10n.workspaceRemoveTitle,
+      child: Text(context.l10n.workspaceRemoveBody(ws.displayName)),
+      confirmLabel: context.l10n.workspaceRemove,
+      cancelLabel: context.l10n.cancel,
       confirmDestructive: true,
       onConfirm: () => Navigator.of(context).pop(true),
     );
     if (confirmed == true) {
       ref.read(workspaceNotifierProvider.notifier).removeWorkspace(ws.id);
-    }
-  }
-
-  String _formatDate(DateTime date) {
-    final now = DateTime.now();
-    final diff = now.difference(date);
-    if (diff.inDays == 0) {
-      return 'Today ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
-    } else if (diff.inDays == 1) {
-      return 'Yesterday';
-    } else if (diff.inDays < 7) {
-      return '${diff.inDays} days ago';
-    } else {
-      return '${date.day}/${date.month}/${date.year}';
     }
   }
 }
@@ -261,19 +249,19 @@ class _EmptyWorkspaces extends StatelessWidget {
           Icon(Icons.folder_outlined, size: 96, color: palette.textDisabled),
           const SizedBox(height: AuraSpacing.lg),
           Text(
-            'No workspaces yet',
+            context.l10n.workspaceEmptyTitle,
             style: Theme.of(context).textTheme.titleLarge?.copyWith(
               color: palette.textSecondary,
             ),
           ),
           const SizedBox(height: AuraSpacing.md),
           Text(
-            'Open a folder to create your first workspace',
+            context.l10n.workspaceEmptyMessage,
             style: TextStyle(color: palette.textDisabled),
           ),
           const SizedBox(height: AuraSpacing.xl),
           AuraButton(
-            label: 'Open Folder',
+            label: context.l10n.workspaceOpenFolder,
             icon: Icons.folder_open,
             onPressed: onOpenFolder,
           ),

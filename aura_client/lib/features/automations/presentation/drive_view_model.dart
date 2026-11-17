@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:aura_client/l10n/l10n.dart';
+
 import '../data/automation_repository.dart';
 
 @immutable
@@ -30,7 +32,7 @@ class DriveViewModel extends Notifier<DriveUiState> {
     final trimmedDesc = description.trim();
     if (trimmedName.isEmpty || trimmedDesc.isEmpty) return false;
 
-    state = state.copyWith(creating: true, logs: const ['Initializing project workspace folders...']);
+    state = state.copyWith(creating: true, logs: [currentL10n.automationsDriveInitializing]);
     try {
       final logs = await ref.read(automationRepositoryProvider).createProjectWorkspace(
             name: trimmedName,
@@ -41,7 +43,7 @@ class DriveViewModel extends Notifier<DriveUiState> {
     } catch (e) {
       state = state.copyWith(
         creating: false,
-        logs: [...state.logs, 'Workspace creation failed: $e'],
+        logs: [...state.logs, currentL10n.automationsDriveFailed('$e')],
       );
       return false;
     }

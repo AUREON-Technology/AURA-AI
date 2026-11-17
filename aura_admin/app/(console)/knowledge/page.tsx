@@ -11,15 +11,17 @@ import { Field, Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/ui/page-header";
 import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow, TableSkeleton } from "@/components/ui/table";
 import { api, fetchMe } from "@/lib/api";
+import { useI18n } from "@/lib/i18n/context";
 import type { KnowledgeSource, Me } from "@/lib/types";
 
 export default function KnowledgePage() {
+  const { t, errorText } = useI18n();
   const [me, setMe] = useState<Me | null>(null);
   const [sources, setSources] = useState<KnowledgeSource[]>([]);
   const [indexes, setIndexes] = useState<{ physical_name: string; active: boolean }[]>([]);
   const [id, setId] = useState("");
   const [uri, setUri] = useState("https://");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [loaded, setLoaded] = useState(false);
 
   async function load() {
@@ -35,27 +37,27 @@ export default function KnowledgePage() {
 
   useEffect(() => {
     load()
-      .catch((err: Error) => setError(err.message))
+      .catch((err: unknown) => setError(err))
       .finally(() => setLoaded(true));
   }, []);
 
   return (
     <>
-      <PageHeader title="Knowledge">Approved sources and versioned indexes. Not a user document browser.</PageHeader>
-      {error ? <Alert>{error}</Alert> : null}
+      <PageHeader title={t("nav.knowledge")}>{t("knowledge.sub")}</PageHeader>
+      {error ? <Alert>{errorText(error)}</Alert> : null}
       <Card>
         <CardHeader>
           <div>
-            <CardTitle>Sources</CardTitle>
-            <CardDescription>Only enabled sources are crawled into the next index.</CardDescription>
+            <CardTitle>{t("knowledge.sources")}</CardTitle>
+            <CardDescription>{t("knowledge.sourcesHelp")}</CardDescription>
           </div>
         </CardHeader>
         <Table flush>
           <TableHeader>
             <TableRow>
-              <TableHead>Id</TableHead>
-              <TableHead>URI</TableHead>
-              <TableHead>Enabled</TableHead>
+              <TableHead>{t("knowledge.colId")}</TableHead>
+              <TableHead>{t("knowledge.colUri")}</TableHead>
+              <TableHead>{t("knowledge.colEnabled")}</TableHead>
               <TableHead></TableHead>
             </TableRow>
           </TableHeader>
@@ -66,7 +68,7 @@ export default function KnowledgePage() {
                 <TableCell className="max-w-[360px] truncate text-muted">{source.uri}</TableCell>
                 <TableCell>
                   <Badge tone={source.enabled ? "ok" : "neutral"} dot>
-                    {source.enabled ? "yes" : "no"}
+                    {source.enabled ? t("common.yes") : t("common.no")}
                   </Badge>
                 </TableCell>
                 <TableCell>
@@ -84,26 +86,28 @@ export default function KnowledgePage() {
                           await load();
                         } catch (err) {
                           setError(
-                            `${source.enabled ? "Disable" : "Enable"} ${source.id} failed: ${
-                              err instanceof Error ? err.message : "request failed"
-                            }`,
+                            t("knowledge.toggleFailed", {
+                              action: source.enabled ? t("knowledge.disable") : t("knowledge.enable"),
+                              id: source.id,
+                              reason: errorText(err),
+                            }),
                           );
                         }
                       }}
                     >
-                      {source.enabled ? "Disable" : "Enable"}
+                      {source.enabled ? t("knowledge.disable") : t("knowledge.enable")}
                     </Button>
                     {me?.is_super_admin ? (
                       <ConfirmDialog
                         danger
-                        title={`Delete ${source.id}`}
+                        title={t("common.deleteTitle", { name: source.id })}
                         confirmText={source.id}
                         onConfirm={async () => {
                           await api(`/admin/sources/${encodeURIComponent(source.id)}`, { method: "DELETE" });
                           await load();
                         }}
                       >
-                        Delete
+                        {t("common.delete")}
                       </ConfirmDialog>
                     ) : null}
                   </div>
@@ -111,30 +115,30 @@ export default function KnowledgePage() {
               </TableRow>
             ))}
             {!loaded ? <TableSkeleton cols={4} /> : null}
-            {loaded && sources.length === 0 && !error ? <TableEmpty colSpan={4}>No sources registered.</TableEmpty> : null}
+            {loaded && sources.length === 0 && !error ? <TableEmpty colSpan={4}>{t("knowledge.emptySources")}</TableEmpty> : null}
           </TableBody>
         </Table>
         {me?.is_super_admin ? (
           <div className="mt-4 flex flex-wrap items-end gap-2">
             <Field>
-              Id
+              {t("knowledge.colId")}
               {/* Same rule as the gateway's SourceCreateRequest: the id is a URL path segment. */}
               <Input
                 value={id}
                 onChange={(e) => setId(e.target.value)}
                 pattern="[A-Za-z0-9][A-Za-z0-9._:\-]*"
                 maxLength={128}
-                title="Letters, digits, '.', '_', ':' or '-', starting with a letter or digit"
+                title={t("knowledge.idHint")}
               />
             </Field>
             <Field className="min-w-[240px] flex-1">
-              HTTPS URI
+              {t("knowledge.fieldUri")}
               <Input value={uri} onChange={(e) => setUri(e.target.value)} />
             </Field>
             <ConfirmDialog
               size="md"
-              title="Register source"
-              confirmText={id || "source"}
+              title={t("knowledge.registerTitle")}
+              confirmText={id || t("knowledge.registerWord")}
               onConfirm={async () => {
                 await api("/admin/sources", {
                   method: "POST",
@@ -144,7 +148,7 @@ export default function KnowledgePage() {
                 await load();
               }}
             >
-              Register
+              {t("knowledge.register")}
             </ConfirmDialog>
           </div>
         ) : null}
@@ -152,25 +156,25 @@ export default function KnowledgePage() {
       <Card className="mt-4">
         <CardHeader>
           <div>
-            <CardTitle>Indexes</CardTitle>
-            <CardDescription>The active alias serves retrieval; roll back to any earlier build.</CardDescription>
+            <CardTitle>{t("knowledge.indexes")}</CardTitle>
+            <CardDescription>{t("knowledge.indexesHelp")}</CardDescription>
           </div>
           <ConfirmDialog
-            title="Rebuild index"
-            confirmText="rebuild"
+            title={t("knowledge.rebuildTitle")}
+            confirmText={t("knowledge.rebuildWord")}
             onConfirm={async () => {
               await api("/admin/index/rebuild", { method: "POST" });
               await load();
             }}
           >
-            Rebuild
+            {t("knowledge.rebuild")}
           </ConfirmDialog>
         </CardHeader>
         <Table flush>
           <TableHeader>
             <TableRow>
-              <TableHead>Physical name</TableHead>
-              <TableHead>Active</TableHead>
+              <TableHead>{t("knowledge.colPhysicalName")}</TableHead>
+              <TableHead>{t("common.active")}</TableHead>
               <TableHead></TableHead>
             </TableRow>
           </TableHeader>
@@ -183,17 +187,17 @@ export default function KnowledgePage() {
                 <TableCell>
                   {row.active ? (
                     <Badge tone="ok" dot pulse>
-                      yes
+                      {t("common.yes")}
                     </Badge>
                   ) : (
                     ""
                   )}
                 </TableCell>
-                <TableCell className="text-right">
+                <TableCell className="text-end">
                   {row.active ? null : (
                     <ConfirmDialog
-                      title="Rollback alias"
-                      confirmText="rollback"
+                      title={t("knowledge.rollbackAliasTitle")}
+                      confirmText={t("common.rollbackWord")}
                       onConfirm={async () => {
                         await api("/admin/index/rollback", {
                           method: "POST",
@@ -202,14 +206,14 @@ export default function KnowledgePage() {
                         await load();
                       }}
                     >
-                      Rollback
+                      {t("common.rollback")}
                     </ConfirmDialog>
                   )}
                 </TableCell>
               </TableRow>
             ))}
             {!loaded ? <TableSkeleton cols={3} rows={2} /> : null}
-            {loaded && indexes.length === 0 && !error ? <TableEmpty colSpan={3}>No index builds yet.</TableEmpty> : null}
+            {loaded && indexes.length === 0 && !error ? <TableEmpty colSpan={3}>{t("knowledge.emptyIndexes")}</TableEmpty> : null}
           </TableBody>
         </Table>
       </Card>

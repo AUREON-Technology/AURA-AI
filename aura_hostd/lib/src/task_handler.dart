@@ -21,8 +21,12 @@ import 'isolated_task_registry.dart';
 import 'workspace_store.dart';
 
 class RpcError implements Exception {
-  RpcError(this.message);
+  RpcError(this.message, {this.code});
   final String message;
+
+  /// Stable machine code (`error_codes.dart`) for a refusal, sent as the RPC `error` frame's
+  /// `code` next to [message]; null for errors that are not refusals.
+  final String? code;
 
   @override
   String toString() => message;
@@ -183,8 +187,8 @@ class TaskHandler {
       );
     }
     final resolved = _roots.requireContained(root, path);
-    final protectedReason = protectedGitWriteReason(resolved);
-    if (protectedReason != null) throw RpcError(protectedReason);
+    final protectedWrite = protectedGitWriteRefusal(resolved);
+    if (protectedWrite != null) throw RpcError(protectedWrite.reason, code: protectedWrite.code);
 
     final verdict = evaluateWrite(workspaceTrusted: root.trusted);
     if (verdict.decision == CommandDecision.needsApproval) {
@@ -248,8 +252,8 @@ class TaskHandler {
         );
       }
       final absolute = _roots.requireContained(root, path);
-      final protectedReason = protectedGitWriteReason(absolute);
-      if (protectedReason != null) throw RpcError(protectedReason);
+      final protectedWrite = protectedGitWriteRefusal(absolute);
+      if (protectedWrite != null) throw RpcError(protectedWrite.reason, code: protectedWrite.code);
 
       final String finalContent;
       if (op.containsKey('content')) {
@@ -364,7 +368,7 @@ class TaskHandler {
     final commandForPolicy = _effectiveShellCommand(commandArgv);
     final verdict = evaluateCommand(commandForPolicy, workspaceTrusted: root.trusted);
     if (verdict.decision == CommandDecision.deny) {
-      throw RpcError('command refused: ${verdict.reason}');
+      throw RpcError('command refused: ${verdict.reason}', code: verdict.code);
     }
     if (verdict.decision == CommandDecision.needsApproval) {
       await _awaitApproval(commandForPolicy, cwd: cwd, root: root, callId: callId);

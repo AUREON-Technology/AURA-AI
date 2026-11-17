@@ -5,6 +5,8 @@ library;
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:aura_client/l10n/l10n.dart';
+
 class HostdTerminalUnavailable implements Exception {
   HostdTerminalUnavailable(this.message);
   final String message;
@@ -22,7 +24,7 @@ class HostdTerminalClient {
   bool get isConnected => false;
 
   Future<void> connect({required String rootPath, required int cols, required int rows}) async {
-    throw HostdTerminalUnavailable('The desktop Engineer daemon is not available on web.');
+    throw HostdTerminalUnavailable(currentL10n.coreHostdNotOnWeb);
   }
 
   void sendInput(Uint8List bytes) {}

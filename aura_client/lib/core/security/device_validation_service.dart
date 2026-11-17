@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../config/backend_url_policy.dart';
 import '../config/config.dart';
+import '../platform/client_language.dart';
 import 'app_attest_client.dart';
 import 'hardware_attestation_client.dart';
 import 'play_integrity_client.dart';
@@ -141,6 +142,9 @@ class DeviceValidationService {
     final headers = {
       'X-Device-Platform': attestation.platform,
       'X-Device-Attestation': attestation.token,
+      // Rides with attestation because every API client already sends these headers, sign-in
+      // included; it is not part of attestation itself (see client_language.dart).
+      clientLanguageHeader: ClientLanguage.current(),
     };
     if (attestation.nonce != null) {
       headers['X-Device-Attestation-Nonce'] = attestation.nonce!;

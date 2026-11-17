@@ -12,6 +12,7 @@ import 'widgets/task_item_card.dart';
 import 'widgets/task_sync_logs_sheet.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class TasksPage extends ConsumerWidget {
   const TasksPage({super.key});
@@ -64,13 +65,13 @@ class TasksPage extends ConsumerWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Welcome back,',
+                            context.l10n.tasksWelcomeBack,
                             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                                   color: palette.textSecondary,
                                 ),
                           ),
                           Text(
-                            user?.displayName ?? 'Aura User',
+                            user?.displayName ?? context.l10n.tasksDefaultUserName,
                             style: Theme.of(context).textTheme.titleLarge?.copyWith(
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -80,7 +81,7 @@ class TasksPage extends ConsumerWidget {
                     ),
                     IconButton(
                       icon: Icon(Icons.logout, color: palette.danger),
-                      tooltip: 'Sign Out',
+                      tooltip: context.l10n.signOut,
                       onPressed: () => confirmAndSignOut(context, ref),
                     ),
                   ],
@@ -96,7 +97,7 @@ class TasksPage extends ConsumerWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Task Workspace',
+                          context.l10n.tasksPageTitle,
                           style: Theme.of(context).textTheme.displayLarge?.copyWith(
                                 fontSize: 28,
                                 fontWeight: FontWeight.w900,
@@ -104,7 +105,7 @@ class TasksPage extends ConsumerWidget {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Prioritize and manage your goals',
+                          context.l10n.tasksPageSubtitle,
                           style: TextStyle(color: palette.textSecondary, fontSize: 13),
                         ),
                       ],
@@ -117,7 +118,7 @@ class TasksPage extends ConsumerWidget {
                         if (ui.syncLogs.isNotEmpty)
                           IconButton(
                             icon: Icon(Icons.receipt_long, color: palette.textSecondary),
-                            tooltip: 'View Sync Logs',
+                            tooltip: context.l10n.tasksViewSyncLogs,
                             onPressed: () => showTaskSyncLogsSheet(context, ui.syncLogs),
                           ),
                         ui.isSyncing
@@ -137,7 +138,7 @@ class TasksPage extends ConsumerWidget {
                                       child: CircularProgressIndicator(strokeWidth: 2, color: palette.brandOnSurfaceText),
                                     ),
                                     const SizedBox(width: 12),
-                                    Text('Syncing...', style: TextStyle(fontSize: 14, color: palette.textPrimary)),
+                                    Text(context.l10n.tasksSyncing, style: TextStyle(fontSize: 14, color: palette.textPrimary)),
                                   ],
                                 ),
                               )
@@ -150,15 +151,15 @@ class TasksPage extends ConsumerWidget {
                                     SnackBar(
                                       content: Text(
                                         hadErrors
-                                            ? 'Tasks sync encountered errors.'
-                                            : 'Google Tasks sync completed successfully!',
+                                            ? context.l10n.tasksSyncFailed
+                                            : context.l10n.tasksSyncSucceeded,
                                       ),
                                       backgroundColor: hadErrors ? palette.danger : palette.success,
                                     ),
                                   );
                                 },
                                 icon: const Icon(Icons.sync),
-                                label: const Text('Sync Tasks'),
+                                label: Text(context.l10n.tasksSyncButton),
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: palette.brand,
                                   foregroundColor: palette.onBrand,
@@ -173,7 +174,7 @@ class TasksPage extends ConsumerWidget {
                             );
                           },
                           icon: const Icon(Icons.add, size: 20),
-                          label: const Text('Add Task'),
+                          label: Text(context.l10n.tasksAddTask),
                           style: ElevatedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
                           ),
@@ -205,7 +206,7 @@ class TasksPage extends ConsumerWidget {
                               ),
                             ),
                             child: Text(
-                              category,
+                              taskCategoryLabel(context.l10n, category),
                               style: TextStyle(
                                 color: isSelected ? palette.onBrand : palette.textSecondary,
                                 fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,

@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:aura_client/core/ai/vision/chat_images.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 import '../../calendar/data/calendar_repository.dart';
 import '../../finance/data/finance_repository.dart';
@@ -12,8 +13,8 @@ import '../data/chat_repository.dart';
 import '../data/turn_meta.dart';
 import 'pending_actions_executor.dart';
 
-/// What an image-only message asks.
-const kDefaultImageQuestion = 'What is in this image?';
+/// What an image-only message asks, in the language on screen when it is sent.
+String get kDefaultImageQuestion => currentL10n.chatDefaultImageQuestion;
 
 @immutable
 class ChatUiState {

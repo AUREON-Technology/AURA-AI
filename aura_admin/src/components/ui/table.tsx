@@ -19,7 +19,7 @@ export function Table({
         flush ? "-mx-5 w-[calc(100%+2.5rem)] border-y border-line" : "rounded-md border border-line bg-surface shadow-card",
       )}
     >
-      <table className={cn("w-full border-separate border-spacing-0 text-left text-sm", className)} {...props} />
+      <table className={cn("w-full border-separate border-spacing-0 text-start text-sm", className)} {...props} />
     </div>
   );
 }
@@ -84,7 +84,7 @@ export function TableSkeleton({ cols, rows = 3 }: { cols: number; rows?: number 
         <tr key={row} aria-hidden="true">
           {Array.from({ length: cols }, (_, col) => (
             <td key={col} className="border-b border-line px-3.5 py-3">
-              <Skeleton className={col === 0 ? "w-32" : col === cols - 1 ? "ml-auto w-20" : "w-16"} />
+              <Skeleton className={col === 0 ? "w-32" : col === cols - 1 ? "ms-auto w-20" : "w-16"} />
             </td>
           ))}
         </tr>

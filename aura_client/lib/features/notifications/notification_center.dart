@@ -4,7 +4,7 @@ import 'package:intl/intl.dart';
 import '../../core/database/database.dart';
 import '../../core/database/database_provider.dart';
 import '../../core/design_system/design_system.dart';
-import '../../l10n/generated/app_localizations.dart';
+import '../../l10n/l10n.dart';
 
 /// Notification Center (Doc/V2_BLUEPRINT.md §3/§13 Phase 2) — surfaces
 /// real system events (AI failovers, sync/request errors) from the
@@ -32,9 +32,9 @@ class AppNotification {
     if (log.eventType == 'failover') {
       return AppNotification(
         id: log.id,
-        title: 'Server inference failover',
+        title: currentL10n.notificationsFailoverTitle,
         message:
-            'AURA could not complete the request on ${log.modelUsed} and recorded a failover.',
+            currentL10n.notificationsFailoverMessage(log.modelUsed),
         createdAt: log.createdAt,
         isError: false,
       );
@@ -43,9 +43,9 @@ class AppNotification {
         (log.errorMessage != null && log.errorMessage!.isNotEmpty)) {
       return AppNotification(
         id: log.id,
-        title: 'Request failed',
+        title: currentL10n.notificationsRequestFailedTitle,
         message:
-            log.errorMessage ?? 'An AI request failed on ${log.modelUsed}.',
+            log.errorMessage ?? currentL10n.notificationsRequestFailedMessage(log.modelUsed),
         createdAt: log.createdAt,
         isError: true,
       );
@@ -177,7 +177,7 @@ class _NotificationSheet extends ConsumerWidget {
                     child: Align(
                       alignment: AlignmentDirectional.centerStart,
                       child: Text(
-                        'Notifications',
+                        context.l10n.notificationsTooltip,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.titleLarge,
@@ -188,13 +188,13 @@ class _NotificationSheet extends ConsumerWidget {
                   Flexible(
                     child: notificationsAsync.when(
                       data: (items) => items.isEmpty
-                          ? const Padding(
-                              padding: EdgeInsets.all(AuraSpacing.xl),
+                          ? Padding(
+                              padding: const EdgeInsets.all(AuraSpacing.xl),
                               child: AuraEmptyState(
                                 icon: Icons.notifications_none,
-                                title: 'Nothing to report',
+                                title: context.l10n.notificationsEmptyTitle,
                                 message:
-                                    "You'll see AI failovers and request errors here.",
+                                    context.l10n.notificationsEmptyMessage,
                               ),
                             )
                           : ListView.separated(
@@ -212,11 +212,11 @@ class _NotificationSheet extends ConsumerWidget {
                         padding: EdgeInsets.all(AuraSpacing.xl),
                         child: Center(child: CircularProgressIndicator()),
                       ),
-                      error: (_, _) => const Padding(
-                        padding: EdgeInsets.all(AuraSpacing.xl),
+                      error: (_, _) => Padding(
+                        padding: const EdgeInsets.all(AuraSpacing.xl),
                         child: AuraEmptyState(
                           icon: Icons.error_outline,
-                          title: "Couldn't load notifications",
+                          title: context.l10n.notificationsLoadFailed,
                         ),
                       ),
                     ),
@@ -266,7 +266,7 @@ class _NotificationTile extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  DateFormat('MMM d, h:mm a').format(item.createdAt),
+                  DateFormat.MMMd().add_jm().format(item.createdAt),
                   style: TextStyle(color: palette.textDisabled, fontSize: 11),
                 ),
               ],

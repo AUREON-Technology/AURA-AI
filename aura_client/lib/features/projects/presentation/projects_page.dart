@@ -9,6 +9,7 @@ import '../data/project_providers.dart';
 import 'projects_view_model.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class ProjectsPage extends ConsumerWidget {
   const ProjectsPage({super.key});
@@ -61,13 +62,13 @@ class ProjectsPage extends ConsumerWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Welcome back,',
+                            context.l10n.projectsWelcomeBack,
                             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                                   color: palette.textSecondary,
                                 ),
                           ),
                           Text(
-                            user?.displayName ?? 'Aura User',
+                            user?.displayName ?? context.l10n.projectsDefaultUserName,
                             style: Theme.of(context).textTheme.titleLarge?.copyWith(
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -77,7 +78,7 @@ class ProjectsPage extends ConsumerWidget {
                     ),
                     IconButton(
                       icon: Icon(Icons.logout, color: palette.danger),
-                      tooltip: 'Sign Out',
+                      tooltip: context.l10n.signOut,
                       onPressed: () => confirmAndSignOut(context, ref),
                     ),
                   ],
@@ -93,14 +94,14 @@ class ProjectsPage extends ConsumerWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Projects',
+                          context.l10n.projectsTitle,
                           style: Theme.of(context).textTheme.displayLarge?.copyWith(
                                 fontSize: 28,
                                 fontWeight: FontWeight.w900,
                               ),
                         ),
                         Text(
-                          'Organize your work into projects',
+                          context.l10n.projectsSubtitle,
                           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                                 color: palette.textSecondary,
                               ),
@@ -110,7 +111,7 @@ class ProjectsPage extends ConsumerWidget {
                     FilledButton.icon(
                       onPressed: () => _showAddProjectDialog(context, ref, vm),
                       icon: const Icon(Icons.add),
-                      label: const Text('New Project'),
+                      label: Text(context.l10n.projectsNew),
                     ),
                   ],
                 ),
@@ -125,9 +126,9 @@ class ProjectsPage extends ConsumerWidget {
                             children: [
                               Icon(Icons.folder_open, size: 64, color: palette.textSecondary),
                               const SizedBox(height: 16),
-                              Text('No projects yet', style: TextStyle(fontSize: 18, color: palette.textSecondary)),
+                              Text(context.l10n.projectsEmptyTitle, style: TextStyle(fontSize: 18, color: palette.textSecondary)),
                               const SizedBox(height: 8),
-                              Text('Create your first project to get started', style: TextStyle(color: palette.textSecondary)),
+                              Text(context.l10n.projectsEmptyMessage, style: TextStyle(color: palette.textSecondary)),
                             ],
                           ),
                         );
@@ -169,32 +170,34 @@ class ProjectsPage extends ConsumerWidget {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: const Text('Create Project'),
+          title: Text(context.l10n.projectsCreateTitle),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
                   controller: titleController,
-                  decoration: const InputDecoration(labelText: 'Title *'),
+                  decoration: InputDecoration(labelText: context.l10n.projectsTitleField),
                   autofocus: true,
                 ),
                 const SizedBox(height: 16),
                 TextField(
                   controller: descController,
-                  decoration: const InputDecoration(labelText: 'Description'),
+                  decoration: InputDecoration(labelText: context.l10n.projectsDescriptionField),
                   maxLines: 3,
                 ),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<String>(
                   initialValue: status,
-                  items: ['active', 'completed', 'archived', 'on_hold'].map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                  items: ['active', 'completed', 'archived', 'on_hold'].map((s) => DropdownMenuItem(value: s, child: Text(projectStatusLabel(context.l10n, s)))).toList(),
                   onChanged: (v) => setState(() => status = v!),
-                  decoration: const InputDecoration(labelText: 'Status'),
+                  decoration: InputDecoration(labelText: context.l10n.projectsStatusField),
                 ),
                 const SizedBox(height: 16),
                 ListTile(
-                  title: Text(targetDate == null ? 'Set target date (optional)' : 'Target: ${targetDate!.toLocal().toString().split(' ')[0]}'),
+                  title: Text(targetDate == null
+                      ? context.l10n.projectsSetTargetDate
+                      : context.l10n.projectsTarget(targetDate!.toLocal().toString().split(' ')[0])),
                   trailing: const Icon(Icons.calendar_today),
                   onTap: () async {
                     final date = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime.now(), lastDate: DateTime.now().add(const Duration(days: 365 * 5)));
@@ -205,7 +208,7 @@ class ProjectsPage extends ConsumerWidget {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            TextButton(onPressed: () => Navigator.pop(context), child: Text(context.l10n.cancel)),
             FilledButton(
               onPressed: () async {
                 if (titleController.text.trim().isEmpty) return;
@@ -217,7 +220,7 @@ class ProjectsPage extends ConsumerWidget {
                 );
                 if (context.mounted) Navigator.pop(context);
               },
-              child: const Text('Create'),
+              child: Text(context.l10n.projectsCreate),
             ),
           ],
         ),
@@ -262,7 +265,7 @@ class _ProjectCard extends StatelessWidget {
             if (project.description != null && project.description!.isNotEmpty)
               Text(project.description!, maxLines: 1, overflow: TextOverflow.ellipsis),
             if (project.targetDate != null)
-              Text('Due: ${project.targetDate!.toLocal().toString().split(' ')[0]}', style: TextStyle(fontSize: 12, color: palette.textSecondary)),
+              Text(context.l10n.projectsDue(project.targetDate!.toLocal().toString().split(' ')[0]), style: TextStyle(fontSize: 12, color: palette.textSecondary)),
           ],
         ),
         trailing: PopupMenuButton<String>(
@@ -271,11 +274,26 @@ class _ProjectCard extends StatelessWidget {
             // TODO: add edit, duplicate, etc.
           },
           itemBuilder: (context) => [
-            const PopupMenuItem(value: 'edit', child: Text('Edit')),
-            PopupMenuItem(value: 'delete', child: Text('Delete', style: TextStyle(color: palette.danger))),
+            PopupMenuItem(value: 'edit', child: Text(context.l10n.commonEdit)),
+            PopupMenuItem(value: 'delete', child: Text(context.l10n.commonDelete, style: TextStyle(color: palette.danger))),
           ],
         ),
       ),
     );
+  }
+}
+/// A project status (a stored identifier such as `on_hold`) in the language on screen.
+String projectStatusLabel(AppLocalizations l10n, String status) {
+  switch (status) {
+    case 'active':
+      return l10n.projectsStatusActive;
+    case 'completed':
+      return l10n.projectsStatusCompleted;
+    case 'archived':
+      return l10n.projectsStatusArchived;
+    case 'on_hold':
+      return l10n.projectsStatusOnHold;
+    default:
+      return status;
   }
 }

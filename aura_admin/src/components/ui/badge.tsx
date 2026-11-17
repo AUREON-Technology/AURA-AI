@@ -28,7 +28,7 @@ export type BadgeProps = HTMLAttributes<HTMLSpanElement> &
 
 export function Badge({ className, tone, dot = false, pulse = false, children, ...props }: BadgeProps) {
   return (
-    <span className={cn(badgeVariants({ tone }), dot && "pl-2", className)} {...props}>
+    <span className={cn(badgeVariants({ tone }), dot && "ps-2", className)} {...props}>
       {dot ? (
         <span aria-hidden="true" className="relative inline-flex size-1.5">
           {pulse ? (

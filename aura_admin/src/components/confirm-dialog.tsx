@@ -7,7 +7,16 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { useI18n } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
+
+/**
+ * Fold the Arabic letter variants a keyboard makes easy to mix up (أ إ آ → ا, ى → ي), so a typed
+ * Arabic confirmation word matches whichever spelling the dictionary uses. Latin text is untouched.
+ */
+function foldConfirm(value: string): string {
+  return value.replace(/[أإآ]/g, "ا").replace(/ى/g, "ي");
+}
 
 export function ConfirmDialog({
   title,
@@ -26,31 +35,37 @@ export function ConfirmDialog({
   disabled?: boolean;
   size?: "sm" | "md";
 }) {
+  const { t, errorText } = useI18n();
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [mismatch, setMismatch] = useState(false);
+  const [error, setError] = useState<unknown>(null);
   const inputId = useId();
 
   async function run() {
-    if (typed !== confirmText) {
-      setError(`Type ${confirmText} to confirm. This writes an audit event.`);
+    if (foldConfirm(typed) !== foldConfirm(confirmText)) {
+      setMismatch(true);
+      setError(null);
       return;
     }
     setBusy(true);
+    setMismatch(false);
     setError(null);
     try {
       await onConfirm();
       setOpen(false);
       setTyped("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Request failed");
+      setError(err ?? new Error(t("errors.requestFailed")));
     } finally {
       setBusy(false);
     }
   }
 
   const Icon = danger ? TriangleAlert : ShieldCheck;
+  // "Type {text}" with the word itself set as code, in whichever order the language puts it.
+  const [labelBefore, labelAfter = ""] = t("confirm.typeLabel", { text: "\u0000" }).split("\u0000");
 
   return (
     <>
@@ -77,12 +92,14 @@ export function ConfirmDialog({
               </span>
               <div className="min-w-0 pt-0.5">
                 <DialogTitle className="break-words">{title}</DialogTitle>
-                <DialogDescription>This writes an audit event.</DialogDescription>
+                <DialogDescription>{t("confirm.auditNote")}</DialogDescription>
               </div>
             </div>
             <div className="mt-5 flex flex-col gap-1.5">
               <label htmlFor={inputId} className="text-[12.5px] font-medium text-muted">
-                Type <code className="rounded-[5px] bg-surface-variant px-1.5 py-0.5 text-[12px] text-fg">{confirmText}</code>
+                {labelBefore}
+                <code className="rounded-[5px] bg-surface-variant px-1.5 py-0.5 text-[12px] text-fg">{confirmText}</code>
+                {labelAfter}
               </label>
               <Input
                 id={inputId}
@@ -92,14 +109,15 @@ export function ConfirmDialog({
                 onChange={(e) => setTyped(e.target.value)}
               />
             </div>
-            {error ? <Alert className="mt-3 mb-0">{error}</Alert> : null}
+            {mismatch ? <Alert className="mt-3 mb-0">{t("confirm.mismatch", { text: confirmText })}</Alert> : null}
+            {error ? <Alert className="mt-3 mb-0">{errorText(error)}</Alert> : null}
             <DialogFooter>
               <Button variant="ghost" onClick={() => setOpen(false)}>
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button type="submit" variant={danger ? "danger" : "primary"} disabled={busy}>
                 {busy ? <LoaderCircle aria-hidden="true" className="motion-safe:animate-spin" /> : null}
-                Confirm
+                {t("common.confirm")}
               </Button>
             </DialogFooter>
           </form>

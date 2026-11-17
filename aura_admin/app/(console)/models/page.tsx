@@ -10,6 +10,8 @@ import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/ui/page-header";
 import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow, TableSkeleton } from "@/components/ui/table";
 import { api, fetchMe } from "@/lib/api";
+import { useI18n } from "@/lib/i18n/context";
+import type { Me, ModelVersion } from "@/lib/types";
 
 function stageTone(stage: string) {
   if (stage === "production") return "ok" as const;
@@ -17,18 +19,18 @@ function stageTone(stage: string) {
   if (stage === "candidate") return "brand" as const;
   return "neutral" as const;
 }
-import type { Me, ModelVersion } from "@/lib/types";
 
 type Approval = { id: string; kind: string; status: string; artefact_digest: string };
 
 export default function ModelsPage() {
+  const { t, errorText } = useI18n();
   const [me, setMe] = useState<Me | null>(null);
   const [rows, setRows] = useState<ModelVersion[]>([]);
   const [local, setLocal] = useState<{ name: string }[]>([]);
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [promotionApprovals, setPromotionApprovals] = useState<Approval[]>([]);
   const [pullName, setPullName] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [loaded, setLoaded] = useState(false);
   const [importUri, setImportUri] = useState("");
   const [importDigest, setImportDigest] = useState("");
@@ -55,21 +57,19 @@ export default function ModelsPage() {
 
   useEffect(() => {
     load()
-      .catch((err: Error) => setError(err.message))
+      .catch((err: unknown) => setError(err))
       .finally(() => setLoaded(true));
   }, []);
 
   return (
     <>
-      <PageHeader title="Models">
-        Registry stages and allowlisted local weights. Production needs a MODEL_PROMOTION approval.
-      </PageHeader>
-      {error ? <Alert>{error}</Alert> : null}
+      <PageHeader title={t("nav.models")}>{t("models.sub")}</PageHeader>
+      {error ? <Alert>{errorText(error)}</Alert> : null}
 
       {approvals.length > 0 ? (
         <Card className="mb-4 border-ok/30">
           <CardHeader className="mb-3">
-            <CardTitle>Approved fine-tunes ready to launch</CardTitle>
+            <CardTitle>{t("models.approvedFinetunes")}</CardTitle>
           </CardHeader>
           <ul className="divide-y divide-line">
             {approvals.map((row) => (
@@ -82,8 +82,8 @@ export default function ModelsPage() {
                   </span>{" "}
                   {me?.is_super_admin ? (
                     <ConfirmDialog
-                      title={`Launch train for ${row.id}`}
-                      confirmText="launch"
+                      title={t("models.launchTitle", { id: row.id })}
+                      confirmText={t("models.launchWord")}
                       onConfirm={async () => {
                         await api("/admin/learning/jobs", {
                           method: "POST",
@@ -95,7 +95,7 @@ export default function ModelsPage() {
                         await load();
                       }}
                     >
-                      Launch train
+                      {t("models.launch")}
                     </ConfirmDialog>
                   ) : null}
                 </li>
@@ -107,11 +107,11 @@ export default function ModelsPage() {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Model</TableHead>
-            <TableHead>Stage</TableHead>
-            <TableHead>Artefact</TableHead>
-            <TableHead>Digest</TableHead>
-            <TableHead>Canary</TableHead>
+            <TableHead>{t("models.colModel")}</TableHead>
+            <TableHead>{t("models.colStage")}</TableHead>
+            <TableHead>{t("common.artefact")}</TableHead>
+            <TableHead>{t("common.digest")}</TableHead>
+            <TableHead>{t("models.colCanary")}</TableHead>
             <TableHead></TableHead>
           </TableRow>
         </TableHeader>
@@ -135,8 +135,8 @@ export default function ModelsPage() {
                 <div className="flex flex-wrap justify-end gap-1.5">
                 {row.stage === "canary" || row.stage === "shadow" ? (
                   <ConfirmDialog
-                    title={`Request production approval for ${row.model_id}@${row.version}`}
-                    confirmText="request"
+                    title={t("models.requestTitle", { model: `${row.model_id}@${row.version}` })}
+                    confirmText={t("common.requestWord")}
                     onConfirm={async () => {
                       await api(
                         `/admin/models/${encodeURIComponent(row.model_id)}/request-promotion?version=${encodeURIComponent(row.version)}`,
@@ -151,13 +151,13 @@ export default function ModelsPage() {
                       await load();
                     }}
                   >
-                    Request promote
+                    {t("models.requestPromote")}
                   </ConfirmDialog>
                 ) : null}
                 {row.stage !== "production" && row.stage !== "archived" ? (
                   <ConfirmDialog
-                    title={`Promote ${row.model_id}@${row.version}`}
-                    confirmText="promote"
+                    title={t("models.promoteTitle", { model: `${row.model_id}@${row.version}` })}
+                    confirmText={t("models.promoteWord")}
                     onConfirm={async () => {
                       const next =
                         row.stage === "candidate"
@@ -179,9 +179,7 @@ export default function ModelsPage() {
                           (a) => a.artefact_digest === key,
                         );
                         if (!promo) {
-                          throw new Error(
-                            `No approved MODEL_PROMOTION for ${key}. Use “Request promote”, approve it, then Promote.`,
-                          );
+                          throw new Error(t("models.noPromotion", { key }));
                         }
                         body.approval_id = promo.id;
                       }
@@ -195,12 +193,12 @@ export default function ModelsPage() {
                       await load();
                     }}
                   >
-                    Promote
+                    {t("models.promote")}
                   </ConfirmDialog>
                 ) : null}
                 <ConfirmDialog
-                  title="Rollback to this version"
-                  confirmText="rollback"
+                  title={t("models.rollbackTitle")}
+                  confirmText={t("common.rollbackWord")}
                   onConfirm={async () => {
                     await api(`/admin/models/${encodeURIComponent(row.model_id)}/rollback`, {
                       method: "POST",
@@ -209,14 +207,14 @@ export default function ModelsPage() {
                     await load();
                   }}
                 >
-                  Rollback
+                  {t("common.rollback")}
                 </ConfirmDialog>
                 </div>
               </TableCell>
             </TableRow>
           ))}
           {!loaded ? <TableSkeleton cols={6} /> : null}
-          {loaded && rows.length === 0 && !error ? <TableEmpty colSpan={6}>No model versions registered.</TableEmpty> : null}
+          {loaded && rows.length === 0 && !error ? <TableEmpty colSpan={6}>{t("models.empty")}</TableEmpty> : null}
         </TableBody>
       </Table>
 
@@ -224,36 +222,33 @@ export default function ModelsPage() {
         <Card className="mt-4">
           <CardHeader>
             <div>
-              <CardTitle>Import artefact</CardTitle>
-              <CardDescription>
-                Register a local Ollama tag trained elsewhere. Requires an approved FINETUNE approval
-                bound to the dataset digest.
-              </CardDescription>
+              <CardTitle>{t("models.importHeading")}</CardTitle>
+              <CardDescription>{t("models.importHelp")}</CardDescription>
             </div>
           </CardHeader>
           <div className="grid gap-2 desk:grid-cols-[1fr_1fr_1fr_auto]">
             <Input
-              aria-label="Artefact URI"
+              aria-label={t("models.importUriPlaceholder")}
               value={importUri}
               onChange={(e) => setImportUri(e.target.value)}
-              placeholder="artefact uri (aura-ft:v1)"
+              placeholder={t("models.importUriPlaceholder")}
             />
             <Input
-              aria-label="Dataset digest"
+              aria-label={t("models.datasetDigestPlaceholder")}
               value={importDigest}
               onChange={(e) => setImportDigest(e.target.value)}
-              placeholder="dataset digest"
+              placeholder={t("models.datasetDigestPlaceholder")}
             />
             <Input
-              aria-label="Approval id"
+              aria-label={t("models.approvalIdPlaceholder")}
               value={importApproval}
               onChange={(e) => setImportApproval(e.target.value)}
-              placeholder="approval id"
+              placeholder={t("models.approvalIdPlaceholder")}
             />
             <ConfirmDialog
               size="md"
-              title="Import model artefact"
-              confirmText="import"
+              title={t("models.importTitle")}
+              confirmText={t("models.importWord")}
               onConfirm={async () => {
                 await api("/admin/models/import", {
                   method: "POST",
@@ -267,7 +262,7 @@ export default function ModelsPage() {
                 await load();
               }}
             >
-              Import
+              {t("models.import")}
             </ConfirmDialog>
           </div>
         </Card>
@@ -275,7 +270,7 @@ export default function ModelsPage() {
 
       <Card className="mt-4">
         <CardHeader className="mb-3">
-          <CardTitle>Local Ollama</CardTitle>
+          <CardTitle>{t("models.localOllama")}</CardTitle>
         </CardHeader>
         <ul className="divide-y divide-line">
           {local.map((model) => (
@@ -284,7 +279,7 @@ export default function ModelsPage() {
               {me?.is_super_admin ? (
                 <ConfirmDialog
                   danger
-                  title={`Delete ${model.name}`}
+                  title={t("common.deleteTitle", { name: model.name })}
                   confirmText={model.name}
                   onConfirm={async () => {
                     await api(`/admin/local-models/${encodeURIComponent(model.name)}`, {
@@ -293,7 +288,7 @@ export default function ModelsPage() {
                     await load();
                   }}
                 >
-                  Delete
+                  {t("common.delete")}
                 </ConfirmDialog>
               ) : null}
             </li>
@@ -305,13 +300,13 @@ export default function ModelsPage() {
               className="w-full max-w-xs"
               value={pullName}
               onChange={(e) => setPullName(e.target.value)}
-              placeholder="allowlisted name"
-              aria-label="Allowlisted model name"
+              placeholder={t("models.allowlistedPlaceholder")}
+              aria-label={t("models.allowlistedPlaceholder")}
             />
             <ConfirmDialog
               size="md"
-              title="Pull model"
-              confirmText={pullName || "pull"}
+              title={t("models.pullTitle")}
+              confirmText={pullName || t("models.pullWord")}
               onConfirm={async () => {
                 await api("/admin/local-models/pull", {
                   method: "POST",
@@ -320,7 +315,7 @@ export default function ModelsPage() {
                 await load();
               }}
             >
-              Pull
+              {t("models.pull")}
             </ConfirmDialog>
           </div>
         ) : null}

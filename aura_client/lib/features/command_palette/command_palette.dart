@@ -5,6 +5,7 @@ import '../../core/database/database.dart';
 import '../../core/database/database_provider.dart';
 import '../../core/design_system/design_system.dart';
 import '../../core/platform/aura_platform.dart';
+import '../../l10n/l10n.dart';
 
 /// Global command palette (Doc/V2_BLUEPRINT.md §3) — reachable from any
 /// screen via Ctrl/Cmd+K or the floating trigger in [ShellLayout], instead
@@ -19,23 +20,23 @@ class _Destination {
   const _Destination(this.label, this.icon, this.route);
 }
 
-const _destinations = [
-  _Destination('Today', Icons.today_outlined, '/today'),
-  _Destination('Copilot', Icons.auto_awesome_outlined, '/chat'),
-  _Destination('Life Hub', Icons.view_week_outlined, '/life'),
-  _Destination('Tasks', Icons.check_circle_outline, '/life?type=tasks'),
-  _Destination('Calendar', Icons.calendar_month_outlined, '/life?type=calendar'),
-  _Destination('Finance', Icons.monetization_on_outlined, '/life?type=finance'),
-  _Destination('Health', Icons.favorite_outline, '/life?type=health'),
-  _Destination('You', Icons.person_outline, '/you'),
-  _Destination('Knowledge', Icons.folder_shared_outlined, '/knowledge'),
-  _Destination('Memory', Icons.psychology_outlined, '/memory'),
-  _Destination('Feedback', Icons.rate_review_outlined, '/feedback'),
-  _Destination('Appearance', Icons.palette_outlined, '/appearance'),
-  _Destination('Engine status', Icons.cloud_outlined, '/models'),
-  _Destination('Automations', Icons.bolt_outlined, '/automations'),
-  _Destination('Usage on this device', Icons.phone_iphone_outlined, '/analytics'),
-  _Destination('Profile', Icons.person_outline, '/profile'),
+List<_Destination> _destinations(AppLocalizations l10n) => [
+  _Destination(l10n.navToday, Icons.today_outlined, '/today'),
+  _Destination(l10n.navCopilot, Icons.auto_awesome_outlined, '/chat'),
+  _Destination(l10n.navLifeHub, Icons.view_week_outlined, '/life'),
+  _Destination(l10n.lifeHubFilterTasks, Icons.check_circle_outline, '/life?type=tasks'),
+  _Destination(l10n.lifeHubFilterCalendar, Icons.calendar_month_outlined, '/life?type=calendar'),
+  _Destination(l10n.lifeHubFilterFinance, Icons.monetization_on_outlined, '/life?type=finance'),
+  _Destination(l10n.lifeHubFilterHealth, Icons.favorite_outline, '/life?type=health'),
+  _Destination(l10n.navYou, Icons.person_outline, '/you'),
+  _Destination(l10n.knowledgeTitle, Icons.folder_shared_outlined, '/knowledge'),
+  _Destination(l10n.memoryTitle, Icons.psychology_outlined, '/memory'),
+  _Destination(l10n.feedbackTitle, Icons.rate_review_outlined, '/feedback'),
+  _Destination(l10n.appearanceTitle, Icons.palette_outlined, '/appearance'),
+  _Destination(l10n.engineStatusTitle, Icons.cloud_outlined, '/models'),
+  _Destination(l10n.settingsAutomationsTitle, Icons.bolt_outlined, '/automations'),
+  _Destination(l10n.settingsUsageTitle, Icons.phone_iphone_outlined, '/analytics'),
+  _Destination(l10n.settingsProfileTitle, Icons.person_outline, '/profile'),
 ];
 
 Future<void> showCommandPalette(BuildContext context, WidgetRef ref) {
@@ -99,9 +100,9 @@ class _CommandPaletteDialogState extends ConsumerState<_CommandPaletteDialog> {
   /// longer redirecting `/today`, this and the IDE's own "Leave IDE" are how
   /// a Windows user moves between the two shells (audit F-34).
   List<_Destination> get _allDestinations => [
-        ..._destinations,
+        ..._destinations(context.l10n),
         if (canRunDesktopIde)
-          const _Destination('Open Desktop IDE', Icons.dashboard_customize_outlined, '/ide'),
+          _Destination(context.l10n.paletteOpenDesktopIde, Icons.dashboard_customize_outlined, '/ide'),
       ];
 
   List<_Destination> get _matchingDestinations {
@@ -161,9 +162,9 @@ class _CommandPaletteDialogState extends ConsumerState<_CommandPaletteDialog> {
                         autofocus: true,
                         onChanged: _search,
                         style: Theme.of(context).textTheme.bodyLarge,
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           border: InputBorder.none,
-                          hintText: 'Search AURA, or jump to a screen…',
+                          hintText: context.l10n.paletteSearchHint,
                           isDense: true,
                         ),
                       ),
@@ -185,7 +186,7 @@ class _CommandPaletteDialogState extends ConsumerState<_CommandPaletteDialog> {
                   padding: const EdgeInsets.symmetric(vertical: AuraSpacing.sm),
                   children: [
                     if (_matchingTasks.isNotEmpty) ...[
-                      _GroupLabel('Tasks'),
+                      _GroupLabel(context.l10n.lifeHubFilterTasks),
                       for (final t in _matchingTasks)
                         _ResultTile(
                           icon: Icons.circle_outlined,
@@ -194,7 +195,7 @@ class _CommandPaletteDialogState extends ConsumerState<_CommandPaletteDialog> {
                         ),
                     ],
                     if (_matchingEvents.isNotEmpty) ...[
-                      _GroupLabel('Calendar'),
+                      _GroupLabel(context.l10n.lifeHubFilterCalendar),
                       for (final e in _matchingEvents)
                         _ResultTile(
                           icon: Icons.event_outlined,
@@ -203,7 +204,7 @@ class _CommandPaletteDialogState extends ConsumerState<_CommandPaletteDialog> {
                         ),
                     ],
                     if (destinations.isNotEmpty) ...[
-                      _GroupLabel('Go to'),
+                      _GroupLabel(context.l10n.paletteGoTo),
                       for (final d in destinations)
                         _ResultTile(
                           icon: d.icon,
@@ -214,9 +215,9 @@ class _CommandPaletteDialogState extends ConsumerState<_CommandPaletteDialog> {
                     if (destinations.isEmpty &&
                         _matchingTasks.isEmpty &&
                         _matchingEvents.isEmpty)
-                      const AuraEmptyState(
+                      AuraEmptyState(
                         icon: Icons.search_off,
-                        title: 'No matches',
+                        title: context.l10n.paletteNoMatches,
                       ),
                   ],
                 ),

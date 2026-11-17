@@ -1,3 +1,4 @@
+import 'package:aura_client/core/locale/text_direction.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -76,8 +77,13 @@ class ChatComposer extends ConsumerWidget {
             children: [
               AttachImageButton(enabled: !locked),
               Expanded(
-                child: TextField(
+                // Arabic typed into an English app reads right-to-left, and English or code typed
+                // into an Arabic app left-to-right: the field follows its own first strong letter.
+                child: ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: controller,
+                  builder: (context, value, _) => TextField(
                   controller: controller,
+                  textDirection: directionOfText(value.text) ?? Directionality.of(context),
                   enabled: !locked,
                   decoration: InputDecoration(
                     hintText: locked
@@ -88,6 +94,7 @@ class ChatComposer extends ConsumerWidget {
                   ),
                   style: TextStyle(color: palette.textPrimary),
                   onSubmitted: locked ? null : (_) => onSend(),
+                ),
                 ),
               ),
               VoiceRecorderButton(

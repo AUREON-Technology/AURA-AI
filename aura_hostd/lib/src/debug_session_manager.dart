@@ -22,6 +22,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'containment.dart' show ContainmentViolation, WorkspaceRoot;
+import 'error_codes.dart';
 import 'workspace_store.dart';
 
 typedef DebugSessionLogger = void Function(String message);
@@ -56,13 +57,14 @@ class DebugSessionManager {
       }
     }
     if (root == null) {
-      await _sendError(socket, '$rootPath is not a granted root');
+      await _sendError(socket, HostdErrorCode.rootNotGranted, '$rootPath is not a granted root');
       await socket.close();
       return;
     }
     if (!root.trusted) {
       await _sendError(
         socket,
+        HostdErrorCode.workspaceNotTrusted,
         'workspace is not trusted -- run `aura_hostd trust "$rootPath"` first',
       );
       await socket.close();
@@ -95,14 +97,14 @@ class DebugSessionManager {
             if (process != null) continue;
             final scriptPath = msg['script_path'] as String?;
             if (scriptPath == null) {
-              await _sendError(socket, 'script_path is required');
+              await _sendError(socket, HostdErrorCode.missingParameter, 'script_path is required');
               continue;
             }
             String resolvedScript;
             try {
               resolvedScript = roots.requireContained(root, scriptPath);
             } on ContainmentViolation catch (error) {
-              await _sendError(socket, error.message);
+              await _sendError(socket, error.code, error.message);
               continue;
             }
             final args = (msg['args'] as List?)?.cast<Object?>().map((e) => e.toString()).toList() ?? const [];
@@ -115,7 +117,12 @@ class DebugSessionManager {
                 workingDirectory: root.canonicalPath,
               );
             } catch (error) {
-              await _sendError(socket, 'failed to start debugpy: $error');
+              await _sendError(
+                socket,
+                HostdErrorCode.debugStartFailed,
+                'failed to start debugpy: $error',
+                detail: '$error',
+              );
               process = null;
               continue;
             }
@@ -132,7 +139,12 @@ class DebugSessionManager {
             try {
               tcpSocket = await _connectWithRetry(port);
             } catch (error) {
-              await _sendError(socket, 'debugpy did not become reachable on port $port: $error');
+              await _sendError(
+                socket,
+                HostdErrorCode.debugUnreachable,
+                'debugpy did not become reachable on port $port: $error',
+                detail: '$error',
+              );
               startedProcess.kill();
               process = null;
               continue;
@@ -175,9 +187,17 @@ class DebugSessionManager {
     }
   }
 
-  Future<void> _sendError(WebSocket socket, String message) async {
+  /// [message] is the English text apps predating codes show; [code] (`error_codes.dart`) is
+  /// what a newer app translates.
+  /// [detail] is the underlying error alone (no English prefix), for a message that wraps one.
+  Future<void> _sendError(WebSocket socket, String code, String message, {String? detail}) async {
     try {
-      socket.add(jsonEncode({'type': 'error', 'message': message}));
+      socket.add(jsonEncode({
+        'type': 'error',
+        'message': message,
+        'code': code,
+        if (detail != null) 'detail': detail,
+      }));
     } catch (_) {
       // Socket already closed -- nothing to notify.
     }

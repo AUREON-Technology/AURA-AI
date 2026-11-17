@@ -10,6 +10,7 @@ import { Input, Select } from "@/components/ui/input";
 import { PageHeader } from "@/components/ui/page-header";
 import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow, TableSkeleton } from "@/components/ui/table";
 import { api, fetchMe } from "@/lib/api";
+import { useI18n } from "@/lib/i18n/context";
 import type { ForgetResult, Me, Operator, OperatorRole } from "@/lib/types";
 
 function roleTone(role: string) {
@@ -20,13 +21,14 @@ function roleTone(role: string) {
 }
 
 export default function AccessPage() {
+  const { t, errorText } = useI18n();
   const [me, setMe] = useState<Me | null>(null);
   const [rows, setRows] = useState<Operator[]>([]);
   const [forgetSubject, setForgetSubject] = useState("");
   const [grantEmail, setGrantEmail] = useState("");
   const [grantRole, setGrantRole] = useState<OperatorRole>("Developer");
   const [forgetResult, setForgetResult] = useState<ForgetResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [loaded, setLoaded] = useState(false);
 
   async function load() {
@@ -40,24 +42,20 @@ export default function AccessPage() {
 
   useEffect(() => {
     load()
-      .catch((err: Error) => setError(err.message))
+      .catch((err: unknown) => setError(err))
       .finally(() => setLoaded(true));
   }, []);
 
   return (
     <>
-      <PageHeader title="Access">
-        Operator directory. Role changes and erasure are SuperAdmin only. A change applies at the
-        person&apos;s next sign-in or token refresh (within 15 minutes). A role granted by an env
-        list or roles.json can only be lowered there.
-      </PageHeader>
-      {error ? <Alert>{error}</Alert> : null}
+      <PageHeader title={t("nav.access")}>{t("access.sub")}</PageHeader>
+      {error ? <Alert>{errorText(error)}</Alert> : null}
       {me?.is_super_admin ? (
         <Card className="mb-4">
           <CardHeader>
             <div>
-              <CardTitle>Grant a role</CardTitle>
-              <CardDescription>The person must have signed in once.</CardDescription>
+              <CardTitle>{t("access.grantHeading")}</CardTitle>
+              <CardDescription>{t("access.grantHelp")}</CardDescription>
             </div>
           </CardHeader>
           <div className="flex flex-wrap items-center gap-2">
@@ -65,12 +63,12 @@ export default function AccessPage() {
               className="w-full max-w-xs"
               value={grantEmail}
               onChange={(e) => setGrantEmail(e.target.value)}
-              placeholder="email"
-              aria-label="Email"
+              placeholder={t("access.emailPlaceholder")}
+              aria-label={t("access.colEmail")}
             />
             <Select
               className="w-auto"
-              aria-label="Role"
+              aria-label={t("access.colRole")}
               value={grantRole}
               onChange={(e) => setGrantRole(e.target.value as OperatorRole)}
             >
@@ -82,7 +80,7 @@ export default function AccessPage() {
             </Select>
             <ConfirmDialog
               size="md"
-              title={`Set ${grantEmail || "this user"} to ${grantRole}`}
+              title={t("access.setRoleTitle", { who: grantEmail || t("access.thisUser"), role: grantRole })}
               confirmText={grantRole}
               disabled={!grantEmail.trim()}
               onConfirm={async () => {
@@ -94,7 +92,7 @@ export default function AccessPage() {
                 await load();
               }}
             >
-              Grant role
+              {t("access.grantRole")}
             </ConfirmDialog>
           </div>
         </Card>
@@ -102,9 +100,9 @@ export default function AccessPage() {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Email</TableHead>
-            <TableHead>Role</TableHead>
-            <TableHead>Granted by</TableHead>
+            <TableHead>{t("access.colEmail")}</TableHead>
+            <TableHead>{t("access.colRole")}</TableHead>
+            <TableHead>{t("access.colGrantedBy")}</TableHead>
             <TableHead></TableHead>
           </TableRow>
         </TableHeader>
@@ -122,7 +120,7 @@ export default function AccessPage() {
                     {(["Developer", "Admin", "SuperAdmin"] as OperatorRole[]).map((role) => (
                       <ConfirmDialog
                         key={role}
-                        title={`Set ${row.email} to ${role}`}
+                        title={t("access.setRoleTitle", { who: row.email, role })}
                         confirmText={role}
                         onConfirm={async () => {
                           await api(`/admin/operators/${encodeURIComponent(row.email)}/role`, {
@@ -132,12 +130,12 @@ export default function AccessPage() {
                           await load();
                         }}
                       >
-                        {`Make ${role}`}
+                        {t("access.make", { role })}
                       </ConfirmDialog>
                     ))}
                     <ConfirmDialog
                       danger
-                      title={`Remove ${row.email}'s Access-page role`}
+                      title={t("access.removeTitle", { email: row.email })}
                       confirmText="User"
                       onConfirm={async () => {
                         await api(`/admin/operators/${encodeURIComponent(row.email)}/role`, {
@@ -147,40 +145,37 @@ export default function AccessPage() {
                         await load();
                       }}
                     >
-                      Remove access
+                      {t("access.removeAccess")}
                     </ConfirmDialog>
                     <ConfirmDialog
                       danger
-                      title="Revoke sessions"
-                      confirmText="revoke"
+                      title={t("access.revokeSessions")}
+                      confirmText={t("access.revokeWord")}
                       onConfirm={async () => {
                         await api(`/admin/operators/${encodeURIComponent(row.email)}/revoke-sessions`, {
                           method: "POST",
                         });
                       }}
                     >
-                      Revoke sessions
+                      {t("access.revokeSessions")}
                     </ConfirmDialog>
                   </div>
                 ) : (
-                  <span className="text-muted">Read only</span>
+                  <span className="text-muted">{t("access.readOnly")}</span>
                 )}
               </TableCell>
             </TableRow>
           ))}
           {!loaded ? <TableSkeleton cols={4} /> : null}
-          {loaded && rows.length === 0 && !error ? <TableEmpty colSpan={4}>No operators yet.</TableEmpty> : null}
+          {loaded && rows.length === 0 && !error ? <TableEmpty colSpan={4}>{t("access.empty")}</TableEmpty> : null}
         </TableBody>
       </Table>
       {me?.is_super_admin ? (
         <Card className="mt-4">
           <CardHeader>
             <div>
-              <CardTitle>GDPR forget</CardTitle>
-              <CardDescription>
-                Returns counts only. Never displays user content. An incomplete erasure keeps the
-                account; run it again once the failed stores are back.
-              </CardDescription>
+              <CardTitle>{t("access.gdprHeading")}</CardTitle>
+              <CardDescription>{t("access.gdprHelp")}</CardDescription>
             </div>
           </CardHeader>
           <div className="flex flex-wrap items-center gap-2">
@@ -188,14 +183,14 @@ export default function AccessPage() {
               className="w-full max-w-xs"
               value={forgetSubject}
               onChange={(e) => setForgetSubject(e.target.value)}
-              placeholder="email or auth subject"
-              aria-label="Email or auth subject"
+              placeholder={t("access.forgetPlaceholder")}
+              aria-label={t("access.forgetPlaceholder")}
             />
             <ConfirmDialog
               danger
               size="md"
-              title="Forget user"
-              confirmText="forget"
+              title={t("access.forgetTitle")}
+              confirmText={t("access.forgetWord")}
               onConfirm={async () => {
                 setForgetResult(null);
                 const body = await api<ForgetResult>(
@@ -205,7 +200,7 @@ export default function AccessPage() {
                 setForgetResult(body);
               }}
             >
-              Forget
+              {t("access.forget")}
             </ConfirmDialog>
           </div>
           {forgetResult ? <ForgetOutcome result={forgetResult} /> : null}
@@ -219,17 +214,20 @@ export default function AccessPage() {
 // stores it could not clear, and the users row is kept (api/admin_platform.py erase_account).
 // Showing only the counts made a partial erasure read as done (audit INT-008).
 function ForgetOutcome({ result }: { result: ForgetResult }) {
+  const { t } = useI18n();
   const failed = result.failed ?? [];
   const complete = result.forgotten === true && failed.length === 0;
   return (
     <div className="mt-3 space-y-2 motion-safe:animate-fade-up">
       {complete ? (
         <p data-testid="forget-status" className="text-[13px] text-ok">
-          Erasure complete.
+          {t("access.erasureComplete")}
         </p>
       ) : (
         <Alert data-testid="forget-status" role="alert" className="mb-0">
-          {`Erasure incomplete: ${failed.length ? `failed for ${failed.join(", ")}` : "the gateway did not confirm it"}. The account was kept; run forget again.`}
+          {failed.length
+            ? t("access.erasureFailedFor", { stores: failed.join(", ") })
+            : t("access.erasureUnconfirmed")}
         </Alert>
       )}
       <p
@@ -240,8 +238,8 @@ function ForgetOutcome({ result }: { result: ForgetResult }) {
       </p>
       {result.not_erased?.length ? (
         <div data-testid="forget-not-erased" className="text-[13px]">
-          <p className="text-muted">Not erased by this request:</p>
-          <ul className="list-disc pl-5">
+          <p className="text-muted">{t("access.notErased")}</p>
+          <ul className="list-disc ps-5">
             {result.not_erased.map((item) => (
               <li key={item}>{item}</li>
             ))}

@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 import '../../calendar/data/calendar_repository.dart';
 import '../../calendar/presentation/widgets/add_event_dialog.dart';
@@ -38,7 +39,7 @@ class LifeHubPage extends ConsumerWidget {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: Text('Life Hub', style: Theme.of(context).textTheme.headlineMedium),
+        title: Text(context.l10n.lifeHubTitle, style: Theme.of(context).textTheme.headlineMedium),
       ),
       floatingActionButton: filter == LifeHubFilter.health
           ? null
@@ -59,7 +60,7 @@ class LifeHubPage extends ConsumerWidget {
                     Padding(
                       padding: const EdgeInsetsDirectional.only(end: AuraSpacing.sm),
                       child: FilterChip(
-                        label: Text(_label(value)),
+                        label: Text(_label(context.l10n, value)),
                         selected: filter == value,
                         onSelected: (_) {
                           ref.read(lifeHubViewModelProvider.notifier).setFilter(value);
@@ -78,15 +79,15 @@ class LifeHubPage extends ConsumerWidget {
     );
   }
 
-  String _label(LifeHubFilter filter) {
+  String _label(AppLocalizations l10n, LifeHubFilter filter) {
     return switch (filter) {
-      LifeHubFilter.all => 'All',
-      LifeHubFilter.tasks => 'Tasks',
-      LifeHubFilter.calendar => 'Calendar',
-      LifeHubFilter.finance => 'Finance',
-      LifeHubFilter.health => 'Health',
-      LifeHubFilter.projects => 'Projects',
-      LifeHubFilter.goals => 'Goals',
+      LifeHubFilter.all => l10n.lifeHubFilterAll,
+      LifeHubFilter.tasks => l10n.lifeHubFilterTasks,
+      LifeHubFilter.calendar => l10n.lifeHubFilterCalendar,
+      LifeHubFilter.finance => l10n.lifeHubFilterFinance,
+      LifeHubFilter.health => l10n.lifeHubFilterHealth,
+      LifeHubFilter.projects => l10n.lifeHubFilterProjects,
+      LifeHubFilter.goals => l10n.lifeHubFilterGoals,
     };
   }
 
@@ -138,10 +139,10 @@ class _AgendaView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final items = ref.watch(lifeAgendaProvider);
     if (items.isEmpty) {
-      return const AuraEmptyState(
+      return AuraEmptyState(
         icon: Icons.event_available_outlined,
-        title: 'Nothing on the board',
-        message: 'Add a task, event, or log to see this week in one place.',
+        title: context.l10n.lifeHubAgendaEmptyTitle,
+        message: context.l10n.lifeHubAgendaEmptyMessage,
       );
     }
     return ListView.separated(
@@ -179,13 +180,13 @@ class _AgendaTile extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  item.title,
+                  item.type == LifeItemType.health ? context.l10n.lifeHubHealthLogTitle : item.title,
                   style: Theme.of(context).textTheme.titleSmall?.copyWith(
                         decoration: item.done ? TextDecoration.lineThrough : null,
                       ),
                 ),
                 Text(
-                  DateFormat('EEE, MMM d · h:mm a').format(item.when),
+                  DateFormat.MMMEd().add_jm().format(item.when),
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
@@ -230,9 +231,9 @@ class _CalendarPane extends ConsumerWidget {
     return eventsAsync.when(
       data: (events) {
         if (events.isEmpty) {
-          return const AuraEmptyState(
+          return AuraEmptyState(
             icon: Icons.calendar_month_outlined,
-            title: 'No upcoming events',
+            title: context.l10n.lifeHubNoUpcomingEvents,
           );
         }
         return ListView.separated(
@@ -246,7 +247,7 @@ class _CalendarPane extends ConsumerWidget {
                 contentPadding: EdgeInsets.zero,
                 title: Text(event.title),
                 subtitle: Text(
-                  DateFormat('EEE, MMM d · h:mm a').format(event.startTime),
+                  DateFormat.MMMEd().add_jm().format(event.startTime),
                 ),
               ),
             );
@@ -317,10 +318,10 @@ class _ProjectsPane extends ConsumerWidget {
     return projectsAsync.when(
       data: (projects) {
         if (projects.isEmpty) {
-          return const AuraEmptyState(
+          return AuraEmptyState(
             icon: Icons.folder_open,
-            title: 'No projects yet',
-            message: 'Create a project to organize your work.',
+            title: context.l10n.projectsEmptyTitle,
+            message: context.l10n.lifeHubProjectsEmptyMessage,
           );
         }
         return ListView.builder(
@@ -336,7 +337,7 @@ class _ProjectsPane extends ConsumerWidget {
                 ),
                 title: Text(project.title, style: const TextStyle(fontWeight: FontWeight.w600)),
                 subtitle: project.targetDate != null
-                    ? Text('Due: ${project.targetDate!.toLocal().toString().split(' ')[0]}')
+                    ? Text(context.l10n.projectsDue(project.targetDate!.toLocal().toString().split(' ')[0]))
                     : null,
               ),
             );
@@ -361,10 +362,10 @@ class _GoalsPane extends ConsumerWidget {
     return goalsAsync.when(
       data: (goals) {
         if (goals.isEmpty) {
-          return const AuraEmptyState(
+          return AuraEmptyState(
             icon: Icons.flag,
-            title: 'No goals yet',
-            message: 'Create a goal to track your aspirations.',
+            title: context.l10n.lifeHubGoalsEmptyTitle,
+            message: context.l10n.lifeHubGoalsEmptyMessage,
           );
         }
         return ListView.builder(
@@ -401,10 +402,10 @@ class _GoalsPane extends ConsumerWidget {
                       minHeight: 8,
                     ),
                     const SizedBox(height: 4),
-                    Text('${goal.progressPct}% complete'),
+                    Text(context.l10n.lifeHubGoalProgress(goal.progressPct)),
                     if (goal.targetDate != null) ...[
                       const SizedBox(height: 4),
-                      Text('Target: ${goal.targetDate!.toLocal().toString().split(' ')[0]}', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                      Text(context.l10n.projectsTarget(goal.targetDate!.toLocal().toString().split(' ')[0]), style: TextStyle(fontSize: 12, color: Colors.grey[600])),
                     ],
                   ],
                 ),
