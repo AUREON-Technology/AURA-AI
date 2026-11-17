@@ -236,6 +236,14 @@ gaps:
     metric: unreviewed LOC in aura_core (target 0)
     exit_condition: Every one of these modules has tests and a caller, or is removed, via reviewed PR.
     status: open
+    progress_2026_11_16: >-
+      Agents audit (docs/reports/AGENTS_AUDIT_2026-11-16.md, F4): engineering2, proactive and
+      continuous_intelligence deleted (1,835 LOC). Re-checked first: still zero importers in
+      aura_backend, tests or scripts. engineering2 described "Engineer 2.0" sandbox and git-safety
+      controls that protected nothing, because nothing called it; the live Engineer's controls
+      are tools/coding.py, ToolPolicy and adapters/docker_sandbox.py. Still open: the four
+      aura_core/security modules (secret_manager now has tests/unit/test_secret_manager_crypto.py;
+      the other three are unreviewed).
 
   - gap_id: GAP-009
     component: security/secret-manager
@@ -280,6 +288,11 @@ gaps:
     metric: tracked binary artefacts (target 0)
     exit_condition: Files removed via reviewed PR; guard test added.
     status: open
+    reverified_2026_11_16: >-
+      aura_hostd/build/* and repo-root test_personal_os.py are no longer tracked. Still tracked:
+      aura_backend/test_personal_os2.py, aura_backend/test_personal_os_sync_integration.py (both
+      collected by the legacy `unittest discover`, so moving them changes that suite) and
+      repo-root ML_ENVIRONMENT_REPORT.md. No guard test yet; no *.exe/*.log/*.err is tracked.
 
   # ------------------------------------------------------------------ inference / scale
 
@@ -692,6 +705,14 @@ gaps:
       deterministic agent_runs evaluation suite in the gate. Real Postgres 16: agent-run store
       contract tests pass and the migration applies after 0007. Not proven: no production
       traffic; scripted providers only; no client or admin view of runs.
+    reverified_2026_11_16: >-
+      current_state above is from 2026-09-25 and is superseded: finance_advisor, health_companion
+      and engineer have their own memory scopes (agents/registry.py), and the kernel reads own +
+      shared (kernel/kernel.py readable_scopes). Agents audit (docs/reports/AGENTS_AUDIT_2026-11-16.md)
+      also fixed: delegate_to_agent targets now follow the live registry, so blueprint (bp_*)
+      agents deployed after boot can be delegated to (F6); decision_agent's prompt lists its tools
+      (F11). Still not proven: agent_tasks evaluates only orchestrator; no specialist persona is
+      evaluated end to end (F5).
 
   - gap_id: GAP-025
     component: engineer/workspaces

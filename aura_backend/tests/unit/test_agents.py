@@ -319,3 +319,22 @@ class TestTheEngineerGrantCoversItsOwnTools:
         assert "write_files" in engineer_tools, "the regression this pins would be vacuous"
         missing = sorted(engineer_tools - engineer.allowed_tools)
         assert missing == [], f"registered for engineer_agent but not granted to the persona: {missing}"
+
+
+class TestEveryPersonaIsToldItsTools:
+    """Audit 2026-11-16 F11: `system.decision_agent` declared no `capabilities` variable, so the
+    kernel's tool list never reached its prompt -- the only persona with tools that was never
+    told what they were. Every persona with a non-empty grant must be able to render the list."""
+
+    @pytest.mark.parametrize(
+        "spec", list(build_default_agent_registry()), ids=lambda s: s.id,
+    )
+    def test_a_persona_with_tools_declares_the_capabilities_variable(self, spec) -> None:
+        from aura_core.prompts.library import BUILTIN_PROMPTS
+
+        if spec.allowed_tools is not None and not spec.allowed_tools:
+            pytest.skip("no tools to list")
+        template = next(t for t in BUILTIN_PROMPTS if t.id == spec.prompt_template_id)
+        names = {v.name for v in template.variables}
+        assert "capabilities" in names, f"{template.id} never renders the persona's tool list"
+        assert "{{#capabilities}}" in template.body

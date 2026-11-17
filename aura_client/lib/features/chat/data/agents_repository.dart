@@ -5,8 +5,8 @@ import 'package:http/http.dart' as http;
 import 'package:aura_client/core/auth/token_manager.dart';
 import 'package:aura_client/core/config/backend_url_provider.dart';
 
-/// One persona from `GET /api/v3/chat/stream`'s sibling endpoint
-/// `/api/v3/agents` (`aura_core/prompts/library.py`'s `AGENT_PROMPT_IDS`).
+/// One persona from `GET /api/v3/agents` (`aura_core/agents/registry.py`'s
+/// `AgentRegistry`, plus any `bp_*` agents a deployed blueprint adds).
 /// Distinct from `agent_config_repository.dart`'s per-agent custom
 /// system-prompt overrides, which have no v3 equivalent and are not
 /// surfaced by the rebuilt chat screen.

@@ -53,6 +53,13 @@ class ActiveAgent extends Notifier<String> {
   @override
   String build() => 'orchestrator';
   void setAgent(String agentId) => state = agentId;
+
+  /// Puts back [previous] only while the persona is still [expected], so a surface that
+  /// borrowed the app-wide persona (the desktop Engineer panel) hands it back on close without
+  /// overriding a choice the user made in the meantime.
+  void restoreIfStill(String expected, String previous) {
+    if (state == expected) state = previous;
+  }
 }
 
 final activeAgentIdProvider = NotifierProvider<ActiveAgent, String>(() {
