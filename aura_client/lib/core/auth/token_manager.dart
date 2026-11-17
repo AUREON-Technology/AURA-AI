@@ -65,8 +65,16 @@ class TokenManager {
     this._ref, {
     http.Client? httpClient,
     RefreshTokenStore? store,
+    bool? isWeb,
   })  : _http = httpClient,
-        _store = store ?? const SecureRefreshTokenStore();
+        _store = store ?? const SecureRefreshTokenStore(),
+        _isWeb = isWeb ?? kIsWeb;
+
+  /// A browser has no device attestation, so it signs in through the customer route, whose
+  /// sessions the backend caps at the `User` role (SaaS P1-B). Phones keep the attested route.
+  final bool _isWeb;
+
+  static String exchangePathFor({required bool isWeb}) => isWeb ? '/consumer/token' : '/token';
 
   String get _authUrl => '${_ref.read(backendUrlProvider)}/api/v3/auth';
   String get _backendUrl => _ref.read(backendUrlProvider);
@@ -293,11 +301,16 @@ class TokenManager {
       }
 
       final headers = {"Authorization": "Bearer $idToken"};
-      headers.addAll(
-        await DeviceValidationService.getAttestationHeaders(backendUrl: _backendUrl),
-      );
+      if (!_isWeb) {
+        headers.addAll(
+          await DeviceValidationService.getAttestationHeaders(backendUrl: _backendUrl),
+        );
+      }
 
-      final response = await _post("$_authUrl/token", headers: headers);
+      final response = await _post(
+        "$_authUrl${exchangePathFor(isWeb: _isWeb)}",
+        headers: headers,
+      );
       if (response.statusCode != 200) {
         debugPrint(
           "[TokenManager] token exchange failed: ${response.statusCode} ${response.body}",

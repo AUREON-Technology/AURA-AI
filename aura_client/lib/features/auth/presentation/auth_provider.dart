@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 import 'package:aura_client/core/auth/account_client.dart';
 import 'package:aura_client/core/auth/desktop_oauth_client.dart';
+import 'package:aura_client/core/auth/identity_service.dart';
 import 'package:aura_client/core/auth/platform_login_support.dart';
 import 'package:aura_client/core/auth/sign_in_refused.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
@@ -64,50 +64,22 @@ class UserProfile {
 
 class AuthNotifier extends AsyncNotifier<UserProfile?> {
   final _storage = auraSecureStorage;
-  late final GoogleSignIn _googleSignIn;
-  GoogleSignInAccount? _currentAccount;
+
+  /// Google, Apple and email/password all sign in through Firebase (SaaS P1-B). Linux and
+  /// Windows have no Firebase or google_sign_in plugin and keep the loopback desktop flow below.
+  IdentityService get _identity => ref.read(identityServiceProvider);
 
   @override
   FutureOr<UserProfile?> build() async {
-    // Getting the singleton reference is cheap (no plugin channel call yet) -- always assign it
-    // so every other method that reads `_googleSignIn` below stays valid on every platform (a
-    // `late final` left unassigned throws on first read). What's actually unsafe on Linux/Windows
-    // (ADR-011 Unit 7) is initializing/using it, guarded below.
-    _googleSignIn = GoogleSignIn.instance;
-
-    // google_sign_in has no plugin implementation on Linux/Windows -- skip initializing it there
-    // entirely rather than relying on the try/catch below to swallow the MissingPluginException
-    // on every launch. signInCached's desktop-device-token path
-    // (_restorePersistedDesktopToken) and signInWithDesktopOAuth cover login on these platforms.
     if (!supportsNativeGoogleSignIn()) {
       return null;
     }
-
-    // Initialise Google Sign In using Client ID
     try {
-      await _googleSignIn.initialize(
-        clientId: kIsWeb ? '87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com' : null,
-        serverClientId: '87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com',
-      );
-
-      // Track the current user account via stream events (new in google_sign_in 7.x)
-      _googleSignIn.authenticationEvents.listen((event) {
-        if (event is GoogleSignInAuthenticationEventSignIn) {
-          _currentAccount = event.user;
-        } else if (event is GoogleSignInAuthenticationEventSignOut) {
-          _currentAccount = null;
-        }
-      }, onError: (Object error) {
-        debugPrint("[AuthNotifier] Google authenticationEvents: $error");
-      });
-
-      // Attempt silently restoring session
-      await _googleSignIn.attemptLightweightAuthentication();
+      await _identity.initialize();
     } catch (e) {
-      debugPrint("[AuthNotifier] Google init or lightweight auth failed: $e");
+      debugPrint("[AuthNotifier] identity provider initialisation failed: $e");
     }
-
-    return null; // Require biometric/google sign-in explicitly at launch
+    return null; // Require biometric/explicit sign-in at launch
   }
 
   Future<bool> hasCachedCredentials() async {
@@ -128,18 +100,19 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
         return;
       }
 
-      GoogleSignInAccount? restored;
-      try {
-        restored = await _googleSignIn.attemptLightweightAuthentication();
-        if (restored != null) {
-          _currentAccount = restored;
-          final idToken = restored.authentication.idToken;
-          if (idToken != null) {
-            await _storage.write(key: 'auth_token', value: idToken);
+      IdentityUser? restored;
+      if (supportsNativeGoogleSignIn()) {
+        try {
+          restored = await _identity.restore();
+          if (restored != null) {
+            final idToken = await _identity.idToken();
+            if (idToken != null) {
+              await _storage.write(key: 'auth_token', value: idToken);
+            }
           }
+        } catch (e) {
+          debugPrint("[AuthNotifier] Silent identity restore after cached sign-in failed: $e");
         }
-      } catch (e) {
-        debugPrint("[AuthNotifier] Silent Google restore after cached sign-in failed: $e");
       }
 
       if (restored == null) {
@@ -162,7 +135,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
 
       ref.read(sessionExpiredProvider.notifier).set(false);
       state = AsyncValue.data(UserProfile(
-        id: restored?.id ?? cachedId,
+        id: restored?.uid ?? cachedId,
         email: restored?.email ?? cachedEmail,
         displayName: restored?.displayName ?? cachedName,
         photoUrl: restored?.photoUrl ?? cachedPhoto,
@@ -242,14 +215,32 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     }
   }
 
-  Future<void> signInWithGoogle() async {
+  Future<void> signInWithGoogle() => _signInWith(_identity.signInWithGoogle);
+
+  Future<void> signInWithApple() => _signInWith(_identity.signInWithApple);
+
+  Future<void> signInWithEmail(String email, String password) =>
+      _signInWith(() => _identity.signInWithEmail(email, password));
+
+  /// Creates an email/password account (Firebase sends the verification email) and signs in.
+  /// Teams stay closed to it until the address is verified (the backend checks).
+  Future<void> registerWithEmail(String email, String password, {String? displayName}) =>
+      _signInWith(() => _identity.registerWithEmail(email, password, displayName: displayName));
+
+  Future<void> sendPasswordReset(String email) => _identity.sendPasswordReset(email);
+
+  Future<void> resendVerification() => _identity.resendVerification();
+
+  /// Every sign-in method ends here: exchange the provider's ID token for a backend session,
+  /// forget another account's local data, cache the profile.
+  Future<void> _signInWith(Future<IdentityUser> Function() signIn) async {
     state = const AsyncValue.loading();
     try {
-      final googleUser = await _googleSignIn.authenticate();
-      final idToken = googleUser.authentication.idToken;
+      final user = await signIn();
+      final idToken = await _identity.idToken();
       if (idToken == null) {
-        await _abandonGoogleSignIn();
-        throw const SignInRefused('Google returned no identity token for this account.');
+        await _abandonIdentity();
+        throw const SignInRefused('The sign-in provider returned no identity token for this account.');
       }
 
       // Start the backend session now, not on the first API call, so a refusal is shown here
@@ -258,20 +249,18 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
       // gets in and keeps everything that works without the backend.
       final outcome = await ref.read(tokenManagerProvider).startSession(idToken);
       if (outcome == SessionStart.refused) {
-        await _abandonGoogleSignIn();
+        await _abandonIdentity();
         throw const SignInRefused();
       }
-      _currentAccount = googleUser;
 
       final profile = UserProfile(
-        id: googleUser.id,
-        email: googleUser.email,
-        displayName: googleUser.displayName ?? 'Google User',
-        photoUrl: googleUser.photoUrl,
+        id: user.uid,
+        email: user.email,
+        displayName: user.displayName.isEmpty ? 'AURA user' : user.displayName,
+        photoUrl: user.photoUrl,
       );
       await _forgetDataOfOtherAccount(profile.id);
 
-      // Cache details
       await _storage.write(key: 'user_id', value: profile.id);
       await _storage.write(key: 'user_email', value: profile.email);
       await _storage.write(key: 'user_name', value: profile.displayName);
@@ -281,18 +270,22 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
       await _storage.write(key: 'auth_token', value: idToken);
 
       state = AsyncValue.data(profile);
+    } on IdentityError catch (err, stack) {
+      // Closing the provider's sheet is a choice, not a failure: nothing to show.
+      state = err.kind == IdentityErrorKind.cancelled
+          ? const AsyncValue.data(null)
+          : AsyncValue.error(err, stack);
     } catch (err, stack) {
       state = AsyncValue.error(err, stack);
     }
   }
 
-  /// Signs out of Google after a sign-in that will not go ahead, so the next attempt offers the
-  /// account picker again instead of silently reusing the account that was just refused.
-  Future<void> _abandonGoogleSignIn() async {
+  /// Signs out of the identity provider after a sign-in that will not go ahead, so the next
+  /// attempt offers the account picker again instead of silently reusing the refused account.
+  Future<void> _abandonIdentity() async {
     try {
-      await _googleSignIn.signOut();
+      await _identity.signOut();
     } catch (_) {}
-    _currentAccount = null;
   }
 
   // Developer bypass bypass for desktop testing without full OAuth redirect config
@@ -365,10 +358,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     } catch (e) {
       debugPrint("[Auth] pending deletes before sign-out failed (continuing): $e");
     }
-    try {
-      await _googleSignIn.signOut();
-    } catch (_) {} // Might fail if never logged into google
-    _currentAccount = null;
+    await _abandonIdentity(); // also fine when this device never used the identity provider
 
     // Last chance to upload offline edits before they are wiped below.
     // Best effort and bounded: signing out must work offline too, and an
@@ -412,10 +402,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     state = const AsyncValue.loading();
     try {
       ref.read(undoableDeletesProvider.notifier).discardAll();
-      try {
-        await _googleSignIn.signOut();
-      } catch (_) {}
-      _currentAccount = null;
+      await _abandonIdentity();
       // The server already revoked every refresh token of the account.
       await _clearThisDevice(revoke: false);
     } catch (e) {
@@ -447,30 +434,16 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
 
   Future<String?> getIdToken() async {
     try {
-      // google_sign_in 7.x: authentication.idToken is a snapshot from the last
-      // authenticate / lightweight restore, not a live refresh. Re-run silent
-      // restore whenever a Google account is (or might be) present.
-      try {
-        final restored = await _googleSignIn.attemptLightweightAuthentication();
-        if (restored != null) {
-          _currentAccount = restored;
-        }
-      } catch (e) {
-        debugPrint("[AuthNotifier] Silent Google ID token refresh failed: $e");
-      }
-
-      final currentAccount = _currentAccount;
-      if (currentAccount != null) {
-        final idToken = currentAccount.authentication.idToken;
+      // Firebase refreshes its ID token itself; this is always a live one when a user is signed in.
+      if (supportsNativeGoogleSignIn()) {
+        final idToken = await _identity.idToken();
         if (idToken != null) {
           await _storage.write(key: 'auth_token', value: idToken);
           return idToken;
         }
       }
-
-      // Fallback: cached Google ID token or mock token. Not claimed as fresh.
-      final cached = await _storage.read(key: 'auth_token');
-      return cached;
+      // Fallback: cached token or mock token. Not claimed as fresh.
+      return await _storage.read(key: 'auth_token');
     } catch (e) {
       debugPrint("[AuthNotifier] Error refreshing or reading ID Token: $e");
       try {
