@@ -45,6 +45,7 @@ __all__ = [
     "Environment",
     "AuraSettings",
     "TenancySettings",
+    "BillingSettings",
     "LLMSettings",
     "ProviderConfig",
     "KnowledgeSettings",
@@ -1898,6 +1899,40 @@ class TenancySettings:
 
 
 @dataclass(frozen=True, slots=True)
+class BillingSettings:
+    """Subscriptions paid through Fawry (SaaS P1-D1). Off until the owner turns it on; every
+    billing route answers 503 until then. ``fawry_secure_key`` is a secret: never logged or
+    returned."""
+
+    enabled: bool = False
+    fawry_base_url: str = "https://atfawry.fawrystaging.com/ECommerceWeb/Fawry/"
+    fawry_merchant_code: str = ""
+    fawry_secure_key: str = ""
+    #: ``AURA_PLAN_PRICES``: JSON plan -> piastres per month (per seat for team).
+    prices_json: str = ""
+    renewal_lead_days: int = 3
+    grace_days: int = 7
+    reference_expiry_hours: int = 72
+
+    @property
+    def fawry_configured(self) -> bool:
+        return bool(self.fawry_merchant_code and self.fawry_secure_key)
+
+    @classmethod
+    def from_env(cls) -> "BillingSettings":
+        return cls(
+            enabled=_bool("BILLING_ENABLED", False),
+            fawry_base_url=(_env("FAWRY_BASE_URL", "") or "").strip() or cls.fawry_base_url,
+            fawry_merchant_code=(_env("FAWRY_MERCHANT_CODE", "") or "").strip(),
+            fawry_secure_key=(_env("FAWRY_SECURE_KEY", "") or "").strip(),
+            prices_json=(_env("PLAN_PRICES", "") or "").strip(),
+            renewal_lead_days=_int("BILLING_RENEWAL_LEAD_DAYS", 3, minimum=1, maximum=14),
+            grace_days=_int("BILLING_GRACE_DAYS", 7, minimum=0, maximum=60),
+            reference_expiry_hours=_int("FAWRY_REFERENCE_EXPIRY_HOURS", 72, minimum=1, maximum=720),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ReleaseSettings:
     """Which build this process actually is (BLOCK-03).
 
@@ -2041,6 +2076,7 @@ class AuraSettings:
     sandbox: SandboxSettings = field(default_factory=SandboxSettings)
     release: ReleaseSettings = field(default_factory=ReleaseSettings)
     tenancy: TenancySettings = field(default_factory=TenancySettings)
+    billing: BillingSettings = field(default_factory=BillingSettings)
 
     @classmethod
     def from_env(cls) -> "AuraSettings":
@@ -2078,6 +2114,7 @@ class AuraSettings:
             sandbox=SandboxSettings.from_env(),
             release=ReleaseSettings.from_env(),
             tenancy=TenancySettings.from_env(),
+            billing=BillingSettings.from_env(),
         )
 
     # -- validation --------------------------------------------------------------------

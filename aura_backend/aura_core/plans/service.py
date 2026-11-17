@@ -140,6 +140,11 @@ class PlanService:
         }
 
     async def set_plan(self, actor: str, workspace_id: str, plan_id: str, seats: int) -> Entitlement:
+        """An operator setting a plan by hand (``source="manual"``)."""
+        return await self.set_entitlement(actor, workspace_id, plan_id, seats, source="manual")
+
+    async def validate_plan(self, workspace_id: str, plan_id: str, seats: int) -> PlanLimits:
+        """Whether ``plan_id`` with ``seats`` fits this workspace; ValidationError otherwise."""
         plan = self.catalogue.get(plan_id)
         if plan is None:
             raise ValidationError(f"unknown plan {plan_id!r}", details={"plans": sorted(self.catalogue)})
@@ -150,10 +155,16 @@ class PlanService:
             raise ValidationError(f"plan {plan_id!r} is not for a {workspace.kind.value} workspace")
         if not plan.min_seats <= seats <= plan.max_seats:
             raise ValidationError(f"plan {plan_id!r} takes {plan.min_seats}-{plan.max_seats} seats")
-        entitlement = Entitlement(workspace_id, plan_id, seats, "manual", self.clock.now(), actor)
+        return plan
+
+    async def set_entitlement(
+        self, actor: str, workspace_id: str, plan_id: str, seats: int, *, source: str
+    ) -> Entitlement:
+        await self.validate_plan(workspace_id, plan_id, seats)
+        entitlement = Entitlement(workspace_id, plan_id, seats, source, self.clock.now(), actor)
         await self.entitlements.put(entitlement)
         await self.audit.record(AuditEvent(
             action="plan.set", actor=actor, outcome="ok", resource=f"workspace:{workspace_id}",
-            at=self.clock.now(), detail={"plan": plan_id, "seats": seats},
+            at=self.clock.now(), detail={"plan": plan_id, "seats": seats, "source": source},
         ))
         return entitlement
