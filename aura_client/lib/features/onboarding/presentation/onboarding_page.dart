@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 import 'onboarding_gate.dart';
 
@@ -56,6 +57,17 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
           padding: const EdgeInsets.all(AuraSpacing.xl),
           child: Column(
             children: [
+              Align(
+                alignment: AlignmentDirectional.centerEnd,
+                child: AnimatedOpacity(
+                  opacity: _index == _pages.length - 1 ? 0 : 1,
+                  duration: AuraMotion.respecting(context, AuraMotion.fast),
+                  child: TextButton(
+                    onPressed: _index == _pages.length - 1 ? null : _finish,
+                    child: Text(context.l10n.onboardingSkip),
+                  ),
+                ),
+              ),
               Expanded(
                 child: PageView.builder(
                   controller: _controller,
@@ -66,18 +78,49 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
                     return Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(page.$1, size: 56, color: palette.brand),
-                        const SizedBox(height: AuraSpacing.xl),
+                        ExcludeSemantics(
+                          child: Container(
+                            width: 112,
+                            height: 112,
+                            decoration: BoxDecoration(
+                              gradient: palette.brandGradient,
+                              borderRadius: BorderRadius.circular(
+                                AuraRadius.xl + 8,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: palette.brand.withValues(alpha: 0.35),
+                                  blurRadius: 36,
+                                  offset: const Offset(0, 14),
+                                ),
+                              ],
+                            ),
+                            child: Icon(
+                              page.$1,
+                              size: 52,
+                              color: palette.onBrand,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: AuraSpacing.xxl),
                         Text(
                           page.$2,
-                          style: Theme.of(context).textTheme.headlineMedium,
+                          style: Theme.of(context).textTheme.headlineMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
                           textAlign: TextAlign.center,
                         ),
                         const SizedBox(height: AuraSpacing.md),
-                        Text(
-                          page.$3,
-                          style: Theme.of(context).textTheme.bodyMedium,
-                          textAlign: TextAlign.center,
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 420),
+                          child: Text(
+                            page.$3,
+                            style: Theme.of(context).textTheme.bodyLarge
+                                ?.copyWith(
+                                  color: palette.textSecondary,
+                                  height: 1.5,
+                                ),
+                            textAlign: TextAlign.center,
+                          ),
                         ),
                       ],
                     );
@@ -88,27 +131,38 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   for (var i = 0; i < _pages.length; i++)
-                    Container(
-                      width: 8,
+                    AnimatedContainer(
+                      duration: AuraMotion.respecting(
+                        context,
+                        AuraMotion.standard,
+                      ),
+                      curve: AuraMotion.standardCurve,
+                      width: i == _index ? 24 : 8,
                       height: 8,
                       margin: const EdgeInsets.symmetric(horizontal: 4),
                       decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: i == _index ? palette.brand : palette.border,
+                        borderRadius: BorderRadius.circular(AuraRadius.pill),
+                        gradient: i == _index ? palette.brandGradient : null,
+                        color: i == _index ? null : palette.border,
                       ),
                     ),
                 ],
               ),
               const SizedBox(height: AuraSpacing.xl),
               AuraButton(
-                label: _index == _pages.length - 1 ? 'Get started' : 'Next',
+                label: _index == _pages.length - 1
+                    ? context.l10n.onboardingGetStarted
+                    : context.l10n.onboardingNext,
                 expand: true,
                 onPressed: () {
                   if (_index == _pages.length - 1) {
                     _finish();
                   } else {
                     _controller.nextPage(
-                      duration: AuraMotion.respecting(context, AuraMotion.standard),
+                      duration: AuraMotion.respecting(
+                        context,
+                        AuraMotion.standard,
+                      ),
                       curve: AuraMotion.standardCurve,
                     );
                   }

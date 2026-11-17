@@ -131,16 +131,118 @@ class AuraThemeV2 {
           TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
         },
       ),
+      // App bars sit flush on the page background: the page title is the
+      // header, not a coloured band (the same reading the web console uses).
+      appBarTheme: AppBarTheme(
+        backgroundColor: palette.background,
+        surfaceTintColor: Colors.transparent,
+        foregroundColor: palette.textPrimary,
+        elevation: AuraElevation.none,
+        scrolledUnderElevation: AuraElevation.none,
+        centerTitle: false,
+        titleSpacing: AuraSpacing.lg,
+        iconTheme: IconThemeData(color: palette.textSecondary),
+        actionsIconTheme: IconThemeData(color: palette.textSecondary),
+      ),
+      listTileTheme: ListTileThemeData(
+        iconColor: palette.textSecondary,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AuraRadius.md),
+        ),
+      ),
+      chipTheme: ChipThemeData(
+        backgroundColor: palette.surfaceVariant,
+        side: BorderSide(color: palette.border),
+        shape: const StadiumBorder(),
+        labelStyle: TextStyle(color: palette.textPrimary, fontSize: 13),
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: palette.surface,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AuraRadius.dialog),
+          side: BorderSide(color: palette.border),
+        ),
+      ),
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: palette.surface,
+        surfaceTintColor: Colors.transparent,
+        showDragHandle: true,
+        dragHandleColor: palette.textDisabled,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(
+            top: Radius.circular(AuraRadius.sheet),
+          ),
+        ),
+      ),
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
+        backgroundColor: palette.brand,
+        foregroundColor: palette.onBrand,
+        elevation: AuraElevation.raised,
+        highlightElevation: AuraElevation.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AuraRadius.lg),
+        ),
+      ),
+      tooltipTheme: TooltipThemeData(
+        decoration: BoxDecoration(
+          color: palette.textPrimary,
+          borderRadius: BorderRadius.circular(AuraRadius.sm),
+        ),
+        textStyle: TextStyle(color: palette.background, fontSize: 12),
+        waitDuration: const Duration(milliseconds: 400),
+      ),
       navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: palette.surface,
+        surfaceTintColor: Colors.transparent,
+        elevation: AuraElevation.none,
+        height: 68,
         indicatorColor: palette.brand.withValues(alpha: 0.20),
         indicatorShape: const StadiumBorder(),
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
         iconTheme: WidgetStateProperty.resolveWith((states) {
           final selected = states.contains(WidgetState.selected);
           return IconThemeData(
             size: 24,
-            color: selected ? palette.brand : palette.textSecondary,
+            color: selected
+                ? palette.brandOnSurfaceText
+                : palette.textSecondary,
           );
         }),
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return TextStyle(
+            fontSize: 12,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+            color: selected ? palette.textPrimary : palette.textSecondary,
+          );
+        }),
+      ),
+      navigationRailTheme: NavigationRailThemeData(
+        backgroundColor: palette.surface,
+        elevation: AuraElevation.none,
+        indicatorColor: palette.brand.withValues(alpha: 0.20),
+        indicatorShape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AuraRadius.md),
+        ),
+        selectedIconTheme: IconThemeData(
+          color: palette.brandOnSurfaceText,
+          size: 22,
+        ),
+        unselectedIconTheme: IconThemeData(
+          color: palette.textSecondary,
+          size: 22,
+        ),
+        selectedLabelTextStyle: TextStyle(
+          color: palette.textPrimary,
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+        ),
+        unselectedLabelTextStyle: TextStyle(
+          color: palette.textSecondary,
+          fontSize: 13,
+          fontWeight: FontWeight.w500,
+        ),
       ),
     );
   }
