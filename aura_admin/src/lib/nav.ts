@@ -1,6 +1,18 @@
-import type { IconName } from "@/components/icons";
+import {
+  Boxes,
+  LayoutDashboard,
+  Library,
+  MessageSquareText,
+  ScrollText,
+  Server,
+  Settings,
+  ShieldCheck,
+  TrendingUp,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 
-export type NavItem = { href: string; label: string; icon: IconName };
+export type NavItem = { href: string; label: string; icon: LucideIcon };
 export type NavGroup = { label: string; items: NavItem[] };
 
 /** The one list of console destinations: the sidebar and the command palette both read it. */
@@ -8,26 +20,26 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: "Operate",
     items: [
-      { href: "/", label: "Overview", icon: "overview" },
-      { href: "/providers", label: "Providers", icon: "providers" },
-      { href: "/models", label: "Models", icon: "models" },
-      { href: "/knowledge", label: "Knowledge", icon: "knowledge" },
+      { href: "/", label: "Overview", icon: LayoutDashboard },
+      { href: "/providers", label: "Providers", icon: Server },
+      { href: "/models", label: "Models", icon: Boxes },
+      { href: "/knowledge", label: "Knowledge", icon: Library },
     ],
   },
   {
     label: "Intelligence",
     items: [
-      { href: "/prompts", label: "Prompts", icon: "prompts" },
-      { href: "/learning", label: "Learning", icon: "learning" },
+      { href: "/prompts", label: "Prompts", icon: MessageSquareText },
+      { href: "/learning", label: "Learning", icon: TrendingUp },
     ],
   },
   {
     label: "Governance",
     items: [
-      { href: "/approvals", label: "Approvals", icon: "approvals" },
-      { href: "/audit", label: "Audit", icon: "audit" },
-      { href: "/access", label: "Access", icon: "access" },
-      { href: "/settings", label: "Settings", icon: "settings" },
+      { href: "/approvals", label: "Approvals", icon: ShieldCheck },
+      { href: "/audit", label: "Audit", icon: ScrollText },
+      { href: "/access", label: "Access", icon: Users },
+      { href: "/settings", label: "Settings", icon: Settings },
     ],
   },
 ];

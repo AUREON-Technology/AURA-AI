@@ -3,7 +3,18 @@
 import { useEffect, useState } from "react";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { CircleCheck, Download, RefreshCw, Sparkles, Users, PenLine } from "lucide-react";
+
+import { Alert } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card, CardHeader, CardTitle } from "@/components/ui/card";
+import { Metric, MetricGrid } from "@/components/ui/metric";
+import { PageHeader } from "@/components/ui/page-header";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow, TableSkeleton } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 type Recommendation = {
   recommended?: boolean;
@@ -38,6 +49,7 @@ export default function LearningPage() {
   const [approvalId, setApprovalId] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
 
   async function load() {
@@ -50,65 +62,88 @@ export default function LearningPage() {
   }
 
   useEffect(() => {
-    load().catch((err: Error) => setError(err.message));
+    load()
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoaded(true));
   }, []);
 
   const stats = recommendation?.statistics;
 
+  const loading = !loaded;
+
   return (
     <>
-      <h1>Learning</h1>
-      <p className="sub">
+      <PageHeader title="Learning">
         Loop B curation from live feedback. Training still requires a recorded approval bound to
         the dataset digest.
-      </p>
-      {error ? <div className="banner">{error}</div> : null}
+      </PageHeader>
+      {error ? <Alert>{error}</Alert> : null}
 
-      <div className="grid">
-        <div className="card metric">
-          Candidates
-          <b>{stats?.total_candidates ?? 0}</b>
-        </div>
-        <div className="card metric">
-          Accepted
-          <b>{stats?.accepted ?? 0}</b>
-        </div>
-        <div className="card metric">
-          Distinct users
-          <b>{stats?.distinct_users ?? 0}</b>
-        </div>
-        <div className="card metric">
-          Corrected
-          <b>{Math.round((stats?.corrected_fraction ?? 0) * 100)}%</b>
-        </div>
-      </div>
+      <MetricGrid>
+        <Metric index={0} icon={Sparkles} label="Candidates" loading={loading} value={stats?.total_candidates ?? 0} />
+        <Metric index={1} icon={CircleCheck} label="Accepted" loading={loading} value={stats?.accepted ?? 0} />
+        <Metric index={2} icon={Users} label="Distinct users" loading={loading} value={stats?.distinct_users ?? 0} />
+        <Metric
+          index={3}
+          icon={PenLine}
+          label="Corrected"
+          loading={loading}
+          value={`${Math.round((stats?.corrected_fraction ?? 0) * 100)}%`}
+        />
+      </MetricGrid>
 
-      <div className="card" style={{ marginTop: 16 }}>
-        <h2>
-          Recommendation{" "}
-          {recommendation?.recommended ? (
-            <span className="pill ok">recommended</span>
-          ) : (
-            <span className="pill">not yet</span>
-          )}
-        </h2>
-        <p className="muted">
-          Digest: {recommendation?.dataset_digest || "—"} · Examples:{" "}
-          {recommendation?.estimated_examples ?? 0} · Tokens:{" "}
-          {recommendation?.estimated_tokens ?? 0}
-          {recommendation?.estimated_train_hours_cpu != null
-            ? ` · CPU hours ≈ ${recommendation.estimated_train_hours_cpu}`
-            : ""}
-        </p>
-        <ul>
-          {(recommendation?.reasons ?? []).map((reason) => (
-            <li key={reason}>{reason}</li>
-          ))}
-        </ul>
-        <div className="row" style={{ marginTop: 12 }}>
-          <button
-            className="btn"
-            type="button"
+      <Card className="mt-4 motion-safe:animate-fade-up [animation-delay:280ms]">
+        <CardHeader className="mb-2">
+          <CardTitle>
+            Recommendation{" "}
+            {recommendation?.recommended ? (
+              <Badge tone="ok" dot pulse>
+                recommended
+              </Badge>
+            ) : (
+              <Badge dot>not yet</Badge>
+            )}
+          </CardTitle>
+        </CardHeader>
+        {loading ? (
+          <div className="space-y-2">
+            <Skeleton className="w-3/4" />
+            <Skeleton className="w-1/2" />
+          </div>
+        ) : (
+          <>
+            <dl className="flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-muted">
+              <div>
+                <dt className="inline">Digest: </dt>
+                <dd className="inline font-mono text-xs text-fg">{recommendation?.dataset_digest || "—"}</dd>
+              </div>
+              <div>
+                <dt className="inline">Examples: </dt>
+                <dd className="inline text-fg tabular-nums">{recommendation?.estimated_examples ?? 0}</dd>
+              </div>
+              <div>
+                <dt className="inline">Tokens: </dt>
+                <dd className="inline text-fg tabular-nums">{recommendation?.estimated_tokens ?? 0}</dd>
+              </div>
+              {recommendation?.estimated_train_hours_cpu != null ? (
+                <div>
+                  <dt className="inline">CPU hours ≈ </dt>
+                  <dd className="inline text-fg tabular-nums">{recommendation.estimated_train_hours_cpu}</dd>
+                </div>
+              ) : null}
+            </dl>
+            {(recommendation?.reasons ?? []).length > 0 ? (
+              <ul className="mt-3 list-disc space-y-1 pl-5 text-[13.5px]">
+                {(recommendation?.reasons ?? []).map((reason) => (
+                  <li key={reason}>{reason}</li>
+                ))}
+              </ul>
+            ) : null}
+          </>
+        )}
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
             disabled={busy}
             onClick={async () => {
               setBusy(true);
@@ -121,8 +156,9 @@ export default function LearningPage() {
               }
             }}
           >
+            <RefreshCw aria-hidden="true" className={cn(busy && "motion-safe:animate-spin")} />
             Refresh
-          </button>
+          </Button>
           <ConfirmDialog
             title="Request fine-tune approval"
             confirmText="request"
@@ -140,42 +176,57 @@ export default function LearningPage() {
           </ConfirmDialog>
           {recommendation?.dataset_digest ? (
             <a
-              className="btn"
+              className={buttonVariants({ size: "sm" })}
               href={`${process.env.NEXT_PUBLIC_BASE_PATH || ""}/api/v3/admin/learning/datasets/${recommendation.dataset_digest}?format=chatml`}
             >
+              <Download aria-hidden="true" />
               Export ChatML
             </a>
           ) : null}
         </div>
-        {!recommendation?.dataset_digest ? (
-          <p className="muted">No curated dataset yet — nothing to approve or export.</p>
+        {!loading && !recommendation?.dataset_digest ? (
+          <p className="mt-3 text-[13px] text-muted">No curated dataset yet — nothing to approve or export.</p>
         ) : null}
-        {approvalId ? <p className="muted">Pending approval: {approvalId}</p> : null}
-      </div>
+        {approvalId ? <p className="mt-2 text-[13px] text-muted">Pending approval: {approvalId}</p> : null}
+      </Card>
 
-      <div className="card" style={{ marginTop: 16 }}>
-        <h2>Fine-tune jobs</h2>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Job</th>
-              <th>Status</th>
-              <th>Digest</th>
-              <th>Artefact</th>
-            </tr>
-          </thead>
-          <tbody>
+      <Card className="mt-4">
+        <CardHeader>
+          <CardTitle>Fine-tune jobs</CardTitle>
+        </CardHeader>
+        <Table flush>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Job</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Digest</TableHead>
+              <TableHead>Artefact</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {jobs.map((job) => (
-              <tr key={job.id}>
-                <td>{job.id}</td>
-                <td>{job.status}</td>
-                <td>{job.dataset_digest}</td>
-                <td>{job.artefact_uri || job.error || "—"}</td>
-              </tr>
+              <TableRow key={job.id}>
+                <TableCell className="font-medium">{job.id}</TableCell>
+                <TableCell>
+                  <Badge
+                    dot
+                    pulse={job.status === "running"}
+                    tone={job.status === "succeeded" ? "ok" : job.status === "failed" ? "bad" : job.status === "running" ? "warn" : "neutral"}
+                  >
+                    {job.status}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  <code className="text-xs">{job.dataset_digest}</code>
+                </TableCell>
+                <TableCell className="text-muted">{job.artefact_uri || job.error || "—"}</TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
-      </div>
+            {!loaded ? <TableSkeleton cols={4} rows={2} /> : null}
+            {loaded && jobs.length === 0 && !error ? <TableEmpty colSpan={4}>No fine-tune jobs yet.</TableEmpty> : null}
+          </TableBody>
+        </Table>
+      </Card>
     </>
   );
 }

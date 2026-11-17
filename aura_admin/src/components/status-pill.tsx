@@ -1,3 +1,10 @@
+import { Badge } from "@/components/ui/badge";
+
+/** Healthy pulses; anything else holds still so the eye goes to it. */
 export function StatusPill({ ok, label }: { ok: boolean; label?: string }) {
-  return <span className={`pill ${ok ? "ok" : "bad"}`}>{label ?? (ok ? "healthy" : "down")}</span>;
+  return (
+    <Badge tone={ok ? "ok" : "bad"} dot pulse={ok}>
+      {label ?? (ok ? "healthy" : "down")}
+    </Badge>
+  );
 }
