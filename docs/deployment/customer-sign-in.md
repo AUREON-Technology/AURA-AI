@@ -27,10 +27,15 @@ no credentials it logs "Firebase Auth verification is disabled" and refuses ever
 
 Firebase console → Authentication → Sign-in method:
 
-- Enable **Google** (already used), **Apple** and **Email/Password**. Leave "Email link" off.
-- Settings → User account linking: choose **"Link accounts that use the same email"**. This is
-  what makes Google, Apple and password sign-ins for one address land on one uid, and one set of
-  data.
+- Enable **Google** (already used), **Apple** and **Email/Password**. Leave "Email link" and
+  **Anonymous** off: an anonymous Firebase token has no email, and `/consumer/token` would accept
+  it.
+- Settings → User account linking: choose **"Link accounts that use the same email"**. That keeps
+  one Firebase account per address. It does **not** silently merge a *different* method into an
+  existing account: an Apple or email/password sign-in for an address that already signs in with
+  Google fails with "This email already uses another sign-in method". The person signs in with the
+  original method. A "link another sign-in method" screen is planned (Plan F). No data is split
+  either way.
 - Settings → Authorized domains: add the web app's domain(s), for example `aureon-ai.tech` and
   `api.aureon-ai.tech`.
 
@@ -74,19 +79,28 @@ FIREBASE_CREDENTIALS_JSON="$(cat service-account.json)" \
 (`railway run` provides `AURA_DATABASE_URL`. If the database is only reachable on Railway's
 private network, run the commands through `railway ssh` instead.)
 
+**After the import**, people still on an old app version keep creating Google-subject accounts.
+The backend covers them: a Firebase token whose Google identity is an existing subject signs in as
+that subject, as long as the Firebase uid has no account of its own (`services/security.canonical_subject`).
+Re-running the import before each release is still cheap and keeps Firebase tidy.
+
 **Notes the script prints:**
 - `exists`: already in Firebase, left untouched.
 - `not-a-person`: service, project or workspace principals and malformed subjects; not imported.
 - `placeholder-email`: an `@unknown.local` stand-in, imported without an email.
 - `duplicate-email`: a second subject with the same address, imported without an email. It is
   **never merged**, because merging would join two people's data. Resolve these by hand.
+- `email-taken`: Firebase already has *another* account with that address (someone registered it,
+  or signed in through the new client first). The person is skipped, because `import_users` does
+  not check email uniqueness. Resolve by hand.
 
 **Verify:**
 1. Sign in with Google through the new client using an existing account.
 2. `GET /api/v3/workspaces` must return that person's existing personal workspace, and their
    knowledge and memory must still be there.
-3. Also sign in with email/password using the same address (Firebase links it). The profile id
-   must be the same.
+3. A brand-new email/password account gets its own new id. Signing in with Apple or a password
+   for an address that already uses Google is refused with "This email already uses another
+   sign-in method", and no second account is created.
 
 **Roll back:** the import only adds Firebase users. Delete them with
 `firebase_admin.auth.delete_users([...uids])`. Nothing in AURA changes.
@@ -102,5 +116,9 @@ private network, run the commands through `railway ssh` instead.)
 - **Email-list role grants** still need a verified Google sign-in (SEC-08). An Apple or password
   sign-in never matches `SUPERADMIN_EMAILS`, `ADMIN_EMAILS` or `DEVELOPER_EMAILS`.
 - **Teams:** `POST /api/v3/workspaces` and invite acceptance return 403 with "verify your email
-  address…" until the access token says `email_verified`. A session refreshes within 15 minutes of
-  the person verifying.
+  address…" until the access token says `email_verified`. A refresh does **not** pick up a later
+  verification, because it re-issues the identity it was signed in with. The app's "I've
+  verified" action on the profile page reloads the Firebase user and starts a new session with a
+  fresh token.
+- **Rate limit:** the consumer sign-in limit keys on the address the trusted proxy appended to
+  `X-Forwarded-For` (`AURA_TRUSTED_PROXY_COUNT`), not the caller-written leftmost entry.

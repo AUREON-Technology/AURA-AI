@@ -865,9 +865,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get identityDifferentMethod =>
-      'This email already uses another sign-in method. Use it, then add this one from your profile.';
+      'This email already uses another sign-in method. Sign in with that method instead.';
 
   @override
   String get identityUnavailable =>
       'This sign-in method isn\'t available right now.';
+
+  @override
+  String get verifyEmailDone => 'I\'ve verified';
 }

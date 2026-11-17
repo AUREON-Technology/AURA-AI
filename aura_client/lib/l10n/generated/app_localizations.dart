@@ -1651,7 +1651,7 @@ abstract class AppLocalizations {
   /// Sign-in failure: the email is registered with a different method
   ///
   /// In en, this message translates to:
-  /// **'This email already uses another sign-in method. Use it, then add this one from your profile.'**
+  /// **'This email already uses another sign-in method. Sign in with that method instead.'**
   String get identityDifferentMethod;
 
   /// Sign-in failure: provider not configured or other error
@@ -1659,6 +1659,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This sign-in method isn\'t available right now.'**
   String get identityUnavailable;
+
+  /// Re-checks the account after the user clicked the verification link
+  ///
+  /// In en, this message translates to:
+  /// **'I\'ve verified'**
+  String get verifyEmailDone;
 }
 
 class _AppLocalizationsDelegate

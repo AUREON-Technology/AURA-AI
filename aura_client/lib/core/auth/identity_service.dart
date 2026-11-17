@@ -10,7 +10,9 @@ import 'package:google_sign_in/google_sign_in.dart';
 /// [uid] is the Firebase uid. For anyone who used AURA before Plan B it equals the Google
 /// subject their data is stored under: `aura_backend/scripts/import_users_to_firebase.py` created
 /// them in Firebase with that uid, and Firebase's "link accounts that use the same email" setting
-/// keeps every later Google, Apple or email/password sign-in on it.
+/// keeps every later Google sign-in on it. (Firebase does not merge a *different* method for an
+/// address that already has an account on its own: that sign-in fails with
+/// `account-exists-with-different-credential` until the methods are linked.)
 @immutable
 class IdentityUser {
   const IdentityUser({
@@ -106,6 +108,10 @@ abstract class IdentityService {
   /// an account exists.
   Future<void> sendPasswordReset(String email);
   Future<void> resendVerification();
+
+  /// Re-reads the signed-in user from the provider (e.g. after they clicked the verification
+  /// link), returning the fresh state.
+  Future<IdentityUser?> reload();
   Future<String?> idToken({bool forceRefresh = false});
   Future<void> signOut();
 }
@@ -207,6 +213,16 @@ class FirebaseIdentityService implements IdentityService {
     } on FirebaseAuthException catch (e) {
       throw IdentityError(identityErrorKindFor(e.code), e.message ?? e.code);
     }
+  }
+
+  @override
+  Future<IdentityUser?> reload() async {
+    try {
+      await _auth.currentUser?.reload();
+    } on FirebaseAuthException catch (e) {
+      throw IdentityError(identityErrorKindFor(e.code), e.message ?? e.code);
+    }
+    return current;
   }
 
   @override

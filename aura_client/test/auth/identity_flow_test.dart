@@ -87,8 +87,27 @@ class FakeIdentityService implements IdentityService {
   @override
   Future<void> resendVerification() async => calls.add('resend');
 
+  bool verifyOnReload = false;
+  bool? lastForceRefresh;
+
   @override
-  Future<String?> idToken({bool forceRefresh = false}) async => current == null ? null : token;
+  Future<IdentityUser?> reload() async {
+    calls.add('reload');
+    final now = current;
+    if (now != null && verifyOnReload) {
+      current = IdentityUser(
+        uid: now.uid, email: now.email, displayName: now.displayName,
+        emailVerified: true, provider: now.provider,
+      );
+    }
+    return current;
+  }
+
+  @override
+  Future<String?> idToken({bool forceRefresh = false}) async {
+    lastForceRefresh = forceRefresh;
+    return current == null ? null : token;
+  }
 
   @override
   Future<void> signOut() async {
@@ -245,6 +264,37 @@ void main() {
     await c.read(authProvider.notifier).resendVerification();
 
     expect(identity.calls, ['reset:ann@example.com', 'resend']);
+  });
+
+  group('confirmEmailVerified (review B#1)', () {
+    const unverified = IdentityUser(
+      uid: 'u-unverified', email: 'dana@example.com', displayName: 'Dana', emailVerified: false, provider: 'password',
+    );
+
+    test('once verified, re-exchanges a force-refreshed token so the server sees it', () async {
+      final identity = FakeIdentityService(user: unverified, token: 'token-after-verify');
+      final c = container(identity);
+      await c.read(authProvider.future);
+      await c.read(authProvider.notifier).signInWithEmail('dana@example.com', 'correct horse');
+      exchanges.clear();
+      identity.verifyOnReload = true;
+
+      expect(await c.read(authProvider.notifier).confirmEmailVerified(), isTrue);
+      expect(identity.calls, contains('reload'));
+      expect(identity.lastForceRefresh, isTrue);
+      expect(exchanges.single.headers['Authorization'], 'Bearer token-after-verify');
+    });
+
+    test('still unverified: nothing is exchanged', () async {
+      final identity = FakeIdentityService(user: unverified);
+      final c = container(identity);
+      await c.read(authProvider.future);
+      await c.read(authProvider.notifier).signInWithEmail('dana@example.com', 'correct horse');
+      exchanges.clear();
+
+      expect(await c.read(authProvider.notifier).confirmEmailVerified(), isFalse);
+      expect(exchanges, isEmpty);
+    });
   });
 
   group('identityErrorKindFor', () {

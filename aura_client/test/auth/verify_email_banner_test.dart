@@ -20,6 +20,14 @@ class _Identity implements IdentityService {
   @override
   Future<void> resendVerification() async => resends++;
 
+  int reloads = 0;
+
+  @override
+  Future<IdentityUser?> reload() async {
+    reloads++;
+    return current;
+  }
+
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
@@ -49,6 +57,14 @@ void main() {
     await tester.tap(find.text('Resend'));
     await tester.pumpAndSettle();
     expect(identity.resends, 1);
+  });
+
+  testWidgets("\"I've verified\" checks with the identity provider", (tester) async {
+    final identity = _Identity(_user(verified: false));
+    await _pump(tester, identity);
+    await tester.tap(find.text("I've verified"));
+    await tester.pumpAndSettle();
+    expect(identity.reloads, 1);
   });
 
   testWidgets('a verified account sees nothing', (tester) async {

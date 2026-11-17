@@ -129,7 +129,8 @@ def email_grant_eligible(user_info: dict) -> bool:
     Both keys are written only by ``services.security.verify_identity_token`` from a verified
     Google or Firebase ID token (Firebase's ``firebase.sign_in_provider``; a Google ID token is
     Google sign-in by definition), and travel with the server-side refresh record. Nothing a
-    client sends can set them: access-token claims (``verify_access_token``) never carry them.
+    client sends can set them. Access tokens now carry ``email_verified`` (SaaS P1-B, server-set) but never
+    ``sign_in_provider``, so an access-token identity can never match an email list.
     An identity without them still keeps a role it holds by uid in roles.json, by Access-page
     assignment, or by the role claim this server stamped into its own access token.
     """

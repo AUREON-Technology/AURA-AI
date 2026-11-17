@@ -231,6 +231,21 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
 
   Future<void> resendVerification() => _identity.resendVerification();
 
+  /// After the person clicked the verification link: re-read them from the identity provider
+  /// and, if verified now, start a new backend session with a force-refreshed ID token. The
+  /// refresh token would otherwise keep re-issuing "unverified" for the life of the session,
+  /// since `/refresh` reuses the identity it was issued for (review B#1). Returns whether the
+  /// address is verified.
+  Future<bool> confirmEmailVerified() async {
+    final user = await _identity.reload();
+    if (user == null || !user.emailVerified) return false;
+    final idToken = await _identity.idToken(forceRefresh: true);
+    if (idToken == null) return false;
+    await ref.read(tokenManagerProvider).startSession(idToken);
+    await _storage.write(key: 'auth_token', value: idToken);
+    return true;
+  }
+
   /// Every sign-in method ends here: exchange the provider's ID token for a backend session,
   /// forget another account's local data, cache the profile.
   Future<void> _signInWith(Future<IdentityUser> Function() signIn) async {

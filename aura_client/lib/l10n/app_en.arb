@@ -1148,12 +1148,16 @@
   "@identityNetwork": {
     "description": "Sign-in failure: offline"
   },
-  "identityDifferentMethod": "This email already uses another sign-in method. Use it, then add this one from your profile.",
+  "identityDifferentMethod": "This email already uses another sign-in method. Sign in with that method instead.",
   "@identityDifferentMethod": {
     "description": "Sign-in failure: the email is registered with a different method"
   },
   "identityUnavailable": "This sign-in method isn't available right now.",
   "@identityUnavailable": {
     "description": "Sign-in failure: provider not configured or other error"
+  },
+  "verifyEmailDone": "I've verified",
+  "@verifyEmailDone": {
+    "description": "Re-checks the account after the user clicked the verification link"
   }
 }
