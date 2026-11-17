@@ -25,13 +25,25 @@ engine with logic is an unnecessary attack surface for a ~100-line feature.
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping, Sequence
 
 from ..domain.errors import NotFoundError, ValidationError
+from ..ports.prompts import PromptPinStore
 
-__all__ = ["PromptTemplate", "PromptVariable", "RenderedPrompt", "PromptRegistry"]
+__all__ = [
+    "PromptTemplate", "PromptVariable", "RenderedPrompt", "PromptRegistry", "PIN_SYNC_INTERVAL_S",
+]
+
+logger = logging.getLogger(__name__)
+
+#: How often each worker re-reads the shared pin store (INT-004). A pin made on one worker is
+#: served by every other within this many seconds; the worker that took the admin request serves
+#: it at once. Five seconds keeps an incident rollback effectively immediate while costing one
+#: single-table read per worker per interval -- negligible next to the per-turn queries.
+PIN_SYNC_INTERVAL_S = 5.0
 
 # {{ name }} -- doubled braces so single braces (JSON examples, code) pass through untouched.
 _VARIABLE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
@@ -193,11 +205,23 @@ class PromptRegistry:
     Version resolution: ``get("id")`` returns the active version (the highest registered unless
     one is pinned); ``get("id", version="1.2.0")`` returns exactly that. Pinning is what makes
     rollback a configuration change rather than a deploy.
+
+    Pins are shared state (INT-004). The gateway runs several workers, each with its own
+    registry, so with a ``pins`` store the operator-facing calls are the async ``set_pin`` /
+    ``clear_pin``, which write the store first and then this worker's copy. Other workers pick
+    the change up from ``refresh_pins()``, which the container runs at startup and then every
+    ``PIN_SYNC_INTERVAL_S`` seconds -- so ``get()`` on the hot path stays a dict lookup and a pin
+    reaches every worker within that interval, never a DB round trip per turn. The synchronous
+    ``pin``/``unpin`` change this registry only (tests, a single-process tool).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, pins: PromptPinStore | None = None) -> None:
         self._templates: dict[str, dict[str, PromptTemplate]] = {}
         self._pinned: dict[str, str] = {}
+        self._pin_store = pins
+        # Bumped by every local pin change; a refresh whose read began before one discards its
+        # snapshot rather than overwrite the newer local state with older shared state.
+        self._pin_generation = 0
 
     def register(self, template: PromptTemplate, *, overwrite: bool = False) -> None:
         versions = self._templates.setdefault(template.id, {})
@@ -218,15 +242,68 @@ class PromptRegistry:
             self.register(template)
 
     def pin(self, template_id: str, version: str) -> None:
+        """Pin in this registry only. Use :meth:`set_pin` for a pin every worker must honour."""
+        self._require_version(template_id, version)
+        self._pinned[template_id] = version
+        self._pin_generation += 1
+
+    def unpin(self, template_id: str) -> None:
+        """Unpin in this registry only. Use :meth:`clear_pin` to release every worker."""
+        self._pinned.pop(template_id, None)
+        self._pin_generation += 1
+
+    def _require_version(self, template_id: str, version: str) -> None:
         if version not in self._templates.get(template_id, {}):
             raise NotFoundError(
                 f"cannot pin unknown prompt version {template_id}@{version}",
                 details={"available": self.versions(template_id)},
             )
-        self._pinned[template_id] = version
 
-    def unpin(self, template_id: str) -> None:
-        self._pinned.pop(template_id, None)
+    async def set_pin(self, template_id: str, version: str, *, pinned_by: str | None = None) -> None:
+        """Pin for every worker: validated here, written to the shared store, then applied
+        locally so the worker that took the request serves the pin immediately."""
+        self._require_version(template_id, version)
+        if self._pin_store is not None:
+            await self._pin_store.set(template_id, version, pinned_by=pinned_by)
+        self.pin(template_id, version)
+
+    async def clear_pin(self, template_id: str) -> bool:
+        """Release a pin for every worker. ``True`` if a pin existed (shared or local)."""
+        existed = template_id in self._pinned
+        if self._pin_store is not None:
+            existed = await self._pin_store.delete(template_id) or existed
+        self.unpin(template_id)
+        return existed
+
+    async def refresh_pins(self) -> None:
+        """Replace this worker's pins with the shared store's. No-op without a store.
+
+        A stored pin naming a template or version this registry does not hold (a rolling deploy
+        where another build registered it, a version since removed) is skipped with a warning:
+        honouring it would make every ``get()`` of that template raise, turning a rollback into
+        an outage. The template then resolves to its default version on this worker.
+        """
+        if self._pin_store is None:
+            return
+        generation = self._pin_generation
+        stored = await self._pin_store.load_all()
+        if generation != self._pin_generation:
+            return  # a local set/clear landed mid-read; the next refresh sees it in the store
+        resolved: dict[str, str] = {}
+        for template_id, version in stored.items():
+            if version in self._templates.get(template_id, {}):
+                resolved[template_id] = version
+            else:
+                logger.warning(
+                    "ignoring prompt pin this worker cannot serve",
+                    extra={"template_id": template_id, "version": version},
+                )
+        self._pinned = resolved
+
+    @property
+    def pins_shared(self) -> bool:
+        """Whether pins are backed by a store every worker reads."""
+        return self._pin_store is not None
 
     @staticmethod
     def _sort_key(version: str) -> tuple[int, ...]:
