@@ -62,13 +62,21 @@ class VoiceClient {
   /// Sends a recorded voice note and returns the transcript, or `null` on any failure --
   /// callers treat a `null` result as "nothing to insert" rather than surfacing raw errors for
   /// what is, at worst, a failed convenience feature.
-  Future<String?> transcribe(List<int> audioBytes, {String filename = 'voice.wav'}) async {
+  ///
+  /// [language] is the ISO-639-1 code the note is spoken in (`en`, `ar`). Omitted, the server
+  /// detects it, which is what clients before Phase V got.
+  Future<String?> transcribe(
+    List<int> audioBytes, {
+    String filename = 'voice.wav',
+    String? language,
+  }) async {
     final tokens = _ref.read(tokenManagerProvider);
     Future<http.StreamedResponse> send() async {
       final token = await tokens.getValidAccessToken();
       final uri = Uri.parse("$_backendUrl/transcribe");
       final request = http.MultipartRequest('POST', uri)
         ..files.add(http.MultipartFile.fromBytes('file', audioBytes, filename: filename));
+      if (language != null && language.isNotEmpty) request.fields['language'] = language;
       request.headers.addAll(await _headers(token));
       final client = _http;
       return client != null ? client.send(request) : http.Client().send(request);

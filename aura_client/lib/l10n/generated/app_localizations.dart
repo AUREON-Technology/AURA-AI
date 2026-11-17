@@ -316,7 +316,7 @@ abstract class AppLocalizations {
   /// **'Capture from anywhere. Browse tasks, calendar, finance, and health in Life Hub. Account tools live under You.'**
   String get onboardingTourBody;
 
-  /// Host daemon status card: the daemon is paired to a different server than the one this app uses
+  /// Host daemon page: warning when the daemon is paired to a different backend than the app
   ///
   /// In en, this message translates to:
   /// **'This app is signed in to {appBackendUrl}. Pair again to move the daemon there.'**
@@ -1450,17 +1450,29 @@ abstract class AppLocalizations {
   /// **'Save executable path'**
   String get hostdSaveExecutable;
 
-  /// Host daemon page: warning when the daemon is paired to a different backend than the app
-  ///
-  /// In en, this message translates to:
-  /// **'This app is signed in to {appBackendUrl}. Pair again to move the daemon there.'**
-  String hostdPairedToOtherServer(String appBackendUrl);
-
   /// Live voice page close button tooltip
   ///
   /// In en, this message translates to:
   /// **'End live voice'**
   String get liveVoiceEnd;
+
+  /// Live voice page: accessibility label of the toggle choosing the language the user speaks in
+  ///
+  /// In en, this message translates to:
+  /// **'Voice language'**
+  String get voiceLanguageLabel;
+
+  /// Voice language toggle: English option
+  ///
+  /// In en, this message translates to:
+  /// **'English'**
+  String get voiceLanguageEnglish;
+
+  /// Voice language toggle: Arabic option, written in Arabic so Arabic speakers recognise it whatever the UI language
+  ///
+  /// In en, this message translates to:
+  /// **'العربية'**
+  String get voiceLanguageArabic;
 
   /// Add event dialog: start time picker tooltip
   ///

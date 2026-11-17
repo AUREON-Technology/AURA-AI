@@ -132,6 +132,26 @@ void main() {
     expect(recorded!.bodyBytes, isNotEmpty);
   });
 
+  // Phase V: the note's language travels as the `language` form field; omitted, the server
+  // detects it (what clients before this change sent).
+  test('transcribe() sends the language form field only when one is given', () async {
+    final bodies = <String>[];
+    final httpClient = MockClient((request) async {
+      bodies.add(latin1.decode(request.bodyBytes));
+      return http.Response(jsonEncode({'text': 'marhaba', 'language': 'ar'}), 200);
+    });
+
+    final container = _containerFor(httpClient);
+    addTearDown(container.dispose);
+    final client = container.read(voiceClientProvider);
+
+    await client.transcribe([1, 2, 3], language: 'ar');
+    await client.transcribe([1, 2, 3]);
+
+    expect(bodies[0], contains('name="language"\r\n\r\nar\r\n'));
+    expect(bodies[1], isNot(contains('name="language"')));
+  });
+
   test('transcribe() returns null for an empty transcript', () async {
     final httpClient = MockClient((request) async {
       return http.Response(jsonEncode({'text': '', 'engine': 'faster-whisper'}), 200);

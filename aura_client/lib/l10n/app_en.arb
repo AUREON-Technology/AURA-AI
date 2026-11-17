@@ -1004,6 +1004,18 @@
   "@liveVoiceEnd": {
     "description": "Live voice page close button tooltip"
   },
+  "voiceLanguageLabel": "Voice language",
+  "@voiceLanguageLabel": {
+    "description": "Live voice page: accessibility label of the toggle choosing the language the user speaks in"
+  },
+  "voiceLanguageEnglish": "English",
+  "@voiceLanguageEnglish": {
+    "description": "Voice language toggle: English option"
+  },
+  "voiceLanguageArabic": "العربية",
+  "@voiceLanguageArabic": {
+    "description": "Voice language toggle: Arabic option, written in Arabic so Arabic speakers recognise it whatever the UI language"
+  },
   "eventChangeStart": "Change start time",
   "@eventChangeStart": {
     "description": "Add event dialog: start time picker tooltip"

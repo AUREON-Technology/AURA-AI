@@ -11,10 +11,12 @@ import 'dart:convert';
 
 import 'package:aura_client/core/ai/voice/live/live_mic_source.dart';
 import 'package:aura_client/core/ai/voice/live/live_voice_socket.dart';
+import 'package:aura_client/core/ai/voice/voice_language.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
 import 'package:aura_client/features/voice_live/presentation/live_voice_view_model.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 class _Tokens extends TokenManager {
@@ -60,6 +62,12 @@ class _FakeChannel implements WebSocketChannel {
       .map((s) => (jsonDecode(s) as Map<String, dynamic>)['type'] as String)
       .toList();
 
+  List<Map<String, dynamic>> get startFrames => fakeSink.sent
+      .whereType<String>()
+      .map((s) => jsonDecode(s) as Map<String, dynamic>)
+      .where((f) => f['type'] == 'start')
+      .toList();
+
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
@@ -102,15 +110,23 @@ void main() {
   late _FakeMic mic;
   late ProviderContainer container;
 
+  late List<_FakeChannel> channels;
+
   setUp(() {
+    SharedPreferences.setMockInitialValues({});
     channel = _FakeChannel();
+    channels = [];
     mic = _FakeMic();
     container = ProviderContainer(overrides: [
+      deviceLanguageCodeProvider.overrideWithValue('en'),
       tokenManagerProvider.overrideWith((ref) => _Tokens(ref)),
       liveVoiceSocketFactoryProvider.overrideWithValue(
         (ref) => LiveVoiceSocket(
           ref,
-          connect: (_) => channel,
+          connect: (_) {
+            channels.add(channel);
+            return channel;
+          },
           attestation: (_) async => const {'X-Device-Platform': 'test'},
           reauthInterval: const Duration(hours: 1),
         ),
@@ -178,5 +194,61 @@ void main() {
 
     expect(mic.starts, [24000]);
     expect(container.read(liveVoiceViewModelProvider).phase, 'listening');
+  });
+
+  // Phase V: the start frame carries the chosen voice language, not a hard-coded 'en'.
+  test('the start frame carries the chosen voice language', () async {
+    await container.read(voiceLanguageProvider.notifier).set(VoiceLanguage.arabic);
+    final vm = container.read(liveVoiceViewModelProvider.notifier);
+    container.listen(liveVoiceViewModelProvider, (_, _) {});
+    await vm.startSession(conversationId: 'conv-1');
+    await _settle();
+
+    expect(channel.startFrames.single['language'], 'ar');
+  });
+
+  test('switching language restarts the open session in the new language', () async {
+    final vm = container.read(liveVoiceViewModelProvider.notifier);
+    container.listen(liveVoiceViewModelProvider, (_, _) {});
+    await vm.startSession(conversationId: 'conv-1');
+    await _settle();
+    expect(channel.startFrames.single['language'], 'en');
+
+    final first = channel;
+    channel = _FakeChannel();
+    await vm.setLanguage(VoiceLanguage.arabic);
+    await _settle();
+
+    expect(channels, [first, channel], reason: 'a fresh socket for the new language');
+    expect(channel.startFrames.single['language'], 'ar');
+    expect(channel.startFrames.single['session_id'], 'conv-1', reason: 'same conversation');
+  });
+
+  test('switching language with no session open only saves the choice', () async {
+    final vm = container.read(liveVoiceViewModelProvider.notifier);
+    await vm.setLanguage(VoiceLanguage.arabic);
+    await _settle();
+
+    expect(channels, isEmpty);
+    expect(container.read(voiceLanguageProvider), VoiceLanguage.arabic);
+  });
+
+  test('a server that cannot hear the language says to switch, not a generic error', () async {
+    await container.read(voiceLanguageProvider.notifier).set(VoiceLanguage.arabic);
+    final vm = container.read(liveVoiceViewModelProvider.notifier);
+    container.listen(liveVoiceViewModelProvider, (_, _) {});
+    await vm.startSession(conversationId: 'conv-1');
+    channel.incoming.add(jsonEncode({
+      'type': 'error',
+      'error': 'language_unsupported',
+      'message': 'live voice STT is English-only with the configured model',
+    }));
+    channel.code = LiveVoiceSocket.closeBadRequest;
+    await channel.incoming.close();
+    await _settle();
+
+    final state = container.read(liveVoiceViewModelProvider);
+    expect(state.phase, 'error');
+    expect(state.error, languageUnavailableMessage(VoiceLanguage.arabic));
   });
 }

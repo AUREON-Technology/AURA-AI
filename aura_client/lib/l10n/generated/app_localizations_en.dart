@@ -750,12 +750,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get hostdSaveExecutable => 'Save executable path';
 
   @override
-  String hostdPairedToOtherServer(String appBackendUrl) {
-    return 'This app is signed in to $appBackendUrl. Pair again to move the daemon there.';
-  }
+  String get liveVoiceEnd => 'End live voice';
 
   @override
-  String get liveVoiceEnd => 'End live voice';
+  String get voiceLanguageLabel => 'Voice language';
+
+  @override
+  String get voiceLanguageEnglish => 'English';
+
+  @override
+  String get voiceLanguageArabic => 'العربية';
 
   @override
   String get eventChangeStart => 'Change start time';
