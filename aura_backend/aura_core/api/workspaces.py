@@ -123,6 +123,12 @@ def register_workspace_ops(
         members = await tenancy.list_members(person(caller), workspace_id)
         return JSONResponse(content={"members": [_member(m) for m in members]})
 
+    @router.get("/workspaces/{workspace_id}/plan")
+    async def workspace_plan(workspace_id: str, caller=Depends(principal)) -> JSONResponse:
+        """The workspace's plan, its limits and this month's usage (SaaS P1-C). Any member."""
+        await tenancy.resolve(person(caller), workspace_id)
+        return JSONResponse(content=await container.plans.usage(workspace_id))
+
     @router.patch("/workspaces/{workspace_id}/members/{user_id}", dependencies=idempotent)
     async def change_role(workspace_id: str, user_id: str, payload: RoleRequest, caller=Depends(principal)) -> Response:
         await tenancy.change_role(person(caller), workspace_id, user_id, _role(payload.role))

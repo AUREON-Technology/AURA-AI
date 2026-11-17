@@ -118,6 +118,8 @@ COVERED = {
         "TestWorkspaces::test_bob_cannot_list_alices_invites",
     ("DELETE", "/api/v3/workspaces/{workspace_id}/invites/{invite_id}"):
         "TestWorkspaces::test_bob_cannot_revoke_alices_invite",
+    ("GET", "/api/v3/workspaces/{workspace_id}/plan"):
+        "TestWorkspaces::test_bob_cannot_read_alices_plan_or_usage",
     ("POST", "/api/v3/insights/{insight_id}/dismiss"):
         "Postgres-only route (api/v2/insights.py): `row.user_id != user.id` -> 404; exercised "
         "against a real database by test_insights_integration.py in the legacy suite",
@@ -585,6 +587,11 @@ class TestWorkspaces:
         response = client.get(f"/api/v3/workspaces/{team[0]}/invites", headers=AUTH_B)
         self._refused(response)
         assert "dan@example.com" not in response.text
+
+    def test_bob_cannot_read_alices_plan_or_usage(self, client, team) -> None:
+        response = client.get(f"/api/v3/workspaces/{team[0]}/plan", headers=AUTH_B)
+        self._refused(response)
+        assert "messages_used" not in response.text
 
     def test_bob_cannot_revoke_alices_invite(self, client, team) -> None:
         self._refused(client.delete(f"/api/v3/workspaces/{team[0]}/invites/{team[1]}", headers=AUTH_B))

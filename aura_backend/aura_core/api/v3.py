@@ -1767,6 +1767,18 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         JSONResponse=JSONResponse,
     )
 
+    from .admin_plans import register_plan_ops
+
+    register_plan_ops(
+        router,
+        container,
+        principal=principal,
+        require_super_admin=require_super_admin,
+        idempotent=idempotent,
+        Depends=Depends,
+        JSONResponse=JSONResponse,
+    )
+
     from .workspaces import register_workspace_ops
 
     register_workspace_ops(
