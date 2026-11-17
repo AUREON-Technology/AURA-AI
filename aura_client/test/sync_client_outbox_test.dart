@@ -4,6 +4,7 @@ import 'package:aura_client/core/auth/token_manager.dart';
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/security/encryption_service.dart';
 import 'package:aura_client/core/sync/sync_client.dart';
+import 'package:aura_client/core/sync/sync_result.dart';
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -341,4 +342,245 @@ void main() {
     expect(rows.single.conversationId, 'conv-9');
     expect(rows.single.agentId, 'orchestrator');
   });
+
+  group('two changes to one row within a second (INT-001)', () {
+    // The outbox clock is stored in whole seconds, and a server that predates
+    // the same-batch rule treats an equal clock as "server is newer". This fake
+    // applies exactly that rule, per request, so only the client's own clock
+    // can get the second change through.
+    late Map<String, ({DateTime clock, bool deleted})> server;
+    late List<String> sentClocks;
+
+    MockClient lwwServer() {
+      return MockClient((request) async {
+        if (request.method == 'GET') return http.Response(jsonEncode(emptyPull()), 200);
+        final mutations = (jsonDecode(request.body) as Map<String, dynamic>)['mutations'] as List;
+        final results = <Map<String, dynamic>>[];
+        for (final m in mutations.cast<Map<String, dynamic>>()) {
+          sentClocks.add(m['client_updated_at'] as String);
+          final clock = DateTime.parse(m['client_updated_at'] as String);
+          final existing = server[m['id']];
+          if (existing != null && !existing.clock.isBefore(clock)) {
+            results.add({'id': m['id'], 'table': m['table'], 'status': 'conflict'});
+            continue;
+          }
+          server[m['id'] as String] = (clock: clock, deleted: m['op'] == 'delete');
+          results.add({'id': m['id'], 'table': m['table'], 'status': 'applied'});
+        }
+        return http.Response(jsonEncode(results), 200);
+      });
+    }
+
+    setUp(() {
+      server = {};
+      sentClocks = [];
+      final fixed = DateTime.utc(2026, 11, 17, 9, 0, 0, 300);
+      db.outboxClock = () => fixed;
+    });
+
+    const id = '77777777-7777-7777-7777-777777777777';
+
+    test('save then forget in one push ends deleted on the server', () async {
+      final client = containerWith(lwwServer()).read(syncClientProvider);
+      await db.enqueueOutbox(table: 'tasks', recordId: id, operation: 'upsert', payload: {'title_enc': 'x'});
+      await db.enqueueOutbox(table: 'tasks', recordId: id, operation: 'delete');
+
+      expect((await client.push()).ok, isTrue);
+
+      expect(server[id]!.deleted, isTrue);
+      expect(sentClocks, hasLength(2));
+      expect(DateTime.parse(sentClocks[1]).isAfter(DateTime.parse(sentClocks[0])), isTrue);
+      expect(await db.select(db.outboxEntries).get(), isEmpty);
+    });
+
+    test('save, push, then forget in the same second also ends deleted', () async {
+      final client = containerWith(lwwServer()).read(syncClientProvider);
+      await db.enqueueOutbox(table: 'tasks', recordId: id, operation: 'upsert', payload: {'title_enc': 'x'});
+      await client.push();
+      await db.enqueueOutbox(table: 'tasks', recordId: id, operation: 'delete');
+      await client.push();
+
+      expect(server[id]!.deleted, isTrue);
+      expect(DateTime.parse(sentClocks[1]).isAfter(DateTime.parse(sentClocks[0])), isTrue);
+    });
+
+    test('a quick double edit keeps the second', () async {
+      final client = containerWith(lwwServer()).read(syncClientProvider);
+      await db.enqueueOutbox(table: 'tasks', recordId: id, operation: 'upsert', payload: {'title_enc': 'a'});
+      await client.push();
+      await db.enqueueOutbox(table: 'tasks', recordId: id, operation: 'upsert', payload: {'title_enc': 'b'});
+      await client.push();
+      expect(sentClocks, hasLength(2));
+      expect(DateTime.parse(sentClocks[1]).isAfter(DateTime.parse(sentClocks[0])), isTrue);
+    });
+
+    test('other rows keep their own clock', () async {
+      final client = containerWith(lwwServer()).read(syncClientProvider);
+      await db.enqueueOutbox(table: 'tasks', recordId: id, operation: 'upsert', payload: {'title_enc': 'a'});
+      await db.enqueueOutbox(
+        table: 'tasks', recordId: '88888888-8888-8888-8888-888888888888', operation: 'upsert', payload: {'title_enc': 'b'},
+      );
+      await client.push();
+      expect(sentClocks[0], sentClocks[1]);
+    });
+  });
+
+  test('an edit refused because the row was deleted elsewhere deletes it here (INT-005)', () async {
+    const id = '99999999-9999-9999-9999-999999999999';
+    await db.into(db.tasks).insert(TasksCompanion.insert(
+          id: id,
+          title: 'edited offline',
+          priority: 'low',
+          isCompleted: false,
+          category: 'personal',
+          createdAt: DateTime.now(),
+        ));
+    await db.enqueueOutbox(table: 'tasks', recordId: id, operation: 'upsert', payload: {'title_enc': 'x'});
+    final httpClient = MockClient((request) async {
+      return http.Response(
+        jsonEncode([
+          {
+            'id': id,
+            'table': 'tasks',
+            'status': 'conflict',
+            'detail': 'deleted on the server',
+            'row': {'id': id, 'title_enc': '', 'deleted_at': '2026-01-02T00:00:00Z'},
+          },
+        ]),
+        200,
+      );
+    });
+
+    await containerWith(httpClient).read(syncClientProvider).push();
+
+    expect(await db.select(db.tasks).get(), isEmpty);
+    expect(await db.select(db.outboxEntries).get(), isEmpty);
+  });
+
+  group('a paged pull (INT-013)', () {
+    Map<String, dynamic> taskRow(String id, String title) => {
+          'id': id,
+          'title_enc': EncryptionService.encryptText(title),
+          'description_enc': null,
+          'priority': 'medium',
+          'category': 'personal',
+          'due_date': null,
+          'completed_at': null,
+          'google_task_id': null,
+          'created_at': '2026-01-01T00:00:00Z',
+          'updated_at': '2026-01-01T00:00:00Z',
+          'deleted_at': null,
+        };
+
+    test('follows next_page and stores only the last page\'s cursor', () async {
+      await db.setSyncCursor('txid:5');
+      final queries = <Map<String, String>>[];
+      final httpClient = MockClient((request) async {
+        if (request.url.path != '/api/v3/sync') return http.Response('', 404);
+        queries.add(request.url.queryParameters);
+        final page = request.url.queryParameters['page'];
+        if (page == null) {
+          return http.Response(
+            jsonEncode({
+              'cursor': 'txid:5',
+              'has_more': true,
+              'next_page': 'page1.5.40.6.-.-',
+              'data': {'tasks': [taskRow('aaaaaaaa-0000-0000-0000-000000000001', 'one')]},
+            }),
+            200,
+          );
+        }
+        return http.Response(
+          jsonEncode({
+            'cursor': 'txid:40',
+            'has_more': false,
+            'data': {'tasks': [taskRow('aaaaaaaa-0000-0000-0000-000000000002', 'two')]},
+          }),
+          200,
+        );
+      });
+
+      final result = await containerWith(httpClient).read(syncClientProvider).pull();
+
+      expect(result.ok, isTrue);
+      expect(queries, hasLength(2));
+      expect(queries[0]['since'], 'txid:5');
+      expect(queries[0]['limit'], '${SyncClient.pullPageSize}');
+      expect(queries[0].containsKey('page'), isFalse);
+      expect(queries[1]['page'], 'page1.5.40.6.-.-');
+      expect(queries[1]['limit'], '${SyncClient.pullPageSize}');
+      expect((await db.select(db.tasks).get()).map((t) => t.title).toSet(), {'one', 'two'});
+      expect(await db.getSyncCursor(), 'txid:40');
+    });
+
+    test('a page that fails leaves the stored cursor where it was', () async {
+      await db.setSyncCursor('txid:5');
+      final httpClient = MockClient((request) async {
+        if (request.url.queryParameters['page'] == null) {
+          return http.Response(
+            jsonEncode({'cursor': 'txid:5', 'has_more': true, 'next_page': 'p2', 'data': <String, dynamic>{}}),
+            200,
+          );
+        }
+        return http.Response('boom', 500);
+      });
+
+      final result = await containerWith(httpClient).read(syncClientProvider).pull();
+
+      expect(result.ok, isFalse);
+      expect(await db.getSyncCursor(), 'txid:5');
+    });
+
+    test('a server that does not page answers in one response', () async {
+      final httpClient = MockClient((request) async {
+        return http.Response(jsonEncode({'cursor': 'txid:9', 'data': <String, dynamic>{}}), 200);
+      });
+      expect((await containerWith(httpClient).read(syncClientProvider).pull()).ok, isTrue);
+      expect(await db.getSyncCursor(), 'txid:9');
+    });
+  });
+
+  group('no access token (INT-028)', () {
+    ProviderContainer containerWithoutToken({required bool hasRefreshToken}) {
+      final container = ProviderContainer(
+        overrides: [
+          tokenManagerProvider.overrideWith((ref) => _NoTokenManager(ref, hasRefreshToken: hasRefreshToken)),
+          syncClientProvider.overrideWith(
+            (ref) => SyncClient(db, ref, httpClient: MockClient((_) async => http.Response('', 500))),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      return container;
+    }
+
+    test('with the session still on disk, it is offline rather than signed out', () async {
+      await db.enqueueOutbox(table: 'tasks', recordId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', operation: 'delete');
+      final client = containerWithoutToken(hasRefreshToken: true).read(syncClientProvider);
+      expect((await client.push()).failure, SyncFailureKind.network);
+      expect((await client.pull()).failure, SyncFailureKind.network);
+      expect((await client.synchronize()).failure, SyncFailureKind.network);
+    });
+
+    test('with no session left, it is unauthorized', () async {
+      await db.enqueueOutbox(table: 'tasks', recordId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', operation: 'delete');
+      final client = containerWithoutToken(hasRefreshToken: false).read(syncClientProvider);
+      expect((await client.push()).failure, SyncFailureKind.unauthorized);
+      expect((await client.pull()).failure, SyncFailureKind.unauthorized);
+    });
+  });
+}
+
+/// A token manager that cannot produce an access token right now: offline
+/// with an expired one ([hasRefreshToken]), or signed out.
+class _NoTokenManager extends TokenManager {
+  _NoTokenManager(super.ref, {required this.hasRefreshToken});
+
+  final bool hasRefreshToken;
+
+  @override
+  Future<String?> getValidAccessToken() async => null;
+
+  @override
+  Future<bool> hasCachedRefreshToken() async => hasRefreshToken;
 }
