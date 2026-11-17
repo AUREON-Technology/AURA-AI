@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { api } from "@/lib/api";
+import { useI18n } from "@/lib/i18n/context";
 
 type Recommendation = {
   recommended?: boolean;
@@ -34,10 +35,11 @@ type Job = {
 };
 
 export default function LearningPage() {
+  const { t, errorText } = useI18n();
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
   const [approvalId, setApprovalId] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
 
   async function load() {
@@ -50,54 +52,53 @@ export default function LearningPage() {
   }
 
   useEffect(() => {
-    load().catch((err: Error) => setError(err.message));
+    load().catch((err: unknown) => setError(err));
   }, []);
 
   const stats = recommendation?.statistics;
 
   return (
     <>
-      <h1>Learning</h1>
-      <p className="sub">
-        Loop B curation from live feedback. Training still requires a recorded approval bound to
-        the dataset digest.
-      </p>
-      {error ? <div className="banner">{error}</div> : null}
+      <h1>{t("nav.learning")}</h1>
+      <p className="sub">{t("learning.sub")}</p>
+      {error ? <div className="banner">{errorText(error)}</div> : null}
 
       <div className="grid">
         <div className="card metric">
-          Candidates
+          {t("learning.candidates")}
           <b>{stats?.total_candidates ?? 0}</b>
         </div>
         <div className="card metric">
-          Accepted
+          {t("learning.accepted")}
           <b>{stats?.accepted ?? 0}</b>
         </div>
         <div className="card metric">
-          Distinct users
+          {t("learning.distinctUsers")}
           <b>{stats?.distinct_users ?? 0}</b>
         </div>
         <div className="card metric">
-          Corrected
+          {t("learning.corrected")}
           <b>{Math.round((stats?.corrected_fraction ?? 0) * 100)}%</b>
         </div>
       </div>
 
       <div className="card" style={{ marginTop: 16 }}>
         <h2>
-          Recommendation{" "}
+          {t("learning.recommendation")}{" "}
           {recommendation?.recommended ? (
-            <span className="pill ok">recommended</span>
+            <span className="pill ok">{t("learning.recommended")}</span>
           ) : (
-            <span className="pill">not yet</span>
+            <span className="pill">{t("learning.notYet")}</span>
           )}
         </h2>
         <p className="muted">
-          Digest: {recommendation?.dataset_digest || "—"} · Examples:{" "}
-          {recommendation?.estimated_examples ?? 0} · Tokens:{" "}
-          {recommendation?.estimated_tokens ?? 0}
+          {t("learning.summary", {
+            digest: recommendation?.dataset_digest || "—",
+            examples: recommendation?.estimated_examples ?? 0,
+            tokens: recommendation?.estimated_tokens ?? 0,
+          })}
           {recommendation?.estimated_train_hours_cpu != null
-            ? ` · CPU hours ≈ ${recommendation.estimated_train_hours_cpu}`
+            ? t("learning.cpuHours", { hours: recommendation.estimated_train_hours_cpu })
             : ""}
         </p>
         <ul>
@@ -115,17 +116,17 @@ export default function LearningPage() {
               try {
                 await load();
               } catch (err) {
-                setError((err as Error).message);
+                setError(err);
               } finally {
                 setBusy(false);
               }
             }}
           >
-            Refresh
+            {t("common.refresh")}
           </button>
           <ConfirmDialog
-            title="Request fine-tune approval"
-            confirmText="request"
+            title={t("learning.requestTitle")}
+            confirmText={t("common.requestWord")}
             disabled={!recommendation?.dataset_digest}
             onConfirm={async () => {
               const body = await api<{ approval: { id: string } }>(
@@ -136,32 +137,32 @@ export default function LearningPage() {
               await load();
             }}
           >
-            Request approval
+            {t("learning.requestApproval")}
           </ConfirmDialog>
           {recommendation?.dataset_digest ? (
             <a
               className="btn"
               href={`${process.env.NEXT_PUBLIC_BASE_PATH || ""}/api/v3/admin/learning/datasets/${recommendation.dataset_digest}?format=chatml`}
             >
-              Export ChatML
+              {t("learning.exportChatml")}
             </a>
           ) : null}
         </div>
         {!recommendation?.dataset_digest ? (
-          <p className="muted">No curated dataset yet — nothing to approve or export.</p>
+          <p className="muted">{t("learning.noDataset")}</p>
         ) : null}
-        {approvalId ? <p className="muted">Pending approval: {approvalId}</p> : null}
+        {approvalId ? <p className="muted">{t("learning.pendingApproval", { id: approvalId })}</p> : null}
       </div>
 
       <div className="card" style={{ marginTop: 16 }}>
-        <h2>Fine-tune jobs</h2>
+        <h2>{t("learning.jobs")}</h2>
         <table className="table">
           <thead>
             <tr>
-              <th>Job</th>
-              <th>Status</th>
-              <th>Digest</th>
-              <th>Artefact</th>
+              <th>{t("learning.colJob")}</th>
+              <th>{t("common.status")}</th>
+              <th>{t("common.digest")}</th>
+              <th>{t("common.artefact")}</th>
             </tr>
           </thead>
           <tbody>

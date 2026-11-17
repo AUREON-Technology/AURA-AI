@@ -4,26 +4,28 @@ import { useEffect, useState } from "react";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { api } from "@/lib/api";
+import { useI18n } from "@/lib/i18n/context";
 import type { AdminStatus, PinResult, PromptRow } from "@/lib/types";
 
 export default function PromptsPage() {
+  const { t, errorText } = useI18n();
   const [rows, setRows] = useState<PromptRow[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   function load() {
     api<AdminStatus>("/admin/status")
       .then((status) => setRows(status.prompts ?? []))
-      .catch((err: Error) => setError(err.message));
+      .catch((err: unknown) => setError(err));
   }
 
   useEffect(load, []);
 
   return (
     <>
-      <h1>Prompts</h1>
-      <p className="sub">Pin a previous version to roll back a bad change. No deploy required.</p>
-      {error ? <div className="banner">{error}</div> : null}
+      <h1>{t("nav.prompts")}</h1>
+      <p className="sub">{t("prompts.sub")}</p>
+      {error ? <div className="banner">{errorText(error)}</div> : null}
       {notice ? (
         <p className="muted" data-testid="prompt-notice">
           {notice}
@@ -32,10 +34,10 @@ export default function PromptsPage() {
       <table className="table">
         <thead>
           <tr>
-            <th>Template</th>
-            <th>Active</th>
-            <th>Pinned</th>
-            <th>Checksum</th>
+            <th>{t("prompts.colTemplate")}</th>
+            <th>{t("common.active")}</th>
+            <th>{t("prompts.colPinned")}</th>
+            <th>{t("prompts.colChecksum")}</th>
             <th></th>
           </tr>
         </thead>
@@ -50,7 +52,7 @@ export default function PromptsPage() {
                 {(row.versions ?? []).map((version) => (
                   <ConfirmDialog
                     key={version}
-                    title={`Pin ${row.id}@${version}`}
+                    title={t("prompts.pinTitle", { target: `${row.id}@${version}` })}
                     confirmText={version}
                     onConfirm={async () => {
                       const result = await api<PinResult>(
@@ -59,26 +61,29 @@ export default function PromptsPage() {
                       );
                       setNotice(
                         result?.shared
-                          ? `Pinned ${result.pinned}; applies to all workers within ~${result.propagation_s ?? 5} s.`
-                          : `Pinned ${result?.pinned ?? `${row.id}@${version}`}.`,
+                          ? t("prompts.pinnedShared", {
+                              target: result.pinned,
+                              seconds: result.propagation_s ?? 5,
+                            })
+                          : t("prompts.pinned", { target: result?.pinned ?? `${row.id}@${version}` }),
                       );
                       load();
                     }}
                   >
-                    Pin {version}
+                    {t("prompts.pin", { version })}
                   </ConfirmDialog>
                 ))}
                 {row.pinned ? (
                   <ConfirmDialog
-                    title={`Unpin ${row.id}`}
-                    confirmText="unpin"
+                    title={t("prompts.unpinTitle", { id: row.id })}
+                    confirmText={t("prompts.unpinWord")}
                     onConfirm={async () => {
                       await api(`/admin/prompts/${encodeURIComponent(row.id)}/pin`, { method: "DELETE" });
-                      setNotice(`Released the pin on ${row.id}; the active version applies again.`);
+                      setNotice(t("prompts.unpinned", { id: row.id }));
                       load();
                     }}
                   >
-                    Unpin
+                    {t("prompts.unpin")}
                   </ConfirmDialog>
                 ) : null}
               </td>

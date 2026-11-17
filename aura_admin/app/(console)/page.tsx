@@ -5,16 +5,18 @@ import { useEffect, useState } from "react";
 import { GrafanaFrame } from "@/components/grafana-frame";
 import { StatusPill } from "@/components/status-pill";
 import { api } from "@/lib/api";
+import { useI18n } from "@/lib/i18n/context";
 import type { AdminStatus } from "@/lib/types";
 
 export default function OverviewPage() {
+  const { t, errorText } = useI18n();
   const [status, setStatus] = useState<AdminStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
     api<AdminStatus>("/admin/status")
       .then(setStatus)
-      .catch((err: Error) => setError(err.message));
+      .catch((err: unknown) => setError(err));
   }, []);
 
   const insecure = Boolean(
@@ -24,36 +26,36 @@ export default function OverviewPage() {
 
   return (
     <>
-      <h1>Overview</h1>
-      <p className="sub">Gateway health, last refresh, and Grafana.</p>
-      {error ? <div className="banner">{error}</div> : null}
+      <h1>{t("nav.overview")}</h1>
+      <p className="sub">{t("overview.sub")}</p>
+      {error ? <div className="banner">{errorText(error)}</div> : null}
       {insecure ? (
         <div className="banner" data-testid="insecure-banner">
-          Insecure mode is active. Production must show aura_insecure_mode = 0.
+          {t("overview.insecure")}
         </div>
       ) : null}
       <div className="grid">
         <div className="card metric">
-          Ready
+          {t("overview.ready")}
           <b>
             <StatusPill ok={Boolean(status?.health.healthy)} />
           </b>
         </div>
         <div className="card metric">
-          Environment
+          {t("overview.environment")}
           <b>{status?.health.environment ?? "—"}</b>
         </div>
         <div className="card metric">
-          Active index
+          {t("overview.activeIndex")}
           <b style={{ fontSize: 14 }}>{status?.health.index ?? "—"}</b>
         </div>
         <div className="card metric">
-          Learning records
+          {t("overview.learningRecords")}
           <b>{String(status?.learning.total_records ?? "—")}</b>
         </div>
       </div>
       <div className="card" style={{ marginTop: 16 }}>
-        <h2>Providers</h2>
+        <h2>{t("nav.providers")}</h2>
         <div className="row">
           {(status?.providers ?? []).map((provider) => (
             <StatusPill
@@ -64,9 +66,9 @@ export default function OverviewPage() {
           ))}
         </div>
       </div>
-      <GrafanaFrame title="Overview" uid="aura-overview" />
-      <GrafanaFrame title="AI Quality" uid="aura-quality" />
-      <GrafanaFrame title="Security" uid="aura-security" />
+      <GrafanaFrame title={t("nav.overview")} uid="aura-overview" />
+      <GrafanaFrame title={t("overview.grafanaQuality")} uid="aura-quality" />
+      <GrafanaFrame title={t("overview.grafanaSecurity")} uid="aura-security" />
     </>
   );
 }
