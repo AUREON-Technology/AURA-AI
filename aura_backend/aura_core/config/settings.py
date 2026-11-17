@@ -1177,6 +1177,10 @@ class SecuritySettings:
     #: not a side effect of upgrading, matching how AURA_SANDBOX_ENABLED/AURA_GITHUB_ENABLED
     #: default off for the same reason.
     engineer_agent_roles: tuple[str, ...] = ()
+    #: SaaS P1-E: the Engineer agent for customers whose workspace plan includes it, on their own
+    #: computer through a paired desktop app (ADR-011, "Customers"). Off by default; startup
+    #: refuses it beside anything a customer must never reach (``AuraSettings.validate``).
+    engineer_for_customers: bool = False
     #: Roles granted the "project_data" capability -- the gate on every agent and tool compiled
     #: from a deployed Project Blueprint (Track AP7): reading the connected organisation's own
     #: system. Empty by default for the same reason as `engineer_agent_roles`: which staff may
@@ -1213,6 +1217,7 @@ class SecuritySettings:
             allow_mock_attestation=_bool_aliased("ALLOW_MOCK_ATTESTATION", False),
             admin_roles=_list("ADMIN_ROLES", ("Admin", "SuperAdmin")),
             engineer_agent_roles=_list("ENGINEER_AGENT_ROLES", ()),
+            engineer_for_customers=_bool("ENGINEER_FOR_CUSTOMERS", False),
             project_data_roles=_list("PROJECT_DATA_ROLES", ()),
             security_headers_enabled=_bool("SECURITY_HEADERS_ENABLED", True),
             content_security_policy=(_env("CONTENT_SECURITY_POLICY", "") or "").strip(),
@@ -2174,6 +2179,22 @@ class AuraSettings:
         where one of these is violated.
         """
         problems: list[str] = []
+
+        if self.security.engineer_for_customers:
+            # SaaS P1-E: a customer's Engineer runs on their own computer only. Each of these
+            # would hand customers something that belongs to the operator or is not built for them.
+            if self.sandbox.enabled:
+                problems.append("AURA_ENGINEER_FOR_CUSTOMERS needs AURA_SANDBOX_ENABLED=false: the server "
+                                "sandbox is not open to customers yet (phase 1b)")
+            if self.github.enabled and not self.github.oauth_enabled:
+                problems.append("AURA_ENGINEER_FOR_CUSTOMERS needs AURA_GITHUB_OAUTH_ENABLED (or GitHub off): "
+                                "AURA_GITHUB_ENABLED alone shares the operator's token with every customer")
+            if self.mcp.enabled:
+                problems.append("AURA_ENGINEER_FOR_CUSTOMERS needs AURA_MCP_ENABLED=false: MCP servers are "
+                                "the operator's and would be reachable by every customer's Engineer")
+            if not self.tools.require_confirmation_for_side_effects:
+                problems.append("AURA_ENGINEER_FOR_CUSTOMERS needs AURA_TOOLS_REQUIRE_CONFIRMATION=true: "
+                                "per-call confirmation stays mandatory for customers (ADR-006)")
 
         if self.billing.apple_environment not in ("", "Production", "Sandbox"):
             problems.append("billing.apple_environment must be Production, Sandbox or empty")

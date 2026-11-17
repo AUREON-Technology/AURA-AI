@@ -18,6 +18,9 @@ CONSOLE_MIN_ROLE = "Developer"
 #: ``channel``. They skip device attestation, so they can never hold a platform role above
 #: ``User`` -- whatever an email list, roles.json, the Access page or a claim says (SaaS P1-B).
 CONSUMER_WEB_CHANNEL = "consumer_web"
+#: A customer's desktop session (SaaS P1-E): also unattested, so capped the same way.
+CONSUMER_DESKTOP_CHANNEL = "consumer_desktop"
+CONSUMER_CHANNELS = frozenset({CONSUMER_WEB_CHANNEL, CONSUMER_DESKTOP_CHANNEL})
 
 
 #: The env lists that can grant a console-capable role, highest first. Names are read *both*
@@ -153,7 +156,7 @@ def get_user_role(user_info: dict, *, assigned_role: str | None = None) -> str:
     15-minute statement of the role; refresh strips it before re-resolving
     (``services/jwt_auth.refresh_token_pair``) so it can never outlive its sources.
     """
-    if user_info.get("channel") == CONSUMER_WEB_CHANNEL:
+    if user_info.get("channel") in CONSUMER_CHANNELS:
         return "User"
     # An unverified or non-Google email selects nothing from the email lists; roles.json is
     # still consulted by uid, which the identity provider -- not the user -- chose.
