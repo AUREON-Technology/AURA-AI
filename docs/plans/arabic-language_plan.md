@@ -1,8 +1,8 @@
 # Plan: Arabic (Egyptian) across the whole system
 
 Status: **approved by the owner 2026-11-17.** Base: `main` at `0d6c53e`, branch
-`anas/kind-rubin-dpm0sq`. **Stage 1 built and TESTED locally** (see "Stage 1: as built" at the
-end); stages 2–4 not started.
+`anas/kind-rubin-dpm0sq`. **Stages 1 and 2 built and TESTED locally** (see the "as built"
+sections at the end); stages 3–4 not started.
 
 ## Goal
 
