@@ -116,6 +116,10 @@ class TurnRequest:
     message: str
     user_id: UserId
     session_id: SessionId | None = None
+    #: Owner for shareable data -- knowledge retrieval, CAG and the knowledge tools (ADR-034):
+    #: the team's ``workspace:<id>`` scope inside a team workspace. ``None`` means ``user_id``.
+    #: Memory, history, goals and Personal-OS always use ``user_id``.
+    knowledge_owner: UserId | None = None
     agent: str = "orchestrator"
     correlation_id: CorrelationId | None = None
     use_knowledge: bool = True
@@ -1118,7 +1122,7 @@ class AIKernel:
             if not (request.use_knowledge and deps.knowledge is not None):
                 return None
             try:
-                return await deps.knowledge.retrieve(message, owner_id=request.user_id)
+                return await deps.knowledge.retrieve(message, owner_id=request.knowledge_owner or request.user_id)
             except Exception:
                 logger.warning("knowledge retrieval failed; continuing without it")
                 return None
@@ -1145,7 +1149,7 @@ class AIKernel:
             if deps.cag is None:
                 return None
             try:
-                return await deps.cag.prefix_for(request.user_id)
+                return await deps.cag.prefix_for(request.knowledge_owner or request.user_id)
             except Exception:
                 logger.warning("cag prefix load failed; continuing without it")
                 return None
@@ -1551,6 +1555,7 @@ class AIKernel:
             )
         return ToolContext(
             user_id=request.user_id,
+            knowledge_owner=request.knowledge_owner,
             correlation_id=(request.correlation_id or CorrelationId.new()).value,
             deadline_s=deadline_s,
             tainted=tainted,
@@ -2179,7 +2184,12 @@ class AIKernel:
         budget: TurnBudget,
     ) -> tuple[str, str | None, str | None, Any, float, bool, str | None, int, Any, float | None]:
         deps = self._deps
+        # Per person *and* per data scope (ADR-034): a team turn's answer rests on the team's
+        # corpus, so it must never be served to (or from) the same person's personal turns -- or,
+        # after they leave the team, at all. Personal turns keep their pre-workspace key.
         namespace = request.user_id.value
+        if request.knowledge_owner is not None and request.knowledge_owner != request.user_id:
+            namespace = f"{namespace}|{request.knowledge_owner.value}"
         # An image turn's answer rests on pixels the cache key never sees: the semantic tier
         # matches on the user's text alone, so "what is in this picture?" would be answered from
         # a different picture (ADR-031). Such turns neither read nor write the cache.

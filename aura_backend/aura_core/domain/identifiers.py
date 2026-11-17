@@ -42,11 +42,12 @@ __all__ = [
 _SAFE = re.compile(r"^[A-Za-z0-9_\-.:@]{1,256}$")
 
 #: Owner namespaces that are not people: a service key acts as ``service:<name>`` (AR-4) and a
-#: project's knowledge is owned by ``project:<id>`` (AP10). With ``"global"`` -- the vector stores'
+#: project's knowledge is owned by ``project:<id>`` (AP10), a team's shared data by
+#: ``workspace:<id>`` (ADR-034). With ``"global"`` -- the vector stores'
 #: shared-content sentinel (``ports.storage.GLOBAL_OWNER``) -- these are owner values a person's
 #: authenticated subject must never take, or that person would read and write as the project, the
 #: service, or everyone.
-RESERVED_PRINCIPAL_PREFIXES = ("service:", "project:")
+RESERVED_PRINCIPAL_PREFIXES = ("service:", "project:", "workspace:")
 _RESERVED_PRINCIPALS = frozenset({"global"})
 
 

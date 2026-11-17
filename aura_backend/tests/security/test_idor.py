@@ -102,6 +102,22 @@ COVERED = {
         "TestEngineering::test_bob_cannot_delete_alices_workspace",
     ("GET", "/api/v3/agents/runs/{run_id}"):
         "TestAgentRuns::test_bob_cannot_read_alices_agent_run",
+    ("DELETE", "/api/v3/workspaces/{workspace_id}"):
+        "TestWorkspaces::test_bob_cannot_delete_alices_team",
+    ("GET", "/api/v3/workspaces/{workspace_id}/members"):
+        "TestWorkspaces::test_bob_cannot_list_alices_members",
+    ("PATCH", "/api/v3/workspaces/{workspace_id}/members/{user_id}"):
+        "TestWorkspaces::test_bob_cannot_change_a_role_in_alices_team",
+    ("DELETE", "/api/v3/workspaces/{workspace_id}/members/{user_id}"):
+        "TestWorkspaces::test_bob_cannot_remove_a_member_of_alices_team",
+    ("POST", "/api/v3/workspaces/{workspace_id}/transfer"):
+        "TestWorkspaces::test_bob_cannot_take_alices_team",
+    ("POST", "/api/v3/workspaces/{workspace_id}/invites"):
+        "TestWorkspaces::test_bob_cannot_invite_into_alices_team",
+    ("GET", "/api/v3/workspaces/{workspace_id}/invites"):
+        "TestWorkspaces::test_bob_cannot_list_alices_invites",
+    ("DELETE", "/api/v3/workspaces/{workspace_id}/invites/{invite_id}"):
+        "TestWorkspaces::test_bob_cannot_revoke_alices_invite",
     ("POST", "/api/v3/insights/{insight_id}/dismiss"):
         "Postgres-only route (api/v2/insights.py): `row.user_id != user.id` -> 404; exercised "
         "against a real database by test_insights_integration.py in the legacy suite",
@@ -514,3 +530,62 @@ class TestConversations:
         assert response.status_code == 200  # idempotent: Bob's (empty) session is cleared
         history, _ = asyncio.run(container.episodic.history(session, UserId(ALICE)))
         assert any("14th" in m.content for m in history), "Bob's delete erased Alice's conversation"
+
+
+class TestWorkspaces:
+    """ADR-034: a stranger naming another person's team by id gets the same 403 as for a team that
+    does not exist, and nothing about the team changes."""
+
+    @pytest.fixture
+    def team(self, client, container):
+        created = client.post("/api/v3/workspaces", json={"name": "Alice Co"}, headers=AUTH_A)
+        assert created.status_code == 201, created.text
+        workspace_id = created.json()["id"]
+        invite = asyncio.run(container.tenancy.invite(ALICE, workspace_id, "carol@example.com", "member"))
+        asyncio.run(container.tenancy.accept("carol", invite[1]))
+        pending = client.post(
+            f"/api/v3/workspaces/{workspace_id}/invites", json={"email": "dan@example.com"}, headers=AUTH_A
+        )
+        return workspace_id, pending.json()["invite"]["invite_id"]
+
+    def _unchanged(self, client, workspace_id: str) -> bool:
+        members = client.get(f"/api/v3/workspaces/{workspace_id}/members", headers=AUTH_A).json()["members"]
+        invites = client.get(f"/api/v3/workspaces/{workspace_id}/invites", headers=AUTH_A).json()["invites"]
+        return {(m["user_id"], m["role"]) for m in members} == {(ALICE, "owner"), ("carol", "member")} and len(invites) == 1
+
+    def _refused(self, response) -> None:
+        assert response.status_code == 403, response.text
+
+    def test_bob_cannot_delete_alices_team(self, client, team) -> None:
+        self._refused(client.delete(f"/api/v3/workspaces/{team[0]}", headers=AUTH_B))
+        assert self._unchanged(client, team[0])
+
+    def test_bob_cannot_list_alices_members(self, client, team) -> None:
+        response = client.get(f"/api/v3/workspaces/{team[0]}/members", headers=AUTH_B)
+        self._refused(response)
+        assert "carol" not in response.text
+
+    def test_bob_cannot_change_a_role_in_alices_team(self, client, team) -> None:
+        self._refused(client.patch(f"/api/v3/workspaces/{team[0]}/members/carol", json={"role": "admin"}, headers=AUTH_B))
+        assert self._unchanged(client, team[0])
+
+    def test_bob_cannot_remove_a_member_of_alices_team(self, client, team) -> None:
+        self._refused(client.delete(f"/api/v3/workspaces/{team[0]}/members/carol", headers=AUTH_B))
+        assert self._unchanged(client, team[0])
+
+    def test_bob_cannot_take_alices_team(self, client, team) -> None:
+        self._refused(client.post(f"/api/v3/workspaces/{team[0]}/transfer", json={"user_id": BOB}, headers=AUTH_B))
+        assert self._unchanged(client, team[0])
+
+    def test_bob_cannot_invite_into_alices_team(self, client, team) -> None:
+        self._refused(client.post(f"/api/v3/workspaces/{team[0]}/invites", json={"email": "bob2@example.com"}, headers=AUTH_B))
+        assert self._unchanged(client, team[0])
+
+    def test_bob_cannot_list_alices_invites(self, client, team) -> None:
+        response = client.get(f"/api/v3/workspaces/{team[0]}/invites", headers=AUTH_B)
+        self._refused(response)
+        assert "dan@example.com" not in response.text
+
+    def test_bob_cannot_revoke_alices_invite(self, client, team) -> None:
+        self._refused(client.delete(f"/api/v3/workspaces/{team[0]}/invites/{team[1]}", headers=AUTH_B))
+        assert self._unchanged(client, team[0])

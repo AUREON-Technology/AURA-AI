@@ -241,6 +241,11 @@ def build_idempotency(container: Any, *, principal: Callable) -> tuple[type, Any
 
         route = request.scope.get("route")
         operation = f"{request.method} {getattr(route, 'path', request.url.path)}"
+        workspace = getattr(caller, "workspace", None)
+        if workspace is not None:
+            # ADR-034: the same key in another workspace is another operation, not a replay --
+            # otherwise a team write would silently return the personal one's response.
+            operation = f"{operation} @{workspace.workspace_id}"
         result = await store.claim(
             user_id=caller.user_id, operation=operation, key=key,
             request_hash=await _fingerprint(request), now=container.clock.now(),

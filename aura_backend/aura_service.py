@@ -21,9 +21,10 @@ from fastapi.responses import JSONResponse
 from aura_core.api import Principal, build_app
 from aura_core.config import load_settings
 from aura_core.container import build_container
-from aura_core.domain.errors import AuthenticationError, ConfigurationError
+from aura_core.domain.errors import AuthenticationError, AuthorizationError, ConfigurationError
 from aura_core.domain.identifiers import UserId, is_reserved_principal
 from aura_core.domain.service_keys import looks_like_service_token
+from aura_core.domain.tenancy import WorkspaceContext
 from aura_core.observability.logging import get_logger
 from aura_core.security import SlidingWindowRateLimiter
 from infrastructure.http_limits import PayloadSizeLimitMiddleware
@@ -32,7 +33,11 @@ from infrastructure.secret_hydration import hydrate_secrets_from_files
 logger = get_logger("service")
 
 
-def _build_authenticator(settings: Any, *, service_keys: Any = None):
+#: Names the workspace a request acts in (ADR-034). Absent: the caller's personal scope.
+WORKSPACE_HEADER = "x-aura-workspace"
+
+
+def _build_authenticator(settings: Any, *, service_keys: Any = None, tenancy: Any = None):
     """Resolve the callable that turns a request into a :class:`Principal`.
 
     During the migration this delegates to the existing v1/v2 verification so v3 accepts the
@@ -41,6 +46,21 @@ def _build_authenticator(settings: Any, *, service_keys: Any = None):
     """
 
     async def authenticate(request) -> Principal:
+        caller = await _identify(request)
+        requested = (request.headers.get(WORKSPACE_HEADER) or "").strip()
+        if not requested:
+            return caller
+        # Checked against the store on every request, with no cache, so a removed member's next
+        # call is refused. "Unknown" and "not a member" are one indistinguishable 403.
+        if caller.is_service or tenancy is None:
+            raise AuthorizationError("not a member of this workspace")
+        workspace, membership = await tenancy.resolve(str(caller.user_id), requested)
+        caller.workspace = WorkspaceContext(
+            workspace_id=workspace.id, kind=workspace.kind, role=membership.role
+        )
+        return caller
+
+    async def _identify(request) -> Principal:
         if settings.security.allow_mock_auth:
             # Reachable only in local/development: production settings validation refuses this
             # combination, and the metric `aura_insecure_mode{bypass="mock_auth"}` reports it.
@@ -319,7 +339,9 @@ def create_app():
     settings = load_settings()
     _require_jwt_secret(settings)
     container = build_container(settings)
-    authenticator = _build_authenticator(settings, service_keys=container.service_keys)
+    authenticator = _build_authenticator(
+        settings, service_keys=container.service_keys, tenancy=container.tenancy
+    )
 
     rate_limiter = None
     if settings.security.rate_limit_enabled:
