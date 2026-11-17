@@ -135,3 +135,31 @@ async def test_downgrade_closes_the_daemon_socket_at_recheck(container, switch, 
             cm.__exit__(None, None, None)
         except Exception:
             pass
+
+
+@pytest.mark.anyio
+async def test_a_lookup_error_at_recheck_keeps_a_connected_daemon(container, switch, monkeypatch) -> None:
+    """Plan E review #1: a database blip must not drop a paying customer's daemon; admission
+    itself still fails closed."""
+    from fastapi.testclient import TestClient
+
+    from aura_core.api import ws_auth
+
+    monkeypatch.setattr(ws_auth, "DEFAULT_RECHECK_S", 0.05)
+    await container.startup()
+    await _pro(container, "hal")
+    registry = container.host_agent_registry
+    with TestClient(_customer_app(container)) as client:
+        cm, _ws = await _connect_and_wait(client, "hal", registry)
+
+        async def broken(subject):
+            raise RuntimeError("db down")
+
+        monkeypatch.setattr(container.plans, "engineer_entitled", broken)
+        await asyncio.sleep(0.4)
+        assert await registry.resolve(UserId("hal")) is not None
+        cm.__exit__(None, None, None)
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect("/api/v3/host/agent") as ws:
+                ws.send_json({"type": "auth", "token": "hal"})
+                ws.receive_json()

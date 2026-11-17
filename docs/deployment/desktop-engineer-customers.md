@@ -15,6 +15,7 @@ Startup refuses `AURA_ENGINEER_FOR_CUSTOMERS=true` together with any of these:
 | `AURA_GITHUB_ENABLED` without `AURA_GITHUB_OAUTH_ENABLED` | not set | One shared operator token would be every customer's. With OAuth, each person connects their own GitHub. |
 | `AURA_MCP_ENABLED` | `false` | MCP servers are the operator's. |
 | `AURA_TOOLS_REQUIRE_CONFIRMATION` | `true` (default) | Per-call confirmation stays mandatory. |
+| `AURA_ENGINEER_AGENT_ROLES` | must not contain `User` | That grant would give every account the Engineer, plan or not. |
 
 The Railway target already meets all four, unless one was changed by hand.
 
@@ -33,8 +34,11 @@ The Railway target already meets all four, unless one was changed by hand.
 - Their desktop session is always a plain `User` session. It can never open the console.
 - **Rate limits:**
   - 10 desktop sign-ins and 10 pairing starts a minute per address;
-  - 5 pairing approvals an hour per person;
-  - at most 10 live desktop devices per person (revoke one in Settings to add more).
+  - 5 wrong pairing codes an hour per person;
+  - at most 10 paired desktops per person (revoke one in Settings to add more);
+  - the 10 newest app sign-ins per person (older ones are signed out).
+
+  These limits are per worker process.
 - **Downgrade.** Within about 15 minutes the desktop session stops refreshing, and within about a
   minute the paired daemon disconnects. The Engineer is also gone from every new turn. Paired
   devices stay listed, and upgrading again works without re-pairing.

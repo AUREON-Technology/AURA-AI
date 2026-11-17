@@ -23,6 +23,7 @@ from services.jwt_auth import (
     consume_refresh_token,
     list_devices_for_uid,
     reissue_for_refreshed_identity,
+    restore_refresh_token,
     revoke_device,
     revoke_refresh_token,
     verify_access_token,
@@ -219,6 +220,20 @@ def _reset_consumer_rate_limit() -> None:
     _consumer_hits.clear()
 
 
+def _rate_key(address: str) -> str:
+    """One bucket per IPv4 address and per IPv6 /64: a single customer line usually holds a whole
+    /64, and rotating within it must not mint fresh buckets (Plan E review #4)."""
+    import ipaddress
+
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return address
+    if ip.version == 6:
+        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+    return str(ip)
+
+
 def _consumer_client_key(request) -> str:
     """The caller's address as the trusted proxy saw it -- counted from the right of
     X-Forwarded-For, never ``request.client.host`` alone, which on Railway is the leftmost,
@@ -226,11 +241,11 @@ def _consumer_client_key(request) -> str:
     from aura_core.config import load_settings
     from aura_core.security.rate_limit import extract_client_ip
 
-    return extract_client_ip(
+    return _rate_key(str(extract_client_ip(
         request.headers,
         peer=request.client.host if request.client else None,
         trusted_proxies=load_settings(validate=False).security.trusted_proxy_count,
-    )
+    )))
 
 
 def _prune_hits(table: dict, now: float, window_s: float) -> None:
@@ -250,6 +265,20 @@ def _sliding_limit(table: dict, key: str, limit: int, window_s: float, detail: s
     if len(recent) >= limit:
         table[key] = recent
         raise HTTPException(status_code=429, detail=detail)
+    _prune_hits(table, now, window_s)
+    recent.append(now)
+    table[key] = recent
+
+
+def _check_limit(table: dict, key: str, limit: int, window_s: float, detail: str) -> None:
+    now = time.monotonic()
+    if len([t for t in table.get(key, []) if now - t < window_s]) >= limit:
+        raise HTTPException(status_code=429, detail=detail)
+
+
+def _record_hit(table: dict, key: str, window_s: float) -> None:
+    now = time.monotonic()
+    recent = [t for t in table.pop(key, []) if now - t < window_s]
     _prune_hits(table, now, window_s)
     recent.append(now)
     table[key] = recent
@@ -294,9 +323,16 @@ async def _engineer_entitled(request: Request, uid: str) -> bool:
         return False
     try:
         return await plans.engineer_entitled(uid)
-    except Exception:
-        logger.warning("could not read a desktop customer's plan; refusing", exc_info=True)
-        return False
+    except Exception as exc:
+        # Not "not entitled": a database blip must not sign a paying customer out or tell them
+        # to upgrade (Plan E review #1). The caller answers 503 and keeps what it can.
+        logger.warning("could not read a desktop customer's plan", exc_info=True)
+        raise _EntitlementUnavailable() from exc
+
+
+class _EntitlementUnavailable(HTTPException):
+    def __init__(self) -> None:
+        super().__init__(status_code=503, detail="Could not check your plan just now; please try again.")
 
 
 _UPGRADE_DETAIL = "The desktop Engineer needs a Pro or Team plan. Upgrade, then sign in again."
@@ -378,7 +414,12 @@ async def refresh(request: RefreshRequest, http_request: Request):
         # refresh token was spent above, so the session ends here; phone and web sessions carry
         # no device_id.
         if user_info.get("channel") == CONSUMER_DESKTOP_CHANNEL:
-            if await _engineer_entitled(http_request, str(user_info["uid"])):
+            try:
+                entitled = await _engineer_entitled(http_request, str(user_info["uid"]))
+            except _EntitlementUnavailable:
+                restore_refresh_token(request.refresh_token, user_info)  # retry with the same token
+                raise
+            if entitled:
                 issued = reissue_for_refreshed_identity(user_info)
                 if issued is None:
                     raise HTTPException(status_code=401, detail="Device access has been revoked.")
@@ -438,16 +479,20 @@ async def approve_desktop_pairing(
         if user_info["role"] not in engineer_roles:
             await _desktop_gate(request, user_info, what="pairing a desktop", where="the desktop app")
     uid = str(user_info["uid"])
-    if _customers_open(request) and len(list_devices_for_uid(uid)) >= MAX_DESKTOP_DEVICES_PER_USER:
+    daemons = [d for d in list_devices_for_uid(uid) if d.get("kind") != "app"]
+    if _customers_open(request) and len(daemons) >= MAX_DESKTOP_DEVICES_PER_USER:
         raise HTTPException(status_code=409, detail=(
-            f"This account already has {MAX_DESKTOP_DEVICES_PER_USER} desktop devices; revoke one in "
+            f"This account already has {MAX_DESKTOP_DEVICES_PER_USER} paired desktops; revoke one in "
             "Settings first."))
     if _customers_open(request):
-        _sliding_limit(_pair_approval_hits, uid, PAIR_APPROVALS_PER_HOUR, 3600.0,
-                       "Too many pairing approvals; try again later.")
+        # Only wrong codes spend the quota (Plan E review #3): it bounds guessing, not pairing.
+        _check_limit(_pair_approval_hits, uid, PAIR_APPROVALS_PER_HOUR, 3600.0,
+                     "Too many wrong pairing codes; try again later.")
     device_name = device_pairing.pending_device_name(body.user_code)
     device_id = device_pairing.approve_pairing(body.user_code, user_info)
     if device_id is None:
+        if _customers_open(request):
+            _record_hit(_pair_approval_hits, uid, 3600.0)
         raise HTTPException(status_code=400, detail="Pairing code is invalid, expired, or already used.")
     return {"status": "approved", "device_id": device_id, "device_name": device_name}
 
@@ -554,6 +599,12 @@ async def desktop_login(
     await stamp_role(user_info)
     await _desktop_gate(request, user_info, what="desktop sign-in", where="the desktop app")
     await _persist_user(user_info)
+    if user_info.get("channel") == CONSUMER_DESKTOP_CHANNEL:
+        # Each sign-in is a new app device: keep the newest few rather than an unbounded pile of
+        # live sessions (Plan E review #2). Paired daemons are never evicted here.
+        apps = [d for d in list_devices_for_uid(str(user_info["uid"])) if d.get("kind") == "app"]
+        for stale in apps[MAX_DESKTOP_DEVICES_PER_USER - 1:]:  # newest first
+            revoke_device(stale["device_id"], requesting_uid=str(user_info["uid"]))
     device_id = secrets.token_urlsafe(16)
     return issue_desktop_session(
         user_info, device_id=device_id, device_name=body.device_name if body else None,

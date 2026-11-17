@@ -131,12 +131,18 @@ Startup therefore refuses the switch alongside any of these:
 - `AURA_TOOLS_REQUIRE_CONFIRMATION=false`;
 - `AURA_SANDBOX_ENABLED=true` (server sandbox workspaces for customers are phase 1b);
 - `AURA_GITHUB_ENABLED` without OAuth (one shared operator token);
-- `AURA_MCP_ENABLED` (the operator's MCP servers).
+- `AURA_MCP_ENABLED` (the operator's MCP servers);
+- `User` in `AURA_ENGINEER_AGENT_ROLES` (a role grant to everyone would skip every plan check).
 
 **Abuse limits.** The new entry points are open beyond operators, so each is limited:
 - desktop sign-ins and pairing starts, per client address: 10 a minute;
-- pairing approvals, per person: 5 an hour;
-- live desktop devices, per person: 10.
+- wrong pairing codes, per person: 5 an hour (correct approvals are not counted);
+- paired daemons, per person: 10;
+- app sign-ins, per person: the newest 10 are kept, and older ones are revoked.
+
+These limits are in-process and per worker, so a deployment with N workers allows N times as
+many. An IPv6 caller is counted per /64. A per-address limit is a burst bound, not a guarantee;
+the per-person limits cannot be forged.
 
 **Revocation on downgrade.** Losing Pro, or leaving the only team that had it, ends the desktop
 Engineer through three independent paths:
@@ -145,7 +151,18 @@ Engineer through three independent paths:
 - the next turn carries no `engineer_agent` capability (`admit_turn`, Plan C).
 
 Paired devices are not deleted. Upgrading again works without re-pairing, and the person can
-still revoke devices in Settings.
+still revoke devices in Settings. A turn already running when the downgrade lands can keep
+calling the daemon until the socket's next recheck (at most 60 seconds).
+
+A failed plan lookup is not a downgrade. Sign-in and pairing answer 503. A refresh answers 503
+and puts the refresh token back, so the app can retry. A daemon already connected stays until a
+recheck succeeds.
+
+Sign-in, pairing and the daemon socket accept an Engineer plan on *any* of the person's
+workspaces. A turn uses only the *active* workspace's plan. A Team member whose personal
+workspace is Free can therefore pair a daemon, but gets the Engineer only in the team. This
+fails closed, and it is deliberate: the daemon belongs to the person, and the plan belongs to
+the workspace.
 
 **Still not offered to customers:** the server-side sandbox and durable workspaces (ADR-013/014),
 MCP, and a shared GitHub token. Tests: `tests/integration/test_desktop_engineer_customers.py`,

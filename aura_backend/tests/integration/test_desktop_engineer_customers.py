@@ -149,15 +149,10 @@ async def test_daemon_token_from_a_customer_approval_is_channel_capped(client, c
     assert claims["channel"] == "consumer_desktop" and claims["role"] == "User" and claims["scope"] == "host_agent"
 
 
-async def test_pairing_limits(client, container, switch, monkeypatch) -> None:
-    await _plan(container, "uma", "pro")
-    token = _web_token("uma")
-    for _ in range(auth_module.PAIR_APPROVALS_PER_HOUR):
-        assert _approve(client, token)[1].status_code == 200
-    assert _approve(client, token)[1].status_code == 429
+async def test_pairing_device_cap(client, container, switch, monkeypatch) -> None:
     await _plan(container, "vic", "pro")
-    monkeypatch.setattr(auth_module, "list_devices_for_uid",
-                        lambda uid: [{"device_id": str(i)} for i in range(auth_module.MAX_DESKTOP_DEVICES_PER_USER)])
+    monkeypatch.setattr(auth_module, "list_devices_for_uid", lambda uid: [
+        {"device_id": str(i), "kind": "daemon"} for i in range(auth_module.MAX_DESKTOP_DEVICES_PER_USER)])
     assert _approve(client, _web_token("vic"))[1].status_code == 409
 
 
@@ -185,3 +180,58 @@ async def test_customer_desktop_session_never_reaches_the_console(client, contai
         headers = {"Authorization": f"Bearer {token}"}
         assert gateway.get("/api/v3/admin/status", headers=headers).status_code == 403
         assert gateway.get("/api/v3/admin/operators", headers=headers).status_code == 403
+
+
+# -- review fixes (Plan E final review) ----------------------------------------------------------
+
+async def test_plan_lookup_failure_is_503_and_keeps_the_session(client, container, switch, monkeypatch) -> None:
+    """#1: a database blip must not sign a paying customer out or tell them to upgrade."""
+    await _plan(container, "yan", "pro")
+    session = _login(client, _person("yan")).json()
+
+    async def broken(subject):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(container.plans, "engineer_entitled", broken)
+    assert client.post("/api/v3/auth/refresh", json={"refresh_token": session["refresh_token"]}).status_code == 503
+    assert _login(client, _person("yan")).status_code == 503
+    monkeypatch.undo()
+    switch(True)
+    again = client.post("/api/v3/auth/refresh", json={"refresh_token": session["refresh_token"]})
+    assert again.status_code == 200, again.text
+
+
+async def test_app_sign_ins_do_not_lock_out_pairing(client, container, switch) -> None:
+    """#2: re-logins evict the oldest app device instead of piling up, and only daemons count
+    toward the pairing cap."""
+    from services.jwt_auth import list_devices_for_uid
+
+    await _plan(container, "zed", "pro")
+    for _ in range(auth_module.MAX_DESKTOP_DEVICES_PER_USER + 3):
+        assert _login(client, _person("zed")).status_code == 200
+        auth_module._reset_desktop_rate_limits()
+    apps = [d for d in list_devices_for_uid("zed") if d.get("kind") == "app"]
+    assert len(apps) <= auth_module.MAX_DESKTOP_DEVICES_PER_USER
+    assert _approve(client, _web_token("zed"))[1].status_code == 200
+
+
+async def test_only_failed_approvals_spend_the_quota(client, container, switch) -> None:
+    """#3: legitimate pairings are not rate limited by typos' quota, and typos are bounded."""
+    await _plan(container, "abe", "pro")
+    token = _web_token("abe")
+    for _ in range(auth_module.PAIR_APPROVALS_PER_HOUR + 2):
+        assert _approve(client, token)[1].status_code == 200
+    headers = {"Authorization": f"Bearer {token}"}
+    for _ in range(auth_module.PAIR_APPROVALS_PER_HOUR):
+        assert client.post("/api/v3/auth/desktop/pair/approve", json={"user_code": "ZZZZ-ZZZZ"},
+                           headers=headers).status_code == 400
+    assert client.post("/api/v3/auth/desktop/pair/approve", json={"user_code": "ZZZZ-ZZZZ"},
+                       headers=headers).status_code == 429
+
+
+def test_ipv6_callers_share_a_bucket_per_64() -> None:
+    """#4: rotating addresses inside one /64 is one caller."""
+    assert auth_module._rate_key("2001:db8:1:2::1") == auth_module._rate_key("2001:db8:1:2:ffff::9")
+    assert auth_module._rate_key("2001:db8:1:3::1") != auth_module._rate_key("2001:db8:1:2::1")
+    assert auth_module._rate_key("198.51.100.7") == "198.51.100.7"
+    assert auth_module._rate_key("not-an-ip") == "not-an-ip"

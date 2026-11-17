@@ -315,6 +315,13 @@ def _refresh_store_take(token: str) -> Optional[dict]:
     return user_info
 
 
+def restore_refresh_token(token: str, user_info: dict) -> None:
+    """Put back a refresh token ``consume_refresh_token`` just spent, when the request then could
+    not be answered for a reason that is not the caller's (a plan lookup failed): the client may
+    retry with the same token. ``user_info`` is what consumption returned, family included."""
+    _refresh_store_set(token, user_info, REFRESH_TOKEN_TTL)
+
+
 def _refresh_store_delete(token: str) -> bool:
     """Drop one refresh token and its index entries. True when it existed."""
     redis_client = get_redis_client()

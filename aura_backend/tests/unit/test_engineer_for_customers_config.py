@@ -60,3 +60,8 @@ def test_consumer_desktop_is_capped_at_user(monkeypatch) -> None:
     assert get_user_role(dict(identity)) == "SuperAdmin"
     assert get_user_role({**identity, "channel": CONSUMER_DESKTOP_CHANNEL}) == "User"
     assert CONSUMER_DESKTOP_CHANNEL == "consumer_desktop" and "consumer_web" in CONSUMER_CHANNELS
+
+
+def test_switch_refuses_user_in_engineer_roles() -> None:
+    """Plan E review #6: a role grant to every User would skip every entitlement gate."""
+    _refused(_on(security={"engineer_for_customers": True, "engineer_agent_roles": ("User",)}), "ENGINEER_AGENT_ROLES")

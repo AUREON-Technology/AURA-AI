@@ -55,13 +55,24 @@ def _host_check(container: Any) -> Callable[[Any], Any]:
     ``AURA_ENGINEER_FOR_CUSTOMERS`` -- a customer one of whose workspaces' plans includes the
     Engineer. Re-run on every credential recheck, so a downgrade closes the socket (SaaS P1-E)."""
 
+    admitted = False
+
     async def may_host(principal: Any) -> bool:
+        nonlocal admitted
         if "engineer_agent" in principal.capabilities:
+            admitted = True
             return True
         plans = getattr(container, "plans", None)
         if plans is None or not container.settings.security.engineer_for_customers:
             return False
-        return await plans.engineer_entitled(principal.user_id.value)
+        try:
+            admitted = await plans.engineer_entitled(principal.user_id.value)
+        except Exception:
+            # Admission fails closed; a blip at a later recheck keeps a daemon already admitted
+            # until the next recheck answers (Plan E review #1).
+            logger.warning("could not re-check a customer's plan for their daemon", exc_info=True)
+            return admitted
+        return admitted
 
     return may_host
 

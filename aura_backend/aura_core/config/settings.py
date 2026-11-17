@@ -2192,6 +2192,9 @@ class AuraSettings:
             if self.mcp.enabled:
                 problems.append("AURA_ENGINEER_FOR_CUSTOMERS needs AURA_MCP_ENABLED=false: MCP servers are "
                                 "the operator's and would be reachable by every customer's Engineer")
+            if "User" in self.security.engineer_agent_roles:
+                problems.append("AURA_ENGINEER_FOR_CUSTOMERS cannot be combined with User in "
+                                "AURA_ENGINEER_AGENT_ROLES: that grant would skip every plan check")
             if not self.tools.require_confirmation_for_side_effects:
                 problems.append("AURA_ENGINEER_FOR_CUSTOMERS needs AURA_TOOLS_REQUIRE_CONFIRMATION=true: "
                                 "per-call confirmation stays mandatory for customers (ADR-006)")
