@@ -22,14 +22,13 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:aura_hostd/src/approval_queue.dart';
+import 'package:aura_hostd/src/backend_connection.dart';
 import 'package:aura_hostd/src/config.dart';
 import 'package:aura_hostd/src/containment.dart';
 import 'package:aura_hostd/src/control_server.dart';
 import 'package:aura_hostd/src/debug_session_manager.dart';
 import 'package:aura_hostd/src/isolated_task_registry.dart';
 import 'package:aura_hostd/src/pairing_client.dart';
-import 'package:aura_hostd/src/rpc_client.dart';
-import 'package:aura_hostd/src/task_handler.dart';
 import 'package:aura_hostd/src/terminal_session_manager.dart';
 import 'package:aura_hostd/src/workspace_store.dart';
 
@@ -113,7 +112,14 @@ Future<void> main(List<String> args) async {
       break;
 
     case 'run':
-      await _runDaemon(configStore, workspaceStore);
+      // Last line of defence (audit INT-019): an error escaping some un-awaited async path -- a
+      // late send on a dropped connection, a handler that forgot a catch -- is logged instead of
+      // killing a daemon the user expects to stay up. The paths known to do it are fixed at the
+      // source (`rpc_client.dart`'s `_send`); this only stops the next one being fatal.
+      await runZonedGuarded(
+        () => _runDaemon(configStore, workspaceStore),
+        (error, stack) => stderr.writeln('[aura_hostd] unhandled error (daemon kept running): $error\n$stack'),
+      );
       break;
 
     default:
@@ -146,50 +152,10 @@ Future<void> _pair(ConfigStore configStore, String backendUrl) async {
   }
 }
 
-/// Starts the backend WebSocket connection (`HostAgentClient`) if not already running -- shared
-/// by the "already paired at startup" and "paired later via the control server" paths below, so
-/// pairing does not require restarting `run`.
-class _BackendConnection {
-  _BackendConnection(this.configStore, this.workspaceStore, this.approvalQueue, this.isolatedTasks);
-
-  final ConfigStore configStore;
-  final WorkspaceStore workspaceStore;
-
-  /// The same queue instance `ControlServer`'s `/approvals` routes act on -- see
-  /// `approval_queue.dart` and `task_handler.dart::TaskHandler`'s constructor doc.
-  final ApprovalQueue approvalQueue;
-
-  /// The same instance `ControlServer` holds -- D9's "Agent Review" panel needs to see exactly
-  /// what this `TaskHandler` has isolated on the agent's behalf. See
-  /// `isolated_task_registry.dart`'s own doc comment.
-  final IsolatedTaskRegistry isolatedTasks;
-  HostAgentClient? _client;
-
-  /// See `HostAgentClient.isConnected`'s own doc -- this is `false` both before pairing and
-  /// while a post-drop reconnect is in backoff, which is exactly the window `control_server.dart`
-  /// needs to distinguish from "has a stored token" for `/status` to stop lying to the UI.
-  bool get isConnected => _client?.isConnected ?? false;
-
-  void startIfAuthenticated() {
-    if (_client != null) return;
-    final config = configStore.load();
-    if (config.authToken == null || config.authToken!.isEmpty) return;
-    final handler = TaskHandler(workspaceStore.load(), approvalQueue, null, isolatedTasks);
-    final client = HostAgentClient(
-      wsUrl: config.hostAgentWsUrl,
-      authToken: config.authToken!,
-      taskHandler: handler,
-    );
-    _client = client;
-    stdout.writeln('Connecting to ${config.backendUrl} ...');
-    unawaited(client.run());
-  }
-
-  void stop() => _client?.stop();
-}
-
 Future<void> _runDaemon(ConfigStore configStore, WorkspaceStore workspaceStore) async {
-  final roots = workspaceStore.load();
+  // The one live set of grants (audit INT-002): the control server's root actions update it on
+  // save, and every agent RPC resolves against it -- never a start-up snapshot.
+  final roots = workspaceStore.live;
   if (roots.all.isEmpty) {
     stdout.writeln(
       'Warning: no workspace roots granted yet -- every write_file/run_command call will be '
@@ -203,19 +169,28 @@ Future<void> _runDaemon(ConfigStore configStore, WorkspaceStore workspaceStore) 
   // isolated_task_registry.dart's own doc comment for why a separate instance per side would
   // silently break Part C.
   final isolatedTasks = IsolatedTaskRegistry(roots);
-  final backend = _BackendConnection(configStore, workspaceStore, approvalQueue, isolatedTasks);
+  final backend = BackendConnection(
+    configStore: configStore,
+    workspaceStore: workspaceStore,
+    approvalQueue: approvalQueue,
+    isolatedTasks: isolatedTasks,
+  );
   final controlServer = ControlServer(
     workspaceStore: workspaceStore,
     configStore: configStore,
     // A UI driving `/pair/start` + `/pair/status` (Unit 8, control_server.dart) pairs this
     // daemon without ever needing `run` restarted -- the control server exists before any token
     // does precisely so that path works.
-    onPaired: (_) => backend.startIfAuthenticated(),
+    // A new token replaces whatever connection the old one had -- including one the backend
+    // already refused (4401), which used to make a re-pair a silent no-op (INT-003).
+    onPaired: (_) => backend.restart(),
     terminalSessions: TerminalSessionManager(workspaceStore),
     debugSessions: DebugSessionManager(workspaceStore),
     approvalQueue: approvalQueue,
     isolatedTasks: isolatedTasks,
     isBackendConnected: () => backend.isConnected,
+    isCredentialsRejected: () => backend.credentialsRejected,
+    lastCloseCode: () => backend.lastCloseCode,
   );
   await controlServer.start(resolveConfigDir());
 

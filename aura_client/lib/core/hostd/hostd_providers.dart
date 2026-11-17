@@ -34,6 +34,8 @@ class HostdStatusSnapshot {
     this.backendUrl,
     this.roots = const [],
     this.error,
+    this.credentialsRejected = false,
+    this.lastCloseCode,
   });
 
   /// Whether the control server answered at all -- false means `aura_hostd run` isn't up (or
@@ -57,6 +59,22 @@ class HostdStatusSnapshot {
   final String? backendUrl;
   final List<HostdRoot> roots;
   final String? error;
+
+  /// The backend refused the daemon's stored token (WebSocket close 4401: expired, revoked, or
+  /// the account lacks the Engineer role) and the daemon stopped reconnecting (audit INT-003).
+  /// `authenticated` stays true -- a token is still stored -- so without this the UI showed
+  /// "reconnecting..." forever and hid the Pair button. An older daemon that does not report the
+  /// field reads as `false`.
+  final bool credentialsRejected;
+
+  /// The close code of the daemon's most recent backend connection, when it reports one.
+  final int? lastCloseCode;
+
+  /// Running and holding a token the backend will no longer accept: only pairing again helps.
+  bool get needsRepair => reachable && credentialsRejected;
+
+  /// Whether a Pair action should be offered: never paired, or paired with a refused token.
+  bool get canPair => reachable && (!authenticated || credentialsRejected);
 }
 
 final hostdControlClientProvider = Provider<HostdControlClient>((ref) {
@@ -106,6 +124,8 @@ HostdStatusSnapshot parseHostdStatusBody(Map<String, dynamic> body) {
     backendConnected: body['backend_connected'] as bool?,
     backendUrl: body['backend_url'] as String?,
     roots: roots,
+    credentialsRejected: body['credentials_rejected'] as bool? ?? false,
+    lastCloseCode: (body['last_close_code'] as num?)?.toInt(),
   );
 }
 

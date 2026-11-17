@@ -317,7 +317,9 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
                 status.reachable ? Icons.circle : Icons.circle_outlined,
                 color: !status.reachable
                     ? palette.textSecondary
-                    : (status.authenticated && status.backendConnected != true
+                    : status.needsRepair
+                        ? palette.danger
+                        : (status.authenticated && status.backendConnected != true
                         ? palette.warning
                         : palette.success),
                 size: 12,
@@ -328,6 +330,10 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
                     ? 'Not running'
                     : !status.authenticated
                         ? 'Running, not paired'
+                        // INT-003: the backend refused the stored token (4401) and the daemon
+                        // stopped reconnecting -- only pairing again helps.
+                        : status.needsRepair
+                            ? 'Re-pair required: the server no longer accepts this device'
                         // Paired (stored token) but not connected happens right after a drop --
                         // a backend redeploy, a network blip -- while the daemon's reconnect
                         // loop is in backoff; every tool call fails during that window, so this
@@ -360,8 +366,13 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
                   variant: AuraButtonVariant.secondary,
                   onPressed: () => _stopDaemon(supervisor),
                 ),
-              if (status.reachable && !status.authenticated)
-                AuraButton(label: 'Pair this device', icon: Icons.link, loading: _pairing, onPressed: _pairDevice),
+              if (status.canPair)
+                AuraButton(
+                  label: status.needsRepair ? 'Pair again' : 'Pair this device',
+                  icon: Icons.link,
+                  loading: _pairing,
+                  onPressed: _pairDevice,
+                ),
             ],
           ),
         ],

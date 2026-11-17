@@ -153,7 +153,8 @@ void main() {
     expect(mode, 0x180, reason: 'expected 0600, got ${mode.toRadixString(8)}');
   }, testOn: '!windows');
 
-  test('GET /status requires no token and reports roots', () async {
+  test('GET /status without a token answers, but never names roots or the backend (INT-037)',
+      () async {
     final (status, body) = await client.request('GET', '/status', withToken: false);
     expect(status, 200);
     expect(body['authenticated'], false);
@@ -162,7 +163,66 @@ void main() {
     // (the shared setUp above), which must report the honest answer -- not connected -- rather
     // than silently defaulting to a value that would make a dead connection look live.
     expect(body['backend_connected'], false);
+    expect(body['credentials_rejected'], false);
+    expect(body.containsKey('roots'), isFalse);
+    expect(body.containsKey('backend_url'), isFalse);
+    expect(jsonEncode(body), isNot(contains(workspaceRoot)));
+  });
+
+  test('GET /status with the token reports roots', () async {
+    final (status, body) = await client.request('GET', '/status');
+    expect(status, 200);
     expect((body['roots'] as List).length, 1);
+    expect(body.containsKey('backend_url'), isTrue);
+  });
+
+  test('GET /status reports credentials_rejected and last_close_code from the wired callbacks '
+      '(INT-003)', () async {
+    final rejectedServer = ControlServer(
+      workspaceStore: workspaceStore,
+      configStore: configStore,
+      onPaired: (_) {},
+      terminalSessions: TerminalSessionManager(workspaceStore),
+      debugSessions: DebugSessionManager(workspaceStore),
+      approvalQueue: approvalQueue,
+      isolatedTasks: IsolatedTaskRegistry(workspaceStore.load()),
+      isCredentialsRejected: () => true,
+      lastCloseCode: () => 4401,
+      logger: (_) {},
+    );
+    await rejectedServer.start(configDir);
+    addTearDown(rejectedServer.stop);
+    final controlFile = jsonDecode(File('${configDir.path}/control.json').readAsStringSync())
+        as Map<String, dynamic>;
+    final rejectedClient = _ControlClient(controlFile['port'] as int, controlFile['token'] as String);
+    addTearDown(rejectedClient.close);
+
+    final (_, body) = await rejectedClient.request('GET', '/status', withToken: false);
+    expect(body['credentials_rejected'], true);
+    expect(body['last_close_code'], 4401);
+  });
+
+  test('a request whose Host is not loopback is refused, token or not (DNS rebinding, INT-037)',
+      () async {
+    final http = HttpClient();
+    addTearDown(() => http.close(force: true));
+    for (final path in ['/status', '/roots']) {
+      final request = await http.openUrl('GET', Uri.parse('http://127.0.0.1:${client.port}$path'));
+      request.headers.host = 'attacker.example';
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ${client.token}');
+      final response = await request.close();
+      await response.drain<void>();
+      expect(response.statusCode, 403, reason: path);
+    }
+    final (ok, _) = await client.request('GET', '/roots');
+    expect(ok, 200, reason: 'a loopback Host still works');
+  });
+
+  test('constantTimeEquals matches == on equal, different and differently-sized strings', () {
+    expect(constantTimeEquals('Bearer abc', 'Bearer abc'), isTrue);
+    expect(constantTimeEquals('Bearer abc', 'Bearer abd'), isFalse);
+    expect(constantTimeEquals('Bearer abc', 'Bearer ab'), isFalse);
+    expect(constantTimeEquals('', ''), isTrue);
   });
 
   test('GET /status reports backend_connected from the wired callback, independent of the '
@@ -521,6 +581,51 @@ void main() {
     expect(ConfigStore.forConfigDir(pairingConfigDir).load().authToken, 'tok-abc');
 
     await pairingServer.stop();
+  });
+
+  test(
+      'the daemon collects an approved pairing itself, with no /pair/status poll from a UI, and '
+      'a late /pair/status still reports it (INT-038)', () async {
+    final fakeBackend = await _FakeAuthServer.start(userCode: 'AB3D-9XYZ', deviceId: 'dev-9', pendingPolls: 2);
+    addTearDown(fakeBackend.close);
+    final pairingConfigDir = Directory.systemTemp.createTempSync('aura_hostd_control_test_bgpair_');
+    addTearDown(() => pairingConfigDir.deleteSync(recursive: true));
+    final pairedTokens = <String>[];
+    final pairingServer = ControlServer(
+      workspaceStore: WorkspaceStore.forConfigDir(pairingConfigDir),
+      configStore: ConfigStore.forConfigDir(pairingConfigDir),
+      onPaired: pairedTokens.add,
+      terminalSessions: TerminalSessionManager(WorkspaceStore.forConfigDir(pairingConfigDir)),
+      debugSessions: DebugSessionManager(WorkspaceStore.forConfigDir(pairingConfigDir)),
+      approvalQueue: ApprovalQueue(),
+      isolatedTasks: IsolatedTaskRegistry(WorkspaceStore.forConfigDir(pairingConfigDir).load()),
+      minPairingPollInterval: const Duration(milliseconds: 20),
+      logger: (_) {},
+    );
+    await pairingServer.start(pairingConfigDir);
+    addTearDown(pairingServer.stop);
+    final controlFile =
+        jsonDecode(File('${pairingConfigDir.path}/control.json').readAsStringSync()) as Map<String, dynamic>;
+    final pairingClient = _ControlClient(controlFile['port'] as int, controlFile['token'] as String);
+    addTearDown(pairingClient.close);
+
+    final (startStatus, _) =
+        await pairingClient.request('POST', '/pair/start', body: {'backend_url': fakeBackend.backendUrl});
+    expect(startStatus, 200);
+
+    // The UI went away: nobody polls /pair/status. The daemon must still pick the token up.
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (pairedTokens.isEmpty && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(pairedTokens, ['tok-abc'], reason: 'onPaired is called exactly once');
+    expect(ConfigStore.forConfigDir(pairingConfigDir).load().authToken, 'tok-abc');
+
+    final (lateStatus, lateBody) = await pairingClient.request('GET', '/pair/status');
+    expect(lateStatus, 200);
+    expect(lateBody['status'], 'approved');
+    expect(lateBody['device_id'], 'dev-9');
+    expect(pairedTokens, hasLength(1));
   });
 
   group('diagnostics (D7 Part A.2)', () {
