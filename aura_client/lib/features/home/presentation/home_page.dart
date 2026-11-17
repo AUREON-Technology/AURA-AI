@@ -77,28 +77,42 @@ class _TodayScaffold extends ConsumerWidget {
         },
         child: ListView(
           padding: const EdgeInsets.all(AuraSpacing.lg),
+          // Today's sections arrive one after another rather than all at
+          // once, so the eye lands on the date and capture bar first.
           children: [
-            Text(
-              DateFormat.MMMMEEEEd().format(DateTime.now()).toUpperCase(),
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: palette.brandOnSurfaceText,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 1.2,
+            for (final (i, section) in <Widget>[
+              Text(
+                DateFormat.MMMMEEEEd().format(DateTime.now()).toUpperCase(),
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: palette.brandOnSurfaceText,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.2,
+                ),
               ),
-            ),
-            const SizedBox(height: AuraSpacing.xl),
-            _CaptureBar(),
-            const SizedBox(height: AuraSpacing.xl),
-            const _InsightsSection(),
-            _DueTodayCard(tasksAsync: tasksAsync, calendarAsync: calendarAsync),
-            const SizedBox(height: AuraSpacing.lg),
-            _QuickStatsRow(
-              tasksAsync: tasksAsync,
-              financeAsync: financeAsync,
-              healthAsync: healthAsync,
-            ),
-            const SizedBox(height: AuraSpacing.lg),
-            _SystemHealthCard(aiStatus: aiStatus),
+              const SizedBox(height: AuraSpacing.xl),
+              _CaptureBar(),
+              const SizedBox(height: AuraSpacing.xl),
+              const _InsightsSection(),
+              _DueTodayCard(
+                tasksAsync: tasksAsync,
+                calendarAsync: calendarAsync,
+              ),
+              const SizedBox(height: AuraSpacing.lg),
+              _QuickStatsRow(
+                tasksAsync: tasksAsync,
+                financeAsync: financeAsync,
+                healthAsync: healthAsync,
+              ),
+              const SizedBox(height: AuraSpacing.lg),
+              _SystemHealthCard(aiStatus: aiStatus),
+            ].indexed)
+              AuraEntrance(
+                delay: AuraEntrance.stagger(
+                  i,
+                  step: const Duration(milliseconds: 40),
+                ),
+                child: section,
+              ),
             const SizedBox(height: AuraSpacing.xxl),
           ],
         ),
@@ -283,7 +297,14 @@ class _InsightCard extends ConsumerWidget {
             label: context.l10n.homeDismissInsight,
             child: InkWell(
               onTap: () async {
-                await ref.read(insightsClientProvider).dismiss(insight.id);
+                final dismissed = await ref.read(insightsClientProvider).dismiss(insight.id);
+                if (!dismissed && context.mounted) {
+                  AuraSnackbar.show(
+                    context,
+                    message: context.l10n.homeInsightDismissFailed,
+                    kind: AuraSnackbarKind.error,
+                  );
+                }
                 ref.invalidate(insightsProvider);
               },
               borderRadius: BorderRadius.circular(AuraRadius.pill),

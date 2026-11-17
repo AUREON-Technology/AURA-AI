@@ -320,6 +320,12 @@ abstract class AppLocalizations {
   /// **'Capture from anywhere. Browse tasks, calendar, finance, and health in Life Hub. Account tools live under You.'**
   String get onboardingTourBody;
 
+  /// Host daemon page: warning when the daemon is paired to a different backend than the app
+  ///
+  /// In en, this message translates to:
+  /// **'This app is signed in to {appBackendUrl}. Pair again to move the daemon there.'**
+  String hostdPairedToOtherServer(String appBackendUrl);
+
   /// Onboarding button that skips the remaining intro pages
   ///
   /// In en, this message translates to:
@@ -7085,6 +7091,156 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The debugger (debugpy) started but couldn\'t be reached: {detail}'**
   String hostdCodeDebugUnreachable(String detail);
+
+  /// Engineer workspaces panel: the list failed to load
+  ///
+  /// In en, this message translates to:
+  /// **'Could not load your workspaces. Your work is not lost -- try again shortly.'**
+  String get coreEngineerWorkspacesLoadFailed;
+
+  /// Live voice closed: the server has the feature off
+  ///
+  /// In en, this message translates to:
+  /// **'Live voice is not available on this server.'**
+  String get voiceSocketUnavailable;
+
+  /// Live voice closed: too many sessions
+  ///
+  /// In en, this message translates to:
+  /// **'Live voice is already open on another device, or you have started it too often. Close it elsewhere or wait a few minutes, then try again.'**
+  String get voiceSocketTooMany;
+
+  /// Live voice closed: the start request was refused
+  ///
+  /// In en, this message translates to:
+  /// **'The server could not start live voice with these settings.'**
+  String get voiceSocketBadRequest;
+
+  /// Read-aloud failed: the reply has no speakable text
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing in this reply can be read aloud.'**
+  String get voiceClientNothingSpeakable;
+
+  /// Read-aloud failed for another validation reason
+  ///
+  /// In en, this message translates to:
+  /// **'Could not read this reply aloud.'**
+  String get voiceClientCouldNotRead;
+
+  /// Host panel status: the server refused the daemon's stored token
+  ///
+  /// In en, this message translates to:
+  /// **'Re-pair required'**
+  String get hostStatusRepairRequired;
+
+  /// Host daemon page status: the server refused the daemon's token
+  ///
+  /// In en, this message translates to:
+  /// **'Re-pair required: the server no longer accepts this device'**
+  String get engineeringDaemonRepairRequired;
+
+  /// Upload failed: file over the size limit
+  ///
+  /// In en, this message translates to:
+  /// **'{kind, select, pdf{This PDF} other{This document}} is larger than the server\'s {limit} limit.'**
+  String knowledgeErrTooLarge(String kind, String limit);
+
+  /// Upload failed: rate limited
+  ///
+  /// In en, this message translates to:
+  /// **'Too many uploads right now. Wait a minute, then try again.'**
+  String get knowledgeErrRateLimited;
+
+  /// Upload failed: the library is unavailable
+  ///
+  /// In en, this message translates to:
+  /// **'The knowledge library is unavailable right now. Try again later.'**
+  String get knowledgeErrUnavailable;
+
+  /// Upload failed: the same upload is still in progress
+  ///
+  /// In en, this message translates to:
+  /// **'AURA is still saving {kind, select, pdf{this PDF} other{this document}}. Refresh in a moment before trying again.'**
+  String knowledgeErrInProgress(String kind);
+
+  /// Upload timed out
+  ///
+  /// In en, this message translates to:
+  /// **'AURA is taking a long time with {kind, select, pdf{this PDF} other{this document}}. It may still be saved: refresh to check. Trying again will not add it twice.'**
+  String knowledgeErrTimeout(String kind);
+
+  /// Upload failed: network
+  ///
+  /// In en, this message translates to:
+  /// **'Could not reach AURA. Trying again will not add it twice.'**
+  String get knowledgeErrNetwork;
+
+  /// Upload failed: signed out
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in again to continue.'**
+  String get knowledgeErrSignIn;
+
+  /// Upload failed: not permitted
+  ///
+  /// In en, this message translates to:
+  /// **'You do not have permission to add documents.'**
+  String get knowledgeErrForbidden;
+
+  /// Upload failed: server error
+  ///
+  /// In en, this message translates to:
+  /// **'AURA could not save {kind, select, pdf{this PDF} other{this document}}. Trying again will not add it twice.'**
+  String knowledgeErrServer(String kind);
+
+  /// Upload rejected, with the server's reason
+  ///
+  /// In en, this message translates to:
+  /// **'Could not add {kind, select, pdf{this PDF} other{this document}}: {reason}'**
+  String knowledgeErrRejected(String kind, String reason);
+
+  /// Upload skipped: identical content already saved
+  ///
+  /// In en, this message translates to:
+  /// **'Already in your library, unchanged. Nothing new was saved.'**
+  String get knowledgeAlreadyUnchanged;
+
+  /// Upload skipped: everything quarantined
+  ///
+  /// In en, this message translates to:
+  /// **'Not saved: every passage was held back by the safety check.'**
+  String get knowledgeNotSavedQuarantined;
+
+  /// Upload skipped for another reason (server code shown)
+  ///
+  /// In en, this message translates to:
+  /// **'Not saved ({reason}).'**
+  String knowledgeNotSavedReason(String reason);
+
+  /// Host panel: why re-pairing is required
+  ///
+  /// In en, this message translates to:
+  /// **'The server no longer accepts this device (expired, revoked, or your account lacks Engineer access). Pair again to reconnect.'**
+  String get hostRepairExplanation;
+
+  /// Knowledge: delete refused, with the server's message
+  ///
+  /// In en, this message translates to:
+  /// **'Could not delete this document: {reason}'**
+  String knowledgeDeleteFailedReason(String reason);
+
+  /// Knowledge: delete failed, server unreachable
+  ///
+  /// In en, this message translates to:
+  /// **'Could not reach AURA to delete this document.'**
+  String get knowledgeDeleteUnreachable;
+
+  /// Today screen: dismissing an insight failed
+  ///
+  /// In en, this message translates to:
+  /// **'Could not dismiss this insight. Try again shortly.'**
+  String get homeInsightDismissFailed;
 }
 
 class _AppLocalizationsDelegate

@@ -20,12 +20,15 @@ class EngineerWorkspacesPanel extends ConsumerWidget {
 
     return async.when(
       loading: () => const AuraSkeleton(height: 96),
-      // A failed fetch of a secondary panel should not shout. The client already degrades to an
-      // empty list, so this branch is for the unexpected rather than the routine.
+      // A failed fetch is an error, not "not enabled" (INT-025): the client used to fold every
+      // failure into an empty, disabled list. Kept quiet -- this is a secondary panel -- but it
+      // says the right thing and offers a retry.
       error: (_, _) => AuraEmptyState(
         icon: Icons.cloud_off_outlined,
         title: context.l10n.coreEngineerWorkspacesUnavailableTitle,
-        message: context.l10n.coreEngineerWorkspacesUnavailableMessage,
+        message: context.l10n.coreEngineerWorkspacesLoadFailed,
+        actionLabel: context.l10n.retry,
+        onAction: () => ref.invalidate(engineerWorkspacesProvider),
       ),
       data: (list) => _body(context, ref, list),
     );

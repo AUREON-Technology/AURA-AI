@@ -2,7 +2,7 @@
 
 The app sends the language it is displaying in ``X-Client-Language`` (its in-app choice, or the
 device language when the user left it on "System"). A request that carries it answers in it
-directly; ``users.language`` (migration 0021) keeps it for work with no request to read it from,
+directly; ``users.language`` (migration 0022) keeps it for work with no request to read it from,
 such as the daily briefing. Anything missing or unrecognised is ignored rather than stored, so an
 old app, or a header with junk in it, never resets a user's saved choice; and a user who never
 reported one reads as English, which is what every user got before this module existed

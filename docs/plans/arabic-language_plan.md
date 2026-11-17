@@ -100,7 +100,7 @@ it):
   (Trojan-Source class). It is **left as is**.
 
 **Language preference:**
-- Migration `0021_users_language.py`:
+- Migration `0022_users_language.py` (renumbered from `0021` when `main` added `0021_prompt_pins`):
   - adds `users.language VARCHAR(16) NULL`;
   - is additive with no backfill: NULL means "unknown", which resolves to English for
     server-written text, as today;
@@ -332,7 +332,7 @@ field is ignored by servers that don't know it.
 | Change | Older clients |
 |---|---|
 | Request header `X-Client-Language` (optional; `ar`/`en`/BCP-47) | Absent, so `users.language` stays NULL. Server text stays English, and replies still mirror the message |
-| `users.language` column (migration 0021) | Invisible |
+| `users.language` column (migration 0022) | Invisible |
 | v2 profile response gains optional `language` | Ignored by older apps |
 | `/voice/transcribe` optional `language` field | Not sent, so the server auto-detects |
 | Live-voice start frame `language: "ar"` accepted when the STT model is multilingual | Older app sends `en`, as today |
@@ -343,8 +343,8 @@ No route, field or enum is renamed or removed.
 
 ## Rollout order
 
-1. **Stage 1** merges first, and Railway's pre-deploy step applies migration 0021. Check
-   `/health/ready` → `schema.revision 0021` after the deploy (CLAUDE.md: first merge that adds a
+1. **Stage 1** merges first, and Railway's pre-deploy step applies migration 0022. Check
+   `/health/ready` → `schema.revision 0022` after the deploy (CLAUDE.md: first merge that adds a
    migration).
 2. **Stage 2** (app) after stage 1 is live, since the header is useless before.
 3. **Stage 3** (server text, daemon codes, console). The console has no live target yet.
@@ -411,7 +411,7 @@ What changed:
   - adaptive routing (`rag/adaptive.py`, a parallel Arabic cue table);
   - refusal detection in curation (`learning/curation.py`).
 - **Language preference:**
-  - Migration `0021` adds `users.language` (nullable, no backfill).
+  - Migration `0022` adds `users.language` (nullable, no backfill).
   - `services/user_language.py`.
   - `X-Client-Language` is remembered on `POST /api/v2/auth/token` and on both insights calls.
 - **Reply language:**

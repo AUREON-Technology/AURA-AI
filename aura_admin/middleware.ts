@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 
+import { accessExpired } from "@/lib/access-expiry";
 import { refreshAtGateway, singleFlightRefresh } from "@/lib/refresh";
 import { ACCESS_COOKIE, REFRESH_COOKIE, clearSessionCookies, setSessionCookies } from "@/lib/session";
 
@@ -8,28 +9,7 @@ import { ACCESS_COOKIE, REFRESH_COOKIE, clearSessionCookies, setSessionCookies }
 // expired went to /login even though a valid refresh cookie was there. Here the refresh happens
 // before the render: the rotated cookies go on the response for the browser, and on the
 // forwarded request headers so the layout sees the new access token on this same request.
-//
-// Expiry is read from the JWT's `exp` claim without verifying the signature -- the gateway
-// still verifies every token it is handed; this only decides whether to refresh first. A token
-// that does not decode is left for the gateway to judge.
-const EXPIRY_SKEW_S = 30;
-
-function accessExpired(token: string | undefined, nowS: number): boolean {
-  if (!token) {
-    return true;
-  }
-  const payload = token.split(".")[1];
-  if (!payload) {
-    return false;
-  }
-  try {
-    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
-    const exp = (JSON.parse(json) as { exp?: unknown }).exp;
-    return typeof exp === "number" && exp - EXPIRY_SKEW_S <= nowS;
-  } catch {
-    return false;
-  }
-}
+// Expiry is judged by src/lib/access-expiry.ts, shared with the /api/auth/session check.
 
 export async function middleware(request: NextRequest) {
   const access = request.cookies.get(ACCESS_COOKIE)?.value;

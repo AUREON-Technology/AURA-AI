@@ -70,7 +70,7 @@ class User(Base):
     timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # The language the app shows ("ar" or "en"), sent in X-Client-Language. Server-written text
     # with no request behind it (the daily briefing, scheduled insights) is written in it;
-    # NULL means never reported and reads as English (services/user_language.py). Migration 0021.
+    # NULL means never reported and reads as English (services/user_language.py). Migration 0022.
     language: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

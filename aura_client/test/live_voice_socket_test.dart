@@ -79,6 +79,7 @@ void main() {
     final socketProvider = Provider<LiveVoiceSocket>((ref) => LiveVoiceSocket(
           ref,
           connect: (_) => channel,
+          attestation: (_) async => const {'X-Device-Platform': 'test'},
           reauthInterval: const Duration(milliseconds: 20),
         ));
     container = ProviderContainer(overrides: [
@@ -137,4 +138,64 @@ void main() {
     expect(channel.fakeSink.sent.length, sentAtClose, reason: 'no reauth after close');
     await sub.cancel();
   });
+
+  // INT-014: the server allows 5 s from accept to a valid auth frame. A slow attestation used
+  // to be fetched *after* connecting, so the window could run out before auth was sent.
+  test('fetches token and attestation before connecting; auth is the first frame sent',
+      () async {
+    final events = <String>[];
+    final slowChannel = _FakeChannel();
+    final slow = LiveVoiceSocket(
+      container.read(_refProvider),
+      connect: (_) {
+        events.add('connect');
+        return slowChannel;
+      },
+      attestation: (_) async {
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+        events.add('attested');
+        return const {'X-Device-Platform': 'test'};
+      },
+      reauthInterval: const Duration(hours: 1),
+    );
+    addTearDown(slow.dispose);
+
+    await slow.connectAndAuth();
+
+    expect(events, ['attested', 'connect']);
+    final sent = slowChannel.fakeSink.sent.whereType<String>().toList();
+    expect(sent, isNotEmpty);
+    final first = jsonDecode(sent.first) as Map<String, dynamic>;
+    expect(first['type'], 'auth');
+    expect(first['token'], 'jwt-test');
+    expect(first['attestation'], {'X-Device-Platform': 'test'});
+  });
+
+  // INT-015: each server close code gets its own error and message.
+  for (final (code, error) in [
+    (LiveVoiceSocket.closeUnavailable, 'feature_unavailable'),
+    (LiveVoiceSocket.closeTooMany, 'too_many_sessions'),
+    (LiveVoiceSocket.closeBadRequest, 'bad_request'),
+  ]) {
+    test('a $code close surfaces as $error', () async {
+      await socket.connectAndAuth();
+      final next = socket.frames.first;
+      channel.code = code;
+      await channel.incoming.close();
+
+      final frame = await next.timeout(const Duration(seconds: 2));
+      expect(frame, isA<LiveErrorFrame>().having((f) => f.error, 'error', error));
+      expect(LiveVoiceSocket.terminalErrors, contains(error));
+    });
+  }
+
+  test('close-code messages are distinct', () {
+    final messages = [4401, 4503, 4429, 4400, 1011]
+        .map((c) => LiveVoiceSocket.errorForCloseCode(c).message)
+        .toSet();
+    expect(messages, hasLength(5));
+  });
 }
+
+/// Lends a test a [Ref] from the container, for constructing a socket by hand.
+final _refProvider = Provider<Ref>((ref) => ref);

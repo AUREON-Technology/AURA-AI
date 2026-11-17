@@ -123,6 +123,11 @@ class AppLocalizationsEn extends AppLocalizations {
       'Capture from anywhere. Browse tasks, calendar, finance, and health in Life Hub. Account tools live under You.';
 
   @override
+  String hostdPairedToOtherServer(String appBackendUrl) {
+    return 'This app is signed in to $appBackendUrl. Pair again to move the daemon there.';
+  }
+
+  @override
   String get onboardingSkip => 'Skip';
 
   @override
@@ -4176,4 +4181,128 @@ class AppLocalizationsEn extends AppLocalizations {
   String hostdCodeDebugUnreachable(String detail) {
     return 'The debugger (debugpy) started but couldn\'t be reached: $detail';
   }
+
+  @override
+  String get coreEngineerWorkspacesLoadFailed =>
+      'Could not load your workspaces. Your work is not lost -- try again shortly.';
+
+  @override
+  String get voiceSocketUnavailable =>
+      'Live voice is not available on this server.';
+
+  @override
+  String get voiceSocketTooMany =>
+      'Live voice is already open on another device, or you have started it too often. Close it elsewhere or wait a few minutes, then try again.';
+
+  @override
+  String get voiceSocketBadRequest =>
+      'The server could not start live voice with these settings.';
+
+  @override
+  String get voiceClientNothingSpeakable =>
+      'Nothing in this reply can be read aloud.';
+
+  @override
+  String get voiceClientCouldNotRead => 'Could not read this reply aloud.';
+
+  @override
+  String get hostStatusRepairRequired => 'Re-pair required';
+
+  @override
+  String get engineeringDaemonRepairRequired =>
+      'Re-pair required: the server no longer accepts this device';
+
+  @override
+  String knowledgeErrTooLarge(String kind, String limit) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'pdf': 'This PDF',
+      'other': 'This document',
+    });
+    return '$_temp0 is larger than the server\'s $limit limit.';
+  }
+
+  @override
+  String get knowledgeErrRateLimited =>
+      'Too many uploads right now. Wait a minute, then try again.';
+
+  @override
+  String get knowledgeErrUnavailable =>
+      'The knowledge library is unavailable right now. Try again later.';
+
+  @override
+  String knowledgeErrInProgress(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'pdf': 'this PDF',
+      'other': 'this document',
+    });
+    return 'AURA is still saving $_temp0. Refresh in a moment before trying again.';
+  }
+
+  @override
+  String knowledgeErrTimeout(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'pdf': 'this PDF',
+      'other': 'this document',
+    });
+    return 'AURA is taking a long time with $_temp0. It may still be saved: refresh to check. Trying again will not add it twice.';
+  }
+
+  @override
+  String get knowledgeErrNetwork =>
+      'Could not reach AURA. Trying again will not add it twice.';
+
+  @override
+  String get knowledgeErrSignIn => 'Sign in again to continue.';
+
+  @override
+  String get knowledgeErrForbidden =>
+      'You do not have permission to add documents.';
+
+  @override
+  String knowledgeErrServer(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'pdf': 'this PDF',
+      'other': 'this document',
+    });
+    return 'AURA could not save $_temp0. Trying again will not add it twice.';
+  }
+
+  @override
+  String knowledgeErrRejected(String kind, String reason) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'pdf': 'this PDF',
+      'other': 'this document',
+    });
+    return 'Could not add $_temp0: $reason';
+  }
+
+  @override
+  String get knowledgeAlreadyUnchanged =>
+      'Already in your library, unchanged. Nothing new was saved.';
+
+  @override
+  String get knowledgeNotSavedQuarantined =>
+      'Not saved: every passage was held back by the safety check.';
+
+  @override
+  String knowledgeNotSavedReason(String reason) {
+    return 'Not saved ($reason).';
+  }
+
+  @override
+  String get hostRepairExplanation =>
+      'The server no longer accepts this device (expired, revoked, or your account lacks Engineer access). Pair again to reconnect.';
+
+  @override
+  String knowledgeDeleteFailedReason(String reason) {
+    return 'Could not delete this document: $reason';
+  }
+
+  @override
+  String get knowledgeDeleteUnreachable =>
+      'Could not reach AURA to delete this document.';
+
+  @override
+  String get homeInsightDismissFailed =>
+      'Could not dismiss this insight. Try again shortly.';
 }

@@ -63,6 +63,8 @@ abstract final class HostdErrorCode {
 
   // --- control_server.dart and the session managers behind it -------------------------------
   static const unauthorized = 'unauthorized';
+  /// DNS rebinding (INT-037): the request's Host is not the loopback interface.
+  static const hostNotLoopback = 'host_not_loopback';
   static const noSuchEndpoint = 'no_such_endpoint';
   static const internalError = 'internal_error';
   static const missingParameter = 'missing_parameter';
@@ -86,6 +88,7 @@ abstract final class HostdErrorCode {
 
   /// Every code above, for tests that check a code is one of ours.
   static const Set<String> all = {
+    hostNotLoopback,
     workspaceTrusted,
     readOnlyAllowlisted,
     commandHardDenied,

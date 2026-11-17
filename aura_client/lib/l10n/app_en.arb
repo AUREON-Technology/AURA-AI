@@ -148,6 +148,15 @@
   "@onboardingTourBody": {
     "description": "Onboarding page 3 body"
   },
+  "hostdPairedToOtherServer": "This app is signed in to {appBackendUrl}. Pair again to move the daemon there.",
+  "@hostdPairedToOtherServer": {
+    "description": "Host daemon status card: the daemon is paired to a different server than the one this app uses",
+    "placeholders": {
+      "appBackendUrl": {
+        "type": "String"
+      }
+    }
+  },
   "onboardingSkip": "Skip",
   "@onboardingSkip": {
     "description": "Onboarding button that skips the remaining intro pages"
@@ -983,6 +992,13 @@
   "hostdSaveExecutable": "Save executable path",
   "@hostdSaveExecutable": {
     "description": "Host daemon page: save path button tooltip"
+  },
+  "hostdPairedToOtherServer": "This app is signed in to {appBackendUrl}. Pair again to move the daemon there.",
+  "@hostdPairedToOtherServer": {
+    "description": "Host daemon page: warning when the daemon is paired to a different backend than the app",
+    "placeholders": {
+      "appBackendUrl": {"type": "String"}
+    }
   },
   "liveVoiceEnd": "End live voice",
   "@liveVoiceEnd": {
@@ -5628,5 +5644,146 @@
         "description": "The underlying error, untranslated (tool or system output)"
       }
     }
+  },
+  "coreEngineerWorkspacesLoadFailed": "Could not load your workspaces. Your work is not lost -- try again shortly.",
+  "@coreEngineerWorkspacesLoadFailed": {
+    "description": "Engineer workspaces panel: the list failed to load"
+  },
+  "voiceSocketUnavailable": "Live voice is not available on this server.",
+  "@voiceSocketUnavailable": {
+    "description": "Live voice closed: the server has the feature off"
+  },
+  "voiceSocketTooMany": "Live voice is already open on another device, or you have started it too often. Close it elsewhere or wait a few minutes, then try again.",
+  "@voiceSocketTooMany": {
+    "description": "Live voice closed: too many sessions"
+  },
+  "voiceSocketBadRequest": "The server could not start live voice with these settings.",
+  "@voiceSocketBadRequest": {
+    "description": "Live voice closed: the start request was refused"
+  },
+  "voiceClientNothingSpeakable": "Nothing in this reply can be read aloud.",
+  "@voiceClientNothingSpeakable": {
+    "description": "Read-aloud failed: the reply has no speakable text"
+  },
+  "voiceClientCouldNotRead": "Could not read this reply aloud.",
+  "@voiceClientCouldNotRead": {
+    "description": "Read-aloud failed for another validation reason"
+  },
+  "hostStatusRepairRequired": "Re-pair required",
+  "@hostStatusRepairRequired": {
+    "description": "Host panel status: the server refused the daemon's stored token"
+  },
+  "engineeringDaemonRepairRequired": "Re-pair required: the server no longer accepts this device",
+  "@engineeringDaemonRepairRequired": {
+    "description": "Host daemon page status: the server refused the daemon's token"
+  },
+  "knowledgeErrTooLarge": "{kind, select, pdf{This PDF} other{This document}} is larger than the server's {limit} limit.",
+  "@knowledgeErrTooLarge": {
+    "description": "Upload failed: file over the size limit",
+    "placeholders": {
+      "kind": {
+        "type": "String"
+      },
+      "limit": {
+        "type": "String"
+      }
+    }
+  },
+  "knowledgeErrRateLimited": "Too many uploads right now. Wait a minute, then try again.",
+  "@knowledgeErrRateLimited": {
+    "description": "Upload failed: rate limited"
+  },
+  "knowledgeErrUnavailable": "The knowledge library is unavailable right now. Try again later.",
+  "@knowledgeErrUnavailable": {
+    "description": "Upload failed: the library is unavailable"
+  },
+  "knowledgeErrInProgress": "AURA is still saving {kind, select, pdf{this PDF} other{this document}}. Refresh in a moment before trying again.",
+  "@knowledgeErrInProgress": {
+    "description": "Upload failed: the same upload is still in progress",
+    "placeholders": {
+      "kind": {
+        "type": "String"
+      }
+    }
+  },
+  "knowledgeErrTimeout": "AURA is taking a long time with {kind, select, pdf{this PDF} other{this document}}. It may still be saved: refresh to check. Trying again will not add it twice.",
+  "@knowledgeErrTimeout": {
+    "description": "Upload timed out",
+    "placeholders": {
+      "kind": {
+        "type": "String"
+      }
+    }
+  },
+  "knowledgeErrNetwork": "Could not reach AURA. Trying again will not add it twice.",
+  "@knowledgeErrNetwork": {
+    "description": "Upload failed: network"
+  },
+  "knowledgeErrSignIn": "Sign in again to continue.",
+  "@knowledgeErrSignIn": {
+    "description": "Upload failed: signed out"
+  },
+  "knowledgeErrForbidden": "You do not have permission to add documents.",
+  "@knowledgeErrForbidden": {
+    "description": "Upload failed: not permitted"
+  },
+  "knowledgeErrServer": "AURA could not save {kind, select, pdf{this PDF} other{this document}}. Trying again will not add it twice.",
+  "@knowledgeErrServer": {
+    "description": "Upload failed: server error",
+    "placeholders": {
+      "kind": {
+        "type": "String"
+      }
+    }
+  },
+  "knowledgeErrRejected": "Could not add {kind, select, pdf{this PDF} other{this document}}: {reason}",
+  "@knowledgeErrRejected": {
+    "description": "Upload rejected, with the server's reason",
+    "placeholders": {
+      "kind": {
+        "type": "String"
+      },
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "knowledgeAlreadyUnchanged": "Already in your library, unchanged. Nothing new was saved.",
+  "@knowledgeAlreadyUnchanged": {
+    "description": "Upload skipped: identical content already saved"
+  },
+  "knowledgeNotSavedQuarantined": "Not saved: every passage was held back by the safety check.",
+  "@knowledgeNotSavedQuarantined": {
+    "description": "Upload skipped: everything quarantined"
+  },
+  "knowledgeNotSavedReason": "Not saved ({reason}).",
+  "@knowledgeNotSavedReason": {
+    "description": "Upload skipped for another reason (server code shown)",
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "hostRepairExplanation": "The server no longer accepts this device (expired, revoked, or your account lacks Engineer access). Pair again to reconnect.",
+  "@hostRepairExplanation": {
+    "description": "Host panel: why re-pairing is required"
+  },
+  "knowledgeDeleteFailedReason": "Could not delete this document: {reason}",
+  "@knowledgeDeleteFailedReason": {
+    "description": "Knowledge: delete refused, with the server's message",
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "knowledgeDeleteUnreachable": "Could not reach AURA to delete this document.",
+  "@knowledgeDeleteUnreachable": {
+    "description": "Knowledge: delete failed, server unreachable"
+  },
+  "homeInsightDismissFailed": "Could not dismiss this insight. Try again shortly.",
+  "@homeInsightDismissFailed": {
+    "description": "Today screen: dismissing an insight failed"
   }
 }

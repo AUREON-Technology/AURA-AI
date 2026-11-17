@@ -106,7 +106,7 @@ class _HostPanelState extends ConsumerState<HostPanel> {
           children: [
             Icon(
               isRunning ? Icons.circle : Icons.circle_outlined,
-              color: gaveUp
+              color: gaveUp || status.needsRepair
                   ? palette.danger
                   : restarting
                       ? palette.warning
@@ -125,6 +125,10 @@ class _HostPanelState extends ConsumerState<HostPanel> {
                   ? context.l10n.hostStatusNotRunning
                   : !isPaired
                       ? context.l10n.hostStatusRunningNotPaired
+                      // INT-003: the backend refused the stored token and the daemon stopped
+                      // trying. Saying "reconnecting" here left the user waiting forever.
+                      : status.needsRepair
+                          ? context.l10n.hostStatusRepairRequired
                       : otherServer
                       ? context.l10n.hostStatusRunningOtherServer
                       : switch (isConnected) {
@@ -136,6 +140,13 @@ class _HostPanelState extends ConsumerState<HostPanel> {
             ),
           ],
         ),
+        if (status.needsRepair) ...[
+          const SizedBox(height: AuraSpacing.xs),
+          Text(
+            context.l10n.hostRepairExplanation,
+            style: TextStyle(fontSize: 10, color: palette.danger),
+          ),
+        ],
         if (gaveUp && supervisorState.reason != null) ...[
           const SizedBox(height: AuraSpacing.xs),
           Text(supervisorState.reason!, style: TextStyle(fontSize: 10, color: palette.danger)),
@@ -176,11 +187,11 @@ class _HostPanelState extends ConsumerState<HostPanel> {
                 variant: AuraButtonVariant.secondary,
                 onPressed: () => _stopDaemon(context, ref, supervisor),
               ),
-            if (isRunning && (!isPaired || otherServer))
+            if (status.canPair || (isRunning && otherServer))
               _SmallAuraButton(
                 label: _pairing
                     ? context.l10n.hostPairing
-                    : (otherServer ? context.l10n.hostRepair : context.l10n.hostPair),
+                    : (status.needsRepair || otherServer ? context.l10n.hostRepair : context.l10n.hostPair),
                 icon: Icons.link,
                 variant: AuraButtonVariant.secondary,
                 onPressed: _pairing ? null : () => _pairDevice(context, ref),

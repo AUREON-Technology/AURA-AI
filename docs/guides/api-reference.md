@@ -423,20 +423,20 @@ attestation). That path is fail-closed: only Developer+ receive a session. Mobil
 | `POST /admin/providers/{name}/reset-circuit` | Admin+ | Close a circuit breaker |
 | `GET /admin/sources` | Admin+ | Approved knowledge sources |
 | `PATCH /admin/sources/{id}` | Admin+ | Enable or disable a source |
-| `POST /admin/sources` | SuperAdmin | Register a source |
+| `POST /admin/sources` | SuperAdmin | Register a source (id: letters, digits, `.`, `_`, `:`, `-`; starts with a letter or digit) |
 | `DELETE /admin/sources/{id}` | SuperAdmin | Remove a source |
 | `GET /admin/approvals` | Admin+ | Pending and historical approvals |
-| `POST /admin/approvals/{id}/decide` | Admin+ | Approve or reject |
+| `POST /admin/approvals/{id}/decide` | Admin+; SuperAdmin for `connector_registration` and `blueprint_deployment` | Approve or reject |
 | `GET /admin/models` | Admin+ | Model registry |
 | `POST /admin/models/{id}/transition` | Admin+ | Stage change (production still needs an approval) |
 | `POST /admin/models/{id}/rollback` | Admin+ | Restore a previous production version |
 | `GET /admin/local-models` | Admin+ | Installed Ollama weights |
 | `POST /admin/local-models/pull` | SuperAdmin | Allowlisted pull |
-| `DELETE /admin/local-models/{name}` | SuperAdmin | Delete installed weights |
+| `DELETE /admin/local-models/{name}` | SuperAdmin | Delete installed weights; `name` may contain `/` (namespaced tags) |
 | `GET /admin/audit` | Admin+ | Append-only audit browser |
 | `GET /admin/refresh/latest` | Admin+ | Last nightly `RefreshReport` |
 | `GET /admin/jobs/{task_id}` | Admin+ | Celery task state |
-| `GET /admin/operators` | Admin+ | Operator directory (read) |
+| `GET /admin/operators` | Admin+ | Operator directory (read); 503 when the database cannot be read |
 | `PATCH /admin/operators/{email}/role` | SuperAdmin | Assign a role |
 | `POST /admin/operators/{email}/revoke-sessions` | SuperAdmin | Drop refresh tokens |
 | `POST /admin/users/{subject}/forget` | SuperAdmin | GDPR erase; returns counts only |

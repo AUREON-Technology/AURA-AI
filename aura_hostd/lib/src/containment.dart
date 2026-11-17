@@ -111,6 +111,16 @@ class ContainmentViolation implements Exception {
   String toString() => 'ContainmentViolation: $message';
 }
 
+/// Thrown when a call names (or was bound to) a workspace root that has since been revoked --
+/// the grant is checked at use, not only when the task was created (audit INT-002).
+class RootRevokedError implements Exception {
+  RootRevokedError(this.message);
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 /// Thrown by [WorkspaceRoots.addRoot] when the requested path is denylisted or otherwise unfit
 /// to be a workspace root (does not exist, is not a directory, or resolves to a denylisted path
 /// through a symlink).
@@ -177,6 +187,24 @@ class WorkspaceRoots {
   final List<WorkspaceRoot> _roots;
 
   List<WorkspaceRoot> get all => List.unmodifiable(_roots);
+
+  /// Replaces every grant with [roots], in place, so every holder of this instance sees the
+  /// change at once (`WorkspaceStore.live`, audit INT-002).
+  void replaceAll(Iterable<WorkspaceRoot> roots) {
+    final next = List.of(roots);
+    _roots
+      ..clear()
+      ..addAll(next);
+  }
+
+  /// The granted root whose canonical path is exactly [canonicalPath], or `null` if it is no
+  /// longer granted. Used to re-read a root's current trust after it was bound to a task.
+  WorkspaceRoot? byCanonicalPath(String canonicalPath) {
+    for (final root in _roots) {
+      if (root.canonicalPath == canonicalPath) return root;
+    }
+    return null;
+  }
 
   /// Validates and adds [rawPath] as a granted root. Throws [InvalidRootError] if the path is
   /// denylisted (directly or through a symlink), does not exist, or is not a directory.

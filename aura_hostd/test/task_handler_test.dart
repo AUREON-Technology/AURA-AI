@@ -5,6 +5,7 @@ import 'package:aura_hostd/src/approval_queue.dart';
 import 'package:aura_hostd/src/containment.dart';
 import 'package:aura_hostd/src/isolated_task_registry.dart';
 import 'package:aura_hostd/src/task_handler.dart';
+import 'package:aura_hostd/src/workspace_store.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
@@ -27,6 +28,23 @@ void main() {
   });
 
   _nameMissingExecutableTests();
+
+  group('read_file size cap (INT-036)', () {
+    test('refuses a file over the cap with an error that names the limit', () async {
+      final big = File(p.join(workspaceDir.path, 'big.log'));
+      big.writeAsBytesSync(List<int>.filled(maxReadFileBytes + 1, 0x61));
+      await expectLater(
+        handler.readFile({'path': 'big.log'}),
+        throwsA(isA<RpcError>().having((e) => e.message, 'message', contains('$maxReadFileBytes-byte'))),
+      );
+    });
+
+    test('still reads a file exactly at the cap', () async {
+      File(p.join(workspaceDir.path, 'edge.txt')).writeAsBytesSync(List<int>.filled(maxReadFileBytes, 0x61));
+      final result = await handler.readFile({'path': 'edge.txt'});
+      expect((result['content'] as String).length, maxReadFileBytes);
+    });
+  });
 
   test('createTask returns a fresh, non-empty task_id each time', () async {
     final a = await handler.createTask(const {});
@@ -404,12 +422,20 @@ void main() {
     test(
         'an approved command is refused if its workspace root was revoked while the approval '
         'was pending (post-approval revalidation)', () async {
+      // Revoked the way the daemon really revokes (audit INT-002): through the store on disk,
+      // by a separate load/save -- the control server's or the CLI's -- never by mutating the
+      // handler's own WorkspaceRoots, which is what this test used to do, and which passed while
+      // the daemon itself ignored every revoke until restart.
+      final store = WorkspaceStore.forConfigDir(Directory(p.join(tempDir.path, 'config')));
+      store.save(roots);
+      handler = TaskHandler.live(store, approvalQueue: approvals);
       final future = handler.run({
         'command': ['sh', '-c', 'mkdir newdir'],
         'timeout_s': 5.0,
       });
       final pending = approvals.list().single;
-      roots.removeRoot(workspaceDir.path);
+      final revoker = WorkspaceStore.forConfigDir(Directory(p.join(tempDir.path, 'config')));
+      revoker.save(revoker.load()..removeRoot(workspaceDir.path));
       approvals.respond(pending.id, true);
       await expectLater(future, throwsA(isA<RpcError>()));
       expect(Directory(p.join(workspaceDir.path, 'newdir')).existsSync(), isFalse);

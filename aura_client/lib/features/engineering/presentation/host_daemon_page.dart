@@ -327,7 +327,9 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
                 status.reachable ? Icons.circle : Icons.circle_outlined,
                 color: !status.reachable
                     ? palette.textSecondary
-                    : (status.authenticated && status.backendConnected != true
+                    : status.needsRepair
+                        ? palette.danger
+                        : (status.authenticated && status.backendConnected != true
                         ? palette.warning
                         : palette.success),
                 size: 12,
@@ -338,6 +340,10 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
                     ? context.l10n.engineeringDaemonNotRunning
                     : !status.authenticated
                         ? context.l10n.engineeringDaemonRunningNotPaired
+                        // INT-003: the backend refused the stored token (4401) and the daemon
+                        // stopped reconnecting -- only pairing again helps.
+                        : status.needsRepair
+                            ? context.l10n.engineeringDaemonRepairRequired
                         : otherServer
                         ? context.l10n.engineeringDaemonRunningOtherServer
                         // Paired (stored token) but not connected happens right after a drop --
@@ -362,7 +368,7 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
           if (otherServer) ...[
             const SizedBox(height: AuraSpacing.xs),
             Text(
-              context.l10n.engineeringDaemonOtherServerNote(appBackendUrl),
+              context.l10n.hostdPairedToOtherServer(appBackendUrl),
               style: TextStyle(color: palette.warning, fontSize: 12),
             ),
           ],
@@ -379,9 +385,11 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
                   variant: AuraButtonVariant.secondary,
                   onPressed: () => _stopDaemon(supervisor),
                 ),
-              if (status.reachable && (!status.authenticated || otherServer))
+              if (status.canPair || (status.reachable && otherServer))
                 AuraButton(
-                  label: otherServer ? context.l10n.engineeringPairAgain : context.l10n.engineeringPairThisDevice,
+                  label: status.needsRepair || otherServer
+                      ? context.l10n.engineeringPairAgain
+                      : context.l10n.engineeringPairThisDevice,
                   icon: Icons.link,
                   loading: _pairing,
                   onPressed: _pairDevice,

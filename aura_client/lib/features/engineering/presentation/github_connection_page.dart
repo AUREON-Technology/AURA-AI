@@ -3,9 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import 'package:aura_client/core/auth/token_manager.dart';
-import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/network/aura_api_client.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
 import 'package:aura_client/l10n/l10n.dart';
@@ -66,12 +65,7 @@ class _StatusViewState extends ConsumerState<_StatusView> {
   Future<void> _connect() async {
     setState(() => _busy = true);
     try {
-      final backendUrl = ref.read(backendUrlProvider);
-      final accessToken = await ref.read(tokenManagerProvider).getValidAccessToken();
-      final authorizeUrl = await fetchGithubAuthorizeUrl(
-        backendUrl: backendUrl,
-        accessToken: accessToken,
-      );
+      final authorizeUrl = await fetchGithubAuthorizeUrl(ref.read(auraApiClientProvider));
       final opened = await launchUrl(
         Uri.parse(authorizeUrl),
         mode: LaunchMode.externalApplication,
@@ -95,9 +89,7 @@ class _StatusViewState extends ConsumerState<_StatusView> {
   Future<void> _disconnect() async {
     setState(() => _busy = true);
     try {
-      final backendUrl = ref.read(backendUrlProvider);
-      final accessToken = await ref.read(tokenManagerProvider).getValidAccessToken();
-      await disconnectGithub(backendUrl: backendUrl, accessToken: accessToken);
+      await disconnectGithub(ref.read(auraApiClientProvider));
       ref.invalidate(githubConnectionStatusProvider);
       if (mounted) {
         AuraSnackbar.show(context, message: context.l10n.engineeringGithubDisconnected, kind: AuraSnackbarKind.success);

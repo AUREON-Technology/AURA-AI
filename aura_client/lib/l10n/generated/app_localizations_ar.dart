@@ -123,6 +123,11 @@ class AppLocalizationsAr extends AppLocalizations {
       'سجّل من أي مكان. تصفّح المهام والتقويم والماليات والصحة في «حياتي». أدوات الحساب موجودة تحت «أنا».';
 
   @override
+  String hostdPairedToOtherServer(String appBackendUrl) {
+    return 'التطبيق ده مسجّل دخول على $appBackendUrl. اعمل Pair تاني عشان تنقل الـ daemon هناك.';
+  }
+
+  @override
   String get onboardingSkip => 'تخطّي';
 
   @override
@@ -4211,4 +4216,125 @@ class AppLocalizationsAr extends AppLocalizations {
   String hostdCodeDebugUnreachable(String detail) {
     return 'الـ Debugger (debugpy) اشتغل بس مقدرناش نوصله: $detail';
   }
+
+  @override
+  String get coreEngineerWorkspacesLoadFailed =>
+      'معرفناش نحمّل مساحات الشغل بتاعتك. شغلك مضاعش -- جرّب تاني بعد شوية.';
+
+  @override
+  String get voiceSocketUnavailable => 'الصوت المباشر مش متاح على السيرفر ده.';
+
+  @override
+  String get voiceSocketTooMany =>
+      'الصوت المباشر مفتوح على جهاز تاني، أو شغّلته مرات كتير. اقفله من هناك أو استنى كام دقيقة وجرّب تاني.';
+
+  @override
+  String get voiceSocketBadRequest =>
+      'السيرفر مقدرش يبدأ الصوت المباشر بالإعدادات دي.';
+
+  @override
+  String get voiceClientNothingSpeakable => 'مفيش حاجة في الرد ده تتقري بصوت.';
+
+  @override
+  String get voiceClientCouldNotRead => 'معرفناش نقرا الرد ده بصوت.';
+
+  @override
+  String get hostStatusRepairRequired => 'محتاج تعمل Pair تاني';
+
+  @override
+  String get engineeringDaemonRepairRequired =>
+      'محتاج تعمل Pair تاني: السيرفر مبقاش بيقبل الجهاز ده';
+
+  @override
+  String knowledgeErrTooLarge(String kind, String limit) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'pdf': 'الـ PDF ده',
+      'other': 'المستند ده',
+    });
+    return '$_temp0 أكبر من الحد المسموح على السيرفر ($limit).';
+  }
+
+  @override
+  String get knowledgeErrRateLimited =>
+      'رفعت ملفات كتير دلوقتي. استنى دقيقة وجرّب تاني.';
+
+  @override
+  String get knowledgeErrUnavailable =>
+      'مكتبة المعرفة مش متاحة دلوقتي. جرّب تاني بعدين.';
+
+  @override
+  String knowledgeErrInProgress(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'pdf': 'الـ PDF ده',
+      'other': 'المستند ده',
+    });
+    return 'AURA لسه بيحفظ $_temp0. اعمل تحديث بعد شوية قبل ما تجرّب تاني.';
+  }
+
+  @override
+  String knowledgeErrTimeout(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'pdf': 'الـ PDF ده',
+      'other': 'المستند ده',
+    });
+    return 'AURA واخد وقت طويل مع $_temp0. ممكن يكون اتحفظ: اعمل تحديث وشوف. لو جرّبت تاني مش هيتضاف مرتين.';
+  }
+
+  @override
+  String get knowledgeErrNetwork =>
+      'معرفناش نوصل لـ AURA. لو جرّبت تاني مش هيتضاف مرتين.';
+
+  @override
+  String get knowledgeErrSignIn => 'سجّل دخول تاني عشان تكمّل.';
+
+  @override
+  String get knowledgeErrForbidden => 'معندكش صلاحية تضيف مستندات.';
+
+  @override
+  String knowledgeErrServer(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'pdf': 'الـ PDF ده',
+      'other': 'المستند ده',
+    });
+    return 'AURA معرفش يحفظ $_temp0. لو جرّبت تاني مش هيتضاف مرتين.';
+  }
+
+  @override
+  String knowledgeErrRejected(String kind, String reason) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'pdf': 'الـ PDF ده',
+      'other': 'المستند ده',
+    });
+    return 'معرفناش نضيف $_temp0: $reason';
+  }
+
+  @override
+  String get knowledgeAlreadyUnchanged =>
+      'موجود في مكتبتك بالفعل ومتغيرش. مفيش حاجة جديدة اتحفظت.';
+
+  @override
+  String get knowledgeNotSavedQuarantined =>
+      'ماتحفظش: كل الأجزاء اتحجزت في فحص الأمان.';
+
+  @override
+  String knowledgeNotSavedReason(String reason) {
+    return 'ماتحفظش ($reason).';
+  }
+
+  @override
+  String get hostRepairExplanation =>
+      'السيرفر مبقاش بيقبل الجهاز ده (انتهت صلاحيته، أو اتلغى، أو حسابك معندوش صلاحية المهندس). اعمل Pair تاني عشان تتوصل.';
+
+  @override
+  String knowledgeDeleteFailedReason(String reason) {
+    return 'معرفناش نمسح المستند ده: $reason';
+  }
+
+  @override
+  String get knowledgeDeleteUnreachable =>
+      'معرفناش نوصل لـ AURA عشان نمسح المستند ده.';
+
+  @override
+  String get homeInsightDismissFailed =>
+      'معرفناش نخفي الملاحظة دي. جرّب تاني بعد شوية.';
 }

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { api, fetchMe } from "@/lib/api";
-import type { Me, Operator, OperatorRole } from "@/lib/types";
+import type { ForgetResult, Me, Operator, OperatorRole } from "@/lib/types";
 
 export default function AccessPage() {
   const [me, setMe] = useState<Me | null>(null);
@@ -12,7 +12,7 @@ export default function AccessPage() {
   const [forgetSubject, setForgetSubject] = useState("");
   const [grantEmail, setGrantEmail] = useState("");
   const [grantRole, setGrantRole] = useState<OperatorRole>("Developer");
-  const [counts, setCounts] = useState<string>("");
+  const [forgetResult, setForgetResult] = useState<ForgetResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
@@ -142,7 +142,10 @@ export default function AccessPage() {
       {me?.is_super_admin ? (
         <div className="card" style={{ marginTop: 16 }}>
           <h2>GDPR forget</h2>
-          <p className="muted">Returns counts only. Never displays user content.</p>
+          <p className="muted">
+            Returns counts only. Never displays user content. An incomplete erasure keeps the
+            account; run it again once the failed stores are back.
+          </p>
           <input
             value={forgetSubject}
             onChange={(e) => setForgetSubject(e.target.value)}
@@ -153,18 +156,51 @@ export default function AccessPage() {
             title="Forget user"
             confirmText="forget"
             onConfirm={async () => {
-              const body = await api<{ counts: Record<string, number> }>(
+              setForgetResult(null);
+              const body = await api<ForgetResult>(
                 `/admin/users/${encodeURIComponent(forgetSubject)}/forget`,
                 { method: "POST" },
               );
-              setCounts(JSON.stringify(body.counts));
+              setForgetResult(body);
             }}
           >
             Forget
           </ConfirmDialog>
-          {counts ? <p data-testid="forget-counts">{counts}</p> : null}
+          {forgetResult ? <ForgetOutcome result={forgetResult} /> : null}
         </div>
       ) : null}
     </>
+  );
+}
+
+// The gateway answers 200 for a partial erasure too: `forgotten` is false, `failed` names the
+// stores it could not clear, and the users row is kept (api/admin_platform.py erase_account).
+// Showing only the counts made a partial erasure read as done (audit INT-008).
+function ForgetOutcome({ result }: { result: ForgetResult }) {
+  const failed = result.failed ?? [];
+  const complete = result.forgotten === true && failed.length === 0;
+  return (
+    <div style={{ marginTop: 12 }}>
+      <p
+        data-testid="forget-status"
+        className={complete ? undefined : "banner"}
+        role={complete ? undefined : "alert"}
+      >
+        {complete
+          ? "Erasure complete."
+          : `Erasure incomplete: ${failed.length ? `failed for ${failed.join(", ")}` : "the gateway did not confirm it"}. The account was kept; run forget again.`}
+      </p>
+      <p data-testid="forget-counts">{JSON.stringify(result.counts ?? {})}</p>
+      {result.not_erased?.length ? (
+        <div data-testid="forget-not-erased">
+          <p className="muted">Not erased by this request:</p>
+          <ul>
+            {result.not_erased.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
   );
 }

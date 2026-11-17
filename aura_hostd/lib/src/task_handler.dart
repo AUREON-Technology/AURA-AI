@@ -18,6 +18,7 @@ import 'containment.dart';
 import 'diff_util.dart';
 import 'git_service.dart';
 import 'isolated_task_registry.dart';
+import 'workspace_store.dart';
 
 class RpcError implements Exception {
   RpcError(this.message, {this.code});
@@ -46,6 +47,13 @@ const _maxCommandTimeout = Duration(minutes: 15);
 /// longer captured or forwarded.
 const _maxOutputCapChars = 500000;
 
+/// The largest file `read_file` returns (audit INT-036), the same 2 MiB the control server's
+/// own `GET /read` allows. A bigger file used to be read whole and sent as one frame, which a
+/// backend whose WebSocket message limit is smaller answers by closing the connection (1009),
+/// failing every other call in flight with it. Refusing with a clear error keeps the connection
+/// and tells the agent what to do instead.
+const maxReadFileBytes = 2 * 1024 * 1024;
+
 /// Called once per chunk of output as a running command produces it (`stream` being `"stdout"` or
 /// `"stderr"`). Optional: [TaskHandler.run] behaves identically without one, just without giving
 /// the caller a way to observe output before the command finishes.
@@ -58,9 +66,29 @@ class TaskHandler {
     GitService? gitService,
     IsolatedTaskRegistry? isolatedTasks,
   ])  : _approvals = approvalQueue ?? ApprovalQueue(),
-        _isolatedTasks = isolatedTasks ?? IsolatedTaskRegistry(_roots, gitService);
+        _isolatedTasks = isolatedTasks ?? IsolatedTaskRegistry(_roots, gitService),
+        _refreshRoots = null;
+
+  /// The daemon's own wiring (`backend_connection.dart`): resolves every RPC against
+  /// [WorkspaceStore.live] -- the same instance the control server's grant/revoke/trust/untrust
+  /// updates on save -- and re-reads the store at the start of each RPC, so a change made by the
+  /// CLI in another process applies too (audit INT-002). [isolatedTasks] must have been built on
+  /// `store.live` as well; the default one is.
+  TaskHandler.live(
+    WorkspaceStore store, {
+    ApprovalQueue? approvalQueue,
+    IsolatedTaskRegistry? isolatedTasks,
+  })  : _roots = store.live,
+        _approvals = approvalQueue ?? ApprovalQueue(),
+        _isolatedTasks = isolatedTasks ?? IsolatedTaskRegistry(store.live),
+        _refreshRoots = store.refreshLive;
 
   final WorkspaceRoots _roots;
+
+  /// Re-reads the grants before each RPC, when this handler was built with [TaskHandler.live].
+  final void Function()? _refreshRoots;
+
+  void _refresh() => _refreshRoots?.call();
   /// Pending approvals by the RPC call id that is waiting on them, so a `cancel` frame from the
   /// server (audit FSA-041) can resolve the right approval.
   final Map<String, String> _approvalByCall = {};
@@ -85,6 +113,7 @@ class TaskHandler {
   final Set<String> _activeTaskIds = {};
 
   Future<Map<String, Object?>> createTask(Map<String, dynamic> params) async {
+    _refresh();
     final taskId = 't_${DateTime.now().microsecondsSinceEpoch}_${_activeTaskIds.length}';
     _activeTaskIds.add(taskId);
 
@@ -119,9 +148,22 @@ class TaskHandler {
   /// The root a task_id was bound to at `create_task` (FSA-006): an isolated task's worktree, or
   /// the IDE root a non-isolated task was created with. `null` for a task created without one,
   /// whose RPCs each resolve their own root as they always have.
+  ///
+  /// Re-derived from the current grants on every call (audit INT-002): a root revoked since
+  /// `create_task` refuses the call, and a trust change applies at once.
   WorkspaceRoot? _boundRootFor(String? taskId) {
     if (taskId == null) return null;
-    return _isolatedTasks.boundRoot(taskId) ?? _boundRoots[taskId];
+    final isolated = _isolatedTasks.boundRoot(taskId);
+    if (isolated != null) return isolated;
+    final bound = _boundRoots[taskId];
+    if (bound == null) return null;
+    final current = _roots.byCanonicalPath(bound.canonicalPath);
+    if (current == null) {
+      throw RpcError(
+        'workspace root ${bound.canonicalPath} was revoked -- grant the folder again to continue',
+      );
+    }
+    return current;
   }
 
   /// D6 plan section C.3 (the write-gating retrofit): the agent-facing write RPC now goes through
@@ -129,6 +171,7 @@ class TaskHandler {
   /// `edit_file` (which routes through this same RPC on the backend, see `coding.py::edit_file`)
   /// were the one place an agent could freely mutate any file in a granted-but-untrusted root.
   Future<Map<String, Object?>> writeFile(Map<String, dynamic> params, {String? callId}) async {
+    _refresh();
     final path = _requireString(params, 'path');
     final content = _requireString(params, 'content');
     final taskId = params['task_id'] as String?;
@@ -171,6 +214,7 @@ class TaskHandler {
   /// within the same granted root -- a cross-root atomic batch would need per-operation trust
   /// gating, which is out of this phase's scope.
   Future<Map<String, Object?>> writeFiles(Map<String, dynamic> params, {String? callId}) async {
+    _refresh();
     final rawOps = params['operations'];
     if (rawOps is! List || rawOps.isEmpty) {
       throw RpcError('"operations" must be a non-empty list');
@@ -252,6 +296,7 @@ class TaskHandler {
   }
 
   Future<Map<String, Object?>> readFile(Map<String, dynamic> params) async {
+    _refresh();
     final path = _requireString(params, 'path');
     final taskId = params['task_id'] as String?;
     var root = _boundRootFor(taskId);
@@ -267,6 +312,13 @@ class TaskHandler {
     if (!file.existsSync()) {
       throw RpcError('$path does not exist');
     }
+    final size = file.lengthSync();
+    if (size > maxReadFileBytes) {
+      throw RpcError(
+        '$path is $size bytes, over the $maxReadFileBytes-byte read_file limit -- read a smaller '
+        'file, or use run_command (e.g. head, grep or sed -n) to read part of it',
+      );
+    }
     return {'content': file.readAsStringSync()};
   }
 
@@ -280,6 +332,7 @@ class TaskHandler {
     // `Process.start`ed directly without this daemon re-interpreting it through another shell.
     // Tolerate other argv shapes too (a future caller might not go through `sh -c`) by falling
     // back to running the argv's first element as the program.
+    _refresh();
     final commandArgv = _requireStringList(params, 'command');
     if (commandArgv.isEmpty) {
       throw RpcError('"command" must be a non-empty list of arguments');
@@ -416,6 +469,19 @@ class TaskHandler {
     if (approvalId != null) _approvals.cancel(approvalId);
   }
 
+  /// The connection these calls arrived on is gone (audit INT-007). The backend failed every
+  /// one of them the moment it saw the drop (`HostAgentSession.fail_all_pending`), so nothing
+  /// still waiting for a human may run afterwards: an approval granted now would execute a
+  /// command or write whose result nobody receives, and a model retry could run it twice.
+  /// Cancels every approval a call is waiting on; a call already running is unaffected.
+  void cancelAll() {
+    final approvalIds = _approvalByCall.values.toList();
+    _approvalByCall.clear();
+    for (final approvalId in approvalIds) {
+      _approvals.cancel(approvalId);
+    }
+  }
+
   void _trackApproval(String? callId, PendingApproval approval) {
     if (callId != null) _approvalByCall[callId] = approval.id;
   }
@@ -458,6 +524,7 @@ class TaskHandler {
       case ApprovalStatus.pending:
         throw RpcError('command approval resolved with no decision -- this should not happen');
     }
+    _refresh();
     final currentRoot = _roots.findContainingRoot(cwd);
     final currentHash = currentRoot == null
         ? null
@@ -525,6 +592,7 @@ class TaskHandler {
         throw RpcError('write approval resolved with no decision -- this should not happen');
     }
 
+    _refresh();
     final currentRoot = _roots.findContainingRoot(cwd);
     if (currentRoot == null) {
       throw RpcError('workspace root is no longer granted -- refusing approved write: $pathList');

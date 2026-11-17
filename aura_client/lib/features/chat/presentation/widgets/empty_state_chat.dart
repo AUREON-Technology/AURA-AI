@@ -58,45 +58,56 @@ class EmptyStateChat extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               ExcludeSemantics(
-                child: Container(
-                  width: 64,
-                  height: 64,
-                  decoration: BoxDecoration(
-                    gradient: palette.brandGradient,
-                    borderRadius: BorderRadius.circular(AuraRadius.lg + 4),
-                    boxShadow: [
-                      BoxShadow(
-                        color: palette.brand.withValues(alpha: 0.35),
-                        blurRadius: 28,
-                        offset: const Offset(0, 10),
+                child: AuraEntrance(
+                  offset: 0,
+                  child: AuraBreathe(
+                    child: Container(
+                      width: 64,
+                      height: 64,
+                      decoration: BoxDecoration(
+                        gradient: palette.brandGradient,
+                        borderRadius: BorderRadius.circular(AuraRadius.lg + 4),
+                        boxShadow: [
+                          BoxShadow(
+                            color: palette.brand.withValues(alpha: 0.35),
+                            blurRadius: 28,
+                            offset: const Offset(0, 10),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                  child: Icon(
-                    Icons.auto_awesome,
-                    color: palette.onBrand,
-                    size: 30,
+                      child: Icon(
+                        Icons.auto_awesome,
+                        color: palette.onBrand,
+                        size: 30,
+                      ),
+                    ),
                   ),
                 ),
               ),
               const SizedBox(height: AuraSpacing.xl),
-              Semantics(
-                header: true,
-                child: Text(
-                  l10n.chatEmptyTitle,
-                  textAlign: TextAlign.center,
-                  style: textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: palette.textPrimary,
+              AuraEntrance(
+                delay: AuraEntrance.stagger(1),
+                child: Semantics(
+                  header: true,
+                  child: Text(
+                    l10n.chatEmptyTitle,
+                    textAlign: TextAlign.center,
+                    style: textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: palette.textPrimary,
+                    ),
                   ),
                 ),
               ),
               const SizedBox(height: AuraSpacing.sm),
-              Text(
-                l10n.chatEmptyMessage,
-                textAlign: TextAlign.center,
-                style: textTheme.bodyMedium?.copyWith(
-                  color: palette.textSecondary,
+              AuraEntrance(
+                delay: AuraEntrance.stagger(2),
+                child: Text(
+                  l10n.chatEmptyMessage,
+                  textAlign: TextAlign.center,
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: palette.textSecondary,
+                  ),
                 ),
               ),
               const SizedBox(height: AuraSpacing.xxl),
@@ -108,13 +119,16 @@ class EmptyStateChat extends StatelessWidget {
                 childAspectRatio: narrow ? 3.4 : 2.2,
                 physics: const NeverScrollableScrollPhysics(),
                 children: [
-                  for (final s in suggestions)
-                    _SuggestionCard(
-                      icon: s.$1,
-                      title: s.$2,
-                      subtitle: s.$3,
-                      prompt: s.$4,
-                      onSelected: onSuggestionSelected,
+                  for (final (i, s) in suggestions.indexed)
+                    AuraEntrance(
+                      delay: AuraEntrance.stagger(i + 3),
+                      child: _SuggestionCard(
+                        icon: s.$1,
+                        title: s.$2,
+                        subtitle: s.$3,
+                        prompt: s.$4,
+                        onSelected: onSuggestionSelected,
+                      ),
                     ),
                 ],
               ),
