@@ -17,6 +17,7 @@ a time behind a flag.
 import asyncio
 import base64
 import binascii
+import hashlib
 import json
 from datetime import datetime, timedelta
 from typing import Any, AsyncIterator, Mapping
@@ -369,6 +370,51 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 detail=AuthorizationError("only a workspace owner or admin can change its knowledge").to_dict(),
             )
 
+    plans = getattr(container, "plans", None)
+
+    async def admit_turn(caller: Principal, agent: str | None) -> Any:
+        """SaaS P1-C: reserve one message against the workspace's plan (and require Engineer for
+        an Engineer turn). Returns the reservation to give back if the turn fails; None when the
+        caller is unmetered. Raises PlanLimitError (402)."""
+        if plans is None:
+            return None
+        workspace_id = await plans.metered_workspace(caller)
+        if workspace_id is None:
+            return None
+        if agent == "engineer":
+            await plans.require_engineer(workspace_id)
+        return await plans.admit_message(workspace_id)
+
+    async def release_turn(reservation: Any) -> None:
+        if reservation is not None:
+            try:
+                await plans.release(reservation)
+            except Exception:
+                logger.warning("could not give back a reserved message", exc_info=True)
+
+    async def storage_workspace(caller: Principal) -> str | None:
+        return None if plans is None else await plans.metered_workspace(caller)
+
+    async def storage_to_reserve(caller: Principal, text: str) -> int:
+        """Bytes an ingest may add: none when this exact content is already stored for this
+        owner (the engine dedupes on the same hash, so a re-upload stores nothing new)."""
+        stripped = text.strip()
+        digest = hashlib.sha256(stripped.encode("utf-8")).hexdigest()
+        if await container.documents.get_by_hash(digest, owner_id=caller.knowledge_owner) is not None:
+            return 0
+        return len(stripped.encode("utf-8"))
+
+    async def settle_storage(workspace_id: str | None, reserved: int, result: Any) -> None:
+        """Correct the reserved estimate to what the store kept: nothing for a duplicate, the
+        stored content's length otherwise -- so a delete later gives back exactly this much."""
+        if workspace_id is None:
+            return
+        kept = 0
+        if result is not None and getattr(result, "created", False) and result.document is not None:
+            kept = len(result.document.content.encode("utf-8"))
+        if kept != reserved:
+            await plans.meter.add(workspace_id, "storage_bytes", "all", kept - reserved)
+
     # Optional `Idempotency-Key` support (roadmap P1.4; see api/idempotency.py). Set before any
     # route is declared: APIRouter reads `route_class` at decoration time. A route opts in with
     # `dependencies=idempotent`; without the header the route behaves exactly as before.
@@ -589,7 +635,15 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         """One complete turn. Use ``/chat/stream`` for incremental output."""
         await enforce_rate_limit(request, caller, "chat")
         turn = await to_turn(payload, caller, request)
-        result = await container.kernel.run(turn)
+        reservation = await admit_turn(caller, payload.agent)
+        try:
+            result = await container.kernel.run(turn)
+        except BaseException:
+            await release_turn(reservation)
+            raise
+        if result.telemetry.outcome.value != "success":
+            # A failed turn does not use up the month (spec 5.3).
+            await release_turn(reservation)
         if caller.is_service:
             # Chat turns are not audited for people; a service's are, so one interpretation can be
             # traced from the calling system's correlation id to the turn that produced it.
@@ -692,16 +746,25 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             raise ValidationError("response_schema is supported on POST /api/v3/chat only, not on the stream")
         await enforce_rate_limit(request, caller, "chat")
         turn = await to_turn(payload, caller, request)
+        reservation = await admit_turn(caller, payload.agent)
 
         async def events() -> AsyncIterator[bytes]:
+            completed = False
             try:
                 async for frame in container.kernel.stream(turn):
                     event = frame.get("type", "message")
+                    if event == "done":
+                        completed = True
                     yield f"event: {event}\ndata: {json.dumps(frame)}\n\n".encode()
             except Exception as exc:  # pragma: no cover - defensive
                 logger.exception("stream failed")
                 payload_ = {"type": "error", "error": "internal_error", "message": type(exc).__name__}
                 yield f"event: error\ndata: {json.dumps(payload_)}\n\n".encode()
+            finally:
+                # Counted only once the turn finished (a `done` frame): an error frame, an
+                # exception or a client gone before `done` gives the message back (spec 5.3).
+                if not completed:
+                    await release_turn(reservation)
 
         return StreamingResponse(
             with_keepalive(events(), interval_s=SSE_KEEPALIVE_S),
@@ -793,13 +856,21 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
     ) -> JSONResponse:
         await enforce_rate_limit(request, caller, "ingest")
         require_knowledge_write(caller)
-        result = await container.knowledge.ingest(
-            content=payload.content,
-            title=payload.title,
-            document_id=DocumentId(payload.document_id) if payload.document_id else None,
-            owner_id=caller.knowledge_owner,
-            metadata=payload.metadata,
-        )
+        storage_ws = await storage_workspace(caller)
+        reserved = await storage_to_reserve(caller, payload.content) if storage_ws is not None else 0
+        if storage_ws is not None:
+            await plans.admit_storage(storage_ws, reserved)
+        result = None
+        try:
+            result = await container.knowledge.ingest(
+                content=payload.content,
+                title=payload.title,
+                document_id=DocumentId(payload.document_id) if payload.document_id else None,
+                owner_id=caller.knowledge_owner,
+                metadata=payload.metadata,
+            )
+        finally:
+            await settle_storage(storage_ws, reserved, result)
         if container.cag is not None and result.document is not None:
             await container.cag.on_document_changed(
                 result.document.id, owner_id=caller.knowledge_owner
@@ -847,9 +918,18 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         if extraction.unreadable_pages and container.ocr_engine is not None:
             extraction = await apply_ocr(extraction, container.ocr_engine)
 
-        result = await container.knowledge.ingest(
-            title=title, owner_id=caller.knowledge_owner, segments=extraction.blocks,
-        )
+        storage_ws = await storage_workspace(caller)
+        joined = "\n\n".join(block.text for block in extraction.blocks if block.text)
+        reserved = await storage_to_reserve(caller, joined) if storage_ws is not None else 0
+        if storage_ws is not None:
+            await plans.admit_storage(storage_ws, reserved)
+        result = None
+        try:
+            result = await container.knowledge.ingest(
+                title=title, owner_id=caller.knowledge_owner, segments=extraction.blocks,
+            )
+        finally:
+            await settle_storage(storage_ws, reserved, result)
         if container.cag is not None and result.document is not None:
             await container.cag.on_document_changed(
                 result.document.id, owner_id=caller.knowledge_owner
@@ -905,9 +985,14 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         await enforce_rate_limit(request, caller, "ingest")
         require_knowledge_write(caller)
         doc_id = DocumentId(document_id)
+        stored = await container.documents.get(doc_id)
         removed = await container.knowledge.delete_document(
             doc_id, owner_id=caller.knowledge_owner
         )
+        storage_ws = await storage_workspace(caller)
+        if removed and storage_ws is not None and stored is not None and stored.owner_id == caller.knowledge_owner:
+            # Gives back what settle_storage counted for it (spec 5.3); never below 0.
+            await plans.free_storage(storage_ws, len(stored.content.encode("utf-8")))
         if container.cag is not None:
             await container.cag.on_document_changed(doc_id, owner_id=caller.knowledge_owner)
         return JSONResponse(content={"deleted": True, "chunks_removed": removed})
