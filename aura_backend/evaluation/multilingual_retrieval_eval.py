@@ -59,6 +59,10 @@ def _configure(embedder: str, reranker: str, threshold: float | None) -> None:
     # needs its own threshold).
     if reranker == "heuristic":
         os.environ["AURA_KNOWLEDGE_RERANK_PROVIDER"] = "heuristic"
+    elif reranker.startswith("either:"):
+        # The combined gate (EitherGateReranker): heuristic OR the named cross-encoder.
+        os.environ["AURA_KNOWLEDGE_RERANK_PROVIDER"] = "either"
+        os.environ["AURA_KNOWLEDGE_RERANK_MODEL"] = reranker.removeprefix("either:")
     else:
         os.environ["AURA_KNOWLEDGE_RERANK_PROVIDER"] = "cross-encoder"
         os.environ["AURA_KNOWLEDGE_RERANK_MODEL"] = reranker
@@ -122,7 +126,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--embedder", action="append", required=True,
                         help="'hash' or a sentence-transformers model id; repeatable")
     parser.add_argument("--reranker", action="append", default=None,
-                        help="'heuristic' (default) or a cross-encoder model id; repeatable")
+                        help="'heuristic' (default), a cross-encoder model id, or "
+                             "'either:<model id>' for the combined gate; repeatable")
     parser.add_argument("--threshold", action="append", type=float, default=None,
                         help="relevance threshold on the reranker's score; repeatable "
                              "(default: the deployment's AURA_KNOWLEDGE_SCORE_THRESHOLD)")

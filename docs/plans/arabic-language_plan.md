@@ -49,6 +49,12 @@ Recorded 2026-11-17 by the owner.
 15. **Currency**: language changes words and number formatting only, never the currency. A
     per-user currency setting is a separate follow-up.
 16. **OCR**: Tesseract reads Arabic and English (`ara+eng`).
+17. **Search relevance gate** (owner, 2026-11-17, after stage 4 measurements): a passage counts
+    as relevant if **either** the existing word-overlap heuristic **or** the multilingual
+    cross-encoder `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` accepts it
+    (`EitherGateReranker`), together with the switch to `multilingual-e5-small` and a
+    re-index. Defaults switch only if the re-measured suites hold. Accepted cost: about
+    100–300 ms of CPU per search for the cross-encoder.
 
 Already decided before this plan (still binding):
 - Arabic should be "a translation file, not a code change". The two source-scan checks
