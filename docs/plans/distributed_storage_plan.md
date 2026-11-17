@@ -1,8 +1,8 @@
 # Plan: Multi-provider offsite storage for AURA backups
 
-Status: **DRAFT, awaiting approval.** No code written.
-Module: `deploy/scripts/` (backup, restore, verify), `deploy/docker-compose.{prod,dev}.yml` (backup service env), `deploy/monitoring/alerts/aura.yml`, `docs/guides/maintenance-guide.md`.
-Base: branch `anas/confident-gates-j2vj8w` at `0d6c53e`. Working tree was clean at Phase 0.
+Status: **Approved by the user on 2026-11-17. BUILT and TESTED locally; not proven.** Nothing has run against real buckets or on the VPS. See "Implementation status" at the end.
+Module: `deploy/scripts/` (backup, fetch, verify), `deploy/docker-compose.prod.yml` (backup service env), `deploy/monitoring/alerts/aura.yml`, `docs/guides/maintenance-guide.md`.
+Base: branch `anas/confident-gates-j2vj8w` at `0d6c53e`. Working tree was clean at Phase 0. PR: anasibrahimgnedy-collab/AURA-AI#252.
 
 ## Goal
 
@@ -83,9 +83,42 @@ Gap: **one remote, not two.** Offsite may also be unset in production; the plan 
 - Free-tier or multi-account storage pooling.
 - Hourly WAL shipping.
 
-## Open items for the user before build
+## Open items for the user (needed for rollout, not for the code)
 
 1. Where is the age private key kept, and is there a second copy? **(needed before any restore can be trusted)**
 2. Which two of B2, R2, Wasabi or AWS S3 do you want as the first pair? Are both accounts ready?
 3. Is `BACKUP_S3_URI` set on the VPS right now? (Needed for rollout step 1.)
-4. Approve this plan, or say what to change.
+4. ~~Approve this plan~~ Approved 2026-11-17.
+
+## Implementation status (2026-11-17)
+
+Built on PR anasibrahimgnedy-collab/AURA-AI#252:
+
+- `backup.sh`: `BACKUP_OFFSITE_TARGETS` (falls back to `BACKUP_S3_URI`); per-target upload, verify
+  and retention; durable only at `BACKUP_OFFSITE_MIN_COPIES` verified copies (default 2). Below
+  that the cycle reports failure and `.last_offsite_success` does not advance.
+- Configuration is checked before any upload. These are refused: two targets on one rclone remote
+  (not independent copies), a duplicated target, a glob character, and a non-integer or zero
+  minimum. The local set is still taken.
+- `backup-fetch.sh` (new): fetches the newest set held by any target, from the first target whose
+  copy verifies keyless; feeds `restore.sh` / `restore-drill.sh`.
+- Metrics `aura_backup_offsite_copies_verified` / `_required`. Alerts `AuraBackupUnderReplicated`
+  (last cycle) and `AuraBackupOffsiteStale` (36 hours without a durable set).
+- Tests: `deploy/scripts/tests/test_backup_crypto.sh`, 90 assertions, stub rclone. shellcheck
+  `-s sh` clean. `backup-fetch.sh` added to Backend CI's shellcheck list.
+
+Deviations from the plan above, and why:
+
+- **Compose:** only `docker-compose.prod.yml` changed. The dev stack has no backup service, so
+  there is nothing to keep in parity.
+- **Secrets:** `bootstrap-secrets.sh` is unchanged. All provider credentials live in the one
+  `secrets/backup/rclone.conf` it already moves into place, one named remote per provider.
+- **Restore:** `restore.sh` and `restore-drill.sh` are unchanged. `backup-fetch.sh` picks and
+  verifies the remote copy, then hands a local set to them, which keeps decryption in one place.
+- **Behaviour change:** with the default minimum of 2, an existing single-target setup now
+  reports offsite failure and fires both alerts until a second target is added. This is
+  intended: one provider is not durable.
+
+Not proven until the rollout steps run: a real cycle to two real providers, and a restore drill
+from each provider's copy (maintenance-guide "Quarterly"). CI on the PR shows red because the
+runners return no logs (CB-44); the checks above were run locally with the CI commands.

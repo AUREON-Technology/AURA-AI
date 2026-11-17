@@ -72,7 +72,7 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 | Engineer workspaces (ADR-013/014) | BUILT | GAP-025; off by default; no `verify-engineer-workspaces` report |
 | Desktop hostd bridge | BUILT | GAP-026; F-21 (confirmed): non-streaming `run` returns `''` / `-1` |
 | Observability | OPEN | GAP-036, GAP-037 |
-| Backup / DR | TESTED in a sandbox; OPEN on any live target | A2 sandbox (`phase-a2-restore-drill.md`); GAP-028, GAP-046 |
+| Backup / DR | TESTED in a sandbox; OPEN on any live target | A2 sandbox (`phase-a2-restore-drill.md`); GAP-028, GAP-046. Multi-provider offsite (2026-11-17, PR #252, `docs/plans/distributed_storage_plan.md`): copies to every `BACKUP_OFFSITE_TARGETS` remote, durable only at `BACKUP_OFFSITE_MIN_COPIES` (default 2), `backup-fetch.sh` for restore -- BUILT and TESTED with a stub rclone, **not deployed, no real provider used** |
 | 50-user capacity | OPEN | GAP-011 (P0), GAP-041. Phase 2 (2026-11-09): admission caps are divided among the gateway's workers and daily quotas are shared across processes (FSA-025) -- built and tested, still unmeasured on the live topology |
 | Phase 2 core reliability (audit FSA-010/011/012/015/016/018/025/041/046/059/066/073/091/092/093/094/100/110/111/112) | BUILT and TESTED locally (pytest, legacy unittest, real PG16 for the Postgres-backed items, `dart test` 274, `flutter test` 630); **not CI-run, not deployed** | Branch `anas/magical-bell-e9spvh` after #229: nginx-only forwarded headers, production CORS, dev/prod parity, streamed `fetch_url`, Ollama `done_reason`, `forget_source` vectors, per-turn tool cap, JSON-mode boot warning, finetune drain reuse, asyncpg pool bounds + computed connection budget, Whisper language allow-list, legacy-plaintext read counter, digest-pinned images + required Space revision, model revisions + Whisper warm-up, per-user session index + refresh-family revocation, audit/telemetry retention + pseudonymised erasure, off-host vector payloads without text, host-tool cancel frames + approval-window budget, client Idempotency-Key, cross-process admission/quota. Live-only items (FSA-084/085, load matrix, re-encryption run) remain the owner's |
 | Real-model evaluation gates | OPEN | GAP-021; GAP-006 (`eval-ci.yml`'s deterministic gate runs on PR and push; only its `dispatch-run` job is manual -- FSA-120 correction 2026-11-08) |
@@ -195,6 +195,9 @@ That needs a check in the Firebase console.
 - #187, #185, #188, #143, #165: listed above; #143 is client-only (failure classifier on every
   `AsyncValue.error`), #165 docs-only.
 - PRs #78 and #88 closed as superseded (both features are on `main` in reworked form).
+- #252 (open, 2026-11-17): multi-provider offsite backups with a two-copy quorum, configuration
+  checks, `backup-fetch.sh`, and the `AuraBackupUnderReplicated` / `AuraBackupOffsiteStale`
+  alerts. Deploy-stack only; no backend code. Local checks pass; CI ran with no logs (CB-44).
 
 ## Next steps
 

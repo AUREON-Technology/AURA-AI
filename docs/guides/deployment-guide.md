@@ -354,8 +354,11 @@ Credentials come from `deploy/secrets/rclone.conf` or `backup_s3_access_key` /
 generate the key pair and configure the public key, or the sidecar refuses to run
 (`AuraBackupMisconfigured`). Procedure, key storage, restore and rotation:
 [maintenance-guide.md → Backup encryption keys](maintenance-guide.md#backup-encryption-keys).
-`AuraBackupStale`, `AuraBackupOffsiteFailed`, `AuraBackupMisconfigured` and
-`AuraBackupUnencrypted` scrape the textfile metrics the sidecar writes.
+`AuraBackupStale`, `AuraBackupOffsiteFailed`, `AuraBackupUnderReplicated`,
+`AuraBackupOffsiteStale`, `AuraBackupMisconfigured` and `AuraBackupUnencrypted` scrape the
+textfile metrics the sidecar writes. Offsite copies go to every remote in
+`BACKUP_OFFSITE_TARGETS` and need two verified providers by default; setup is in
+[maintenance-guide.md → Offsite providers](maintenance-guide.md#offsite-providers-multi-target).
 
 ```bash
 ls -lh backups/

@@ -195,17 +195,25 @@ rebuild.
 
 ## Quarterly
 
-**Pull one offsite set back and verify it** (for each offsite target). The nightly job already
-`rclone check`s each upload; this proves every copy is restorable from the far side. Run it
-against each remote in `BACKUP_OFFSITE_TARGETS`, or against `BACKUP_S3_URI` for a single target:
+**Pull one offsite set back and verify it** (from each offsite target). The nightly job already
+`rclone check`s each upload; this proves every copy is restorable from the far side.
+`backup-fetch.sh` downloads a set, checks it against its `CHECKSUMS.sha256` (no key needed) and
+prints its path. Give it one target at a time, so each provider's copy is drilled:
 
 ```bash
-rclone copy "<remote>/aura-<stamp>" /root/offsite-check/aura-<stamp>
-./deploy/scripts/backup-open.sh --verify /root/offsite-check/aura-<stamp>
-BACKUP_AGE_IDENTITY_FILE=/path/to/aura-backup.agekey DRILL_RECORD=deploy/backups/drills.tsv \
-  ./deploy/scripts/restore-drill.sh /root/offsite-check/aura-<stamp>
-rm -rf /root/offsite-check
+export RCLONE_CONFIG_FILE=deploy/secrets/backup/rclone.conf
+for target in $BACKUP_OFFSITE_TARGETS; do
+  fetched=$(BACKUP_OFFSITE_TARGETS="$target" ./deploy/scripts/backup-fetch.sh /root/offsite-check) || break
+  BACKUP_AGE_IDENTITY_FILE=/path/to/aura-backup.agekey DRILL_RECORD=deploy/backups/drills.tsv \
+    ./deploy/scripts/restore-drill.sh "$fetched"
+  rm -rf /root/offsite-check
+done
 ```
+
+**Restoring after losing the VPS.** Run `backup-fetch.sh` with every target listed. With no set
+name it takes the newest set held by any provider, and it skips a copy that is missing, partial
+or fails verification and tries the next provider. Pass a set name (`aura-<stamp>`) to fetch an
+older one. Then restore the printed path with `restore.sh`, as for a local set.
 
 ### Offsite providers (multi-target)
 
@@ -227,6 +235,13 @@ holding the only copy is one outage from data loss.
    one target may still use `BACKUP_S3_URI` with the S3 key files.
 4. Confirm both copies after the first cycle: `aura_backup_offsite_copies_verified` should equal
    `aura_backup_offsite_copies_required`.
+
+Before uploading anything, the cycle refuses a configuration that could miscount copies: two
+targets on the same rclone remote, the same target listed twice, a glob character in a target,
+or a `BACKUP_OFFSITE_MIN_COPIES` that is not a whole number of at least 1. The local set is still
+taken; offsite is reported as failed. Two alerts watch the result: `AuraBackupUnderReplicated`
+(the last set reached too few providers) and `AuraBackupOffsiteStale` (no set has met the
+quorum in 36 hours, including when offsite has never succeeded).
 
 The age private key is still needed for every restore. Losing it loses every backup on every
 provider; see "Backup encryption keys" above.

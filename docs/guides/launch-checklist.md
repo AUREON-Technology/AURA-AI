@@ -35,8 +35,11 @@ Package IDs that Play Integrity / App Attest verify:
 
 - [ ] Alert test received (critical receiver: `AuraGatewayDown` / `AuraInsecureModeActive` / `AuraAllProvidersUnhealthy`)
 - [ ] Restore drill dated (staging throwaway Postgres, not prod) — see the maintenance guide
-- [ ] Offsite object listed (`rclone ls $BACKUP_S3_URI` shows a dump newer than 26 hours)
-- [ ] `AuraBackupStale` / `AuraBackupOffsiteFailed` not firing
+- [ ] Offsite set listed on every target (`rclone lsf --dirs-only <target>` for each entry in
+      `BACKUP_OFFSITE_TARGETS`, or `$BACKUP_S3_URI`) shows a set newer than 26 hours
+- [ ] `aura_backup_offsite_copies_verified` equals `aura_backup_offsite_copies_required` (2 by default)
+- [ ] `AuraBackupStale` / `AuraBackupOffsiteFailed` / `AuraBackupUnderReplicated` /
+      `AuraBackupOffsiteStale` not firing
 - [ ] v1 AI routes return **410**: `/api/chat/*`, `/api/rag/*`, `/api/memory/*`, `/api/telemetry/*` (v2 sync/auth/insights and automations/learning stay mounted)
 - [ ] `GET /health/ready` is green (`healthy: true`)
 

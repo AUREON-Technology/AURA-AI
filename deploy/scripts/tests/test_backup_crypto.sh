@@ -220,9 +220,10 @@ echo "# offsite push / verify / prune (stub rclone)"
 mkdir -p "$T/bin" "$T/remote"
 cat > "$T/bin/rclone" <<'STUB'
 #!/bin/sh
-# Minimal rclone stand-in: "stub:<path>" maps to $STUB_ROOT/<path>.
+# Minimal rclone stand-in: "stub<anything>:<path>" maps to $STUB_ROOT/<path>, so tests can name
+# several distinct remotes (stub-a:, stub-b:) that share one local root.
 set -eu
-map() { case "$1" in stub:*) echo "$STUB_ROOT/${1#stub:}" ;; *) echo "$1" ;; esac; }
+map() { case "$1" in stub*:*) echo "$STUB_ROOT/${1#*:}" ;; *) echo "$1" ;; esac; }
 cmd=$1; shift
 case "$cmd" in
     copy)
@@ -271,8 +272,11 @@ expect_fail "offsite prune refuses when the newest remote set is not the one jus
 # ---------------------------------------------------------------------------------------------
 echo "# multi-target offsite quorum (copy_offsite and resolve_offsite_remote, from backup.sh)"
 # Extracted rather than sourced: backup.sh runs its cycle loop as soon as it is loaded.
-sed -n '/^resolve_offsite_remote() {/,/^}/p; /^copy_offsite() {/,/^}/p' "$HERE/../backup.sh" > "$T/offsite-funcs.sh"
-[ -s "$T/offsite-funcs.sh" ] && ok "extracted copy_offsite and resolve_offsite_remote from backup.sh" || bad "could not extract offsite functions"
+sed -n '/^offsite_config_error() (/,/^)/p; /^offsite_required_metric() {/,/^}/p; /^resolve_offsite_remote() {/,/^}/p; /^copy_offsite() {/,/^}/p' \
+    "$HERE/../backup.sh" > "$T/offsite-funcs.sh"
+for fn in offsite_config_error offsite_required_metric resolve_offsite_remote copy_offsite; do
+    grep -q "^$fn() " "$T/offsite-funcs.sh" && ok "extracted $fn from backup.sh" || bad "could not extract $fn"
+done
 RCLONE_CONFIG_FILE="$T/rclone.conf"; export RCLONE_CONFIG_FILE
 : > "$RCLONE_CONFIG_FILE"
 
@@ -295,13 +299,13 @@ offsite_case() (
 verified() { cat "$T/verified"; }
 
 rm -rf "$T/offsite-dir" "$T/remote/ob-good-a" "$T/remote/ob-good-b" "$T/remote/ob-bad"
-expect_ok "two targets both verify: durable at min=2" offsite_case 2 "stub:ob-good-a" "stub:ob-good-b"
+expect_ok "two targets both verify: durable at min=2" offsite_case 2 "stub-a:ob-good-a" "stub-b:ob-good-b"
 [ "$(verified)" = 2 ] && ok "...verified count is 2" || bad "verified count $(verified), wanted 2"
 [ -f "$T/offsite-dir/.last_offsite_success" ] && ok "...and the success marker advances" || bad "no success marker after a durable cycle"
 
 rm -rf "$T/offsite-dir" "$T/remote/ob-good-a" "$T/remote/ob-good-b" "$T/remote/ob-bad"
 STUB_CORRUPT_DST=ob-bad; export STUB_CORRUPT_DST
-expect_fail "one of two targets corrupt at min=2: the cycle reports failure" offsite_case 2 "stub:ob-bad" "stub:ob-good-a"
+expect_fail "one of two targets corrupt at min=2: the cycle reports failure" offsite_case 2 "stub-a:ob-bad" "stub-b:ob-good-a"
 [ "$(verified)" = 1 ] && ok "...only the good target counts as verified" || bad "verified count $(verified), wanted 1"
 [ -d "$T/remote/ob-good-a/aura-$STAMP" ] && ok "...the good copy is still uploaded" || bad "good copy missing"
 [ ! -f "$T/offsite-dir/.last_offsite_success" ] && ok "...and the success marker does NOT advance" || bad "success marker advanced on an under-replicated set"
@@ -309,19 +313,67 @@ unset STUB_CORRUPT_DST
 
 rm -rf "$T/offsite-dir" "$T/remote/ob-good-a" "$T/remote/ob-bad"
 STUB_CORRUPT_DST=ob-bad; export STUB_CORRUPT_DST
-expect_ok "the same split passes when min=1" offsite_case 1 "stub:ob-bad" "stub:ob-good-a"
+expect_ok "the same split passes when min=1" offsite_case 1 "stub-a:ob-bad" "stub-b:ob-good-a"
 [ "$(verified)" = 1 ] && ok "...with one verified copy" || bad "verified count $(verified)"
 unset STUB_CORRUPT_DST
 
 rm -rf "$T/offsite-dir" "$T/remote/ob-good-a"
-expect_fail "one target cannot meet min=2 even when it verifies" offsite_case 2 "stub:ob-good-a"
+expect_fail "one target cannot meet min=2 even when it verifies" offsite_case 2 "stub-a:ob-good-a"
 [ "$(verified)" = 1 ] && ok "...it is still uploaded and counted" || bad "single target not counted"
 
 rm -rf "$T/offsite-dir" "$T/remote/ob-good-a" "$T/remote/ob-good-b"
 RCLONE_CONFIG_FILE="$T/no-such.conf"; export RCLONE_CONFIG_FILE
-expect_fail "several targets without named remotes in rclone.conf are refused" offsite_case 2 "stub:ob-good-a" "stub:ob-good-b"
+expect_fail "several targets without named remotes in rclone.conf are refused" offsite_case 2 "stub-a:ob-good-a" "stub-b:ob-good-b"
 [ ! -e "$T/remote/ob-good-a" ] && ok "...and nothing is uploaded" || bad "upload happened without a named-remote config"
 RCLONE_CONFIG_FILE="$T/rclone.conf"; export RCLONE_CONFIG_FILE
+
+echo "# offsite configuration is checked before any upload"
+rm -rf "$T/remote/ob-good-a" "$T/remote/ob-good-b"
+expect_fail "two buckets behind one rclone remote do not count as two copies" offsite_case 2 "stub-a:ob-good-a" "stub-a:ob-good-b"
+[ ! -e "$T/remote/ob-good-a" ] && ok "...and nothing is uploaded" || bad "uploaded despite a shared remote"
+expect_fail "the same target listed twice is refused" offsite_case 2 "stub-a:ob-good-a" "stub-a:ob-good-a"
+expect_fail "a non-numeric BACKUP_OFFSITE_MIN_COPIES is refused" offsite_case two "stub-a:ob-good-a" "stub-b:ob-good-b"
+expect_fail "BACKUP_OFFSITE_MIN_COPIES=0 is refused" offsite_case 0 "stub-a:ob-good-a" "stub-b:ob-good-b"
+expect_fail "a target with a glob character is refused" offsite_case 1 "stub-a:ob-*"
+[ ! -e "$T/remote/ob-good-a" ] && [ ! -e "$T/remote/ob-good-b" ] && ok "...none of them uploaded anything" || bad "an invalid configuration uploaded"
+# shellcheck disable=SC2034,SC1091 # read by the sourced offsite_required_metric
+metric_for() ( OFFSITE_MIN_COPIES=$1; . "$T/offsite-funcs.sh"; offsite_required_metric )
+[ "$(metric_for two)" = 1 ] && [ "$(metric_for 0)" = 1 ] && [ "$(metric_for 3)" = 3 ] \
+    && ok "the required-copies gauge stays a positive number for any setting" \
+    || bad "required-copies gauge: two=$(metric_for two) 0=$(metric_for 0) 3=$(metric_for 3)"
+
+echo "# backup-fetch.sh: newest set from the first target whose copy verifies"
+FETCH="$HERE/../backup-fetch.sh"
+OLD=aura-20260101T000000Z
+reset_fetch() { rm -rf "$T/remote/fetch-a" "$T/remote/fetch-b" "$T/fetch-out"; mkdir -p "$T/remote/fetch-a" "$T/remote/fetch-b"; }
+corrupt_remote() { f=$(find "$1" -name '*.dump.age' | head -n 1); printf 'Z' | dd of="$f" bs=1 seek=40 conv=notrunc 2>/dev/null; }
+fetch() { BACKUP_OFFSITE_TARGETS="stub-a:fetch-a stub-b:fetch-b" sh "$FETCH" "$T/fetch-out" "$@" 2>>"$T/fetch.log"; }
+
+reset_fetch
+cp -R "$SET" "$T/remote/fetch-a/$OLD"
+cp -R "$SET" "$T/remote/fetch-b/aura-$STAMP"
+got=$(fetch) && [ "$got" = "$T/fetch-out/aura-$STAMP" ] \
+    && ok "picks the newest set held by any target, not the first target's newest" || bad "fetched '$got'"
+expect_ok "...and the fetched copy verifies" bk_verify_set "$T/fetch-out/aura-$STAMP"
+
+reset_fetch
+cp -R "$SET" "$T/remote/fetch-a/aura-$STAMP"; corrupt_remote "$T/remote/fetch-a/aura-$STAMP"
+cp -R "$SET" "$T/remote/fetch-b/aura-$STAMP"
+got=$(fetch) && [ "$got" = "$T/fetch-out/aura-$STAMP" ] && bk_verify_set "$got" >/dev/null 2>&1 \
+    && ok "a corrupt copy at the first target falls through to a good one" || bad "corrupt fall-through: '$got'"
+
+reset_fetch
+cp -R "$SET" "$T/remote/fetch-a/aura-$STAMP"; corrupt_remote "$T/remote/fetch-a/aura-$STAMP"
+cp -R "$SET" "$T/remote/fetch-b/aura-$STAMP"; corrupt_remote "$T/remote/fetch-b/aura-$STAMP"
+expect_fail "no verifying copy anywhere fails" fetch
+[ ! -e "$T/fetch-out/aura-$STAMP" ] && ok "...and leaves no partial set behind" || bad "a corrupt copy was left in place"
+
+reset_fetch
+cp -R "$SET" "$T/remote/fetch-a/$OLD"
+cp -R "$SET" "$T/remote/fetch-b/aura-$STAMP"
+got=$(fetch "$OLD") && [ "$got" = "$T/fetch-out/$OLD" ] && ok "an older set can be fetched by name" || bad "named fetch: '$got'"
+expect_fail "an existing destination set is not overwritten" fetch "$OLD"
+expect_fail "a name that is not a set name is refused" fetch "../etc"
 
 # ---------------------------------------------------------------------------------------------
 echo "# library functions do not clobber caller variables"
@@ -338,7 +390,7 @@ fi
 
 # ---------------------------------------------------------------------------------------------
 echo "# scripts parse"
-for s in backup.sh backup-lib.sh backup-open.sh restore.sh restore-drill.sh; do
+for s in backup.sh backup-lib.sh backup-open.sh backup-fetch.sh restore.sh restore-drill.sh; do
     expect_ok "sh -n $s" sh -n "$HERE/../$s"
 done
 

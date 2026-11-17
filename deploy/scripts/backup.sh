@@ -52,11 +52,55 @@ OFFSITE_TARGETS=${BACKUP_OFFSITE_TARGETS:-${BACKUP_S3_URI:-}}
 # A cycle counts as durable only when this many targets verify. Defaults to 2: one provider
 # losing the data must not be the only copy.
 OFFSITE_MIN_COPIES=${BACKUP_OFFSITE_MIN_COPIES:-2}
-OFFSITE_TARGET_COUNT=0
-for _target in $OFFSITE_TARGETS; do
-    OFFSITE_TARGET_COUNT=$((OFFSITE_TARGET_COUNT + 1))
-done
+# Counted with globbing off: a target is split on whitespace, never matched against local files.
+OFFSITE_TARGET_COUNT=$(set -f; n=0; for _t in $OFFSITE_TARGETS; do n=$((n + 1)); done; echo "$n")
 OFFSITE_VERIFIED=0
+
+# Prints why the offsite configuration cannot give a trustworthy copy count, or nothing when it
+# can. Checked before every upload: a miscounted copy would let one provider pass for two.
+offsite_config_error() (
+    set -f
+    case "$OFFSITE_MIN_COPIES" in
+        ''|*[!0-9]*)
+            echo "BACKUP_OFFSITE_MIN_COPIES='$OFFSITE_MIN_COPIES' is not a whole number"; exit 0 ;;
+    esac
+    if [ "$OFFSITE_MIN_COPIES" -lt 1 ]; then
+        echo "BACKUP_OFFSITE_MIN_COPIES must be at least 1"; exit 0
+    fi
+    seen=" "
+    for target in $OFFSITE_TARGETS; do
+        case "$target" in
+            *'*'*|*'?'*|*'['*)
+                echo "offsite target '$target' contains a glob character"; exit 0 ;;
+        esac
+        case " $seen " in
+            *" $target "*) echo "offsite target '$target' is listed twice"; exit 0 ;;
+        esac
+        # The rclone remote is the part before the first ':'. An on-the-fly remote (":s3,...:")
+        # has no name, so the whole target identifies it.
+        case "$target" in
+            :*) remote_name=$target ;;
+            *:*) remote_name=${target%%:*} ;;
+            *) remote_name=$target ;;
+        esac
+        case "$seen" in
+            *" @$remote_name "*)
+                echo "offsite targets share the rclone remote '$remote_name'; two buckets behind one remote are not independent copies"
+                exit 0 ;;
+        esac
+        seen="$seen$target @$remote_name "
+    done
+    exit 0
+)
+
+# The required-copies gauge must stay numeric whatever the variable holds, or the textfile
+# collector rejects the whole metrics file.
+offsite_required_metric() {
+    case "$OFFSITE_MIN_COPIES" in
+        ''|*[!0-9]*) echo 1 ;;
+        *) if [ "$OFFSITE_MIN_COPIES" -lt 1 ]; then echo 1; else echo "$OFFSITE_MIN_COPIES"; fi ;;
+    esac
+}
 
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [backup] $*"; }
 
@@ -282,6 +326,11 @@ copy_offsite() {
         log "ERROR: offsite targets are set but rclone is not installed"
         return 1
     fi
+    config_problem=$(offsite_config_error)
+    if [ -n "$config_problem" ]; then
+        log "ERROR: offsite configuration: $config_problem; nothing uploaded"
+        return 1
+    fi
     if [ "$OFFSITE_TARGET_COUNT" -gt 1 ] && [ ! -f "${RCLONE_CONFIG_FILE:-}" ]; then
         log "ERROR: several offsite targets need named remotes in RCLONE_CONFIG_FILE (not found)"
         return 1
@@ -387,7 +436,7 @@ while true; do
     offsite_required=0
     if [ -n "$OFFSITE_TARGETS" ]; then
         offsite_configured=1
-        offsite_required=$OFFSITE_MIN_COPIES
+        offsite_required=$(offsite_required_metric)
     fi
 
     if ! bk_require_encryption_config; then
