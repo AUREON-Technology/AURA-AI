@@ -162,17 +162,17 @@ void main() {
     final testRouterProvider = Provider<GoRouter>((ref) {
       final notifier = RouterTransitionNotifier(ref);
       return GoRouter(
-        initialLocation: '/today',
+        initialLocation: '/chat',
         refreshListenable: notifier,
         redirect: (context, state) => resolveAppRedirect(
           isLoggedIn: ref.read(authProvider).value != null,
           onboarded: true,
           location: state.matchedLocation,
-          prefersDesktopIde: () async => false,
+          desktop: false,
         ),
         routes: [
           GoRoute(path: '/login', builder: (_, _) => const Text('Login page')),
-          GoRoute(path: '/today', builder: (_, _) => const Text('Today page')),
+          GoRoute(path: '/chat', builder: (_, _) => const Text('Chat page')),
         ],
       );
     });
@@ -195,12 +195,12 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Today page'), findsOneWidget);
+    expect(find.text('Chat page'), findsOneWidget);
 
     await tester.runAsync(() => container.read(auraApiClientProvider).get('/api/v3/anything'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Today page'), findsNothing);
+    expect(find.text('Chat page'), findsNothing);
     expect(find.text('Login page'), findsOneWidget);
   });
 }
