@@ -1885,10 +1885,16 @@ class TenancySettings:
     """
 
     default_team_seats: int = 5
+    #: ``AURA_PLAN_CATALOGUE``: JSON replacing the built-in placeholder plans
+    #: (``aura_core/domain/plans.py``, SaaS P1-C). Empty keeps the defaults.
+    plan_catalogue_json: str = ""
 
     @classmethod
     def from_env(cls) -> "TenancySettings":
-        return cls(default_team_seats=_int("TEAM_DEFAULT_SEATS", 5, minimum=2, maximum=1000))
+        return cls(
+            default_team_seats=_int("TEAM_DEFAULT_SEATS", 5, minimum=2, maximum=1000),
+            plan_catalogue_json=(_env("PLAN_CATALOGUE", "") or "").strip(),
+        )
 
 
 @dataclass(frozen=True, slots=True)
