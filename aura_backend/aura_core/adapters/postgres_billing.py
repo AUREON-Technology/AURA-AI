@@ -82,6 +82,16 @@ class PostgresSubscriptionStore:
             )
         return [_sub(r) for r in rows]
 
+    async def list_page(self, limit: int, after: str | None) -> list[Subscription]:
+        pool = await self._pool._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT {_SUB} FROM aura_subscriptions WHERE ($1::text IS NULL OR workspace_id > $1) "
+                "ORDER BY workspace_id LIMIT $2",
+                after, limit,
+            )
+        return [_sub(r) for r in rows]
+
 
 class PostgresPaymentStore:
     def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:

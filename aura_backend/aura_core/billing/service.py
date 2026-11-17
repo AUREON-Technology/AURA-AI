@@ -34,7 +34,7 @@ from ..domain.billing import (
     apply_payment,
     price_for,
 )
-from ..domain.errors import AuthorizationError, ConflictError
+from ..domain.errors import AuthorizationError, ConflictError, ValidationError
 from ..domain.tenancy import WorkspaceRole
 from ..ports.runtime import AuditEvent
 
@@ -127,6 +127,53 @@ class BillingService:
                 "paid_at": p.paid_at.isoformat() if p.paid_at else None,
             } for p in recent],
         }
+
+    # -- operator tooling (SaaS P1-F1, spec 5.4 "Owner tooling") ----------------------------
+
+    async def customers(self, limit: int, after: str | None) -> dict:
+        """Read-only: every subscribed workspace, its plan and state, and its last payment."""
+        rows = []
+        page = await self.subscriptions.list_page(limit, after)
+        for sub in page:
+            workspace = await self.tenancy.store.get_workspace(sub.workspace_id)
+            last = (await self.payments.for_workspace(sub.workspace_id, limit=1) or [None])[0]
+            rows.append({
+                "workspace_id": sub.workspace_id,
+                "workspace_name": workspace.name if workspace else None,
+                "kind": workspace.kind.value if workspace else None,
+                "plan": sub.plan_id, "seats": sub.seats, "status": sub.status.value, "provider": sub.provider,
+                "period_end": sub.period_end.isoformat(),
+                "grace_until": sub.grace_until.isoformat() if sub.grace_until else None,
+                "last_payment": None if last is None else {
+                    "status": last.status.value, "amount_piastres": last.amount_piastres,
+                    "at": (last.paid_at or last.created_at).isoformat(),
+                },
+            })
+        return {"customers": rows, "next": page[-1].workspace_id if len(page) == limit else None}
+
+    async def extend_grace(self, actor: str, workspace_id: str, days: int) -> dict:
+        """The operator's one write: more grace for a Fawry subscription that is behind on
+        payment -- or already expired, which brings its plan back. A store owns its own
+        subscriptions, so theirs are refused. Audited."""
+        if isinstance(days, bool) or not isinstance(days, int) or not 1 <= days <= 30:
+            raise ValidationError("days must be between 1 and 30")
+        lock = await self.locks.lock_workspace(workspace_id)
+        try:
+            sub = await self.subscriptions.get(workspace_id)
+            behind = (SubscriptionStatus.PAST_DUE, SubscriptionStatus.GRACE, SubscriptionStatus.EXPIRED)
+            if sub is None or sub.provider != "fawry" or sub.status not in behind:
+                raise ConflictError("only a Fawry subscription that is past due, in grace or expired can get more grace")
+            now = self.clock.now()
+            start = max(sub.grace_until or now, now)
+            until = start + timedelta(days=days)
+            await self.subscriptions.put(replace(sub, status=SubscriptionStatus.GRACE, grace_until=until, updated_at=now))
+            if sub.status is SubscriptionStatus.EXPIRED:
+                await self.plans.set_entitlement(actor, workspace_id, sub.plan_id, sub.seats, source="subscription")
+        finally:
+            await lock.release()
+        await self._audit("billing.grace_extended", actor, workspace_id,
+                          {"days": days, "was": sub.status.value, "grace_until": until.isoformat()})
+        return {"status": "grace", "grace_until": until.isoformat()}
 
     # -- the provider's answer ------------------------------------------------------------
 

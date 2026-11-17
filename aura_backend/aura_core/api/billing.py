@@ -154,6 +154,21 @@ def register_billing_ops(
         authorization = request.headers.get("authorization")
         return await _store_answer(lambda: stores.handle_google(authorization, body))
 
+    class GraceRequest(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        days: int = Field(ge=1, le=30)
+
+    @router.get("/admin/customers")
+    async def list_customers(limit: int = 50, after: str | None = None, caller=Depends(principal)) -> JSONResponse:
+        """The console's read-only Customers page (SaaS P1-F1)."""
+        require_super_admin(caller)
+        return JSONResponse(content=await billing.customers(max(1, min(limit, 200)), after))
+
+    @router.post("/admin/customers/{workspace_id}/extend-grace")
+    async def extend_grace(workspace_id: str, payload: GraceRequest, caller=Depends(principal)) -> JSONResponse:
+        require_super_admin(caller)
+        return JSONResponse(content=await billing.extend_grace(str(caller.user_id), workspace_id, payload.days))
+
     @router.post("/admin/billing/run-cycle")
     async def run_billing_cycle(caller=Depends(principal)) -> JSONResponse:
         require_super_admin(caller)

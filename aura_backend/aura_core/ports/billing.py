@@ -21,6 +21,10 @@ class SubscriptionStore(Protocol):
         """Subscriptions the cycle must look at: still live (active, past due, in grace or
         canceled) and whose period end -- or grace end -- is before ``before``."""
 
+    async def list_page(self, limit: int, after: str | None) -> list[Subscription]:
+        """Every subscription in ``workspace_id`` order, after ``after`` (the operator's
+        Customers page, SaaS P1-F1)."""
+
 
 class PaymentStore(Protocol):
     async def put(self, payment: Payment) -> None: ...

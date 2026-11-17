@@ -37,6 +37,11 @@ class InMemorySubscriptionStore:
             key=lambda s: (s.period_end, s.workspace_id),
         )
 
+    async def list_page(self, limit: int, after: str | None) -> list[Subscription]:
+        rows = sorted((s for s in self._rows.values() if after is None or s.workspace_id > after),
+                      key=lambda s: s.workspace_id)
+        return rows[:limit]
+
 
 class InMemoryPaymentStore:
     def __init__(self) -> None:

@@ -168,3 +168,13 @@ async def test_locks_serialise_a_workspace_and_admit_one_cycle(stores, backend_r
     again = await locks.try_lock_cycle()
     assert again is not None
     await again.release()
+
+
+async def test_list_page_in_workspace_order(stores) -> None:
+    subs, _p, (ws1, ws2) = stores
+    await subs.put(_sub(ws1))
+    await subs.put(_sub(ws2))
+    first, second = sorted([ws1, ws2])
+    assert [s.workspace_id for s in await subs.list_page(1, None)] == [first]
+    assert [s.workspace_id for s in await subs.list_page(5, first)] == [second]
+    assert await subs.list_page(5, second) == []
