@@ -96,18 +96,17 @@ class SecurityHeadersMiddleware:
 
 
 class MetricsAuthMiddleware:
-    """Require a bearer token on the metrics path, when one is configured.
+    """Require a bearer token on the metrics path.
 
-    Deliberately opt-in rather than enforced. The application cannot tell "reachable only on a
-    private Docker network" (the VPS, where nginx 404s the public path and Prometheus scrapes
-    `gateway:8000/metrics` directly) from "reachable from the internet" (Railway). Making a token
-    mandatory would break the correctly-configured deployment to fix the misconfigured one.
-
-    So: set ``AURA_METRICS_TOKEN`` on any deployment where the app is the edge.
-    ``AuraSettings.validate()`` warns when a production-like environment leaves it unset.
+    ``build_app`` mounts this whenever a token is configured *and* in every production-like
+    environment. The application cannot tell "reachable only on a private Docker network" (the VPS,
+    where nginx 404s the public path) from "reachable from the internet" (Railway), so it fails
+    closed: a production-like deployment with no ``AURA_METRICS_TOKEN`` gets ``token=None`` and
+    the endpoint answers 404 to everyone. A Prometheus that scrapes ``gateway:8000/metrics`` on the
+    private network must therefore send the token too (SaaS P1 plan A, task 1).
     """
 
-    def __init__(self, app: Any, *, path: str, token: str) -> None:
+    def __init__(self, app: Any, *, path: str, token: str | None) -> None:
         self.app = app
         self._path = path
         self._token = token
@@ -134,6 +133,8 @@ class MetricsAuthMiddleware:
         await self.app(scope, receive, send)
 
     def _authorised(self, scope: dict[str, Any]) -> bool:
+        if self._token is None:
+            return False
         for name, value in scope.get("headers") or ():
             if name == b"authorization":
                 supplied = value.decode("latin-1")

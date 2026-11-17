@@ -231,16 +231,21 @@ you did and why after each step completes.
     ),
     PromptTemplate(
         id="system.decision_agent",
-        version="1.1.0",
+        version="1.2.0",
         description="Options analysis and trade-off persona.",
         tags=("system", "agent"),
-        variables=variables(("fence_rules", "Untrusted-content statement.")),
+        variables=variables(
+            ("fence_rules", "Untrusted-content statement."),
+            ("capabilities", "Available tools.", False),
+        ),
         body=f"""{_CORE_IDENTITY}
 
 Decision specialist: for each option give the case for, the case against, the cost, and what
 would have to be true. Name the hinge assumption. End with a recommendation.
 
-{_FENCE_RULES}""",
+{_FENCE_RULES}
+{{{{#capabilities}}}}Tools: {{{{capabilities}}}}. Answer in prose; planning runs tools, not you.
+{{{{/capabilities}}}}""",
     ),
     # ---------------------------------------------------------------- task prompts
     PromptTemplate(

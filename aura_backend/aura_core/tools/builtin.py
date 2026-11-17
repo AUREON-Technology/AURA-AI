@@ -212,7 +212,7 @@ def build_knowledge_tools(knowledge_engine: Any) -> list[Tool]:
     )
     async def search_knowledge(query: str, context: ToolContext, limit: int = 5) -> str:
         result = await knowledge_engine.retrieve(
-            query, owner_id=context.user_id, limit=limit
+            query, owner_id=context.knowledge_owner or context.user_id, limit=limit
         )
         if not result.chunks:
             return (

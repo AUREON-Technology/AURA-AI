@@ -44,6 +44,7 @@ logger = logging.getLogger("aura_core.config")
 __all__ = [
     "Environment",
     "AuraSettings",
+    "TenancySettings",
     "LLMSettings",
     "ProviderConfig",
     "KnowledgeSettings",
@@ -1876,6 +1877,21 @@ class VisionSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class TenancySettings:
+    """Workspaces (SaaS phase 1, ADR-034).
+
+    ``default_team_seats`` caps a team's members plus open invites until plan entitlements exist
+    (SaaS P1 plan C replaces it with the workspace's plan).
+    """
+
+    default_team_seats: int = 5
+
+    @classmethod
+    def from_env(cls) -> "TenancySettings":
+        return cls(default_team_seats=_int("TEAM_DEFAULT_SEATS", 5, minimum=2, maximum=1000))
+
+
+@dataclass(frozen=True, slots=True)
 class ReleaseSettings:
     """Which build this process actually is (BLOCK-03).
 
@@ -2018,6 +2034,7 @@ class AuraSettings:
     github: GitHubSettings = field(default_factory=GitHubSettings)
     sandbox: SandboxSettings = field(default_factory=SandboxSettings)
     release: ReleaseSettings = field(default_factory=ReleaseSettings)
+    tenancy: TenancySettings = field(default_factory=TenancySettings)
 
     @classmethod
     def from_env(cls) -> "AuraSettings":
@@ -2054,6 +2071,7 @@ class AuraSettings:
             github=GitHubSettings.from_env(),
             sandbox=SandboxSettings.from_env(),
             release=ReleaseSettings.from_env(),
+            tenancy=TenancySettings.from_env(),
         )
 
     # -- validation --------------------------------------------------------------------

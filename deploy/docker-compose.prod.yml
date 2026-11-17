@@ -415,6 +415,12 @@ services:
 
   # ------------------------------------------------------------------ application
   gateway:
+    # Root, explicitly (the backend image itself now runs as uid 10002 `aura`). The secret files
+    # bootstrap-secrets.sh writes are root-owned mode 600 and file secrets are bind-mounted with
+    # those permissions, and the existing named volumes are root-owned, so this stack cannot drop
+    # root until both are migrated. Railway, which has neither, runs the image's own user.
+    # tests/unit/test_backend_image_user.py pins this on every service built from the image.
+    user: "0:0"
     build:
       context: ../aura_backend
       dockerfile: Dockerfile
@@ -819,6 +825,7 @@ services:
         limits: {cpus: "0.25", memory: 64M}
 
   worker-realtime:
+    user: "0:0"  # root until secrets/volumes are migrated; see the gateway service
     build:
       context: ../aura_backend
       dockerfile: Dockerfile
@@ -935,6 +942,7 @@ services:
         limits: {cpus: "1.0", memory: 1G}
 
   worker-ingestion:
+    user: "0:0"  # root until secrets/volumes are migrated; see the gateway service
     build:
       context: ../aura_backend
       dockerfile: Dockerfile
@@ -966,6 +974,7 @@ services:
   # LEARNING_FINETUNE_ALLOW_CPU=true; the base model must be a Hugging Face id on
   # LEARNING_FINETUNE_CPU_BASES (Ollama tags cannot be trained). See docs/guides/mlops-guide.md.
   worker-training:
+    user: "0:0"  # root until secrets/volumes are migrated; see the gateway service
     profiles: [training]
     build:
       context: ../aura_backend
@@ -1000,6 +1009,7 @@ services:
         limits: {cpus: "2.0", memory: 4G}
 
   beat:
+    user: "0:0"  # root until secrets/volumes are migrated; see the gateway service
     build:
       context: ../aura_backend
       dockerfile: Dockerfile
