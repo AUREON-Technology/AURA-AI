@@ -29,6 +29,7 @@ from services.jwt_auth import (
 )
 from services.rbac import (
     CONSOLE_MIN_ROLE,
+    CONSUMER_DESKTOP_CHANNEL,
     CONSUMER_WEB_CHANNEL,
     console_operators_configured,
     is_console_operator,
@@ -232,25 +233,88 @@ def _consumer_client_key(request) -> str:
     )
 
 
-def _prune_consumer_hits(now: float) -> None:
-    if len(_consumer_hits) < CONSUMER_RATE_TABLE_MAX:
+def _prune_hits(table: dict, now: float, window_s: float) -> None:
+    if len(table) < CONSUMER_RATE_TABLE_MAX:
         return
-    for ip in [ip for ip, hits in _consumer_hits.items() if not hits or now - hits[-1] >= 60.0]:
-        del _consumer_hits[ip]
-    while len(_consumer_hits) >= CONSUMER_RATE_TABLE_MAX:
-        del _consumer_hits[next(iter(_consumer_hits))]  # oldest inserted first
+    for key in [key for key, hits in table.items() if not hits or now - hits[-1] >= window_s]:
+        del table[key]
+    while len(table) >= CONSUMER_RATE_TABLE_MAX:
+        del table[next(iter(table))]  # oldest inserted first
+
+
+def _sliding_limit(table: dict, key: str, limit: int, window_s: float, detail: str) -> None:
+    """In-process sliding window: at most ``limit`` hits per ``key`` in ``window_s``. Per worker,
+    which bounds a burst rather than promising an exact global count."""
+    now = time.monotonic()
+    recent = [t for t in table.pop(key, []) if now - t < window_s]
+    if len(recent) >= limit:
+        table[key] = recent
+        raise HTTPException(status_code=429, detail=detail)
+    _prune_hits(table, now, window_s)
+    recent.append(now)
+    table[key] = recent
 
 
 def _consumer_rate_limit(request: Request) -> None:
-    now = time.monotonic()
-    ip = _consumer_client_key(request)
-    recent = [t for t in _consumer_hits.pop(ip, []) if now - t < 60.0]
-    if len(recent) >= CONSUMER_SIGN_INS_PER_MINUTE:
-        _consumer_hits[ip] = recent
-        raise HTTPException(status_code=429, detail="Too many sign-in attempts; try again in a minute.")
-    _prune_consumer_hits(now)
-    recent.append(now)
-    _consumer_hits[ip] = recent
+    _sliding_limit(_consumer_hits, _consumer_client_key(request), CONSUMER_SIGN_INS_PER_MINUTE, 60.0,
+                   "Too many sign-in attempts; try again in a minute.")
+
+
+# --- Desktop Engineer for customers (SaaS P1-E, ADR-011 "Customers") ---
+
+#: Desktop sign-ins and pairing starts per client address per minute: both are unauthenticated
+#: or unattested entry points, now open beyond operators.
+DESKTOP_SIGN_INS_PER_MINUTE = 10
+#: Pairing approvals per person per hour, and live desktop devices per person.
+PAIR_APPROVALS_PER_HOUR = 5
+MAX_DESKTOP_DEVICES_PER_USER = 10
+_desktop_hits: dict = {}
+_pair_start_hits: dict = {}
+_pair_approval_hits: dict = {}
+
+
+def _reset_desktop_rate_limits() -> None:
+    _desktop_hits.clear()
+    _pair_start_hits.clear()
+    _pair_approval_hits.clear()
+
+
+def _customers_open(request: Request) -> bool:
+    container = getattr(request.app.state, "aura", None)
+    return bool(container is not None and container.settings.security.engineer_for_customers)
+
+
+async def _engineer_entitled(request: Request, uid: str) -> bool:
+    """Whether ``uid`` may use the desktop Engineer as a customer: the switch is on and one of
+    their workspaces' plans includes the Engineer. No container, no entitlement."""
+    if not _customers_open(request):
+        return False
+    plans = getattr(request.app.state.aura, "plans", None)
+    if plans is None:
+        return False
+    try:
+        return await plans.engineer_entitled(uid)
+    except Exception:
+        logger.warning("could not read a desktop customer's plan; refusing", exc_info=True)
+        return False
+
+
+_UPGRADE_DETAIL = "The desktop Engineer needs a Pro or Team plan. Upgrade, then sign in again."
+
+
+async def _desktop_gate(request: Request, user_info: dict, *, what: str, where: str) -> None:
+    """An operator passes as before (F-09). A customer passes when entitled, and from then on
+    carries ``channel=consumer_desktop``: an unattested session is never worth more than ``User``
+    (``rbac.get_user_role``), so it can never reach the console. Anyone else: 403."""
+    if is_console_operator(user_info["role"]):
+        return
+    if await _engineer_entitled(request, str(user_info["uid"])):
+        user_info["channel"] = CONSUMER_DESKTOP_CHANNEL
+        await stamp_role(user_info)
+        return
+    if _customers_open(request):
+        raise HTTPException(status_code=403, detail=_UPGRADE_DETAIL)
+    _require_operator(user_info, what=what, where=where)
 
 
 @router.post("/consumer/token", response_model=TokenResponse)
@@ -301,7 +365,7 @@ def _require_operator(user_info: dict, *, what: str, where: str) -> None:
 
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh(request: RefreshRequest):
+async def refresh(request: RefreshRequest, http_request: Request):
     user_info = consume_refresh_token(request.refresh_token)
     if user_info is None:
         raise HTTPException(status_code=401, detail="Refresh token is invalid, expired, or already used.")
@@ -309,9 +373,17 @@ async def refresh(request: RefreshRequest):
     # the device claims, and a revoked device gets nothing even with a valid refresh token.
     await stamp_role(user_info)
     if user_info.get("device_id") and not is_console_operator(user_info["role"]):
-        # F-09: desktop sign-in is for operators only, and a session issued before that rule,
-        # or to someone since demoted, must not outlive it. The refresh token was spent above,
-        # so the session ends here; phone and web sessions carry no device_id.
+        # F-09: desktop sign-in is for operators -- and, since SaaS P1-E, entitled customers --
+        # and a session issued to someone since demoted or downgraded must not outlive it. The
+        # refresh token was spent above, so the session ends here; phone and web sessions carry
+        # no device_id.
+        if user_info.get("channel") == CONSUMER_DESKTOP_CHANNEL:
+            if await _engineer_entitled(http_request, str(user_info["uid"])):
+                issued = reissue_for_refreshed_identity(user_info)
+                if issued is None:
+                    raise HTTPException(status_code=401, detail="Device access has been revoked.")
+                return issued
+            raise HTTPException(status_code=401, detail=_UPGRADE_DETAIL)
         raise HTTPException(
             status_code=401,
             detail=f"Desktop sign-in now requires at least {CONSOLE_MIN_ROLE}; please sign in again.",
@@ -337,17 +409,42 @@ async def revoke(request: RevokeRequest):
 
 
 @router.post("/desktop/pair/start", response_model=PairingStartResponse)
-async def start_desktop_pairing(body: PairingStartRequest | None = None):
+async def start_desktop_pairing(request: Request, body: PairingStartRequest | None = None):
+    if _customers_open(request):  # the switch off leaves operator-only behaviour untouched
+        _sliding_limit(_pair_start_hits, _consumer_client_key(request), DESKTOP_SIGN_INS_PER_MINUTE, 60.0,
+                       "Too many pairing attempts; try again in a minute.")
     return device_pairing.start_pairing(device_name=body.device_name if body else None)
 
 
 @router.post("/desktop/pair/approve", response_model=PairingApproveResponse)
 async def approve_desktop_pairing(
-    body: PairingApproveRequest, user_info: dict = Depends(verify_access_token),
+    body: PairingApproveRequest, request: Request, user_info: dict = Depends(verify_access_token),
 ):
     """Requires the approving client's own valid access token -- this is what stands in for
     attestation here: proof of an already-authenticated session, not proof of the new device's
-    integrity (ADR-011 explains why the latter has no desktop equivalent worth relying on)."""
+    integrity (ADR-011 explains why the latter has no desktop equivalent worth relying on).
+
+    The approver must be an operator or an entitled customer (SaaS P1-E): the daemon token
+    inherits the approver's identity, channel cap included. Per person: a few approvals an hour
+    and a bounded number of live devices."""
+    user_info = dict(user_info)
+    if not user_info.get("role"):
+        await stamp_role(user_info)
+    if _customers_open(request):
+        # With the switch off nothing changes: any session may approve, and the daemon socket
+        # decides who may host. With it on, the approver is an operator, a role granted the
+        # Engineer by the deployment, or an entitled customer (who then carries the cap).
+        engineer_roles = request.app.state.aura.settings.security.engineer_agent_roles
+        if user_info["role"] not in engineer_roles:
+            await _desktop_gate(request, user_info, what="pairing a desktop", where="the desktop app")
+    uid = str(user_info["uid"])
+    if _customers_open(request) and len(list_devices_for_uid(uid)) >= MAX_DESKTOP_DEVICES_PER_USER:
+        raise HTTPException(status_code=409, detail=(
+            f"This account already has {MAX_DESKTOP_DEVICES_PER_USER} desktop devices; revoke one in "
+            "Settings first."))
+    if _customers_open(request):
+        _sliding_limit(_pair_approval_hits, uid, PAIR_APPROVALS_PER_HOUR, 3600.0,
+                       "Too many pairing approvals; try again later.")
     device_name = device_pairing.pending_device_name(body.user_code)
     device_id = device_pairing.approve_pairing(body.user_code, user_info)
     if device_id is None:
@@ -450,9 +547,12 @@ async def desktop_login(
     Called as a plain function (not via Depends), matching exchange_web_token just above --
     verify_identity_token has no attestation requirement of its own to enforce as a dependency,
     and this keeps both non-attested identity endpoints in the same shape."""
+    if _customers_open(request):  # the switch off leaves operator-only behaviour untouched
+        _sliding_limit(_desktop_hits, _consumer_client_key(request), DESKTOP_SIGN_INS_PER_MINUTE, 60.0,
+                       "Too many sign-in attempts; try again in a minute.")
     user_info = await verify_identity_token(request, authorization)
     await stamp_role(user_info)
-    _require_operator(user_info, what="desktop sign-in", where="the desktop app")
+    await _desktop_gate(request, user_info, what="desktop sign-in", where="the desktop app")
     await _persist_user(user_info)
     device_id = secrets.token_urlsafe(16)
     return issue_desktop_session(
