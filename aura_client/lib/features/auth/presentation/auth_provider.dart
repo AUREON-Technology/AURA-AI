@@ -350,6 +350,32 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     state = const AsyncValue.data(null);
   }
 
+  /// The backend said this account was deleted (`account_deleted`) -- from another device, or by
+  /// an operator. Unlike [expireSession], the local data goes too: it belongs to an account that
+  /// no longer exists, and keeping it (with its unsynced outbox) would push it into whatever
+  /// account signs in next under the same Google identity (audit INT-010). Google is signed out
+  /// as well, so nothing can silently re-exchange its way back in; only a deliberate sign-in
+  /// starts a fresh account. [TokenManager] calls this instead of falling back to `/token`.
+  Future<void> endDeletedAccount() async {
+    final current = state.value;
+    if (current != null && current.id == _mockUserId) return;
+    try {
+      ref.read(undoableDeletesProvider.notifier).discardAll();
+      try {
+        await _googleSignIn.signOut();
+      } catch (_) {}
+      _currentAccount = null;
+      // The server already revoked every refresh token of the account.
+      await _clearThisDevice(revoke: false);
+    } catch (e) {
+      debugPrint("[Auth] local cleanup after a remote account deletion failed: $e");
+      await ref.read(tokenManagerProvider).clear();
+    } finally {
+      ref.read(sessionExpiredProvider.notifier).set(true);
+      state = const AsyncValue.data(null);
+    }
+  }
+
   /// [expireSession] keeps the local data for the account that was signed
   /// in. The local DB has no user column, so if someone else signs in next,
   /// that data must go first -- the same reason [signOut] wipes it.

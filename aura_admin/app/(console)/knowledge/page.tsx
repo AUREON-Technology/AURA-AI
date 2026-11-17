@@ -74,11 +74,21 @@ export default function KnowledgePage() {
                     <Button
                       size="sm"
                       onClick={async () => {
-                        await api(`/admin/sources/${source.id}`, {
-                          method: "PATCH",
-                          body: JSON.stringify({ enabled: !source.enabled }),
-                        });
-                        await load();
+                        // Not an unhandled rejection: a failed toggle says why (audit INT-032).
+                        setError(null);
+                        try {
+                          await api(`/admin/sources/${encodeURIComponent(source.id)}`, {
+                            method: "PATCH",
+                            body: JSON.stringify({ enabled: !source.enabled }),
+                          });
+                          await load();
+                        } catch (err) {
+                          setError(
+                            `${source.enabled ? "Disable" : "Enable"} ${source.id} failed: ${
+                              err instanceof Error ? err.message : "request failed"
+                            }`,
+                          );
+                        }
                       }}
                     >
                       {source.enabled ? "Disable" : "Enable"}
@@ -89,7 +99,7 @@ export default function KnowledgePage() {
                         title={`Delete ${source.id}`}
                         confirmText={source.id}
                         onConfirm={async () => {
-                          await api(`/admin/sources/${source.id}`, { method: "DELETE" });
+                          await api(`/admin/sources/${encodeURIComponent(source.id)}`, { method: "DELETE" });
                           await load();
                         }}
                       >
@@ -108,7 +118,14 @@ export default function KnowledgePage() {
           <div className="mt-4 flex flex-wrap items-end gap-2">
             <Field>
               Id
-              <Input value={id} onChange={(e) => setId(e.target.value)} />
+              {/* Same rule as the gateway's SourceCreateRequest: the id is a URL path segment. */}
+              <Input
+                value={id}
+                onChange={(e) => setId(e.target.value)}
+                pattern="[A-Za-z0-9][A-Za-z0-9._:\-]*"
+                maxLength={128}
+                title="Letters, digits, '.', '_', ':' or '-', starting with a letter or digit"
+              />
             </Field>
             <Field className="min-w-[240px] flex-1">
               HTTPS URI

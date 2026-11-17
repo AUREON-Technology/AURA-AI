@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../../auth/token_manager.dart';
 import '../../config/backend_url_provider.dart';
+import '../../network/aura_api_error.dart';
 import '../../security/device_validation_service.dart';
 import 'speech_text.dart';
 
@@ -34,7 +35,16 @@ class VoiceSpeakResult {
 class VoiceClient {
   final Ref _ref;
   final http.Client? _http;
-  VoiceClient(this._ref, {http.Client? httpClient}) : _http = httpClient;
+  final Duration transcribeTimeout;
+  VoiceClient(
+    this._ref, {
+    http.Client? httpClient,
+    this.transcribeTimeout = defaultTranscribeTimeout,
+  }) : _http = httpClient;
+
+  /// Upload plus a self-hosted Whisper pass on CPU; generous, but bounded so a stalled server
+  /// cannot leave the recorder spinner up forever (INT-017).
+  static const defaultTranscribeTimeout = Duration(seconds: 90);
 
   String get _backendUrl => '${_ref.read(backendUrlProvider)}/api/v3/voice';
 
@@ -64,13 +74,17 @@ class VoiceClient {
       return client != null ? client.send(request) : http.Client().send(request);
     }
 
-    try {
+    Future<http.Response> exchange() async {
       var streamed = await send();
       if (streamed.statusCode == 401) {
         tokens.invalidateAccessToken();
         streamed = await send();
       }
-      final response = await http.Response.fromStream(streamed);
+      return http.Response.fromStream(streamed);
+    }
+
+    try {
+      final response = await exchange().timeout(transcribeTimeout);
       if (response.statusCode < 200 || response.statusCode >= 300) return null;
       final parsed = jsonDecode(response.body);
       if (parsed is! Map<String, dynamic>) return null;
@@ -113,7 +127,9 @@ class VoiceClient {
         debugPrint(
           "[VoiceClient] speak failed: ${response.statusCode} ${response.body}",
         );
-        return VoiceSpeakResult.failure(_speakFailureMessage(response.statusCode));
+        return VoiceSpeakResult.failure(
+          _speakFailureMessage(response.statusCode, response.body),
+        );
       }
       final audio = response.bodyBytes;
       if (audio.isEmpty) {
@@ -127,15 +143,38 @@ class VoiceClient {
     }
   }
 
-  static String _speakFailureMessage(int statusCode) {
+  static String _speakFailureMessage(int statusCode, String body) {
     return switch (statusCode) {
       401 => 'Sign in again to continue.',
       404 => 'Speech playback is not available on this server.',
-      422 => 'This reply is too long to read aloud.',
+      422 => _speak422Message(body),
       429 => 'Too many speech requests. Try again shortly.',
       503 => 'This server has no speech engine configured.',
       _ => 'Could not generate speech for this reply.',
     };
+  }
+
+  /// The gateway sends 422 for two different things (INT-022): the engine produced no audio
+  /// (`ValidationError("text contains nothing speakable")`, an `{error, message}` envelope),
+  /// or the text failed request validation (FastAPI's `{detail: [{type: ...}]}`), of which
+  /// only `string_too_long` means "too long".
+  static String _speak422Message(String body) {
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map && decoded['detail'] is List) {
+        final tooLong = (decoded['detail'] as List)
+            .whereType<Map>()
+            .any((e) => e['type']?.toString() == 'string_too_long');
+        if (tooLong) return 'This reply is too long to read aloud.';
+      }
+    } catch (_) {
+      // Not JSON; fall through to the envelope parser, which never throws.
+    }
+    final error = AuraApiError.fromResponse(statusCode: 422, body: body);
+    if (error.message.toLowerCase().contains('speakable')) {
+      return 'Nothing in this reply can be read aloud.';
+    }
+    return 'Could not read this reply aloud.';
   }
 }
 

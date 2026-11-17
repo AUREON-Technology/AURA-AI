@@ -32,15 +32,23 @@ next cursor. A row the pull could not see belongs to a transaction that was stil
 is therefore at least that xmin, so the next pull returns it. The price is that rows written by
 transactions still open at pull time are re-sent once; the client applies every row as an
 idempotent upsert, so that is harmless.
+
+**A pull can be paged (INT-013).** A client that sends `limit` gets at most that many rows, plus
+`has_more` and an opaque `next_page` token to send instead of `since` for the next page; the
+cursor it stores is the one on the last page. Without `limit` the pull is one response, as every
+client before paging expects. Pages walk the tables in a fixed order and each table by
+`(sync_txid, id)`, and the final cursor is the *first* page's snapshot xmin (carried in the
+token), so a row written while the pages were being fetched has a txid at or past it and the next
+pull returns it -- the same argument as above, stretched over several requests.
 """
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import DateTime, select, text
+from sqlalchemy import DateTime, select, text, tuple_
 from sqlalchemy.exc import DataError, IntegrityError, InterfaceError, OperationalError, StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -191,6 +199,71 @@ def decode_cursor(since: Optional[str], *, xmax: int) -> Optional[int]:
     return value
 
 
+#: Prefix of a page token (`next_page`). Its fields, dot-separated: the `since` txid the pull
+#: started from (`-` for a full sync), the cursor the last page will hand back, the index of the
+#: table to resume in (`_PULL_TABLES`), and the `(sync_txid, id)` last returned from it (`-` when
+#: the table starts afresh). Not signed: every field only narrows a query already scoped to the
+#: caller's own rows, so a forged token can at worst re-send or skip the forger's own data.
+PAGE_PREFIX = "page1."
+
+#: Upper bound on `limit`, so one request stays well inside the client's timeout.
+MAX_PULL_LIMIT = 5000
+
+#: The order a paged pull walks the tables in. Sorted, so it cannot differ between two pages
+#: served by different processes.
+_PULL_TABLES: tuple[str, ...] = tuple(sorted(SYNCABLE_MODELS))
+
+
+class PageToken(BaseModel):
+    since: Optional[int]
+    cursor: int
+    table: int
+    after_txid: Optional[int] = None
+    after_id: Optional[uuid.UUID] = None
+
+
+def encode_page(token: PageToken) -> str:
+    def part(value) -> str:
+        return "-" if value is None else str(value)
+
+    return PAGE_PREFIX + ".".join(
+        part(v) for v in (token.since, token.cursor, token.table, token.after_txid, token.after_id)
+    )
+
+
+def decode_page(page: Optional[str], *, xmax: int) -> Optional[PageToken]:
+    """The page to resume, or None when there is no token or it cannot be honoured here -- the
+    pull then starts over from its first page, which is always safe: the client applies rows
+    idempotently and stores the cursor only from the last page. A token whose txids are ahead of
+    this database came from another cluster, as for `decode_cursor`."""
+    if not page or not page.startswith(PAGE_PREFIX):
+        return None
+    fields = page[len(PAGE_PREFIX):].split(".")
+    if len(fields) != 5:
+        return None
+    since, cursor, table, after_txid, after_id = (None if f == "-" else f for f in fields)
+    try:
+        token = PageToken(
+            since=None if since is None else int(since),
+            cursor=int(cursor),
+            table=int(table),
+            after_txid=None if after_txid is None else int(after_txid),
+            after_id=None if after_id is None else uuid.UUID(after_id),
+        )
+    except (TypeError, ValueError, ValidationError):
+        return None
+    if (token.after_txid is None) != (token.after_id is None):
+        return None
+    if not 0 <= token.table < len(_PULL_TABLES):
+        return None
+    for value in (token.since, token.cursor, token.after_txid):
+        if value is not None and not 0 <= value <= xmax:
+            return None
+    if token.since is not None and token.since > token.cursor:
+        return None
+    return token
+
+
 def bounded_client_clock(value: datetime, *, now: datetime) -> datetime:
     """`client_updated_at` as the LWW rule may use it: aware, and at most
     `CLIENT_CLOCK_SKEW_ALLOWANCE` ahead of the server.
@@ -206,7 +279,12 @@ def bounded_client_clock(value: datetime, *, now: datetime) -> datetime:
 
 class SyncPullResponse(BaseModel):
     data: dict[str, list[dict[str, Any]]]
+    #: The cursor to store. On a page with `has_more`, the cursor the pull started from (empty for
+    #: a full sync): a client must store only the last page's.
     cursor: str
+    #: More rows remain; fetch them with `page=next_page`. Always False on an unpaged pull.
+    has_more: bool = False
+    next_page: Optional[str] = None
 
 
 class SyncMutation(BaseModel):
@@ -245,33 +323,77 @@ class SyncMutationResult(BaseModel):
     row: Optional[dict[str, Any]] = None
 
 
-@router.get("/sync", response_model=SyncPullResponse)
+@router.get("/sync", response_model=SyncPullResponse, response_model_exclude_none=True)
 async def pull_sync(
     since: Optional[str] = None,
+    limit: Optional[int] = Query(default=None, ge=1),
+    page: Optional[str] = None,
     user_info: dict = Depends(verify_access_token),
     db: AsyncSession = Depends(get_db),
 ):
-    """One round trip for a full delta sync across every domain table.
+    """One round trip for a full delta sync across every domain table, or one page of it.
 
     `since` is the opaque cursor a previous pull returned. The new cursor is this pull's snapshot
-    xmin, read before any row (module docstring).
+    xmin, read before any row (module docstring). With `limit` the response is one page, and
+    `page=<next_page>` fetches the next one (INT-013).
     """
     _require_db_configured()
     user = await _get_or_create_user(db, user_info)
 
     snapshot = (await db.execute(_SNAPSHOT_SQL)).one()
-    since_txid = decode_cursor(since, xmax=snapshot.xmax)
 
-    data: dict[str, list[dict[str, Any]]] = {}
-    for table_name, model in SYNCABLE_MODELS.items():
+    if limit is None:
+        since_txid = decode_cursor(since, xmax=snapshot.xmax)
+        data: dict[str, list[dict[str, Any]]] = {}
+        for table_name, model in SYNCABLE_MODELS.items():
+            stmt = select(model).where(model.user_id == user.id)
+            if since_txid is not None:
+                stmt = stmt.where(model.sync_txid >= since_txid)
+            rows = (await db.execute(stmt)).scalars().all()
+            data[table_name] = [_row_to_dict(r) for r in rows]
+
+        await db.commit()
+        return SyncPullResponse(data=data, cursor=encode_cursor(snapshot.xmin))
+
+    limit = min(limit, MAX_PULL_LIMIT)
+    token = decode_page(page, xmax=snapshot.xmax)
+    if token is None:
+        token = PageToken(since=decode_cursor(since, xmax=snapshot.xmax), cursor=snapshot.xmin, table=0)
+
+    data = {name: [] for name in SYNCABLE_MODELS}
+    remaining = limit
+    next_token: Optional[PageToken] = None
+    for index in range(token.table, len(_PULL_TABLES)):
+        table_name = _PULL_TABLES[index]
+        model = SYNCABLE_MODELS[table_name]
         stmt = select(model).where(model.user_id == user.id)
-        if since_txid is not None:
-            stmt = stmt.where(model.sync_txid >= since_txid)
+        if token.since is not None:
+            stmt = stmt.where(model.sync_txid >= token.since)
+        if index == token.table and token.after_txid is not None:
+            stmt = stmt.where(tuple_(model.sync_txid, model.id) > tuple_(token.after_txid, token.after_id))
+        # One row more than fits says whether this table has more.
+        stmt = stmt.order_by(model.sync_txid, model.id).limit(remaining + 1)
         rows = (await db.execute(stmt)).scalars().all()
-        data[table_name] = [_row_to_dict(r) for r in rows]
+        taken = rows[:remaining]
+        data[table_name] = [_row_to_dict(r) for r in taken]
+        remaining -= len(taken)
+        if len(rows) > len(taken):
+            last = taken[-1]
+            next_token = token.model_copy(update={"table": index, "after_txid": last.sync_txid, "after_id": last.id})
+            break
+        if remaining == 0 and index + 1 < len(_PULL_TABLES):
+            next_token = token.model_copy(update={"table": index + 1, "after_txid": None, "after_id": None})
+            break
 
     await db.commit()
-    return SyncPullResponse(data=data, cursor=encode_cursor(snapshot.xmin))
+    if next_token is None:
+        return SyncPullResponse(data=data, cursor=encode_cursor(token.cursor))
+    return SyncPullResponse(
+        data=data,
+        cursor=encode_cursor(token.since) if token.since is not None else "",
+        has_more=True,
+        next_page=encode_page(next_token),
+    )
 
 
 #: Tables where a second client-minted id for the same logical record is expected, keyed by the
@@ -314,9 +436,37 @@ async def _natural_key_twin(db: AsyncSession, model, table: str, user_id, payloa
     return (await db.execute(stmt)).scalars().first()
 
 
-async def _apply_mutation(db: AsyncSession, user_id, raw: dict[str, Any], *, now: datetime) -> SyncMutationResult:
+def is_stale(existing, client_clock: datetime, *, written_in_batch: Optional[datetime] = None) -> bool:
+    """Whether an incoming mutation loses to the row the server holds.
+
+    Ties lose: across requests the server cannot tell one device's newer change from another
+    device's concurrent one carrying the same clock, and re-applying an identical mutation would
+    resurrect a row a concurrent delete had just tombstoned.
+
+    The one exception is a row an earlier mutation *of this same batch* wrote with that same
+    clock (`written_in_batch`). A batch is one device's outbox, sent in the order its user made
+    the changes, so the later mutation is the newer one. The client's clock is stored in whole
+    seconds, and without this a save followed within the second by a delete ("save, then
+    forget") lost the delete as a conflict and the row stayed alive (INT-001). The client also
+    keeps its clock strictly increasing per row, which covers the same two changes split across
+    two pushes, where this rule cannot help.
+    """
+    comparand = conflict_comparand(existing)
+    if comparand > client_clock:
+        return True
+    return comparand == client_clock and written_in_batch != client_clock
+
+
+async def _apply_mutation(
+    db: AsyncSession, user_id, raw: dict[str, Any], *, now: datetime,
+    written: Optional[dict[tuple[str, uuid.UUID], datetime]] = None,
+) -> SyncMutationResult:
     """One mutation, inside the caller's SAVEPOINT. Returns a result, or raises for the caller
-    to roll the savepoint back and report the row as an error."""
+    to roll the savepoint back and report the row as an error.
+
+    `written` maps each row an earlier mutation of this batch applied to the clock it wrote
+    (`is_stale`). Only the caller adds to it, once the savepoint has been released."""
+    written = written if written is not None else {}
     try:
         mutation = SyncMutation.model_validate(raw)
     except ValidationError as exc:
@@ -348,7 +498,20 @@ async def _apply_mutation(db: AsyncSession, user_id, raw: dict[str, Any], *, now
         existing = await _natural_key_twin(db, model, mutation.table, user_id, payload)
         merged = existing is not None
 
-    if existing is not None and conflict_comparand(existing) >= client_clock:
+    if mutation.op == "upsert" and existing is not None and not merged and existing.deleted_at is not None:
+        # A deleted id stays deleted, whatever the clocks say (INT-005). The client never
+        # re-inserts an id it deleted (`undoable_deletes.dart` defers the delete instead), so
+        # this is an edit from a device that had not yet heard of the delete. Writing it used to
+        # answer `applied` while the row stayed deleted -- the client dropped the edit as saved
+        # and its next pull deleted the row anyway -- and put the edit's ciphertext back onto the
+        # tombstone, undoing F-07. A conflict carrying the tombstone says what happened, and the
+        # client applies it as a local delete. The natural-key merge is different: a new id for
+        # the key is a new record, so it revives the row (as the personal-OS adapter's `revive`).
+        return result("conflict", detail="deleted on the server", row=_row_to_dict(existing))
+
+    if existing is not None and is_stale(
+        existing, client_clock, written_in_batch=written.get((mutation.table, existing.id)),
+    ):
         return result(
             "conflict", detail="server has a newer version",
             server_id=str(existing.id) if merged else None, row=_row_to_dict(existing),
@@ -396,7 +559,9 @@ async def push_sync(
     """Applies a batch of outbox mutations with last-write-wins on `client_updated_at`.
 
     A mutation whose `id` already exists with an equal-or-newer client clock is reported as a
-    conflict, carrying the server's row, instead of silently overwriting it.
+    conflict, carrying the server's row, instead of silently overwriting it -- unless an earlier
+    mutation of this batch wrote that row with the same clock (`is_stale`, INT-001). An upsert
+    onto a deleted id is a conflict carrying the tombstone (INT-005).
 
     **Each mutation stands alone (F-11).** It runs in its own SAVEPOINT; a bad value, a
     constraint violation or a malformed envelope rolls back that one mutation and reports it as
@@ -413,10 +578,16 @@ async def push_sync(
     now = datetime.now(timezone.utc)
 
     results: list[SyncMutationResult] = []
+    written: dict[tuple[str, uuid.UUID], datetime] = {}
     for raw in body.mutations:
         try:
             async with db.begin_nested():
-                results.append(await _apply_mutation(db, user_id, raw, now=now))
+                outcome = await _apply_mutation(db, user_id, raw, now=now, written=written)
+            results.append(outcome)
+            if outcome.status == "applied":
+                # Validated already, or it could not have applied.
+                clock = bounded_client_clock(SyncMutation.model_validate(raw).client_updated_at, now=now)
+                written[(outcome.table, uuid.UUID(outcome.server_id or outcome.id))] = clock
             continue
         except _RowError as exc:
             detail, retryable = exc.detail, exc.retryable

@@ -1,0 +1,5 @@
+# Only the Railway backup image (backup/railway.Dockerfile) builds with deploy/ as its context.
+# Allow-list: it needs scripts/ and nothing else. deploy/secrets and backup sets on a host must
+# never reach a build context.
+*
+!scripts/

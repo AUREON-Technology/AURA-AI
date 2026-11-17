@@ -1325,6 +1325,11 @@ services:
       REDIS_HOST: redis
       REDIS_PASSWORD_FILE: /run/secrets/redis_password
       BACKUP_S3_URI: ${BACKUP_S3_URI:-}
+      # Multi-provider offsite (docs/plans/distributed_storage_plan.md): space-separated rclone
+      # remotes named in rclone.conf, e.g. "b2-aura:aura-backups r2-aura:aura-backups". A set
+      # counts as durable only when BACKUP_OFFSITE_MIN_COPIES of them verify (default 2).
+      BACKUP_OFFSITE_TARGETS: ${BACKUP_OFFSITE_TARGETS:-}
+      BACKUP_OFFSITE_MIN_COPIES: ${BACKUP_OFFSITE_MIN_COPIES:-2}
       BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
       BACKUP_S3_PROVIDER: ${BACKUP_S3_PROVIDER:-Other}
       BACKUP_S3_ACCESS_KEY_FILE: /run/backup-secrets/backup_s3_access_key

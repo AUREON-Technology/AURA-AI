@@ -10,6 +10,7 @@ import { Input, Select } from "@/components/ui/input";
 import { PageHeader } from "@/components/ui/page-header";
 import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow, TableSkeleton } from "@/components/ui/table";
 import { api, fetchMe } from "@/lib/api";
+import type { ForgetResult, Me, Operator, OperatorRole } from "@/lib/types";
 
 function roleTone(role: string) {
   if (role === "SuperAdmin") return "brand" as const;
@@ -17,7 +18,6 @@ function roleTone(role: string) {
   if (role === "Developer") return "warn" as const;
   return "neutral" as const;
 }
-import type { Me, Operator, OperatorRole } from "@/lib/types";
 
 export default function AccessPage() {
   const [me, setMe] = useState<Me | null>(null);
@@ -25,7 +25,7 @@ export default function AccessPage() {
   const [forgetSubject, setForgetSubject] = useState("");
   const [grantEmail, setGrantEmail] = useState("");
   const [grantRole, setGrantRole] = useState<OperatorRole>("Developer");
-  const [counts, setCounts] = useState<string>("");
+  const [forgetResult, setForgetResult] = useState<ForgetResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
 
@@ -177,7 +177,10 @@ export default function AccessPage() {
           <CardHeader>
             <div>
               <CardTitle>GDPR forget</CardTitle>
-              <CardDescription>Returns counts only. Never displays user content.</CardDescription>
+              <CardDescription>
+                Returns counts only. Never displays user content. An incomplete erasure keeps the
+                account; run it again once the failed stores are back.
+              </CardDescription>
             </div>
           </CardHeader>
           <div className="flex flex-wrap items-center gap-2">
@@ -194,26 +197,57 @@ export default function AccessPage() {
               title="Forget user"
               confirmText="forget"
               onConfirm={async () => {
-                const body = await api<{ counts: Record<string, number> }>(
+                setForgetResult(null);
+                const body = await api<ForgetResult>(
                   `/admin/users/${encodeURIComponent(forgetSubject)}/forget`,
                   { method: "POST" },
                 );
-                setCounts(JSON.stringify(body.counts));
+                setForgetResult(body);
               }}
             >
               Forget
             </ConfirmDialog>
           </div>
-          {counts ? (
-            <p
-              data-testid="forget-counts"
-              className="mt-3 rounded-sm bg-surface-variant px-3 py-2 font-mono text-xs break-all motion-safe:animate-fade-up"
-            >
-              {counts}
-            </p>
-          ) : null}
+          {forgetResult ? <ForgetOutcome result={forgetResult} /> : null}
         </Card>
       ) : null}
     </>
+  );
+}
+
+// The gateway answers 200 for a partial erasure too: `forgotten` is false, `failed` names the
+// stores it could not clear, and the users row is kept (api/admin_platform.py erase_account).
+// Showing only the counts made a partial erasure read as done (audit INT-008).
+function ForgetOutcome({ result }: { result: ForgetResult }) {
+  const failed = result.failed ?? [];
+  const complete = result.forgotten === true && failed.length === 0;
+  return (
+    <div className="mt-3 space-y-2 motion-safe:animate-fade-up">
+      {complete ? (
+        <p data-testid="forget-status" className="text-[13px] text-ok">
+          Erasure complete.
+        </p>
+      ) : (
+        <Alert data-testid="forget-status" role="alert" className="mb-0">
+          {`Erasure incomplete: ${failed.length ? `failed for ${failed.join(", ")}` : "the gateway did not confirm it"}. The account was kept; run forget again.`}
+        </Alert>
+      )}
+      <p
+        data-testid="forget-counts"
+        className="rounded-sm bg-surface-variant px-3 py-2 font-mono text-xs break-all"
+      >
+        {JSON.stringify(result.counts ?? {})}
+      </p>
+      {result.not_erased?.length ? (
+        <div data-testid="forget-not-erased" className="text-[13px]">
+          <p className="text-muted">Not erased by this request:</p>
+          <ul className="list-disc pl-5">
+            {result.not_erased.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
   );
 }

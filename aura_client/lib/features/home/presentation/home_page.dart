@@ -297,7 +297,14 @@ class _InsightCard extends ConsumerWidget {
             label: 'Dismiss insight',
             child: InkWell(
               onTap: () async {
-                await ref.read(insightsClientProvider).dismiss(insight.id);
+                final dismissed = await ref.read(insightsClientProvider).dismiss(insight.id);
+                if (!dismissed && context.mounted) {
+                  AuraSnackbar.show(
+                    context,
+                    message: 'Could not dismiss this insight. Try again shortly.',
+                    kind: AuraSnackbarKind.error,
+                  );
+                }
                 ref.invalidate(insightsProvider);
               },
               borderRadius: BorderRadius.circular(AuraRadius.pill),

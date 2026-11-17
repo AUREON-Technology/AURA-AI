@@ -202,7 +202,7 @@ export default function ModelsPage() {
                   title="Rollback to this version"
                   confirmText="rollback"
                   onConfirm={async () => {
-                    await api(`/admin/models/${row.model_id}/rollback`, {
+                    await api(`/admin/models/${encodeURIComponent(row.model_id)}/rollback`, {
                       method: "POST",
                       body: JSON.stringify({ to_version: row.version }),
                     });

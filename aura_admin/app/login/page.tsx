@@ -8,6 +8,9 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 
+import { errorFromBody } from "@/lib/api";
+import { CONSOLE_ROLE_MESSAGE } from "@/lib/session";
+
 declare global {
   interface Window {
     google?: {
@@ -31,13 +34,20 @@ export default function LoginPage() {
       body: JSON.stringify({ idToken }),
     });
     if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      setError(body.detail || body.message || "Sign-in was refused");
+      const body: unknown = await response.json().catch(() => null);
+      setError(errorFromBody(response.status, body).message || "Sign-in was refused");
       return;
     }
     const base = process.env.NEXT_PUBLIC_BASE_PATH || "";
     window.location.assign(base || "/");
   }
+
+  useEffect(() => {
+    // The console layout sends a signed-in account below Admin here (audit INT-042).
+    if (new URLSearchParams(window.location.search).get("reason") === "role") {
+      setError(CONSOLE_ROLE_MESSAGE);
+    }
+  }, []);
 
   useEffect(() => {
     const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
