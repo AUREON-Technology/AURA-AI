@@ -194,6 +194,8 @@ class ControlServer {
           await _handleListRoots(request);
         case 'POST /roots':
           await _handleRootAction(request);
+        case 'POST /remote_control':
+          await _handleRemoteControl(request);
         case 'GET /list':
           await _handleList(request);
         case 'GET /read':
@@ -294,8 +296,33 @@ class ControlServer {
     if (_authorized(request)) {
       body['backend_url'] = config.backendUrl;
       body['roots'] = workspaceStore.load().all.map((r) => r.toJson()).toList();
+      body['remote_control'] = config.remoteControl;
     }
     await _respond(request, 200, body);
+  }
+
+  /// `POST /remote_control` `{"enabled": <bool>}` (WP8, D-10b): the desktop's "Allow control
+  /// from my phone and the web" switch, persisted to `config.json`. This route -- token-guarded
+  /// and loopback-only like every other mutating one -- is the only way to change it; no RPC from
+  /// the backend can. The agent's `TaskHandler` reads it from disk on every call of a remote task,
+  /// so switching it off refuses that task's next call.
+  Future<void> _handleRemoteControl(HttpRequest request) async {
+    final Object? decoded;
+    try {
+      final raw = await utf8.decoder.bind(request).join();
+      decoded = raw.trim().isEmpty ? null : jsonDecode(raw);
+    } on FormatException {
+      await _respond(request, 400, {'error': 'the body must be JSON: {"enabled": true|false}'});
+      return;
+    }
+    final enabled = decoded is Map ? decoded['enabled'] : null;
+    if (enabled is! bool) {
+      await _respond(request, 400, {'error': '"enabled" is required and must be true or false'});
+      return;
+    }
+    configStore.save(configStore.load().copyWith(remoteControl: enabled));
+    _logger('remote control ${enabled ? 'enabled' : 'disabled'} from the desktop');
+    await _respond(request, 200, {'remote_control': enabled});
   }
 
   Future<void> _handleListRoots(HttpRequest request) async {
@@ -996,7 +1023,7 @@ class ControlServer {
         _pairingBackendUrl = null;
         _pairingTimer?.cancel();
         _pairingTimer = null;
-        configStore.save(DaemonConfig(backendUrl: backendUrl, authToken: result.accessToken));
+        configStore.saveCredentials(backendUrl: backendUrl, authToken: result.accessToken);
         final body = <String, Object?>{'status': 'approved', 'device_id': result.deviceId};
         _pairingOutcome = body;
         onPaired(result.accessToken);

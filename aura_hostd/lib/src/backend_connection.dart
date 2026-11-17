@@ -76,6 +76,9 @@ class BackendConnection {
       workspaceStore,
       approvalQueue: approvalQueue,
       isolatedTasks: isolatedTasks,
+      // WP8: read from config.json on every call of a remote task, so the desktop's
+      // "Allow control from my phone and the web" switch applies at once.
+      remoteControlEnabled: configStore.remoteControlEnabled,
     );
     final client = _clientFactory(
       wsUrl: config.hostAgentWsUrl,

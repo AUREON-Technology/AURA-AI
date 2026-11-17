@@ -311,6 +311,81 @@ void main() {
     });
   });
 
+  group('WP8: remote control is decided on this computer, over the real socket', () {
+    test('a remote task is refused until the desktop turns remote control on', () async {
+      final conn = await connect();
+      final refused = await conn.call('create_task', {'origin': 'remote', 'cwd': rootA});
+      expect(refused['type'], 'error');
+      expect(refused['message'], startsWith('remote_control_disabled: '));
+
+      final (status, _) = await control.request('POST', '/remote_control', body: {'enabled': true});
+      expect(status, 200);
+      final created = await conn.call('create_task', {'origin': 'remote', 'cwd': rootA});
+      expect(created['type'], 'result');
+    });
+
+    test('a remote task in a trusted folder needs confirmation, never the desktop queue, and '
+        'stops at the next call once remote control is turned off', () async {
+      final conn = await connect();
+      await control.request('POST', '/remote_control', body: {'enabled': true});
+      final created = await conn.call('create_task', {'origin': 'remote', 'cwd': rootA});
+      final taskId = (created['result'] as Map)['task_id'];
+
+      final unconfirmed = await conn.call('run', {
+        'command': ['sh', '-c', 'mkdir unconfirmed'],
+        'task_id': taskId,
+        'timeout_s': 5,
+      });
+      expect(unconfirmed['type'], 'error');
+      expect(unconfirmed['message'], startsWith('confirmation_required: '));
+      expect(approvals.list(), isEmpty);
+      expect(Directory(p.join(rootA, 'unconfirmed')).existsSync(), isFalse);
+
+      final confirmed = await conn.call('run', {
+        'command': ['sh', '-c', 'mkdir confirmed'],
+        'task_id': taskId,
+        'timeout_s': 5,
+        'confirmed': true,
+      });
+      expect(confirmed['type'], 'result');
+      expect(Directory(p.join(rootA, 'confirmed')).existsSync(), isTrue);
+
+      await control.request('POST', '/remote_control', body: {'enabled': false});
+      final after = await conn.call('write_file', {
+        'path': 'after.txt',
+        'content': 'x',
+        'task_id': taskId,
+        'confirmed': true,
+      });
+      expect(after['type'], 'error');
+      expect(after['message'], startsWith('remote_control_disabled: '));
+      expect(File(p.join(rootA, 'after.txt')).existsSync(), isFalse);
+    });
+
+    test('list_roots answers with the live folders and flag, with no task', () async {
+      final conn = await connect();
+      final before = await conn.call('list_roots', {});
+      expect(before['type'], 'result');
+      expect(before['result'], {
+        'roots': [
+          {'path': rootA, 'trusted': true},
+        ],
+        'remote_control': false,
+      });
+
+      await control.request('POST', '/roots', body: {'action': 'grant', 'path': rootB});
+      await control.request('POST', '/remote_control', body: {'enabled': true});
+      final after = await conn.call('list_roots', {});
+      expect(after['result'], {
+        'roots': [
+          {'path': rootA, 'trusted': true},
+          {'path': rootB, 'trusted': false},
+        ],
+        'remote_control': true,
+      });
+    });
+  });
+
   test('INT-007: a dropped connection cancels approvals its calls were waiting on', () async {
     final conn = await connect();
     await control.request('POST', '/roots', body: {'action': 'untrust', 'path': rootA});

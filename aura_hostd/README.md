@@ -45,6 +45,23 @@ dart run bin/aura_hostd.dart run                               # connect and ser
 Config and granted roots persist under the platform's usual per-user config directory (see
 `lib/src/config.dart::resolveConfigDir`).
 
+## RPC methods and remote control
+
+The backend calls `create_task`, `run`, `write_file`, `write_files`, `read_file` and
+`list_roots` over the WebSocket (`lib/src/task_handler.dart` has the details). `list_roots` needs no
+task and returns `{"roots": [{"path", "trusted"}], "remote_control": <bool>}`.
+
+**Remote control (WP8)** lets the Engineer drive this computer from the phone or the web. It is
+**off** until turned on here: `remote_control` in `config.json`, changed only through the local
+control server's `POST /remote_control` `{"enabled": <bool>}` (bearer token, loopback only). `GET
+/status` reports it to a caller holding the token. With it off, a `create_task` with
+`origin: "remote"` fails with `remote_control_disabled: ...`, and so does the next call of a remote
+task already running. A remote task never uses the trusted tier, the read-only allowlist or this
+computer's approval queue. Everything refused in every folder (hard denylist, destructive commands
+outside the folder, `.git` hooks and config, containment) stays refused. Every other `run` or write
+needs `confirmed: true`, meaning the person approved that call on the phone or web; without it the
+call fails with `confirmation_required: ...`. A desktop task ignores `confirmed`.
+
 ## Rebuilding after a change
 
 There is no CI/CD that redeploys this daemon onto your own machine — every change under

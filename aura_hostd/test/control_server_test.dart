@@ -219,6 +219,137 @@ void main() {
     expect(ok, 200, reason: 'a loopback Host still works');
   });
 
+  group('remote control opt-in (WP8, D-10b)', () {
+    test('GET /status reports remote_control only to a caller holding the token', () async {
+      final (_, anonymous) = await client.request('GET', '/status', withToken: false);
+      expect(anonymous.containsKey('remote_control'), isFalse);
+
+      final (_, before) = await client.request('GET', '/status');
+      expect(before['remote_control'], isFalse, reason: 'off by default');
+
+      configStore.save(configStore.load().copyWith(remoteControl: true));
+      final (_, after) = await client.request('GET', '/status');
+      expect(after['remote_control'], isTrue);
+      final (_, stillAnonymous) = await client.request('GET', '/status', withToken: false);
+      expect(stillAnonymous.containsKey('remote_control'), isFalse);
+    });
+
+    test('POST /remote_control turns it on and off, persisted to config.json', () async {
+      configStore.save(DaemonConfig(backendUrl: 'https://a.example', authToken: 'tok'));
+
+      final (on, onBody) = await client.request('POST', '/remote_control', body: {'enabled': true});
+      expect(on, 200);
+      expect(onBody, {'remote_control': true});
+      expect(ConfigStore.forConfigDir(configDir).load().remoteControl, isTrue);
+      final raw = jsonDecode(File('${configDir.path}/config.json').readAsStringSync()) as Map;
+      expect(raw['remote_control'], isTrue);
+      expect(raw['auth_token'], 'tok', reason: 'the rest of config.json is left as it was');
+      expect(raw['backend_url'], 'https://a.example');
+
+      final (off, offBody) =
+          await client.request('POST', '/remote_control', body: {'enabled': false});
+      expect(off, 200);
+      expect(offBody, {'remote_control': false});
+      expect(ConfigStore.forConfigDir(configDir).load().remoteControl, isFalse);
+    });
+
+    test('POST /remote_control keeps config.json readable by the owner only', () async {
+      await client.request('POST', '/remote_control', body: {'enabled': true});
+      final mode = File('${configDir.path}/config.json').statSync().mode & 0x1FF;
+      expect(mode, 0x180, reason: 'expected 0600, got ${mode.toRadixString(8)}');
+    }, testOn: '!windows');
+
+    test('POST /remote_control rejects a missing or non-bool enabled with 400 and changes nothing',
+        () async {
+      configStore.save(configStore.load().copyWith(remoteControl: true));
+      for (final body in <Map<String, Object?>>[
+        {},
+        {'enabled': 'false'},
+        {'enabled': 0},
+        {'enabled': null},
+        {'on': false},
+      ]) {
+        final (status, response) = await client.request('POST', '/remote_control', body: body);
+        expect(status, 400, reason: '$body');
+        expect(response['error'], isNotEmpty, reason: '$body');
+      }
+      expect(configStore.load().remoteControl, isTrue);
+    });
+
+    test('POST /remote_control rejects a body that is not JSON with 400', () async {
+      final http = HttpClient();
+      addTearDown(() => http.close(force: true));
+      final request = await http.openUrl('POST', Uri.parse('http://127.0.0.1:${client.port}/remote_control'));
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ${client.token}');
+      request.write('{"enabled": tru');
+      final response = await request.close();
+      await response.drain<void>();
+      expect(response.statusCode, 400);
+      expect(configStore.load().remoteControl, isFalse);
+    });
+
+    test('POST /remote_control refuses a missing or wrong token and changes nothing', () async {
+      final (missing, _) = await client.request(
+        'POST',
+        '/remote_control',
+        body: {'enabled': true},
+        withToken: false,
+      );
+      expect(missing, 401);
+      final wrongToken = _ControlClient(client.port, 'not-the-real-token');
+      addTearDown(wrongToken.close);
+      final (wrong, _) = await wrongToken.request('POST', '/remote_control', body: {'enabled': true});
+      expect(wrong, 401);
+      expect(configStore.load().remoteControl, isFalse);
+    });
+
+    test('POST /remote_control refuses a non-loopback Host, token or not (INT-037)', () async {
+      final http = HttpClient();
+      addTearDown(() => http.close(force: true));
+      final request = await http.openUrl('POST', Uri.parse('http://127.0.0.1:${client.port}/remote_control'));
+      request.headers.host = 'attacker.example';
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ${client.token}');
+      request.headers.contentType = ContentType.json;
+      request.write(jsonEncode({'enabled': true}));
+      final response = await request.close();
+      await response.drain<void>();
+      expect(response.statusCode, 403);
+      expect(configStore.load().remoteControl, isFalse);
+    });
+
+    test('turning it off through this route refuses the next call of a connected remote task',
+        () async {
+      final agent = TaskHandler.live(
+        workspaceStore,
+        approvalQueue: approvalQueue,
+        isolatedTasks: IsolatedTaskRegistry(workspaceStore.live),
+        remoteControlEnabled: configStore.remoteControlEnabled,
+      );
+      await client.request('POST', '/remote_control', body: {'enabled': true});
+      final created = await agent.createTask({'origin': 'remote', 'cwd': workspaceRoot});
+      await agent.writeFile({
+        'task_id': created['task_id'],
+        'path': 'one.txt',
+        'content': '1',
+        'confirmed': true,
+      });
+      expect(File('$workspaceRoot/one.txt').readAsStringSync(), '1');
+
+      await client.request('POST', '/remote_control', body: {'enabled': false});
+      await expectLater(
+        agent.writeFile({
+          'task_id': created['task_id'],
+          'path': 'two.txt',
+          'content': '2',
+          'confirmed': true,
+        }),
+        throwsA(isA<RpcError>().having(
+            (e) => e.message, 'message', startsWith('remote_control_disabled: '))),
+      );
+      expect(File('$workspaceRoot/two.txt').existsSync(), isFalse);
+    });
+  });
+
   test('constantTimeEquals matches == on equal, different and differently-sized strings', () {
     expect(constantTimeEquals('Bearer abc', 'Bearer abc'), isTrue);
     expect(constantTimeEquals('Bearer abc', 'Bearer abd'), isFalse);
@@ -555,6 +686,10 @@ void main() {
       isolatedTasks: IsolatedTaskRegistry(WorkspaceStore.forConfigDir(pairingConfigDir).load()),
       logger: (_) {},
     );
+    // Remote control was turned on on this computer before the re-pair (WP8): a new token must not
+    // silently switch it off, nor on.
+    ConfigStore.forConfigDir(pairingConfigDir)
+        .save(DaemonConfig(backendUrl: fakeBackend.backendUrl, authToken: null, remoteControl: true));
     await pairingServer.start(pairingConfigDir);
     final controlFile =
         jsonDecode(File('${pairingConfigDir.path}/control.json').readAsStringSync()) as Map<String, dynamic>;
@@ -580,6 +715,7 @@ void main() {
     expect(secondPollBody['device_id'], 'dev-1');
     expect(paired, 'tok-abc');
     expect(ConfigStore.forConfigDir(pairingConfigDir).load().authToken, 'tok-abc');
+    expect(ConfigStore.forConfigDir(pairingConfigDir).load().remoteControl, isTrue);
 
     await pairingServer.stop();
   });

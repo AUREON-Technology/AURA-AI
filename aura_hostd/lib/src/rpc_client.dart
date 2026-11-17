@@ -243,6 +243,8 @@ class HostAgentClient {
         return taskHandler.writeFiles(params, callId: id?.toString());
       case 'read_file':
         return taskHandler.readFile(params);
+      case 'list_roots':
+        return taskHandler.listRoots(params);
       default:
         throw RpcError('unknown method "$method"');
     }

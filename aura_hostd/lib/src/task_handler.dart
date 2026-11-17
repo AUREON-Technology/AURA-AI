@@ -1,8 +1,22 @@
 /// Implements the RPC methods the backend's `HostAgentSandboxRunner`
 /// (`aura_backend/aura_core/adapters/host_agent.py`) calls: `create_task`, `run`, `write_file`,
-/// `write_files`, `read_file` (plus the `cancel` frame, `rpc_client.dart`). Every
+/// `write_files`, `read_file` and `list_roots` (plus the `cancel` frame, `rpc_client.dart`). Every
 /// filesystem/command operation goes through [WorkspaceRoots] for containment
 /// before touching disk -- this class has no path-handling logic of its own that bypasses it.
+///
+/// Remote control (WP8; ADR-011, D-10/D-10b/D-10c). `create_task` takes an `origin`: `"desktop"`
+/// (also when absent, as older backends send it) or `"remote"`, a turn started on the phone or the
+/// web. A remote task is refused unless this computer's `remote_control` flag (`config.json`, set
+/// only through the local control server) is on, and that flag is re-read on every later call of
+/// the task, so switching it off stops the next one. A remote task never gets the trusted tier,
+/// the read-only allowlist or the desktop's approval queue -- nobody is at the desk: what is
+/// refused in every tier stays refused, and every other `run`/`write_file`/`write_files` needs
+/// `confirmed: true`, the backend's word that the person approved this exact call on the remote
+/// device; without it the call fails with `confirmation_required:`. `read_file` needs no
+/// confirmation. A desktop task ignores `confirmed`: the backend cannot waive the desktop's own
+/// consent. The origin defends against a stolen phone or web session with an honest backend, not
+/// against a compromised backend (which could simply claim `desktop`); the local opt-in and the
+/// containment, denylist and `.git` rules are what hold then.
 ///
 /// A "task" here does not own a single workspace root the way a Docker sandbox owns one
 /// container: paths arrive workspace-relative from the tool layer's point of view, so each call
@@ -31,6 +45,12 @@ class RpcError implements Exception {
   @override
   String toString() => message;
 }
+
+/// The error every call of a remote task gets while this computer's remote control is off (WP8).
+/// The `remote_control_disabled:` prefix is what the backend and the apps match on; the rest is
+/// shown to the person.
+const remoteControlDisabledMessage = 'remote_control_disabled: Remote control is off on this '
+    "computer. Turn on 'Allow control from my phone and the web' in AURA on the computer.";
 
 /// How long a command may run before this side kills it -- a hard ceiling under whatever
 /// `timeout_s` the tool call requested, in case the caller asks for something unreasonable.
@@ -67,21 +87,36 @@ class TaskHandler {
     IsolatedTaskRegistry? isolatedTasks,
   ])  : _approvals = approvalQueue ?? ApprovalQueue(),
         _isolatedTasks = isolatedTasks ?? IsolatedTaskRegistry(_roots, gitService),
-        _refreshRoots = null;
+        _refreshRoots = null,
+        _remoteControlEnabled = _remoteControlOff;
 
   /// The daemon's own wiring (`backend_connection.dart`): resolves every RPC against
   /// [WorkspaceStore.live] -- the same instance the control server's grant/revoke/trust/untrust
   /// updates on save -- and re-reads the store at the start of each RPC, so a change made by the
   /// CLI in another process applies too (audit INT-002). [isolatedTasks] must have been built on
   /// `store.live` as well; the default one is.
+  ///
+  /// [remoteControlEnabled] answers whether this computer accepts remote tasks (WP8), read live
+  /// on every call -- the daemon passes `ConfigStore.remoteControlEnabled`. Without one, remote
+  /// control is off.
   TaskHandler.live(
     WorkspaceStore store, {
     ApprovalQueue? approvalQueue,
     IsolatedTaskRegistry? isolatedTasks,
+    bool Function()? remoteControlEnabled,
   })  : _roots = store.live,
         _approvals = approvalQueue ?? ApprovalQueue(),
         _isolatedTasks = isolatedTasks ?? IsolatedTaskRegistry(store.live),
-        _refreshRoots = store.refreshLive;
+        _refreshRoots = store.refreshLive,
+        _remoteControlEnabled = remoteControlEnabled ?? _remoteControlOff;
+
+  static bool _remoteControlOff() => false;
+
+  /// Whether this computer's `remote_control` flag is on now (WP8, D-10b).
+  final bool Function() _remoteControlEnabled;
+
+  /// Task ids created with `origin: "remote"`. Never reaped, like [_activeTaskIds].
+  final Set<String> _remoteTasks = {};
 
   final WorkspaceRoots _roots;
 
@@ -122,6 +157,8 @@ class TaskHandler {
 
   Future<Map<String, Object?>> createTask(Map<String, dynamic> params) async {
     _refresh();
+    final remote = _parseOrigin(params['origin']);
+    if (remote && !_remoteControlEnabled()) throw RpcError(remoteControlDisabledMessage);
     final taskId = 't_${DateTime.now().microsecondsSinceEpoch}_${_activeTaskIds.length}';
     _activeTaskIds.add(taskId);
 
@@ -159,7 +196,56 @@ class TaskHandler {
         _boundRoots[taskId] = root;
       }
     }
+    // Recorded only once the task is fully set up, so a refused create_task leaves nothing behind.
+    if (remote) _remoteTasks.add(taskId);
     return {'task_id': taskId, 'isolated': taskKey != null};
+  }
+
+  /// `list_roots` (WP8): the folders the agent may use, as the grants stand now, and whether this
+  /// computer accepts remote tasks -- so the phone or web app can offer a folder picker and say
+  /// when remote control is off. Needs no task, and answers for any origin: it reveals nothing
+  /// the desktop app's own status does not already show the signed-in account.
+  Future<Map<String, Object?>> listRoots(Map<String, dynamic> params) async {
+    _refresh();
+    return {
+      'roots': [
+        for (final root in _roots.all) {'path': root.canonicalPath, 'trusted': root.trusted},
+      ],
+      'remote_control': _remoteControlEnabled(),
+    };
+  }
+
+  /// `true` for a remote task. An absent origin is a desktop task (older backends); any other
+  /// value is refused rather than guessed at.
+  bool _parseOrigin(Object? origin) {
+    if (origin == null || origin == 'desktop') return false;
+    if (origin == 'remote') return true;
+    throw RpcError('invalid origin ${jsonEncode(origin)}: it must be "desktop" or "remote"');
+  }
+
+  /// Whether [params]' task is a remote task -- refusing the call if it is and remote control has
+  /// been switched off since (WP8, D-10b). Called first thing in every task RPC, after the grants
+  /// are re-read, so the switch stops the very next call of a conversation already under way.
+  bool _checkRemote(Map<String, dynamic> params) {
+    final taskId = params['task_id'];
+    if (taskId is! String || !_remoteTasks.contains(taskId)) return false;
+    if (!_remoteControlEnabled()) throw RpcError(remoteControlDisabledMessage);
+    return true;
+  }
+
+  /// D-10c: a remote task's `run`/`write_file`/`write_files` must carry `confirmed: true` -- the
+  /// backend's statement that the person approved this exact call on their phone or the web.
+  /// Only a JSON `true` counts. This is the daemon's own floor: the backend should never send an
+  /// unconfirmed one, and nothing here falls back to the desktop's queue, which nobody is watching.
+  /// Checked after every refusal that applies anyway (containment, `.git`, denylist), so the
+  /// person is never asked to approve a call this daemon would refuse regardless. (An isolated
+  /// task's worktree may already have been created by then, exactly as before a desktop approval.)
+  void _requireRemoteConfirmation(Map<String, dynamic> params, String method) {
+    if (params['confirmed'] == true) return;
+    throw RpcError(
+      'confirmation_required: this computer is being controlled from the phone or the web, so '
+      'every command and file change must be approved there first -- this $method call was not',
+    );
   }
 
   /// G-04 (SEC-03): see `isolated_task_registry.dart::isSafeTaskKey`.
@@ -218,6 +304,7 @@ class TaskHandler {
   /// were the one place an agent could freely mutate any file in a granted-but-untrusted root.
   Future<Map<String, Object?>> writeFile(Map<String, dynamic> params, {String? callId}) async {
     _refresh();
+    final remote = _checkRemote(params);
     final path = _requireString(params, 'path');
     final content = _requireString(params, 'content');
     final taskId = params['task_id'] as String?;
@@ -236,8 +323,12 @@ class TaskHandler {
     final protectedReason = protectedGitWriteReason(resolved);
     if (protectedReason != null) throw RpcError(protectedReason);
 
-    final verdict = evaluateWrite(workspaceTrusted: root.trusted);
-    if (verdict.decision == CommandDecision.needsApproval) {
+    // A remote task skips the trust tier and the desktop queue: approved on the remote device, or
+    // refused (WP8). A desktop task ignores `confirmed`.
+    if (remote) {
+      _requireRemoteConfirmation(params, 'write_file');
+    } else if (evaluateWrite(workspaceTrusted: root.trusted).decision ==
+        CommandDecision.needsApproval) {
       await _awaitWriteApproval(
         [WriteOp(path: path, finalContent: content)],
         cwd: root.canonicalPath,
@@ -261,6 +352,7 @@ class TaskHandler {
   /// gating, which is out of this phase's scope.
   Future<Map<String, Object?>> writeFiles(Map<String, dynamic> params, {String? callId}) async {
     _refresh();
+    final remote = _checkRemote(params);
     final rawOps = params['operations'];
     if (rawOps is! List || rawOps.isEmpty) {
       throw RpcError('"operations" must be a non-empty list');
@@ -325,8 +417,10 @@ class TaskHandler {
     }
 
     final root = sharedRoot!;
-    final verdict = evaluateWrite(workspaceTrusted: root.trusted);
-    if (verdict.decision == CommandDecision.needsApproval) {
+    if (remote) {
+      _requireRemoteConfirmation(params, 'write_files');
+    } else if (evaluateWrite(workspaceTrusted: root.trusted).decision ==
+        CommandDecision.needsApproval) {
       await _awaitWriteApproval(resolved, cwd: root.canonicalPath, root: root, callId: callId);
     }
 
@@ -343,6 +437,8 @@ class TaskHandler {
 
   Future<Map<String, Object?>> readFile(Map<String, dynamic> params) async {
     _refresh();
+    // Read-only: no confirmation for a remote task, but it still stops once remote control is off.
+    _checkRemote(params);
     final path = _requireString(params, 'path');
     final taskId = params['task_id'] as String?;
     var root = _boundRootFor(taskId);
@@ -379,6 +475,7 @@ class TaskHandler {
     // Tolerate other argv shapes too (a future caller might not go through `sh -c`) by falling
     // back to running the argv's first element as the program.
     _refresh();
+    final remote = _checkRemote(params);
     final commandArgv = _requireStringList(params, 'command');
     if (commandArgv.isEmpty) {
       throw RpcError('"command" must be a non-empty list of arguments');
@@ -412,22 +509,28 @@ class TaskHandler {
         : root.canonicalPath;
 
     final commandForPolicy = _effectiveShellCommand(commandArgv);
-    final verdict = evaluateCommand(
-      commandForPolicy,
-      workspaceTrusted: root.trusted,
-      workspaceRoot: root.canonicalPath,
-      cwd: cwd,
-    );
+    // WP8: a remote task gets neither the trusted tier nor the read-only allowlist -- only the
+    // every-workspace refusals, then the remote device's approval (`confirmed`), never the queue.
+    final verdict = remote
+        ? evaluateRemoteCommand(commandForPolicy)
+        : evaluateCommand(
+            commandForPolicy,
+            workspaceTrusted: root.trusted,
+            workspaceRoot: root.canonicalPath,
+            cwd: cwd,
+          );
     if (verdict.decision == CommandDecision.deny) {
       throw RpcError('command refused: ${verdict.reason}');
     }
-    if (verdict.decision == CommandDecision.needsApproval) {
+    if (remote) {
+      _requireRemoteConfirmation(params, 'run');
+    } else if (verdict.decision == CommandDecision.needsApproval) {
       await _awaitApproval(commandForPolicy, cwd: cwd, root: root, callId: callId);
     }
     // G-17 (SEC-10): the untrusted tier's allowlisted git runs with the repository's own
-    // fsmonitor, hooks, external diff and textconv programs switched off. An approved command is
-    // left as the human saw it.
-    final argvToRun = verdict.isAllowed && !root.trusted
+    // fsmonitor, hooks, external diff and textconv programs switched off. An approved command
+    // (on the desktop, or a remote task's confirmed one) is left as the human saw it.
+    final argvToRun = !remote && verdict.isAllowed && !root.trusted
         ? _hardenUntrustedGit(commandArgv, commandForPolicy)
         : commandArgv;
 

@@ -15,6 +15,9 @@
 ///
 /// The trust flag is set by the user (`aura_hostd trust <path>` or the IDE), never by the agent.
 ///
+/// A task started on the phone or the web (WP8) never gets these tiers: [evaluateRemoteCommand]
+/// keeps only the every-workspace refusals and asks for the remote device's approval otherwise.
+///
 /// Command policy is layered *on top of* workspace containment (`containment.dart`), never a
 /// substitute for it: a command permitted here still only ever runs with its working directory
 /// inside the granted root, and `run_command`'s shell interpretation means containment is a
@@ -285,6 +288,31 @@ CommandVerdict evaluateCommand(
     'workspace is not trusted and this command is not on the read-only allowlist -- run '
     '`aura_hostd trust <path>` for this workspace, or connect a Desktop IDE session to answer '
     'interactive approval requests',
+  );
+}
+
+/// The policy for a command from a *remote* task (WP8: a turn started on the phone or the web,
+/// `create_task` with `origin: "remote"`). Nobody is at the desk, so neither the trusted tier nor
+/// the read-only allowlist applies (D-10b): what [evaluateCommand] refuses in every workspace stays
+/// refused -- the hard denylist, and a destructive verb reaching outside the folder, which a
+/// confirmation on a phone must not unlock either -- and everything else is
+/// [CommandDecision.needsApproval], meaning "only once the person approved this exact call on
+/// their phone or the web" (D-10c, `confirmed` on the RPC). Never the desktop's approval queue.
+CommandVerdict evaluateRemoteCommand(String command) {
+  final trimmed = command.trim();
+  for (final pattern in hardDenylistPatterns) {
+    if (pattern.hasMatch(trimmed)) {
+      return const CommandVerdict(
+        CommandDecision.deny,
+        'command matches the hard denylist and is refused in every workspace',
+      );
+    }
+  }
+  final escape = destructiveEscapeReason(trimmed);
+  if (escape != null) return CommandVerdict(CommandDecision.deny, escape);
+  return const CommandVerdict(
+    CommandDecision.needsApproval,
+    'a command from the phone or the web runs only once it was approved there',
   );
 }
 
