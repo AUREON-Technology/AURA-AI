@@ -181,6 +181,18 @@ groups:
           description: >
             Plaintext backup sets on the host, and offsite copy is refused for them.
 
+      - alert: AuraBackupSingleKey
+        expr: aura_backup_encryption_enabled == 1 and aura_backup_age_recipients < 2
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "New backups can be decrypted by fewer than two age keys"
+          description: >
+            Every set on the VPS, B2 and R2 is readable only with the offline private key(s).
+            With a single key pair, losing that one key loses every backup on every provider.
+            Put both public keys in deploy/secrets/backup/backup_age_recipients.txt
+            (maintenance-guide "Backup encryption keys").
+
       - alert: AuraBackupOffsiteFailed
         expr: aura_backup_offsite_configured == 1 and aura_backup_offsite_last_exit_code != 0
         for: 15m
@@ -190,6 +202,33 @@ groups:
           description: >
             BACKUP_S3_URI is set but the last upload, remote check, or cycle failed.
             Credentials live in deploy/secrets/; no keys are in the image.
+
+      - alert: AuraBackupUnderReplicated
+        expr: |
+          aura_backup_offsite_configured == 1
+          and aura_backup_offsite_copies_verified < aura_backup_offsite_copies_required
+        for: 15m
+        labels: {severity: critical}
+        annotations:
+          summary: "Latest backup set is not on enough offsite providers"
+          description: >
+            Fewer than BACKUP_OFFSITE_MIN_COPIES offsite targets verified the last set. A
+            single provider holding the only copy is one outage from data loss. Check
+            `docker compose logs backup` for which target failed verification.
+
+      - alert: AuraBackupOffsiteStale
+        expr: |
+          aura_backup_offsite_configured == 1
+          and time() - aura_backup_offsite_last_success_timestamp_seconds > 129600
+        for: 30m
+        labels: {severity: critical}
+        annotations:
+          summary: "No backup set has reached enough offsite providers in 36 hours"
+          description: >
+            The success marker advances only when BACKUP_OFFSITE_MIN_COPIES targets verify a
+            set, so this fires for repeated under-replication, a stopped backup sidecar, or
+            offsite never having succeeded (timestamp 0). Losing the VPS now loses more than
+            a day of data.
 
       - alert: AuraEvalRegression
         expr: aura_eval_score{metric="recall_at_k"} < 0.6
