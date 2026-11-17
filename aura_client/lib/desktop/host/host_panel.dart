@@ -91,6 +91,11 @@ class _HostPanelState extends ConsumerState<HostPanel> {
     // `null` is the third case: an aura_hostd too old to report `backend_connected` at all (see
     // HostdStatusSnapshot.backendConnected), which must not be shown as an endless reconnect.
     final isConnected = status.backendConnected;
+    // The daemon is paired, but to a server other than the one this app is signed in to (see
+    // HostdStatusSnapshot.pairedToDifferentServer). Pairing is the only way to move it, so Pair is
+    // offered again below instead of leaving a permanent "reconnecting".
+    final appBackendUrl = ref.watch(backendUrlProvider);
+    final otherServer = status.pairedToDifferentServer(appBackendUrl);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -118,6 +123,8 @@ class _HostPanelState extends ConsumerState<HostPanel> {
                   ? 'Not running'
                   : !isPaired
                       ? 'Running, not paired'
+                      : otherServer
+                      ? 'Running, paired to a different server'
                       : switch (isConnected) {
                           true => 'Running, paired',
                           false => 'Running, reconnecting...',
@@ -134,6 +141,13 @@ class _HostPanelState extends ConsumerState<HostPanel> {
         if (status.backendUrl != null) ...[
           const SizedBox(height: AuraSpacing.xs),
           Text('Backend: ${status.backendUrl}', style: TextStyle(fontSize: 10, color: palette.textSecondary)),
+        ],
+        if (otherServer) ...[
+          const SizedBox(height: AuraSpacing.xs),
+          Text(
+            'This app is signed in to $appBackendUrl. Pair again to move the daemon there.',
+            style: TextStyle(fontSize: 10, color: palette.warning),
+          ),
         ],
         const SizedBox(height: AuraSpacing.sm),
         Wrap(
@@ -158,9 +172,9 @@ class _HostPanelState extends ConsumerState<HostPanel> {
                 variant: AuraButtonVariant.secondary,
                 onPressed: () => _stopDaemon(context, ref, supervisor),
               ),
-            if (isRunning && !isPaired)
+            if (isRunning && (!isPaired || otherServer))
               _SmallAuraButton(
-                label: _pairing ? 'Pairing...' : 'Pair',
+                label: _pairing ? 'Pairing...' : (otherServer ? 'Re-pair' : 'Pair'),
                 icon: Icons.link,
                 variant: AuraButtonVariant.secondary,
                 onPressed: _pairing ? null : () => _pairDevice(context, ref),
