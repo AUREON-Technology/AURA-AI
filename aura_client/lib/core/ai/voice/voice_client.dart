@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:aura_client/core/platform/client_language.dart';
 import 'package:aura_client/l10n/l10n.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -60,6 +61,10 @@ class VoiceClient {
       final uri = Uri.parse("$_backendUrl/transcribe");
       final request = http.MultipartRequest('POST', uri)
         ..files.add(http.MultipartFile.fromBytes('file', audioBytes, filename: filename));
+      // An Arabic app hints Arabic to a multilingual speech model; otherwise the model detects
+      // the language itself, so Arabic spoken into an English app still transcribes. Servers
+      // that predate the field ignore it (docs/plans/arabic-language_plan.md, stage 4).
+      if (ClientLanguage.current() == 'ar') request.fields['language'] = 'ar';
       request.headers.addAll(await _headers(token));
       final client = _http;
       return client != null ? client.send(request) : http.Client().send(request);
