@@ -394,6 +394,35 @@ class TestInsightsIntegration(unittest.TestCase):
         self.assertEqual(call(generate_insights, None), "Asia/Riyadh")
         self.assertEqual(call(generate_insights, "America/Bogota"), "America/Bogota")
 
+    def test_the_insights_endpoints_remember_the_clients_language(self):
+        """``X-Client-Language`` is persisted as ``ar``/``en``; a bad, unsupported or missing value
+        never overwrites a good one (docs/plans/arabic-language_plan.md, stage 1)."""
+        from sqlalchemy import select
+
+        from api.v2.insights import generate_insights, list_insights
+        from infrastructure.db.base import get_session_factory
+        from infrastructure.db.models import User
+
+        user_info = {"uid": f"lang-{uuid.uuid4()}", "email": f"lang-{uuid.uuid4()}@example.com"}
+
+        def call(endpoint, language):
+            async def go():
+                async with get_session_factory()() as db:
+                    await endpoint(user_info=user_info, db=db, client_timezone=None,
+                                   client_language=language)
+                async with get_session_factory()() as db:
+                    return await db.scalar(
+                        select(User.language).where(User.auth_subject == user_info["uid"])
+                    )
+            return self._arun(go())
+
+        self.assertIsNone(call(list_insights, None))
+        self.assertEqual(call(list_insights, "ar-EG"), "ar")
+        self.assertEqual(call(generate_insights, "fr-FR"), "ar")
+        self.assertEqual(call(generate_insights, "../../etc"), "ar")
+        self.assertEqual(call(generate_insights, None), "ar")
+        self.assertEqual(call(generate_insights, "en_US"), "en")
+
 
 if __name__ == "__main__":
     unittest.main()

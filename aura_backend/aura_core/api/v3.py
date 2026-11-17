@@ -34,6 +34,7 @@ from ..domain.caller_context import MAX_CALLER_CONTEXT, CallerContext
 from ..domain.connectors import CONNECTOR_ID_PATTERN, Credential
 from ..domain.identifiers import CorrelationId, DocumentId, SessionId, UserId
 from ..domain.llm import RoutingPolicy
+from ..text.language import CLIENT_LANGUAGE_HEADER, normalize_language
 from ..domain.memory import MemoryKind, MemoryQuery
 from ..domain.output_schema import check_output_schema
 from ..domain.reasoning import ReasoningStrategy
@@ -63,6 +64,11 @@ _MAX_RESPONSE_SCHEMA_CHARS = 8000
 CONNECTOR_TOKEN_HEADER = "x-aura-connector-token"
 _MAX_CONNECTOR_TOKENS = 8
 _MAX_CONNECTOR_TOKEN_CHARS = 8192
+
+
+def _client_language(request: Any) -> str | None:
+    """The app's display language from ``X-Client-Language`` (``"ar"``/``"en"``), or ``None``."""
+    return normalize_language(request.headers.get(CLIENT_LANGUAGE_HEADER))
 
 
 def _connector_tokens(request: Any) -> dict[str, Credential]:
@@ -519,6 +525,9 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             response_schema=payload.response_schema,
             connector_tokens=connector_tokens or None,
             images=images,
+            # The app's display language (X-Client-Language), the fallback for a message with no
+            # clear language of its own (prompts/language.py). A service key has no app.
+            preferred_language=None if caller.is_service else _client_language(request),
         )
 
     def vision_status() -> dict[str, bool]:

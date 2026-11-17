@@ -1,7 +1,8 @@
 # Plan: Arabic (Egyptian) across the whole system
 
-Status: **DRAFT, awaiting owner approval** (2026-11-17). Base: `main` at `0d6c53e`, branch
-`anas/kind-rubin-dpm0sq`. Nothing below is built yet.
+Status: **approved by the owner 2026-11-17.** Base: `main` at `0d6c53e`, branch
+`anas/kind-rubin-dpm0sq`. **Stage 1 built and TESTED locally** (see "Stage 1: as built" at the
+end); stages 2–4 not started.
 
 ## Goal
 
@@ -383,3 +384,75 @@ Manual test checklist (device, browser, desktop) is handed over at the end of ea
 - The daemon CLI output.
 - Windows `.rc` metadata and the Linux window title.
 - Translating `docs/` or the end-user guide artifact.
+
+---
+
+## Stage 1: as built (2026-11-17)
+
+**Evidence: BUILT and TESTED locally only.** CI has run no application suite since `dc87beb`
+(CB-44). Nothing is deployed, and nothing is proven against a live model. Whether a real model
+follows the reply-language rule is untested.
+
+What changed:
+- **Shared Arabic text** (`aura_core/text/`):
+  - `fold`, `light_stem`, `dominant_script` and `arabic_view` are in `arabic.py`.
+  - `normalize_language` and the header name are in `language.py`.
+  - The safety guards and the TTS language detector now use this module instead of their own
+    copies, so the guards, search and voice agree on Arabic.
+- **Arabic-blind code fixed:**
+  - BM25 tokenizer (`knowledge/retrieval.py`) and evidence grading (`rag/verification.py`);
+  - token counter (`context/tokenizer.py`, one token per 2 Arabic letters, deliberately high);
+  - sentence splitter (`knowledge/chunking.py`);
+  - groundedness guard (`safety/guards.py`). It scores a word only against sources in the same
+    script, so a faithful Arabic answer drawn from English documents stays unscored instead of
+    being flagged; the labelled guard eval case `ground-18` caught the first version doing that.
+  - complexity scoring (`llm/complexity.py`, folded terms with Arabic affixes plus Egyptian
+    phrasings);
+  - adaptive routing (`rag/adaptive.py`, a parallel Arabic cue table);
+  - refusal detection in curation (`learning/curation.py`).
+- **Language preference:**
+  - Migration `0021` adds `users.language` (nullable, no backfill).
+  - `services/user_language.py`.
+  - `X-Client-Language` is remembered on `POST /api/v2/auth/token` and on both insights calls.
+- **Reply language:**
+  - `TurnRequest.preferred_language` comes from the header; service keys get none.
+  - `prompts/language.py` decides the language, ignoring URLs and code.
+  - All 9 persona templates declare `arabic_reply` in `_CORE_IDENTITY`, each bumped one minor
+    version. It is set only when the reply should be Arabic. It adds one line: Egyptian Arabic,
+    or فصحى if the user writes or asks for it, with code and names kept as they are.
+  - **An English reply's system prompt is byte-for-byte unchanged**, checked across all 18
+    templates against `main`. The first version added an always-on rule of about 70 tokens to
+    every prompt. That pushed every retrieved chunk out of English turns on the CPU tier's
+    400-token prompt budget (`TestCpuPrefillBudget`, and the degraded-turn notice tests).
+- **Client:** `lib/core/platform/client_language.dart` supplies `X-Client-Language`.
+  `DeviceValidationService.getAttestationHeaders()` sends it, and that method is the header set
+  every API client already attaches. It sends the device language until stage 2's picker sets
+  `ClientLanguage.override`.
+
+Deviations from the plan, and why:
+- **`RoutingHint.language` is left unset.** The router refuses a provider whose declared
+  `LANGUAGES` lacks the hinted language (`llm/router.py`, `serves_language`). No compose file
+  declares languages, but Railway's variables can't be seen from the repo. If any provider there
+  declares only `en`, setting the hint would turn every working Arabic turn into "no eligible
+  provider". The prompt rule does the work instead.
+- **No `language` field on a v2 profile response.** There is no profile endpoint to extend, and
+  the app keeps its own choice. Sign-in (`/token`) is where the stored value is written.
+- `/api/v2/auth/refresh` does not remember the language, because it never opens the database.
+  Sign-in and the insights calls do.
+
+Contract (all additive):
+- Optional request header `X-Client-Language` (BCP-47; `ar`/`en` honoured, anything else
+  ignored).
+- `users.language`.
+- Persona prompt versions bump one minor each, e.g. `system.orchestrator` 1.1.0 → 1.2.0. An
+  admin pin of an old built-in version now returns 404, as for any earlier bump.
+
+An app without the header behaves exactly as before for English. An Arabic message now gets
+the Arabic reply line whatever app sent it.
+
+Known costs:
+- An Arabic turn's system prompt is about 30 tokens longer.
+- The token counter now charges Arabic about 2 letters per token.
+
+On the CPU tier, both leave Arabic turns less room for retrieved context than English ones.
+That is the honest price of counting Arabic at all; before, it overflowed silently.

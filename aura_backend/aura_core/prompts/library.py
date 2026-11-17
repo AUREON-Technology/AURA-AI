@@ -27,7 +27,17 @@ _CORE_IDENTITY = """You are AURA. Be precise, concise, and honest.
 
 Ground answers in provided reference material; cite the source. If it does not contain the
 answer, say so and name what is missing. Never invent facts, numbers, dates, citations, or
-filenames. Mark inferences. Never claim you ran a tool or action you did not."""
+filenames. Mark inferences. Never claim you ran a tool or action you did not.{{#arabic_reply}}
+Reply in Egyptian Arabic, or Modern Standard Arabic if the user writes or asks for it. Keep code,
+commands and names as they are.{{/arabic_reply}}"""
+
+#: Declared by every template built on ``_CORE_IDENTITY`` (owner decisions 3 and 5,
+#: docs/plans/arabic-language_plan.md). Set only when the reply should be Arabic: the message is
+#: written in Arabic, or has no language of its own and the app is showing Arabic
+#: (``prompts/language.py``). An English reply gets no extra text at all, so its system prompt is
+#: byte-for-byte what it was -- the CPU tier's 400-token prompt budget has no room to spare
+#: (``TestCpuPrefillBudget``), and an always-on rule cost English turns their retrieved context.
+_ARABIC_REPLY = ("arabic_reply", "Non-empty when this reply must be written in Arabic.", False)
 
 
 _FENCE_RULES = """{{fence_rules}}"""
@@ -37,10 +47,11 @@ BUILTIN_PROMPTS: tuple[PromptTemplate, ...] = (
     # ---------------------------------------------------------------- system: orchestrator
     PromptTemplate(
         id="system.orchestrator",
-        version="1.1.0",
+        version="1.2.0",
         description="Default assistant persona: general assistance and delegation.",
         tags=("system", "agent"),
         variables=variables(
+            _ARABIC_REPLY,
             ("fence_rules", "Untrusted-content statement produced by ContextBundle."),
             ("user_profile", "Short description of the user, from memory.", False),
             ("current_time", "ISO timestamp for temporal grounding.", False),
@@ -59,10 +70,11 @@ BUILTIN_PROMPTS: tuple[PromptTemplate, ...] = (
     # ---------------------------------------------------------------- system: personas
     PromptTemplate(
         id="system.task_planner",
-        version="1.1.0",
+        version="1.2.0",
         description="Task and schedule management persona.",
         tags=("system", "agent"),
         variables=variables(
+            _ARABIC_REPLY,
             ("fence_rules", "Untrusted-content statement."),
             ("current_time", "ISO timestamp.", False),
             ("capabilities", "Available tools.", False),
@@ -80,10 +92,11 @@ Nothing you propose is done until the user approves.
     ),
     PromptTemplate(
         id="system.finance_advisor",
-        version="1.1.0",
+        version="1.2.0",
         description="Personal finance persona. Advisory only; no authority to move money.",
         tags=("system", "agent"),
         variables=variables(
+            _ARABIC_REPLY,
             ("fence_rules", "Untrusted-content statement."),
             ("capabilities", "Available tools.", False),
         ),
@@ -99,10 +112,11 @@ professional. If records are incomplete, say what is missing.
     ),
     PromptTemplate(
         id="system.health_companion",
-        version="1.1.0",
+        version="1.2.0",
         description="Wellness tracking persona. Explicitly not a clinician.",
         tags=("system", "agent"),
         variables=variables(
+            _ARABIC_REPLY,
             ("fence_rules", "Untrusted-content statement."),
             ("capabilities", "Available tools.", False),
         ),
@@ -118,10 +132,11 @@ do not infer a condition.
     ),
     PromptTemplate(
         id="system.research_agent",
-        version="1.1.0",
+        version="1.2.0",
         description="Retrieval and synthesis persona. Citation-bound.",
         tags=("system", "agent"),
         variables=variables(
+            _ARABIC_REPLY,
             ("fence_rules", "Untrusted-content statement."),
             ("capabilities", "Available tools.", False),
         ),
@@ -137,11 +152,12 @@ say so — do not guess.
     ),
     PromptTemplate(
         id="system.blueprint_agent",
-        version="1.0.0",
+        version="1.1.0",
         description="Fixed core prompt for every agent compiled from a Project Blueprint (ADR-024, AP7). "
                     "Nothing from the connected system is rendered into it.",
         tags=("system", "agent", "adaptation"),
         variables=variables(
+            _ARABIC_REPLY,
             ("fence_rules", "Untrusted-content statement."),
             ("current_time", "ISO timestamp.", False),
             ("capabilities", "Available tools.", False),
@@ -161,10 +177,11 @@ system; if asked to, say so and suggest who can. Say which tool each figure came
     ),
     PromptTemplate(
         id="system.coding_agent",
-        version="1.1.0",
+        version="1.2.0",
         description="Software engineering persona.",
         tags=("system", "agent"),
         variables=variables(
+            _ARABIC_REPLY,
             ("fence_rules", "Untrusted-content statement."),
             ("capabilities", "Available tools.", False),
         ),
@@ -179,11 +196,12 @@ unhandled failure modes. In reviews, cite file, line, and the input that breaks 
     ),
     PromptTemplate(
         id="system.engineer",
-        version="1.3.0",
+        version="1.4.0",
         description="Engineer agent persona: multi-step coding tasks against a sandboxed "
         "workspace, git, GitHub, and any configured MCP tools.",
         tags=("system", "agent"),
         variables=variables(
+            _ARABIC_REPLY,
             ("fence_rules", "Untrusted-content statement."),
             ("capabilities", "Available tools.", False),
             ("desktop_paired", "Set when this session is paired with a desktop app.", False),
@@ -231,10 +249,11 @@ you did and why after each step completes.
     ),
     PromptTemplate(
         id="system.decision_agent",
-        version="1.2.0",
+        version="1.3.0",
         description="Options analysis and trade-off persona.",
         tags=("system", "agent"),
         variables=variables(
+            _ARABIC_REPLY,
             ("fence_rules", "Untrusted-content statement."),
             ("capabilities", "Available tools.", False),
         ),
