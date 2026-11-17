@@ -33,12 +33,17 @@ class AuraThemeV2 {
       error: palette.danger,
     );
 
+    // Component label styles below derive from this so they carry the brand
+    // font: a bare `TextStyle` in a component theme replaces, rather than
+    // merges with, the text theme, and would fall back to the platform font.
+    final textTheme = AuraTypography.textTheme(palette);
+
     return ThemeData(
       useMaterial3: true,
       brightness: brightness,
       scaffoldBackgroundColor: palette.background,
       colorScheme: colorScheme,
-      textTheme: AuraTypography.textTheme(palette),
+      textTheme: textTheme,
       extensions: [palette, AuraIdeDensity.defaultDensity],
       // InkSparkle + ListTile tile/selected colors hides ink (Flutter asserts
       // "ListTile background color or ink splashes may be invisible").
@@ -154,7 +159,10 @@ class AuraThemeV2 {
         backgroundColor: palette.surfaceVariant,
         side: BorderSide(color: palette.border),
         shape: const StadiumBorder(),
-        labelStyle: TextStyle(color: palette.textPrimary, fontSize: 13),
+        labelStyle: textTheme.labelLarge?.copyWith(
+          color: palette.textPrimary,
+          fontSize: 13,
+        ),
       ),
       dialogTheme: DialogThemeData(
         backgroundColor: palette.surface,
@@ -189,7 +197,10 @@ class AuraThemeV2 {
           color: palette.textPrimary,
           borderRadius: BorderRadius.circular(AuraRadius.sm),
         ),
-        textStyle: TextStyle(color: palette.background, fontSize: 12),
+        textStyle: textTheme.bodySmall?.copyWith(
+          color: palette.background,
+          fontSize: 12,
+        ),
         waitDuration: const Duration(milliseconds: 400),
       ),
       navigationBarTheme: NavigationBarThemeData(
@@ -211,7 +222,7 @@ class AuraThemeV2 {
         }),
         labelTextStyle: WidgetStateProperty.resolveWith((states) {
           final selected = states.contains(WidgetState.selected);
-          return TextStyle(
+          return textTheme.labelMedium?.copyWith(
             fontSize: 12,
             fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
             color: selected ? palette.textPrimary : palette.textSecondary,
@@ -233,12 +244,12 @@ class AuraThemeV2 {
           color: palette.textSecondary,
           size: 22,
         ),
-        selectedLabelTextStyle: TextStyle(
+        selectedLabelTextStyle: textTheme.labelLarge?.copyWith(
           color: palette.textPrimary,
           fontSize: 13,
           fontWeight: FontWeight.w600,
         ),
-        unselectedLabelTextStyle: TextStyle(
+        unselectedLabelTextStyle: textTheme.labelLarge?.copyWith(
           color: palette.textSecondary,
           fontSize: 13,
           fontWeight: FontWeight.w500,
