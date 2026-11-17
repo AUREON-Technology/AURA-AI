@@ -18,6 +18,7 @@ import asyncio
 import base64
 import binascii
 import hashlib
+from dataclasses import replace
 import json
 from datetime import datetime, timedelta
 from typing import Any, AsyncIterator, Mapping
@@ -372,18 +373,26 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     plans = getattr(container, "plans", None)
 
-    async def admit_turn(caller: Principal, agent: str | None) -> Any:
-        """SaaS P1-C: reserve one message against the workspace's plan (and require Engineer for
-        an Engineer turn). Returns the reservation to give back if the turn fails; None when the
-        caller is unmetered. Raises PlanLimitError (402)."""
+    async def admit_turn(caller: Principal, agent: str | None, turn: Any) -> tuple[Any, Any]:
+        """SaaS P1-C: reserve one message against the workspace's plan. Returns the reservation
+        to give back if the turn fails (None when unmetered) and the turn to run.
+
+        Engineer is decided by the workspace's plan, not the persona name: an Engineer turn on a
+        plan without it is refused, and any other turn loses the ``engineer_agent`` capability,
+        so neither the orchestrator's coding tools nor a delegation to the Engineer can reach it
+        (review C#2). Raises PlanLimitError (402)."""
         if plans is None:
-            return None
+            return None, turn
         workspace_id = await plans.metered_workspace(caller)
         if workspace_id is None:
-            return None
-        if agent == "engineer":
-            await plans.require_engineer(workspace_id)
-        return await plans.admit_message(workspace_id)
+            return None, turn
+        plan, _seats = await plans.entitlement(workspace_id)
+        if not plan.engineer:
+            if agent == "engineer":
+                await plans.require_engineer(workspace_id)
+            if "engineer_agent" in turn.capabilities:
+                turn = replace(turn, capabilities=tuple(c for c in turn.capabilities if c != "engineer_agent"))
+        return await plans.admit_message(workspace_id), turn
 
     async def release_turn(reservation: Any) -> None:
         if reservation is not None:
@@ -412,6 +421,12 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         kept = 0
         if result is not None and getattr(result, "created", False) and result.document is not None:
             kept = len(result.document.content.encode("utf-8"))
+            if result.document.version > 1:
+                # A new version replaces the previous one: only the difference is new storage,
+                # and deleting the document later frees the latest version's size (review C#1).
+                previous = await container.documents.get(result.document.id, version=result.document.version - 1)
+                if previous is not None:
+                    kept -= len(previous.content.encode("utf-8"))
         if kept != reserved:
             await plans.meter.add(workspace_id, "storage_bytes", "all", kept - reserved)
 
@@ -635,7 +650,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         """One complete turn. Use ``/chat/stream`` for incremental output."""
         await enforce_rate_limit(request, caller, "chat")
         turn = await to_turn(payload, caller, request)
-        reservation = await admit_turn(caller, payload.agent)
+        reservation, turn = await admit_turn(caller, payload.agent, turn)
         try:
             result = await container.kernel.run(turn)
         except BaseException:
@@ -746,7 +761,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             raise ValidationError("response_schema is supported on POST /api/v3/chat only, not on the stream")
         await enforce_rate_limit(request, caller, "chat")
         turn = await to_turn(payload, caller, request)
-        reservation = await admit_turn(caller, payload.agent)
+        reservation, turn = await admit_turn(caller, payload.agent, turn)
 
         async def events() -> AsyncIterator[bytes]:
             completed = False

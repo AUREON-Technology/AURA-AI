@@ -156,3 +156,57 @@ async def test_operator_unmetered(client, container) -> None:
     for _ in range(4):
         assert _chat(client, _as("op")).status_code == 200
     assert await _used(container, "op") == 0
+
+
+async def test_new_version_settles_against_the_previous_one(client, container) -> None:
+    """Review C#1: editing a document charges only the difference, and deleting it frees all of it."""
+    first = client.post("/api/v3/knowledge/documents", headers=_as("jo"), json={"title": "a", "content": "A" * 50, "document_id": "doc-jo"})
+    assert first.status_code == 200
+    second = client.post("/api/v3/knowledge/documents", headers=_as("jo"), json={"title": "a", "content": "B" * 60, "document_id": "doc-jo"})
+    assert second.status_code == 200 and second.json()["version"] == 2
+    ws = (await container.tenancy.ensure_personal("jo")).id
+    assert (await container.plans.usage(ws))["storage_used"] == 60
+    client.delete("/api/v3/knowledge/documents/doc-jo", headers=_as("jo"))
+    assert (await container.plans.usage(ws))["storage_used"] == 0
+
+
+async def test_engineer_capability_dropped_when_the_plan_lacks_it(client, container, monkeypatch) -> None:
+    """Review C#2: the gate is the workspace's plan, not the persona name -- an orchestrator turn
+    from a Free workspace must not carry the engineer_agent capability even if a role grants it."""
+    seen = {}
+    original = container.kernel.run
+
+    async def spy(turn):
+        seen["capabilities"] = tuple(turn.capabilities)
+        return await original(turn)
+
+    monkeypatch.setattr(container.kernel, "run", spy)
+    from aura_core.api import build_app
+
+    async def authenticator(request):
+        from aura_core.api import Principal
+        from aura_core.domain.identifiers import UserId
+
+        return Principal(user_id=UserId("kim"), role="User", capabilities=("engineer_agent",), email_verified=True)
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(build_app(container, authenticator=authenticator)) as app:
+        assert app.post("/api/v3/chat", headers=_as("kim"), json={"message": "hi", "use_tools": False}).status_code == 200
+    assert "engineer_agent" not in seen["capabilities"]
+    ws = (await container.tenancy.ensure_personal("kim")).id
+    await container.plans.set_plan("sa", ws, "pro", 1)
+    with TestClient(build_app(container, authenticator=authenticator)) as app:
+        app.post("/api/v3/chat", headers=_as("kim"), json={"message": "hi", "use_tools": False})
+    assert "engineer_agent" in seen["capabilities"]
+
+
+async def test_full_team_refused_as_plan_limit(client, container) -> None:
+    """Review C#3: a full team is a plan limit (402, limit=seats), which the app words."""
+    team = client.post("/api/v3/workspaces", headers=_as("lou"), json={"name": "Lou Co"}).json()["id"]
+    for person in ("m1", "m2"):
+        invite = client.post(f"/api/v3/workspaces/{team}/invites", headers=_as("lou"), json={"email": f"{person}@example.com"})
+        assert invite.status_code == 201
+    full = client.post(f"/api/v3/workspaces/{team}/invites", headers=_as("lou"), json={"email": "m3@example.com"})
+    assert full.status_code == 402
+    assert full.json()["error"] == "plan_limit" and full.json()["details"]["limit"] == "seats"

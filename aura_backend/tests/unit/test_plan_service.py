@@ -124,14 +124,14 @@ async def test_team_seats_follow_plan(services) -> None:
     for person in ("a", "b"):
         _invite, token = await tenancy.invite("owner", team.id, f"{person}@example.com", MEMBER)
         await tenancy.accept(person, token)
-    with pytest.raises(ConflictError):
+    with pytest.raises(PlanLimitError):
         await tenancy.invite("owner", team.id, "c@example.com", MEMBER)
     await plans.set_plan("sa", team.id, "team", 4)
     _invite, token = await tenancy.invite("owner", team.id, "c@example.com", MEMBER)
     await tenancy.accept("c", token)
     await plans.set_plan("sa", team.id, "team", 2)   # below current members: keep them, refuse new
     assert len(await tenancy.list_members("owner", team.id)) == 4
-    with pytest.raises(ConflictError):
+    with pytest.raises(PlanLimitError):
         await tenancy.invite("owner", team.id, "d@example.com", MEMBER)
 
 

@@ -35,6 +35,7 @@ from ..domain.tenancy import (
     new_workspace_id,
     parse_invite_token,
 )
+from ..domain.plans import PlanLimitError
 from ..ports.runtime import AuditEvent
 
 __all__ = ["TenancyService"]
@@ -52,6 +53,14 @@ class TenancyService:
     #: ``async (workspace_id) -> int``: the team's seats from its plan (``PlanService.seat_limit``,
     #: SaaS P1-C). Unset (tests, no plans wired): ``settings.default_team_seats``.
     seat_limit: Any = None
+    #: ``async (workspace_id) -> str``: the plan's id, for the seats refusal's details.
+    plan_of: Any = None
+
+    async def _no_free_seats(self, workspace_id: str, used: int, allowed: int) -> PlanLimitError:
+        plan = await self.plan_of(workspace_id) if self.plan_of is not None else ""
+        return PlanLimitError(
+            "this workspace has no free seats", limit="seats", plan=plan, used=used, allowed=allowed,
+        )
 
     async def _seats(self, workspace_id: str) -> int:
         if self.seat_limit is not None:
@@ -133,8 +142,10 @@ class TenancyService:
         now = self.clock.now()
         members = await self.store.list_members(workspace_id)
         open_invites = [i for i in await self.store.list_invites(workspace_id) if i.is_open(now)]
-        if len(members) + len(open_invites) >= await self._seats(workspace_id):
-            raise ConflictError("this workspace has no free seats")
+        seats = await self._seats(workspace_id)
+        if len(members) + len(open_invites) >= seats:
+            # A plan limit (402, limit=seats), which the app words (review C#3).
+            raise await self._no_free_seats(workspace_id, len(members) + len(open_invites), seats)
         invite_id, token = new_invite_token()
         invite = Invite(
             invite_id=invite_id, workspace_id=workspace_id, email=address, role=role,
@@ -149,8 +160,12 @@ class TenancyService:
         invite = await self.store.get_invite(invite_id)
         if invite is None or not hmac.compare_digest(invite.digest, invite_digest(token)):
             raise ConflictError("this invite is no longer valid")
+        seats = await self._seats(invite.workspace_id)
+        members = await self.store.list_members(invite.workspace_id)
+        if len(members) >= seats and invite.is_open(self.clock.now()):
+            raise await self._no_free_seats(invite.workspace_id, len(members), seats)
         member = await self.store.accept_invite(
-            invite_id, user_id=user_id, at=self.clock.now(), seat_limit=await self._seats(invite.workspace_id)
+            invite_id, user_id=user_id, at=self.clock.now(), seat_limit=seats
         )
         await self._audit("join", user_id, member.role, member.workspace_id, {"invite_id": invite_id})
         return member

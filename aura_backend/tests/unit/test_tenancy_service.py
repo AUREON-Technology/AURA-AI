@@ -8,6 +8,7 @@ from aura_core.adapters.runtime import InMemoryAuditSink
 from aura_core.adapters.tenancy import InMemoryTenancyStore
 from aura_core.config.settings import TenancySettings
 from aura_core.domain.errors import AuthorizationError, ConflictError, ValidationError
+from aura_core.domain.plans import PlanLimitError
 from aura_core.domain.tenancy import WorkspaceKind, WorkspaceRole
 from aura_core.tenancy import TenancyService
 
@@ -72,7 +73,7 @@ async def test_member_cannot_invite(service) -> None:
 async def test_seat_limit_counts_open_invites(service) -> None:
     ws = await _team_with(service, ("m1", MEMBER))  # 2 of 3 seats taken
     await service.invite("owner", ws.id, "third@example.com", MEMBER)  # 3rd seat held by an open invite
-    with pytest.raises(ConflictError):
+    with pytest.raises(PlanLimitError):
         await service.invite("owner", ws.id, "fourth@example.com", MEMBER)
 
 

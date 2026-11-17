@@ -65,6 +65,9 @@ class PlanService:
             return self.catalogue[DEFAULT_PLAN], 1
         return self.catalogue[row.plan_id], row.seats
 
+    async def plan_id(self, workspace_id: str) -> str:
+        return (await self.entitlement(workspace_id))[0].id
+
     async def seat_limit(self, workspace_id: str) -> int:
         plan, seats = await self.entitlement(workspace_id)
         if plan.min_seats == plan.max_seats or plan.id == DEFAULT_PLAN:

@@ -183,6 +183,7 @@ class Container:
         self.tenancy = self._build_tenancy()
         self.plans = self._build_plans()
         self.tenancy.seat_limit = self.plans.seat_limit
+        self.tenancy.plan_of = self.plans.plan_id
 
         self.providers = build_providers(
             settings.llm, model_allowlist=settings.security.model_allowlist
