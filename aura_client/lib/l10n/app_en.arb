@@ -225,7 +225,9 @@
   "@devicesPairedOn": {
     "description": "When the device was signed in or paired",
     "placeholders": {
-      "date": {"type": "String"}
+      "date": {
+        "type": "String"
+      }
     }
   },
   "devicesThisDevice": "this device",
@@ -248,7 +250,9 @@
   "@devicesRevokeConfirmMessage": {
     "description": "Revoke confirmation dialog message",
     "placeholders": {
-      "name": {"type": "String"}
+      "name": {
+        "type": "String"
+      }
     }
   },
   "devicesRevoked": "Device revoked.",
@@ -1051,5 +1055,105 @@
         "type": "String"
       }
     }
+  },
+  "loginApple": "Continue with Apple",
+  "@loginApple": {
+    "description": "Sign in with Apple button on the login page"
+  },
+  "loginEmail": "Continue with email",
+  "@loginEmail": {
+    "description": "Opens the email and password form on the login page"
+  },
+  "emailFieldLabel": "Email",
+  "@emailFieldLabel": {
+    "description": "Email address field"
+  },
+  "passwordFieldLabel": "Password",
+  "@passwordFieldLabel": {
+    "description": "Password field"
+  },
+  "confirmPasswordFieldLabel": "Confirm password",
+  "@confirmPasswordFieldLabel": {
+    "description": "Password confirmation field when creating an account"
+  },
+  "nameFieldLabel": "Name",
+  "@nameFieldLabel": {
+    "description": "Display name field when creating an account"
+  },
+  "emailSignInAction": "Sign in",
+  "@emailSignInAction": {
+    "description": "Submits the email and password form"
+  },
+  "emailCreateAccountAction": "Create account",
+  "@emailCreateAccountAction": {
+    "description": "Submits the create-account form"
+  },
+  "emailForgotPassword": "Forgot password?",
+  "@emailForgotPassword": {
+    "description": "Switches the email form to password reset"
+  },
+  "emailSwitchToRegister": "New to AURA? Create an account",
+  "@emailSwitchToRegister": {
+    "description": "Switches the email form to account creation"
+  },
+  "emailSwitchToSignIn": "Already have an account? Sign in",
+  "@emailSwitchToSignIn": {
+    "description": "Switches the email form back to sign-in"
+  },
+  "emailSendReset": "Send reset link",
+  "@emailSendReset": {
+    "description": "Submits the password reset form"
+  },
+  "emailResetSent": "If an account exists for that address, we've sent a reset link.",
+  "@emailResetSent": {
+    "description": "Shown after a reset request; never says whether the account exists"
+  },
+  "emailInvalid": "Enter a valid email address.",
+  "@emailInvalid": {
+    "description": "Validation message for the email field"
+  },
+  "passwordTooShort": "Use at least 8 characters.",
+  "@passwordTooShort": {
+    "description": "Validation message for a short password"
+  },
+  "passwordsDontMatch": "The passwords don't match.",
+  "@passwordsDontMatch": {
+    "description": "Validation message when the confirmation differs"
+  },
+  "verifyEmailBanner": "Check your inbox to verify your email. You'll need it to create or join a team.",
+  "@verifyEmailBanner": {
+    "description": "Shown until an email/password account verifies its address"
+  },
+  "verifyEmailResend": "Resend",
+  "@verifyEmailResend": {
+    "description": "Resends the verification email"
+  },
+  "identityWrongCredentials": "That email and password don't match an account.",
+  "@identityWrongCredentials": {
+    "description": "Sign-in failure: wrong email or password"
+  },
+  "identityEmailInUse": "An account already uses this email. Sign in instead.",
+  "@identityEmailInUse": {
+    "description": "Account creation failure: email taken"
+  },
+  "identityWeakPassword": "Choose a stronger password.",
+  "@identityWeakPassword": {
+    "description": "Account creation failure: weak password"
+  },
+  "identityInvalidEmail": "That email address isn't valid.",
+  "@identityInvalidEmail": {
+    "description": "Sign-in failure: malformed email"
+  },
+  "identityNetwork": "Couldn't reach the sign-in service. Check your connection.",
+  "@identityNetwork": {
+    "description": "Sign-in failure: offline"
+  },
+  "identityDifferentMethod": "This email already uses another sign-in method. Use it, then add this one from your profile.",
+  "@identityDifferentMethod": {
+    "description": "Sign-in failure: the email is registered with a different method"
+  },
+  "identityUnavailable": "This sign-in method isn't available right now.",
+  "@identityUnavailable": {
+    "description": "Sign-in failure: provider not configured or other error"
   }
 }

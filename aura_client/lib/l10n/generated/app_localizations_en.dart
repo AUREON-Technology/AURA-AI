@@ -788,4 +788,86 @@ class AppLocalizationsEn extends AppLocalizations {
   String planStepWithStatus(String step, String status) {
     return '$step — $status';
   }
+
+  @override
+  String get loginApple => 'Continue with Apple';
+
+  @override
+  String get loginEmail => 'Continue with email';
+
+  @override
+  String get emailFieldLabel => 'Email';
+
+  @override
+  String get passwordFieldLabel => 'Password';
+
+  @override
+  String get confirmPasswordFieldLabel => 'Confirm password';
+
+  @override
+  String get nameFieldLabel => 'Name';
+
+  @override
+  String get emailSignInAction => 'Sign in';
+
+  @override
+  String get emailCreateAccountAction => 'Create account';
+
+  @override
+  String get emailForgotPassword => 'Forgot password?';
+
+  @override
+  String get emailSwitchToRegister => 'New to AURA? Create an account';
+
+  @override
+  String get emailSwitchToSignIn => 'Already have an account? Sign in';
+
+  @override
+  String get emailSendReset => 'Send reset link';
+
+  @override
+  String get emailResetSent =>
+      'If an account exists for that address, we\'ve sent a reset link.';
+
+  @override
+  String get emailInvalid => 'Enter a valid email address.';
+
+  @override
+  String get passwordTooShort => 'Use at least 8 characters.';
+
+  @override
+  String get passwordsDontMatch => 'The passwords don\'t match.';
+
+  @override
+  String get verifyEmailBanner =>
+      'Check your inbox to verify your email. You\'ll need it to create or join a team.';
+
+  @override
+  String get verifyEmailResend => 'Resend';
+
+  @override
+  String get identityWrongCredentials =>
+      'That email and password don\'t match an account.';
+
+  @override
+  String get identityEmailInUse =>
+      'An account already uses this email. Sign in instead.';
+
+  @override
+  String get identityWeakPassword => 'Choose a stronger password.';
+
+  @override
+  String get identityInvalidEmail => 'That email address isn\'t valid.';
+
+  @override
+  String get identityNetwork =>
+      'Couldn\'t reach the sign-in service. Check your connection.';
+
+  @override
+  String get identityDifferentMethod =>
+      'This email already uses another sign-in method. Use it, then add this one from your profile.';
+
+  @override
+  String get identityUnavailable =>
+      'This sign-in method isn\'t available right now.';
 }

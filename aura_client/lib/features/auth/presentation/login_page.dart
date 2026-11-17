@@ -1,8 +1,10 @@
-import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform, kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:local_auth/local_auth.dart';
 import 'auth_provider.dart';
+import 'email_sign_in_form.dart';
+import 'package:aura_client/core/auth/identity_service.dart';
 import 'package:aura_client/core/auth/platform_login_support.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
@@ -37,6 +39,12 @@ CachedSessionUnlock cachedSessionUnlock({
   return biometricsEnrolled ? CachedSessionUnlock.biometric : CachedSessionUnlock.direct;
 }
 
+/// Where "Continue with Apple" is offered (SaaS P1-B). The App Store requires it on iOS once
+/// Google sign-in is offered; macOS and the web support it through Firebase. Android and the
+/// Linux/Windows desktop builds offer Google and email instead.
+bool appleSignInOffered({required TargetPlatform platform, required bool isWeb}) =>
+    isWeb || platform == TargetPlatform.iOS || platform == TargetPlatform.macOS;
+
 /// V2 rebuild (Doc/V2_BLUEPRINT.md §4) — same auth flows as V1, restyled
 /// on the design system (light+dark-ready, contrast-checked palette,
 /// shared AuraCard/AuraButton components) instead of the page's own
@@ -52,6 +60,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   bool _showDeveloperPanel = false;
+  bool _showEmailForm = false;
 
   late final LocalAuthentication _localAuth = ref.read(localAuthenticationProvider);
   bool _canCheckBiometrics = false;
@@ -215,6 +224,29 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                 expand: true,
                                 onPressed: () => ref.read(authProvider.notifier).signInWithDesktopOAuth(),
                               ),
+                            if (supportsNativeGoogleSignIn()) ...[
+                              if (appleSignInOffered(platform: defaultTargetPlatform, isWeb: kIsWeb)) ...[
+                                const SizedBox(height: AuraSpacing.md),
+                                AuraButton(
+                                  label: l10n.loginApple,
+                                  icon: Icons.apple,
+                                  expand: true,
+                                  variant: AuraButtonVariant.secondary,
+                                  onPressed: () => ref.read(authProvider.notifier).signInWithApple(),
+                                ),
+                              ],
+                              const SizedBox(height: AuraSpacing.md),
+                              if (_showEmailForm)
+                                const EmailSignInForm()
+                              else
+                                AuraButton(
+                                  label: l10n.loginEmail,
+                                  icon: Icons.mail_outline,
+                                  expand: true,
+                                  variant: AuraButtonVariant.secondary,
+                                  onPressed: () => setState(() => _showEmailForm = true),
+                                ),
+                            ],
                             const SizedBox(height: AuraSpacing.md),
                             if (_canCheckBiometrics && _hasCachedCredentials) ...[
                               AuraButton(
@@ -270,7 +302,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                   // Through AuraFailure, not the raw exception (audit F-33); the
                                   // exception itself is only shown to developers.
                                   Text(
-                                    _signInFailureText(authState.error),
+                                    _signInFailureText(authState.error, l10n),
                                     style: TextStyle(color: palette.danger, fontSize: 12),
                                     textAlign: TextAlign.center,
                                   ),
@@ -340,7 +372,20 @@ class _GoogleSignInButton extends StatelessWidget {
 
 /// What a failed sign-in says to the user: [AuraFailure]'s words, never the
 /// exception's `toString()`.
-String _signInFailureText(Object? error) {
+String _signInFailureText(Object? error, AppLocalizations l10n) {
+  if (error is IdentityError) return identityErrorText(error.kind, l10n);
   final failure = AuraFailure.from(error);
   return '${failure.title}. ${failure.message}';
 }
+
+/// What the identity provider's refusal says to the user (SaaS P1-B). `cancelled` never reaches
+/// here: `AuthNotifier` treats closing the provider's sheet as no sign-in at all.
+String identityErrorText(IdentityErrorKind kind, AppLocalizations l10n) => switch (kind) {
+      IdentityErrorKind.wrongCredentials => l10n.identityWrongCredentials,
+      IdentityErrorKind.emailInUse => l10n.identityEmailInUse,
+      IdentityErrorKind.weakPassword => l10n.identityWeakPassword,
+      IdentityErrorKind.invalidEmail => l10n.identityInvalidEmail,
+      IdentityErrorKind.network => l10n.identityNetwork,
+      IdentityErrorKind.accountExistsWithDifferentMethod => l10n.identityDifferentMethod,
+      IdentityErrorKind.cancelled || IdentityErrorKind.unavailable => l10n.identityUnavailable,
+    };

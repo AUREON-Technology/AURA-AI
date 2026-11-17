@@ -1509,6 +1509,156 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{step} — {status}'**
   String planStepWithStatus(String step, String status);
+
+  /// Sign in with Apple button on the login page
+  ///
+  /// In en, this message translates to:
+  /// **'Continue with Apple'**
+  String get loginApple;
+
+  /// Opens the email and password form on the login page
+  ///
+  /// In en, this message translates to:
+  /// **'Continue with email'**
+  String get loginEmail;
+
+  /// Email address field
+  ///
+  /// In en, this message translates to:
+  /// **'Email'**
+  String get emailFieldLabel;
+
+  /// Password field
+  ///
+  /// In en, this message translates to:
+  /// **'Password'**
+  String get passwordFieldLabel;
+
+  /// Password confirmation field when creating an account
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm password'**
+  String get confirmPasswordFieldLabel;
+
+  /// Display name field when creating an account
+  ///
+  /// In en, this message translates to:
+  /// **'Name'**
+  String get nameFieldLabel;
+
+  /// Submits the email and password form
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in'**
+  String get emailSignInAction;
+
+  /// Submits the create-account form
+  ///
+  /// In en, this message translates to:
+  /// **'Create account'**
+  String get emailCreateAccountAction;
+
+  /// Switches the email form to password reset
+  ///
+  /// In en, this message translates to:
+  /// **'Forgot password?'**
+  String get emailForgotPassword;
+
+  /// Switches the email form to account creation
+  ///
+  /// In en, this message translates to:
+  /// **'New to AURA? Create an account'**
+  String get emailSwitchToRegister;
+
+  /// Switches the email form back to sign-in
+  ///
+  /// In en, this message translates to:
+  /// **'Already have an account? Sign in'**
+  String get emailSwitchToSignIn;
+
+  /// Submits the password reset form
+  ///
+  /// In en, this message translates to:
+  /// **'Send reset link'**
+  String get emailSendReset;
+
+  /// Shown after a reset request; never says whether the account exists
+  ///
+  /// In en, this message translates to:
+  /// **'If an account exists for that address, we\'ve sent a reset link.'**
+  String get emailResetSent;
+
+  /// Validation message for the email field
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a valid email address.'**
+  String get emailInvalid;
+
+  /// Validation message for a short password
+  ///
+  /// In en, this message translates to:
+  /// **'Use at least 8 characters.'**
+  String get passwordTooShort;
+
+  /// Validation message when the confirmation differs
+  ///
+  /// In en, this message translates to:
+  /// **'The passwords don\'t match.'**
+  String get passwordsDontMatch;
+
+  /// Shown until an email/password account verifies its address
+  ///
+  /// In en, this message translates to:
+  /// **'Check your inbox to verify your email. You\'ll need it to create or join a team.'**
+  String get verifyEmailBanner;
+
+  /// Resends the verification email
+  ///
+  /// In en, this message translates to:
+  /// **'Resend'**
+  String get verifyEmailResend;
+
+  /// Sign-in failure: wrong email or password
+  ///
+  /// In en, this message translates to:
+  /// **'That email and password don\'t match an account.'**
+  String get identityWrongCredentials;
+
+  /// Account creation failure: email taken
+  ///
+  /// In en, this message translates to:
+  /// **'An account already uses this email. Sign in instead.'**
+  String get identityEmailInUse;
+
+  /// Account creation failure: weak password
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a stronger password.'**
+  String get identityWeakPassword;
+
+  /// Sign-in failure: malformed email
+  ///
+  /// In en, this message translates to:
+  /// **'That email address isn\'t valid.'**
+  String get identityInvalidEmail;
+
+  /// Sign-in failure: offline
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t reach the sign-in service. Check your connection.'**
+  String get identityNetwork;
+
+  /// Sign-in failure: the email is registered with a different method
+  ///
+  /// In en, this message translates to:
+  /// **'This email already uses another sign-in method. Use it, then add this one from your profile.'**
+  String get identityDifferentMethod;
+
+  /// Sign-in failure: provider not configured or other error
+  ///
+  /// In en, this message translates to:
+  /// **'This sign-in method isn\'t available right now.'**
+  String get identityUnavailable;
 }
 
 class _AppLocalizationsDelegate
