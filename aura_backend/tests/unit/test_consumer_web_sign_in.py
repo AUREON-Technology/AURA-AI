@@ -33,11 +33,13 @@ def _operator_lists(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _fresh_rate_limit():
-    from api.v2 import auth as auth_module
+    """Every TestClient shares one client address, so the bucket is cleared before *and* after
+    each test -- a full bucket must not leak into another file's sign-in tests."""
+    from api.v2.auth import _reset_consumer_rate_limit
 
-    reset = getattr(auth_module, "_reset_consumer_rate_limit", None)
-    if reset is not None:
-        reset()
+    _reset_consumer_rate_limit()
+    yield
+    _reset_consumer_rate_limit()
 
 
 def _client() -> TestClient:
