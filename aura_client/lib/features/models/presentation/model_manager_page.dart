@@ -58,7 +58,7 @@ class ModelManagerPage extends ConsumerWidget {
           const SizedBox(height: AuraSpacing.lg),
           AuraCard(
             child: Text(
-              'Requests are processed on AURA’s own servers. There is nothing to download or configure on this device.',
+              'Requests are processed on AURA’s servers. There is nothing to download or configure on this device.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ),

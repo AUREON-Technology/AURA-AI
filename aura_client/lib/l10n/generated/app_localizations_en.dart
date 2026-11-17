@@ -102,6 +102,27 @@ class AppLocalizationsEn extends AppLocalizations {
   String get onboardingNext => 'Next';
 
   @override
+  String get onboardingCopilotTitle => 'AURA is your copilot';
+
+  @override
+  String get onboardingCopilotBody =>
+      'Talk to it. It remembers, searches your documents, and proposes actions — you confirm the writes.';
+
+  @override
+  String get onboardingPrivacyTitle => 'Your private data stays with AURA';
+
+  @override
+  String get onboardingPrivacyBody =>
+      'Nothing is processed on this phone. Your documents, memories and files are only read by AI models AURA runs itself. Other messages may be answered by an approved hosted AI provider, if the server’s operator allows it.';
+
+  @override
+  String get onboardingTourTitle => 'Today, Copilot, Life Hub, You';
+
+  @override
+  String get onboardingTourBody =>
+      'Capture from anywhere. Browse tasks, calendar, finance, and health in Life Hub. Account tools live under You.';
+
+  @override
   String get onboardingSkip => 'Skip';
 
   @override
@@ -265,7 +286,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsAboutBody =>
-      'Requests are processed on AURA’s own servers. They are never sent to a third-party AI service, and never processed on this device.';
+      'Requests are processed on AURA’s servers, never on this device. Your documents, memories, files and tool results are only read by AI models AURA runs itself. If the server’s operator turns it on, your other messages may be answered by an approved hosted AI provider.';
 
   @override
   String get themeSystem => 'System';
