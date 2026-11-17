@@ -47,6 +47,7 @@ METHOD_BLIND_NOTE = (
 # merely shares the spelling (`/xy`). See triage_note().
 TRIAGE = (
     ("/api/v3/integrations/github/callback", "server-only: OAuth redirect target, reached by the browser"),
+    ("/api/v3/billing/fawry/notify", "server-only: Fawry's server notification (SaaS P1-D1)"),
     ("/api/v3/chat$", "server-to-server: the non-streaming turn is for integrating systems (ADR-029 service keys, AR-6 structured output); the app streams via /chat/stream"),
     ("/api/v3/auth/desktop/", "to wire: desktop pairing flow (ADR-011), no caller in client or hostd yet"),
     ("/api/v3/agents/runs", "to wire: agent-run history (wave 2) has no client or admin view yet"),

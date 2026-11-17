@@ -184,6 +184,7 @@ class Container:
         self.plans = self._build_plans()
         self.tenancy.seat_limit = self.plans.seat_limit
         self.tenancy.plan_of = self.plans.plan_id
+        self.billing = self._build_billing()
 
         self.providers = build_providers(
             settings.llm, model_allowlist=settings.security.model_allowlist
@@ -1350,6 +1351,38 @@ class Container:
         return PlanService(
             entitlements=entitlements, meter=meter, tenancy=self.tenancy, clock=self.clock,
             audit=self.audit, catalogue=load_catalogue(self.settings.tenancy.plan_catalogue_json),
+        )
+
+    def _build_billing(self) -> Any:
+        """Subscriptions and Fawry payments (SaaS P1-D1). Fawry only when merchant credentials are
+        set; otherwise the in-memory fake (local runs and tests -- production refuses to start
+        with billing enabled and no credentials, ``AuraSettings.validate``)."""
+        from .billing import BillingService
+        from .domain.billing import load_prices
+
+        billing = self.settings.billing
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_billing import PostgresPaymentStore, PostgresSubscriptionStore
+
+            url = self.settings.infrastructure.database_url
+            subscriptions: Any = PostgresSubscriptionStore(url, pool=self._postgres_pool())
+            payments: Any = PostgresPaymentStore(url, pool=self._postgres_pool())
+        else:
+            from .adapters.billing import InMemoryPaymentStore, InMemorySubscriptionStore
+
+            subscriptions, payments = InMemorySubscriptionStore(), InMemoryPaymentStore()
+        if billing.fawry_configured:
+            from .adapters.fawry import FawryPaymentProvider
+
+            provider: Any = FawryPaymentProvider(billing.fawry_base_url, billing.fawry_merchant_code, billing.fawry_secure_key)
+        else:
+            from .adapters.billing import FakePaymentProvider
+
+            provider = FakePaymentProvider()
+        return BillingService(
+            subscriptions=subscriptions, payments=payments, provider=provider, plans=self.plans,
+            tenancy=self.tenancy, clock=self.clock, audit=self.audit, settings=billing,
+            prices=load_prices(billing.prices_json),
         )
 
     def _build_idempotency_store(self) -> Any:

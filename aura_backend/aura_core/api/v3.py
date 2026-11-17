@@ -1782,6 +1782,19 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         JSONResponse=JSONResponse,
     )
 
+    from .billing import register_billing_ops
+
+    register_billing_ops(
+        router,
+        container,
+        principal=principal,
+        require_super_admin=require_super_admin,
+        Depends=Depends,
+        JSONResponse=JSONResponse,
+        Request=Request,
+        Response=Response,
+    )
+
     from .admin_plans import register_plan_ops
 
     register_plan_ops(

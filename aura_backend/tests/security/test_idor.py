@@ -120,6 +120,12 @@ COVERED = {
         "TestWorkspaces::test_bob_cannot_revoke_alices_invite",
     ("GET", "/api/v3/workspaces/{workspace_id}/plan"):
         "TestWorkspaces::test_bob_cannot_read_alices_plan_or_usage",
+    ("GET", "/api/v3/workspaces/{workspace_id}/billing"):
+        "TestWorkspaces::test_bob_cannot_read_alices_billing",
+    ("POST", "/api/v3/workspaces/{workspace_id}/billing/checkout"):
+        "TestWorkspaces::test_bob_cannot_buy_for_alices_team",
+    ("POST", "/api/v3/workspaces/{workspace_id}/billing/cancel"):
+        "TestWorkspaces::test_bob_cannot_cancel_alices_billing",
     ("POST", "/api/v3/insights/{insight_id}/dismiss"):
         "Postgres-only route (api/v2/insights.py): `row.user_id != user.id` -> 404; exercised "
         "against a real database by test_insights_integration.py in the legacy suite",
@@ -592,6 +598,22 @@ class TestWorkspaces:
         response = client.get(f"/api/v3/workspaces/{team[0]}/plan", headers=AUTH_B)
         self._refused(response)
         assert "messages_used" not in response.text
+
+    @pytest.fixture
+    def billing_on(self, container):
+        from dataclasses import replace
+
+        container.billing.settings = replace(container.billing.settings, enabled=True)
+
+    def test_bob_cannot_read_alices_billing(self, client, team, billing_on) -> None:
+        self._refused(client.get(f"/api/v3/workspaces/{team[0]}/billing", headers=AUTH_B))
+
+    def test_bob_cannot_buy_for_alices_team(self, client, team, billing_on) -> None:
+        self._refused(client.post(f"/api/v3/workspaces/{team[0]}/billing/checkout",
+                                  json={"plan": "team", "seats": 2}, headers=AUTH_B))
+
+    def test_bob_cannot_cancel_alices_billing(self, client, team, billing_on) -> None:
+        self._refused(client.post(f"/api/v3/workspaces/{team[0]}/billing/cancel", headers=AUTH_B))
 
     def test_bob_cannot_revoke_alices_invite(self, client, team) -> None:
         self._refused(client.delete(f"/api/v3/workspaces/{team[0]}/invites/{team[1]}", headers=AUTH_B))

@@ -55,6 +55,9 @@ PUBLIC = {
         "an ID token; mints no session (tests/unit/test_desktop_code_exchange.py)",
     ("GET", "/api/v3/integrations/github/callback"): "browser redirect; authenticated by the "
         "single-use OAuth `state` (tests/unit/test_github_oauth_state.py); links nothing itself",
+    ("POST", "/api/v3/billing/fawry/notify"): "Fawry's server notification; authenticated by its "
+        "SHA-256 messageSignature over the payment and our secure key (tests/unit/test_fawry_adapter.py, "
+        "tests/integration/test_billing_api.py); 403 without it, and a payment leaves pending once",
     ("POST", "/api/v3/integrations/github/callback/confirm"): "the callback page's confirmation; "
         "spends the single-use OAuth `state` (tests/unit/test_github_link_confirmation.py)",
 }

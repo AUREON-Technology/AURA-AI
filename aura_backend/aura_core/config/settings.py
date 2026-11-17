@@ -1898,21 +1898,31 @@ class TenancySettings:
         )
 
 
+FAWRY_SANDBOX_URL = "https://atfawry.fawrystaging.com/ECommerceWeb/Fawry/"
+
+
 @dataclass(frozen=True, slots=True)
 class BillingSettings:
     """Subscriptions paid through Fawry (SaaS P1-D1). Off until the owner turns it on; every
-    billing route answers 503 until then. ``fawry_secure_key`` is a secret: never logged or
-    returned."""
+    billing route answers 503 until then.
+
+    The secure key is **not a field**: it is read from the environment variable named by
+    ``fawry_secure_key_env`` through a property, like provider API keys, so ``as_dict`` (served on
+    ``/admin/status``) can never walk into it."""
 
     enabled: bool = False
-    fawry_base_url: str = "https://atfawry.fawrystaging.com/ECommerceWeb/Fawry/"
+    fawry_base_url: str = FAWRY_SANDBOX_URL
     fawry_merchant_code: str = ""
-    fawry_secure_key: str = ""
+    fawry_secure_key_env: str = "AURA_FAWRY_SECURE_KEY"
     #: ``AURA_PLAN_PRICES``: JSON plan -> piastres per month (per seat for team).
     prices_json: str = ""
     renewal_lead_days: int = 3
     grace_days: int = 7
     reference_expiry_hours: int = 72
+
+    @property
+    def fawry_secure_key(self) -> str:
+        return (os.environ.get(self.fawry_secure_key_env, "") or "").strip()
 
     @property
     def fawry_configured(self) -> bool:
@@ -1922,9 +1932,8 @@ class BillingSettings:
     def from_env(cls) -> "BillingSettings":
         return cls(
             enabled=_bool("BILLING_ENABLED", False),
-            fawry_base_url=(_env("FAWRY_BASE_URL", "") or "").strip() or cls.fawry_base_url,
+            fawry_base_url=(_env("FAWRY_BASE_URL", "") or "").strip() or FAWRY_SANDBOX_URL,
             fawry_merchant_code=(_env("FAWRY_MERCHANT_CODE", "") or "").strip(),
-            fawry_secure_key=(_env("FAWRY_SECURE_KEY", "") or "").strip(),
             prices_json=(_env("PLAN_PRICES", "") or "").strip(),
             renewal_lead_days=_int("BILLING_RENEWAL_LEAD_DAYS", 3, minimum=1, maximum=14),
             grace_days=_int("BILLING_GRACE_DAYS", 7, minimum=0, maximum=60),
@@ -2143,6 +2152,10 @@ class AuraSettings:
                 )
             if not self.safety.enabled:
                 problems.append("safety.enabled must be true in staging/production")
+            if self.billing.enabled and not self.billing.fawry_configured:
+                # SaaS P1-D1: billing on with no merchant credentials would answer every checkout
+                # with the in-memory fake provider -- payments nobody can actually make.
+                problems.append("billing.enabled needs AURA_FAWRY_MERCHANT_CODE and AURA_FAWRY_SECURE_KEY")
             if not self.security.rate_limit_enabled:
                 problems.append("security.rate_limit_enabled must be true in staging/production")
             if not self.security.audit_enabled:

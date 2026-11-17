@@ -19,7 +19,7 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Mapping
 
-from .errors import ConfigurationError, ValidationError
+from .errors import AuraError, ConfigurationError, ValidationError
 
 __all__ = [
     "SubscriptionStatus",
@@ -32,6 +32,7 @@ __all__ = [
     "add_month",
     "apply_payment",
     "advance",
+    "BillingUnavailableError",
 ]
 
 #: Plans priced per seat (the rest are flat per workspace).
@@ -154,3 +155,10 @@ def advance(sub: Subscription, now: datetime, grace: timedelta) -> Subscription:
     if status is SubscriptionStatus.GRACE and sub.grace_until is not None and now >= sub.grace_until:
         return replace(sub, status=SubscriptionStatus.EXPIRED, updated_at=now)
     return sub
+
+
+class BillingUnavailableError(AuraError):
+    """Billing is turned off on this deployment (``AURA_BILLING_ENABLED``)."""
+
+    kind = "billing_unavailable"
+    http_status = 503
