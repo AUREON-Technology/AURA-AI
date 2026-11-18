@@ -380,6 +380,18 @@ void main() {
       expect(webDeepLinkLocation(Uri.parse('https://app.example.test/')), isNull);
       expect(webDeepLinkLocation(Uri.parse('https://app.example.test/#/desktop-sign-in')), isNull);
     });
+
+    // The invite link (`inviteLinkFor`) is a real path too. Under the hash strategy it used to
+    // reach the router as `/`: the page never opened and the token was lost.
+    test('a web build opened from an invite link starts at the invite, token intact', () {
+      expect(
+        webDeepLinkLocation(Uri.parse('https://app.example.test/invite?token=tok-123')),
+        '/invite?token=tok-123',
+      );
+      expect(webDeepLinkLocation(Uri.parse('https://app.example.test/invite')), '/invite');
+      expect(webDeepLinkLocation(Uri.parse('https://app.example.test/invitex?token=t')), isNull);
+      expect(webDeepLinkLocation(Uri.parse('https://app.example.test/today?token=t')), isNull);
+    });
   });
 
   group('the desktop login button', () {

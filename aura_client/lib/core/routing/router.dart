@@ -14,6 +14,7 @@ import '../../features/chat/presentation/chat_page.dart';
 import '../../features/chat/presentation/chat_route_extra.dart';
 import '../../features/chat/presentation/widgets/capture_sheet.dart';
 import '../../features/command_palette/command_palette.dart';
+import '../platform/browser_address.dart';
 import '../sync/sync_alert_banner.dart';
 import '../../features/engineering/presentation/engineer_history_page.dart';
 import '../../features/engineering/presentation/github_connection_page.dart';
@@ -525,22 +526,38 @@ bool isReachableRoute(String location, {required bool desktop}) {
   return !(under('/today') || under('/life'));
 }
 
+/// Pages opened from a link outside the app, as a real path: the address the desktop app opens
+/// (WP12), and the team invite link (`inviteLinkFor`, SaaS P1-F2).
+const _webDeepLinkPaths = {desktopSignInPath, '/invite'};
+
 /// Where a web build starts when the address bar already names a page the router must open
 /// directly. The web build keeps Flutter's default hash URL strategy, under which a path such as
-/// `https://app.example/desktop-sign-in?…` (the address the desktop app opens, WP12) reaches the
-/// router as `/`; this reads it back from [base] so the page opens with its query intact. Null for
-/// every other address, which then starts as it always has.
+/// `https://app.example/invite?token=…` reaches the router as `/` -- an invite link opened in a
+/// browser used to land on the home page with its token lost. This reads it back from [base] so
+/// the page opens with its query intact. Null for every other address, which then starts as it
+/// always has.
 @visibleForTesting
 String? webDeepLinkLocation(Uri base) {
-  if (base.path != desktopSignInPath) return null;
+  if (!_webDeepLinkPaths.contains(base.path)) return null;
   return base.hasQuery ? '${base.path}?${base.query}' : base.path;
+}
+
+/// The web start location, and -- for an invite -- the single-use token taken out of the real
+/// address. Under the hash strategy the router only rewrites the `#fragment`, so the invite page's
+/// own clean-up (`context.replace('/invite')`) never reached the `?token=` in the path: it stayed
+/// in the address bar and in history. Dropped here, before anything else runs; the token travels
+/// on in the router's initial location only.
+String? _webInitialLocation() {
+  final location = webDeepLinkLocation(Uri.base);
+  if (location != null && location.startsWith('/invite?')) dropAddressPathAndQuery();
+  return location;
 }
 
 final routerProvider = Provider<GoRouter>((ref) {
   final notifier = RouterTransitionNotifier(ref);
 
   return GoRouter(
-    initialLocation: (kIsWeb ? webDeepLinkLocation(Uri.base) : null) ?? appLandingRoute,
+    initialLocation: (kIsWeb ? _webInitialLocation() : null) ?? appLandingRoute,
     refreshListenable: notifier,
     redirect: (context, state) async {
       final isLoggedIn = ref.read(authProvider).value != null;
