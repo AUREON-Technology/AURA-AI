@@ -84,8 +84,25 @@ class TestRefreshAndConsolidateJobs:
         result = await run_memory_consolidate(
             memory, [UserId("alice"), UserId("bob")], enabled=True
         )
-        assert result == {"status": "success", "owners": 2}
+        assert result == {"status": "success", "owners": 2, "errors": 0}
         assert memory.owners == ["alice", "bob"]
+
+    async def test_one_failing_owner_does_not_stop_the_rest(self) -> None:
+        """F28: the loop had no per-owner guard, so one owner whose consolidation raised halted
+        the nightly run for every owner after it."""
+
+        class _OneBroken(_FakeMemory):
+            async def consolidate(self, owner_id: UserId, *, kinds=None):
+                if owner_id.value == "bob":
+                    raise RuntimeError("bob's rows are unreadable")
+                await super().consolidate(owner_id, kinds=kinds)
+
+        memory = _OneBroken()
+        result = await run_memory_consolidate(
+            memory, [UserId("alice"), UserId("bob"), UserId("carol")], enabled=True
+        )
+        assert memory.owners == ["alice", "carol"]
+        assert result == {"status": "partial", "owners": 3, "errors": 1}
 
     async def test_disabled_consolidate_is_a_noop(self) -> None:
         memory = _FakeMemory()

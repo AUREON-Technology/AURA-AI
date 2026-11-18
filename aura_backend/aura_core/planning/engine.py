@@ -64,6 +64,24 @@ _STEP_KINDS = {k.value for k in StepKind}
 _STEP_OUTPUT_TOKEN = re.compile(r"\$\{\s*([A-Za-z0-9_.\-]+)\.output\s*\}")
 
 
+_CANONICAL_STEP_ID = re.compile(r"^s(\d+)$")
+
+
+def _remap_output_tokens(arguments: Mapping[str, Any], mapping: Mapping[str, str]) -> dict[str, Any]:
+    """``arguments`` with every ``${old.output}`` token whose step was renumbered rewritten to
+    name the new id. Only string values, the same ones ``execution/engine.py`` resolves; a token
+    naming a step outside ``mapping`` is left exactly as written."""
+
+    def repl(match: "re.Match[str]") -> str:
+        new_id = mapping.get(match.group(1))
+        return match.group(0) if new_id is None else "${" + new_id + ".output}"
+
+    return {
+        key: _STEP_OUTPUT_TOKEN.sub(repl, value) if isinstance(value, str) else value
+        for key, value in arguments.items()
+    }
+
+
 def _render_tool_line(tool: Mapping[str, Any]) -> str:
     """One prompt line per tool: name, its argument signature, then description.
 
@@ -414,21 +432,31 @@ class PlanningEngine:
             available_tools=available_tools,
             max_steps=self._max_steps - len(completed),
         )
-        # Renumber the new steps so they cannot collide with the preserved ones.
-        offset = len(completed)
+        # Renumber the new steps after the highest preserved id, not after how many were kept:
+        # with s1 and s3 succeeded and s2 failed, "s{len(completed) + 1}" is s3 again, the
+        # duplicate id made `Plan` raise, and the agent loop stopped with `replan_failed` (F12).
+        # References follow the renumbering -- `depends_on` and the `${sN.output}` data-flow
+        # tokens alike -- or a new step would be fed a preserved step's output instead.
+        offset = max(
+            (int(m.group(1)) for s in completed if (m := _CANONICAL_STEP_ID.match(s.id.value))),
+            default=0,
+        )
+        mapping = {
+            step.id.value: f"s{offset + i + 1}" for i, step in enumerate(fresh.steps)
+        }
         renumbered = [
             PlanStep(
-                id=StepId(f"s{offset + i + 1}"),
+                id=StepId(mapping[step.id.value]),
                 kind=step.kind,
                 description=step.description,
                 depends_on=tuple(
-                    StepId(f"s{offset + int(d.value[1:])}") for d in step.depends_on
+                    StepId(mapping[d.value]) for d in step.depends_on if d.value in mapping
                 ),
                 tool=step.tool,
-                arguments=step.arguments,
+                arguments=_remap_output_tokens(step.arguments, mapping),
                 priority=step.priority,
             )
-            for i, step in enumerate(fresh.steps)
+            for step in fresh.steps
         ]
 
         if self._metrics is not None:
