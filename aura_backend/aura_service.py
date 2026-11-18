@@ -373,6 +373,11 @@ def create_app():
     settings = load_settings()
     _require_jwt_secret(settings)
     container = build_container(settings)
+    # INT-106: a self-approval is refused while another eligible approver exists. The operator
+    # directory lives outside aura_core, so it is attached here, once the container exists.
+    from api.admin_platform import other_approver_exists
+
+    container.approvals.use_other_approver_check(other_approver_exists)
     authenticator = _build_authenticator(
         settings, service_keys=container.service_keys, tenancy=container.tenancy
     )
