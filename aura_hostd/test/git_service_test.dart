@@ -294,6 +294,81 @@ void main() {
     });
   });
 
+  // F45: git runs programs the repository configures -- hooks, `core.hooksPath`,
+  // `core.fsmonitor` -- on worktree add, checkout, merge and commit. Unless the caller says the
+  // folder is trusted, none of them may run.
+  group('repository programs (F45)', () {
+    late Directory markers;
+
+    setUp(() {
+      markers = Directory.systemTemp.createTempSync('aura_hostd_git_hook_markers_');
+    });
+
+    tearDown(() => markers.deleteSync(recursive: true));
+
+    /// A hook script that records that it ran by creating `markers/<name>`.
+    void installHook(String hooksDir, String name) {
+      Directory(hooksDir).createSync(recursive: true);
+      final hook = File(p.join(hooksDir, name))
+        ..writeAsStringSync('#!/bin/sh\ntouch "${p.join(markers.path, name)}"\n');
+      Process.runSync('chmod', ['+x', hook.path]);
+    }
+
+    bool ran(String name) => File(p.join(markers.path, name)).existsSync();
+
+    test('createWorktree runs no post-checkout hook from .git/hooks', () async {
+      await commitFile('a.txt', 'hello');
+      installHook(p.join(repoDir.path, '.git', 'hooks'), 'post-checkout');
+
+      await git.createWorktree(repoDir.path, taskId: 'hooked');
+
+      expect(ran('post-checkout'), isFalse);
+    }, testOn: '!windows');
+
+    test('createWorktree runs no hook from a repository-set core.hooksPath', () async {
+      await commitFile('a.txt', 'hello');
+      installHook(p.join(repoDir.path, '.githooks'), 'post-checkout');
+      await _git(repoDir.path, ['config', 'core.hooksPath', '.githooks']);
+
+      await git.createWorktree(repoDir.path, taskId: 'hooked2');
+
+      expect(ran('post-checkout'), isFalse);
+    }, testOn: '!windows');
+
+    test('commit, checkout and merge run no hook either', () async {
+      await commitFile('a.txt', 'hello');
+      final hooks = p.join(repoDir.path, '.git', 'hooks');
+      for (final name in ['pre-commit', 'post-commit', 'post-checkout', 'post-merge']) {
+        installHook(hooks, name);
+      }
+      File(p.join(repoDir.path, 'b.txt')).writeAsStringSync('b');
+      await git.stage(repoDir.path, ['b.txt']);
+      await git.commit(repoDir.path, 'add b');
+      await git.checkout(repoDir.path, 'side', create: true);
+      File(p.join(repoDir.path, 'c.txt')).writeAsStringSync('c');
+      await git.stage(repoDir.path, ['c.txt']);
+      await git.commit(repoDir.path, 'add c');
+      await git.checkout(repoDir.path, 'main');
+      await git.mergeBranch(repoDir.path, 'side');
+
+      for (final name in ['pre-commit', 'post-commit', 'post-checkout', 'post-merge']) {
+        expect(ran(name), isFalse, reason: name);
+      }
+    }, testOn: '!windows');
+
+    test('a folder the caller says is trusted keeps its own hooks', () async {
+      await commitFile('a.txt', 'hello');
+      installHook(p.join(repoDir.path, '.git', 'hooks'), 'pre-commit');
+      final trustedGit = GitService(runsRepositoryPrograms: (cwd) => p.equals(cwd, repoDir.path));
+
+      File(p.join(repoDir.path, 'b.txt')).writeAsStringSync('b');
+      await trustedGit.stage(repoDir.path, ['b.txt']);
+      await trustedGit.commit(repoDir.path, 'add b');
+
+      expect(ran('pre-commit'), isTrue);
+    }, testOn: '!windows');
+  });
+
   group('branches/fetch/pull/push (human remote sync)', () {
     test('an empty repo lists no branches and a null current branch', () async {
       final result = await git.branches(repoDir.path);

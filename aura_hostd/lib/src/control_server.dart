@@ -65,7 +65,12 @@ class ControlServer {
         isCredentialsRejected = isCredentialsRejected ?? (() => false),
         lastCloseCode = lastCloseCode ?? (() => null),
         _minPairingPollInterval = minPairingPollInterval,
-        gitService = gitService ?? GitService(),
+        // F45: the repository's own hooks and fsmonitor run only in a folder the person trusts.
+        gitService = gitService ??
+            GitService(
+              runsRepositoryPrograms: (cwd) =>
+                  workspaceStore.load().findContainingRoot(cwd)?.trusted ?? false,
+            ),
         diagnosticsService = diagnosticsService ?? DiagnosticsService(),
         _logger = logger ?? _defaultLogger;
 
