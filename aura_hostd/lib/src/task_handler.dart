@@ -906,7 +906,7 @@ class TaskHandler {
   List<String> _requireStringList(Map<String, dynamic> params, String key) {
     final value = params[key];
     if (value is! List) {
-      throw RpcError('missing or invalid "$key" parameter');
+      throw RpcError('missing or invalid "$key" parameter', code: HostdErrorCode.missingParameter);
     }
     return value.map((e) => e.toString()).toList(growable: false);
   }

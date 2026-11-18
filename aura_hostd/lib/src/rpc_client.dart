@@ -18,6 +18,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'containment.dart';
+import 'isolated_task_registry.dart';
 import 'task_handler.dart';
 
 typedef Logger = void Function(String message);
@@ -200,13 +201,17 @@ class HostAgentClient {
       final code = switch (error) {
         RpcError(code: final String code) => code,
         ContainmentViolation() => error.code,
+        // WP4: an isolated task created without a cwd meets this on its first call.
+        IsolationNeedsGitError() => error.code,
         _ => null,
       };
+      final detail = error is RpcError ? error.detail : null;
       reply = {
         'type': 'error',
         'id': id,
         'message': error.toString(),
         if (code != null) 'code': code,
+        if (detail != null) 'detail': detail,
       };
     }
     _send(socket, reply);
@@ -257,6 +262,8 @@ class HostAgentClient {
         return taskHandler.readFile(params);
       case 'list_roots':
         return taskHandler.listRoots(params);
+      case 'init_git':
+        return taskHandler.initGit(params);
       default:
         throw RpcError('unknown method "$method"');
     }

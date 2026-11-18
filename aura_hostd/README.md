@@ -47,9 +47,22 @@ Config and granted roots persist under the platform's usual per-user config dire
 
 ## RPC methods and remote control
 
-The backend calls `create_task`, `run`, `write_file`, `write_files`, `read_file` and
-`list_roots` over the WebSocket (`lib/src/task_handler.dart` has the details). `list_roots` needs no
-task and returns `{"roots": [{"path", "trusted"}], "remote_control": <bool>}`.
+The backend calls `create_task`, `run`, `write_file`, `write_files`, `read_file`, `list_roots`
+and `init_git` over the WebSocket (`lib/src/task_handler.dart` has the details). `list_roots` needs
+no task and returns `{"roots": [{"path", "trusted", "is_git"}], "remote_control": <bool>}`.
+
+**Isolation needs git (WP4, D-13).** An isolated task (`isolate: true` with a `task_key`) works on
+its own git worktree of the folder. In a folder that is not a git repository with at least one
+commit it is refused with code `isolation_needs_git`, never run in the live folder instead.
+`is_git` says where isolation works. "Initialize git here" runs `git init`, `git add -A` and a
+first commit with the person's own git identity (`AURA <aura@localhost>` only if git has none):
+from the desktop through the control server's `POST /git/init` `{"root": <granted folder>}`, from
+the phone or web through `init_git` `{path, confirmed: true}`, which also needs remote control on.
+Either returns `{"ok": true, "commit": <sha>}`; a folder that already has a commit is refused with
+`already_a_git_repo`.
+
+At most 100 approvals wait on this computer at once (G-21); beyond that a request is refused with
+`approval_queue_full`. A decided approval is no longer kept in memory.
 
 **Remote control (WP8)** lets the Engineer drive this computer from the phone or the web. It is
 **off** until turned on here: `remote_control` in `config.json`, changed only through the local

@@ -1703,7 +1703,9 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             )
         params: dict[str, Any] = {"path": payload.path, "confirmed": True}
         try:
-            result = await session.call("init_git", params, timeout_s=60.0)
+            # The daemon bounds each step (init, add, commit) at 45 s; a large folder's `git add -A`
+            # needs most of that, so this waits for all three rather than giving up first.
+            result = await session.call("init_git", params, timeout_s=150.0)
         except Exception as exc:
             return JSONResponse(
                 status_code=409,

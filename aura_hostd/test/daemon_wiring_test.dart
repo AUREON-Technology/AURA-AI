@@ -371,7 +371,7 @@ void main() {
       expect(before['type'], 'result');
       expect(before['result'], {
         'roots': [
-          {'path': rootA, 'trusted': true},
+          {'path': rootA, 'trusted': true, 'is_git': false},
         ],
         'remote_control': false,
       });
@@ -381,8 +381,8 @@ void main() {
       final after = await conn.call('list_roots', {});
       expect(after['result'], {
         'roots': [
-          {'path': rootA, 'trusted': true},
-          {'path': rootB, 'trusted': false},
+          {'path': rootA, 'trusted': true, 'is_git': false},
+          {'path': rootB, 'trusted': false, 'is_git': false},
         ],
         'remote_control': true,
       });

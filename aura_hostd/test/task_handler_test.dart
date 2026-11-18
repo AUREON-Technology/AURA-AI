@@ -1607,7 +1607,7 @@ void main() {
     test('list_roots reports the live grants and the remote control flag', () async {
       expect(await handler.listRoots(const {}), {
         'roots': [
-          {'path': root, 'trusted': false},
+          {'path': root, 'trusted': false, 'is_git': false},
         ],
         'remote_control': false,
       });
@@ -1619,8 +1619,8 @@ void main() {
       final listed = await handler.listRoots(const {});
       expect(listed['remote_control'], isTrue);
       expect(listed['roots'], [
-        {'path': root, 'trusted': true},
-        {'path': later.resolveSymbolicLinksSync(), 'trusted': false},
+        {'path': root, 'trusted': true, 'is_git': false},
+        {'path': later.resolveSymbolicLinksSync(), 'trusted': false, 'is_git': false},
       ]);
     });
 

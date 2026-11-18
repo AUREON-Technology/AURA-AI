@@ -32,6 +32,7 @@ import 'containment.dart';
 import 'debug_session_manager.dart';
 import 'diagnostics_service.dart';
 import 'error_codes.dart';
+import 'git_init.dart';
 import 'git_service.dart';
 import 'isolated_task_registry.dart';
 import 'pairing_client.dart';
@@ -210,6 +211,8 @@ class ControlServer {
           await _handleApprovalsList(request);
         case 'GET /git/status':
           await _handleGitStatus(request);
+        case 'POST /git/init':
+          await _handleGitInit(request);
         case 'GET /git/diff':
           await _handleGitDiff(request);
         case 'GET /git/log':
@@ -531,6 +534,30 @@ class ControlServer {
       await _fail(request, 415, HostdErrorCode.gitOutputNotUtf8, error.message);
     } on GitCommandError catch (error) {
       await _fail(request, 500, HostdErrorCode.gitCommandFailed, error.message);
+    }
+  }
+
+  /// `POST /git/init` `{"root": <path>}` (WP4, D-13): "Initialize git here" from the desktop app.
+  /// [root] must be exactly a granted root; one that already is a repository with a commit is a
+  /// 409. Otherwise `git init`, `git add -A` and a first commit with the person's own git identity
+  /// (`AURA <aura@localhost>` only if git has none) -- `git_init.dart`, the same as the `init_git`
+  /// RPC the phone and the web use. Responds `{"ok": true, "commit": <sha>}`.
+  Future<void> _handleGitInit(HttpRequest request) async {
+    final body = await _readJsonBody(request);
+    final root = body['root'];
+    if (root is! String || root.isEmpty) {
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'root is required');
+      return;
+    }
+    try {
+      await _respond(request, 200, await initializeGrantedFolder(workspaceStore.load(), gitService, root));
+    } on GitInitRefusal catch (error) {
+      final status = switch (error.code) {
+        HostdErrorCode.rootNotGranted => 404,
+        HostdErrorCode.alreadyAGitRepo => 409,
+        _ => 500,
+      };
+      await _fail(request, status, error.code, error.message, detail: error.detail);
     }
   }
 
@@ -1059,8 +1086,10 @@ class ControlServer {
 
   /// Every error response: the English [message] under `error` (what apps predating codes
   /// show), plus its stable machine [code] (`error_codes.dart`), which a newer app translates.
-  Future<void> _fail(HttpRequest request, int statusCode, String code, String message) =>
-      _respond(request, statusCode, {'error': message, 'code': code});
+  /// [detail]: the underlying error alone (git's own message for `git_init_failed`), so a
+  /// translated message can quote it.
+  Future<void> _fail(HttpRequest request, int statusCode, String code, String message, {String? detail}) =>
+      _respond(request, statusCode, {'error': message, 'code': code}..addAll({if (detail != null) 'detail': detail}));
 
   Future<void> _respond(HttpRequest request, int statusCode, Map<String, Object?> body) async {
     assert(
