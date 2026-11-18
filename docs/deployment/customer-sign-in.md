@@ -132,6 +132,7 @@ Build flags for the customer builds:
 |---|---|
 | `APP_BASE_URL` | where the web app is served, for example `https://app.aureon-ai.tech`. Invite links point at `{APP_BASE_URL}/invite?token=…`, and the backend's `AURA_APP_BASE_URL` must be the same. |
 | `TERMS_URL`, `PRIVACY_URL`, `REFUND_URL` | the owner's legal pages, `https://` only. A page that is not set is not linked. |
+| `DIRECT_DISTRIBUTION` | `true` only for a macOS build distributed outside the Mac App Store. It allows Fawry checkout there. Never set it for a Mac App Store build: Apple rejects outside payment. |
 
 The web build must serve `index.html` for `/invite`, so an invite link opened in a browser reaches
 the app's router. That is the normal single-page-app fallback on any static host.

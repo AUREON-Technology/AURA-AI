@@ -238,7 +238,7 @@ class PostgresTenancyStore:
         return status.rsplit(" ", 1)[-1] == "1"
 
     async def accept_invite(
-        self, invite_id: str, *, user_id: str, at: datetime, seat_limit: int
+        self, invite_id: str, *, user_id: str, at: datetime, seat_limit: int, email: str | None = None
     ) -> Membership:
         pool = await self._conn()
         async with pool.acquire() as conn:
@@ -268,7 +268,7 @@ class PostgresTenancyStore:
                 if seats >= seat_limit:
                     raise ConflictError("this workspace has no free seats")
                 member = Membership(invite.workspace_id, user_id, invite.role, at, invited_by=invite.created_by,
-                                    email=invite.email)
+                                    email=email or invite.email)
                 await ensure_user_id(conn, user_id)
                 await conn.execute(
                     f"INSERT INTO aura_workspace_members ({_MEMBER}) VALUES ($1, $2, $3, $4, $5, $6)",

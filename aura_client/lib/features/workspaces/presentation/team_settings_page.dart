@@ -58,16 +58,21 @@ class _TeamBody extends ConsumerWidget {
     final invites = workspace.canManage ? ref.watch(invitesProvider(id)) : null;
     final client = ref.read(workspacesClientProvider);
 
-    Future<void> run(Future<void> Function() action) async {
+    /// True when the server did it; on a refusal the error is shown and nothing else happens.
+    Future<bool> run(Future<void> Function() action) async {
       try {
         await action();
         ref.invalidate(membersProvider(id));
         ref.invalidate(invitesProvider(id));
         ref.invalidate(workspacesListProvider);
+        return true;
       } catch (error) {
         if (context.mounted) showFailure(context, error);
+        return false;
       }
     }
+
+    void leavePage() => context.canPop() ? context.pop() : context.go('/you');
 
     return ListView(
       padding: const EdgeInsets.all(AuraSpacing.lg),
@@ -130,9 +135,9 @@ class _TeamBody extends ConsumerWidget {
                   action: l10n.teamDelete, destructive: true)) {
                 return;
               }
-              await run(() => client.deleteTeam(workspace.id));
+              if (!await run(() => client.deleteTeam(workspace.id))) return;
               await ref.read(activeWorkspaceProvider.notifier).clear();
-              if (context.mounted) context.pop();
+              if (context.mounted) leavePage();
             },
           )
         else if (me != null)
@@ -145,9 +150,9 @@ class _TeamBody extends ConsumerWidget {
                   action: l10n.teamLeave, destructive: true)) {
                 return;
               }
-              await run(() => client.remove(workspace.id, me));
+              if (!await run(() => client.remove(workspace.id, me))) return;
               await ref.read(activeWorkspaceProvider.notifier).clear();
-              if (context.mounted) context.pop();
+              if (context.mounted) leavePage();
             },
           ),
       ],
@@ -155,7 +160,7 @@ class _TeamBody extends ConsumerWidget {
   }
 
   Widget? _memberActions(BuildContext context, Member m, String? me,
-      Future<void> Function(Future<void> Function()) run, WorkspacesClient client) {
+      Future<bool> Function(Future<void> Function()) run, WorkspacesClient client) {
     final l10n = context.l10n;
     if (m.userId == me || m.role == 'owner' || !workspace.canManage) return null;
     // An admin manages members, never other admins (the server refuses that too).

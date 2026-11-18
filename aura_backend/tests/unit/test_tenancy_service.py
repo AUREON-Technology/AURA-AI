@@ -177,3 +177,13 @@ async def test_member_email_from_invite_and_owner(service) -> None:
     await service.accept("bea", token)
     emails = {m.user_id: m.email for m in await service.list_members("owner", ws.id)}
     assert emails == {"owner": "owner@example.com", "bea": "bea@example.com"}
+
+
+
+async def test_member_email_is_the_joiner_s_own_when_known(service) -> None:
+    """Review F2#7: a forwarded invite link shows who actually joined."""
+    ws = await service.create_team("owner", "Acme", owner_email="owner@example.com")
+    _invite, token = await service.invite("owner", ws.id, "bea@example.com", MEMBER)
+    await service.accept("cal", token, email="Cal@Example.com")
+    emails = {m.user_id: m.email for m in await service.list_members("owner", ws.id)}
+    assert emails["cal"] == "cal@example.com"

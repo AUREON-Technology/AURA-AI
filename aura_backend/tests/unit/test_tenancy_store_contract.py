@@ -249,3 +249,11 @@ async def test_member_email_roundtrips(store) -> None:
     assert emails == {"u1": "u1@example.com", "u2": "new@example.com"}
     [(_ws, mine)] = [(w, m) for w, m in await store.memberships_of("u2") if w.id == ws.id]
     assert mine.email == "new@example.com"
+
+
+
+async def test_accept_stores_the_given_email(store) -> None:
+    ws = await _workspace(store, "u1")
+    invite = await _invite(store, ws)
+    await store.accept_invite(invite.invite_id, user_id="u3", at=T0 + timedelta(hours=1), seat_limit=5, email="u3@example.com")
+    assert {m.user_id: m.email for m in await store.list_members(ws.id)}["u3"] == "u3@example.com"

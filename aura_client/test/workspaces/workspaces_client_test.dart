@@ -105,16 +105,19 @@ void main() {
     );
   });
 
-  test('a team sends the workspace header, personal does not', () async {
+  test('a team sends the workspace header on scoped routes, personal does not', () async {
     final container = scope();
-    await container.read(workspacesClientProvider).list();
+    Future<void> get() => container.read(auraApiClientProvider).json(method: 'GET', path: '/api/v3/knowledge/documents');
+    await get();
     expect(requests.last.headers.containsKey(workspaceHeaderName), isFalse);
     await container.read(activeWorkspaceProvider.notifier).select(_personal);
-    await container.read(workspacesClientProvider).list();
+    await get();
     expect(requests.last.headers.containsKey(workspaceHeaderName), isFalse);
     await container.read(activeWorkspaceProvider.notifier).select(_team);
-    await container.read(workspacesClientProvider).list();
+    await get();
     expect(requests.last.headers[workspaceHeaderName], 'ws-team');
+    await container.read(workspacesClientProvider).list();
+    expect(requests.last.headers.containsKey(workspaceHeaderName), isFalse); // ids are in the path
   });
 
   test('the selection survives a restart', () async {
@@ -126,11 +129,13 @@ void main() {
     expect(second.read(activeWorkspaceProvider), _team);
   });
 
-  test('a not-a-member 403 falls back to personal', () async {
+  test('a not-a-member 403 on a scoped route falls back to personal', () async {
     final container = scope();
     await container.read(activeWorkspaceProvider.notifier).select(_team);
     respond = (_) => http.Response(jsonEncode({'error': 'authorization_error', 'message': notAMemberMessage}), 403);
-    await expectLater(container.read(workspacesClientProvider).members('ws-team'), throwsA(isA<AuraApiError>()));
+    await expectLater(
+        container.read(auraApiClientProvider).json(method: 'GET', path: '/api/v3/knowledge/documents'),
+        throwsA(isA<AuraApiError>()));
     expect(container.read(activeWorkspaceProvider), isNull);
   });
 

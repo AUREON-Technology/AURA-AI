@@ -485,7 +485,8 @@ Future<String?> resolveAppRedirect({
     return '/onboarding';
   }
   if (isLoggedIn && onboarded == true && isOnboarding) {
-    return landing();
+    // Invitees are usually new: the invite waits through onboarding too (F2 review #2).
+    return hasPendingInvite ? '/invite' : landing();
   }
   return null;
 }

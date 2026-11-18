@@ -1628,5 +1628,18 @@
   "deleteBlockedBody": "Before deleting your account, make someone else the owner of these teams, or delete them:",
   "@deleteBlockedBody": {
     "description": "Explains the refusal"
+  },
+  "shareNothing": "This chat has nothing to share yet.",
+  "@shareNothing": {
+    "description": "Share tapped on an empty chat"
+  },
+  "shareConfirm": "Share a copy of this chat with {name}? Everyone in the team can read it.",
+  "@shareConfirm": {
+    "description": "Confirms sharing",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
   }
 }

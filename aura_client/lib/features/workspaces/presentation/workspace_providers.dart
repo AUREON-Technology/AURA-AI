@@ -10,9 +10,11 @@ import '../../../l10n/l10n.dart';
 import '../data/workspace_models.dart';
 import '../data/workspaces_client.dart';
 
-final workspacesListProvider = FutureProvider.autoDispose<List<WorkspaceSummary>>(
-  (ref) => ref.read(workspacesClientProvider).list(),
-);
+final workspacesListProvider = FutureProvider.autoDispose<List<WorkspaceSummary>>((ref) async {
+  final listed = await ref.read(workspacesClientProvider).list();
+  await ref.read(activeWorkspaceProvider.notifier).reconcile(listed);
+  return listed;
+});
 
 final membersProvider = FutureProvider.autoDispose.family<List<Member>, String>(
   (ref, id) => ref.read(workspacesClientProvider).members(id),

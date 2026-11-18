@@ -14,13 +14,17 @@ import '../data/workspace_models.dart';
 import '../data/workspaces_client.dart';
 import 'workspace_providers.dart';
 
-/// Whether this build may sell a plan with Fawry: the web and desktop builds. The app-store
-/// builds may not steer to outside payment, so they only show the plan (in-app purchase is F2b).
+/// A macOS build distributed outside the Mac App Store (`--dart-define=DIRECT_DISTRIBUTION=true`).
+const _directDistribution = bool.fromEnvironment('DIRECT_DISTRIBUTION');
+
+/// Whether this build may sell a plan with Fawry: the web, Windows and Linux builds, and a macOS
+/// build only when distributed directly. App-store builds (iOS, Android, Mac App Store) may not
+/// steer to outside payment, so they only show the plan (in-app purchase is F2b; review #4).
 final canCheckoutHereProvider = Provider<bool>((ref) =>
     kIsWeb ||
-    defaultTargetPlatform == TargetPlatform.macOS ||
     defaultTargetPlatform == TargetPlatform.windows ||
-    defaultTargetPlatform == TargetPlatform.linux);
+    defaultTargetPlatform == TargetPlatform.linux ||
+    (defaultTargetPlatform == TargetPlatform.macOS && _directDistribution));
 
 final planUsageProvider = FutureProvider.autoDispose.family<PlanUsage, String>(
   (ref, id) => ref.read(workspacesClientProvider).plan(id),

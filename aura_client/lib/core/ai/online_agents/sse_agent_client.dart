@@ -269,7 +269,7 @@ class SseAgentClient {
           await DeviceValidationService.getAttestationHeaders(backendUrl: _backendUrl),
         );
         // A team turn retrieves the team's corpus and is metered to the team (ADR-034).
-        req.headers.addAll(workspaceHeaders(_ref));
+        req.headers.addAll(await workspaceHeaders(_ref));
       }
 
       await applyAuth(request);

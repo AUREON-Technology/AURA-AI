@@ -171,6 +171,6 @@ def register_workspace_ops(
     async def accept_invite(payload: AcceptRequest, caller=Depends(principal)) -> JSONResponse:
         require_verified_email(caller)
         await invite_budget(caller)
-        member = await tenancy.accept(person(caller), payload.token)
+        member = await tenancy.accept(person(caller), payload.token, email=getattr(caller, "email", None) or None)
         ws, _ = await tenancy.resolve(person(caller), member.workspace_id)
         return JSONResponse(content={"workspace": _workspace(ws, member.role), "role": member.role.value})

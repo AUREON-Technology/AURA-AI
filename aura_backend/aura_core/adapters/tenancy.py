@@ -122,7 +122,7 @@ class InMemoryTenancyStore:
             return self._invites.pop(invite_id, None) is not None
 
     async def accept_invite(
-        self, invite_id: str, *, user_id: str, at: datetime, seat_limit: int
+        self, invite_id: str, *, user_id: str, at: datetime, seat_limit: int, email: str | None = None
     ) -> Membership:
         async with self._lock:
             invite = self._invites.get(invite_id)
@@ -134,7 +134,7 @@ class InMemoryTenancyStore:
             if seats >= seat_limit:
                 raise ConflictError("this workspace has no free seats")
             member = Membership(invite.workspace_id, user_id, invite.role, at, invited_by=invite.created_by,
-                                email=invite.email)
+                                email=email or invite.email)
             self._members[(invite.workspace_id, user_id)] = member
             self._invites[invite_id] = replace(invite, accepted_at=at, accepted_by=user_id)
             return member

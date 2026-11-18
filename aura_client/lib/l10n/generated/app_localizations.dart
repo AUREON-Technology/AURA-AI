@@ -2217,6 +2217,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Before deleting your account, make someone else the owner of these teams, or delete them:'**
   String get deleteBlockedBody;
+
+  /// Share tapped on an empty chat
+  ///
+  /// In en, this message translates to:
+  /// **'This chat has nothing to share yet.'**
+  String get shareNothing;
+
+  /// Confirms sharing
+  ///
+  /// In en, this message translates to:
+  /// **'Share a copy of this chat with {name}? Everyone in the team can read it.'**
+  String shareConfirm(String name);
 }
 
 class _AppLocalizationsDelegate

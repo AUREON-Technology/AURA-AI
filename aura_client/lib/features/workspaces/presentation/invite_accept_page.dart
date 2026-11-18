@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -27,11 +28,20 @@ class _InviteAcceptPageState extends ConsumerState<InviteAcceptPage> {
   @override
   void initState() {
     super.initState();
-    _token = (widget.token?.isNotEmpty ?? false) ? widget.token : ref.read(pendingInviteProvider);
-    // Forget a held token once this page has it -- after the frame, since a provider cannot
-    // change while the tree builds.
+    final fromLink = (widget.token?.isNotEmpty ?? false) ? widget.token : null;
+    _token = fromLink ?? ref.read(pendingInviteProvider);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) ref.read(pendingInviteProvider.notifier).take();
+      if (!mounted) return;
+      if (fromLink != null && kIsWeb) {
+        // Take the single-use token out of the address bar and history: hold it in memory and
+        // show the same page at a plain /invite (F2 review #8).
+        ref.read(pendingInviteProvider.notifier).hold(fromLink);
+        context.replace('/invite');
+        return;
+      }
+      // Forget a held token once this page has it -- after the frame, since a provider cannot
+      // change while the tree builds.
+      ref.read(pendingInviteProvider.notifier).take();
     });
   }
   String? _problem;

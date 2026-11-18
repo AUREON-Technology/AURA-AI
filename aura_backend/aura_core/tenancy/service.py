@@ -162,7 +162,9 @@ class TenancyService:
             await self.notifier.invite(address, _ws.name, inviter_email, role.value, token)  # never raises
         return invite, token
 
-    async def accept(self, user_id: str, token: str) -> Membership:
+    async def accept(self, user_id: str, token: str, *, email: str | None = None) -> Membership:
+        """``email`` is the accepting account's own verified address: the members list shows who
+        actually joined, even when an invite link was forwarded (review F2#7)."""
         invite_id = parse_invite_token(token)
         invite = await self.store.get_invite(invite_id)
         if invite is None or not hmac.compare_digest(invite.digest, invite_digest(token)):
@@ -172,7 +174,8 @@ class TenancyService:
         if len(members) >= seats and invite.is_open(self.clock.now()):
             raise await self._no_free_seats(invite.workspace_id, len(members), seats)
         member = await self.store.accept_invite(
-            invite_id, user_id=user_id, at=self.clock.now(), seat_limit=seats
+            invite_id, user_id=user_id, at=self.clock.now(), seat_limit=seats,
+            email=_clean_email(email) if email else None,
         )
         await self._audit("join", user_id, member.role, member.workspace_id, {"invite_id": invite_id})
         return member

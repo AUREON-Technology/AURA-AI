@@ -1198,4 +1198,12 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get deleteBlockedBody =>
       'Before deleting your account, make someone else the owner of these teams, or delete them:';
+
+  @override
+  String get shareNothing => 'This chat has nothing to share yet.';
+
+  @override
+  String shareConfirm(String name) {
+    return 'Share a copy of this chat with $name? Everyone in the team can read it.';
+  }
 }

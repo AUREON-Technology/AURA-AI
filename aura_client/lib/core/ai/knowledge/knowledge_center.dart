@@ -29,7 +29,7 @@ class KnowledgeCenter {
       ),
     );
     // In a team, documents belong to the team's corpus (ADR-034).
-    headers.addAll(workspaceHeaders(_ref));
+    headers.addAll(await workspaceHeaders(_ref));
     return headers;
   }
 
@@ -215,7 +215,7 @@ class KnowledgeCenter {
         ..fields['title'] = title
         ..files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
       if (token != null) request.headers['Authorization'] = 'Bearer $token';
-      request.headers.addAll(workspaceHeaders(_ref));
+      request.headers.addAll(await workspaceHeaders(_ref));
       request.headers.addAll(
         await DeviceValidationService.getAttestationHeaders(
           backendUrl: _ref.read(backendUrlProvider),

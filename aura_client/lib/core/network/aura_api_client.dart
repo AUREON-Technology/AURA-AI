@@ -29,6 +29,7 @@ class AuraApiClient {
   Future<Map<String, String>> _headers({
     required bool jsonBody,
     String? correlationId,
+    bool workspaceScoped = true,
   }) async {
     final headers = <String, String>{
       'X-Correlation-Id': correlationId ?? _uuid.v4(),
@@ -39,7 +40,7 @@ class AuraApiClient {
     headers.addAll(
       await DeviceValidationService.getAttestationHeaders(backendUrl: _backendUrl),
     );
-    headers.addAll(workspaceHeaders(_ref));
+    if (workspaceScoped) headers.addAll(await workspaceHeaders(_ref));
     return headers;
   }
 
@@ -60,6 +61,9 @@ class AuraApiClient {
       final headers = await _headers(
         jsonBody: body != null,
         correlationId: correlationId,
+        // The workspace routes name the workspace in the path; a stale header there would only
+        // fail them (F2 review #10).
+        workspaceScoped: !uri.path.startsWith('/api/v3/workspaces'),
       );
       if (idempotencyKey != null) headers[idempotencyKeyHeader] = idempotencyKey;
       final encoded = body == null ? null : jsonEncode(body);
@@ -97,7 +101,9 @@ class AuraApiClient {
         tokens.invalidateAccessToken();
         response = await send();
       }
-      healActiveWorkspace(_ref, statusCode: response.statusCode, body: response.body);
+      if (!uri.path.startsWith('/api/v3/workspaces')) {
+        healActiveWorkspace(_ref, statusCode: response.statusCode, body: response.body);
+      }
       return response;
     } catch (e) {
       throw AuraApiError.unreachable(e);

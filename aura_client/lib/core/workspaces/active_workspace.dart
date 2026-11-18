@@ -55,9 +55,13 @@ const workspaceHeaderName = 'X-Aura-Workspace';
 class ActiveWorkspace extends Notifier<WorkspaceSummary?> {
   static const prefsKey = 'aura.active_workspace';
 
+  /// Completes once the saved choice is loaded: a request awaits it, so nothing goes out in the
+  /// personal scope while the app is still restoring a team (F2 review #6).
+  late Future<void> ready;
+
   @override
   WorkspaceSummary? build() {
-    restore();
+    ready = restore();
     return null;
   }
 
@@ -71,6 +75,19 @@ class ActiveWorkspace extends Notifier<WorkspaceSummary?> {
       if (decoded is Map<String, dynamic>) state = WorkspaceSummary.fromJson(decoded);
     } catch (_) {
       // A corrupt entry is not worth failing start-up over: personal is a safe default.
+    }
+  }
+
+  /// Keeps the saved summary true to the server's list: a changed role or name is updated, and a
+  /// team that is no longer ours is dropped (F2 review #5).
+  Future<void> reconcile(List<WorkspaceSummary> listed) async {
+    final active = state;
+    if (active == null) return;
+    final fresh = listed.where((w) => w.id == active.id).firstOrNull;
+    if (fresh == null) {
+      await clear();
+    } else if (fresh != active) {
+      await select(fresh);
     }
   }
 
@@ -90,8 +107,11 @@ class ActiveWorkspace extends Notifier<WorkspaceSummary?> {
 
 final activeWorkspaceProvider = NotifierProvider<ActiveWorkspace, WorkspaceSummary?>(ActiveWorkspace.new);
 
-/// `X-Aura-Workspace` when a team is active; nothing for personal (the server's default).
-Map<String, String> workspaceHeaders(Ref ref) {
+/// `X-Aura-Workspace` when a team is active; nothing for personal (the server's default). Waits
+/// for the saved choice to load first.
+Future<Map<String, String>> workspaceHeaders(Ref ref) async {
+  ref.read(activeWorkspaceProvider);
+  await ref.read(activeWorkspaceProvider.notifier).ready;
   final active = ref.read(activeWorkspaceProvider);
   return active != null && active.isTeam ? {workspaceHeaderName: active.id} : const {};
 }

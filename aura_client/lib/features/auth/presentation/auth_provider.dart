@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:aura_client/core/workspaces/active_workspace.dart';
 import 'package:aura_client/core/auth/account_client.dart';
 import 'package:aura_client/core/auth/desktop_oauth_client.dart';
 import 'package:aura_client/core/auth/identity_service.dart';
@@ -366,6 +367,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     final previous = await _storage.read(key: 'user_id');
     if (previous != null && previous.isNotEmpty && previous != newUserId) {
       await ref.read(databaseProvider).wipeUserData();
+      await ref.read(activeWorkspaceProvider.notifier).clear();
     }
   }
 
@@ -444,6 +446,9 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     // The local DB is not keyed by user, so the next account to sign in
     // would otherwise inherit this one's data, unsynced outbox and cursor.
     await ref.read(databaseProvider).wipeUserData();
+
+    // The next account must not start in this one's team (F2 review #1).
+    await ref.read(activeWorkspaceProvider.notifier).clear();
 
     await _storage.deleteAll();
     // Shared storage also drops the DB encryption-key copy. Tokens must be

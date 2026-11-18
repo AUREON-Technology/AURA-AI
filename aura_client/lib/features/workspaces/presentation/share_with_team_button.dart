@@ -47,7 +47,16 @@ class ShareWithTeamButton extends ConsumerWidget {
         try {
           final rows = await ref.read(chatRepositoryProvider).watchMessages(conversationId).first;
           final messages = shareableMessages(rows.map((m) => (role: m.role, text: m.content)));
-          if (messages.isEmpty) return;
+          if (!context.mounted) return;
+          if (messages.isEmpty) {
+            AuraSnackbar.show(context, message: l10n.shareNothing);
+            return;
+          }
+          // A copy goes to everyone in the team: say which team, and ask (F2 review #9).
+          if (!await confirm(context, title: l10n.shareWithTeam, body: l10n.shareConfirm(active.name),
+              action: l10n.shareWithTeam)) {
+            return;
+          }
           await ref.read(workspacesClientProvider).share(active.id, conversationId, shareTitle(messages), messages);
           if (context.mounted) {
             AuraSnackbar.show(context, message: l10n.sharedWithTeam(active.name), kind: AuraSnackbarKind.success);
