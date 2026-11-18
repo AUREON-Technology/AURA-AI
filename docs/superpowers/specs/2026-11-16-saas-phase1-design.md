@@ -232,6 +232,11 @@ and "AURA for your system" (Track AP) need SSO-grade security in place first.
 - **Metering:** usage is counted per workspace per billing period.
   - Counted: messages, Engineer runs, storage bytes.
   - Messages count on accepted turns. A turn the server fails does not count.
+  - **Amended 2026-11-18 (audit F6, owner decision): a streamed message counts once its first
+    token is sent.** It is given back only when the turn fails, errors or loses its client
+    *before* any token. The earlier rule (count only on the final `done` frame) let a client read
+    the whole answer, disconnect before `done`, and get the message back. Live voice turns follow
+    the same rule per committed utterance (F7).
   - The existing cross-process daily quota machinery (`aura_core/llm/quota.py`, shared through the
     Cache port) is a model for the counter, but per-customer limits are a separate concern from
     per-provider quotas.
