@@ -98,6 +98,36 @@ abstract class AppLocalizations {
     Locale('en'),
   ];
 
+  /// C1 (F2): body of a failed or empty reply that is not the conversation's latest turn, shown instead of a Retry button
+  ///
+  /// In en, this message translates to:
+  /// **'Later messages followed this one, so it can\'t be retried here. Send it again if you still need an answer.'**
+  String get chatRetryOnlyLatestTurn;
+
+  /// C1 (F25): tooltip of the attach-image button while the server's image support could not be checked
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t check whether images can be attached. Tap to try again.'**
+  String get chatImageCapabilityCheckFailed;
+
+  /// C1 (F22): a memory was saved locally and queued because the server could not be reached
+  ///
+  /// In en, this message translates to:
+  /// **'Saved on this device. AURA will remember it once it can reach the server.'**
+  String get memorySaveQueued;
+
+  /// C1 (F22): the server refused a saved memory (a 4xx), so it will not be retried
+  ///
+  /// In en, this message translates to:
+  /// **'The server didn\'t accept this memory: {fact}'**
+  String memorySaveRefused(String fact);
+
+  /// C1 (INT-113): added to the share confirmation when the chat is too long for the server's limits: how many older messages will not be shared
+  ///
+  /// In en, this message translates to:
+  /// **'Only the latest {count} messages fit in a shared chat, so the {omitted} older ones won\'t be included.'**
+  String shareTruncatedOlder(int count, int omitted);
+
   /// Today screen header, shown before noon
   ///
   /// In en, this message translates to:

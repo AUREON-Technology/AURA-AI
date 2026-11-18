@@ -129,6 +129,12 @@ class ChatRepository {
   /// WP4: the conversations whose turns asked for an isolated worktree, kept for the same reason.
   final Set<String> _isolatedConversations = {};
   String? _stoppedMessageId;
+  /// A send that has passed the in-flight gate but has not marked its reply as streaming yet
+  /// (it is still saving its rows). Without it, two sends started in the same frame -- a double
+  /// tap on Retry -- would both pass the gate and both reach the server.
+  bool _claimingSend = false;
+  /// A retry between its gate and its send, for the same reason (F2).
+  bool _retrying = false;
 
   ChatRepository(this._db, this._ref);
 
@@ -206,8 +212,24 @@ class ChatRepository {
     await _db.enqueueOutbox(table: 'messages', recordId: id, operation: 'delete');
   }
 
-  // Sends message and streams response, saving to Drift DB in real-time
-  Future<void> sendChatMessage({
+  /// The id of [conversationId]'s newest assistant message, or null when it has none. A failed
+  /// turn offers Retry only while it is the newest (F2): an older one has been followed by
+  /// other turns, and resending it now would answer out of order.
+  Stream<String?> watchLatestAssistantId(String conversationId) {
+    final query = _db.select(_db.messages)
+      ..where((m) => m.conversationId.equals(conversationId) & m.role.equals('assistant'))
+      ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.desc)])
+      ..limit(1);
+    return query.watch().map((rows) => rows.isEmpty ? null : rows.first.id);
+  }
+
+  /// Sends a message and streams the response, saving to Drift as it arrives.
+  ///
+  /// Returns false when the send was ignored because another reply is still in flight, and
+  /// otherwise whether the turn got an answer: false too when it ended as a connection failure
+  /// ([kChatConnectionErrorPrefix], the bubble with Retry). [onAccepted] runs once the send has
+  /// passed the in-flight gate and saved its rows, before the request goes out.
+  Future<bool> sendChatMessage({
     required String conversationId,
     required String userContent,
     bool useRag = true,
@@ -224,65 +246,88 @@ class ChatRepository {
     // G-14c: the persona to ask and to label the reply with. Null means the active persona; an
     // approval resend passes the held turn's own, which the user may have switched away from.
     String? agentId,
+    Future<void> Function()? onAccepted,
   }) async {
-    if (_ref.read(streamingMessageIdProvider) != null) {
+    if (_claimingSend || _ref.read(streamingMessageIdProvider) != null) {
       debugPrint("[ChatRepository] ignoring send while a stream is already in flight");
-      return;
+      return false;
     }
+    _claimingSend = true;
     if (workspaceRoot != null) {
       _lastWorkspaceRoot[conversationId] = workspaceRoot;
     }
     if (desktopTaskIsolation) _isolatedConversations.add(conversationId);
+    final effectiveRoot = workspaceRoot ?? _lastWorkspaceRoot[conversationId];
+    final effectiveIsolation = desktopTaskIsolation || _isolatedConversations.contains(conversationId);
+    final String assistantMsgId;
+    final String activeAgentId;
 
-    _ref.read(pendingActionsProvider.notifier).clear();
-    // Pending confirmations are turn-scoped (each `PendingToolCall.turnId`), not cleared wholesale
-    // here -- a new message must not silently discard a still-unresolved earlier turn's pending
-    // calls. `confirmPendingCalls`/`rejectPendingCalls` remove entries as they resolve.
+    try {
+      _ref.read(pendingActionsProvider.notifier).clear();
+      // Pending confirmations are turn-scoped (each `PendingToolCall.turnId`), not cleared wholesale
+      // here -- a new message must not silently discard a still-unresolved earlier turn's pending
+      // calls. `confirmPendingCalls`/`rejectPendingCalls` remove entries as they resolve.
 
-    if (persistUserMessage) {
-      final userMsgId = _uuid.v4();
-      // Before the insert, so the bubble's first frame already has its thumbnails.
-      _ref.read(sentChatImagesProvider.notifier).remember(userMsgId, images);
+      if (persistUserMessage) {
+        final userMsgId = _uuid.v4();
+        // Before the insert, so the bubble's first frame already has its thumbnails.
+        _ref.read(sentChatImagesProvider.notifier).remember(userMsgId, images);
+        await _db.into(_db.messages).insert(
+          MessagesCompanion.insert(
+            id: userMsgId,
+            conversationId: conversationId,
+            role: "user",
+            // The bytes stay in memory for this one request (ADR-031); the transcript keeps the
+            // same marker the server's session history does.
+            content: images.isEmpty
+                ? userContent
+                : '$userContent\n${imagesAttachedNote(images.length)}',
+            createdAt: DateTime.now(),
+            updatedAt: Value(DateTime.now()),
+          ),
+        );
+        await _enqueueUpsert(userMsgId);
+      }
+
+      // 2. Save Placeholder Assistant Message
+      assistantMsgId = _uuid.v4();
+      activeAgentId = agentId ?? _ref.read(activeAgentIdProvider);
       await _db.into(_db.messages).insert(
         MessagesCompanion.insert(
-          id: userMsgId,
+          id: assistantMsgId,
           conversationId: conversationId,
-          role: "user",
-          // The bytes stay in memory for this one request (ADR-031); the transcript keeps the
-          // same marker the server's session history does.
-          content: images.isEmpty
-              ? userContent
-              : '$userContent\n${imagesAttachedNote(images.length)}',
+          role: "assistant",
+          content: "",
+          modelUsed: Value(activeAgentId),
+          agentId: Value(activeAgentId),
+          // Where the turn runs, from the start: a turn that fails before `done` is retried in the
+          // same folder and worktree, after a restart too (F2).
+          turnMetaJson: effectiveRoot != null || effectiveIsolation
+              ? Value(TurnMeta(workspaceRoot: effectiveRoot, desktopTaskIsolation: effectiveIsolation).encode())
+              : const Value.absent(),
           createdAt: DateTime.now(),
           updatedAt: Value(DateTime.now()),
         ),
       );
-      await _enqueueUpsert(userMsgId);
+      await _enqueueUpsert(assistantMsgId);
+
+      // 3. Stream against the v3 kernel. Conversation history is loaded server-side
+      // from episodic memory keyed by session_id. SSE errors stay a retry bubble;
+      // there is no v1 orchestrator fallback.
+      _ref.read(streamingMessageIdProvider.notifier).set(assistantMsgId);
+    } finally {
+      _claimingSend = false;
     }
-
-    // 2. Save Placeholder Assistant Message
-    final assistantMsgId = _uuid.v4();
-    final String activeAgentId = agentId ?? _ref.read(activeAgentIdProvider);
-    await _db.into(_db.messages).insert(
-      MessagesCompanion.insert(
-        id: assistantMsgId,
-        conversationId: conversationId,
-        role: "assistant",
-        content: "",
-        modelUsed: Value(activeAgentId),
-        agentId: Value(activeAgentId),
-        createdAt: DateTime.now(),
-        updatedAt: Value(DateTime.now()),
-      ),
-    );
-    await _enqueueUpsert(assistantMsgId);
-
-    // 3. Stream against the v3 kernel. Conversation history is loaded server-side
-    // from episodic memory keyed by session_id. SSE errors stay a retry bubble;
-    // there is no v1 orchestrator fallback.
-    _ref.read(streamingMessageIdProvider.notifier).set(assistantMsgId);
     EngineerConsentPrompt? consentPrompt;
+    var answered = true;
     try {
+      if (onAccepted != null) {
+        try {
+          await onAccepted();
+        } catch (e) {
+          debugPrint("[ChatRepository] after-accept step failed: $e");
+        }
+      }
       final sseOutcome = await _sendViaSse(
         message: userContent,
         sessionId: conversationId,
@@ -293,8 +338,8 @@ class ChatRepository {
         approvalIds: approvalIds,
         assistantMsgId: assistantMsgId,
         images: images,
-        workspaceRoot: workspaceRoot ?? _lastWorkspaceRoot[conversationId],
-        desktopTaskIsolation: desktopTaskIsolation || _isolatedConversations.contains(conversationId),
+        workspaceRoot: effectiveRoot,
+        desktopTaskIsolation: effectiveIsolation,
       );
 
       if (sseOutcome.outcome == _SseSendOutcome.interrupted) {
@@ -325,11 +370,13 @@ class ChatRepository {
       } else if (sseOutcome.outcome == _SseSendOutcome.approvalExpired) {
         await _updateMessageText(assistantMsgId, kChatApprovalExpiredText);
       } else if (sseOutcome.message != null) {
+        answered = false;
         await _updateMessageText(
           assistantMsgId,
           '$kChatConnectionErrorPrefix: ${sseOutcome.message}',
         );
       } else if (sseOutcome.outcome == _SseSendOutcome.failed) {
+        answered = false;
         await _updateMessageText(assistantMsgId, kChatConnectionErrorMessage);
       }
     } finally {
@@ -343,37 +390,61 @@ class ChatRepository {
     if (consentPrompt != null) {
       _ref.read(engineerConsentPromptProvider.notifier).request(consentPrompt);
     }
+    return answered;
   }
 
-  /// Re-sends the last user turn after a connection-error bubble. Deletes the
-  /// error row and that user row, then calls [sendChatMessage] so the UI never
-  /// needs to touch Drift or `ref` after the bubble unmounts.
-  Future<void> retryLastFailedTurn({
+  /// Re-sends the turn of the assistant message [errorMessageId] -- a connection-error bubble,
+  /// an empty answer, or a turn that asked for Engineer consent -- with that turn's own user
+  /// message, persona, workspace root and isolation (F2 / INT-108). It used to resend whichever
+  /// user message was last, whatever bubble was tapped, and in the active persona.
+  ///
+  /// Returns false, changing nothing, while another reply is in flight or when the turn is no
+  /// longer in the conversation. The failed rows are deleted only once the resend has been
+  /// accepted, so a refused retry cannot lose the message. An approval resend that failed has
+  /// no user message of its own (it resumed a held turn): its retry asks again as a new turn,
+  /// without the approval, and leaves the held turn's message where it is.
+  Future<bool> retryLastFailedTurn({
     required String conversationId,
     required String errorMessageId,
   }) async {
-    final messages = await (_db.select(_db.messages)
-          ..where((m) => m.conversationId.equals(conversationId))
-          ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.asc)]))
-        .get();
+    if (_retrying || _ref.read(streamingMessageIdProvider) != null) return false;
+    _retrying = true;
+    try {
+      final turn = await _turnOf(conversationId, (m) => m.id == errorMessageId);
+      if (turn == null) return false;
+      // Again after the await: a reply may have started meanwhile.
+      if (_ref.read(streamingMessageIdProvider) != null) return false;
 
-    final userMessages = messages.where((m) => m.role == "user").toList();
-    if (userMessages.isEmpty) return;
-
-    final lastUserMsg = userMessages.last;
-    // The stored text carries the image marker, not the images (ADR-031): resend the text alone,
-    // with the images themselves while this session still holds them.
-    final images = _ref.read(sentChatImagesProvider)[lastUserMsg.id] ?? const <ChatImageAttachment>[];
-    await (_db.delete(_db.messages)..where((m) => m.id.equals(errorMessageId))).go();
-    await _enqueueDelete(errorMessageId);
-    await (_db.delete(_db.messages)..where((m) => m.id.equals(lastUserMsg.id))).go();
-    await _enqueueDelete(lastUserMsg.id);
-
-    await sendChatMessage(
-      conversationId: conversationId,
-      userContent: splitImagesNote(lastUserMsg.content).text,
-      images: images,
-    );
+      final ownUser = turn.ownUserMessage;
+      final meta = TurnMeta.decode(turn.assistant.turnMetaJson);
+      // The stored text carries the image marker, not the images (ADR-031): resend the text
+      // alone, with the images themselves while this session still holds them.
+      final images = ownUser == null
+          ? const <ChatImageAttachment>[]
+          : _ref.read(sentChatImagesProvider)[ownUser.id] ?? const <ChatImageAttachment>[];
+      var accepted = false;
+      await sendChatMessage(
+        conversationId: conversationId,
+        userContent: turn.userContent,
+        images: images,
+        persistUserMessage: ownUser != null,
+        agentId: turn.assistant.agentId,
+        workspaceRoot: meta.workspaceRoot,
+        desktopTaskIsolation: meta.desktopTaskIsolation,
+        onAccepted: () async {
+          accepted = true;
+          await (_db.delete(_db.messages)..where((m) => m.id.equals(errorMessageId))).go();
+          await _enqueueDelete(errorMessageId);
+          if (ownUser != null) {
+            await (_db.delete(_db.messages)..where((m) => m.id.equals(ownUser.id))).go();
+            await _enqueueDelete(ownUser.id);
+          }
+        },
+      );
+      return accepted;
+    } finally {
+      _retrying = false;
+    }
   }
 
   /// Approves [calls] -- held calls from ONE turn -- by their server-issued approval ids (F-04).
@@ -385,7 +456,8 @@ class ChatRepository {
   ///
   /// Returns false, changing nothing, while another stream is in flight (the send would be
   /// dropped and the approval silently lost) or when [calls] have no approval id or span turns.
-  /// Pending entries are removed only after the request has been sent.
+  /// Pending entries are removed only once the server has answered the resend: one that ended
+  /// as a connection failure leaves the card up, so the approval can be given again.
   Future<bool> confirmPendingCalls({
     required String conversationId,
     required List<PendingToolCall> calls,
@@ -403,7 +475,8 @@ class ChatRepository {
     if (_ref.read(streamingMessageIdProvider) != null) return false;
 
     final heldMeta = TurnMeta.decode(held.assistant.turnMetaJson);
-    await sendChatMessage(
+    var accepted = false;
+    final answered = await sendChatMessage(
       conversationId: conversationId,
       userContent: held.userContent,
       approvalIds: approvable.map((c) => c.approvalId!).toList(),
@@ -413,7 +486,12 @@ class ChatRepository {
       // Where the held turn ran -- still known after a restart, unlike the in-memory maps.
       workspaceRoot: heldMeta.workspaceRoot,
       desktopTaskIsolation: heldMeta.desktopTaskIsolation,
+      onAccepted: () async => accepted = true,
     );
+    if (!accepted) return false;
+    // F-04: a resend that failed before the server answered left the approval unused, so the card
+    // stays and the user can approve again (an id the server did spend comes back as "expired").
+    if (!answered) return true;
     // The server consumed that whole held turn: the approved calls ran, and anything still
     // needing approval came back under the new turn with fresh ids. The old entries are dead.
     _ref.read(pendingConfirmationProvider.notifier).removeByTurnId(turnId);
@@ -461,19 +539,38 @@ class ChatRepository {
   /// and the user message that produced it, or null when that turn is no longer in the
   /// conversation.
   Future<({Message assistant, String userContent})?> _heldTurn(String conversationId, String turnId) async {
+    // The server resumes the stored turn (F-04); its images were already understood then.
+    final turn = await _turnOf(
+      conversationId,
+      (m) => m.id == turnId || TurnMeta.decode(m.turnMetaJson).turnId == turnId,
+    );
+    return turn == null ? null : (assistant: turn.assistant, userContent: turn.userContent);
+  }
+
+  /// The first assistant message of [conversationId] that [matches], the text of the user
+  /// message that produced it, and that user message itself when it belongs to this turn alone
+  /// -- null for an approval resend, which follows its held turn's reply rather than a message
+  /// of its own. Null when no such turn is in the conversation.
+  Future<({Message assistant, String userContent, Message? ownUserMessage})?> _turnOf(
+    String conversationId,
+    bool Function(Message assistant) matches,
+  ) async {
     final messages = await (_db.select(_db.messages)
           ..where((m) => m.conversationId.equals(conversationId))
           ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.asc)]))
         .get();
-    final index = messages.indexWhere((m) =>
-        m.role == 'assistant' &&
-        (m.id == turnId || TurnMeta.decode(m.turnMetaJson).turnId == turnId));
+    final index = messages.indexWhere((m) => m.role == 'assistant' && matches(m));
     if (index < 0) return null;
+    var own = true;
     for (var i = index - 1; i >= 0; i--) {
-      // The server resumes the stored turn (F-04); its images were already understood then.
       if (messages[i].role == 'user') {
-        return (assistant: messages[index], userContent: splitImagesNote(messages[i].content).text);
+        return (
+          assistant: messages[index],
+          userContent: splitImagesNote(messages[i].content).text,
+          ownUserMessage: own ? messages[i] : null,
+        );
       }
+      if (messages[i].role == 'assistant') own = false;
     }
     return null;
   }
@@ -518,8 +615,11 @@ class ChatRepository {
     DateTime lastDbUpdate = DateTime.now();
     final citations = <String>[];
     final toolCalls = <Map<String, dynamic>>[];
-    var meta = const TurnMeta();
+    var meta = TurnMeta(workspaceRoot: workspaceRoot, desktopTaskIsolation: desktopTaskIsolation);
     final steps = <TurnStep>[];
+    // F21: only a `done` frame says the turn finished. A stream that simply ends without one was
+    // cut short (a proxy closing the connection, a server restart) and must not read as complete.
+    var sawDone = false;
 
     // Keeps what already arrived instead of swapping it for the error bubble: the user has read
     // it, and a dropped connection does not make it wrong (F-31).
@@ -655,6 +755,7 @@ class ChatRepository {
             );
             return _SseResult(_SseSendOutcome.failed, event.message);
           case SseEventKind.done:
+            sawDone = true;
             if (citations.isEmpty && (event.citations ?? []).isNotEmpty) {
               citations.addAll(event.citations!.map((c) => c.toString()));
               await _updateMessageCitations(assistantMsgId, citations);
@@ -705,6 +806,17 @@ class ChatRepository {
       }
 
       if (_stoppedMessageId == assistantMsgId) return keepPartial("stopped_by_user");
+      if (!sawDone) {
+        if (displayText.isNotEmpty) return keepPartial("ended_without_done");
+        await _logTelemetry(
+          eventType: "failover",
+          isOffline: false,
+          latencyMs: stopwatch.elapsedMilliseconds.toDouble(),
+          modelUsed: "server-sse",
+          errorMessage: "ended_without_done",
+        );
+        return const _SseResult(_SseSendOutcome.failed);
+      }
       await _updateMessageText(assistantMsgId, displayText);
       await _logTelemetry(eventType: "request", isOffline: false, latencyMs: stopwatch.elapsedMilliseconds.toDouble(), modelUsed: "server-sse");
       return const _SseResult(_SseSendOutcome.succeeded);
@@ -872,6 +984,13 @@ final chatRepositoryProvider = Provider<ChatRepository>((ref) {
 /// conversation; it runs once per conversation.
 final pendingConfirmationRehydrationProvider = FutureProvider.family<void, String>(
   (ref, conversationId) => ref.read(chatRepositoryProvider).rehydratePendingConfirmations(conversationId),
+);
+
+/// See [ChatRepository.watchLatestAssistantId]: which of a conversation's failed turns may still
+/// offer Retry. Not retried on error: the bubble then simply keeps its Retry, as before.
+final latestAssistantMessageIdProvider = StreamProvider.autoDispose.family<String?, String>(
+  (ref, conversationId) => ref.watch(chatRepositoryProvider).watchLatestAssistantId(conversationId),
+  retry: (_, _) => null,
 );
 
 // Active Conversation session ID

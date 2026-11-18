@@ -75,6 +75,26 @@ class MessageBubble extends ConsumerWidget {
     }
   }
 
+  /// Whether this reply is its conversation's newest: only then does a failed turn offer Retry
+  /// (F2). While that is not known yet (the lookup is loading, or failed) Retry stays, as before;
+  /// the repository resends the tapped turn's own message either way.
+  bool _isLatestTurn(WidgetRef ref) {
+    final latest = ref.watch(latestAssistantMessageIdProvider(message.conversationId)).value;
+    return latest == null || latest == message.id;
+  }
+
+  /// Resends this bubble's own turn -- not "the last message" (F2 / INT-108). The repository
+  /// refuses while another reply is streaming and removes the failed rows only once the resend
+  /// is accepted, so nothing here touches Drift or `ref` after the bubble unmounts.
+  void _retry(WidgetRef ref) {
+    unawaited(
+      ref.read(chatRepositoryProvider).retryLastFailedTurn(
+            conversationId: message.conversationId,
+            errorMessageId: message.id,
+          ),
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = AuraPalette.of(context);
@@ -95,6 +115,7 @@ class MessageBubble extends ConsumerWidget {
     }
 
     if (!isUser && isChatConnectionErrorText(message.content)) {
+      final canRetry = _isLatestTurn(ref);
       return Align(
         alignment: AlignmentDirectional.centerStart,
         child: Container(
@@ -124,7 +145,9 @@ class MessageBubble extends ConsumerWidget {
                 ),
                 const SizedBox(height: AuraSpacing.sm),
                 Text(
-                  context.l10n.chatCloudUnavailableBody,
+                  canRetry
+                      ? context.l10n.chatCloudUnavailableBody
+                      : context.l10n.chatRetryOnlyLatestTurn,
                   style: TextStyle(
                     color: palette.textSecondary,
                     fontSize: 13,
@@ -136,19 +159,12 @@ class MessageBubble extends ConsumerWidget {
                   spacing: AuraSpacing.sm,
                   runSpacing: AuraSpacing.sm,
                   children: [
-                    AuraButton(
-                      label: context.l10n.retry,
-                      icon: Icons.refresh,
-                      onPressed: () {
-                        final repo = ref.read(chatRepositoryProvider);
-                        unawaited(
-                          repo.retryLastFailedTurn(
-                            conversationId: message.conversationId,
-                            errorMessageId: message.id,
-                          ),
-                        );
-                      },
-                    ),
+                    if (canRetry)
+                      AuraButton(
+                        label: context.l10n.retry,
+                        icon: Icons.refresh,
+                        onPressed: () => _retry(ref),
+                      ),
                     AuraButton(
                       label: context.l10n.chatReportIssue,
                       icon: Icons.bug_report_outlined,
@@ -290,15 +306,7 @@ class MessageBubble extends ConsumerWidget {
                               : _AwaitingConfirmationHint(text: context.l10n.chatApprovalExpiredNotice)
                     else if (!isStreaming && message.content.trim().isEmpty)
                       EmptyAnswerRetryCard(
-                        onRetry: () {
-                          final repo = ref.read(chatRepositoryProvider);
-                          unawaited(
-                            repo.retryLastFailedTurn(
-                              conversationId: message.conversationId,
-                              errorMessageId: message.id,
-                            ),
-                          );
-                        },
+                        onRetry: _isLatestTurn(ref) ? () => _retry(ref) : null,
                       )
                     else
                       // The message reads in its own direction (first strong letter outside

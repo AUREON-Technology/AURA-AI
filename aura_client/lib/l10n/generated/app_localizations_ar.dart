@@ -9,6 +9,28 @@ class AppLocalizationsAr extends AppLocalizations {
   AppLocalizationsAr([String locale = 'ar']) : super(locale);
 
   @override
+  String get chatRetryOnlyLatestTurn =>
+      'فيه رسايل جت بعد دي، فمينفعش تعيد محاولتها من هنا. ابعتها تاني لو لسه محتاج رد.';
+
+  @override
+  String get chatImageCapabilityCheckFailed =>
+      'معرفناش نتأكد إذا كان ينفع ترفق صور. دوس عشان تجرب تاني.';
+
+  @override
+  String get memorySaveQueued =>
+      'اتحفظت على الجهاز ده. AURA هيفتكرها أول ما يوصل للسيرفر.';
+
+  @override
+  String memorySaveRefused(String fact) {
+    return 'السيرفر مقبلش الذكرى دي: $fact';
+  }
+
+  @override
+  String shareTruncatedOlder(int count, int omitted) {
+    return 'المحادثة المتشاركة بتساع آخر $count رسالة بس، فالـ$omitted رسالة الأقدم مش هتتشارك.';
+  }
+
+  @override
   String get greetingMorning => 'صباح الخير';
 
   @override

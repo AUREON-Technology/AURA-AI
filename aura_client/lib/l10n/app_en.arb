@@ -1,5 +1,38 @@
 {
   "@@locale": "en",
+  "chatRetryOnlyLatestTurn": "Later messages followed this one, so it can't be retried here. Send it again if you still need an answer.",
+  "@chatRetryOnlyLatestTurn": {
+    "description": "C1 (F2): body of a failed or empty reply that is not the conversation's latest turn, shown instead of a Retry button"
+  },
+  "chatImageCapabilityCheckFailed": "Couldn't check whether images can be attached. Tap to try again.",
+  "@chatImageCapabilityCheckFailed": {
+    "description": "C1 (F25): tooltip of the attach-image button while the server's image support could not be checked"
+  },
+  "memorySaveQueued": "Saved on this device. AURA will remember it once it can reach the server.",
+  "@memorySaveQueued": {
+    "description": "C1 (F22): a memory was saved locally and queued because the server could not be reached"
+  },
+  "memorySaveRefused": "The server didn't accept this memory: {fact}",
+  "@memorySaveRefused": {
+    "description": "C1 (F22): the server refused a saved memory (a 4xx), so it will not be retried",
+    "placeholders": {
+      "fact": {
+        "type": "String"
+      }
+    }
+  },
+  "shareTruncatedOlder": "Only the latest {count} messages fit in a shared chat, so the {omitted} older ones won't be included.",
+  "@shareTruncatedOlder": {
+    "description": "C1 (INT-113): added to the share confirmation when the chat is too long for the server's limits: how many older messages will not be shared",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "omitted": {
+        "type": "int"
+      }
+    }
+  },
   "greetingMorning": "Good morning",
   "@greetingMorning": {
     "description": "Today screen header, shown before noon"
