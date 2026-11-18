@@ -191,9 +191,14 @@ networks:
     external: true
     name: aura_edge
   # Engineer agent (AURA_SANDBOX_ENABLED, off by default) -- see docker-compose.prod.yml's
-  # `sandbox_ctl`/`sandbox_egress`/`docker-socket-proxy` comments for the full rationale; this
-  # dev stack mirrors the same shape rather than repeating it.
+  # `sandbox_ctl`/`sandbox_docker`/`sandbox_egress`/`docker-socket-proxy`/`sandbox-broker`
+  # comments for the full rationale; this dev stack mirrors the same shape rather than repeating
+  # it. gateway <-> sandbox-broker only (audit F19).
   sandbox_ctl:
+    driver: bridge
+    internal: true
+  # sandbox-broker <-> docker-socket-proxy only.
+  sandbox_docker:
     driver: bridge
     internal: true
   # Mirrors prod: no default route out; sandboxes reach the internet only via sandbox-proxy.
@@ -451,7 +456,8 @@ services:
       AURA_SANDBOX_WORKSPACE_TTL_HOURS: ${AURA_SANDBOX_WORKSPACE_TTL_HOURS:-72}
       AURA_SANDBOX_MAX_WORKSPACES: ${AURA_SANDBOX_DEV_MAX_WORKSPACES:-2}
       AURA_SANDBOX_MAX_RUNNING: ${AURA_SANDBOX_DEV_MAX_RUNNING:-1}
-      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      # The sandbox broker, never the socket proxy -- see prod's `sandbox-broker` (audit F19).
+      DOCKER_HOST: tcp://sandbox-broker:2375
       AURA_GITHUB_ENABLED: ${AURA_GITHUB_ENABLED:-false}
       AURA_GITHUB_DEFAULT_OWNER: ${AURA_GITHUB_DEFAULT_OWNER:-}
       AURA_GITHUB_DEFAULT_REPO: ${AURA_GITHUB_DEFAULT_REPO:-}
@@ -508,7 +514,9 @@ services:
         limits: {cpus: "1.5", memory: 2G}
 
   # Engineer agent (AURA_SANDBOX_ENABLED, off by default) -- mirrors prod: IMAGES off because
-  # `sandbox-image` builds the workspace image locally. See prod's docker-socket-proxy comment.
+  # `sandbox-image` builds the workspace image locally. See prod's docker-socket-proxy comment,
+  # including what this allowlist does not do: it never looks at a request body, so only
+  # `sandbox-broker` may reach it (audit F19).
   docker-socket-proxy:
     profiles: [sandbox]
     image: tecnativa/docker-socket-proxy:0.3.0@sha256:9e4b9e7517a6b660f2cc903a19b257b1852d5b3344794e3ea334ff00ae677ac2
@@ -537,7 +545,34 @@ services:
       AUTH: "0"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks: [sandbox_ctl]
+    networks: [sandbox_docker]
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 128M}
+
+  # Mirrors prod's `sandbox-broker`, with dev's own sandbox root and network: the gateway's only
+  # Docker API, refusing any container the sandbox would not create (audit F19).
+  sandbox-broker:
+    profiles: [sandbox]
+    build:
+      context: ./sandbox-broker
+      dockerfile: Dockerfile
+    image: aura-sandbox-broker:latest
+    <<: *restart
+    logging: *logging
+    environment:
+      AURA_SANDBOX_IMAGE: ${AURA_SANDBOX_IMAGE:-aura-sandbox:latest}
+      AURA_SANDBOX_NETWORK: ${AURA_SANDBOX_NETWORK:-aura-dev_sandbox_egress}
+      AURA_SANDBOX_HOST_ROOT: ${AURA_SANDBOX_DEV_HOST_ROOT:-/opt/aura-stack/deploy/sandboxes-dev}
+      BROKER_UPSTREAM: docker-socket-proxy:2375
+      BROKER_LISTEN: 0.0.0.0:2375
+    volumes:
+      - ${AURA_SANDBOX_DEV_HOST_ROOT:-/opt/aura-stack/deploy/sandboxes-dev}:${AURA_SANDBOX_DEV_HOST_ROOT:-/opt/aura-stack/deploy/sandboxes-dev}:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [sandbox_ctl, sandbox_docker]
+    depends_on: [docker-socket-proxy]
     deploy:
       resources:
         limits: {cpus: "0.25", memory: 128M}

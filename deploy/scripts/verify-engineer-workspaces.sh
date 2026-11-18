@@ -49,7 +49,7 @@ info "gateway is up"
 # The sandbox services live behind `profiles: [sandbox]`. Without COMPOSE_PROFILES they simply
 # never start, and every check below would fail for that one reason -- which is worth saying
 # plainly here rather than letting it look like the feature itself is broken.
-for required in docker-socket-proxy sandbox-proxy; do
+for required in docker-socket-proxy sandbox-broker sandbox-proxy; do
     running_services | grep -qx "$required" || die "'$required' is not running. Set
     COMPOSE_PROFILES=sandbox in deploy/.env (as well as AURA_SANDBOX_ENABLED=true) and bring the
     stack up again; the sandbox services are behind a compose profile and never start without it."

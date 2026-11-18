@@ -219,11 +219,17 @@ networks:
     ipam:
       config:
         - subnet: 10.77.11.0/24
-  # Engineer agent (AURA_SANDBOX_ENABLED, off by default): gateway <-> docker-socket-proxy only.
-  # No other service attaches here, and the proxy is the only thing with the real socket -- the
-  # gateway container never gets host-root-equivalent access itself, only the restricted API
-  # surface docker-socket-proxy's own env allowlist (below) exposes.
+  # Engineer agent (AURA_SANDBOX_ENABLED, off by default): gateway <-> sandbox-broker only.
+  # The gateway cannot reach docker-socket-proxy at all (audit F19): the proxy filters by
+  # endpoint, not by request body, so with CONTAINERS and POST on it would accept a create for a
+  # privileged container with `/` bind-mounted. sandbox-broker is what checks the body, and it is
+  # the only thing on this network besides the gateway.
   sandbox_ctl:
+    driver: bridge
+    internal: true
+  # sandbox-broker <-> docker-socket-proxy only. Nothing else attaches here; the proxy is the only
+  # container with the real socket.
+  sandbox_docker:
     driver: bridge
     internal: true
   # Where engineer-agent workspace containers (aura_core/adapters/docker_sandbox.py) actually run.
@@ -680,9 +686,10 @@ services:
       AURA_SANDBOX_WORKSPACE_DISK_QUOTA_MB: ${AURA_SANDBOX_WORKSPACE_DISK_QUOTA_MB:-2048}
       AURA_SANDBOX_MIN_FREE_MEMORY_MB: ${AURA_SANDBOX_MIN_FREE_MEMORY_MB:-1024}
       AURA_SANDBOX_IN_CONTAINER_GIT: ${AURA_SANDBOX_IN_CONTAINER_GIT:-false}
-      # docker-py's `docker.from_env()` reads this; only the socket-proxy's restricted API
-      # surface is reachable at this address, never the real socket (see `sandbox_ctl` above).
-      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      # docker-py's `docker.from_env()` reads this. It names sandbox-broker, never the socket
+      # proxy or the socket: the broker refuses any container the sandbox would not create (see
+      # its service below and `sandbox_ctl` above).
+      DOCKER_HOST: tcp://sandbox-broker:2375
       AURA_GITHUB_ENABLED: ${AURA_GITHUB_ENABLED:-false}
       AURA_GITHUB_DEFAULT_OWNER: ${AURA_GITHUB_DEFAULT_OWNER:-}
       AURA_GITHUB_DEFAULT_REPO: ${AURA_GITHUB_DEFAULT_REPO:-}
@@ -754,15 +761,17 @@ services:
         reservations: {memory: 1G}
 
   # Engineer agent (AURA_SANDBOX_ENABLED, off by default; `profiles` keeps it from starting
-  # otherwise). The only container with the real Docker socket -- gateway reaches it over
-  # `sandbox_ctl` at DOCKER_HOST=tcp://docker-socket-proxy:2375, never the socket directly, so a
-  # compromised gateway process gets this restricted API surface, not host-root-equivalent
-  # access. The env vars below are tecnativa/docker-socket-proxy's own allowlist: CONTAINERS
-  # (create/start/stop/wait/logs/remove) is on. IMAGES is now OFF too: the workspace image is
-  # built locally by the `sandbox-image` service rather than pulled at runtime, so nothing needs
-  # the image endpoints, and a compromised gateway is left with container operations alone.
-  # EXEC, NETWORKS (beyond attach at create), VOLUMES, SERVICES, SWARM and everything else stay
-  # off, since `DockerSandboxRunner` never calls any of them.
+  # otherwise). The only container with the real Docker socket. The env vars below are
+  # tecnativa/docker-socket-proxy's own allowlist: CONTAINERS (create/start/stop/wait/logs/remove)
+  # is on; IMAGES is off because the workspace image is built locally by `sandbox-image`; EXEC,
+  # NETWORKS, VOLUMES, SERVICES, SWARM and everything else stay off, since `DockerSandboxRunner`
+  # never calls any of them.
+  #
+  # What this allowlist does NOT do (audit F19): it filters by endpoint and method, never by
+  # request body. With CONTAINERS and POST on, `POST /containers/create` is accepted whatever it
+  # carries -- `Privileged`, a bind of `/`, `NetworkMode: host` -- and that is host root. So the
+  # proxy is not the boundary: only `sandbox-broker` can reach it (`sandbox_docker`), and the
+  # broker is what refuses a container the sandbox would not create.
   docker-socket-proxy:
     profiles: [sandbox]
     image: tecnativa/docker-socket-proxy:0.3.0@sha256:9e4b9e7517a6b660f2cc903a19b257b1852d5b3344794e3ea334ff00ae677ac2
@@ -791,7 +800,45 @@ services:
       AUTH: "0"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks: [sandbox_ctl]
+    networks: [sandbox_docker]
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 128M}
+
+  # The gateway's only Docker API (audit F19). docker-socket-proxy filters endpoints, not request
+  # bodies, so this is the server-side check on what the gateway asks for: it forwards only the
+  # calls DockerSandboxRunner makes, refuses a create unless it is exactly the sandbox container
+  # (this image, uid 10001, all capabilities dropped, no-new-privileges, read-only rootfs, limits
+  # set, the sandbox network or none, binds only from one directory directly under the workspace
+  # root with no symlink on the way), and refuses to start, stop, read or remove any container
+  # that does not carry a sandbox label. deploy/sandbox-broker/broker.py has the whole policy.
+  #
+  # Its image, network and root settings are the gateway's own (same variables, same defaults):
+  # a mismatch refuses every legitimate command rather than allowing anything. The workspace root
+  # is mounted read-only at the same path so the broker can resolve symlinks in a bind source;
+  # it runs as the sandbox uid because bootstrap-host.sh makes that root 0750 owned by it.
+  # Built, not proven: no Docker daemon has run behind it in CI.
+  sandbox-broker:
+    profiles: [sandbox]
+    build:
+      context: ./sandbox-broker
+      dockerfile: Dockerfile
+    image: aura-sandbox-broker:latest
+    <<: *restart
+    logging: *logging
+    environment:
+      AURA_SANDBOX_IMAGE: ${AURA_SANDBOX_IMAGE:-aura-sandbox:latest}
+      AURA_SANDBOX_NETWORK: ${AURA_SANDBOX_NETWORK:-aura_sandbox_egress}
+      AURA_SANDBOX_HOST_ROOT: ${AURA_SANDBOX_HOST_ROOT:-/opt/aura-stack/deploy/sandboxes}
+      BROKER_UPSTREAM: docker-socket-proxy:2375
+      BROKER_LISTEN: 0.0.0.0:2375
+    volumes:
+      - ${AURA_SANDBOX_HOST_ROOT:-/opt/aura-stack/deploy/sandboxes}:${AURA_SANDBOX_HOST_ROOT:-/opt/aura-stack/deploy/sandboxes}:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [sandbox_ctl, sandbox_docker]
+    depends_on: [docker-socket-proxy]
     deploy:
       resources:
         limits: {cpus: "0.25", memory: 128M}

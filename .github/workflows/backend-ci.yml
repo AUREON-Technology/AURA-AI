@@ -298,6 +298,15 @@ jobs:
           push: false
           tags: aura-sandbox:ci
 
+      # The sandbox broker (audit F19), the gateway's only Docker API. Same profile, same reason:
+      # without this the first build of it would be on the VPS, mid-deploy.
+      - name: Build sandbox broker image (no push — build-only gate)
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
+        with:
+          context: deploy/sandbox-broker
+          push: false
+          tags: aura-sandbox-broker:ci
+
       # The backup sidecar's image. Built here so the pinned Alpine branch and the `age~1.3`
       # constraint (P1.3) are proven to resolve before a deploy depends on them; the Dockerfile's
       # own `age --version` fails the build if the binary is missing.
