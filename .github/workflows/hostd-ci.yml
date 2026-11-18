@@ -51,7 +51,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install debugpy
-        run: python -m pip install debugpy
+        run: python -m pip install debugpy==1.8.22
 
       - name: Install dependencies
         run: dart pub get
@@ -90,7 +90,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install debugpy
-        run: python -m pip install debugpy
+        run: python -m pip install debugpy==1.8.22
 
       - name: Install dependencies
         run: dart pub get

@@ -154,7 +154,7 @@ jobs:
         # dropping the hashes for the scan loses no protection. The two checks after it fail the
         # job if the extraction ever leaves a hash or backslash behind, or loses torch.
         run: |
-          pip install pip-audit
+          pip install pip-audit==2.10.1
           grep -E '^[A-Za-z0-9._-]+==' requirements.lock \
             | sed -E 's/[[:space:]]*\\$//; s/\+[A-Za-z0-9.]+$//' > /tmp/audit.lock
           if grep -q -e '--hash' -e '[\]' /tmp/audit.lock || ! grep -qx 'torch==[0-9.]*' /tmp/audit.lock; then

@@ -120,8 +120,12 @@ jobs:
         with:
           python-version: "3.11"
 
+      # Hash-checked (audit F49): this job holds HF_TOKEN, so the client that uses it is the exact
+      # huggingface-hub the backend already locks, with its dependency closure, from
+      # deploy/ci/huggingface-hub.lock -- not whatever PyPI served that minute.
       - name: Install huggingface_hub
-        run: pip install -U huggingface_hub
+        run: |
+          pip install --require-hashes --only-binary=:all: -r deploy/ci/huggingface-hub.lock
 
       - name: Publish/update Space
         env:
