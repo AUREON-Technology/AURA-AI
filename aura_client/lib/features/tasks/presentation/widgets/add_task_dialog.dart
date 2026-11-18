@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
 import '../../data/task_repository.dart';
+import '../tasks_view_model.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
 class AddTaskDialog extends ConsumerStatefulWidget {
@@ -81,7 +82,7 @@ class _AddTaskDialogState extends ConsumerState<AddTaskDialog> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Add New Task',
+                  context.l10n.tasksAddNewTaskTitle,
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         fontWeight: FontWeight.bold,
                       ),
@@ -89,14 +90,14 @@ class _AddTaskDialogState extends ConsumerState<AddTaskDialog> {
                 const SizedBox(height: 20),
                 TextFormField(
                   controller: _titleController,
-                  decoration: const InputDecoration(
-                    labelText: 'Task Title',
-                    hintText: 'What needs to be done?',
+                  decoration: InputDecoration(
+                    labelText: context.l10n.tasksTitleLabel,
+                    hintText: context.l10n.tasksTitleHint,
                   ),
                   style: TextStyle(color: palette.textPrimary),
                   validator: (val) {
                     if (val == null || val.trim().isEmpty) {
-                      return 'Please enter a title';
+                      return context.l10n.tasksTitleRequired;
                     }
                     return null;
                   },
@@ -104,9 +105,9 @@ class _AddTaskDialogState extends ConsumerState<AddTaskDialog> {
                 const SizedBox(height: 16),
                 TextFormField(
                   controller: _descController,
-                  decoration: const InputDecoration(
-                    labelText: 'Description',
-                    hintText: 'Add details (optional)',
+                  decoration: InputDecoration(
+                    labelText: context.l10n.tasksDescriptionLabel,
+                    hintText: context.l10n.tasksDescriptionHint,
                   ),
                   style: TextStyle(color: palette.textPrimary),
                   maxLines: 3,
@@ -117,12 +118,12 @@ class _AddTaskDialogState extends ConsumerState<AddTaskDialog> {
                     Expanded(
                       child: DropdownButtonFormField<String>(
                         initialValue: _category,
-                        decoration: const InputDecoration(labelText: 'Category'),
+                        decoration: InputDecoration(labelText: context.l10n.tasksCategoryLabel),
                         dropdownColor: palette.surface,
                         items: ['personal', 'academic', 'client', 'project']
                             .map((cat) => DropdownMenuItem(
                                   value: cat,
-                                  child: Text(cat.toUpperCase()),
+                                  child: Text(taskCategoryLabel(context.l10n, cat).toUpperCase()),
                                 ))
                             .toList(),
                         onChanged: (val) {
@@ -136,12 +137,12 @@ class _AddTaskDialogState extends ConsumerState<AddTaskDialog> {
                     Expanded(
                       child: DropdownButtonFormField<String>(
                         initialValue: _priority,
-                        decoration: const InputDecoration(labelText: 'Priority'),
+                        decoration: InputDecoration(labelText: context.l10n.tasksPriorityLabel),
                         dropdownColor: palette.surface,
                         items: ['low', 'medium', 'high']
                             .map((prio) => DropdownMenuItem(
                                   value: prio,
-                                  child: Text(prio.toUpperCase()),
+                                  child: Text(taskPriorityLabel(context.l10n, prio).toUpperCase()),
                                 ))
                             .toList(),
                         onChanged: (val) {
@@ -170,7 +171,7 @@ class _AddTaskDialogState extends ConsumerState<AddTaskDialog> {
                         const SizedBox(width: 12),
                         Expanded(
                           child: Text(
-                            _dueDate == null ? 'No Due Date Selected' : DateFormat('MMM d, y').format(_dueDate!),
+                            _dueDate == null ? context.l10n.tasksNoDueDate : DateFormat.yMMMd().format(_dueDate!),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -198,7 +199,7 @@ class _AddTaskDialogState extends ConsumerState<AddTaskDialog> {
                   children: [
                     TextButton(
                       onPressed: () => Navigator.pop(context),
-                      child: Text('Cancel', style: TextStyle(color: palette.textSecondary)),
+                      child: Text(context.l10n.cancel, style: TextStyle(color: palette.textSecondary)),
                     ),
                     const SizedBox(width: 12),
                     ElevatedButton(
@@ -214,7 +215,7 @@ class _AddTaskDialogState extends ConsumerState<AddTaskDialog> {
                           Navigator.pop(context);
                         }
                       },
-                      child: const Text('Save Task'),
+                      child: Text(context.l10n.tasksSaveTask),
                     ),
                   ],
                 ),

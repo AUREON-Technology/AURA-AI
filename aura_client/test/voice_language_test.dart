@@ -1,14 +1,15 @@
-// Phase V: the language voice input is spoken in. It starts from the device locale and a choice
-// the user makes on the live-voice screen is remembered on the device.
+// Phase V: the language voice input is spoken in. It follows the app's language (Arabic stage 4)
+// until the user picks one on the live-voice screen; that choice is remembered on the device.
 
 import 'package:aura_client/core/ai/voice/voice_language.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-ProviderContainer _container(String deviceLanguage) {
+ProviderContainer _container(String appLanguage) {
   final container = ProviderContainer(overrides: [
-    deviceLanguageCodeProvider.overrideWithValue(deviceLanguage),
+    appLanguageCodeProvider.overrideWithValue(appLanguage),
   ]);
   addTearDown(container.dispose);
   return container;
@@ -25,16 +26,16 @@ void main() {
 
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  test('an Arabic-locale device starts in Arabic', () async {
+  test('an app shown in Arabic starts voice in Arabic', () async {
     expect(await _settled(_container('ar')), VoiceLanguage.arabic);
   });
 
-  test('any other device starts in English', () async {
+  test('an app in any other language starts voice in English', () async {
     expect(await _settled(_container('en')), VoiceLanguage.english);
     expect(await _settled(_container('fr')), VoiceLanguage.english);
   });
 
-  test('a saved choice wins over the device default', () async {
+  test('a choice made on the live screen wins over the app language', () async {
     SharedPreferences.setMockInitialValues({VoiceLanguageNotifier.prefsKey: 'ar'});
     expect(await _settled(_container('en')), VoiceLanguage.arabic);
   });
@@ -47,6 +48,24 @@ void main() {
     expect(container.read(voiceLanguageProvider), VoiceLanguage.arabic);
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString(VoiceLanguageNotifier.prefsKey), 'ar');
+  });
+
+  test('switching the app language moves voice too, unless the user picked one', () async {
+    final app = StateProvider<String>((ref) => 'en');
+    final container = ProviderContainer(overrides: [
+      appLanguageCodeProvider.overrideWith((ref) => ref.watch(app)),
+    ]);
+    addTearDown(container.dispose);
+    container.listen(voiceLanguageProvider, (_, _) {});
+    expect(await _settled(container), VoiceLanguage.english);
+
+    container.read(app.notifier).state = 'ar';
+    expect(await _settled(container), VoiceLanguage.arabic);
+
+    await container.read(voiceLanguageProvider.notifier).set(VoiceLanguage.english);
+    container.read(app.notifier).state = 'en';
+    container.read(app.notifier).state = 'ar';
+    expect(await _settled(container), VoiceLanguage.english, reason: 'the explicit choice holds');
   });
 
   test('codes map to the server language codes', () {

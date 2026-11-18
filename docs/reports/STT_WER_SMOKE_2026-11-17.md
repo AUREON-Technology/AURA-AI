@@ -1,6 +1,6 @@
 # STT WER smoke run: faster-whisper `base` (2026-11-17)
 
-**This is not GAP-020's evidence.** The clips below are synthetic: text-to-speech output, not
+**This is not GAP-020's evidence, and is superseded** by the FLEURS run of `small` on human speech (`docs/reports/STT_WER_ARABIC_ENGLISH_2026-11-17.md`, Arabic plan stage 4). The clips below are synthetic: text-to-speech output, not
 people. A model that hears synthetic speech well can still fail on accents, noise and real
 microphones. GAP-020 closes only on a report from human speech (e.g. Common Voice) on the model
 production runs. This run shows that `scripts/measure_stt_wer.py` works end to end, and that the

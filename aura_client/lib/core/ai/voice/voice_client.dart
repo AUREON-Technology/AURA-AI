@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:aura_client/core/platform/client_language.dart';
+import 'package:aura_client/l10n/l10n.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
@@ -63,8 +65,8 @@ class VoiceClient {
   /// callers treat a `null` result as "nothing to insert" rather than surfacing raw errors for
   /// what is, at worst, a failed convenience feature.
   ///
-  /// [language] is the ISO-639-1 code the note is spoken in (`en`, `ar`). Omitted, the server
-  /// detects it, which is what clients before Phase V got.
+  /// [language] is the code the note is spoken in (`en`, `ar`): the user's voice language.
+  /// Omitted, the app's display language stands in for it.
   Future<String?> transcribe(
     List<int> audioBytes, {
     String filename = 'voice.wav',
@@ -76,7 +78,12 @@ class VoiceClient {
       final uri = Uri.parse("$_backendUrl/transcribe");
       final request = http.MultipartRequest('POST', uri)
         ..files.add(http.MultipartFile.fromBytes('file', audioBytes, filename: filename));
-      if (language != null && language.isNotEmpty) request.fields['language'] = language;
+      // Arabic is the only hint sent: for an Arabic voice language (the live screen's toggle,
+      // passed as [language]) or, when none is given, an Arabic app. Otherwise the model detects
+      // the language itself, so Arabic spoken into an English app still transcribes. Servers
+      // that predate the field ignore it (docs/plans/arabic-language_plan.md, stage 4).
+      final spoken = language ?? ClientLanguage.current();
+      if (spoken == 'ar') request.fields['language'] = 'ar';
       request.headers.addAll(await _headers(token));
       final client = _http;
       return client != null ? client.send(request) : http.Client().send(request);
@@ -108,7 +115,7 @@ class VoiceClient {
   Future<VoiceSpeakResult> speak(String text, {String? voice}) async {
     final spoken = prepareSpeechText(text);
     if (spoken.isEmpty) {
-      return VoiceSpeakResult.failure('Nothing to read in this reply.');
+      return VoiceSpeakResult.failure(currentL10n.voiceClientNothingToRead);
     }
 
     final tokens = _ref.read(tokenManagerProvider);
@@ -142,23 +149,23 @@ class VoiceClient {
       final audio = response.bodyBytes;
       if (audio.isEmpty) {
         debugPrint("[VoiceClient] speak returned an empty body");
-        return VoiceSpeakResult.failure('Could not generate speech for this reply.');
+        return VoiceSpeakResult.failure(currentL10n.voiceClientSpeechFailed);
       }
       return VoiceSpeakResult.success(audio);
     } catch (e) {
       debugPrint("[VoiceClient] speak failed: $e");
-      return VoiceSpeakResult.failure('Could not reach AURA to generate speech.');
+      return VoiceSpeakResult.failure(currentL10n.voiceClientUnreachable);
     }
   }
 
   static String _speakFailureMessage(int statusCode, String body) {
     return switch (statusCode) {
-      401 => 'Sign in again to continue.',
-      404 => 'Speech playback is not available on this server.',
+      401 => currentL10n.voiceClientSignInAgain,
+      404 => currentL10n.voiceClientSpeakNotAvailable,
       422 => _speak422Message(body),
-      429 => 'Too many speech requests. Try again shortly.',
-      503 => 'This server has no speech engine configured.',
-      _ => 'Could not generate speech for this reply.',
+      429 => currentL10n.voiceClientRateLimited,
+      503 => currentL10n.voiceClientNoSpeechEngine,
+      _ => currentL10n.voiceClientSpeechFailed,
     };
   }
 
@@ -173,16 +180,16 @@ class VoiceClient {
         final tooLong = (decoded['detail'] as List)
             .whereType<Map>()
             .any((e) => e['type']?.toString() == 'string_too_long');
-        if (tooLong) return 'This reply is too long to read aloud.';
+        if (tooLong) return currentL10n.voiceClientReplyTooLong;
       }
     } catch (_) {
       // Not JSON; fall through to the envelope parser, which never throws.
     }
     final error = AuraApiError.fromResponse(statusCode: 422, body: body);
     if (error.message.toLowerCase().contains('speakable')) {
-      return 'Nothing in this reply can be read aloud.';
+      return currentL10n.voiceClientNothingSpeakable;
     }
-    return 'Could not read this reply aloud.';
+    return currentL10n.voiceClientCouldNotRead;
   }
 }
 

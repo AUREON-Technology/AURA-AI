@@ -37,11 +37,11 @@ class VoiceLanguageToggle extends StatelessWidget {
         segments: [
           ButtonSegment(
             value: VoiceLanguage.english,
-            label: Text(l10n.voiceLanguageEnglish, textDirection: TextDirection.ltr),
+            label: Text(VoiceLanguage.english.nativeName, textDirection: TextDirection.ltr),
           ),
           ButtonSegment(
             value: VoiceLanguage.arabic,
-            label: Text(l10n.voiceLanguageArabic, textDirection: TextDirection.rtl),
+            label: Text(VoiceLanguage.arabic.nativeName, textDirection: TextDirection.rtl),
           ),
         ],
         selected: {value},

@@ -14,6 +14,7 @@
 /// outbox row is.
 library;
 
+import 'package:aura_client/l10n/l10n.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -53,14 +54,13 @@ AuraSyncPhase auraSyncPhaseFor(SyncState state, int parkedCount) {
 /// The sentence the indicator shows and announces.
 String auraSyncLabelFor(AuraSyncPhase phase, int parkedCount) {
   return switch (phase) {
-    AuraSyncPhase.synced => 'Synced',
-    AuraSyncPhase.syncing => 'Syncing',
-    AuraSyncPhase.offline => 'Offline',
+    AuraSyncPhase.synced => currentL10n.coreSyncSynced,
+    AuraSyncPhase.syncing => currentL10n.coreSyncSyncing,
+    AuraSyncPhase.offline => currentL10n.coreSyncOffline,
     // Not "Error": naming the thing that failed is what tells the user
     // whether their work is at risk.
-    AuraSyncPhase.failed => 'Sync failed',
-    AuraSyncPhase.pendingRefused =>
-      parkedCount == 1 ? '1 change not synced' : '$parkedCount changes not synced',
+    AuraSyncPhase.failed => currentL10n.coreSyncFailed,
+    AuraSyncPhase.pendingRefused => currentL10n.coreSyncPendingRefused(parkedCount),
   };
 }
 
@@ -105,7 +105,7 @@ class AuraSyncStatusView extends ConsumerWidget {
       // change worth announcing when it happens, rather than leaving them to
       // go and look.
       liveRegion: true,
-      label: 'Sync status: $label',
+      label: context.l10n.coreSyncStatusSemantic(label),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.sm, vertical: 4),
         decoration: BoxDecoration(

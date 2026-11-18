@@ -7,28 +7,16 @@ replies in Arabic, and mixed replies that are still Arabic-majority should sound
 
 from __future__ import annotations
 
-import re
+from ..text import dominant_script
 
 __all__ = ["detect_speech_language"]
-
-# Arabic block + supplement + extended-A + presentation forms. Tashkeel lives in the
-# main block (U+064B–U+065F) and is counted on purpose -- it is Arabic, not Latin.
-_ARABIC = re.compile(
-    r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]"
-)
-_LATIN = re.compile(r"[A-Za-z]")
 
 
 def detect_speech_language(text: str) -> str:
     """Return ``"ar"`` or ``"en"`` from letter-script counts.
 
     Arabic wins when the Arabic-script count is greater than zero **and** at least the
-    Latin count. Empty, punctuation-only, and Latin-majority strings are English.
+    Latin count. Empty, punctuation-only, and Latin-majority strings are English. The rule
+    lives in ``aura_core/text/arabic.py`` so the reply-language hint uses the same one.
     """
-    if not text:
-        return "en"
-    arabic = len(_ARABIC.findall(text))
-    latin = len(_LATIN.findall(text))
-    if arabic > 0 and arabic >= latin:
-        return "ar"
-    return "en"
+    return dominant_script(text) or "en"

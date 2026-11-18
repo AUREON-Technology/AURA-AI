@@ -50,21 +50,21 @@ beside its result. The vision step's `done` shows a check mark. The new `degrade
 OCR could read the image, because the vision model was asleep) shows a warning and the server's
 "send it again in a minute" text.
 
-## Update 2026-11-17 (Phase V voice language, branch `anas/laughing-hamilton-glfevj`)
+## Update 2026-11-17/18 (Phase V voice language, branch `anas/laughing-hamilton-glfevj`)
 
-**TESTED locally** (Flutter 3.44.6: `flutter analyze` clean, `flutter test` 794 passed, 4
-skipped). Not CI-run, not released, not tried on a device.
+**TESTED locally** after merging `main` (Arabic stages 3–4). Flutter 3.44.6: `flutter analyze`
+clean, `flutter test` 830 passed, 4 skipped. Not CI-run, not released, not tried on a device.
 
-- An English / العربية toggle on the live voice screen chooses the language the server listens
-  for (`core/ai/voice/voice_language.dart`). It starts from the device locale and is remembered
-  on the device. Switching restarts an open session in the same conversation. The live start
-  frame used to hard-code `'en'`.
-- The chat mic sends the same choice as the new `language` field of
-  `POST /api/v3/voice/transcribe`.
-- When the server refuses Arabic (English-only Whisper), the screen says to switch to English
-  instead of the generic "could not start live voice".
-- Needs the backend half (same branch) deployed, plus `AURA_VOICE_STT_MODEL=base` on Railway,
-  before Arabic works end to end. An older app keeps sending `en` and still works.
+- Voice language follows the app language (Appearance → Language). An English / العربية toggle
+  on the live voice screen overrides it for speech, and the choice is remembered on the device
+  (`core/ai/voice/voice_language.dart`). Switching restarts an open session in the same
+  conversation.
+- The chat mic uses the same choice: only Arabic is sent as a `language` hint, so the server
+  auto-detects otherwise.
+- On a server still running English-only Whisper, live voice restarts in English and shows a
+  localized notice (stage 4's fallback plus the notice). Choosing Arabic again retries it.
+- Merge fix: `main`'s `app_en.arb` had lost `hostdPairedToOtherServer` (its committed generated
+  code still had it); restored, so `flutter gen-l10n` + `analyze` pass again.
 
 ## Update 2026-11-14 (release readiness pass, on `b655421`)
 
@@ -173,7 +173,7 @@ capability rows below that cite those findings as open describe `dc87beb`; treat
 | Device attestation | TESTED (unit) | Play Integrity (`IntegrityAttestationPlugin.kt`) and App Attest (`AppAttestPlugin.swift`), with backend tests green. F-09: until 2026-11-16 any account could skip attestation through `/desktop/login`; that route is now for operators only, like `/web/token` (owner decision; TESTED locally, not deployed). |
 | Account deletion | TESTED locally (2026-11-14) | `POST /api/v3/account/delete` + You → Account → Delete account; `test/account_deletion_test.dart`, `tests/unit/test_account_self_deletion.py`. Not deployed. |
 | Push notifications | OPEN | No `firebase_messaging`; a failed `Firebase.initializeApp()` is ignored (`main.dart:26`); iOS has no `GoogleService-Info.plist`; in-app notification centre only |
-| Accessibility / i18n | BUILT; TESTED locally (F-36 foundation, 2026-10-30) | `design_system_contrast_test.dart`, `test/ux/`. F-36: every `IconButton` under `lib/` now has a tooltip, pinned by `test/ux/icon_button_tooltip_test.dart` (Send already had one; the 18 real gaps were in tasks, calendar, finance, memory bank, hostd page, live voice, analytics, GitHub tab, plus the chat header menu button). Strings for chat, sign-in, You/settings and the design-system components moved to `app_en.arb` (34 → 203 keys) and are read via `context.l10n` (`lib/l10n/l10n.dart`, English fallback when no delegate is present). Other features still hold 209 hard-coded `Text('...')` literals, held by `test/ux/hardcoded_text_ratchet_test.dart`. RTL: layout code uses directional APIs (`test/ux/rtl_layout_test.dart` guard), and the chat composer, empty chat, You and sign-in screens render under `TextDirection.rtl` at 360 px with no exception. No Arabic locale yet. Screen-reader output and Arabic glyph shaping have not been checked on a device. |
+| Accessibility / i18n | BUILT; TESTED locally (F-36 foundation 2026-10-30; Arabic 2026-11-17), not CI-run (CB-44), not device-checked | `design_system_contrast_test.dart`, `test/ux/`, `test/l10n/`. Every `IconButton` has a tooltip (`icon_button_tooltip_test.dart`). **Egyptian Arabic UI (Arabic plan stage 2):** 1,131 keys in `app_en.arb`, all translated in `app_ar.arb` (parity, placeholder and not-copied checks in `test/l10n/arabic_locale_test.dart`); Settings → Appearance → Language (System / English / العربية), persisted and sent as `X-Client-Language`; `ar` without region so digits stay Western; Cairo bundled as the Arabic font fallback; dates via locale skeletons, calendar week starts Saturday in Arabic; code panes, terminal, diffs and chat code blocks stay LTR, chat messages and the composer take their own direction. Hard-coded `Text('...')` literals under `lib/features`: 209 → 28 (ratchet). `rtl_layout_test.dart` now renders the real Arabic strings. Not done: iOS/macOS translated permission prompts (need `.lproj` entries added in Xcode), live voice now sends the app language (stage 4, falls back to English if the server is still on `tiny.en`). Screen-reader output, Arabic glyph shaping and the translations themselves have not been checked by a native speaker on a device. Plan: `docs/plans/arabic-language_plan.md`. |
 | Android release (APK/AAB) | BUILT; not currently built in CI | See below |
 | iOS release (IPA) | OPEN | No CI, no team ID, Google sign-in config missing (below) |
 
@@ -209,7 +209,8 @@ capability rows below that cite those findings as open describe `dc87beb`; treat
 6. ~~**F-09 (Medium).** Attestation bypass.~~ Closed in code on 2026-11-16: desktop sign-in is for operators only (ADR-011 amendment). Not deployed or CI-run.
 7. **F-36 (Medium).** Foundation built on 2026-10-30 and TESTED locally (analyze clean, 513 passed /
    3 skipped). It is not proven. Still open: a screen-reader pass on a real device (R4.6 acceptance),
-   extracting the remaining features' strings (ratchet at 209), and an Arabic locale.
+   extracting the remaining features' strings, and an Arabic locale. **2026-11-17:** strings extracted (ratchet 209 → 28)
+   and the Egyptian Arabic locale built (Arabic plan stage 2, `docs/plans/arabic-language_plan.md`), TESTED locally, unmerged.
    **F-33 and F-34** fixed on 2026-10-30, TESTED locally
    only (CI has no runners, CB-44), not proven on a device:
    - F-33: an expired session ends and routes to login; the Memory page shows its error state

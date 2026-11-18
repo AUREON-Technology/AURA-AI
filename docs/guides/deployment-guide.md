@@ -389,7 +389,9 @@ database needs its index rebuilt.
 
 ### Monitoring
 
-The operator console is at `https://$AURA_DOMAIN/console/`. Grafana is at
+On this stack the operator console is at `https://$AURA_DOMAIN/console/` (the compose files build
+it with that base path; the Railway deploy serves it from the root of `console.aureon-ai.tech`
+instead). Grafana is at
 `https://$AURA_DOMAIN/grafana/` and is gated by an Nginx `auth_request` against the console
 session (Developer+). `/metrics` stays denied on the public edge.
 

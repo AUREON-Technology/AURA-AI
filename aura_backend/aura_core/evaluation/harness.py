@@ -261,16 +261,23 @@ def _mrr(retrieved: Sequence[str], relevant: set[str]) -> float:
 
 
 def _ndcg(retrieved: Sequence[str], relevant: set[str]) -> float:
-    """Binary-relevance nDCG.
+    """Binary-relevance nDCG, with relevance per *document*.
 
     Rewards placing a relevant document first rather than merely including it, which is what
     matters when only the top few chunks fit the context budget.
+
+    ``retrieved`` holds one document id per returned *chunk*, so a document can appear several
+    times. Only its first (highest-ranked) chunk earns gain; later chunks of an already-found
+    document keep their slot -- they did use context budget -- but add nothing. The ideal ranking
+    is the same unit: one gain per distinct relevant document, up to the slots returned. Counting
+    every chunk against a per-document ideal is what let a threshold-0 run report nDCG 1.19.
     """
-    dcg = sum(
-        1.0 / math.log2(position + 1)
-        for position, doc_id in enumerate(retrieved, start=1)
-        if doc_id in relevant
-    )
+    seen: set[str] = set()
+    dcg = 0.0
+    for position, doc_id in enumerate(retrieved, start=1):
+        if doc_id in relevant and doc_id not in seen:
+            seen.add(doc_id)
+            dcg += 1.0 / math.log2(position + 1)
     ideal = sum(
         1.0 / math.log2(position + 1)
         for position in range(1, min(len(relevant), len(retrieved)) + 1)

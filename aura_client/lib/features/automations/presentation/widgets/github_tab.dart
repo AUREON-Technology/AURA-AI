@@ -44,7 +44,7 @@ class _GitHubTabState extends ConsumerState<GitHubTab> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Text('GitHub Integration Setup', style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(context.l10n.automationsGithubSetup, style: const TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 12),
                 Row(
                   children: [
@@ -53,8 +53,8 @@ class _GitHubTabState extends ConsumerState<GitHubTab> {
                       child: TextField(
                         controller: _patController,
                         obscureText: true,
-                        decoration: const InputDecoration(
-                          labelText: 'GitHub PAT (Personal Access Token)',
+                        decoration: InputDecoration(
+                          labelText: context.l10n.automationsGithubPatLabel,
                           hintText: 'ghp_...',
                         ),
                         style: TextStyle(color: palette.textPrimary),
@@ -65,8 +65,8 @@ class _GitHubTabState extends ConsumerState<GitHubTab> {
                       flex: 2,
                       child: TextField(
                         controller: _repoController,
-                        decoration: const InputDecoration(
-                          labelText: 'Repository Path',
+                        decoration: InputDecoration(
+                          labelText: context.l10n.automationsGithubRepoLabel,
                           hintText: 'owner/repo',
                         ),
                         style: TextStyle(color: palette.textPrimary),
@@ -90,7 +90,7 @@ class _GitHubTabState extends ConsumerState<GitHubTab> {
                     }
                   },
                   icon: const Icon(Icons.search),
-                  label: const Text('Load Repo Issues'),
+                  label: Text(context.l10n.automationsGithubLoadIssues),
                   style: ElevatedButton.styleFrom(backgroundColor: palette.brand, foregroundColor: palette.onBrand),
                 ),
               ],
@@ -102,7 +102,7 @@ class _GitHubTabState extends ConsumerState<GitHubTab> {
           child: ui.issues.isEmpty
               ? Center(
                   child: Text(
-                    ui.loading ? 'Loading GitHub Board...' : 'No open issues loaded.',
+                    ui.loading ? context.l10n.automationsGithubLoading : context.l10n.automationsGithubEmpty,
                     style: TextStyle(color: palette.textSecondary),
                   ),
                 )
@@ -170,7 +170,7 @@ class _IssueCard extends ConsumerWidget {
                       : OutlinedButton.icon(
                           onPressed: onAnalyze,
                           icon: const Icon(Icons.analytics_outlined, size: 14),
-                          label: const Text('Extract Subtasks'),
+                          label: Text(context.l10n.automationsGithubExtractSubtasks),
                         ),
               ],
             ),
@@ -210,7 +210,7 @@ class GitHubAnalysisPanel extends ConsumerWidget {
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
-                'Complexity: ${analysis.complexity}',
+                context.l10n.automationsGithubComplexity(analysis.complexity),
                 style: TextStyle(color: palette.warning, fontSize: 11, fontWeight: FontWeight.bold),
               ),
             ),
@@ -222,19 +222,19 @@ class GitHubAnalysisPanel extends ConsumerWidget {
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
-                'Priority: ${analysis.suggestedPriority}',
+                context.l10n.automationsGithubPriority(analysis.suggestedPriority),
                 style: TextStyle(color: palette.success, fontSize: 11, fontWeight: FontWeight.bold),
               ),
             ),
           ],
         ),
         const SizedBox(height: 12),
-        const Text('Issue Summary', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+        Text(context.l10n.automationsGithubIssueSummary, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
         const SizedBox(height: 4),
         Text(analysis.summary, style: TextStyle(color: palette.textSecondary, fontSize: 13)),
         const SizedBox(height: 16),
         if (analysis.subtasks.isNotEmpty) ...[
-          const Text('Extracted Coding Tasks', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+          Text(context.l10n.automationsGithubCodingTasks, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
           const SizedBox(height: 8),
           ...analysis.subtasks.map((task) {
             return Container(
@@ -252,8 +252,9 @@ class GitHubAnalysisPanel extends ConsumerWidget {
                     icon: Icon(Icons.add_task, color: palette.success),
                     onPressed: () async {
                       final messenger = ScaffoldMessenger.of(context);
+                      final l10n = context.l10n;
                       await vm.importSubtask(issue, analysis, task);
-                      messenger.showSnackBar(const SnackBar(content: Text('Imported coding task!')));
+                      messenger.showSnackBar(SnackBar(content: Text(l10n.automationsGithubImported)));
                     },
                   ),
                 ],

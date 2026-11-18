@@ -10,6 +10,7 @@ import 'package:aura_client/core/hostd/hostd_control_client.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart';
 import 'package:aura_client/core/security/path_containment.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// Result of a directory listing.
 @immutable
@@ -151,15 +152,16 @@ class ExplorerService {
         }
       }
     } else if (hostConnected) {
-      return const DirectoryListing(
-        entries: [],
-        error: 'This folder is outside every root granted to the host daemon.',
+      // currentL10n: no BuildContext here, and the listing is shown as soon as it returns.
+      return DirectoryListing(
+        entries: const [],
+        error: currentL10n.explorerOutsideGrantedRoots,
         isAccessDenied: true,
       );
     }
 
     if (!allowLocalFallback) {
-      return const DirectoryListing(entries: [], error: 'The host daemon is unreachable.');
+      return DirectoryListing(entries: const [], error: currentL10n.explorerHostUnreachable);
     }
 
     // Fallback to dart:io -- hostd is offline, or a granted-root hostd call above failed
@@ -168,7 +170,7 @@ class ExplorerService {
       final resolvedPath = requireContainedClient(_workspaceRoot, relativePath);
       final dir = Directory(resolvedPath);
       if (!dir.existsSync()) {
-        return DirectoryListing(entries: [], error: 'Directory not found');
+        return DirectoryListing(entries: [], error: currentL10n.explorerDirectoryNotFound);
       }
       final entries = dir.listSync()
           .map((e) => FileSystemEntry.fromIO(e, _workspaceRoot))

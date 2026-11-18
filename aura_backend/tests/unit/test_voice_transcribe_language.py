@@ -1,10 +1,9 @@
 """``POST /api/v3/voice/transcribe`` takes the clip's language (Phase V, GAP-020).
 
-Arabic speech sent to an English-only Whisper comes back as an English guess, so the route
-refuses a language the configured model cannot hear instead of returning that guess. Without a
-``language`` a multilingual model detects it. Either way the response says which language was
-used. A client that sends no ``language`` still gets the same fields as before, plus
-``language``.
+An unknown code is a 422. A known one is a hint for a multilingual model; an English-only model
+ignores it (Arabic stage 4: apps already in use send ``ar`` whenever they show Arabic). Without
+a ``language`` a multilingual model detects it. The response says which language was used. A
+client that sends no ``language`` still gets the same fields as before, plus ``language``.
 """
 
 from __future__ import annotations
@@ -92,7 +91,7 @@ class TestWithoutALanguageTheEngineDetectsIt:
         assert engine.last_language == "ar"
 
 
-class TestALanguageTheModelCannotHearIsRefused:
+class TestWhatTheModelCannotHear:
     async def test_an_unknown_code_is_422(self, container) -> None:
         await container.startup()
         engine = InMemoryStt()
@@ -105,7 +104,11 @@ class TestALanguageTheModelCannotHearIsRefused:
         assert response.json()["details"]["reason"] == "language_unsupported"
         assert engine.last_language is None  # never reached the engine
 
-    async def test_arabic_on_an_english_only_model_is_422(self, container) -> None:
+    async def test_an_english_only_model_ignores_the_hint_instead_of_refusing(
+        self, container
+    ) -> None:
+        """Merged with Arabic stage 4: clients in use send ``ar`` whenever the app is in Arabic,
+        so an English-only server must still transcribe (in English), never 422."""
         await container.startup()
         engine = InMemoryStt(multilingual=False)
         container.stt_engine = engine
@@ -113,13 +116,9 @@ class TestALanguageTheModelCannotHearIsRefused:
             arabic = client.post(
                 "/api/v3/voice/transcribe", files={"file": AUDIO}, data={"language": "ar"}
             )
-            english = client.post(
-                "/api/v3/voice/transcribe", files={"file": AUDIO}, data={"language": "en"}
-            )
-        assert arabic.status_code == 422
-        assert arabic.json()["details"]["language"] == "ar"
-        assert english.status_code == 200
-        assert english.json()["language"] == "en"
+        assert arabic.status_code == 200
+        assert engine.last_language is None  # the hint never reached the English-only model
+        assert arabic.json()["language"] == "en"
 
 
 class TestTheWhisperAdapterKnowsWhichSizesAreEnglishOnly:

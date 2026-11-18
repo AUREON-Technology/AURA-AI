@@ -3,8 +3,9 @@
 Day-to-day operation of a running AURA deployment: knowledge, indexes, prompts, models,
 approvals, and the security posture.
 
-Day-to-day ops use the **AURA Console** at `https://$AURA_DOMAIN/console/` (Google sign-in via
-`POST /api/v3/auth/web/token`) or curl with a Bearer token.
+Day-to-day ops use the **AURA Console** (Google sign-in via `POST /api/v3/auth/web/token`) or curl
+with a Bearer token. The console is at `https://console.aureon-ai.tech/` on the Railway deploy, and
+at `https://$AURA_DOMAIN/console/` on a VPS stack.
 
 Two operator roles:
 

@@ -83,6 +83,7 @@ ARG PIPER_AR_JSON_SHA256=ea6d9b9d9076dbdb6bf5c98c6a141ef154959d2359709b378557279
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
+    tesseract-ocr-ara \
     espeak-ng \
     ca-certificates \
     curl \

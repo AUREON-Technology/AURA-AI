@@ -8,6 +8,7 @@ import 'widgets/health_daily_dashboard.dart';
 import 'widgets/health_trend_charts.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class HealthPage extends ConsumerWidget {
   const HealthPage({super.key});
@@ -38,10 +39,10 @@ class HealthPage extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('Health Monitor', style: Theme.of(context).textTheme.displayLarge?.copyWith(fontSize: 28)),
+                Text(context.l10n.healthPageTitle, style: Theme.of(context).textTheme.displayLarge?.copyWith(fontSize: 28)),
                 const SizedBox(height: 4),
                 Text(
-                  'Track fitness parameters, log water, sleep, and review logs',
+                  context.l10n.healthPageSubtitle,
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
                 const SizedBox(height: 24),

@@ -604,23 +604,24 @@ gaps:
     component: voice/stt-language
     severity: P2
     current_state: >-
-      Phase V (2026-11-17, branch anas/laughing-hamilton-glfevj; tested locally, not CI-run, not
-      deployed). Built: `POST /api/v3/voice/transcribe` takes an optional `language` and refuses
-      one an English-only model cannot hear (422); the client sends the user's voice language
-      (EN / Arabic toggle, device default) on both voice surfaces; an opt-in Silero VAD
-      (`AURA_VOICE_LIVE_VAD=silero`, adapters/silero_vad.py) that ignores a steady hum the energy
-      VAD takes for speech; `scripts/measure_stt_wer.py`. Still the default and live on Railway:
-      `tiny.en` (English-only) and the energy VAD -- switching to multilingual `base` is the
-      owner's Railway change (docs/plans/runtime_feature_enablement_plan.md). Smoke only, not
-      evidence: `base` on 4 Piper-synthesised Arabic clips 22% WER, language detected 4/4
-      (docs/reports/STT_WER_SMOKE_2026-11-17.md). No WER on human speech yet.
+      2026-11-17 (Arabic plan stage 4, branch anas/kind-rubin-dpm0sq, since merged): the STT default
+      is faster-whisper `small` (multilingual; VoiceSettings.stt_model), so live voice accepts
+      Arabic and POST /voice/transcribe takes an optional `language` hint. Measured offline on
+      FLEURS (docs/reports/STT_WER_ARABIC_ENGLISH_2026-11-17.md): English WER 6.46% (tiny.en was
+      11.96%), Egyptian Arabic 24.96%, RTF ~0.3 on 4 dev CPU cores. Not yet the production model
+      and not measured on the production host. TTS ships Arabic Piper (ar_JO-kareem-medium).
+      Phase V (branch anas/laughing-hamilton-glfevj, merged with stage 4; tested locally, not
+      deployed): the transcribe response reports the `language` used; an opt-in Silero VAD
+      (`AURA_VOICE_LIVE_VAD=silero`, adapters/silero_vad.py) ignores a steady hum the default
+      energy VAD takes for speech; the live voice screen can override the app language for
+      speech (EN / Arabic toggle); `scripts/measure_stt_wer.py`.
     target_state: Multilingual self-hosted ASR (Arabic + English) with measured WER; neural VAD.
     owner: ml
     dependencies: [GAP-012]
     test: synthesize->transcribe round trip in Arabic and English with WER threshold
     metric: WER per language; voice round-trip latency
     exit_condition: WER report in docs/reports/ for both languages on the production ASR model.
-    status: in_progress
+    status: built_not_proven
 
   - gap_id: GAP-021
     component: evaluation/real-model-quality

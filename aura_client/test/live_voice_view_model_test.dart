@@ -14,6 +14,7 @@ import 'package:aura_client/core/ai/voice/live/live_voice_socket.dart';
 import 'package:aura_client/core/ai/voice/voice_language.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
 import 'package:aura_client/features/voice_live/presentation/live_voice_view_model.dart';
+import 'package:aura_client/l10n/l10n.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -118,7 +119,7 @@ void main() {
     channels = [];
     mic = _FakeMic();
     container = ProviderContainer(overrides: [
-      deviceLanguageCodeProvider.overrideWithValue('en'),
+      appLanguageCodeProvider.overrideWithValue('en'),
       tokenManagerProvider.overrideWith((ref) => _Tokens(ref)),
       liveVoiceSocketFactoryProvider.overrideWithValue(
         (ref) => LiveVoiceSocket(
@@ -233,22 +234,44 @@ void main() {
     expect(container.read(voiceLanguageProvider), VoiceLanguage.arabic);
   });
 
-  test('a server that cannot hear the language says to switch, not a generic error', () async {
+  test('a server that cannot hear Arabic restarts the session in English and says so', () async {
     await container.read(voiceLanguageProvider.notifier).set(VoiceLanguage.arabic);
     final vm = container.read(liveVoiceViewModelProvider.notifier);
     container.listen(liveVoiceViewModelProvider, (_, _) {});
     await vm.startSession(conversationId: 'conv-1');
-    channel.incoming.add(jsonEncode({
+    await _settle();
+    expect(channel.startFrames.single['language'], 'ar');
+
+    final refused = channel;
+    channel = _FakeChannel();
+    refused.incoming.add(jsonEncode({
       'type': 'error',
       'error': 'language_unsupported',
       'message': 'live voice STT is English-only with the configured model',
     }));
-    channel.code = LiveVoiceSocket.closeBadRequest;
-    await channel.incoming.close();
     await _settle();
 
-    final state = container.read(liveVoiceViewModelProvider);
-    expect(state.phase, 'error');
-    expect(state.error, languageUnavailableMessage(VoiceLanguage.arabic));
+    expect(channel.startFrames.single['language'], 'en');
+    expect(channel.startFrames.single['session_id'], 'conv-1');
+    expect(container.read(liveVoiceViewModelProvider).error,
+        currentL10n.voiceLiveArabicUnavailable);
+  });
+
+  test('choosing Arabic again retries it after an English-only fallback', () async {
+    await container.read(voiceLanguageProvider.notifier).set(VoiceLanguage.arabic);
+    final vm = container.read(liveVoiceViewModelProvider.notifier);
+    container.listen(liveVoiceViewModelProvider, (_, _) {});
+    await vm.startSession(conversationId: 'conv-1');
+    await _settle();
+    final refused = channel;
+    channel = _FakeChannel();
+    refused.incoming.add(jsonEncode({'type': 'error', 'error': 'language_unsupported'}));
+    await _settle();
+    expect(channel.startFrames.single['language'], 'en');
+
+    channel = _FakeChannel();
+    await vm.setLanguage(VoiceLanguage.arabic);
+    await _settle();
+    expect(channel.startFrames.single['language'], 'ar');
   });
 }

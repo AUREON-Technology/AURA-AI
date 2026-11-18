@@ -39,15 +39,20 @@ Recorded 2026-11-17.
    `HOSTED_OPEN_WEIGHT_HOSTS`.
 4. **Vision is served by the HF Space running `Qwen2.5-VL-7B`** (vLLM, paid GPU tier). Images never go
    to Groq or Cloudflare: the router refuses third-party image turns (ADR-031, `router.py:347`).
-5. **STT moves to multilingual Whisper `base`**, still on Railway's CPU.
+5. ~~STT moves to multilingual Whisper `base`~~. **Superseded 2026-11-18** by the Arabic plan's
+   decision 11 (merged on `main`): faster-whisper **`small`** is the default, measured on FLEURS
+   (English WER 6.46%, Egyptian Arabic 24.96%; `docs/reports/STT_WER_ARABIC_ENGLISH_2026-11-17.md`).
 6. **Operations target Grafana Cloud (free)**: metrics scrape, OTLP traces and synthetic uptime checks.
 7. Priority areas for new work, in this order: **voice (Arabic + live), vision, reliability and
    operations**. Deferred: workspaces/teams UI, Track AP, the GPU inference plane, branch protection
    (the owner's own setting).
-8. **Voice language is chosen on the live voice screen** (added 2026-11-17, during Phase V): an
-   English / العربية toggle that starts from the device locale (`ar*` → Arabic, else English)
-   and is remembered on the device. The chat mic button uses the same choice. The app's UI
-   stays English only; this sets only what the server's Whisper listens for.
+8. **Voice language follows the app language, and the live voice screen can override it**
+   (2026-11-17; amended 2026-11-18 when merging Arabic stage 4, which added the app language
+   picker). The English / العربية toggle starts from the app's language and, once tapped, is
+   remembered on the device. The chat mic uses the same choice. A server still on an
+   English-only model restarts live voice in English and says so (stage 4's fallback);
+   choosing Arabic again retries it. `/voice/transcribe` keeps stage 4's rule: an English-only
+   model ignores the `ar` hint instead of refusing it.
 9. **Vision model = `Qwen/Qwen2.5-VL-7B-Instruct-AWQ` @ `536a3579…` on the existing
    `a10g-small` Space** (2026-11-17, Phase I). It supersedes decision 4's unquantised wording
    and the repo's earlier Qwen3-VL-8B pick, which stays the upgrade path for a bigger GPU.
@@ -61,12 +66,12 @@ Every item is a Railway variable change or an admin call. They are listed in the
 
 | # | Action | Variable / call | Evidence it worked |
 |---|---|---|---|
-| 0.1 | Pin the embedder before re-indexing, so the index is built once | `AURA_EMBEDDING_MODEL_REVISION=<bge-small-en-v1.5 commit SHA>` | `/health/ready` → `embedding.revision` non-null |
-| 0.2 | Rebuild and promote the knowledge index | `POST /api/v3/admin/index/rebuild` as SuperAdmin | Response `promoted: true`; `/health/ready.index` = `…baai-bge-small-en-v1-5…__384`; a chat turn about an uploaded document cites it. If the gate refuses (`gate_failures`), stop and report: it compares recall against the old index. |
+| 0.1 | *(Superseded 2026-11-18 by Arabic stage 4, merged on `main`: go straight to E5 so the index is rebuilt once.)* Set the stage-4 search defaults | `AURA_EMBEDDING_MODEL=intfloat/multilingual-e5-small`, `AURA_KNOWLEDGE_RERANK_PROVIDER=either`, `AURA_KNOWLEDGE_RERANK_MODEL=cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` (`docs/deployment/control-plane.md`) | `/health/ready.embedding.model` = E5 |
+| 0.2 | Rebuild and promote the knowledge index | `railway ssh`, then `python scripts/rebuild_index.py --dry-run`, then without `--dry-run` (or `POST /api/v3/admin/index/rebuild` as SuperAdmin) | `/health/ready.index` names `…multilingual-e5-small…__384`; a chat turn about an uploaded document cites it. If the gate refuses (`gate_failures`), stop and report |
 | 0.3 | Allow sensitive on Groq | `AURA_PROVIDER_HOSTED1_MAX_DATA_CLASSIFICATION=sensitive`; in Groq's console, turn off I/O log retention (Data Controls) | Boot log names the warning; memory extraction succeeds (a remembered fact shows on `/api/v3/memory`) |
 | 0.4 | Add `hosted2` (Cloudflare Workers AI) | `AURA_LLM_PROVIDERS=hosted1,hosted2,hfspace`; `AURA_PROVIDER_HOSTED2_KIND=openai_compatible`, `_BASE_URL=https://api.cloudflare.com/client/v4/accounts/<id>/ai/v1`, `_MODEL=@cf/openai/gpt-oss-120b` (or another open-weight `@cf/` model), `_API_KEY_ENV`, `_MAX_DATA_CLASSIFICATION=sensitive`, `_QUALITY_TIER=3`, `_CONTEXT_WINDOW`, `_MAX_OUTPUT_TOKENS=1024`, `_TIMEOUT_S=60` | `/health/ready.providers.hosted2.healthy: true`; with Groq rate-limited, a turn is served by `hosted2` (telemetry `provider`) |
 | 0.5 | Raise prompt budgets sized for a CPU 400-token prompt (two hosted slots now share load) | `AURA_KNOWLEDGE_TOP_K=4`, `AURA_KNOWLEDGE_PROMPT_CHUNK_CHARS=700`, `AURA_CAG_MAX_TOKENS=240` (`_GLOBAL_TOKENS=120`, `_USER_TOKENS=120`), `AURA_MEMORY_TOKEN_BUDGET=200`, `AURA_MEMORY_PROMPT_HISTORY_MESSAGES=6` (variable names verified against `settings.py` before applying) | Answers cite more than one chunk; no rise in 429s on `/metrics` |
-| 0.6 | Cross-encoder rerank | `AURA_KNOWLEDGE_RERANK_PROVIDER=cross_encoder`, `AURA_KNOWLEDGE_RERANK_MODEL_REVISION=<sha>` | Retrieval p95 measured before and after (Phase R6) |
+| 0.6 | *(Folded into 0.1: stage 4's `either` gate over the multilingual mMARCO cross-encoder.)* Pin its revision | `AURA_KNOWLEDGE_RERANK_MODEL_REVISION=<sha>` | Retrieval p95 measured before and after (Phase R6) |
 | 0.7 | Turn safety caps | `AURA_LLM_TURN_GENERATION_BUDGET_S=120`, `AURA_LLM_STREAM_MAX_S=180`, `AURA_LLM_USER_MAX_CONCURRENT_GENERATIONS=2` | A third concurrent stream from one user queues |
 
 Kept as they are, on purpose: `retrieval_strategy=simple` until R6 measures `adaptive`;
@@ -75,7 +80,7 @@ Kept as they are, on purpose: `retrieval_strategy=simple` until R6 measures `ada
 ## Phase V: Arabic and live voice (code + config)
 
 ### Backend (`aura_backend/`)
-- **Config:** `AURA_VOICE_STT_MODEL=base`, `AURA_VOICE_STT_MODEL_REVISION=<sha>`,
+- **Config:** `AURA_VOICE_STT_MODEL=small` (stage-4 default; decision 5), `AURA_VOICE_STT_MODEL_REVISION=<sha>`,
   `AURA_VOICE_STT_WARM_ON_STARTUP=true`, then `AURA_VOICE_LIVE_ENABLED=true`. Memory: about
   150 MB per uvicorn worker; check the Railway plan's RAM against `AURA_WORKERS`.
 - **`POST /api/v3/voice/transcribe` accepts an optional `language` form field**, validated with the
@@ -118,7 +123,7 @@ Built and tested locally on this branch (not CI-run, not deployed):
   legacy unittest 146 OK; client `flutter analyze` clean, `flutter test` 794 passed.
 - Smoke WER (synthetic, not evidence): `docs/reports/STT_WER_SMOKE_2026-11-17.md`.
 
-Still to do: the owner's Railway change (`AURA_VOICE_STT_MODEL=base`, revision,
+Still to do: the owner's Railway change (`AURA_VOICE_STT_MODEL=small` or unset for the stage-4 default, revision,
 `AURA_VOICE_LIVE_ENABLED=true`, optionally `AURA_VOICE_LIVE_VAD=silero`), then the device test.
 A human-speech WER report is what closes GAP-020.
 
@@ -167,7 +172,7 @@ The rest is the owner's: Space variables + resume, Railway variables, then
 | R3 | Uptime | Grafana Synthetic Monitoring: `/health/live` (200) and `/health/ready` (`healthy == true`) every minute, from two regions | GAP-036 external probe |
 | R4 | Dashboards + alerts as code | `deploy/observability/grafana-cloud/`: dashboard JSON (turn latency, provider health, 429s, admission queue) and alert rules adapted from the VPS Prometheus rules; runbook in `docs/deployment/observability.md` | GAP-037 buckets checked against measured latency |
 | R5 | Backups | Create the Railway backup cron service per `docs/deployment/backups.md` with two offsite targets; then a restore drill into a scratch Postgres/Qdrant, recorded in `docs/reports/` | GAP-028 / GAP-046 |
-| R6 | Real-model eval | Run `real-model-eval.yml` (or locally with the keys) against `hosted1`+bge: simple vs adaptive retrieval, heuristic vs cross-encoder rerank. Keep whichever wins on the RAG SLO; set it on Railway | GAP-021, GAP-023 |
+| R6 | Real-model eval | Run `real-model-eval.yml` (or locally with the keys) against `hosted1` + E5: simple vs adaptive retrieval (the reranker is stage 4's `either` gate). Keep whichever wins on the RAG SLO; set it on Railway | GAP-021, GAP-023 |
 | R7 | Load | 1→10→25 virtual users against `api.aureon-ai.tech` (test account, `tests/load` harness), with Groq and Cloudflare limits stated. GAP-041 stays **open**: 50 users is beyond the free tiers by arithmetic | Partial evidence only, stated as such |
 
 ### Phase R progress (2026-11-18)

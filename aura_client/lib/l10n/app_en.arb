@@ -148,15 +148,6 @@
   "@onboardingTourBody": {
     "description": "Onboarding page 3 body"
   },
-  "hostdPairedToOtherServer": "This app is signed in to {appBackendUrl}. Pair again to move the daemon there.",
-  "@hostdPairedToOtherServer": {
-    "description": "Host daemon status card: the daemon is paired to a different server than the one this app uses",
-    "placeholders": {
-      "appBackendUrl": {
-        "type": "String"
-      }
-    }
-  },
   "onboardingSkip": "Skip",
   "@onboardingSkip": {
     "description": "Onboarding button that skips the remaining intro pages"
@@ -997,7 +988,9 @@
   "@hostdPairedToOtherServer": {
     "description": "Host daemon page: warning when the daemon is paired to a different backend than the app",
     "placeholders": {
-      "appBackendUrl": {"type": "String"}
+      "appBackendUrl": {
+        "type": "String"
+      }
     }
   },
   "liveVoiceEnd": "End live voice",
@@ -1008,13 +1001,9 @@
   "@voiceLanguageLabel": {
     "description": "Live voice page: accessibility label of the toggle choosing the language the user speaks in"
   },
-  "voiceLanguageEnglish": "English",
-  "@voiceLanguageEnglish": {
-    "description": "Voice language toggle: English option"
-  },
-  "voiceLanguageArabic": "العربية",
-  "@voiceLanguageArabic": {
-    "description": "Voice language toggle: Arabic option, written in Arabic so Arabic speakers recognise it whatever the UI language"
+  "voiceLiveArabicUnavailable": "Arabic live voice isn't available on this server yet, so this session continues in English.",
+  "@voiceLiveArabicUnavailable": {
+    "description": "Live voice page: the server's speech model is English-only, so the session restarted in English"
   },
   "eventChangeStart": "Change start time",
   "@eventChangeStart": {
@@ -1115,5 +1104,4687 @@
         "type": "String"
       }
     }
+  },
+  "languageSectionTitle": "Language",
+  "@languageSectionTitle": {
+    "description": "Appearance page: heading above the language choices"
+  },
+  "languageSystem": "System",
+  "@languageSystem": {
+    "description": "Language option: follow the device language"
+  },
+  "languageSystemSubtitle": "Use your device's language",
+  "@languageSystemSubtitle": {
+    "description": "Subtitle under the System language option"
+  },
+  "deviceUnverifiedBanner": "This device could not be verified. Some features may be unavailable.",
+  "@deviceUnverifiedBanner": {
+    "description": "Persistent banner after device attestation was rejected"
+  },
+  "commonDismiss": "Dismiss",
+  "@commonDismiss": {
+    "description": "Generic button: close a banner or notice"
+  },
+  "commonSave": "Save",
+  "@commonSave": {
+    "description": "Generic button: save changes"
+  },
+  "commonDelete": "Delete",
+  "@commonDelete": {
+    "description": "Generic button: delete an item"
+  },
+  "commonEdit": "Edit",
+  "@commonEdit": {
+    "description": "Generic button: edit an item"
+  },
+  "commonAdd": "Add",
+  "@commonAdd": {
+    "description": "Generic button: add an item"
+  },
+  "commonOk": "OK",
+  "@commonOk": {
+    "description": "Generic button: acknowledge"
+  },
+  "commonConfirm": "Confirm",
+  "@commonConfirm": {
+    "description": "Generic button: confirm an action"
+  },
+  "commonUndo": "Undo",
+  "@commonUndo": {
+    "description": "Generic snackbar action: undo the last change"
+  },
+  "commonBack": "Back",
+  "@commonBack": {
+    "description": "Generic button/tooltip: go back"
+  },
+  "commonNext": "Next",
+  "@commonNext": {
+    "description": "Generic button: next step"
+  },
+  "commonDone": "Done",
+  "@commonDone": {
+    "description": "Generic button: finish"
+  },
+  "commonCopy": "Copy",
+  "@commonCopy": {
+    "description": "Generic button/tooltip: copy to clipboard"
+  },
+  "commonCopied": "Copied",
+  "@commonCopied": {
+    "description": "Snackbar after copying to clipboard"
+  },
+  "commonRefresh": "Refresh",
+  "@commonRefresh": {
+    "description": "Generic button/tooltip: reload"
+  },
+  "commonSearch": "Search",
+  "@commonSearch": {
+    "description": "Generic search field hint or tooltip"
+  },
+  "commonLoading": "Loading…",
+  "@commonLoading": {
+    "description": "Generic loading label"
+  },
+  "commonSomethingWentWrong": "Something went wrong",
+  "@commonSomethingWentWrong": {
+    "description": "Generic error title"
+  },
+  "commonNone": "None",
+  "@commonNone": {
+    "description": "Shown when a value is empty"
+  },
+  "commonYes": "Yes",
+  "@commonYes": {
+    "description": "Generic answer"
+  },
+  "commonNo": "No",
+  "@commonNo": {
+    "description": "Generic answer"
+  },
+  "healthPageTitle": "Health Monitor",
+  "@healthPageTitle": {
+    "description": "Health page: title"
+  },
+  "healthPageSubtitle": "Track fitness parameters, log water, sleep, and review logs",
+  "@healthPageSubtitle": {
+    "description": "Health page: subtitle under the title"
+  },
+  "healthDailyGoalsTitle": "Daily Goals Progress",
+  "@healthDailyGoalsTitle": {
+    "description": "Health dashboard: daily goals card heading"
+  },
+  "healthWeightBadge": "Weight: {weight} kg",
+  "@healthWeightBadge": {
+    "description": "Health dashboard: badge with today's logged weight",
+    "placeholders": {
+      "weight": {
+        "type": "String"
+      }
+    }
+  },
+  "healthWaterIntake": "Water Intake",
+  "@healthWaterIntake": {
+    "description": "Health dashboard: water progress bar title"
+  },
+  "healthUnitMl": "ml",
+  "@healthUnitMl": {
+    "description": "Health dashboard: millilitre unit after water amounts"
+  },
+  "healthSleepDuration": "Sleep Duration",
+  "@healthSleepDuration": {
+    "description": "Health dashboard: sleep progress bar title"
+  },
+  "healthUnitMins": "mins",
+  "@healthUnitMins": {
+    "description": "Health dashboard: minutes unit after sleep/exercise amounts"
+  },
+  "healthSleepHoursProgress": "{hours} / 8.0 hrs",
+  "@healthSleepHoursProgress": {
+    "description": "Health dashboard: sleep hours logged out of the 8-hour goal",
+    "placeholders": {
+      "hours": {
+        "type": "String"
+      }
+    }
+  },
+  "healthExerciseDuration": "Exercise Duration",
+  "@healthExerciseDuration": {
+    "description": "Health dashboard: exercise progress bar title"
+  },
+  "healthCaloriesConsumed": "Calories Consumed",
+  "@healthCaloriesConsumed": {
+    "description": "Health dashboard: calories progress bar title"
+  },
+  "healthUnitKcal": "kcal",
+  "@healthUnitKcal": {
+    "description": "Health dashboard: kilocalorie unit after calorie amounts"
+  },
+  "healthQuickLoggerTitle": "Quick Logger Panel",
+  "@healthQuickLoggerTitle": {
+    "description": "Health dashboard: quick logging card heading"
+  },
+  "healthAddWater250": "+250ml Water",
+  "@healthAddWater250": {
+    "description": "Health dashboard: button that logs 250 ml of water"
+  },
+  "healthAddWater500": "+500ml Water",
+  "@healthAddWater500": {
+    "description": "Health dashboard: button that logs 500 ml of water"
+  },
+  "healthLogSleepTitle": "Log Sleep Duration",
+  "@healthLogSleepTitle": {
+    "description": "Health log dialog title: sleep"
+  },
+  "healthSleepMinutesLabel": "Sleep Minutes",
+  "@healthSleepMinutesLabel": {
+    "description": "Health log dialog: sleep minutes field label"
+  },
+  "healthSleepMinutesHint": "e.g. 480 for 8 hours",
+  "@healthSleepMinutesHint": {
+    "description": "Health log dialog: sleep minutes field hint"
+  },
+  "healthLogSleep": "Log Sleep",
+  "@healthLogSleep": {
+    "description": "Health dashboard: button opening the sleep log dialog"
+  },
+  "healthLogExerciseTitle": "Log Exercise Duration",
+  "@healthLogExerciseTitle": {
+    "description": "Health log dialog title: exercise"
+  },
+  "healthExerciseMinutesLabel": "Exercise Minutes",
+  "@healthExerciseMinutesLabel": {
+    "description": "Health log dialog: exercise minutes field label"
+  },
+  "healthExampleHint": "e.g. {example}",
+  "@healthExampleHint": {
+    "description": "Health log dialog: example value hint in a numeric field",
+    "placeholders": {
+      "example": {
+        "type": "String"
+      }
+    }
+  },
+  "healthLogExercise": "Log Exercise",
+  "@healthLogExercise": {
+    "description": "Health dashboard: button opening the exercise log dialog"
+  },
+  "healthLogCaloriesTitle": "Log Calories",
+  "@healthLogCaloriesTitle": {
+    "description": "Health log dialog title: calories"
+  },
+  "healthKcalConsumedLabel": "Kcal Consumed",
+  "@healthKcalConsumedLabel": {
+    "description": "Health log dialog: calories field label"
+  },
+  "healthLogCalories": "Log Calories",
+  "@healthLogCalories": {
+    "description": "Health dashboard: button opening the calories log dialog"
+  },
+  "healthLogWeightTitle": "Log Current Weight",
+  "@healthLogWeightTitle": {
+    "description": "Health log dialog title: weight"
+  },
+  "healthWeightKgLabel": "Weight (kg)",
+  "@healthWeightKgLabel": {
+    "description": "Health log dialog: weight field label"
+  },
+  "healthLogWeight": "Log Weight",
+  "@healthLogWeight": {
+    "description": "Health dashboard: button opening the weight log dialog"
+  },
+  "healthWeeklyTrendsTitle": "Weekly Health Trends",
+  "@healthWeeklyTrendsTitle": {
+    "description": "Health trend charts: card heading"
+  },
+  "healthWeeklyTrendsEmpty": "Log metrics to populate weekly graphs",
+  "@healthWeeklyTrendsEmpty": {
+    "description": "Health trend charts: empty state"
+  },
+  "healthWaterChartTitle": "Water Intake (ml)",
+  "@healthWaterChartTitle": {
+    "description": "Health trend charts: water bar chart caption"
+  },
+  "healthWeightChartTitle": "Weight Trends (kg)",
+  "@healthWeightChartTitle": {
+    "description": "Health trend charts: weight line chart caption"
+  },
+  "healthWeightChartEmpty": "Log weight to display trend line",
+  "@healthWeightChartEmpty": {
+    "description": "Health trend charts: weight chart empty state"
+  },
+  "knowledgeFileReadFailed": "Could not read that file.",
+  "@knowledgeFileReadFailed": {
+    "description": "Knowledge page: snackbar when a picked PDF has no readable bytes"
+  },
+  "knowledgeAddDocument": "Add a document",
+  "@knowledgeAddDocument": {
+    "description": "Knowledge page: heading of the add-document card"
+  },
+  "knowledgeTitleLabel": "Title",
+  "@knowledgeTitleLabel": {
+    "description": "Knowledge page: document title field label"
+  },
+  "knowledgeContentLabel": "Content",
+  "@knowledgeContentLabel": {
+    "description": "Knowledge page: document content field label"
+  },
+  "knowledgeTitleContentRequired": "Title and content are required.",
+  "@knowledgeTitleContentRequired": {
+    "description": "Knowledge page: snackbar when saving with an empty title or content"
+  },
+  "knowledgeUploading": "Uploading…",
+  "@knowledgeUploading": {
+    "description": "Knowledge page: upload button label while a PDF uploads"
+  },
+  "knowledgeUploadPdfInstead": "Upload a PDF instead",
+  "@knowledgeUploadPdfInstead": {
+    "description": "Knowledge page: button to pick and upload a PDF"
+  },
+  "knowledgeSearchLabel": "Look up a passage",
+  "@knowledgeSearchLabel": {
+    "description": "Knowledge page: search field label"
+  },
+  "knowledgeSearchEmpty": "Searched your library — nothing relevant turned up.",
+  "@knowledgeSearchEmpty": {
+    "description": "Knowledge page: search returned no results"
+  },
+  "knowledgeCagTitle": "Always in context (CAG)",
+  "@knowledgeCagTitle": {
+    "description": "Knowledge page: heading of the pinned-context (CAG) card"
+  },
+  "knowledgeCagBudget": "Budget {tokens} / {budget} tokens",
+  "@knowledgeCagBudget": {
+    "description": "Knowledge page: CAG token budget used out of total",
+    "placeholders": {
+      "tokens": {
+        "type": "int"
+      },
+      "budget": {
+        "type": "int"
+      }
+    }
+  },
+  "knowledgeCagNothingPinned": "nothing pinned yet",
+  "@knowledgeCagNothingPinned": {
+    "description": "Knowledge page: appended to the CAG budget line when no document is pinned"
+  },
+  "knowledgeCagHandbook": "handbook",
+  "@knowledgeCagHandbook": {
+    "description": "Knowledge page: CAG document entry that comes from the shared handbook"
+  },
+  "knowledgeCagYours": "yours",
+  "@knowledgeCagYours": {
+    "description": "Knowledge page: CAG document entry that belongs to the user"
+  },
+  "knowledgeCagDocTokens": "{tokens} tok",
+  "@knowledgeCagDocTokens": {
+    "description": "Knowledge page: token count of one pinned CAG document",
+    "placeholders": {
+      "tokens": {
+        "type": "String"
+      }
+    }
+  },
+  "knowledgeLibrary": "Library",
+  "@knowledgeLibrary": {
+    "description": "Knowledge page: heading above the document list"
+  },
+  "knowledgeLoadFailed": "Could not load documents",
+  "@knowledgeLoadFailed": {
+    "description": "Knowledge page: error state title when the document list fails"
+  },
+  "knowledgeEmptyTitle": "No documents yet",
+  "@knowledgeEmptyTitle": {
+    "description": "Knowledge page: empty library title"
+  },
+  "knowledgeEmptyMessage": "Save a title and some text to build your library.",
+  "@knowledgeEmptyMessage": {
+    "description": "Knowledge page: empty library message"
+  },
+  "knowledgeAlwaysInContext": "Always in context",
+  "@knowledgeAlwaysInContext": {
+    "description": "Knowledge page: document subtitle tag when pinned to CAG"
+  },
+  "knowledgeUnpinTooltip": "Remove from always-in-context",
+  "@knowledgeUnpinTooltip": {
+    "description": "Knowledge page: tooltip to unpin a document from CAG"
+  },
+  "knowledgePinTooltip": "Keep always in context",
+  "@knowledgePinTooltip": {
+    "description": "Knowledge page: tooltip to pin a document to CAG"
+  },
+  "knowledgeAddFailed": "Could not add this document.",
+  "@knowledgeAddFailed": {
+    "description": "Knowledge page: message when ingesting a typed document fails"
+  },
+  "knowledgePassagesHeldBack": "{count, plural, =1{1 passage was held back.} other{{count} passages were held back.}}",
+  "@knowledgePassagesHeldBack": {
+    "description": "Knowledge page: appended after Saved/Uploaded when some passages were quarantined",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "knowledgeSaved": "Saved.",
+  "@knowledgeSaved": {
+    "description": "Knowledge page: message after a document is saved"
+  },
+  "knowledgePdfUploadFailed": "Could not upload this PDF.",
+  "@knowledgePdfUploadFailed": {
+    "description": "Knowledge page: message when a PDF upload fails"
+  },
+  "knowledgeUploaded": "Uploaded.",
+  "@knowledgeUploaded": {
+    "description": "Knowledge page: message after a PDF is uploaded"
+  },
+  "goalsWelcomeBack": "Welcome back,",
+  "@goalsWelcomeBack": {
+    "description": "Goals page: greeting above the user's name"
+  },
+  "goalsDefaultUserName": "Aura User",
+  "@goalsDefaultUserName": {
+    "description": "Goals page: fallback name when the account has no display name"
+  },
+  "goalsPageTitle": "Goals",
+  "@goalsPageTitle": {
+    "description": "Goals page: title"
+  },
+  "goalsPageSubtitle": "Track your aspirations and progress",
+  "@goalsPageSubtitle": {
+    "description": "Goals page: subtitle under the title"
+  },
+  "goalsNewGoal": "New Goal",
+  "@goalsNewGoal": {
+    "description": "Goals page: button that opens the create-goal dialog"
+  },
+  "goalsEmptyTitle": "No goals yet",
+  "@goalsEmptyTitle": {
+    "description": "Goals page: empty state title"
+  },
+  "goalsEmptyMessage": "Create your first goal to get started",
+  "@goalsEmptyMessage": {
+    "description": "Goals page: empty state message"
+  },
+  "goalsCreateGoalTitle": "Create Goal",
+  "@goalsCreateGoalTitle": {
+    "description": "Create-goal dialog: title"
+  },
+  "goalsTitleRequiredLabel": "Title *",
+  "@goalsTitleRequiredLabel": {
+    "description": "Create-goal dialog: required title field label"
+  },
+  "goalsDescriptionLabel": "Description",
+  "@goalsDescriptionLabel": {
+    "description": "Create-goal dialog: description field label"
+  },
+  "goalsStatusLabel": "Status",
+  "@goalsStatusLabel": {
+    "description": "Create-goal dialog: status dropdown label"
+  },
+  "goalsPriorityLabel": "Priority",
+  "@goalsPriorityLabel": {
+    "description": "Create-goal dialog: priority dropdown label"
+  },
+  "goalsSetTargetDate": "Set target date (optional)",
+  "@goalsSetTargetDate": {
+    "description": "Create-goal dialog: target date row before a date is picked"
+  },
+  "goalsTargetDate": "Target: {date}",
+  "@goalsTargetDate": {
+    "description": "Goals: target date of a goal (dialog row and goal card)",
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "goalsProgressPercent": "Progress: {percent}%",
+  "@goalsProgressPercent": {
+    "description": "Create-goal dialog: progress slider caption",
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "goalsCreate": "Create",
+  "@goalsCreate": {
+    "description": "Create-goal dialog: confirm button"
+  },
+  "goalsStatusActive": "active",
+  "@goalsStatusActive": {
+    "description": "Goal status value: active (dropdown item and card chip)"
+  },
+  "goalsStatusAchieved": "achieved",
+  "@goalsStatusAchieved": {
+    "description": "Goal status value: achieved (dropdown item and card chip)"
+  },
+  "goalsStatusAbandoned": "abandoned",
+  "@goalsStatusAbandoned": {
+    "description": "Goal status value: abandoned (dropdown item and card chip)"
+  },
+  "goalsPriorityLow": "low",
+  "@goalsPriorityLow": {
+    "description": "Goal priority value: low (dropdown item and card chip)"
+  },
+  "goalsPriorityMedium": "medium",
+  "@goalsPriorityMedium": {
+    "description": "Goal priority value: medium (dropdown item and card chip)"
+  },
+  "goalsPriorityHigh": "high",
+  "@goalsPriorityHigh": {
+    "description": "Goal priority value: high (dropdown item and card chip)"
+  },
+  "tasksWelcomeBack": "Welcome back,",
+  "@tasksWelcomeBack": {
+    "description": "Tasks page: greeting above the user's name"
+  },
+  "tasksDefaultUserName": "Aura User",
+  "@tasksDefaultUserName": {
+    "description": "Tasks page: fallback name when the account has no display name"
+  },
+  "tasksPageTitle": "Task Workspace",
+  "@tasksPageTitle": {
+    "description": "Tasks page: title"
+  },
+  "tasksPageSubtitle": "Prioritize and manage your goals",
+  "@tasksPageSubtitle": {
+    "description": "Tasks page: subtitle under the title"
+  },
+  "tasksViewSyncLogs": "View Sync Logs",
+  "@tasksViewSyncLogs": {
+    "description": "Tasks page: tooltip of the button that opens the sync log sheet"
+  },
+  "tasksSyncing": "Syncing...",
+  "@tasksSyncing": {
+    "description": "Tasks page: shown while Google Tasks sync runs"
+  },
+  "tasksSyncFailed": "Tasks sync encountered errors.",
+  "@tasksSyncFailed": {
+    "description": "Tasks page: snackbar after a sync with errors"
+  },
+  "tasksSyncSucceeded": "Google Tasks sync completed successfully!",
+  "@tasksSyncSucceeded": {
+    "description": "Tasks page: snackbar after a successful sync"
+  },
+  "tasksSyncButton": "Sync Tasks",
+  "@tasksSyncButton": {
+    "description": "Tasks page: button that syncs with Google Tasks"
+  },
+  "tasksAddTask": "Add Task",
+  "@tasksAddTask": {
+    "description": "Tasks page: button that opens the add-task dialog"
+  },
+  "tasksAddNewTaskTitle": "Add New Task",
+  "@tasksAddNewTaskTitle": {
+    "description": "Add-task dialog: title"
+  },
+  "tasksTitleLabel": "Task Title",
+  "@tasksTitleLabel": {
+    "description": "Add-task dialog: title field label"
+  },
+  "tasksTitleHint": "What needs to be done?",
+  "@tasksTitleHint": {
+    "description": "Add-task dialog: title field hint"
+  },
+  "tasksTitleRequired": "Please enter a title",
+  "@tasksTitleRequired": {
+    "description": "Add-task dialog: validation error when the title is empty"
+  },
+  "tasksDescriptionLabel": "Description",
+  "@tasksDescriptionLabel": {
+    "description": "Add-task dialog: description field label"
+  },
+  "tasksDescriptionHint": "Add details (optional)",
+  "@tasksDescriptionHint": {
+    "description": "Add-task dialog: description field hint"
+  },
+  "tasksCategoryLabel": "Category",
+  "@tasksCategoryLabel": {
+    "description": "Add-task dialog: category dropdown label"
+  },
+  "tasksPriorityLabel": "Priority",
+  "@tasksPriorityLabel": {
+    "description": "Add-task dialog: priority dropdown label"
+  },
+  "tasksNoDueDate": "No Due Date Selected",
+  "@tasksNoDueDate": {
+    "description": "Add-task dialog: due date row before a date is picked"
+  },
+  "tasksSaveTask": "Save Task",
+  "@tasksSaveTask": {
+    "description": "Add-task dialog: confirm button"
+  },
+  "tasksCategoryAll": "All",
+  "@tasksCategoryAll": {
+    "description": "Task category filter chip: all categories"
+  },
+  "tasksCategoryPersonal": "Personal",
+  "@tasksCategoryPersonal": {
+    "description": "Task category: personal (filter chip; upper-cased in the dialog and card)"
+  },
+  "tasksCategoryAcademic": "Academic",
+  "@tasksCategoryAcademic": {
+    "description": "Task category: academic (filter chip; upper-cased in the dialog and card)"
+  },
+  "tasksCategoryClient": "Client",
+  "@tasksCategoryClient": {
+    "description": "Task category: client (filter chip; upper-cased in the dialog and card)"
+  },
+  "tasksCategoryProject": "Project",
+  "@tasksCategoryProject": {
+    "description": "Task category: project (filter chip; upper-cased in the dialog and card)"
+  },
+  "tasksPriorityLow": "Low",
+  "@tasksPriorityLow": {
+    "description": "Task priority: low (upper-cased in the dialog and card)"
+  },
+  "tasksPriorityMedium": "Medium",
+  "@tasksPriorityMedium": {
+    "description": "Task priority: medium (upper-cased in the dialog and card)"
+  },
+  "tasksPriorityHigh": "High",
+  "@tasksPriorityHigh": {
+    "description": "Task priority: high (upper-cased in the dialog and card)"
+  },
+  "tasksEmptyTitle": "All caught up!",
+  "@tasksEmptyTitle": {
+    "description": "Tasks page: empty state title"
+  },
+  "tasksEmptyMessage": "Enjoy your day or create a new task to stay organized.",
+  "@tasksEmptyMessage": {
+    "description": "Tasks page: empty state message"
+  },
+  "tasksSyncLogTitle": "Tasks Sync Activity Log",
+  "@tasksSyncLogTitle": {
+    "description": "Sync log sheet: title"
+  },
+  "tasksSyncLogEmpty": "No logs recorded yet. Press sync to begin.",
+  "@tasksSyncLogEmpty": {
+    "description": "Sync log sheet: empty state"
+  },
+  "tasksDeleteTask": "Delete task",
+  "@tasksDeleteTask": {
+    "description": "Task card: delete button tooltip"
+  },
+  "tasksTaskDeleted": "Task deleted",
+  "@tasksTaskDeleted": {
+    "description": "Task card: snackbar after deleting a task (with Undo)"
+  },
+  "calendarSyncFailed": "Calendar sync encountered errors.",
+  "@calendarSyncFailed": {
+    "description": "Calendar page: snackbar after a sync with errors"
+  },
+  "calendarSyncSucceeded": "Google Calendar sync completed successfully!",
+  "@calendarSyncSucceeded": {
+    "description": "Calendar page: snackbar after a successful sync"
+  },
+  "calendarPageTitle": "Calendar",
+  "@calendarPageTitle": {
+    "description": "Calendar page: title"
+  },
+  "calendarPageSubtitle": "Manage local schedules and sync with Google",
+  "@calendarPageSubtitle": {
+    "description": "Calendar page: subtitle under the title"
+  },
+  "calendarViewSyncLogs": "View Sync Logs",
+  "@calendarViewSyncLogs": {
+    "description": "Calendar page: tooltip of the button that opens the sync log sheet"
+  },
+  "calendarSyncing": "Syncing...",
+  "@calendarSyncing": {
+    "description": "Calendar page: shown while Google Calendar sync runs"
+  },
+  "calendarSyncButton": "Sync Calendar",
+  "@calendarSyncButton": {
+    "description": "Calendar page: button that syncs with Google Calendar"
+  },
+  "calendarSyncLogTitle": "Sync Activity Log",
+  "@calendarSyncLogTitle": {
+    "description": "Calendar sync log sheet: title"
+  },
+  "calendarSyncLogEmpty": "No logs recorded yet. Press sync to begin.",
+  "@calendarSyncLogEmpty": {
+    "description": "Calendar sync log sheet: empty state"
+  },
+  "calendarCreateEventTitle": "Create Calendar Event",
+  "@calendarCreateEventTitle": {
+    "description": "Add-event dialog: title"
+  },
+  "calendarEventTitleLabel": "Event Title",
+  "@calendarEventTitleLabel": {
+    "description": "Add-event dialog: title field label"
+  },
+  "calendarEventTitleHint": "e.g. Team Standup",
+  "@calendarEventTitleHint": {
+    "description": "Add-event dialog: title field hint"
+  },
+  "calendarEventDescriptionLabel": "Description (Optional)",
+  "@calendarEventDescriptionLabel": {
+    "description": "Add-event dialog: description field label"
+  },
+  "calendarEventDescriptionHint": "Enter event details",
+  "@calendarEventDescriptionHint": {
+    "description": "Add-event dialog: description field hint"
+  },
+  "calendarStartTime": "Start Time",
+  "@calendarStartTime": {
+    "description": "Add-event dialog: start time row title"
+  },
+  "calendarEndTime": "End Time",
+  "@calendarEndTime": {
+    "description": "Add-event dialog: end time row title"
+  },
+  "calendarEventCreated": "Event created successfully!",
+  "@calendarEventCreated": {
+    "description": "Add-event dialog: snackbar after creating an event"
+  },
+  "calendarCreate": "Create",
+  "@calendarCreate": {
+    "description": "Add-event dialog: confirm button"
+  },
+  "calendarNoEvents": "No events scheduled for today",
+  "@calendarNoEvents": {
+    "description": "Calendar schedule panel: empty state for the selected day"
+  },
+  "calendarCloudSynced": "Cloud Synced",
+  "@calendarCloudSynced": {
+    "description": "Calendar schedule panel: tag on events synced with Google Calendar"
+  },
+  "calendarDeleteEventTitle": "Delete Event",
+  "@calendarDeleteEventTitle": {
+    "description": "Delete-event confirmation dialog: title"
+  },
+  "calendarDeleteEventConfirm": "Are you sure you want to delete '{title}'?",
+  "@calendarDeleteEventConfirm": {
+    "description": "Delete-event confirmation dialog: body",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "calendarEventDeleted": "Event deleted successfully.",
+  "@calendarEventDeleted": {
+    "description": "Calendar schedule panel: snackbar after deleting an event"
+  },
+  "hostPanelTitle": "Host Daemon",
+  "@hostPanelTitle": {
+    "description": "IDE Host panel: card title"
+  },
+  "hostFullSettings": "Full Settings",
+  "@hostFullSettings": {
+    "description": "IDE Host panel: button opening the full host daemon settings page"
+  },
+  "hostStatusError": "Error: {error}",
+  "@hostStatusError": {
+    "description": "IDE Host panel: status could not be read; error is an already-described message",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "hostStatusGaveUp": "Stopped after repeated crashes",
+  "@hostStatusGaveUp": {
+    "description": "IDE Host panel status: supervisor gave up restarting the daemon"
+  },
+  "hostStatusRestarting": "Crashed, restarting in {seconds}s...",
+  "@hostStatusRestarting": {
+    "description": "IDE Host panel status: daemon crashed, countdown to automatic restart (seconds)",
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "hostStatusNotRunning": "Not running",
+  "@hostStatusNotRunning": {
+    "description": "IDE Host panel status: daemon not running"
+  },
+  "hostStatusRunningNotPaired": "Running, not paired",
+  "@hostStatusRunningNotPaired": {
+    "description": "IDE Host panel status: running but not paired"
+  },
+  "hostStatusRunningOtherServer": "Running, paired to a different server",
+  "@hostStatusRunningOtherServer": {
+    "description": "IDE Host panel status: paired to a server other than the app's"
+  },
+  "hostStatusRunningPaired": "Running, paired",
+  "@hostStatusRunningPaired": {
+    "description": "IDE Host panel status: running and connected"
+  },
+  "hostStatusReconnecting": "Running, reconnecting...",
+  "@hostStatusReconnecting": {
+    "description": "IDE Host panel status: paired but reconnecting to the backend"
+  },
+  "hostStatusPairedUpdateDaemon": "Running, paired (update aura_hostd)",
+  "@hostStatusPairedUpdateDaemon": {
+    "description": "IDE Host panel status: paired, daemon too old to report connection state"
+  },
+  "hostBackendLabel": "Backend: {url}",
+  "@hostBackendLabel": {
+    "description": "IDE Host panel: backend URL the daemon is paired to",
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
+  },
+  "hostOtherServerNotice": "This app is signed in to {url}. Pair again to move the daemon there.",
+  "@hostOtherServerNotice": {
+    "description": "IDE Host panel: daemon paired to another server",
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
+  },
+  "hostStarting": "Starting...",
+  "@hostStarting": {
+    "description": "IDE Host panel: start button label while starting"
+  },
+  "hostStartNow": "Start now",
+  "@hostStartNow": {
+    "description": "IDE Host panel: start button while an automatic restart is pending"
+  },
+  "hostStart": "Start",
+  "@hostStart": {
+    "description": "IDE Host panel: start daemon button"
+  },
+  "hostCancelRestart": "Cancel restart",
+  "@hostCancelRestart": {
+    "description": "IDE Host panel: cancel the pending automatic restart"
+  },
+  "hostStop": "Stop",
+  "@hostStop": {
+    "description": "IDE Host panel: stop daemon button"
+  },
+  "hostPairing": "Pairing...",
+  "@hostPairing": {
+    "description": "IDE Host panel: pair button while pairing"
+  },
+  "hostRepair": "Re-pair",
+  "@hostRepair": {
+    "description": "IDE Host panel: pair again to move the daemon to this app's server"
+  },
+  "hostPair": "Pair",
+  "@hostPair": {
+    "description": "IDE Host panel: pair the daemon with the account"
+  },
+  "hostGrantedRoots": "Granted Roots",
+  "@hostGrantedRoots": {
+    "description": "IDE Host panel: heading above the folders the daemon may access"
+  },
+  "hostTrusted": "Trusted",
+  "@hostTrusted": {
+    "description": "IDE Host panel: badge on a trusted folder"
+  },
+  "hostSetExecutableFirst": "Set the aura_hostd executable path in Full Settings first.",
+  "@hostSetExecutableFirst": {
+    "description": "IDE Host panel snackbar: no executable path configured"
+  },
+  "hostCouldNotStart": "Could not start aura_hostd: {error}",
+  "@hostCouldNotStart": {
+    "description": "IDE Host panel snackbar: start failed",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "hostCouldNotStop": "Could not stop aura_hostd: {error}",
+  "@hostCouldNotStop": {
+    "description": "IDE Host panel snackbar: stop failed",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "hostPairDialogTitle": "Pair this device",
+  "@hostPairDialogTitle": {
+    "description": "IDE Host panel: pairing dialog title"
+  },
+  "hostPairApproving": "Approving with your signed-in AURA session...",
+  "@hostPairApproving": {
+    "description": "IDE Host panel pairing dialog: self-approval in progress"
+  },
+  "hostPairWaiting": "Waiting for approval...",
+  "@hostPairWaiting": {
+    "description": "IDE Host panel pairing dialog: waiting for the pairing to complete"
+  },
+  "hostPairSignInFirst": "Sign in to AURA first -- pairing needs a valid session to approve with.",
+  "@hostPairSignInFirst": {
+    "description": "IDE Host panel: pairing error shown inside the 'Could not start pairing' snackbar"
+  },
+  "hostPaired": "Paired.",
+  "@hostPaired": {
+    "description": "IDE Host panel snackbar: pairing succeeded"
+  },
+  "hostPairingFailed": "Pairing failed: {reason}",
+  "@hostPairingFailed": {
+    "description": "IDE Host panel snackbar: pairing failed; reason is the daemon's raw text",
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "hostPairingExpired": "Pairing code expired.",
+  "@hostPairingExpired": {
+    "description": "IDE Host panel snackbar: pairing code expired"
+  },
+  "hostCouldNotStartPairing": "Could not start pairing: {error}",
+  "@hostCouldNotStartPairing": {
+    "description": "IDE Host panel snackbar: pairing could not start",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "debugOpenWorkspace": "Open a workspace to use the Debug Console.",
+  "@debugOpenWorkspace": {
+    "description": "IDE Debug Console: no workspace open"
+  },
+  "debugScriptHint": "script.py (relative to workspace root)",
+  "@debugScriptHint": {
+    "description": "IDE Debug Console: hint of the script path field"
+  },
+  "debugStart": "Start",
+  "@debugStart": {
+    "description": "IDE Debug Console toolbar tooltip: start debugging"
+  },
+  "debugContinue": "Continue",
+  "@debugContinue": {
+    "description": "IDE Debug Console toolbar tooltip: continue execution"
+  },
+  "debugStepOver": "Step Over",
+  "@debugStepOver": {
+    "description": "IDE Debug Console toolbar tooltip: step over"
+  },
+  "debugStepInto": "Step Into",
+  "@debugStepInto": {
+    "description": "IDE Debug Console toolbar tooltip: step into"
+  },
+  "debugStepOut": "Step Out",
+  "@debugStepOut": {
+    "description": "IDE Debug Console toolbar tooltip: step out"
+  },
+  "debugStop": "Stop",
+  "@debugStop": {
+    "description": "IDE Debug Console toolbar tooltip: stop debugging"
+  },
+  "debugStatusIdle": "Idle",
+  "@debugStatusIdle": {
+    "description": "IDE Debug Console status: no session"
+  },
+  "debugStatusStarting": "Starting...",
+  "@debugStatusStarting": {
+    "description": "IDE Debug Console status: starting"
+  },
+  "debugStatusRunningPid": "Running (pid {pid})",
+  "@debugStatusRunningPid": {
+    "description": "IDE Debug Console status: running, with process id",
+    "placeholders": {
+      "pid": {
+        "type": "int"
+      }
+    }
+  },
+  "debugStatusRunning": "Running",
+  "@debugStatusRunning": {
+    "description": "IDE Debug Console status: running"
+  },
+  "debugStatusPaused": "Paused",
+  "@debugStatusPaused": {
+    "description": "IDE Debug Console status: paused at a breakpoint"
+  },
+  "debugStatusStopped": "Stopped",
+  "@debugStatusStopped": {
+    "description": "IDE Debug Console status: session ended"
+  },
+  "debugBreakpointsLabel": "Breakpoints:",
+  "@debugBreakpointsLabel": {
+    "description": "IDE Debug Console: label before the breakpoint list"
+  },
+  "debugLineHint": "line #",
+  "@debugLineHint": {
+    "description": "IDE Debug Console: hint of the breakpoint line number field"
+  },
+  "debugCallStack": "CALL STACK",
+  "@debugCallStack": {
+    "description": "IDE Debug Console: side panel section heading (upper case)"
+  },
+  "debugVariables": "VARIABLES",
+  "@debugVariables": {
+    "description": "IDE Debug Console: side panel section heading (upper case)"
+  },
+  "controlCenterDiscardTitle": "Discard this task?",
+  "@controlCenterDiscardTitle": {
+    "description": "Agent Review panel: discard confirmation title"
+  },
+  "controlCenterDiscardBody": "This permanently deletes the \"{branch}\" branch and its worktree at {path}. Any unmerged work in it is lost. This cannot be undone.",
+  "@controlCenterDiscardBody": {
+    "description": "Agent Review panel: discard confirmation body",
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      },
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "controlCenterDiscard": "Discard",
+  "@controlCenterDiscard": {
+    "description": "Agent Review panel: discard a task (button and tooltip)"
+  },
+  "controlCenterMergedTitle": "Merged",
+  "@controlCenterMergedTitle": {
+    "description": "Agent Review panel: dialog title after a clean merge"
+  },
+  "controlCenterMergedBody": "\"{branch}\" was merged locally. Discard its now-merged worktree?",
+  "@controlCenterMergedBody": {
+    "description": "Agent Review panel: offer to discard the merged worktree",
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      }
+    }
+  },
+  "controlCenterKeepIt": "Keep it",
+  "@controlCenterKeepIt": {
+    "description": "Agent Review panel: keep the merged worktree"
+  },
+  "controlCenterTitle": "Agent Review",
+  "@controlCenterTitle": {
+    "description": "Agent Review panel: header title"
+  },
+  "controlCenterEmpty": "No isolated agent tasks right now. Starting a new chat task creates one automatically.",
+  "@controlCenterEmpty": {
+    "description": "Agent Review panel: empty state"
+  },
+  "controlCenterNoChanges": "(no changes)",
+  "@controlCenterNoChanges": {
+    "description": "Agent Review panel: diff stat of a task with no changes"
+  },
+  "controlCenterDiffStatError": "error: {message}",
+  "@controlCenterDiffStatError": {
+    "description": "Agent Review panel: diff stat line when it could not be computed; message comes from the daemon",
+    "placeholders": {
+      "message": {
+        "type": "String"
+      }
+    }
+  },
+  "controlCenterBaseBranchUnknown": "Could not determine the base branch to diff against.",
+  "@controlCenterBaseBranchUnknown": {
+    "description": "Agent Review panel: error when the base branch is unknown"
+  },
+  "controlCenterMergeConflict": "Merge conflict -- resolve in the main worktree, then commit there directly.",
+  "@controlCenterMergeConflict": {
+    "description": "Agent Review panel: merge conflict banner"
+  },
+  "controlCenterHideDiff": "Hide diff",
+  "@controlCenterHideDiff": {
+    "description": "Agent Review panel: collapse the inline diff"
+  },
+  "controlCenterViewDiff": "View diff",
+  "@controlCenterViewDiff": {
+    "description": "Agent Review panel: expand the inline diff"
+  },
+  "controlCenterSquashMerge": "Squash merge",
+  "@controlCenterSquashMerge": {
+    "description": "Agent Review panel: squash-merge button"
+  },
+  "controlCenterWorking": "Working...",
+  "@controlCenterWorking": {
+    "description": "Agent Review panel: merge button while busy"
+  },
+  "controlCenterMerge": "Merge",
+  "@controlCenterMerge": {
+    "description": "Agent Review panel: merge button"
+  },
+  "terminalOpenWorkspace": "Open a workspace to use the terminal.",
+  "@terminalOpenWorkspace": {
+    "description": "IDE terminal: no workspace open"
+  },
+  "terminalGrantWorkspace": "Grant this workspace to the host daemon to use the terminal.",
+  "@terminalGrantWorkspace": {
+    "description": "IDE terminal: workspace not granted to the daemon"
+  },
+  "terminalUntrusted": "Workspace is not trusted. Trust it from the Host panel to use the terminal.",
+  "@terminalUntrusted": {
+    "description": "IDE terminal: workspace not trusted"
+  },
+  "terminalStarting": "Starting terminal...",
+  "@terminalStarting": {
+    "description": "IDE terminal: session starting"
+  },
+  "terminalSessionEndedWithCode": "Session ended (exit code {code}).",
+  "@terminalSessionEndedWithCode": {
+    "description": "IDE terminal: session ended with an exit code",
+    "placeholders": {
+      "code": {
+        "type": "int"
+      }
+    }
+  },
+  "terminalSessionEnded": "Session ended.",
+  "@terminalSessionEnded": {
+    "description": "IDE terminal: session ended without an exit code"
+  },
+  "terminalRestart": "Restart",
+  "@terminalRestart": {
+    "description": "IDE terminal: restart the session"
+  },
+  "outputFilterAll": "All",
+  "@outputFilterAll": {
+    "description": "IDE Output panel: channel filter option showing every channel"
+  },
+  "outputChannelAgent": "Agent",
+  "@outputChannelAgent": {
+    "description": "IDE Output panel: channel filter option"
+  },
+  "outputChannelHost": "Host",
+  "@outputChannelHost": {
+    "description": "IDE Output panel: channel filter option"
+  },
+  "outputChannelTasks": "Tasks",
+  "@outputChannelTasks": {
+    "description": "IDE Output panel: channel filter option"
+  },
+  "outputChannelDiagnostics": "Diagnostics",
+  "@outputChannelDiagnostics": {
+    "description": "IDE Output panel: channel filter option"
+  },
+  "outputClear": "Clear Output",
+  "@outputClear": {
+    "description": "IDE Output panel: tooltip of the clear button"
+  },
+  "outputEmpty": "No output yet",
+  "@outputEmpty": {
+    "description": "IDE Output panel: empty state"
+  },
+  "diagnosticsOpenWorkspace": "Open a workspace to see problems.",
+  "@diagnosticsOpenWorkspace": {
+    "description": "IDE Problems panel: no workspace open"
+  },
+  "diagnosticsDetecting": "Detecting diagnostics tool...",
+  "@diagnosticsDetecting": {
+    "description": "IDE Problems panel: detecting the linter"
+  },
+  "diagnosticsNoTool": "No diagnostics tool detected for this workspace.",
+  "@diagnosticsNoTool": {
+    "description": "IDE Problems panel: no linter found"
+  },
+  "diagnosticsRerun": "Rerun",
+  "@diagnosticsRerun": {
+    "description": "IDE Problems panel: tooltip of the rescan button"
+  },
+  "diagnosticsNoProblems": "No problems detected",
+  "@diagnosticsNoProblems": {
+    "description": "IDE Problems panel: empty state"
+  },
+  "diagnosticsToolNotFound": "\"{tool}\" is not installed or not on PATH.",
+  "@diagnosticsToolNotFound": {
+    "description": "IDE Problems panel: linter missing; tool is a command name",
+    "placeholders": {
+      "tool": {
+        "type": "String"
+      }
+    }
+  },
+  "editorNoFileOpen": "No file open",
+  "@editorNoFileOpen": {
+    "description": "IDE editor: empty state title"
+  },
+  "editorNoFileOpenHint": "Open a file from the Explorer or press Ctrl+P",
+  "@editorNoFileOpenHint": {
+    "description": "IDE editor: empty state hint"
+  },
+  "editorCouldNotRead": "Could not read {path}: {error}",
+  "@editorCouldNotRead": {
+    "description": "IDE editor: file could not be read",
+    "placeholders": {
+      "path": {
+        "type": "String"
+      },
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "editorNoActiveWorkspace": "No active workspace",
+  "@editorNoActiveWorkspace": {
+    "description": "IDE editor: no workspace when opening a file"
+  },
+  "editorRestoredNotice": "Restored unsaved changes from your last session.",
+  "@editorRestoredNotice": {
+    "description": "IDE editor: banner after hot-exit restore"
+  },
+  "editorRestoredOverChange": "Restored unsaved changes from your last session. The file has changed on disk since; saving will overwrite that change.",
+  "@editorRestoredOverChange": {
+    "description": "IDE editor: banner after hot-exit restore when the file changed on disk"
+  },
+  "editorUnsavedTitle": "Unsaved changes",
+  "@editorUnsavedTitle": {
+    "description": "IDE editor: close-tab dialog title"
+  },
+  "editorUnsavedBody": "\"{title}\" has unsaved changes.",
+  "@editorUnsavedBody": {
+    "description": "IDE editor: close-tab dialog body; title is the file name",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "editorDiscard": "Discard",
+  "@editorDiscard": {
+    "description": "IDE editor: close the tab without saving"
+  },
+  "editorQuickOpenHint": "Type to search files...",
+  "@editorQuickOpenHint": {
+    "description": "IDE quick open (Ctrl+P): search field hint"
+  },
+  "editorNoFilesFound": "No files found",
+  "@editorNoFilesFound": {
+    "description": "IDE quick open: no files in the workspace"
+  },
+  "editorNoMatches": "No matches",
+  "@editorNoMatches": {
+    "description": "IDE quick open: no file matches the query"
+  },
+  "agentWorkspaceLabel": "Workspace: {path}",
+  "@agentWorkspaceLabel": {
+    "description": "IDE Agent panel: active workspace path",
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "agentLockedTitle": "Engineer is not available on this account",
+  "@agentLockedTitle": {
+    "description": "IDE Agent panel: Engineer persona not allowed"
+  },
+  "agentLockedMessage": "Engineer needs the engineer_agent capability. Ask an operator to grant it; until then, messages from here would be answered by the general assistant instead.",
+  "@agentLockedMessage": {
+    "description": "IDE Agent panel: explanation when Engineer is locked"
+  },
+  "agentEmptyTitle": "No messages yet",
+  "@agentEmptyTitle": {
+    "description": "IDE Agent panel: empty conversation title"
+  },
+  "agentEmptyMessage": "Ask Engineer about this workspace — it can read your files, run commands and propose changes for you to review before anything is applied.",
+  "@agentEmptyMessage": {
+    "description": "IDE Agent panel: empty conversation message"
+  },
+  "agentTaskDefault": "Default",
+  "@agentTaskDefault": {
+    "description": "IDE Agent panel: name of the default task session"
+  },
+  "agentTaskLabel": "Task {id}",
+  "@agentTaskLabel": {
+    "description": "IDE Agent panel: task session name; id is a short session suffix",
+    "placeholders": {
+      "id": {
+        "type": "String"
+      }
+    }
+  },
+  "agentSwitchTask": "Switch task",
+  "@agentSwitchTask": {
+    "description": "IDE Agent panel: tooltip of the task switcher"
+  },
+  "agentNewTask": "+ New Task",
+  "@agentNewTask": {
+    "description": "IDE Agent panel: task switcher menu item starting a new task"
+  },
+  "engineeringDaemonSaved": "Saved.",
+  "@engineeringDaemonSaved": {
+    "description": "Engineer daemon page: snackbar after saving the aura_hostd executable path"
+  },
+  "engineeringDaemonPathMissing": "Set the aura_hostd executable path first.",
+  "@engineeringDaemonPathMissing": {
+    "description": "Engineer daemon page: error when Start is pressed with no executable path"
+  },
+  "engineeringDaemonStartFailed": "Could not start aura_hostd: {error}",
+  "@engineeringDaemonStartFailed": {
+    "description": "Engineer daemon page: snackbar when the daemon could not be started",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "engineeringDaemonStopFailed": "Could not stop aura_hostd: {error}",
+  "@engineeringDaemonStopFailed": {
+    "description": "Engineer daemon page: snackbar when the daemon could not be stopped",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "engineeringPairThisDevice": "Pair this device",
+  "@engineeringPairThisDevice": {
+    "description": "Engineer daemon page: pairing dialog title and the pair button label"
+  },
+  "engineeringPairApproving": "Approving with your signed-in AURA session...",
+  "@engineeringPairApproving": {
+    "description": "Engineer daemon page: pairing dialog body while approving"
+  },
+  "engineeringPairWaiting": "Waiting for approval...",
+  "@engineeringPairWaiting": {
+    "description": "Engineer daemon page: pairing dialog line under the spinner"
+  },
+  "engineeringPairSignInFirst": "Sign in to AURA first -- pairing needs a valid session to approve with.",
+  "@engineeringPairSignInFirst": {
+    "description": "Engineer daemon page: pairing error when the app has no valid session"
+  },
+  "engineeringPairApprovalRejected": "Approval rejected: HTTP {status} {body}",
+  "@engineeringPairApprovalRejected": {
+    "description": "Engineer daemon page: pairing error when the server rejected the approval; status is the HTTP code, body the raw server response",
+    "placeholders": {
+      "status": {
+        "type": "int"
+      },
+      "body": {
+        "type": "String"
+      }
+    }
+  },
+  "engineeringPaired": "Paired.",
+  "@engineeringPaired": {
+    "description": "Engineer daemon page: snackbar after a successful pairing (device name unknown)"
+  },
+  "engineeringPairedNamed": "Paired {name}.",
+  "@engineeringPairedNamed": {
+    "description": "Engineer daemon page: snackbar after a successful pairing, naming the paired machine",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "engineeringPairingFailed": "Pairing failed: {reason}",
+  "@engineeringPairingFailed": {
+    "description": "Engineer daemon page: snackbar when pairing failed; reason comes from the daemon",
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "engineeringPairingExpired": "Pairing code expired.",
+  "@engineeringPairingExpired": {
+    "description": "Engineer daemon page: snackbar when the pairing code expired before approval"
+  },
+  "engineeringPairingStartFailed": "Could not start pairing: {error}",
+  "@engineeringPairingStartFailed": {
+    "description": "Engineer daemon page: snackbar when pairing could not start",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "engineeringGrantRootFailed": "Could not grant {path}: {error}",
+  "@engineeringGrantRootFailed": {
+    "description": "Engineer daemon page: snackbar when a workspace folder could not be granted",
+    "placeholders": {
+      "path": {
+        "type": "String"
+      },
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "engineeringRevokeRootTitle": "Revoke workspace root?",
+  "@engineeringRevokeRootTitle": {
+    "description": "Engineer daemon page: confirm dialog title for revoking a granted folder"
+  },
+  "engineeringRevokeRootBody": "The agent will no longer be able to read or write anything under {path}.",
+  "@engineeringRevokeRootBody": {
+    "description": "Engineer daemon page: confirm dialog body for revoking a granted folder",
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "engineeringRevoke": "Revoke",
+  "@engineeringRevoke": {
+    "description": "Engineer daemon page: confirm button and tooltip to revoke a granted folder"
+  },
+  "engineeringDaemonTitle": "Desktop Engineer Daemon",
+  "@engineeringDaemonTitle": {
+    "description": "Engineer daemon page: app bar title"
+  },
+  "engineeringDaemonStatusFailed": "Could not check status: {error}",
+  "@engineeringDaemonStatusFailed": {
+    "description": "Engineer daemon page: shown when the daemon status check failed",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "engineeringExecutableTitle": "aura_hostd executable",
+  "@engineeringExecutableTitle": {
+    "description": "Engineer daemon page: card title for the daemon executable path"
+  },
+  "engineeringExecutableHelp": "Installed builds use the aura_hostd that ships with this app. To use another one, point this at it (see aura_hostd/README.md); clear it to go back to the bundled one.",
+  "@engineeringExecutableHelp": {
+    "description": "Engineer daemon page: help text under the executable path title"
+  },
+  "engineeringDaemonNotRunning": "Not running",
+  "@engineeringDaemonNotRunning": {
+    "description": "Engineer daemon page: status when the daemon is not running"
+  },
+  "engineeringDaemonRunningNotPaired": "Running, not paired",
+  "@engineeringDaemonRunningNotPaired": {
+    "description": "Engineer daemon page: status when the daemon runs but is not paired"
+  },
+  "engineeringDaemonRunningOtherServer": "Running, paired to a different server",
+  "@engineeringDaemonRunningOtherServer": {
+    "description": "Engineer daemon page: status when the daemon is paired to another server than the app"
+  },
+  "engineeringDaemonRunningPaired": "Running, paired",
+  "@engineeringDaemonRunningPaired": {
+    "description": "Engineer daemon page: status when the daemon is paired and connected"
+  },
+  "engineeringDaemonReconnecting": "Running, reconnecting...",
+  "@engineeringDaemonReconnecting": {
+    "description": "Engineer daemon page: status while the daemon reconnects to the backend"
+  },
+  "engineeringDaemonPairedUpdateNeeded": "Running, paired -- update aura_hostd to see connection status",
+  "@engineeringDaemonPairedUpdateNeeded": {
+    "description": "Engineer daemon page: status when the daemon is too old to report its connection"
+  },
+  "engineeringDaemonBackend": "Backend: {url}",
+  "@engineeringDaemonBackend": {
+    "description": "Engineer daemon page: the backend URL the daemon is paired to",
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
+  },
+  "engineeringDaemonOtherServerNote": "This app is signed in to {url}. Pair again to move the daemon there.",
+  "@engineeringDaemonOtherServerNote": {
+    "description": "Engineer daemon page: warning when the daemon is paired to a different server",
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
+  },
+  "engineeringDaemonStart": "Start",
+  "@engineeringDaemonStart": {
+    "description": "Engineer daemon page: button to start the daemon"
+  },
+  "engineeringDaemonStop": "Stop",
+  "@engineeringDaemonStop": {
+    "description": "Engineer daemon page: button to stop the daemon"
+  },
+  "engineeringPairAgain": "Pair again",
+  "@engineeringPairAgain": {
+    "description": "Engineer daemon page: button to pair again with the current server"
+  },
+  "engineeringWorkspaceRoots": "Workspace roots",
+  "@engineeringWorkspaceRoots": {
+    "description": "Engineer daemon page: card title listing granted folders"
+  },
+  "engineeringNoRoots": "No folders granted yet -- the agent can't read or write anything on this machine until you add one.",
+  "@engineeringNoRoots": {
+    "description": "Engineer daemon page: empty state for granted folders"
+  },
+  "engineeringRootTrusted": "Trusted -- commands run without per-call confirmation (still confined to this folder)",
+  "@engineeringRootTrusted": {
+    "description": "Engineer daemon page: subtitle of a trusted granted folder"
+  },
+  "engineeringRootUntrusted": "Untrusted -- only a read-only inspection allowlist runs",
+  "@engineeringRootUntrusted": {
+    "description": "Engineer daemon page: subtitle of an untrusted granted folder"
+  },
+  "engineeringBrowse": "Browse",
+  "@engineeringBrowse": {
+    "description": "Engineer daemon page: tooltip to browse a granted folder"
+  },
+  "engineeringDaemonOutput": "Daemon output",
+  "@engineeringDaemonOutput": {
+    "description": "Engineer daemon page: card title for the live daemon log"
+  },
+  "engineeringNoLogsNote": "Live output is only available for a daemon this app started -- pointing at one already running elsewhere still works for everything else on this page.",
+  "@engineeringNoLogsNote": {
+    "description": "Engineer daemon page: note shown when the daemon was not started by this app"
+  },
+  "engineeringBackToFileList": "Back to file list",
+  "@engineeringBackToFileList": {
+    "description": "Host file browser: button to leave the file view"
+  },
+  "engineeringFileTruncated": "File is larger than this preview shows.",
+  "@engineeringFileTruncated": {
+    "description": "Host file browser: note when a file preview was truncated"
+  },
+  "engineeringReadDirFailed": "Could not read this directory: {error}",
+  "@engineeringReadDirFailed": {
+    "description": "Host file browser: error when a folder could not be listed",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "engineeringFolderEmpty": "This folder is empty.",
+  "@engineeringFolderEmpty": {
+    "description": "Host file browser: empty folder state"
+  },
+  "engineeringGithubBrowserFailed": "Could not open the browser to connect GitHub.",
+  "@engineeringGithubBrowserFailed": {
+    "description": "GitHub connection page: snackbar when the browser could not open"
+  },
+  "engineeringGithubDisconnected": "GitHub disconnected.",
+  "@engineeringGithubDisconnected": {
+    "description": "GitHub connection page: snackbar after disconnecting"
+  },
+  "engineeringGithubConnectedUnknown": "Connected as a GitHub account",
+  "@engineeringGithubConnectedUnknown": {
+    "description": "GitHub connection page: status title when connected but the login is unknown"
+  },
+  "engineeringGithubConnectedAs": "Connected as {login}",
+  "@engineeringGithubConnectedAs": {
+    "description": "GitHub connection page: status title naming the connected GitHub login",
+    "placeholders": {
+      "login": {
+        "type": "String"
+      }
+    }
+  },
+  "engineeringGithubNotConnected": "No GitHub account connected",
+  "@engineeringGithubNotConnected": {
+    "description": "GitHub connection page: status title when nothing is connected"
+  },
+  "engineeringGithubConnectedAt": "Connected {date}",
+  "@engineeringGithubConnectedAt": {
+    "description": "GitHub connection page: when the account was connected; date is already formatted",
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "engineeringGithubConnectedBody": "The engineer agent can read and write exactly the repositories you granted when you installed the GitHub App. Disconnecting only removes what AURA can use -- it does not revoke the app on github.com.",
+  "@engineeringGithubConnectedBody": {
+    "description": "GitHub connection page: explanation while connected"
+  },
+  "engineeringGithubDisconnectedBody": "Connect your own GitHub account so the engineer agent (opening PRs, reading issues, committing files) acts on the repositories you choose, instead of relying on a shared token an operator configured.",
+  "@engineeringGithubDisconnectedBody": {
+    "description": "GitHub connection page: explanation while not connected"
+  },
+  "engineeringGithubDisconnect": "Disconnect GitHub",
+  "@engineeringGithubDisconnect": {
+    "description": "GitHub connection page: button to disconnect"
+  },
+  "engineeringGithubConnect": "Connect GitHub",
+  "@engineeringGithubConnect": {
+    "description": "GitHub connection page: button to connect"
+  },
+  "engineeringDesktopDaemonTooltip": "Desktop daemon",
+  "@engineeringDesktopDaemonTooltip": {
+    "description": "Engineer history page: app bar action tooltip opening the desktop daemon page"
+  },
+  "engineeringNoRunsTitle": "No engineer runs yet",
+  "@engineeringNoRunsTitle": {
+    "description": "Engineer history page: empty state title"
+  },
+  "engineeringNoRunsMessage": "Ask the Engineer agent to open a PR or run a command, and it will show up here.",
+  "@engineeringNoRunsMessage": {
+    "description": "Engineer history page: empty state message"
+  },
+  "engineeringToolOpenedDraftPr": "Opened draft PR",
+  "@engineeringToolOpenedDraftPr": {
+    "description": "Engineer history: run label for opening a draft pull request"
+  },
+  "engineeringToolCommittedFiles": "Committed files",
+  "@engineeringToolCommittedFiles": {
+    "description": "Engineer history: run label for committing files on GitHub"
+  },
+  "engineeringToolCreatedBranch": "Created branch",
+  "@engineeringToolCreatedBranch": {
+    "description": "Engineer history: run label for creating a branch"
+  },
+  "engineeringToolWroteFile": "Wrote file",
+  "@engineeringToolWroteFile": {
+    "description": "Engineer history: run label for writing a file"
+  },
+  "engineeringToolEditedFile": "Edited file",
+  "@engineeringToolEditedFile": {
+    "description": "Engineer history: run label for editing a file"
+  },
+  "engineeringToolRanCommand": "Ran command",
+  "@engineeringToolRanCommand": {
+    "description": "Engineer history: run label for running a command"
+  },
+  "engineeringToolCommitted": "Committed",
+  "@engineeringToolCommitted": {
+    "description": "Engineer history: run label for a git commit"
+  },
+  "engineeringToolSwitchedBranch": "Switched branch",
+  "@engineeringToolSwitchedBranch": {
+    "description": "Engineer history: run label for checking out a branch"
+  },
+  "engineeringToolDiffedSandbox": "Diffed sandbox",
+  "@engineeringToolDiffedSandbox": {
+    "description": "Engineer history: run label for diffing the sandbox"
+  },
+  "engineeringRunStatusPending": "pending",
+  "@engineeringRunStatusPending": {
+    "description": "Engineer history: run status word (pending)"
+  },
+  "engineeringRunStatusSucceeded": "succeeded",
+  "@engineeringRunStatusSucceeded": {
+    "description": "Engineer history: run status word (succeeded)"
+  },
+  "engineeringRunStatusFailed": "failed",
+  "@engineeringRunStatusFailed": {
+    "description": "Engineer history: run status word (failed)"
+  },
+  "engineeringRunStatus": "Status: {status}",
+  "@engineeringRunStatus": {
+    "description": "Engineer history: run detail status line",
+    "placeholders": {
+      "status": {
+        "type": "String"
+      }
+    }
+  },
+  "engineeringRunBranch": "Branch: {branch}",
+  "@engineeringRunBranch": {
+    "description": "Engineer history: run detail branch line",
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      }
+    }
+  },
+  "engineeringRunCommit": "Commit: {sha}",
+  "@engineeringRunCommit": {
+    "description": "Engineer history: run detail commit line",
+    "placeholders": {
+      "sha": {
+        "type": "String"
+      }
+    }
+  },
+  "engineeringCopyLink": "Copy link",
+  "@engineeringCopyLink": {
+    "description": "Engineer history: tooltip to copy the PR link"
+  },
+  "engineeringLinkCopied": "Link copied",
+  "@engineeringLinkCopied": {
+    "description": "Engineer history: snackbar after copying the PR link"
+  },
+  "engineeringRunOutput": "Output",
+  "@engineeringRunOutput": {
+    "description": "Engineer history: heading over a run transcript or diff"
+  },
+  "automationsTitle": "AURA Automations",
+  "@automationsTitle": {
+    "description": "Automations page: title"
+  },
+  "automationsSubtitle": "Extract tasks from emails and issues, generate workspace structures",
+  "@automationsSubtitle": {
+    "description": "Automations page: subtitle"
+  },
+  "automationsTabGmail": "Gmail Inbox Analyzer",
+  "@automationsTabGmail": {
+    "description": "Automations page: Gmail tab label"
+  },
+  "automationsTabGithub": "GitHub Issue Importer",
+  "@automationsTabGithub": {
+    "description": "Automations page: GitHub tab label"
+  },
+  "automationsTabDrive": "Drive Workspace Builder",
+  "@automationsTabDrive": {
+    "description": "Automations page: Drive tab label"
+  },
+  "automationsGmailUnavailableTitle": "Live Gmail Integration Unavailable",
+  "@automationsGmailUnavailableTitle": {
+    "description": "Automations Gmail tab: title shown for a mock developer profile"
+  },
+  "automationsGmailUnavailableBody": "You are signed in via a mock developer profile. Real unread emails can only be fetched when logged in with a real Google Account.",
+  "@automationsGmailUnavailableBody": {
+    "description": "Automations Gmail tab: body shown for a mock developer profile"
+  },
+  "automationsGmailRecentUnread": "Recent Unread Emails",
+  "@automationsGmailRecentUnread": {
+    "description": "Automations Gmail tab: section title"
+  },
+  "automationsGmailFetchUnread": "Fetch Unread",
+  "@automationsGmailFetchUnread": {
+    "description": "Automations Gmail tab: button to fetch unread emails"
+  },
+  "automationsGmailFetching": "Fetching...",
+  "@automationsGmailFetching": {
+    "description": "Automations Gmail tab: loading text"
+  },
+  "automationsGmailEmpty": "No unread emails loaded. Click Fetch.",
+  "@automationsGmailEmpty": {
+    "description": "Automations Gmail tab: empty state"
+  },
+  "automationsGmailFrom": "From: {sender}",
+  "@automationsGmailFrom": {
+    "description": "Automations Gmail tab: email sender line",
+    "placeholders": {
+      "sender": {
+        "type": "String"
+      }
+    }
+  },
+  "automationsGmailAnalyze": "AI Analyze",
+  "@automationsGmailAnalyze": {
+    "description": "Automations Gmail tab: button to analyze an email with AI"
+  },
+  "automationsGmailCategory": "Category: {category}",
+  "@automationsGmailCategory": {
+    "description": "Automations Gmail tab: analysed email category chip; category comes from the server",
+    "placeholders": {
+      "category": {
+        "type": "String"
+      }
+    }
+  },
+  "automationsGmailUrgent": "URGENT",
+  "@automationsGmailUrgent": {
+    "description": "Automations Gmail tab: urgency chip for high urgency"
+  },
+  "automationsGmailLowUrgency": "Low Urgency",
+  "@automationsGmailLowUrgency": {
+    "description": "Automations Gmail tab: urgency chip for low urgency"
+  },
+  "automationsGmailAiSummary": "AI Summary",
+  "@automationsGmailAiSummary": {
+    "description": "Automations Gmail tab: heading over the AI summary"
+  },
+  "automationsGmailActionItems": "Action Items Extracted",
+  "@automationsGmailActionItems": {
+    "description": "Automations Gmail tab: heading over extracted action items"
+  },
+  "automationsGmailSuggestedDeadline": "Suggested Deadline: {date}",
+  "@automationsGmailSuggestedDeadline": {
+    "description": "Automations Gmail tab: suggested due date of an action item; date is already formatted",
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "automationsGmailImportTask": "Import as AURA Task",
+  "@automationsGmailImportTask": {
+    "description": "Automations Gmail tab: tooltip to import an action item as a task"
+  },
+  "automationsGmailImportedTask": "Imported task: {title}",
+  "@automationsGmailImportedTask": {
+    "description": "Automations Gmail tab: snackbar after importing a task",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "automationsGmailSuggestedEvent": "Suggested Calendar Event",
+  "@automationsGmailSuggestedEvent": {
+    "description": "Automations Gmail tab: heading over a suggested calendar event"
+  },
+  "automationsGmailScheduleEvent": "Schedule Event",
+  "@automationsGmailScheduleEvent": {
+    "description": "Automations Gmail tab: tooltip to add the suggested event to the calendar"
+  },
+  "automationsGmailScheduledEvent": "Scheduled event: {title}",
+  "@automationsGmailScheduledEvent": {
+    "description": "Automations Gmail tab: snackbar after adding the event",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "automationsGmailFetchError": "Gmail Fetch Error: {error}",
+  "@automationsGmailFetchError": {
+    "description": "Automations Gmail tab: snackbar when fetching emails failed",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "automationsGmailAnalysisFailed": "Analysis failed: {error}",
+  "@automationsGmailAnalysisFailed": {
+    "description": "Automations Gmail tab: snackbar when analysing an email failed",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "automationsGmailNoSubject": "No Subject",
+  "@automationsGmailNoSubject": {
+    "description": "Automations Gmail tab: placeholder for an email with no subject"
+  },
+  "automationsGmailUnknownSender": "Unknown Sender",
+  "@automationsGmailUnknownSender": {
+    "description": "Automations Gmail tab: placeholder for an email with no sender"
+  },
+  "automationsGithubSetup": "GitHub Integration Setup",
+  "@automationsGithubSetup": {
+    "description": "Automations GitHub tab: card title"
+  },
+  "automationsGithubPatLabel": "GitHub PAT (Personal Access Token)",
+  "@automationsGithubPatLabel": {
+    "description": "Automations GitHub tab: label of the personal access token field"
+  },
+  "automationsGithubRepoLabel": "Repository Path",
+  "@automationsGithubRepoLabel": {
+    "description": "Automations GitHub tab: label of the owner/repo field"
+  },
+  "automationsGithubLoadIssues": "Load Repo Issues",
+  "@automationsGithubLoadIssues": {
+    "description": "Automations GitHub tab: button to load open issues"
+  },
+  "automationsGithubLoading": "Loading GitHub Board...",
+  "@automationsGithubLoading": {
+    "description": "Automations GitHub tab: loading text"
+  },
+  "automationsGithubEmpty": "No open issues loaded.",
+  "@automationsGithubEmpty": {
+    "description": "Automations GitHub tab: empty state"
+  },
+  "automationsGithubExtractSubtasks": "Extract Subtasks",
+  "@automationsGithubExtractSubtasks": {
+    "description": "Automations GitHub tab: button to analyse an issue into subtasks"
+  },
+  "automationsGithubComplexity": "Complexity: {complexity}",
+  "@automationsGithubComplexity": {
+    "description": "Automations GitHub tab: complexity chip; value comes from the server",
+    "placeholders": {
+      "complexity": {
+        "type": "String"
+      }
+    }
+  },
+  "automationsGithubPriority": "Priority: {priority}",
+  "@automationsGithubPriority": {
+    "description": "Automations GitHub tab: priority chip; value comes from the server",
+    "placeholders": {
+      "priority": {
+        "type": "String"
+      }
+    }
+  },
+  "automationsGithubIssueSummary": "Issue Summary",
+  "@automationsGithubIssueSummary": {
+    "description": "Automations GitHub tab: heading over the issue summary"
+  },
+  "automationsGithubCodingTasks": "Extracted Coding Tasks",
+  "@automationsGithubCodingTasks": {
+    "description": "Automations GitHub tab: heading over extracted coding tasks"
+  },
+  "automationsGithubImported": "Imported coding task!",
+  "@automationsGithubImported": {
+    "description": "Automations GitHub tab: snackbar after importing a coding task"
+  },
+  "automationsGithubMissingInput": "Please provide both GitHub PAT and Repository Path.",
+  "@automationsGithubMissingInput": {
+    "description": "Automations GitHub tab: validation error when the token is missing"
+  },
+  "automationsGithubRepoFormat": "Repository Path must be in 'owner/repo' format (e.g., owner/AURA-AI).",
+  "@automationsGithubRepoFormat": {
+    "description": "Automations GitHub tab: validation error for a bad repository path. The translation must keep the literal text owner/repo (the snackbar colour depends on it)"
+  },
+  "automationsGithubFetchFailed": "GitHub fetch failed: {error}",
+  "@automationsGithubFetchFailed": {
+    "description": "Automations GitHub tab: snackbar when loading issues failed",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "automationsGithubAnalysisFailed": "Issue analysis failed: {error}",
+  "@automationsGithubAnalysisFailed": {
+    "description": "Automations GitHub tab: snackbar when analysing an issue failed",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "automationsDriveUnavailableTitle": "Google Drive Workspace Creation Unavailable",
+  "@automationsDriveUnavailableTitle": {
+    "description": "Automations Drive tab: title shown for a mock developer profile"
+  },
+  "automationsDriveUnavailableBody": "You are signed in via a mock developer profile. Drive workspace directories can only be generated when logged in with a real Google Account.",
+  "@automationsDriveUnavailableBody": {
+    "description": "Automations Drive tab: body shown for a mock developer profile"
+  },
+  "automationsDriveGeneratorTitle": "Drive Project Workspace Generator",
+  "@automationsDriveGeneratorTitle": {
+    "description": "Automations Drive tab: card title"
+  },
+  "automationsDriveGeneratorBody": "Enter project details. AURA will generate a Google Drive folder and populate it with a structured Markdown project outline document.",
+  "@automationsDriveGeneratorBody": {
+    "description": "Automations Drive tab: card description"
+  },
+  "automationsDriveProjectName": "Project Name",
+  "@automationsDriveProjectName": {
+    "description": "Automations Drive tab: project name field label"
+  },
+  "automationsDriveProjectNameHint": "e.g. Freelance Mobile App",
+  "@automationsDriveProjectNameHint": {
+    "description": "Automations Drive tab: project name field hint"
+  },
+  "automationsDriveProjectDescription": "Project Description / Outline",
+  "@automationsDriveProjectDescription": {
+    "description": "Automations Drive tab: project description field label"
+  },
+  "automationsDriveProjectDescriptionHint": "Describe details to generate template plan",
+  "@automationsDriveProjectDescriptionHint": {
+    "description": "Automations Drive tab: project description field hint"
+  },
+  "automationsDriveGenerate": "Generate Drive Workspace",
+  "@automationsDriveGenerate": {
+    "description": "Automations Drive tab: button to create the Drive workspace"
+  },
+  "automationsDriveConsole": "Automation Activity Console",
+  "@automationsDriveConsole": {
+    "description": "Automations Drive tab: title over the progress log"
+  },
+  "automationsDriveInitializing": "Initializing project workspace folders...",
+  "@automationsDriveInitializing": {
+    "description": "Automations Drive tab: first progress log line"
+  },
+  "automationsDriveFailed": "Workspace creation failed: {error}",
+  "@automationsDriveFailed": {
+    "description": "Automations Drive tab: progress log line when creation failed",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "automationsDriveRequestingPermissions": "Requesting Drive storage permissions...",
+  "@automationsDriveRequestingPermissions": {
+    "description": "Automations Drive tab: progress log line while asking for Drive access"
+  },
+  "automationsDriveConnected": "Established connection with Google Drive.",
+  "@automationsDriveConnected": {
+    "description": "Automations Drive tab: progress log line after connecting to Drive"
+  },
+  "automationsDriveCreatedFolder": "Created Folder: {name}",
+  "@automationsDriveCreatedFolder": {
+    "description": "Automations Drive tab: progress log line after the folder is created; name is the folder name as created on Drive",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "automationsDriveCreatedDocument": "Created document: {name}",
+  "@automationsDriveCreatedDocument": {
+    "description": "Automations Drive tab: progress log line after the plan document is created; name is the document name as created on Drive",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "automationsDriveDone": "Drive Workspace generated successfully!",
+  "@automationsDriveDone": {
+    "description": "Automations Drive tab: last progress log line on success"
+  },
+  "financeTitle": "Finance Ledger",
+  "@financeTitle": {
+    "description": "Finance page: title"
+  },
+  "financeSubtitle": "Track incomes, expenses, and analyze financial distributions",
+  "@financeSubtitle": {
+    "description": "Finance page: subtitle"
+  },
+  "financeBalance": "Balance",
+  "@financeBalance": {
+    "description": "Finance summary card: balance title"
+  },
+  "financeIncome": "Income",
+  "@financeIncome": {
+    "description": "Finance: income label (summary card, chart axis, type chip)"
+  },
+  "financeExpenses": "Expenses",
+  "@financeExpenses": {
+    "description": "Finance summary card: total expenses title"
+  },
+  "financeExpensesByCategory": "Expenses by Category",
+  "@financeExpensesByCategory": {
+    "description": "Finance charts: pie chart title"
+  },
+  "financeNoExpenses": "No expenses logged",
+  "@financeNoExpenses": {
+    "description": "Finance charts: empty pie chart"
+  },
+  "financeIncomeVsExpense": "Income vs Expense",
+  "@financeIncomeVsExpense": {
+    "description": "Finance charts: bar chart title"
+  },
+  "financeExpense": "Expense",
+  "@financeExpense": {
+    "description": "Finance: expense label (chart axis, type chip)"
+  },
+  "financeLogTransaction": "Log Transaction",
+  "@financeLogTransaction": {
+    "description": "Finance form: card title"
+  },
+  "financeAmountLabel": "Amount ({currency})",
+  "@financeAmountLabel": {
+    "description": "Finance form: amount field label; currency is the currency symbol",
+    "placeholders": {
+      "currency": {
+        "type": "String"
+      }
+    }
+  },
+  "financeCategory": "Category",
+  "@financeCategory": {
+    "description": "Finance form: category field label"
+  },
+  "financeCategoryFood": "Food",
+  "@financeCategoryFood": {
+    "description": "Finance category name (display only; stored value stays English)"
+  },
+  "financeCategoryStudies": "Studies",
+  "@financeCategoryStudies": {
+    "description": "Finance category name (display only; stored value stays English)"
+  },
+  "financeCategoryFreelance": "Freelance",
+  "@financeCategoryFreelance": {
+    "description": "Finance category name (display only; stored value stays English)"
+  },
+  "financeCategoryHousing": "Housing",
+  "@financeCategoryHousing": {
+    "description": "Finance category name (display only; stored value stays English)"
+  },
+  "financeCategoryEntertainment": "Entertainment",
+  "@financeCategoryEntertainment": {
+    "description": "Finance category name (display only; stored value stays English)"
+  },
+  "financeCategoryUtilities": "Utilities",
+  "@financeCategoryUtilities": {
+    "description": "Finance category name (display only; stored value stays English)"
+  },
+  "financeCategoryTransport": "Transport",
+  "@financeCategoryTransport": {
+    "description": "Finance category name (display only; stored value stays English)"
+  },
+  "financeCategoryOther": "Other",
+  "@financeCategoryOther": {
+    "description": "Finance category name (display only; stored value stays English)"
+  },
+  "financeDescriptionLabel": "Description (Optional)",
+  "@financeDescriptionLabel": {
+    "description": "Finance form: description field label"
+  },
+  "financeDescriptionHint": "e.g. Weekly grocery shopping",
+  "@financeDescriptionHint": {
+    "description": "Finance form: description field hint"
+  },
+  "financeDate": "Date",
+  "@financeDate": {
+    "description": "Finance form: date row title"
+  },
+  "financeLogged": "Transaction logged successfully!",
+  "@financeLogged": {
+    "description": "Finance form: snackbar after saving a transaction"
+  },
+  "financeSubmit": "Submit Ledger Entry",
+  "@financeSubmit": {
+    "description": "Finance form: submit button"
+  },
+  "financeInvalidAmount": "Please enter a valid positive amount.",
+  "@financeInvalidAmount": {
+    "description": "Finance form: validation error for the amount"
+  },
+  "financeChooseCategory": "Please choose a category.",
+  "@financeChooseCategory": {
+    "description": "Finance form: validation error when no category is chosen"
+  },
+  "financeRecentActivities": "Recent Activities",
+  "@financeRecentActivities": {
+    "description": "Finance history: card title"
+  },
+  "financeNoActivities": "No activities recorded yet",
+  "@financeNoActivities": {
+    "description": "Finance history: empty state"
+  },
+  "financeDeletedEntry": "Deleted entry: {entry}",
+  "@financeDeletedEntry": {
+    "description": "Finance history: snackbar after swiping a transaction away; entry is its description or category",
+    "placeholders": {
+      "entry": {
+        "type": "String"
+      }
+    }
+  },
+  "ideClosePanel": "Close panel",
+  "@ideClosePanel": {
+    "description": "Desktop IDE shell: screen-reader label of the scrim behind a floating panel"
+  },
+  "ideActivityExplorer": "Explorer",
+  "@ideActivityExplorer": {
+    "description": "Desktop IDE activity bar: Explorer item label"
+  },
+  "ideActivityExplorerTooltip": "Explorer (Ctrl+B)",
+  "@ideActivityExplorerTooltip": {
+    "description": "Desktop IDE activity bar: Explorer item tooltip with its shortcut"
+  },
+  "ideActivityGoToFile": "Go to File",
+  "@ideActivityGoToFile": {
+    "description": "Desktop IDE activity bar: Quick Open item label"
+  },
+  "ideActivityGoToFileTooltip": "Go to File (Ctrl+P)",
+  "@ideActivityGoToFileTooltip": {
+    "description": "Desktop IDE activity bar: Quick Open item tooltip with its shortcut"
+  },
+  "ideActivitySourceControl": "Source Control",
+  "@ideActivitySourceControl": {
+    "description": "Desktop IDE activity bar: Source Control (Git) item label and tooltip"
+  },
+  "ideActivityAgents": "AURA Agents",
+  "@ideActivityAgents": {
+    "description": "Desktop IDE activity bar: AI agent panel item label"
+  },
+  "ideActivityAgentsTooltip": "AURA Agents (Ctrl+J)",
+  "@ideActivityAgentsTooltip": {
+    "description": "Desktop IDE activity bar: AI agent panel item tooltip with its shortcut"
+  },
+  "ideActivityControlCenterTooltip": "AURA Control Center",
+  "@ideActivityControlCenterTooltip": {
+    "description": "Desktop IDE activity bar: Control Center item tooltip"
+  },
+  "ideActivityPanel": "Panel",
+  "@ideActivityPanel": {
+    "description": "Desktop IDE activity bar: bottom panel toggle label"
+  },
+  "ideActivityPanelTooltip": "Terminal, Output & Problems (Ctrl+Shift+J)",
+  "@ideActivityPanelTooltip": {
+    "description": "Desktop IDE activity bar: bottom panel toggle tooltip with its shortcut"
+  },
+  "ideActivityPanelProblems": "Panel, {count, plural, =1{1 problem} other{{count} problems}}",
+  "@ideActivityPanelProblems": {
+    "description": "Desktop IDE activity bar: screen-reader label of the bottom panel toggle when it carries a problem-count badge",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ideBottomTerminal": "Terminal",
+  "@ideBottomTerminal": {
+    "description": "Desktop IDE bottom panel: Terminal tab"
+  },
+  "ideBottomOutput": "Output",
+  "@ideBottomOutput": {
+    "description": "Desktop IDE bottom panel: Output tab"
+  },
+  "ideBottomProblemsCount": "Problems ({count})",
+  "@ideBottomProblemsCount": {
+    "description": "Desktop IDE bottom panel: Problems tab with the number of problems",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ideBottomProblems": "Problems",
+  "@ideBottomProblems": {
+    "description": "Desktop IDE bottom panel: Problems tab with no problems"
+  },
+  "ideBottomDebugConsole": "Debug Console",
+  "@ideBottomDebugConsole": {
+    "description": "Desktop IDE bottom panel: Debug Console tab"
+  },
+  "ideCmdNoWorkspace": "No workspace is open",
+  "@ideCmdNoWorkspace": {
+    "description": "Desktop IDE command palette: why a command is disabled"
+  },
+  "ideCmdNoFileOpen": "No file is open",
+  "@ideCmdNoFileOpen": {
+    "description": "Desktop IDE command palette: why a command is disabled"
+  },
+  "ideCmdGroupFile": "File",
+  "@ideCmdGroupFile": {
+    "description": "Desktop IDE command palette: group heading for file commands"
+  },
+  "ideCmdGroupView": "View",
+  "@ideCmdGroupView": {
+    "description": "Desktop IDE command palette: group heading for layout commands"
+  },
+  "ideCmdGoToFile": "Go to File...",
+  "@ideCmdGoToFile": {
+    "description": "Desktop IDE command palette: Quick Open command"
+  },
+  "ideCmdSaveFile": "Save File",
+  "@ideCmdSaveFile": {
+    "description": "Desktop IDE command palette: save command"
+  },
+  "ideCmdNoUnsavedChanges": "No unsaved changes",
+  "@ideCmdNoUnsavedChanges": {
+    "description": "Desktop IDE command palette: why Save File is disabled"
+  },
+  "ideCmdCloseEditor": "Close Editor",
+  "@ideCmdCloseEditor": {
+    "description": "Desktop IDE command palette: close the active tab"
+  },
+  "ideCmdShowExplorer": "Show Explorer",
+  "@ideCmdShowExplorer": {
+    "description": "Desktop IDE command palette"
+  },
+  "ideCmdShowSourceControl": "Show Source Control",
+  "@ideCmdShowSourceControl": {
+    "description": "Desktop IDE command palette"
+  },
+  "ideCmdShowControlCenter": "Show AURA Control Center",
+  "@ideCmdShowControlCenter": {
+    "description": "Desktop IDE command palette"
+  },
+  "ideCmdHideSidebar": "Hide Side Bar",
+  "@ideCmdHideSidebar": {
+    "description": "Desktop IDE command palette: toggle the primary sidebar (currently shown)"
+  },
+  "ideCmdShowSidebar": "Show Side Bar",
+  "@ideCmdShowSidebar": {
+    "description": "Desktop IDE command palette: toggle the primary sidebar (currently hidden)"
+  },
+  "ideCmdHidePanel": "Hide Panel",
+  "@ideCmdHidePanel": {
+    "description": "Desktop IDE command palette: toggle the bottom panel (currently shown)"
+  },
+  "ideCmdShowPanel": "Show Panel",
+  "@ideCmdShowPanel": {
+    "description": "Desktop IDE command palette: toggle the bottom panel (currently hidden)"
+  },
+  "ideCmdFocusTerminal": "Focus Terminal",
+  "@ideCmdFocusTerminal": {
+    "description": "Desktop IDE command palette: open the panel and focus the terminal"
+  },
+  "ideCmdHideAgent": "Hide AURA Agent",
+  "@ideCmdHideAgent": {
+    "description": "Desktop IDE command palette: toggle the agent panel (currently shown)"
+  },
+  "ideCmdShowAgent": "Show AURA Agent",
+  "@ideCmdShowAgent": {
+    "description": "Desktop IDE command palette: toggle the agent panel (currently hidden)"
+  },
+  "ideCmdInlineCompletion": "Request Inline Completion",
+  "@ideCmdInlineCompletion": {
+    "description": "Desktop IDE command palette: ask AURA for an inline code completion at the cursor"
+  },
+  "ideCmdRefreshSourceControl": "Refresh Source Control",
+  "@ideCmdRefreshSourceControl": {
+    "description": "Desktop IDE command palette: refresh Git status"
+  },
+  "ideCmdLeaveIde": "Leave IDE (Open Today)",
+  "@ideCmdLeaveIde": {
+    "description": "Desktop IDE command palette: go back to AURA's Today page"
+  },
+  "ideStatusNoBranch": "No branch",
+  "@ideStatusNoBranch": {
+    "description": "Desktop IDE status bar: no Git branch (no repo yet, or detached HEAD)"
+  },
+  "ideStatusHostNotRunning": "Host Not Running",
+  "@ideStatusHostNotRunning": {
+    "description": "Desktop IDE status bar: host daemon unreachable"
+  },
+  "ideStatusHostNotPaired": "Host Not Paired",
+  "@ideStatusHostNotPaired": {
+    "description": "Desktop IDE status bar: host daemon running but not paired"
+  },
+  "ideStatusHostOtherServer": "Host paired to a different server -- re-pair",
+  "@ideStatusHostOtherServer": {
+    "description": "Desktop IDE status bar: host daemon paired to another backend"
+  },
+  "ideStatusHostConnected": "Host Connected",
+  "@ideStatusHostConnected": {
+    "description": "Desktop IDE status bar: host daemon connected"
+  },
+  "ideStatusReconnecting": "Reconnecting to server...",
+  "@ideStatusReconnecting": {
+    "description": "Desktop IDE status bar: host daemon reconnecting to the backend"
+  },
+  "ideStatusHostUnknown": "Host Status Unknown (update aura_hostd)",
+  "@ideStatusHostUnknown": {
+    "description": "Desktop IDE status bar: daemon too old to report its connection"
+  },
+  "ideStatusPendingApprovals": "{count, plural, =1{1 pending approval} other{{count} pending approvals}}",
+  "@ideStatusPendingApprovals": {
+    "description": "Desktop IDE status bar: number of agent actions waiting for approval",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ideStatusRolledBackTooltip": "This version was rolled back to {version}",
+  "@ideStatusRolledBackTooltip": {
+    "description": "Desktop IDE status bar: tooltip when the update channel was rolled back",
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "ideStatusUpdateAvailableTooltip": "AURA {version} is available",
+  "@ideStatusUpdateAvailableTooltip": {
+    "description": "Desktop IDE status bar: tooltip when an update is available",
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "ideStatusRollBackTo": "Roll back to {version}",
+  "@ideStatusRollBackTo": {
+    "description": "Desktop IDE status bar: rollback offer",
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "ideStatusUpdateTo": "Update to {version}",
+  "@ideStatusUpdateTo": {
+    "description": "Desktop IDE status bar: update offer",
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "ideStatusLineColumn": "Ln {line}, Col {column}",
+  "@ideStatusLineColumn": {
+    "description": "Desktop IDE status bar: cursor line and column",
+    "placeholders": {
+      "line": {
+        "type": "int"
+      },
+      "column": {
+        "type": "int"
+      }
+    }
+  },
+  "ideStatusLineEndingMixed": "Mixed",
+  "@ideStatusLineEndingMixed": {
+    "description": "Desktop IDE status bar: the file mixes LF/CRLF/CR line endings"
+  },
+  "ideUpdateRollbackTitle": "Roll back to AURA {version}?",
+  "@ideUpdateRollbackTitle": {
+    "description": "Desktop update dialog title (rollback)",
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "ideUpdateTitle": "Update to AURA {version}?",
+  "@ideUpdateTitle": {
+    "description": "Desktop update dialog title",
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "ideUpdateWindowsRollbackBody": "This version has been rolled back. AURA will close, install {version} and reopen. Unsaved changes are kept and restored.",
+  "@ideUpdateWindowsRollbackBody": {
+    "description": "Desktop update dialog body on Windows (rollback)",
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "ideUpdateWindowsBody": "AURA will close, install {version} and reopen. Unsaved changes are kept and restored.",
+  "@ideUpdateWindowsBody": {
+    "description": "Desktop update dialog body on Windows",
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "ideUpdateLinuxBody": "Download AURA {version} for Linux in your browser.",
+  "@ideUpdateLinuxBody": {
+    "description": "Desktop update dialog body on Linux",
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "ideNotNow": "Not now",
+  "@ideNotNow": {
+    "description": "Desktop IDE: decline button in the update and grant-access dialogs"
+  },
+  "ideUpdateInstallRestart": "Install and restart",
+  "@ideUpdateInstallRestart": {
+    "description": "Desktop update dialog: confirm button on Windows"
+  },
+  "ideUpdateDownload": "Download",
+  "@ideUpdateDownload": {
+    "description": "Desktop update dialog: confirm button on Linux"
+  },
+  "ideUpdateDownloading": "Downloading the update...",
+  "@ideUpdateDownloading": {
+    "description": "Desktop update: progress dialog"
+  },
+  "ideUpdateChecksumFailed": "The download did not match the release checksum and was deleted. Nothing was installed.",
+  "@ideUpdateChecksumFailed": {
+    "description": "Desktop update: error snackbar when the installer fails its checksum"
+  },
+  "ideUpdateFailed": "Could not update: {error}",
+  "@ideUpdateFailed": {
+    "description": "Desktop update: error snackbar",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "idePendingApprovalsTitle": "Pending Approvals",
+  "@idePendingApprovalsTitle": {
+    "description": "Desktop IDE: title of the dialog listing agent actions waiting for approval"
+  },
+  "ideApprovalFilesInRoot": "{count, plural, =1{1 file in {root}} other{{count} files in {root}}}",
+  "@ideApprovalFilesInRoot": {
+    "description": "Desktop IDE approvals dialog: how many files a pending write touches, and in which workspace root",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "root": {
+        "type": "String"
+      }
+    }
+  },
+  "ideApprovalFiles": "{count, plural, =1{1 file} other{{count} files}}",
+  "@ideApprovalFiles": {
+    "description": "Desktop IDE approvals dialog: how many files a pending write touches",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ideApprove": "Approve",
+  "@ideApprove": {
+    "description": "Desktop IDE approvals dialog: approve button"
+  },
+  "explorerGrantTitle": "Grant workspace to hostd?",
+  "@explorerGrantTitle": {
+    "description": "Explorer / workspace pages: dialog title asking to grant the folder to the host daemon"
+  },
+  "explorerGrantBody": "This allows the AURA agent to read and write files in \"{root}\".",
+  "@explorerGrantBody": {
+    "description": "Explorer: grant-access dialog body",
+    "placeholders": {
+      "root": {
+        "type": "String"
+      }
+    }
+  },
+  "explorerGrant": "Grant",
+  "@explorerGrant": {
+    "description": "Explorer / workspace pages: confirm button and inline link that grants folder access to the host daemon"
+  },
+  "explorerAccessGranted": "Workspace access granted",
+  "@explorerAccessGranted": {
+    "description": "Explorer: snackbar after granting access"
+  },
+  "explorerGrantFailed": "Could not grant root: {error}",
+  "@explorerGrantFailed": {
+    "description": "Explorer / workspace pages: error snackbar when granting a root fails",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "explorerHostOffline": "Host offline",
+  "@explorerHostOffline": {
+    "description": "Explorer toolbar: badge when the host daemon is not connected"
+  },
+  "explorerNoWorkspaceTitle": "No workspace open",
+  "@explorerNoWorkspaceTitle": {
+    "description": "Explorer: empty state title"
+  },
+  "explorerNoWorkspaceMessage": "Open a folder from the welcome page to browse its files here.",
+  "@explorerNoWorkspaceMessage": {
+    "description": "Explorer: empty state message"
+  },
+  "explorerAccessRequiredTitle": "Workspace access required",
+  "@explorerAccessRequiredTitle": {
+    "description": "Explorer: error title when the folder is not granted to the host daemon"
+  },
+  "explorerLoadFailedTitle": "Failed to load directory",
+  "@explorerLoadFailedTitle": {
+    "description": "Explorer: error title when listing a folder fails"
+  },
+  "explorerAccessRequiredBody": "This folder is outside every root granted to the host daemon. Grant access to browse it here and let the AURA agent work in it.",
+  "@explorerAccessRequiredBody": {
+    "description": "Explorer: error body when the folder is not granted"
+  },
+  "explorerGrantAccess": "Grant Access",
+  "@explorerGrantAccess": {
+    "description": "Explorer: button that grants the workspace root"
+  },
+  "explorerOutsideGrantedRoots": "This folder is outside every root granted to the host daemon.",
+  "@explorerOutsideGrantedRoots": {
+    "description": "Explorer listing error: folder not granted"
+  },
+  "explorerHostUnreachable": "The host daemon is unreachable.",
+  "@explorerHostUnreachable": {
+    "description": "Explorer / host file browser listing error: daemon unreachable"
+  },
+  "explorerDirectoryNotFound": "Directory not found",
+  "@explorerDirectoryNotFound": {
+    "description": "Explorer listing error"
+  },
+  "explorerDeleteFolderTitle": "Delete folder?",
+  "@explorerDeleteFolderTitle": {
+    "description": "Explorer: delete confirmation title (folder)"
+  },
+  "explorerDeleteFileTitle": "Delete file?",
+  "@explorerDeleteFileTitle": {
+    "description": "Explorer: delete confirmation title (file)"
+  },
+  "explorerDeleteFolderBody": "\"{name}\" and everything inside it will be permanently deleted.",
+  "@explorerDeleteFolderBody": {
+    "description": "Explorer: delete confirmation body (folder)",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "explorerDeleteFileBody": "\"{name}\" will be permanently deleted.",
+  "@explorerDeleteFileBody": {
+    "description": "Explorer: delete confirmation body (file)",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "explorerRenameFolderTitle": "Rename folder",
+  "@explorerRenameFolderTitle": {
+    "description": "Explorer: rename dialog title (folder)"
+  },
+  "explorerRenameFileTitle": "Rename file",
+  "@explorerRenameFileTitle": {
+    "description": "Explorer: rename dialog title (file)"
+  },
+  "explorerNewName": "New name",
+  "@explorerNewName": {
+    "description": "Explorer: rename dialog field label"
+  },
+  "explorerRename": "Rename",
+  "@explorerRename": {
+    "description": "Explorer: rename dialog button and context-menu item"
+  },
+  "explorerRenameFailed": "Could not rename: {error}",
+  "@explorerRenameFailed": {
+    "description": "Explorer: rename error snackbar",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "explorerDeleteFailed": "Could not delete: {error}",
+  "@explorerDeleteFailed": {
+    "description": "Explorer: delete error snackbar",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "explorerNewFileTitle": "New file",
+  "@explorerNewFileTitle": {
+    "description": "Explorer: new-file dialog title"
+  },
+  "explorerFileName": "File name",
+  "@explorerFileName": {
+    "description": "Explorer: new-file dialog field label"
+  },
+  "explorerCreate": "Create",
+  "@explorerCreate": {
+    "description": "Explorer / Git panel: create button in name dialogs"
+  },
+  "explorerCreateFileFailed": "Could not create file: {error}",
+  "@explorerCreateFileFailed": {
+    "description": "Explorer: new-file error snackbar",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "explorerNewFolderTitle": "New folder",
+  "@explorerNewFolderTitle": {
+    "description": "Explorer: new-folder dialog title"
+  },
+  "explorerFolderName": "Folder name",
+  "@explorerFolderName": {
+    "description": "Explorer: new-folder dialog field label"
+  },
+  "explorerCreateFolderFailed": "Could not create folder: {error}",
+  "@explorerCreateFolderFailed": {
+    "description": "Explorer: new-folder error snackbar",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "explorerMenuOpen": "Open",
+  "@explorerMenuOpen": {
+    "description": "Explorer context menu: open file"
+  },
+  "explorerMenuCopyPath": "Copy path",
+  "@explorerMenuCopyPath": {
+    "description": "Explorer context menu"
+  },
+  "explorerMenuCopyRelativePath": "Copy relative path",
+  "@explorerMenuCopyRelativePath": {
+    "description": "Explorer context menu"
+  },
+  "explorerMenuReveal": "Reveal in filesystem",
+  "@explorerMenuReveal": {
+    "description": "Explorer context menu: show in the OS file manager"
+  },
+  "explorerMenuOpenInTerminal": "Open in Terminal",
+  "@explorerMenuOpenInTerminal": {
+    "description": "Explorer context menu"
+  },
+  "explorerMenuCollapse": "Collapse",
+  "@explorerMenuCollapse": {
+    "description": "Explorer context menu: collapse folder"
+  },
+  "explorerMenuExpand": "Expand",
+  "@explorerMenuExpand": {
+    "description": "Explorer context menu: expand folder"
+  },
+  "explorerMenuNewFile": "New File",
+  "@explorerMenuNewFile": {
+    "description": "Explorer context menu"
+  },
+  "explorerMenuNewFolder": "New Folder",
+  "@explorerMenuNewFolder": {
+    "description": "Explorer context menu"
+  },
+  "explorerAccessRequired": "Access required",
+  "@explorerAccessRequired": {
+    "description": "Explorer tree: subfolder not granted to the host daemon"
+  },
+  "explorerLoadFailed": "Failed to load",
+  "@explorerLoadFailed": {
+    "description": "Explorer tree: subfolder listing failed"
+  },
+  "explorerEmpty": "Empty",
+  "@explorerEmpty": {
+    "description": "Explorer tree: empty folder"
+  },
+  "explorerPathCopied": "Path copied",
+  "@explorerPathCopied": {
+    "description": "Explorer: snackbar after copying a path"
+  },
+  "explorerRevealWindowsOnly": "Reveal in filesystem is only supported on Windows for now",
+  "@explorerRevealWindowsOnly": {
+    "description": "Explorer: snackbar on non-Windows platforms"
+  },
+  "explorerRevealFailed": "Could not open filesystem: {error}",
+  "@explorerRevealFailed": {
+    "description": "Explorer: error snackbar",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "gitDiffTruncated": "Diff truncated -- view the full diff in a terminal.",
+  "@gitDiffTruncated": {
+    "description": "Git diff page: warning when the diff was cut short"
+  },
+  "gitMergeDialogTitle": "Merge branch into current",
+  "@gitMergeDialogTitle": {
+    "description": "Git panel: merge branch picker title"
+  },
+  "gitRemoteBranch": "{name} (remote)",
+  "@gitRemoteBranch": {
+    "description": "Git panel: remote-tracking branch entry",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "gitCreateBranchTitle": "Create branch",
+  "@gitCreateBranchTitle": {
+    "description": "Git panel: create-branch dialog title"
+  },
+  "gitBranchNameHint": "Branch name",
+  "@gitBranchNameHint": {
+    "description": "Git panel: create-branch dialog field hint"
+  },
+  "gitNoWorkspace": "Open a workspace to use Source Control.",
+  "@gitNoWorkspace": {
+    "description": "Git panel: no workspace open"
+  },
+  "gitGrantRequired": "Grant this workspace to the host daemon to use Source Control.",
+  "@gitGrantRequired": {
+    "description": "Git panel: workspace not granted to the host daemon"
+  },
+  "gitFetchTooltip": "Fetch from all remotes",
+  "@gitFetchTooltip": {
+    "description": "Git panel: fetch button tooltip"
+  },
+  "gitPullTooltip": "Pull (fast-forward only)",
+  "@gitPullTooltip": {
+    "description": "Git panel: pull button tooltip"
+  },
+  "gitPushTooltip": "Push current branch to its upstream",
+  "@gitPushTooltip": {
+    "description": "Git panel: push button tooltip"
+  },
+  "gitMerge": "Merge",
+  "@gitMerge": {
+    "description": "Git panel: merge button"
+  },
+  "gitBranch": "Branch",
+  "@gitBranch": {
+    "description": "Git panel: new-branch button"
+  },
+  "gitCommitMessageHint": "Commit message",
+  "@gitCommitMessageHint": {
+    "description": "Git panel: commit message field hint"
+  },
+  "gitWorking": "Working...",
+  "@gitWorking": {
+    "description": "Git panel: commit button while an operation runs"
+  },
+  "gitCommit": "Commit",
+  "@gitCommit": {
+    "description": "Git panel: commit button"
+  },
+  "gitHistory": "History",
+  "@gitHistory": {
+    "description": "Git panel: commit history section"
+  },
+  "gitNoCommits": "No commits loaded.",
+  "@gitNoCommits": {
+    "description": "Git panel: empty commit history"
+  },
+  "gitStagedChanges": "Staged Changes",
+  "@gitStagedChanges": {
+    "description": "Git panel: staged files section title"
+  },
+  "gitUnstageAll": "Unstage All",
+  "@gitUnstageAll": {
+    "description": "Git panel: unstage every staged file"
+  },
+  "gitUnstage": "Unstage",
+  "@gitUnstage": {
+    "description": "Git panel: unstage one file (tooltip)"
+  },
+  "gitChanges": "Changes",
+  "@gitChanges": {
+    "description": "Git panel: unstaged files section title"
+  },
+  "gitStageAll": "Stage All",
+  "@gitStageAll": {
+    "description": "Git panel: stage every changed file"
+  },
+  "gitStage": "Stage",
+  "@gitStage": {
+    "description": "Git panel: stage one file (tooltip)"
+  },
+  "gitNoChanges": "No changes.",
+  "@gitNoChanges": {
+    "description": "Git panel: clean working tree"
+  },
+  "gitDetachedHead": "(detached HEAD)",
+  "@gitDetachedHead": {
+    "description": "Git panel: branch selector when HEAD is detached"
+  },
+  "gitConflictCount": "{count, plural, =1{1 file has merge conflicts} other{{count} files have merge conflicts}}",
+  "@gitConflictCount": {
+    "description": "Git panel: conflict banner",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "gitAbortMerge": "Abort Merge",
+  "@gitAbortMerge": {
+    "description": "Git panel: conflict banner button"
+  },
+  "gitMarkResolved": "Mark Resolved",
+  "@gitMarkResolved": {
+    "description": "Git panel: stage a conflicted file as resolved"
+  },
+  "gitNothingStaged": "Nothing is staged to commit.",
+  "@gitNothingStaged": {
+    "description": "Git panel error: commit with nothing staged"
+  },
+  "gitCheckoutOverwrite": "Switching branches would overwrite local changes.",
+  "@gitCheckoutOverwrite": {
+    "description": "Git panel error: checkout blocked by local changes"
+  },
+  "gitCheckoutOverwriteIn": "Switching branches would overwrite local changes in: {files}",
+  "@gitCheckoutOverwriteIn": {
+    "description": "Git panel error: checkout blocked by local changes in the listed files",
+    "placeholders": {
+      "files": {
+        "type": "String"
+      }
+    }
+  },
+  "gitNoUpstream": "The current branch has no upstream set.",
+  "@gitNoUpstream": {
+    "description": "Git panel error (daemon reason no_upstream)"
+  },
+  "gitDiverged": "The branch has diverged -- pull (or push) cannot fast-forward.",
+  "@gitDiverged": {
+    "description": "Git panel error (daemon reason diverged)"
+  },
+  "gitLocalChangesOverwritten": "Local changes would be overwritten.",
+  "@gitLocalChangesOverwritten": {
+    "description": "Git panel error (daemon reason local_changes_would_be_overwritten)"
+  },
+  "gitLocalChangesOverwrittenIn": "Local changes would be overwritten in: {files}",
+  "@gitLocalChangesOverwrittenIn": {
+    "description": "Git panel error (local_changes_would_be_overwritten) with the affected files",
+    "placeholders": {
+      "files": {
+        "type": "String"
+      }
+    }
+  },
+  "gitRemoteSyncFailed": "Remote sync failed.",
+  "@gitRemoteSyncFailed": {
+    "description": "Git panel error: any other pull/push failure"
+  },
+  "workspaceWelcomeSubtitle": "Open a folder to start coding with AURA",
+  "@workspaceWelcomeSubtitle": {
+    "description": "Desktop IDE welcome page subtitle"
+  },
+  "workspaceOpenFolder": "Open Folder",
+  "@workspaceOpenFolder": {
+    "description": "Desktop IDE welcome / workspace pages: open folder button"
+  },
+  "workspaceRecent": "Recent",
+  "@workspaceRecent": {
+    "description": "Desktop IDE welcome page: recent workspaces divider"
+  },
+  "workspaceGrantBody": "This allows the AURA agent to read/write files in \"{path}\".",
+  "@workspaceGrantBody": {
+    "description": "Workspace pages: grant-access dialog body after opening a folder",
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "workspaceNotNow": "Not Now",
+  "@workspaceNotNow": {
+    "description": "Workspace pages: decline granting access"
+  },
+  "workspaceNoRecent": "No recent workspaces",
+  "@workspaceNoRecent": {
+    "description": "Desktop IDE welcome page: empty recent list"
+  },
+  "workspaceNoRecentHint": "Open a folder to get started",
+  "@workspaceNoRecentHint": {
+    "description": "Desktop IDE welcome page: empty recent list hint"
+  },
+  "workspaceRemoveFromRecent": "Remove from recent",
+  "@workspaceRemoveFromRecent": {
+    "description": "Workspace pages: remove a workspace from the recent list (tooltip)"
+  },
+  "workspaceManagerTitle": "Workspaces",
+  "@workspaceManagerTitle": {
+    "description": "Workspace manager page title"
+  },
+  "workspaceRecentWorkspaces": "Recent Workspaces",
+  "@workspaceRecentWorkspaces": {
+    "description": "Workspace manager page heading"
+  },
+  "workspaceActive": "Active",
+  "@workspaceActive": {
+    "description": "Workspace manager: badge on the active workspace"
+  },
+  "workspaceLastOpened": "Last opened: {date}",
+  "@workspaceLastOpened": {
+    "description": "Workspace manager: when a workspace was last opened; date is preformatted",
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "workspaceOpen": "Open",
+  "@workspaceOpen": {
+    "description": "Workspace manager: open a workspace"
+  },
+  "workspaceRemoveTitle": "Remove workspace?",
+  "@workspaceRemoveTitle": {
+    "description": "Workspace manager: remove confirmation title"
+  },
+  "workspaceRemoveBody": "This will remove \"{name}\" from your recent workspaces.",
+  "@workspaceRemoveBody": {
+    "description": "Workspace manager: remove confirmation body",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "workspaceRemove": "Remove",
+  "@workspaceRemove": {
+    "description": "Workspace manager: remove confirmation button"
+  },
+  "workspaceEmptyTitle": "No workspaces yet",
+  "@workspaceEmptyTitle": {
+    "description": "Workspace manager: empty state title"
+  },
+  "workspaceEmptyMessage": "Open a folder to create your first workspace",
+  "@workspaceEmptyMessage": {
+    "description": "Workspace manager: empty state message"
+  },
+  "relativeTodayAt": "Today {time}",
+  "@relativeTodayAt": {
+    "description": "Relative date: earlier today, with the time",
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "relativeYesterday": "Yesterday",
+  "@relativeYesterday": {
+    "description": "Relative date: the previous calendar day"
+  },
+  "relativeDaysAgo": "{days, plural, =1{1 day ago} other{{days} days ago}}",
+  "@relativeDaysAgo": {
+    "description": "Relative date: 2-6 calendar days ago",
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "coreEngineerWorkspacesUnavailableTitle": "Workspaces unavailable",
+  "@coreEngineerWorkspacesUnavailableTitle": {
+    "description": "Engineer workspaces panel: title when the list could not be loaded"
+  },
+  "coreEngineerWorkspacesUnavailableMessage": "Could not reach the server. Your work is not lost -- try again shortly.",
+  "@coreEngineerWorkspacesUnavailableMessage": {
+    "description": "Engineer workspaces panel: message when the list could not be loaded"
+  },
+  "coreEngineerWorkspacesDisabledTitle": "Workspaces are not enabled",
+  "@coreEngineerWorkspacesDisabledTitle": {
+    "description": "Engineer workspaces panel: title when the server has the feature off"
+  },
+  "coreEngineerWorkspacesDisabledMessage": "This server does not run the engineer agent’s sandboxes.",
+  "@coreEngineerWorkspacesDisabledMessage": {
+    "description": "Engineer workspaces panel: message when the server has the feature off"
+  },
+  "coreEngineerWorkspacesEmptyTitle": "No workspaces yet",
+  "@coreEngineerWorkspacesEmptyTitle": {
+    "description": "Engineer workspaces panel: empty state title"
+  },
+  "coreEngineerWorkspacesEmptyMessage": "Ask the engineer agent to clone a repository and one will appear here. Workspaces are removed after {hours} hours without activity.",
+  "@coreEngineerWorkspacesEmptyMessage": {
+    "description": "Engineer workspaces panel: empty state message; hours = inactivity limit before deletion",
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "coreEngineerWorkspacesHeader": "Engineer workspaces",
+  "@coreEngineerWorkspacesHeader": {
+    "description": "Engineer workspaces panel: section header above the list"
+  },
+  "coreEngineerWorkspaceSemanticLabel": "Workspace for {repo}",
+  "@coreEngineerWorkspaceSemanticLabel": {
+    "description": "Engineer workspace card: screen-reader label; repo = repository name",
+    "placeholders": {
+      "repo": {
+        "type": "String"
+      }
+    }
+  },
+  "coreEngineerWorkspaceBranch": "Branch {branch}",
+  "@coreEngineerWorkspaceBranch": {
+    "description": "Engineer workspace card: the checked-out Git branch",
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      }
+    }
+  },
+  "coreEngineerWorkspaceDeleteTitle": "Delete this workspace?",
+  "@coreEngineerWorkspaceDeleteTitle": {
+    "description": "Engineer workspace delete confirmation: dialog title"
+  },
+  "coreEngineerWorkspaceKeep": "Keep",
+  "@coreEngineerWorkspaceKeep": {
+    "description": "Engineer workspace delete confirmation: cancel button (keep the workspace)"
+  },
+  "coreEngineerWorkspaceDeleteBody": "The checkout of {repo} and any uncommitted changes in it will be removed. Anything already pushed is unaffected.",
+  "@coreEngineerWorkspaceDeleteBody": {
+    "description": "Engineer workspace delete confirmation: dialog body; repo = repository name",
+    "placeholders": {
+      "repo": {
+        "type": "String"
+      }
+    }
+  },
+  "coreEngineerWorkspaceDeleted": "Workspace deleted.",
+  "@coreEngineerWorkspaceDeleted": {
+    "description": "Snackbar after an engineer workspace was deleted"
+  },
+  "coreEngineerWorkspaceDeleteFailed": "Could not delete that workspace.",
+  "@coreEngineerWorkspaceDeleteFailed": {
+    "description": "Snackbar when deleting an engineer workspace failed"
+  },
+  "coreEngineerWorkspaceExpiryOverdue": "Due to be removed",
+  "@coreEngineerWorkspaceExpiryOverdue": {
+    "description": "Engineer workspace card: the inactivity deadline has passed"
+  },
+  "coreEngineerWorkspaceExpiryUnderHour": "Removed in under an hour unless used",
+  "@coreEngineerWorkspaceExpiryUnderHour": {
+    "description": "Engineer workspace card: less than an hour before deletion"
+  },
+  "coreEngineerWorkspaceExpiryHours": "{hours, plural, other{Removed in {hours}h unless used}}",
+  "@coreEngineerWorkspaceExpiryHours": {
+    "description": "Engineer workspace card: hours left before deletion (1-23)",
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "coreEngineerWorkspaceExpiryDays": "{days, plural, other{Removed in {days}d unless used}}",
+  "@coreEngineerWorkspaceExpiryDays": {
+    "description": "Engineer workspace card: days left before deletion",
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "coreEngineerWorkspaceRunning": "Running",
+  "@coreEngineerWorkspaceRunning": {
+    "description": "Engineer workspace card: status chip, the workspace is running"
+  },
+  "coreEngineerWorkspaceIdle": "Idle",
+  "@coreEngineerWorkspaceIdle": {
+    "description": "Engineer workspace card: status chip, the workspace is stopped but kept"
+  },
+  "voiceClientNothingToRead": "Nothing to read in this reply.",
+  "@voiceClientNothingToRead": {
+    "description": "Read-aloud failure: the reply has no speakable text"
+  },
+  "voiceClientSpeechFailed": "Could not generate speech for this reply.",
+  "@voiceClientSpeechFailed": {
+    "description": "Read-aloud failure: the server could not synthesize speech"
+  },
+  "voiceClientUnreachable": "Could not reach AURA to generate speech.",
+  "@voiceClientUnreachable": {
+    "description": "Read-aloud failure: no answer from the server"
+  },
+  "voiceClientSignInAgain": "Sign in again to continue.",
+  "@voiceClientSignInAgain": {
+    "description": "Read-aloud failure: session expired (HTTP 401)"
+  },
+  "voiceClientSpeakNotAvailable": "Speech playback is not available on this server.",
+  "@voiceClientSpeakNotAvailable": {
+    "description": "Read-aloud failure: the server has no speak endpoint (HTTP 404)"
+  },
+  "voiceClientReplyTooLong": "This reply is too long to read aloud.",
+  "@voiceClientReplyTooLong": {
+    "description": "Read-aloud failure: text too long (HTTP 422)"
+  },
+  "voiceClientRateLimited": "Too many speech requests. Try again shortly.",
+  "@voiceClientRateLimited": {
+    "description": "Read-aloud failure: rate limited (HTTP 429)"
+  },
+  "voiceClientNoSpeechEngine": "This server has no speech engine configured.",
+  "@voiceClientNoSpeechEngine": {
+    "description": "Read-aloud failure: no TTS engine on the server (HTTP 503)"
+  },
+  "voiceSocketSessionExpired": "Live voice ended because your sign-in needs renewing. Start it again.",
+  "@voiceSocketSessionExpired": {
+    "description": "Live voice: the server closed the socket because the session expired"
+  },
+  "voiceSocketDisconnected": "Live voice was disconnected. Start it again.",
+  "@voiceSocketDisconnected": {
+    "description": "Live voice: the server or network closed the socket"
+  },
+  "coreBackendEnvironmentProduction": "Production",
+  "@coreBackendEnvironmentProduction": {
+    "description": "Server environment picker: the production server"
+  },
+  "coreBackendEnvironmentDevelopment": "Development",
+  "@coreBackendEnvironmentDevelopment": {
+    "description": "Server environment picker: the development server"
+  },
+  "coreAskCopilotTooltip": "Ask Copilot",
+  "@coreAskCopilotTooltip": {
+    "description": "Mobile shell: tooltip on the floating capture button"
+  },
+  "coreDesktopSignInBrowserFailed": "Could not open the system browser.",
+  "@coreDesktopSignInBrowserFailed": {
+    "description": "Desktop Google sign-in failure: the browser would not open"
+  },
+  "coreDesktopSignInTimedOut": "Timed out waiting for the browser sign-in to complete.",
+  "@coreDesktopSignInTimedOut": {
+    "description": "Desktop Google sign-in failure: nothing came back from the browser in time"
+  },
+  "coreDesktopSignInPageCancelled": "Sign-in was cancelled ({error}).",
+  "@coreDesktopSignInPageCancelled": {
+    "description": "Browser page shown after desktop sign-in: cancelled; error = Google error code",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "coreDesktopSignInGoogleError": "Google returned an error: {error}",
+  "@coreDesktopSignInGoogleError": {
+    "description": "Desktop sign-in failure: Google redirected back with an error code (e.g. access_denied when the user cancels); error = Google error code, left untranslated",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "coreDesktopSignInPageInvalidResponse": "Sign-in failed: invalid response.",
+  "@coreDesktopSignInPageInvalidResponse": {
+    "description": "Browser page shown after desktop sign-in: the redirect was malformed"
+  },
+  "coreDesktopSignInInvalidRedirect": "Missing authorization code or a state mismatch (possible CSRF).",
+  "@coreDesktopSignInInvalidRedirect": {
+    "description": "Desktop sign-in failure: the browser redirect had no code or a wrong state value"
+  },
+  "coreDesktopSignInPageSuccess": "Signed in -- you can close this tab.",
+  "@coreDesktopSignInPageSuccess": {
+    "description": "Browser page shown after desktop sign-in succeeded"
+  },
+  "coreDesktopSignInServerUnreachable": "Could not reach the AURA server to finish signing in. Check your connection and try again.",
+  "@coreDesktopSignInServerUnreachable": {
+    "description": "Desktop sign-in failure: AURA server unreachable during the code exchange"
+  },
+  "coreDesktopSignInServerInsecure": "Could not make a secure connection to the AURA server to finish signing in.",
+  "@coreDesktopSignInServerInsecure": {
+    "description": "Desktop sign-in failure: TLS handshake with the AURA server failed"
+  },
+  "coreDesktopSignInServerBadAnswer": "The AURA server did not answer properly while finishing sign-in. Try again.",
+  "@coreDesktopSignInServerBadAnswer": {
+    "description": "Desktop sign-in failure: malformed HTTP answer from the AURA server"
+  },
+  "coreDesktopSignInServerTimedOut": "The AURA server took too long to finish signing in. Try again.",
+  "@coreDesktopSignInServerTimedOut": {
+    "description": "Desktop sign-in failure: the AURA server timed out"
+  },
+  "coreDesktopSignInServerFailed": "The AURA server could not finish signing in (HTTP {status}).",
+  "@coreDesktopSignInServerFailed": {
+    "description": "Desktop sign-in failure: the AURA server answered with an error and no detail",
+    "placeholders": {
+      "status": {
+        "type": "int"
+      }
+    }
+  },
+  "coreDesktopSignInNoIdentityToken": "The AURA server returned no identity token.",
+  "@coreDesktopSignInNoIdentityToken": {
+    "description": "Desktop sign-in failure: the AURA server answered without an ID token"
+  },
+  "coreDesktopSignInPageSignedIn": "Signed in",
+  "@coreDesktopSignInPageSignedIn": {
+    "description": "Browser page shown after desktop sign-in: heading on success"
+  },
+  "coreDesktopSignInPageFailed": "Sign-in failed",
+  "@coreDesktopSignInPageFailed": {
+    "description": "Browser page shown after desktop sign-in: heading on failure"
+  },
+  "failureFeatureUnavailableTitle": "This needs a feature that isn't available yet",
+  "@failureFeatureUnavailableTitle": {
+    "description": "Failure title: the request needs memory/documents/tools/images, which are not available yet (owner-approved wording)"
+  },
+  "failureFeatureUnavailableMessage": "AURA can answer plain questions right now. Answers that use your memory, documents, tools or images are coming soon.",
+  "@failureFeatureUnavailableMessage": {
+    "description": "Failure message for the feature-unavailable state (owner-approved wording)"
+  },
+  "failureSignInRefusedTitle": "AURA did not accept this sign-in",
+  "@failureSignInRefusedTitle": {
+    "description": "Failure title: the server refused the Google account"
+  },
+  "failureSignInRefusedMessage": "The server refused this Google account, so you have not been signed in. Try another account, or ask whoever runs this AURA server to check this one.",
+  "@failureSignInRefusedMessage": {
+    "description": "Failure message: the server refused the Google account"
+  },
+  "failureSignInIncompleteTitle": "Couldn't finish signing in",
+  "@failureSignInIncompleteTitle": {
+    "description": "Failure title: the desktop sign-in flow failed (message comes from the flow)"
+  },
+  "failureUnclassifiedMessage": "AURA hit an error it could not classify. Your work is unaffected.",
+  "@failureUnclassifiedMessage": {
+    "description": "Failure message: an error the app does not recognise"
+  },
+  "failureUnreachableTitle": "Couldn't reach AURA",
+  "@failureUnreachableTitle": {
+    "description": "Failure title: nothing answered (network or server down)"
+  },
+  "failureUnreachableMessage": "Nothing answered — this may be your connection or the server. Anything you have already saved is safe on this device.",
+  "@failureUnreachableMessage": {
+    "description": "Failure message: nothing answered; deliberately does not claim the user is offline"
+  },
+  "failureInferenceUnavailableTitle": "AURA reached the server, but the model is not answering",
+  "@failureInferenceUnavailableTitle": {
+    "description": "Failure title: the server is up but the AI model is down"
+  },
+  "failureInferenceUnavailableMessage": "The Control Plane is up; inference is not. Your workspace and conversations are untouched.",
+  "@failureInferenceUnavailableMessage": {
+    "description": "Failure message: the server is up but the AI model is down"
+  },
+  "failureBusyTitle": "AURA is busy",
+  "@failureBusyTitle": {
+    "description": "Failure title: the server is overloaded"
+  },
+  "failureBusyMessage": "Too much is running at once. Waiting a moment usually clears it.",
+  "@failureBusyMessage": {
+    "description": "Failure message: the server is overloaded"
+  },
+  "failureRateLimitedTitle": "Too many requests",
+  "@failureRateLimitedTitle": {
+    "description": "Failure title: rate limited"
+  },
+  "failureRateLimitedMessage": "You have hit the request limit. Try again shortly.",
+  "@failureRateLimitedMessage": {
+    "description": "Failure message: rate limited, no wait time known"
+  },
+  "failureTurnInFlightTitle": "AURA is still working on your last request",
+  "@failureTurnInFlightTitle": {
+    "description": "Failure title: another chat turn is still running"
+  },
+  "failureTurnInFlightMessage": "Only one turn runs at a time. Wait for it to finish, or stop it first.",
+  "@failureTurnInFlightMessage": {
+    "description": "Failure message: another chat turn is still running"
+  },
+  "failureAuthRequiredTitle": "Sign in again",
+  "@failureAuthRequiredTitle": {
+    "description": "Failure title: the session expired"
+  },
+  "failureAuthRequiredMessage": "Your session expired. Signing in again picks up exactly where you left off.",
+  "@failureAuthRequiredMessage": {
+    "description": "Failure message: the session expired"
+  },
+  "failureForbiddenTitle": "Not allowed",
+  "@failureForbiddenTitle": {
+    "description": "Failure title: the account lacks permission"
+  },
+  "failureForbiddenMessage": "Your account does not have permission for this. Retrying will not change that.",
+  "@failureForbiddenMessage": {
+    "description": "Failure message: the account lacks permission"
+  },
+  "failureBudgetTitle": "Budget reached",
+  "@failureBudgetTitle": {
+    "description": "Failure title: the spend limit was reached"
+  },
+  "failureBudgetMessage": "This request would go over the configured spend limit.",
+  "@failureBudgetMessage": {
+    "description": "Failure message: the spend limit was reached"
+  },
+  "failureBlockedTitle": "AURA declined this request",
+  "@failureBlockedTitle": {
+    "description": "Failure title: refused on safety grounds"
+  },
+  "failureBlockedMessage": "It was refused on safety grounds. Sending the same thing again will be refused the same way — rephrasing is what changes the outcome.",
+  "@failureBlockedMessage": {
+    "description": "Failure message: refused on safety grounds; retrying will not help"
+  },
+  "failureIndexingTitle": "Still indexing",
+  "@failureIndexingTitle": {
+    "description": "Failure title: the knowledge index is still building"
+  },
+  "failureIndexingMessage": "AURA is building the search index for this content. It will work once that finishes.",
+  "@failureIndexingMessage": {
+    "description": "Failure message: the knowledge index is still building"
+  },
+  "failureDegradedTitle": "AURA is degraded",
+  "@failureDegradedTitle": {
+    "description": "Failure title: a dependency timed out or is degraded"
+  },
+  "failureDegradedMessage": "Part of the system did not respond in time. Your data is unaffected.",
+  "@failureDegradedMessage": {
+    "description": "Failure message: a dependency timed out or is degraded"
+  },
+  "failureServerErrorTitle": "AURA had a problem",
+  "@failureServerErrorTitle": {
+    "description": "Failure title: the server failed (HTTP 5xx)"
+  },
+  "failureServerErrorMessage": "The server failed to complete this. Your data is unaffected.",
+  "@failureServerErrorMessage": {
+    "description": "Failure message: the server failed (HTTP 5xx)"
+  },
+  "failureUnknownMessage": "AURA could not complete this request. Your work is unaffected.",
+  "@failureUnknownMessage": {
+    "description": "Failure message: an unrecognised HTTP error"
+  },
+  "failureRateLimitedWaitSeconds": "You have hit the request limit. Try again in {seconds, plural, =1{1 second} other{{seconds} seconds}}.",
+  "@failureRateLimitedWaitSeconds": {
+    "description": "Failure message: rate limited with a known wait under a minute",
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "failureRateLimitedWaitMinutes": "You have hit the request limit. Try again in about {minutes, plural, =1{1 minute} other{{minutes} minutes}}.",
+  "@failureRateLimitedWaitMinutes": {
+    "description": "Failure message: rate limited with a known wait of a minute or more",
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "coreApiErrorUnreachable": "Could not reach AURA.",
+  "@coreApiErrorUnreachable": {
+    "description": "Request error text when nothing answered (no technical cause known)"
+  },
+  "coreApiErrorUnreachableCause": "Could not reach AURA: {cause}",
+  "@coreApiErrorUnreachableCause": {
+    "description": "Request error text when nothing answered; cause = technical error text, left untranslated",
+    "placeholders": {
+      "cause": {
+        "type": "String"
+      }
+    }
+  },
+  "coreApiErrorBlocked": "AURA blocked this turn.",
+  "@coreApiErrorBlocked": {
+    "description": "Request error fallback when the server sent HTTP 400 with no message"
+  },
+  "coreApiErrorSignInAgain": "Sign in again to continue.",
+  "@coreApiErrorSignInAgain": {
+    "description": "Request error fallback when the server sent HTTP 401 with no message"
+  },
+  "coreApiErrorForbidden": "You do not have permission for this action.",
+  "@coreApiErrorForbidden": {
+    "description": "Request error fallback when the server sent HTTP 403 with no message"
+  },
+  "coreApiErrorRateLimited": "Too many requests. Try again shortly.",
+  "@coreApiErrorRateLimited": {
+    "description": "Request error fallback when the server sent HTTP 429 with no message"
+  },
+  "coreApiErrorStartingUp": "AURA is starting up. Try again in a moment.",
+  "@coreApiErrorStartingUp": {
+    "description": "Request error fallback when the server sent HTTP 503 with no message"
+  },
+  "coreApiErrorRequestFailed": "Request failed ({status}).",
+  "@coreApiErrorRequestFailed": {
+    "description": "Request error fallback for any other HTTP status with no message",
+    "placeholders": {
+      "status": {
+        "type": "int"
+      }
+    }
+  },
+  "coreSyncSynced": "Synced",
+  "@coreSyncSynced": {
+    "description": "Sync status pill: everything is on the server"
+  },
+  "coreSyncSyncing": "Syncing",
+  "@coreSyncSyncing": {
+    "description": "Sync status pill: sync in progress"
+  },
+  "coreSyncOffline": "Offline",
+  "@coreSyncOffline": {
+    "description": "Sync status pill: cannot reach the server"
+  },
+  "coreSyncFailed": "Sync failed",
+  "@coreSyncFailed": {
+    "description": "Sync status pill: the last sync failed"
+  },
+  "coreSyncPendingRefused": "{count, plural, =1{1 change not synced} other{{count} changes not synced}}",
+  "@coreSyncPendingRefused": {
+    "description": "Sync status pill: changes the server refused and that were set aside",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "coreSyncStatusSemantic": "Sync status: {label}",
+  "@coreSyncStatusSemantic": {
+    "description": "Sync status pill: screen-reader label; label = the visible status text",
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "coreSyncParkedBanner": "{count, plural, =1{1 change hasn't reached the server. It's saved on this device.} other{{count} changes haven't reached the server. They're saved on this device.}}",
+  "@coreSyncParkedBanner": {
+    "description": "Shell banner: changes still not on the server",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "coreSyncParkedBannerSemantic": "{count, plural, =1{1 change has not reached the server. It is saved on this device.} other{{count} changes have not reached the server. They are saved on this device.}}",
+  "@coreSyncParkedBannerSemantic": {
+    "description": "Shell banner: screen-reader label (no contractions)",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "coreSyncReview": "Review",
+  "@coreSyncReview": {
+    "description": "Shell sync banner: action button to review unsynced changes"
+  },
+  "coreHostdNotRunning": "aura_hostd is not running.",
+  "@coreHostdNotRunning": {
+    "description": "Desktop IDE: the local Host Daemon (aura_hostd) is not running"
+  },
+  "coreHostdUnreachable": "Could not reach aura_hostd: {error}",
+  "@coreHostdUnreachable": {
+    "description": "Desktop IDE: the local Host Daemon did not answer; error = technical cause, left untranslated",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "coreHostdOutOfDate": "The local aura_hostd daemon does not recognize this request -- it may be out of date. Rebuild and restart aura_hostd, then try again.",
+  "@coreHostdOutOfDate": {
+    "description": "Desktop IDE: the local Host Daemon is older than the app"
+  },
+  "coreHostdNotRunningStartIt": "aura_hostd is not running. Start it and try again.",
+  "@coreHostdNotRunningStartIt": {
+    "description": "Desktop IDE: the local Host Daemon is not running (with what to do)"
+  },
+  "coreHostdNotOnWeb": "The desktop Engineer daemon is not available on web.",
+  "@coreHostdNotOnWeb": {
+    "description": "Web build: the desktop Engineer daemon cannot be used in a browser"
+  },
+  "coreHostdRejectedArguments": "aura_hostd rejected its arguments (exit 64) -- check the configured executable",
+  "@coreHostdRejectedArguments": {
+    "description": "Desktop IDE: the supervised Host Daemon refused its command line"
+  },
+  "coreHostdCrashedRepeatedly": "{count, plural, other{aura_hostd crashed {count} times in a row; see the log above}}",
+  "@coreHostdCrashedRepeatedly": {
+    "description": "Desktop IDE: the supervised Host Daemon kept crashing and was given up on",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "coreHostdRestartFailed": "could not restart aura_hostd: {error}",
+  "@coreHostdRestartFailed": {
+    "description": "Desktop IDE: restarting the Host Daemon failed; error = technical cause, left untranslated",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "coreCommandItemUnavailable": "{title}, unavailable: {reason}",
+  "@coreCommandItemUnavailable": {
+    "description": "Command palette: screen-reader label of a disabled command; reason = why it is disabled",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      },
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "chatActionCreateTask": "Create Task: {title}",
+  "@chatActionCreateTask": {
+    "description": "Chat: label of a proposed 'add task' action",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "chatActionScheduleEvent": "Schedule Event: {title}",
+  "@chatActionScheduleEvent": {
+    "description": "Chat: label of a proposed 'add calendar event' action",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "chatActionLogExpense": "Log Expense: ${amount}",
+  "@chatActionLogExpense": {
+    "description": "Chat: label of a proposed 'log expense' action; amount is a number",
+    "placeholders": {
+      "amount": {
+        "type": "String"
+      }
+    }
+  },
+  "chatActionLogIncome": "Log Income: ${amount}",
+  "@chatActionLogIncome": {
+    "description": "Chat: label of a proposed 'log income' action; amount is a number",
+    "placeholders": {
+      "amount": {
+        "type": "String"
+      }
+    }
+  },
+  "chatActionLogHealth": "Log Health",
+  "@chatActionLogHealth": {
+    "description": "Chat: label of a proposed 'log health metrics' action"
+  },
+  "chatActionUnknownNamed": "Unknown Action: {type}",
+  "@chatActionUnknownNamed": {
+    "description": "Chat: label of a proposed action of an unrecognised type (type is a code identifier)",
+    "placeholders": {
+      "type": {
+        "type": "String"
+      }
+    }
+  },
+  "chatActionUnknown": "Unknown Action",
+  "@chatActionUnknown": {
+    "description": "Chat: label of a malformed proposed action that failed"
+  },
+  "chatSpeechGenerateFailed": "Could not generate speech for this reply.",
+  "@chatSpeechGenerateFailed": {
+    "description": "Chat: error when text-to-speech for a reply fails"
+  },
+  "chatSpeechPlayFailed": "Could not play the generated speech.",
+  "@chatSpeechPlayFailed": {
+    "description": "Chat: error when playing generated speech fails"
+  },
+  "chatDefaultImageQuestion": "What is in this image?",
+  "@chatDefaultImageQuestion": {
+    "description": "Chat: the question sent (and shown as the user's message) when only images are attached"
+  },
+  "chatEngineUnreachable": "AURA (unreachable)",
+  "@chatEngineUnreachable": {
+    "description": "Chat sidebar: AI engine value when the server is unreachable"
+  },
+  "chatEngineServer": "AURA server",
+  "@chatEngineServer": {
+    "description": "Chat sidebar: AI engine value when the server is reachable"
+  },
+  "chatCreateBranchOnRepo": "Create branch on {repo}",
+  "@chatCreateBranchOnRepo": {
+    "description": "Chat: confirmation card heading for creating a Git branch in a named repository",
+    "placeholders": {
+      "repo": {
+        "type": "String"
+      }
+    }
+  },
+  "chatCreateBranch": "Create branch",
+  "@chatCreateBranch": {
+    "description": "Chat: confirmation card heading for creating a Git branch"
+  },
+  "chatConfirmActions": "Confirm actions",
+  "@chatConfirmActions": {
+    "description": "Chat: heading of the confirmation card when several tool calls await approval"
+  },
+  "chatConfirmAction": "Confirm action",
+  "@chatConfirmAction": {
+    "description": "Chat: heading of the confirmation card when one tool call awaits approval"
+  },
+  "chatConfirmSelected": "Confirm selected",
+  "@chatConfirmSelected": {
+    "description": "Chat: confirmation card button when only some calls are selected"
+  },
+  "chatConfirmSwitchBranch": "Switch to branch",
+  "@chatConfirmSwitchBranch": {
+    "description": "Chat: confirmation card heading for a git checkout of a branch"
+  },
+  "chatConfirmOpenDraftPr": "Open draft pull request",
+  "@chatConfirmOpenDraftPr": {
+    "description": "Chat: confirmation card heading for opening a draft GitHub pull request"
+  },
+  "chatConfirmCommitFiles": "Commit {count, plural, =1{1 file} other{{count} files}}",
+  "@chatConfirmCommitFiles": {
+    "description": "Chat: confirmation card heading for committing files to GitHub",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chatConfirmCommitFilesToBranch": "Commit {count, plural, =1{1 file} other{{count} files}} to {branch}",
+  "@chatConfirmCommitFilesToBranch": {
+    "description": "Chat: confirmation card heading for committing files to a named GitHub branch",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "branch": {
+        "type": "String"
+      }
+    }
+  },
+  "chatConfirmWriteFile": "Write file",
+  "@chatConfirmWriteFile": {
+    "description": "Chat: confirmation card heading for writing a file in the sandbox"
+  },
+  "chatConfirmEditFile": "Edit {path}",
+  "@chatConfirmEditFile": {
+    "description": "Chat: confirmation card heading for editing a file; path is a file path",
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "chatConfirmEditFileUnnamed": "Edit file",
+  "@chatConfirmEditFileUnnamed": {
+    "description": "Chat: confirmation card heading for editing a file whose path is unknown"
+  },
+  "chatConfirmRunCommand": "Run command in sandbox",
+  "@chatConfirmRunCommand": {
+    "description": "Chat: confirmation card heading for running a shell command in the sandbox"
+  },
+  "chatConfirmCommitSandbox": "Commit sandbox changes",
+  "@chatConfirmCommitSandbox": {
+    "description": "Chat: confirmation card heading for committing the sandbox's changes"
+  },
+  "chatTurnQuarantined": "AURA treated the content it read as untrusted, so nothing with side effects can run without your confirmation.",
+  "@chatTurnQuarantined": {
+    "description": "Chat: note under an answer whose retrieved context was quarantined"
+  },
+  "chatTurnInterrupted": "Interrupted — this answer is incomplete.",
+  "@chatTurnInterrupted": {
+    "description": "Chat: note under an answer that was interrupted"
+  },
+  "chatTurnRedacted": "This answer was redacted by a safety check.",
+  "@chatTurnRedacted": {
+    "description": "Chat: note under an answer a safety check redacted"
+  },
+  "chatTurnLowConfidence": "Low confidence ({percent}%).",
+  "@chatTurnLowConfidence": {
+    "description": "Chat: note under a low-confidence answer",
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "chatTurnLibraryEmpty": "Searched your library — nothing relevant was found.",
+  "@chatTurnLibraryEmpty": {
+    "description": "Chat: note when knowledge search found nothing relevant"
+  },
+  "chatTurnReducedMode": "AURA ran this turn in a reduced mode.",
+  "@chatTurnReducedMode": {
+    "description": "Chat: note under an answer produced in degraded mode"
+  },
+  "chatTurnUngrounded": "Ungrounded — no sources attached.",
+  "@chatTurnUngrounded": {
+    "description": "Chat: note under an answer with no citations"
+  },
+  "chatMoreLines": "… {count, plural, =1{1 more line} other{{count} more lines}}",
+  "@chatMoreLines": {
+    "description": "Chat: note under a truncated code, file, diff or terminal preview",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chatImageReadFailed": "Could not read {name}.",
+  "@chatImageReadFailed": {
+    "description": "Chat: error when a picked image file cannot be read; name is the file name",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "chatImageTooMany": "You can attach up to {max} images to one message.",
+  "@chatImageTooMany": {
+    "description": "Chat: error when too many images are attached",
+    "placeholders": {
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "chatImageTooLarge": "{name} is larger than {mb} MB.",
+  "@chatImageTooLarge": {
+    "description": "Chat: error when an image is too large; mb is a number",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "mb": {
+        "type": "String"
+      }
+    }
+  },
+  "chatImagesAttached": "{count, plural, =1{1 image attached} other{{count} images attached}}",
+  "@chatImagesAttached": {
+    "description": "Chat: shown in a sent message whose images are no longer available",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chatActionCreateTaskDetail": "Create Task: {title} ({priority} priority, {category})",
+  "@chatActionCreateTaskDetail": {
+    "description": "Chat: proposed-actions card line for adding a task; priority and category are data values",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      },
+      "priority": {
+        "type": "String"
+      },
+      "category": {
+        "type": "String"
+      }
+    }
+  },
+  "chatActionScheduleEventAt": "Schedule Event: {title} at {start}",
+  "@chatActionScheduleEventAt": {
+    "description": "Chat: proposed-actions card line for adding a calendar event; start is a timestamp",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      },
+      "start": {
+        "type": "String"
+      }
+    }
+  },
+  "chatActionLogExpenseFor": "Log Expense: ${amount} for {category}",
+  "@chatActionLogExpenseFor": {
+    "description": "Chat: proposed-actions card line for logging an expense",
+    "placeholders": {
+      "amount": {
+        "type": "String"
+      },
+      "category": {
+        "type": "String"
+      }
+    }
+  },
+  "chatActionLogIncomeFor": "Log Income: ${amount} for {category}",
+  "@chatActionLogIncomeFor": {
+    "description": "Chat: proposed-actions card line for logging income",
+    "placeholders": {
+      "amount": {
+        "type": "String"
+      },
+      "category": {
+        "type": "String"
+      }
+    }
+  },
+  "chatHealthWater": "{ml}ml water",
+  "@chatHealthWater": {
+    "description": "Chat: health metric in a proposed log-health action",
+    "placeholders": {
+      "ml": {
+        "type": "String"
+      }
+    }
+  },
+  "chatHealthSleep": "{minutes}m sleep",
+  "@chatHealthSleep": {
+    "description": "Chat: health metric in a proposed log-health action",
+    "placeholders": {
+      "minutes": {
+        "type": "String"
+      }
+    }
+  },
+  "chatHealthExercise": "{minutes}m exercise",
+  "@chatHealthExercise": {
+    "description": "Chat: health metric in a proposed log-health action",
+    "placeholders": {
+      "minutes": {
+        "type": "String"
+      }
+    }
+  },
+  "chatActionLogHealthDetail": "Log Health: {metrics}",
+  "@chatActionLogHealthDetail": {
+    "description": "Chat: proposed-actions card line for logging health metrics; metrics is a list",
+    "placeholders": {
+      "metrics": {
+        "type": "String"
+      }
+    }
+  },
+  "chatListSeparator": ", ",
+  "@chatListSeparator": {
+    "description": "Separator between items of an inline list (keep the trailing space)"
+  },
+  "chatStepFallback": "step",
+  "@chatStepFallback": {
+    "description": "Chat: fallback name of a plan step that has no label"
+  },
+  "chatStepBlocked": "Blocked: {detail}",
+  "@chatStepBlocked": {
+    "description": "Chat: detail of a plan step blocked by a failed dependency; detail comes from the server",
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "chatCapabilityEngineer": "the Engineer capability",
+  "@chatCapabilityEngineer": {
+    "description": "Persona picker: name of the capability the Engineer persona needs, inserted into chatPersonaRequires"
+  },
+  "chatCapabilityAdditional": "an additional capability",
+  "@chatCapabilityAdditional": {
+    "description": "Persona picker: generic capability name, inserted into chatPersonaRequires"
+  },
+  "chatPersonaRequires": "Requires {capability} -- not available on this account",
+  "@chatPersonaRequires": {
+    "description": "Persona picker: subtitle of a locked persona",
+    "placeholders": {
+      "capability": {
+        "type": "String"
+      }
+    }
+  },
+  "chatWithheldNotice": "This response was withheld by a safety check.",
+  "@chatWithheldNotice": {
+    "description": "Chat: shown in place of an answer a safety check withheld after it streamed"
+  },
+  "chatBlockedNotice": "AURA did not answer this request: it was stopped by a safety check.",
+  "@chatBlockedNotice": {
+    "description": "Chat: shown in place of an answer a safety check refused before generation"
+  },
+  "chatFeatureUnavailableNotice": "This needs a feature that isn't available yet. AURA can answer plain questions right now. Answers that use your memory, documents, tools or images are coming soon.",
+  "@chatFeatureUnavailableNotice": {
+    "description": "Chat: shown in place of an answer the server refused because a needed capability is unavailable"
+  },
+  "chatPersonaOrchestrator": "Orchestrator",
+  "@chatPersonaOrchestrator": {
+    "description": "Persona name: the default orchestrator agent"
+  },
+  "chatPersonaTaskPlanner": "Task Planner",
+  "@chatPersonaTaskPlanner": {
+    "description": "Persona name"
+  },
+  "chatPersonaFinanceAdvisor": "Finance Advisor",
+  "@chatPersonaFinanceAdvisor": {
+    "description": "Persona name"
+  },
+  "chatPersonaHealthCompanion": "Health Companion",
+  "@chatPersonaHealthCompanion": {
+    "description": "Persona name"
+  },
+  "chatPersonaResearchAgent": "Research Agent",
+  "@chatPersonaResearchAgent": {
+    "description": "Persona name"
+  },
+  "chatPersonaCodingAgent": "Coding Agent",
+  "@chatPersonaCodingAgent": {
+    "description": "Persona name"
+  },
+  "chatPersonaDecisionAgent": "Decision Agent",
+  "@chatPersonaDecisionAgent": {
+    "description": "Persona name"
+  },
+  "chatPersonaEngineer": "Engineer",
+  "@chatPersonaEngineer": {
+    "description": "Persona name: the gated Engineer persona"
+  },
+  "chatHeaderStatus": "Active • {model} ({status}) • {latency}ms",
+  "@chatHeaderStatus": {
+    "description": "Chat header: AI router status line; model and status come from the server, latency is a number",
+    "placeholders": {
+      "model": {
+        "type": "String"
+      },
+      "status": {
+        "type": "String"
+      },
+      "latency": {
+        "type": "String"
+      }
+    }
+  },
+  "memoryFilterAll": "All",
+  "@memoryFilterAll": {
+    "description": "Memory page: filter chip showing every kind of memory"
+  },
+  "memoryEmptyTitle": "No memories yet",
+  "@memoryEmptyTitle": {
+    "description": "Memory page: empty state title"
+  },
+  "memoryEmptyMessage": "Save a fact with a kind so Copilot can use it later.",
+  "@memoryEmptyMessage": {
+    "description": "Memory page: empty state message"
+  },
+  "memoryForgotten": "Memory forgotten",
+  "@memoryForgotten": {
+    "description": "Memory page: snackbar after a memory is deleted on the server"
+  },
+  "memoryForgottenLocally": "Forgotten on this device. AURA will finish removing it from the server the next time it can reach it.",
+  "@memoryForgottenLocally": {
+    "description": "Memory page: snackbar when a memory was deleted locally but the server delete is pending"
+  },
+  "memoryForgetFailed": "Could not forget this memory. {reason}",
+  "@memoryForgetFailed": {
+    "description": "Memory page: snackbar when deleting a memory fails; reason is a localized failure message",
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "memoryAddTitle": "Remember this",
+  "@memoryAddTitle": {
+    "description": "Memory page: title of the add-memory dialog"
+  },
+  "memoryFactLabel": "Fact",
+  "@memoryFactLabel": {
+    "description": "Memory page: label of the fact field in the add-memory dialog"
+  },
+  "memorySubjectLabel": "Subject (optional)",
+  "@memorySubjectLabel": {
+    "description": "Memory page: label of the subject field in the add-memory dialog"
+  },
+  "memoryKindField": "Kind",
+  "@memoryKindField": {
+    "description": "Memory page: label of the memory-kind dropdown"
+  },
+  "memoryKindWorking": "working",
+  "@memoryKindWorking": {
+    "description": "Memory kind name (backend 'working' memory)"
+  },
+  "memoryKindEpisodic": "episodic",
+  "@memoryKindEpisodic": {
+    "description": "Memory kind name (backend 'episodic' memory)"
+  },
+  "memoryKindSemantic": "semantic",
+  "@memoryKindSemantic": {
+    "description": "Memory kind name (backend 'semantic' memory)"
+  },
+  "memoryKindEntity": "entity",
+  "@memoryKindEntity": {
+    "description": "Memory kind name (backend 'entity' memory)"
+  },
+  "memoryKindProcedural": "procedural",
+  "@memoryKindProcedural": {
+    "description": "Memory kind name (backend 'procedural' memory)"
+  },
+  "memoryKindReflection": "reflection",
+  "@memoryKindReflection": {
+    "description": "Memory kind name (backend 'reflection' memory)"
+  },
+  "projectsWelcomeBack": "Welcome back,",
+  "@projectsWelcomeBack": {
+    "description": "Projects page: greeting above the user's name"
+  },
+  "projectsDefaultUserName": "Aura User",
+  "@projectsDefaultUserName": {
+    "description": "Projects page: name shown when the account has no display name"
+  },
+  "projectsTitle": "Projects",
+  "@projectsTitle": {
+    "description": "Projects page: title"
+  },
+  "projectsSubtitle": "Organize your work into projects",
+  "@projectsSubtitle": {
+    "description": "Projects page: subtitle"
+  },
+  "projectsNew": "New Project",
+  "@projectsNew": {
+    "description": "Projects page: button that opens the create-project dialog"
+  },
+  "projectsEmptyTitle": "No projects yet",
+  "@projectsEmptyTitle": {
+    "description": "Projects page: empty state title"
+  },
+  "projectsEmptyMessage": "Create your first project to get started",
+  "@projectsEmptyMessage": {
+    "description": "Projects page: empty state message"
+  },
+  "projectsCreateTitle": "Create Project",
+  "@projectsCreateTitle": {
+    "description": "Projects page: create-project dialog title"
+  },
+  "projectsTitleField": "Title *",
+  "@projectsTitleField": {
+    "description": "Projects page: required title field label"
+  },
+  "projectsDescriptionField": "Description",
+  "@projectsDescriptionField": {
+    "description": "Projects page: description field label"
+  },
+  "projectsStatusField": "Status",
+  "@projectsStatusField": {
+    "description": "Projects page: status dropdown label"
+  },
+  "projectsSetTargetDate": "Set target date (optional)",
+  "@projectsSetTargetDate": {
+    "description": "Projects page: row that opens the target date picker"
+  },
+  "projectsTarget": "Target: {date}",
+  "@projectsTarget": {
+    "description": "Projects page: chosen target date; date is already formatted",
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "projectsCreate": "Create",
+  "@projectsCreate": {
+    "description": "Projects page: confirm button of the create-project dialog"
+  },
+  "projectsDue": "Due: {date}",
+  "@projectsDue": {
+    "description": "Projects page: a project's target date; date is already formatted",
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "projectsStatusActive": "active",
+  "@projectsStatusActive": {
+    "description": "Project status name"
+  },
+  "projectsStatusCompleted": "completed",
+  "@projectsStatusCompleted": {
+    "description": "Project status name"
+  },
+  "projectsStatusArchived": "archived",
+  "@projectsStatusArchived": {
+    "description": "Project status name"
+  },
+  "projectsStatusOnHold": "on hold",
+  "@projectsStatusOnHold": {
+    "description": "Project status name ('on_hold')"
+  },
+  "analyticsTitle": "System Analytics Dashboard",
+  "@analyticsTitle": {
+    "description": "Analytics page: title"
+  },
+  "analyticsEmptyTitle": "No telemetry metrics collected yet",
+  "@analyticsEmptyTitle": {
+    "description": "Analytics page: empty state title"
+  },
+  "analyticsEmptyMessage": "Metrics will appear once you stream prompts.",
+  "@analyticsEmptyMessage": {
+    "description": "Analytics page: empty state message"
+  },
+  "analyticsTotalRequests": "Total Requests",
+  "@analyticsTotalRequests": {
+    "description": "Analytics page: KPI card title"
+  },
+  "analyticsAvgLatency": "Avg Latency",
+  "@analyticsAvgLatency": {
+    "description": "Analytics page: KPI card title"
+  },
+  "analyticsFailovers": "Failovers",
+  "@analyticsFailovers": {
+    "description": "Analytics page: KPI card title (requests that fell back to another path)"
+  },
+  "analyticsErrorsLogged": "Errors Logged",
+  "@analyticsErrorsLogged": {
+    "description": "Analytics page: KPI card title"
+  },
+  "analyticsLatencyHistory": "Latency History (Last 10 Request Streams)",
+  "@analyticsLatencyHistory": {
+    "description": "Analytics page: latency chart title"
+  },
+  "analyticsInsufficientData": "Insufficient data",
+  "@analyticsInsufficientData": {
+    "description": "Analytics page: shown in a chart with no data points"
+  },
+  "analyticsInferencePaths": "Inference Path Distribution",
+  "@analyticsInferencePaths": {
+    "description": "Analytics page: inference path pie chart title"
+  },
+  "analyticsNoInferenceData": "No inference data",
+  "@analyticsNoInferenceData": {
+    "description": "Analytics page: shown when the inference pie chart is empty"
+  },
+  "analyticsFailoverStats": "API Failover Statistics",
+  "@analyticsFailoverStats": {
+    "description": "Analytics page: failover pie chart title"
+  },
+  "analyticsNoFailoverEvents": "No failover events",
+  "@analyticsNoFailoverEvents": {
+    "description": "Analytics page: shown when the failover chart is empty"
+  },
+  "analyticsSuccessCount": "Success ({count})",
+  "@analyticsSuccessCount": {
+    "description": "Analytics page: pie chart slice label",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "analyticsFailoversCount": "Failovers ({count})",
+  "@analyticsFailoversCount": {
+    "description": "Analytics page: pie chart slice label",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "analyticsLatestLogs": "Latest Telemetry Logs",
+  "@analyticsLatestLogs": {
+    "description": "Analytics page: recent telemetry list title"
+  },
+  "lifeHubFilterAll": "All",
+  "@lifeHubFilterAll": {
+    "description": "Life Hub: filter chip for every item type"
+  },
+  "lifeHubFilterTasks": "Tasks",
+  "@lifeHubFilterTasks": {
+    "description": "Life Hub: filter chip"
+  },
+  "lifeHubFilterCalendar": "Calendar",
+  "@lifeHubFilterCalendar": {
+    "description": "Life Hub: filter chip"
+  },
+  "lifeHubFilterFinance": "Finance",
+  "@lifeHubFilterFinance": {
+    "description": "Life Hub: filter chip"
+  },
+  "lifeHubFilterHealth": "Health",
+  "@lifeHubFilterHealth": {
+    "description": "Life Hub: filter chip"
+  },
+  "lifeHubFilterProjects": "Projects",
+  "@lifeHubFilterProjects": {
+    "description": "Life Hub: filter chip"
+  },
+  "lifeHubFilterGoals": "Goals",
+  "@lifeHubFilterGoals": {
+    "description": "Life Hub: filter chip"
+  },
+  "lifeHubAgendaEmptyTitle": "Nothing on the board",
+  "@lifeHubAgendaEmptyTitle": {
+    "description": "Life Hub: agenda empty state title"
+  },
+  "lifeHubAgendaEmptyMessage": "Add a task, event, or log to see this week in one place.",
+  "@lifeHubAgendaEmptyMessage": {
+    "description": "Life Hub: agenda empty state message"
+  },
+  "lifeHubHealthLogTitle": "Today’s health log",
+  "@lifeHubHealthLogTitle": {
+    "description": "Life Hub: agenda entry for today's health record"
+  },
+  "lifeHubHealthLogWater": "{ml} ml water",
+  "@lifeHubHealthLogWater": {
+    "description": "Life Hub: water amount of today's health record",
+    "placeholders": {
+      "ml": {
+        "type": "int"
+      }
+    }
+  },
+  "lifeHubNoUpcomingEvents": "No upcoming events",
+  "@lifeHubNoUpcomingEvents": {
+    "description": "Life Hub: calendar pane empty state"
+  },
+  "lifeHubProjectsEmptyMessage": "Create a project to organize your work.",
+  "@lifeHubProjectsEmptyMessage": {
+    "description": "Life Hub: projects pane empty state message"
+  },
+  "lifeHubGoalsEmptyTitle": "No goals yet",
+  "@lifeHubGoalsEmptyTitle": {
+    "description": "Life Hub: goals pane empty state title"
+  },
+  "lifeHubGoalsEmptyMessage": "Create a goal to track your aspirations.",
+  "@lifeHubGoalsEmptyMessage": {
+    "description": "Life Hub: goals pane empty state message"
+  },
+  "lifeHubGoalProgress": "{percent}% complete",
+  "@lifeHubGoalProgress": {
+    "description": "Life Hub: a goal's progress",
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "voiceLiveTranscript": "Transcript",
+  "@voiceLiveTranscript": {
+    "description": "Live voice: tooltip of the button that shows or hides the transcript"
+  },
+  "voiceLiveInterrupt": "Interrupt",
+  "@voiceLiveInterrupt": {
+    "description": "Live voice: tooltip of the button that interrupts AURA while it speaks"
+  },
+  "voiceLiveEndShort": "End",
+  "@voiceLiveEndShort": {
+    "description": "Live voice: tooltip of the button that ends the session"
+  },
+  "voiceLiveUnsupported": "Live voice is available on Android and iOS only",
+  "@voiceLiveUnsupported": {
+    "description": "Live voice: error on platforms without live voice support"
+  },
+  "homeAskAuraLabel": "Ask AURA anything",
+  "@homeAskAuraLabel": {
+    "description": "Home: screen-reader label of the capture bar"
+  },
+  "homeSendToAura": "Send to AURA",
+  "@homeSendToAura": {
+    "description": "Home: screen-reader label of the capture bar's send button"
+  },
+  "homeInsightsLoadFailed": "Could not load insights",
+  "@homeInsightsLoadFailed": {
+    "description": "Home: insights section error title"
+  },
+  "homeInsightsLoadFailedMessage": "Pull to refresh when you are back online.",
+  "@homeInsightsLoadFailedMessage": {
+    "description": "Home: insights section error message"
+  },
+  "homeDismissInsight": "Dismiss insight",
+  "@homeDismissInsight": {
+    "description": "Home: screen-reader label of the button that dismisses an insight"
+  },
+  "homeDueTask": "Task: {title}",
+  "@homeDueTask": {
+    "description": "Home: screen-reader label of a due task",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "homeDueEvent": "Event: {title}",
+  "@homeDueEvent": {
+    "description": "Home: screen-reader label of a due calendar event",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "homeDueOverdue": "{item}, overdue",
+  "@homeDueOverdue": {
+    "description": "Home: screen-reader label of an overdue item; item is homeDueTask or homeDueEvent",
+    "placeholders": {
+      "item": {
+        "type": "String"
+      }
+    }
+  },
+  "notificationsFailoverTitle": "Server inference failover",
+  "@notificationsFailoverTitle": {
+    "description": "Notifications: title of a failover notification"
+  },
+  "notificationsFailoverMessage": "AURA could not complete the request on {model} and recorded a failover.",
+  "@notificationsFailoverMessage": {
+    "description": "Notifications: body of a failover notification; model is a model/path identifier",
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "notificationsRequestFailedTitle": "Request failed",
+  "@notificationsRequestFailedTitle": {
+    "description": "Notifications: title of a failed-request notification"
+  },
+  "notificationsRequestFailedMessage": "An AI request failed on {model}.",
+  "@notificationsRequestFailedMessage": {
+    "description": "Notifications: body of a failed-request notification without its own error text",
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "notificationsEmptyTitle": "Nothing to report",
+  "@notificationsEmptyTitle": {
+    "description": "Notifications: empty state title"
+  },
+  "notificationsEmptyMessage": "You'll see AI failovers and request errors here.",
+  "@notificationsEmptyMessage": {
+    "description": "Notifications: empty state message"
+  },
+  "notificationsLoadFailed": "Couldn't load notifications",
+  "@notificationsLoadFailed": {
+    "description": "Notifications: error state title"
+  },
+  "feedbackEmptyTitle": "No corrections yet",
+  "@feedbackEmptyTitle": {
+    "description": "Feedback page: empty state title"
+  },
+  "feedbackEmptyMessage": "Rate a Copilot answer to help AURA learn what you prefer.",
+  "@feedbackEmptyMessage": {
+    "description": "Feedback page: empty state message"
+  },
+  "feedbackRated": "Rated {rating}/5 · {date}",
+  "@feedbackRated": {
+    "description": "Feedback page: heading of a sent rating; date is already formatted",
+    "placeholders": {
+      "rating": {
+        "type": "int"
+      },
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "modelsLastResponse": "Last response in {ms} ms",
+  "@modelsLastResponse": {
+    "description": "Engine status page: latency of the last response; ms is a number",
+    "placeholders": {
+      "ms": {
+        "type": "String"
+      }
+    }
+  },
+  "modelsNoRequestsYet": "No requests yet this session",
+  "@modelsNoRequestsYet": {
+    "description": "Engine status page: shown before any request was made"
+  },
+  "modelsCheckAgain": "Check again",
+  "@modelsCheckAgain": {
+    "description": "Engine status page: button that probes the server again"
+  },
+  "modelsServerNote": "Requests are processed on AURA’s servers. There is nothing to download or configure on this device.",
+  "@modelsServerNote": {
+    "description": "Engine status page: explanatory note"
+  },
+  "paletteOpenDesktopIde": "Open Desktop IDE",
+  "@paletteOpenDesktopIde": {
+    "description": "Command palette: command that opens the desktop IDE shell"
+  },
+  "paletteSearchHint": "Search AURA, or jump to a screen…",
+  "@paletteSearchHint": {
+    "description": "Command palette: search field hint"
+  },
+  "paletteGoTo": "Go to",
+  "@paletteGoTo": {
+    "description": "Command palette: heading above navigation destinations"
+  },
+  "paletteNoMatches": "No matches",
+  "@paletteNoMatches": {
+    "description": "Command palette: shown when nothing matches the search"
+  },
+  "authAttestationDebugOnly": "Debug marker only — hardware attestation is not enabled in this app",
+  "@authAttestationDebugOnly": {
+    "description": "Profile page: attestation check result on a debug build"
+  },
+  "authAttestationReady": "Hardware attestation token ready",
+  "@authAttestationReady": {
+    "description": "Profile page: attestation check result when a hardware token was produced"
+  },
+  "authAttestationUnavailable": "Hardware attestation unavailable on this device",
+  "@authAttestationUnavailable": {
+    "description": "Profile page: attestation check result when no hardware token could be produced"
+  },
+  "authAuthorizedUser": "Authorized User",
+  "@authAuthorizedUser": {
+    "description": "Profile page: badge under the signed-in user's name"
+  },
+  "authAttestationHeading": "Device Attestation Status",
+  "@authAttestationHeading": {
+    "description": "Profile page: device attestation card title"
+  },
+  "authAttestationExplainer": "This client does not request Google Play Integrity or Apple App Attest tokens. Debug builds send an explicit development marker; release builds advertise that hardware attestation is unsupported. Backend verification of real Play Integrity tokens exists, but this app cannot produce them without a vendor SDK and Play Console keys.",
+  "@authAttestationExplainer": {
+    "description": "Profile page: explanation on the device attestation card"
+  },
+  "authSessionOperations": "Session Operations",
+  "@authSessionOperations": {
+    "description": "Profile page: title of the sign-out card"
+  },
+  "hostdCodeCommandHardDenied": "This command is blocked in every workspace because it could cause serious damage.",
+  "@hostdCodeCommandHardDenied": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code command_hard_denied)"
+  },
+  "hostdCodeDestructivePathOutsideWorkspace": "This command deletes or changes files outside the workspace, so it was refused, even though the workspace is trusted.",
+  "@hostdCodeDestructivePathOutsideWorkspace": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code destructive_path_outside_workspace)"
+  },
+  "hostdCodeDestructiveAfterLeavingWorkspace": "This command leaves the workspace folder and then deletes or changes files, so it was refused, even though the workspace is trusted.",
+  "@hostdCodeDestructiveAfterLeavingWorkspace": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code destructive_after_leaving_workspace)"
+  },
+  "hostdCodeUntrustedShellSyntax": "An untrusted workspace only runs one simple read-only command: no chaining (&&, ;, |), redirection or substitution.",
+  "@hostdCodeUntrustedShellSyntax": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code untrusted_shell_syntax)"
+  },
+  "hostdCodeCommandNeedsApproval": "This workspace isn't trusted, so this command is waiting for your approval.",
+  "@hostdCodeCommandNeedsApproval": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code command_needs_approval)"
+  },
+  "hostdCodeCommandNotAllowlisted": "This workspace isn't trusted and this command isn't a read-only one. Trust the workspace, or open the Desktop IDE to approve it.",
+  "@hostdCodeCommandNotAllowlisted": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code command_not_allowlisted)"
+  },
+  "hostdCodeWriteNeedsApproval": "This workspace isn't trusted, so this file change is waiting for your approval.",
+  "@hostdCodeWriteNeedsApproval": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code write_needs_approval)"
+  },
+  "hostdCodeProtectedGitHooks": "Writing under .git/hooks is never allowed: a hook is a program Git runs on the next commit, checkout or push.",
+  "@hostdCodeProtectedGitHooks": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code protected_git_hooks)"
+  },
+  "hostdCodeProtectedGitConfig": "Writing to .git/config is never allowed: it can make Git run another program.",
+  "@hostdCodeProtectedGitConfig": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code protected_git_config)"
+  },
+  "hostdCodeRootNotADirectory": "That folder doesn't exist, or it isn't a folder.",
+  "@hostdCodeRootNotADirectory": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code root_not_a_directory)"
+  },
+  "hostdCodeRootIsFilesystemRoot": "A whole drive can't be a workspace. Choose a project folder inside it instead.",
+  "@hostdCodeRootIsFilesystemRoot": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code root_is_filesystem_root)"
+  },
+  "hostdCodeRootDenylisted": "This system folder can never be a workspace. Choose a project folder inside it instead.",
+  "@hostdCodeRootDenylisted": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code root_denylisted)"
+  },
+  "hostdCodeOutsideWorkspace": "That path is outside the workspace. Add it as its own workspace to use it.",
+  "@hostdCodeOutsideWorkspace": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code outside_workspace)"
+  },
+  "hostdCodeUnauthorized": "The Host Daemon refused the request because its access key didn't match. Restart the Host Daemon and try again.",
+  "@hostdCodeUnauthorized": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code unauthorized)"
+  },
+  "hostdCodeInternalError": "The Host Daemon ran into a problem: {detail}",
+  "@hostdCodeInternalError": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code internal_error)",
+    "placeholders": {
+      "detail": {
+        "type": "String",
+        "description": "The underlying error, untranslated (tool or system output)"
+      }
+    }
+  },
+  "hostdCodeMissingParameter": "The request to the Host Daemon was missing something it needs. Update the app and try again.",
+  "@hostdCodeMissingParameter": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code missing_parameter)"
+  },
+  "hostdCodeUnknownAction": "The Host Daemon doesn't know this action. It may be out of date.",
+  "@hostdCodeUnknownAction": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code unknown_action)"
+  },
+  "hostdCodeRootNotGranted": "This folder isn't one of your workspaces anymore. Add it again and try again.",
+  "@hostdCodeRootNotGranted": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code root_not_granted)"
+  },
+  "hostdCodePathNotFound": "That file or folder doesn't exist.",
+  "@hostdCodePathNotFound": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code path_not_found)"
+  },
+  "hostdCodeFileNotUtf8": "This file isn't text, so it can't be shown here.",
+  "@hostdCodeFileNotUtf8": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code file_not_utf8)"
+  },
+  "hostdCodeApprovalNotFound": "This request was already answered or has expired.",
+  "@hostdCodeApprovalNotFound": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code approval_not_found)"
+  },
+  "hostdCodeNotAGitRepository": "This folder isn't a Git repository.",
+  "@hostdCodeNotAGitRepository": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code not_a_git_repository)"
+  },
+  "hostdCodeGitOutputNotUtf8": "Git returned something that isn't text, so it can't be shown here.",
+  "@hostdCodeGitOutputNotUtf8": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code git_output_not_utf8)"
+  },
+  "hostdCodeGitCommandFailed": "Git failed: {detail}",
+  "@hostdCodeGitCommandFailed": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code git_command_failed)",
+    "placeholders": {
+      "detail": {
+        "type": "String",
+        "description": "The underlying error, untranslated (tool or system output)"
+      }
+    }
+  },
+  "hostdCodeUnknownDiagnosticsTool": "The Host Daemon doesn't know this diagnostics tool.",
+  "@hostdCodeUnknownDiagnosticsTool": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code unknown_diagnostics_tool)"
+  },
+  "hostdCodeTaskNotFound": "This agent task's workspace no longer exists.",
+  "@hostdCodeTaskNotFound": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code task_not_found)"
+  },
+  "hostdCodePairingFailed": "Couldn't start pairing with the server: {detail}",
+  "@hostdCodePairingFailed": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code pairing_failed)",
+    "placeholders": {
+      "detail": {
+        "type": "String",
+        "description": "The underlying error, untranslated (tool or system output)"
+      }
+    }
+  },
+  "hostdCodeNoPairingSession": "No pairing is in progress. Start pairing again.",
+  "@hostdCodeNoPairingSession": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code no_pairing_session)"
+  },
+  "hostdCodePairingEnded": "Pairing ended before it was approved.",
+  "@hostdCodePairingEnded": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code pairing_ended)"
+  },
+  "hostdCodeWorkspaceNotTrusted": "This workspace isn't trusted. Trust it first to open a terminal or debugger here.",
+  "@hostdCodeWorkspaceNotTrusted": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code workspace_not_trusted)"
+  },
+  "hostdCodeTerminalStartFailed": "Couldn't start the terminal: {detail}",
+  "@hostdCodeTerminalStartFailed": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code terminal_start_failed)",
+    "placeholders": {
+      "detail": {
+        "type": "String",
+        "description": "The underlying error, untranslated (tool or system output)"
+      }
+    }
+  },
+  "hostdCodeDebugStartFailed": "Couldn't start the debugger (debugpy): {detail}",
+  "@hostdCodeDebugStartFailed": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code debug_start_failed)",
+    "placeholders": {
+      "detail": {
+        "type": "String",
+        "description": "The underlying error, untranslated (tool or system output)"
+      }
+    }
+  },
+  "hostdCodeDebugUnreachable": "The debugger (debugpy) started but couldn't be reached: {detail}",
+  "@hostdCodeDebugUnreachable": {
+    "description": "Host Daemon refusal/error shown in the desktop app (daemon code debug_unreachable)",
+    "placeholders": {
+      "detail": {
+        "type": "String",
+        "description": "The underlying error, untranslated (tool or system output)"
+      }
+    }
+  },
+  "coreEngineerWorkspacesLoadFailed": "Could not load your workspaces. Your work is not lost -- try again shortly.",
+  "@coreEngineerWorkspacesLoadFailed": {
+    "description": "Engineer workspaces panel: the list failed to load"
+  },
+  "voiceSocketUnavailable": "Live voice is not available on this server.",
+  "@voiceSocketUnavailable": {
+    "description": "Live voice closed: the server has the feature off"
+  },
+  "voiceSocketTooMany": "Live voice is already open on another device, or you have started it too often. Close it elsewhere or wait a few minutes, then try again.",
+  "@voiceSocketTooMany": {
+    "description": "Live voice closed: too many sessions"
+  },
+  "voiceSocketBadRequest": "The server could not start live voice with these settings.",
+  "@voiceSocketBadRequest": {
+    "description": "Live voice closed: the start request was refused"
+  },
+  "voiceClientNothingSpeakable": "Nothing in this reply can be read aloud.",
+  "@voiceClientNothingSpeakable": {
+    "description": "Read-aloud failed: the reply has no speakable text"
+  },
+  "voiceClientCouldNotRead": "Could not read this reply aloud.",
+  "@voiceClientCouldNotRead": {
+    "description": "Read-aloud failed for another validation reason"
+  },
+  "hostStatusRepairRequired": "Re-pair required",
+  "@hostStatusRepairRequired": {
+    "description": "Host panel status: the server refused the daemon's stored token"
+  },
+  "engineeringDaemonRepairRequired": "Re-pair required: the server no longer accepts this device",
+  "@engineeringDaemonRepairRequired": {
+    "description": "Host daemon page status: the server refused the daemon's token"
+  },
+  "knowledgeErrTooLarge": "{kind, select, pdf{This PDF} other{This document}} is larger than the server's {limit} limit.",
+  "@knowledgeErrTooLarge": {
+    "description": "Upload failed: file over the size limit",
+    "placeholders": {
+      "kind": {
+        "type": "String"
+      },
+      "limit": {
+        "type": "String"
+      }
+    }
+  },
+  "knowledgeErrRateLimited": "Too many uploads right now. Wait a minute, then try again.",
+  "@knowledgeErrRateLimited": {
+    "description": "Upload failed: rate limited"
+  },
+  "knowledgeErrUnavailable": "The knowledge library is unavailable right now. Try again later.",
+  "@knowledgeErrUnavailable": {
+    "description": "Upload failed: the library is unavailable"
+  },
+  "knowledgeErrInProgress": "AURA is still saving {kind, select, pdf{this PDF} other{this document}}. Refresh in a moment before trying again.",
+  "@knowledgeErrInProgress": {
+    "description": "Upload failed: the same upload is still in progress",
+    "placeholders": {
+      "kind": {
+        "type": "String"
+      }
+    }
+  },
+  "knowledgeErrTimeout": "AURA is taking a long time with {kind, select, pdf{this PDF} other{this document}}. It may still be saved: refresh to check. Trying again will not add it twice.",
+  "@knowledgeErrTimeout": {
+    "description": "Upload timed out",
+    "placeholders": {
+      "kind": {
+        "type": "String"
+      }
+    }
+  },
+  "knowledgeErrNetwork": "Could not reach AURA. Trying again will not add it twice.",
+  "@knowledgeErrNetwork": {
+    "description": "Upload failed: network"
+  },
+  "knowledgeErrSignIn": "Sign in again to continue.",
+  "@knowledgeErrSignIn": {
+    "description": "Upload failed: signed out"
+  },
+  "knowledgeErrForbidden": "You do not have permission to add documents.",
+  "@knowledgeErrForbidden": {
+    "description": "Upload failed: not permitted"
+  },
+  "knowledgeErrServer": "AURA could not save {kind, select, pdf{this PDF} other{this document}}. Trying again will not add it twice.",
+  "@knowledgeErrServer": {
+    "description": "Upload failed: server error",
+    "placeholders": {
+      "kind": {
+        "type": "String"
+      }
+    }
+  },
+  "knowledgeErrRejected": "Could not add {kind, select, pdf{this PDF} other{this document}}: {reason}",
+  "@knowledgeErrRejected": {
+    "description": "Upload rejected, with the server's reason",
+    "placeholders": {
+      "kind": {
+        "type": "String"
+      },
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "knowledgeAlreadyUnchanged": "Already in your library, unchanged. Nothing new was saved.",
+  "@knowledgeAlreadyUnchanged": {
+    "description": "Upload skipped: identical content already saved"
+  },
+  "knowledgeNotSavedQuarantined": "Not saved: every passage was held back by the safety check.",
+  "@knowledgeNotSavedQuarantined": {
+    "description": "Upload skipped: everything quarantined"
+  },
+  "knowledgeNotSavedReason": "Not saved ({reason}).",
+  "@knowledgeNotSavedReason": {
+    "description": "Upload skipped for another reason (server code shown)",
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "hostRepairExplanation": "The server no longer accepts this device (expired, revoked, or your account lacks Engineer access). Pair again to reconnect.",
+  "@hostRepairExplanation": {
+    "description": "Host panel: why re-pairing is required"
+  },
+  "knowledgeDeleteFailedReason": "Could not delete this document: {reason}",
+  "@knowledgeDeleteFailedReason": {
+    "description": "Knowledge: delete refused, with the server's message",
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "knowledgeDeleteUnreachable": "Could not reach AURA to delete this document.",
+  "@knowledgeDeleteUnreachable": {
+    "description": "Knowledge: delete failed, server unreachable"
+  },
+  "homeInsightDismissFailed": "Could not dismiss this insight. Try again shortly.",
+  "@homeInsightDismissFailed": {
+    "description": "Today screen: dismissing an insight failed"
   }
 }

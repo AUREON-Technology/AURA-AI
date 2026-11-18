@@ -52,6 +52,14 @@ gating CI as of this commit.
 `k=5`, default settings (`hybrid_enabled=True`, BM25 + dense fused via RRF, `HashEmbeddingProvider`
 as the embedder, `score_threshold=0.35`).
 
+> **Update (2026-11-17).** The JSON above is the original run, not what the gate holds today.
+> `_ndcg` used to give a gain to every returned chunk of a relevant document against a
+> once-per-document ideal, so nDCG could exceed 1.0. That is fixed, and
+> `docs_corpus_baseline.json` was regenerated with `RegressionGate.save_baseline()` on `main` at
+> `446e004`: nDCG 0.5174, MRR 0.4542, recall@5 0.70, precision@5 0.3867, pass rate 0.6522,
+> empty-correct 0.3333. Recall, MRR and precision rose from retrieval changes made after this
+> report, not from the metric fix. See `LEXICAL_RETRIEVAL_BENCHMARK.md` §3 for the correction.
+
 This is not the number a corpus author wants to publish, and it was not adjusted to look better.
 Two things drive it, both structural rather than bugs:
 

@@ -35,6 +35,7 @@ from ..domain.caller_context import MAX_CALLER_CONTEXT, CallerContext
 from ..domain.connectors import CONNECTOR_ID_PATTERN, Credential
 from ..domain.identifiers import CorrelationId, DocumentId, SessionId, UserId
 from ..domain.llm import RoutingPolicy
+from ..text.language import CLIENT_LANGUAGE_HEADER, normalize_language
 from ..domain.memory import MemoryKind, MemoryQuery
 from ..domain.output_schema import check_output_schema
 from ..domain.reasoning import ReasoningStrategy
@@ -65,6 +66,11 @@ _MAX_RESPONSE_SCHEMA_CHARS = 8000
 CONNECTOR_TOKEN_HEADER = "x-aura-connector-token"
 _MAX_CONNECTOR_TOKENS = 8
 _MAX_CONNECTOR_TOKEN_CHARS = 8192
+
+
+def _client_language(request: Any) -> str | None:
+    """The app's display language from ``X-Client-Language`` (``"ar"``/``"en"``), or ``None``."""
+    return normalize_language(request.headers.get(CLIENT_LANGUAGE_HEADER))
 
 
 def _connector_tokens(request: Any) -> dict[str, Credential]:
@@ -521,6 +527,9 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             response_schema=payload.response_schema,
             connector_tokens=connector_tokens or None,
             images=images,
+            # The app's display language (X-Client-Language), the fallback for a message with no
+            # clear language of its own (prompts/language.py). A service key has no app.
+            preferred_language=None if caller.is_service else _client_language(request),
         )
 
     def vision_status() -> dict[str, bool]:
@@ -1140,18 +1149,22 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
     async def transcribe_audio(
         request: Request,
         file: UploadFile = File(...),
-        language: str | None = Form(None, max_length=40),
+        language: str | None = Form(default=None, max_length=40),
         caller: Principal = Depends(principal),
     ) -> JSONResponse:
         """Speech to text via the container's `SpeechToText` engine (self-hosted
         `faster-whisper`, Phase F2). 503s with a clear `dependency_unavailable` body when no
         engine is configured, rather than pretending an empty transcript is a real answer.
 
-        ``language`` (optional form field) is the clip's language as an ISO-639-1 code (``en``,
-        ``ar``, ``en-US`` folds to ``en``), validated exactly as a live-voice start frame is.
-        Absent, a multilingual model detects it. The response's ``language`` is the code used
-        -- requested or detected -- or ``null`` when the engine cannot say; it is additive, so
-        a client that sends no language gets the response it always did plus that field.
+        ``language`` (optional, ISO-639-1 such as ``ar``; ``AR-eg`` folds to ``ar``) is a hint
+        for a multilingual model, validated exactly as a live-voice start frame is; an unknown
+        code is a 422. Without it the model detects the language itself. An English-only
+        (``*.en``) model ignores the hint, exactly as before the field existed: clients already
+        in use send ``ar`` whenever the app is in Arabic, and must keep getting a transcript
+        (docs/plans/arabic-language_plan.md, stage 4).
+
+        The response's ``language`` (Phase V, additive) is the language the engine used --
+        the hint it honoured, or the one it detected -- or ``null`` when it cannot say.
         """
         from ..ports.speech import LanguageAwareSpeechToText
         from ..voice.session import normalise_language
@@ -1163,32 +1176,33 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "no speech-to-text engine is configured on this deployment",
                 dependency="faster-whisper",
             )
-        code: str | None = None
+        hint: str | None = None
         if language is not None and language.strip():
-            code = normalise_language(language)
-            if code is None:
+            hint = normalise_language(language)
+            if hint is None:
                 raise ValidationError(
                     "language is not a supported language code; send an ISO-639-1 code such "
                     "as en or ar",
                     details={"field": "language", "reason": "language_unsupported"},
                 )
         language_aware = isinstance(engine, LanguageAwareSpeechToText)
-        if code not in (None, "en") and language_aware and not engine.multilingual:
-            raise ValidationError(
-                "speech-to-text is English-only with the configured model; set a multilingual "
-                "Whisper size to transcribe other languages",
-                details={"field": "language", "reason": "language_unsupported",
-                         "language": code},
-            )
+        english_only = (
+            not engine.multilingual if language_aware
+            else settings.voice.stt_model.endswith(".en")
+        )
+        if english_only:
+            hint = None
         data = await file.read()
         if len(data) > MAX_AUDIO_BYTES:
             raise ValidationError(
                 "uploaded audio exceeds the size limit", details={"limit_bytes": MAX_AUDIO_BYTES}
             )
         if language_aware:
-            text, used = await engine.transcribe_detect(data, language=code)
+            text, used = await engine.transcribe_detect(data, language=hint)
         else:
-            text, used = await engine.transcribe(data, language=code), code
+            text, used = await engine.transcribe(data, language=hint), hint
+        if english_only:
+            used = "en"
         return JSONResponse(content={"text": text, "engine": engine.name, "language": used})
 
     @router.post("/voice/speak")

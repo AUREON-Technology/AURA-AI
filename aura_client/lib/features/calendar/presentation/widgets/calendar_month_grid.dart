@@ -17,12 +17,21 @@ class CalendarMonthGrid extends ConsumerWidget {
     final ui = ref.watch(calendarViewModelProvider);
     final vm = ref.read(calendarViewModelProvider.notifier);
     final monthDays = daysInMonth(ui.currentMonthDate);
-    final offset = firstDayOffset(ui.currentMonthDate);
+    final localizations = MaterialLocalizations.of(context);
+    final firstDay = localizations.firstDayOfWeekIndex;
+    final offset = firstDayOffset(ui.currentMonthDate, firstDayOfWeekIndex: firstDay);
     final totalCells = monthDays + offset;
     final rowCount = (totalCells / 7).ceil();
     final prevMonthDate = DateTime(ui.currentMonthDate.year, ui.currentMonthDate.month - 1, 1);
     final daysInPrev = daysInMonth(prevMonthDate);
-    const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    // Day names in the language on screen, starting on the locale's first day of the week.
+    // 2023-01-01 was a Sunday (index 0). Arabic has no short day names, and its full ones do not
+    // fit seven columns on a phone, so a long name falls back to Material's narrow label.
+    final weekdays = List.generate(7, (i) {
+      final index = (firstDay + i) % 7;
+      final name = DateFormat.E().format(DateTime(2023, 1, 1 + index));
+      return name.length > 3 ? localizations.narrowWeekdays[index] : name;
+    });
 
     return Card(
       child: Padding(
@@ -32,7 +41,7 @@ class CalendarMonthGrid extends ConsumerWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(DateFormat('MMMM yyyy').format(ui.currentMonthDate), style: Theme.of(context).textTheme.titleLarge),
+                Text(DateFormat.yMMMM().format(ui.currentMonthDate), style: Theme.of(context).textTheme.titleLarge),
                 Row(
                   children: [
                     IconButton(
