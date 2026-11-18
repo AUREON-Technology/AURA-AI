@@ -42,7 +42,7 @@ void showAddEventDialog(
               side: BorderSide(color: palette.border),
             ),
             title: Text(
-              'Create Calendar Event',
+              context.l10n.calendarCreateEventTitle,
               style: TextStyle(color: palette.textPrimary),
             ),
             content: SingleChildScrollView(
@@ -53,9 +53,9 @@ void showAddEventDialog(
                   children: [
                     TextField(
                       controller: titleController,
-                      decoration: const InputDecoration(
-                        labelText: 'Event Title',
-                        hintText: 'e.g. Team Standup',
+                      decoration: InputDecoration(
+                        labelText: context.l10n.calendarEventTitleLabel,
+                        hintText: context.l10n.calendarEventTitleHint,
                       ),
                       style: TextStyle(color: palette.textPrimary),
                     ),
@@ -63,9 +63,9 @@ void showAddEventDialog(
                     TextField(
                       controller: descController,
                       maxLines: 3,
-                      decoration: const InputDecoration(
-                        labelText: 'Description (Optional)',
-                        hintText: 'Enter event details',
+                      decoration: InputDecoration(
+                        labelText: context.l10n.calendarEventDescriptionLabel,
+                        hintText: context.l10n.calendarEventDescriptionHint,
                       ),
                       style: TextStyle(color: palette.textPrimary),
                     ),
@@ -78,9 +78,9 @@ void showAddEventDialog(
                           Icons.access_time,
                           color: palette.brandOnSurfaceText,
                         ),
-                        title: const Text(
-                          'Start Time',
-                          style: TextStyle(fontSize: 14),
+                        title: Text(
+                          context.l10n.calendarStartTime,
+                          style: const TextStyle(fontSize: 14),
                         ),
                         subtitle: Text(
                           DateFormat('yyyy-MM-dd HH:mm').format(startDate),
@@ -140,9 +140,9 @@ void showAddEventDialog(
                           Icons.access_time_filled,
                           color: palette.warning,
                         ),
-                        title: const Text(
-                          'End Time',
-                          style: TextStyle(fontSize: 14),
+                        title: Text(
+                          context.l10n.calendarEndTime,
+                          style: const TextStyle(fontSize: 14),
                         ),
                         subtitle: Text(
                           DateFormat('yyyy-MM-dd HH:mm').format(endDate),
@@ -197,7 +197,7 @@ void showAddEventDialog(
               TextButton(
                 onPressed: () => Navigator.pop(context),
                 child: Text(
-                  'Cancel',
+                  context.l10n.cancel,
                   style: TextStyle(color: palette.textSecondary),
                 ),
               ),
@@ -218,13 +218,13 @@ void showAddEventDialog(
                     Navigator.pop(context);
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: const Text('Event created successfully!'),
+                        content: Text(context.l10n.calendarEventCreated),
                         backgroundColor: palette.success,
                       ),
                     );
                   }
                 },
-                child: const Text('Create'),
+                child: Text(context.l10n.calendarCreate),
               ),
             ],
           );

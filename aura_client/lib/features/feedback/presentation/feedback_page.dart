@@ -6,6 +6,7 @@ import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
 import 'package:aura_client/features/chat/data/feedback_repository.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class FeedbackPage extends ConsumerWidget {
   const FeedbackPage({super.key});
@@ -20,15 +21,15 @@ class FeedbackPage extends ConsumerWidget {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: Text('Feedback', style: Theme.of(context).textTheme.headlineMedium),
+        title: Text(context.l10n.feedbackTitle, style: Theme.of(context).textTheme.headlineMedium),
       ),
       body: logsAsync.when(
         data: (logs) {
           if (logs.isEmpty) {
-            return const AuraEmptyState(
+            return AuraEmptyState(
               icon: Icons.rate_review_outlined,
-              title: 'No corrections yet',
-              message: 'Rate a Copilot answer to help AURA learn what you prefer.',
+              title: context.l10n.feedbackEmptyTitle,
+              message: context.l10n.feedbackEmptyMessage,
             );
           }
           return ListView.separated(
@@ -42,7 +43,7 @@ class FeedbackPage extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Rated ${log.rating}/5 · ${DateFormat.yMMMd().format(log.createdAt)}',
+                      context.l10n.feedbackRated(log.rating, DateFormat.yMMMd().format(log.createdAt)),
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                     if (log.correction != null && log.correction!.isNotEmpty) ...[

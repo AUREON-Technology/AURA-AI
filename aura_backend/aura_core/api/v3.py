@@ -37,6 +37,7 @@ from ..domain.identifiers import CorrelationId, DocumentId, SessionId, UserId
 from ..domain.engineering import ENGINEER_CONSENT_NOTICE_VERSION
 from ..domain.llm import RoutingPolicy, WorkloadClass
 from ..llm.workload import workload_class_for_turn
+from ..text.language import CLIENT_LANGUAGE_HEADER, normalize_language
 from ..domain.memory import MemoryKind, MemoryQuery
 from ..domain.output_schema import check_output_schema
 from ..domain.reasoning import ReasoningStrategy
@@ -67,6 +68,11 @@ _MAX_RESPONSE_SCHEMA_CHARS = 8000
 CONNECTOR_TOKEN_HEADER = "x-aura-connector-token"
 _MAX_CONNECTOR_TOKENS = 8
 _MAX_CONNECTOR_TOKEN_CHARS = 8192
+
+
+def _client_language(request: Any) -> str | None:
+    """The app's display language from ``X-Client-Language`` (``"ar"``/``"en"``), or ``None``."""
+    return normalize_language(request.headers.get(CLIENT_LANGUAGE_HEADER))
 
 
 def _connector_tokens(request: Any) -> dict[str, Credential]:
@@ -537,6 +543,9 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             response_schema=payload.response_schema,
             connector_tokens=connector_tokens or None,
             images=images,
+            # The app's display language (X-Client-Language), the fallback for a message with no
+            # clear language of its own (prompts/language.py). A service key has no app.
+            preferred_language=None if caller.is_service else _client_language(request),
         )
 
     def vision_status() -> dict[str, bool]:
@@ -1169,11 +1178,19 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     @router.post("/voice/transcribe")
     async def transcribe_audio(
-        request: Request, file: UploadFile = File(...), caller: Principal = Depends(principal),
+        request: Request,
+        file: UploadFile = File(...),
+        language: str | None = Form(default=None, max_length=40),
+        caller: Principal = Depends(principal),
     ) -> JSONResponse:
         """Speech to text via the container's `SpeechToText` engine (self-hosted
         `faster-whisper`, Phase F2). 503s with a clear `dependency_unavailable` body when no
-        engine is configured, rather than pretending an empty transcript is a real answer."""
+        engine is configured, rather than pretending an empty transcript is a real answer.
+
+        ``language`` (optional, ISO-639-1 such as ``ar``) is a hint for a multilingual model;
+        without it the model detects the language itself. An English-only (``*.en``) model
+        ignores it, exactly as before the field existed (docs/plans/arabic-language_plan.md,
+        stage 4)."""
         await enforce_rate_limit(request, caller, "voice")
         if container.stt_engine is None:
             raise DependencyUnavailableError(
@@ -1185,7 +1202,19 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             raise ValidationError(
                 "uploaded audio exceeds the size limit", details={"limit_bytes": MAX_AUDIO_BYTES}
             )
-        text = await container.stt_engine.transcribe(data)
+        hint = None
+        if language:
+            from ..voice.session import normalise_language
+
+            hint = normalise_language(language)
+            if hint is None:
+                raise ValidationError(
+                    "language is not a supported language code; send an ISO-639-1 code such as ar",
+                    details={"reason": "language_unsupported"},
+                )
+            if settings.voice.stt_model.endswith(".en"):
+                hint = None
+        text = await container.stt_engine.transcribe(data, language=hint)
         return JSONResponse(content={"text": text, "engine": container.stt_engine.name})
 
     @router.post("/voice/speak")

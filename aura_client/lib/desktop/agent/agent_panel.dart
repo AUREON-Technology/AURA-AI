@@ -25,6 +25,7 @@ import 'package:aura_client/features/chat/presentation/widgets/message_bubble.da
 import 'package:aura_client/features/chat/presentation/widgets/pending_actions_card.dart';
 import 'package:aura_client/features/engineering/presentation/engineer_consent_sheet.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 const _engineerAgentId = kEngineerAgentId;
 
@@ -180,21 +181,19 @@ class _AgentPanelState extends ConsumerState<AgentPanel> {
                 padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.md, vertical: 6),
                 color: palette.surfaceVariant,
                 child: Text(
-                  'Workspace: $workspaceRoot',
+                  context.l10n.agentWorkspaceLabel(workspaceRoot),
                   style: TextStyle(fontSize: 10.5, color: palette.textSecondary, fontFamily: 'Courier'),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
             if (locked)
-              const Expanded(
+              Expanded(
                 child: Center(
                   child: SingleChildScrollView(
                     child: AuraEmptyState(
                       icon: Icons.lock_outline,
-                      title: 'Engineer is not available on this account',
-                      message: 'Engineer needs the engineer_agent capability. Ask an operator to '
-                          'grant it; until then, messages from here would be answered by the '
-                          'general assistant instead.',
+                      title: context.l10n.agentLockedTitle,
+                      message: context.l10n.agentLockedMessage,
                     ),
                   ),
                 ),
@@ -206,14 +205,12 @@ class _AgentPanelState extends ConsumerState<AgentPanel> {
                   if (messages.isEmpty) {
                     // Was a one-line grey Text, which reads as a screen that
                     // failed to load rather than one waiting for you to start.
-                    return const Center(
+                    return Center(
                       child: SingleChildScrollView(
                         child: AuraEmptyState(
                           icon: Icons.auto_awesome_outlined,
-                          title: 'No messages yet',
-                          message: 'Ask Engineer about this workspace — it can read your files, '
-                              'run commands and propose changes for you to review before anything '
-                              'is applied.',
+                          title: context.l10n.agentEmptyTitle,
+                          message: context.l10n.agentEmptyMessage,
                         ),
                       ),
                     );
@@ -269,10 +266,10 @@ class _TaskSwitcher extends ConsumerWidget {
 
   final String activeSessionId;
 
-  String _labelFor(String sessionId) {
-    if (sessionId == 'default_session') return 'Default';
+  String _labelFor(BuildContext context, String sessionId) {
+    if (sessionId == 'default_session') return context.l10n.agentTaskDefault;
     final suffix = sessionId.split('_').last;
-    return 'Task ${suffix.length >= 5 ? suffix.substring(suffix.length - 5) : suffix}';
+    return context.l10n.agentTaskLabel(suffix.length >= 5 ? suffix.substring(suffix.length - 5) : suffix);
   }
 
   @override
@@ -283,7 +280,7 @@ class _TaskSwitcher extends ConsumerWidget {
     final allSessions = sessions.contains(activeSessionId) ? sessions : [activeSessionId, ...sessions];
 
     return PopupMenuButton<String>(
-      tooltip: 'Switch task',
+      tooltip: context.l10n.agentSwitchTask,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -292,7 +289,7 @@ class _TaskSwitcher extends ConsumerWidget {
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 90),
             child: Text(
-              _labelFor(activeSessionId),
+              _labelFor(context, activeSessionId),
               overflow: TextOverflow.ellipsis,
               style: TextStyle(fontSize: 11, color: palette.textSecondary),
             ),
@@ -300,7 +297,7 @@ class _TaskSwitcher extends ConsumerWidget {
         ],
       ),
       itemBuilder: (context) => [
-        const PopupMenuItem(value: '__new__', child: Text('+ New Task')),
+        PopupMenuItem(value: '__new__', child: Text(context.l10n.agentNewTask)),
         const PopupMenuDivider(),
         ...allSessions.map((session) => PopupMenuItem(
               value: session,
@@ -308,7 +305,7 @@ class _TaskSwitcher extends ConsumerWidget {
                 children: [
                   SizedBox(width: 14, child: session == activeSessionId ? const Icon(Icons.check, size: 14) : null),
                   const SizedBox(width: 6),
-                  Expanded(child: Text(_labelFor(session), overflow: TextOverflow.ellipsis)),
+                  Expanded(child: Text(_labelFor(context, session), overflow: TextOverflow.ellipsis)),
                 ],
               ),
             )),

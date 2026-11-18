@@ -77,7 +77,7 @@ void main() {
         turnId: 't1',
       ),
     ], turnId: 't1');
-    expect(find.text(AppLocalizationsEn().engineerConfirmRunCommand), findsOneWidget);
+    expect(find.text(AppLocalizationsEn().chatConfirmRunCommand), findsOneWidget);
     expect(find.text('Run command in sandbox'), findsNothing);
   });
 

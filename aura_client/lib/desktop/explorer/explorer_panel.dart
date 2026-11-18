@@ -12,6 +12,7 @@ import 'package:aura_client/desktop/explorer/explorer_tree_tile.dart';
 import 'package:aura_client/desktop/explorer/explorer_service.dart';
 import 'package:aura_client/desktop/host/host_panel.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class ExplorerPanel extends ConsumerStatefulWidget {
   const ExplorerPanel({super.key});
@@ -71,7 +72,7 @@ class _ExplorerPanelState extends ConsumerState<ExplorerPanel> {
                       Icon(Icons.cloud_off, size: 12, color: palette.warning),
                       const SizedBox(width: 4),
                       Text(
-                        'Host offline',
+                        context.l10n.explorerHostOffline,
                         style: TextStyle(fontSize: 10, color: palette.warning),
                       ),
                     ],
@@ -83,7 +84,7 @@ class _ExplorerPanelState extends ConsumerState<ExplorerPanel> {
                   ref.invalidate(explorerServiceProvider);
                   _treeKey.currentState?.reload();
                 },
-                tooltip: 'Refresh',
+                tooltip: context.l10n.commonRefresh,
               ),
             ],
           ),
@@ -231,12 +232,12 @@ class _NoWorkspaceSelected extends StatelessWidget {
     // The welcome page this points at is already showing in the editor area
     // beside this panel whenever no file is open, so naming it is the whole
     // instruction — a button here would be a second door to the same room.
-    return const Center(
+    return Center(
       child: SingleChildScrollView(
         child: AuraEmptyState(
           icon: Icons.folder_outlined,
-          title: 'No workspace open',
-          message: 'Open a folder from the welcome page to browse its files here.',
+          title: context.l10n.explorerNoWorkspaceTitle,
+          message: context.l10n.explorerNoWorkspaceMessage,
         ),
       ),
     );
@@ -278,28 +279,25 @@ class _ErrorView extends ConsumerWidget {
             Icon(Icons.error_outline, size: 48, color: palette.danger),
             const SizedBox(height: AuraSpacing.md),
             Text(
-              isAccessDenied ? 'Workspace access required' : 'Failed to load directory',
+              isAccessDenied ? context.l10n.explorerAccessRequiredTitle : context.l10n.explorerLoadFailedTitle,
               style: TextStyle(color: palette.textPrimary, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: AuraSpacing.xs),
             Text(
-              isAccessDenied
-                  ? 'This folder is outside every root granted to the host daemon. '
-                    'Grant access to browse it here and let the AURA agent work in it.'
-                  : message,
+              isAccessDenied ? context.l10n.explorerAccessRequiredBody : message,
               style: TextStyle(color: palette.textSecondary, fontSize: 12),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: AuraSpacing.lg),
             if (isAccessDenied && workspaceRoot != null)
               AuraButton(
-                label: 'Grant Access',
+                label: context.l10n.explorerGrantAccess,
                 icon: Icons.key,
                 onPressed: () => grantWorkspaceAccess(context, ref, workspaceRoot!, onGranted: onGranted),
               ),
             if (isAccessDenied && workspaceRoot != null) const SizedBox(height: AuraSpacing.sm),
             AuraButton(
-              label: 'Retry',
+              label: context.l10n.retry,
               icon: Icons.refresh,
               variant: AuraButtonVariant.secondary,
               onPressed: onRetry,

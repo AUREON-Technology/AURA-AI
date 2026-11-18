@@ -104,7 +104,8 @@ class _FolderPicker extends ConsumerWidget {
             for (final root in folders.roots)
               DropdownMenuItem(
                 value: root.path,
-                child: Text(root.path, overflow: TextOverflow.ellipsis),
+                // A path reads left to right whatever the app language (Arabic plan, stage 2).
+                child: Text(root.path, overflow: TextOverflow.ellipsis, textDirection: TextDirection.ltr),
               ),
           ],
           onChanged: (path) {

@@ -11,6 +11,7 @@ import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart' hide HostdRoot;
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 import 'package:aura_client/desktop/state/desktop_application_state.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class WorkspaceWelcomePage extends ConsumerWidget {
   const WorkspaceWelcomePage({super.key});
@@ -52,7 +53,7 @@ class WorkspaceWelcomePage extends ConsumerWidget {
                 ),
                 const SizedBox(height: AuraSpacing.xs),
                 Text(
-                  'Open a folder to start coding with AURA',
+                  context.l10n.workspaceWelcomeSubtitle,
                   textAlign: TextAlign.center,
                   style: TextStyle(color: palette.textSecondary),
                 ),
@@ -60,7 +61,7 @@ class WorkspaceWelcomePage extends ConsumerWidget {
 
                 // Open Folder button
                 AuraButton(
-                  label: 'Open Folder',
+                  label: context.l10n.workspaceOpenFolder,
                   icon: Icons.folder_open,
                   onPressed: () => _openFolder(context, ref),
                 ),
@@ -72,7 +73,7 @@ class WorkspaceWelcomePage extends ConsumerWidget {
                     Expanded(child: Divider(color: palette.border)),
                     Padding(
                       padding: EdgeInsets.symmetric(horizontal: ideDensity.spacingScale * AuraSpacing.md),
-                      child: Text('Recent', style: TextStyle(color: palette.textSecondary)),
+                      child: Text(context.l10n.workspaceRecent, style: TextStyle(color: palette.textSecondary)),
                     ),
                     Expanded(child: Divider(color: palette.border)),
                   ],
@@ -123,7 +124,7 @@ class WorkspaceWelcomePage extends ConsumerWidget {
           );
         } catch (e) {
           if (context.mounted) {
-            AuraSnackbar.show(context, message: 'Could not grant root: $e', kind: AuraSnackbarKind.error);
+            AuraSnackbar.show(context, message: context.l10n.explorerGrantFailed(e.toString()), kind: AuraSnackbarKind.error);
           }
         }
       }
@@ -133,10 +134,10 @@ class WorkspaceWelcomePage extends ConsumerWidget {
   Future<bool?> _showGrantDialog(BuildContext context, String path) {
     return AuraDialog.show<bool>(
       context: context,
-      title: 'Grant workspace to hostd?',
-      child: Text('This allows the AURA agent to read/write files in "$path".'),
-      confirmLabel: 'Grant',
-      cancelLabel: 'Not Now',
+      title: context.l10n.explorerGrantTitle,
+      child: Text(context.l10n.workspaceGrantBody(path)),
+      confirmLabel: context.l10n.explorerGrant,
+      cancelLabel: context.l10n.workspaceNotNow,
       onConfirm: () => Navigator.of(context).pop(true),
     );
   }
@@ -155,12 +156,12 @@ class _EmptyRecent extends StatelessWidget {
         Icon(Icons.folder_outlined, size: 64, color: palette.textDisabled),
         const SizedBox(height: AuraSpacing.md),
         Text(
-          'No recent workspaces',
+          context.l10n.workspaceNoRecent,
           style: TextStyle(color: palette.textSecondary),
         ),
         const SizedBox(height: AuraSpacing.xs),
         Text(
-          'Open a folder to get started',
+          context.l10n.workspaceNoRecentHint,
           style: TextStyle(color: palette.textDisabled, fontSize: 12),
         ),
       ],
@@ -229,7 +230,7 @@ class _RecentWorkspacesList extends ConsumerWidget {
                     IconButton(
                       icon: Icon(Icons.close, size: 18, color: palette.textDisabled),
                       onPressed: () => ref.read(workspaceNotifierProvider.notifier).removeWorkspace(ws.id),
-                      tooltip: 'Remove from recent',
+                      tooltip: context.l10n.workspaceRemoveFromRecent,
                     ),
                 ],
               ),

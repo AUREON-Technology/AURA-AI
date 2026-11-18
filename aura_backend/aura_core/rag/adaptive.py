@@ -22,6 +22,7 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Mapping, Sequence
 
+from ..text import fold
 from .base import (
     BaseStrategy,
     RetrievalOutcome,
@@ -133,20 +134,57 @@ _PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
+#: The same classes in Arabic, Egyptian and فصحى both, written in folded form (no diacritics; أ/إ/آ
+#: as ا, ى as ي, ة as ه) because the query is folded before matching (``aura_core/text``). Kept
+#: beside the English table rather than inside it so each stays readable. ``\b`` is Unicode-aware
+#: in ``re``; a leading و/ف is allowed where Arabic attaches the conjunction to the verb.
+_ARABIC_PATTERNS: Mapping[str, tuple[str, ...]] = {
+    QueryClass.SELF_CONTAINED: (
+        r"\b[وف]?(ترجم|ترجملي|اعد صياغه|اعاده صياغه|صيغ|صحح|اختصر)\b",
+        r"^\s*(لخص|لخصلي|نسق|حول)\s+(ده|دي|هذا|هذه|النص|الكلام)\b",
+    ),
+    QueryClass.VERIFICATION: (
+        r"\bهل (ده|دي|هذا|هذه|الكلام ده)( \w+)? (صح|صحيح|دقيق|مؤكد|حقيقي)\b",
+        r"\b(انت متاكد|متاكد|ما الدليل|ايه الدليل|فين الدليل|الدليل علي)\b",
+        r"\b(ما مصدر|ايه مصدر|مصدرك|فين مكتوب|مكتوب فين)\b",
+    ),
+    QueryClass.MEDIA: (
+        r"\b[وبل]?(ال)?(صوره|صور|رسم بياني|مخطط|جدول|لقطه شاشه|اسكرين ?شوت|سكرين ?شوت)\b",
+        r"\bصفحه (رقم )?\d+\b",
+        r"\b(ممسوح|مسح ضوئي|سكان)\b",
+    ),
+    QueryClass.COMPARATIVE: (
+        r"\b[وف]?(قارن|قارنلي|مقارنه|المقارنه|الفرق بين|مقابل)\b",
+        r"\b(ايهما|انهي|اي واحد)( \w+)? (احسن|افضل|ارخص|اسرع|اامن|اشد)\b",
+    ),
+    QueryClass.RELATIONAL: (
+        r"\b(يعتمد علي|تعتمد علي|مرتبط|مرتبطه|العلاقه بين|علاقته|علاقتها)\b",
+        r"\b(مين|من) (بيدير|يدير|يملك|بيملك|اسس|مدير|رئيس|صاحب|بيقود|يقود)\b",
+        r"\b(بيشتغل|يعمل|شغال|بيبلغ|يتبع) (في|عند|مع|ل)\b",
+        r"\b(مقره|مقرها|موجود|موجوده) في\b",
+    ),
+    QueryClass.PERSONAL: (
+        r"\b(قلتلك|قلت لك|ذكرتلك|ذكرت|سالتك|فاكر|فاكره|تفتكر|اتكلمنا|اتفقنا|ناقشنا)\b",
+        r"\b(بتاعي|بتاعتي|بتوعي|الخاص بي|الخاصه بي)\b",
+        r"\b(المره اللي فاتت|الاسبوع اللي فات|الاسبوع الماضي|قبل كده|سابقا)\b",
+    ),
+}
+
+
 def classify_query(query: str) -> QueryClassification:
     """Assign zero or more classes to a query.
 
     Always returns at least FACTUAL, so the router always has a strategy. A question matching
     nothing is a plain lookup, which is the correct default and the cheapest path.
     """
-    lowered = query.lower().strip()
+    lowered = fold(query.lower().strip())
     if not lowered:
         return QueryClassification(classes=(QueryClass.FACTUAL,), signals=("empty",))
 
     classes: list[str] = []
     signals: list[str] = []
     for name, patterns in _PATTERNS:
-        for pattern in patterns:
+        for pattern in (*patterns, *_ARABIC_PATTERNS.get(name, ())):
             if re.search(pattern, lowered):
                 classes.append(name)
                 signals.append(f"{name}:{pattern[:24]}")

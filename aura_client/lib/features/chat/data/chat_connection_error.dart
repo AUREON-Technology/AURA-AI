@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 
-import '../../../core/network/aura_failure.dart';
+import '../../../l10n/generated/app_localizations.dart';
 import '../../../l10n/generated/app_localizations_en.dart';
 
 /// Prefix stored on assistant rows when no backend path could serve the turn.
@@ -16,7 +16,12 @@ const kChatConnectionErrorMessage =
 /// Assistant-row text for a turn the backend refused for its content class
 /// (`capability_unavailable`). Deliberately does not start with
 /// [kChatConnectionErrorPrefix], so the transcript shows no Retry card.
-const kChatFeatureUnavailableText = '$kFeatureUnavailableTitle. $kFeatureUnavailableMessage';
+/// Stored as the row's text and matched by `message_bubble.dart`, which shows the localized
+/// `chatFeatureUnavailableNotice` in its place; so it is a fixed marker, never translated (a
+/// row saved while the app was in Arabic must still match after switching to English).
+const kChatFeatureUnavailableText = "This needs a feature that isn't available yet. "
+    'AURA can answer plain questions right now. Answers that use your memory, '
+    'documents, tools or images are coming soon.';
 
 /// Assistant-row text for an answer the output guard withheld after it had streamed
 /// (`safety_violation`, `post_hoc`). Replaces the streamed text rather than keeping it: the
@@ -51,10 +56,30 @@ String engineerLimitReachedText(Object? details, {DateTime? now}) {
   return _en.engineerLimitReached(formatLimitReset(reset.toLocal(), now: now ?? DateTime.now()));
 }
 
-/// "1:00 AM" when [local] falls on [now]'s day, "Wed 1:00 AM" otherwise.
+/// "1:00 AM" when [local] falls on [now]'s day, "Wed 1:00 AM" otherwise. Always formatted in
+/// English, like the row it goes into, whatever language the app is showing.
 String formatLimitReset(DateTime local, {required DateTime now}) {
   final sameDay = local.year == now.year && local.month == now.month && local.day == now.day;
-  return sameDay ? DateFormat.jm().format(local) : DateFormat('EEE').add_jm().format(local);
+  return sameDay ? DateFormat.jm('en_US').format(local) : DateFormat('EEE', 'en_US').add_jm().format(local);
+}
+
+/// The Engineer refusal rows above are stored in English (they are persisted and synced as the
+/// turn's text); this is the same notice in the language on screen, or null when [content] is
+/// not one of them. The limit row keeps its stored reset time and only rewraps it.
+String? localizedEngineerRefusal(String content, AppLocalizations l10n) {
+  if (content == kChatEngineerConsentNeededText) return l10n.engineerConsentNeededNotice;
+  if (content == _en.engineerLimitReachedNoTime) return l10n.engineerLimitReachedNoTime;
+  const marker = '\u0000';
+  final template = _en.engineerLimitReached(marker);
+  final cut = template.indexOf(marker);
+  final prefix = template.substring(0, cut);
+  final suffix = template.substring(cut + marker.length);
+  if (content.length > prefix.length + suffix.length &&
+      content.startsWith(prefix) &&
+      content.endsWith(suffix)) {
+    return l10n.engineerLimitReached(content.substring(prefix.length, content.length - suffix.length));
+  }
+  return null;
 }
 
 bool isChatConnectionErrorText(String text) =>

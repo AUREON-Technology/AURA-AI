@@ -32,6 +32,7 @@ import 'approval_queue.dart';
 import 'command_policy.dart';
 import 'containment.dart';
 import 'diff_util.dart';
+import 'error_codes.dart';
 import 'git_service.dart';
 import 'isolated_task_registry.dart';
 import 'process_env.dart';
@@ -39,8 +40,12 @@ import 'process_tree.dart';
 import 'workspace_store.dart';
 
 class RpcError implements Exception {
-  RpcError(this.message);
+  RpcError(this.message, {this.code});
   final String message;
+
+  /// Stable machine code (`error_codes.dart`) for a refusal, sent as the RPC `error` frame's
+  /// `code` next to [message]; null for errors that are not refusals.
+  final String? code;
 
   @override
   String toString() => message;
@@ -158,7 +163,7 @@ class TaskHandler {
   Future<Map<String, Object?>> createTask(Map<String, dynamic> params) async {
     _refresh();
     final remote = _parseOrigin(params['origin']);
-    if (remote && !_remoteControlEnabled()) throw RpcError(remoteControlDisabledMessage);
+    if (remote && !_remoteControlEnabled()) throw RpcError(remoteControlDisabledMessage, code: HostdErrorCode.remoteControlDisabled);
     final taskId = 't_${DateTime.now().microsecondsSinceEpoch}_${_activeTaskIds.length}';
     _activeTaskIds.add(taskId);
 
@@ -189,7 +194,7 @@ class TaskHandler {
         try {
           worktree = await _isolatedTasks.resolve(taskId, cwdParam);
         } on ContainmentViolation catch (error) {
-          throw RpcError(error.message);
+          throw RpcError(error.message, code: error.code);
         }
         if (worktree == null) throw _noWorktreeError(taskKey);
       } else {
@@ -220,7 +225,10 @@ class TaskHandler {
   bool _parseOrigin(Object? origin) {
     if (origin == null || origin == 'desktop') return false;
     if (origin == 'remote') return true;
-    throw RpcError('invalid origin ${jsonEncode(origin)}: it must be "desktop" or "remote"');
+    throw RpcError(
+      'invalid origin ${jsonEncode(origin)}: it must be "desktop" or "remote"',
+      code: HostdErrorCode.invalidOrigin,
+    );
   }
 
   /// Whether [params]' task is a remote task -- refusing the call if it is and remote control has
@@ -229,7 +237,7 @@ class TaskHandler {
   bool _checkRemote(Map<String, dynamic> params) {
     final taskId = params['task_id'];
     if (taskId is! String || !_remoteTasks.contains(taskId)) return false;
-    if (!_remoteControlEnabled()) throw RpcError(remoteControlDisabledMessage);
+    if (!_remoteControlEnabled()) throw RpcError(remoteControlDisabledMessage, code: HostdErrorCode.remoteControlDisabled);
     return true;
   }
 
@@ -245,6 +253,7 @@ class TaskHandler {
     throw RpcError(
       'confirmation_required: this computer is being controlled from the phone or the web, so '
       'every command and file change must be approved there first -- this $method call was not',
+      code: HostdErrorCode.remoteConfirmationRequired,
     );
   }
 
@@ -254,6 +263,7 @@ class TaskHandler {
       throw RpcError(
         'invalid task_key: it must be a single path segment of 1-128 letters, digits, ".", "_" '
         'or "-", and not "." or ".."',
+        code: HostdErrorCode.invalidTaskKey,
       );
     }
     return rawTaskKey;
@@ -262,6 +272,7 @@ class TaskHandler {
   RpcError _noWorktreeError([String? taskKey]) => RpcError(
         'isolation was requested${taskKey == null ? '' : ' (task_key "$taskKey")'} but no '
         'granted folder could hold its worktree -- refusing rather than acting on the live checkout',
+        code: HostdErrorCode.isolatedTaskUnresolved,
       );
 
   /// The root a task_id was bound to at `create_task` (FSA-006): an isolated task's worktree, or
@@ -320,8 +331,8 @@ class TaskHandler {
       );
     }
     final resolved = _roots.requireContained(root, path);
-    final protectedReason = protectedGitWriteReason(resolved);
-    if (protectedReason != null) throw RpcError(protectedReason);
+    final protectedWrite = protectedGitWriteRefusal(resolved);
+    if (protectedWrite != null) throw RpcError(protectedWrite.reason, code: protectedWrite.code);
 
     // A remote task skips the trust tier and the desktop queue: approved on the remote device, or
     // refused (WP8). A desktop task ignores `confirmed`.
@@ -390,8 +401,8 @@ class TaskHandler {
         );
       }
       final absolute = _roots.requireContained(root, path);
-      final protectedReason = protectedGitWriteReason(absolute);
-      if (protectedReason != null) throw RpcError(protectedReason);
+      final protectedWrite = protectedGitWriteRefusal(absolute);
+      if (protectedWrite != null) throw RpcError(protectedWrite.reason, code: protectedWrite.code);
 
       final String finalContent;
       if (op.containsKey('content')) {
@@ -520,7 +531,7 @@ class TaskHandler {
             cwd: cwd,
           );
     if (verdict.decision == CommandDecision.deny) {
-      throw RpcError('command refused: ${verdict.reason}');
+      throw RpcError('command refused: ${verdict.reason}', code: verdict.code);
     }
     if (remote) {
       _requireRemoteConfirmation(params, 'run');

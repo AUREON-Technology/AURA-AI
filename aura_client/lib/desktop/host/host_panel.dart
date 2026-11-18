@@ -18,10 +18,12 @@ import 'package:http/http.dart' as http;
 import 'package:aura_client/core/auth/token_manager.dart';
 import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/hostd/hostd_error_codes.dart';
 import 'package:aura_client/core/hostd/hostd_error_messages.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart';
 import 'package:aura_client/core/hostd/hostd_supervisor.dart';
 import 'package:aura_client/features/engineering/presentation/remote_control_toggle.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class HostPanel extends ConsumerStatefulWidget {
   const HostPanel({super.key});
@@ -52,11 +54,11 @@ class _HostPanelState extends ConsumerState<HostPanel> {
           Row(
             children: [
               Expanded(
-                child: Text('Host Daemon', style: Theme.of(context).textTheme.titleSmall),
+                child: Text(context.l10n.hostPanelTitle, style: Theme.of(context).textTheme.titleSmall),
               ),
               TextButton(
                 onPressed: () => context.push('/engineer-daemon'),
-                child: const Text('Full Settings'),
+                child: Text(context.l10n.hostFullSettings),
               ),
             ],
           ),
@@ -64,7 +66,7 @@ class _HostPanelState extends ConsumerState<HostPanel> {
           statusAsync.when(
             data: (status) => _buildStatusCard(context, ref, palette, status, supervisor, supervisorState),
             loading: () => const Center(child: CircularProgressIndicator()),
-            error: (error, _) => Text('Error: ${describeHostdError(error)}', style: TextStyle(color: palette.danger, fontSize: 12)),
+            error: (error, _) => Text(context.l10n.hostStatusError(describeHostdError(error)), style: TextStyle(color: palette.danger, fontSize: 12)),
           ),
         ],
         ),
@@ -117,23 +119,23 @@ class _HostPanelState extends ConsumerState<HostPanel> {
             const SizedBox(width: AuraSpacing.xs),
             Text(
               gaveUp
-                  ? 'Stopped after repeated crashes'
+                  ? context.l10n.hostStatusGaveUp
                   : restarting
-                      ? 'Crashed, restarting in ${supervisorState.nextRestartIn?.inSeconds ?? 0}s...'
+                      ? context.l10n.hostStatusRestarting(supervisorState.nextRestartIn?.inSeconds ?? 0)
                       : !isRunning
-                  ? 'Not running'
+                  ? context.l10n.hostStatusNotRunning
                   : !isPaired
-                      ? 'Running, not paired'
+                      ? context.l10n.hostStatusRunningNotPaired
                       // INT-003: the backend refused the stored token and the daemon stopped
                       // trying. Saying "reconnecting" here left the user waiting forever.
                       : status.needsRepair
-                          ? 'Re-pair required'
+                          ? context.l10n.hostStatusRepairRequired
                       : otherServer
-                      ? 'Running, paired to a different server'
+                      ? context.l10n.hostStatusRunningOtherServer
                       : switch (isConnected) {
-                          true => 'Running, paired',
-                          false => 'Running, reconnecting...',
-                          null => 'Running, paired (update aura_hostd)',
+                          true => context.l10n.hostStatusRunningPaired,
+                          false => context.l10n.hostStatusReconnecting,
+                          null => context.l10n.hostStatusPairedUpdateDaemon,
                         },
               style: TextStyle(fontSize: 12, color: palette.textPrimary),
             ),
@@ -142,8 +144,7 @@ class _HostPanelState extends ConsumerState<HostPanel> {
         if (status.needsRepair) ...[
           const SizedBox(height: AuraSpacing.xs),
           Text(
-            'The server no longer accepts this device (expired, revoked, or your account lacks '
-            'Engineer access). Pair again to reconnect.',
+            context.l10n.hostRepairExplanation,
             style: TextStyle(fontSize: 10, color: palette.danger),
           ),
         ],
@@ -153,12 +154,12 @@ class _HostPanelState extends ConsumerState<HostPanel> {
         ],
         if (status.backendUrl != null) ...[
           const SizedBox(height: AuraSpacing.xs),
-          Text('Backend: ${status.backendUrl}', style: TextStyle(fontSize: 10, color: palette.textSecondary)),
+          Text(context.l10n.hostBackendLabel(status.backendUrl!), style: TextStyle(fontSize: 10, color: palette.textSecondary)),
         ],
         if (otherServer) ...[
           const SizedBox(height: AuraSpacing.xs),
           Text(
-            'This app is signed in to $appBackendUrl. Pair again to move the daemon there.',
+            context.l10n.hostOtherServerNotice(appBackendUrl),
             style: TextStyle(fontSize: 10, color: palette.warning),
           ),
         ],
@@ -168,26 +169,30 @@ class _HostPanelState extends ConsumerState<HostPanel> {
           children: [
             if (!isRunning)
               _SmallAuraButton(
-                label: _starting ? 'Starting...' : (restarting ? 'Start now' : 'Start'),
+                label: _starting
+                    ? context.l10n.hostStarting
+                    : (restarting ? context.l10n.hostStartNow : context.l10n.hostStart),
                 icon: Icons.play_arrow,
                 onPressed: _starting ? null : () => _startDaemon(context, ref),
               ),
             if (restarting)
               _SmallAuraButton(
-                label: 'Cancel restart',
+                label: context.l10n.hostCancelRestart,
                 icon: Icons.stop,
                 onPressed: supervisor.stop,
               ),
             if (isRunning)
               _SmallAuraButton(
-                label: 'Stop',
+                label: context.l10n.hostStop,
                 icon: Icons.stop,
                 variant: AuraButtonVariant.secondary,
                 onPressed: () => _stopDaemon(context, ref, supervisor),
               ),
             if (status.canPair || (isRunning && otherServer))
               _SmallAuraButton(
-                label: _pairing ? 'Pairing...' : (status.needsRepair || otherServer ? 'Re-pair' : 'Pair'),
+                label: _pairing
+                    ? context.l10n.hostPairing
+                    : (status.needsRepair || otherServer ? context.l10n.hostRepair : context.l10n.hostPair),
                 icon: Icons.link,
                 variant: AuraButtonVariant.secondary,
                 onPressed: _pairing ? null : () => _pairDevice(context, ref),
@@ -211,7 +216,7 @@ class _HostPanelState extends ConsumerState<HostPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Granted Roots', style: Theme.of(context).textTheme.labelSmall?.copyWith(color: palette.textSecondary)),
+        Text(context.l10n.hostGrantedRoots, style: Theme.of(context).textTheme.labelSmall?.copyWith(color: palette.textSecondary)),
         const SizedBox(height: AuraSpacing.xs),
         ...roots.map((root) => Padding(
           padding: const EdgeInsets.only(bottom: AuraSpacing.xs),
@@ -234,7 +239,7 @@ class _HostPanelState extends ConsumerState<HostPanel> {
                     borderRadius: BorderRadius.circular(AuraRadius.pill),
                   ),
                   child: Text(
-                    'Trusted',
+                    context.l10n.hostTrusted,
                     style: TextStyle(fontSize: 9, color: palette.success),
                   ),
                 ),
@@ -251,7 +256,7 @@ class _HostPanelState extends ConsumerState<HostPanel> {
       if (context.mounted) {
         AuraSnackbar.show(
           context,
-          message: 'Set the aura_hostd executable path in Full Settings first.',
+          message: context.l10n.hostSetExecutableFirst,
           kind: AuraSnackbarKind.error,
         );
       }
@@ -264,7 +269,7 @@ class _HostPanelState extends ConsumerState<HostPanel> {
       ref.invalidate(hostdStatusProvider);
     } catch (error) {
       if (context.mounted) {
-        AuraSnackbar.show(context, message: 'Could not start aura_hostd: ${describeHostdError(error)}', kind: AuraSnackbarKind.error);
+        AuraSnackbar.show(context, message: context.l10n.hostCouldNotStart(describeHostdError(error)), kind: AuraSnackbarKind.error);
       }
     } finally {
       if (mounted) setState(() => _starting = false);
@@ -279,7 +284,7 @@ class _HostPanelState extends ConsumerState<HostPanel> {
         await ref.read(hostdControlClientProvider).shutdown();
       } catch (error) {
         if (context.mounted) {
-          AuraSnackbar.show(context, message: 'Could not stop aura_hostd: ${describeHostdError(error)}', kind: AuraSnackbarKind.error);
+          AuraSnackbar.show(context, message: context.l10n.hostCouldNotStop(describeHostdError(error)), kind: AuraSnackbarKind.error);
         }
         return;
       }
@@ -303,12 +308,12 @@ class _HostPanelState extends ConsumerState<HostPanel> {
         context: context,
         barrierDismissible: false,
         builder: (dialogContext) => AuraDialog(
-          title: 'Pair this device',
+          title: dialogContext.l10n.hostPairDialogTitle,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text('Approving with your signed-in AURA session...'),
+              Text(dialogContext.l10n.hostPairApproving),
               const SizedBox(height: AuraSpacing.md),
               SelectableText(
                 userCode,
@@ -318,7 +323,7 @@ class _HostPanelState extends ConsumerState<HostPanel> {
               const SizedBox(height: AuraSpacing.lg),
               const Center(child: CircularProgressIndicator()),
               const SizedBox(height: AuraSpacing.sm),
-              const Text('Waiting for approval...', textAlign: TextAlign.center),
+              Text(dialogContext.l10n.hostPairWaiting, textAlign: TextAlign.center),
             ],
           ),
         ),
@@ -330,7 +335,7 @@ class _HostPanelState extends ConsumerState<HostPanel> {
       // all (no separate pairing-approval UI exists anywhere yet).
       final accessToken = await ref.read(tokenManagerProvider).getValidAccessToken();
       if (accessToken == null) {
-        throw StateError('Sign in to AURA first -- pairing needs a valid session to approve with.');
+        throw StateError(currentL10n.hostPairSignInFirst);
       }
       final approveResponse = await http.post(
         Uri.parse('$backendUrl/api/v3/auth/desktop/pair/approve'),
@@ -357,7 +362,9 @@ class _HostPanelState extends ConsumerState<HostPanel> {
         }
         if (statusValue != 'pending') {
           outcome = 'failed';
-          failureReason = status['reason'] as String? ?? statusValue;
+          // A newer daemon sends a `code` next to the English `reason` (hostd_error_codes.dart).
+          final rawReason = status['reason'] as String? ?? statusValue;
+          failureReason = rawReason == null ? null : hostdCodeMessage(status['code'] as String?, rawReason);
           break;
         }
       }
@@ -365,17 +372,19 @@ class _HostPanelState extends ConsumerState<HostPanel> {
       if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
       if (outcome == 'approved') {
         ref.invalidate(hostdStatusProvider);
-        if (context.mounted) AuraSnackbar.show(context, message: 'Paired.', kind: AuraSnackbarKind.success);
+        if (context.mounted) AuraSnackbar.show(context, message: context.l10n.hostPaired, kind: AuraSnackbarKind.success);
       } else if (context.mounted) {
         AuraSnackbar.show(
           context,
-          message: outcome == 'failed' ? 'Pairing failed: $failureReason' : 'Pairing code expired.',
+          message: outcome == 'failed'
+              ? context.l10n.hostPairingFailed(failureReason.toString())
+              : context.l10n.hostPairingExpired,
           kind: AuraSnackbarKind.error,
         );
       }
     } catch (error) {
       if (context.mounted) {
-        AuraSnackbar.show(context, message: 'Could not start pairing: ${describeHostdError(error)}', kind: AuraSnackbarKind.error);
+        AuraSnackbar.show(context, message: context.l10n.hostCouldNotStartPairing(describeHostdError(error)), kind: AuraSnackbarKind.error);
       }
     } finally {
       if (mounted) setState(() => _pairing = false);

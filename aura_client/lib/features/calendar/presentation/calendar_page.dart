@@ -74,8 +74,8 @@ class CalendarPage extends ConsumerWidget {
                           SnackBar(
                             content: Text(
                               hadErrors
-                                  ? 'Calendar sync encountered errors.'
-                                  : 'Google Calendar sync completed successfully!',
+                                  ? context.l10n.calendarSyncFailed
+                                  : context.l10n.calendarSyncSucceeded,
                             ),
                             backgroundColor: hadErrors
                                 ? palette.danger
@@ -149,14 +149,14 @@ class _CalendarHeader extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Calendar',
+              context.l10n.calendarPageTitle,
               style: Theme.of(
                 context,
               ).textTheme.displayLarge?.copyWith(fontSize: 28),
             ),
             const SizedBox(height: 4),
             Text(
-              'Manage local schedules and sync with Google',
+              context.l10n.calendarPageSubtitle,
               style: Theme.of(context).textTheme.bodyMedium,
             ),
           ],
@@ -172,7 +172,7 @@ class _CalendarHeader extends StatelessWidget {
                   Icons.receipt_long,
                   color: palette.textSecondary,
                 ),
-                tooltip: 'View Sync Logs',
+                tooltip: context.l10n.calendarViewSyncLogs,
                 onPressed: () => _showLogs(context, logs),
               ),
             isSyncing
@@ -198,14 +198,14 @@ class _CalendarHeader extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(width: 12),
-                        Text('Syncing...', style: TextStyle(fontSize: 14, color: palette.textPrimary)),
+                        Text(context.l10n.calendarSyncing, style: TextStyle(fontSize: 14, color: palette.textPrimary)),
                       ],
                     ),
                   )
                 : ElevatedButton.icon(
                     onPressed: onSync,
                     icon: const Icon(Icons.sync),
-                    label: const Text('Sync Calendar'),
+                    label: Text(context.l10n.calendarSyncButton),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: palette.brand,
                       foregroundColor: palette.onBrand,
@@ -245,7 +245,7 @@ class _CalendarHeader extends StatelessWidget {
                   children: [
                     Expanded(
                       child: Text(
-                        'Sync Activity Log',
+                        context.l10n.calendarSyncLogTitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.titleLarge,
@@ -263,7 +263,7 @@ class _CalendarHeader extends StatelessWidget {
                   child: logs.isEmpty
                       ? Center(
                           child: Text(
-                            'No logs recorded yet. Press sync to begin.',
+                            context.l10n.calendarSyncLogEmpty,
                             style: TextStyle(color: palette.textSecondary),
                           ),
                         )

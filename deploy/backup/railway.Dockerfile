@@ -7,9 +7,11 @@
 # (deploy/backup/Dockerfile), a Railway service has no bind mount to read them from.
 #
 # PG_MAJOR must be >= the Railway Postgres server's major version: pg_dump refuses to dump a newer
-# server. Railway passes a service variable named PG_MAJOR to this ARG. The package line matches
+# server. The production server reported 18.6 on 2026-11-17, hence the default. Raise it (here, or
+# with a Railway service variable named PG_MAJOR, which Railway passes to this ARG) BEFORE that
+# server is upgraded, or the nightly dump fails. The package line matches
 # deploy/backup/Dockerfile (pinned by deploy/scripts/tests/test_backup_crypto.sh).
-ARG PG_MAJOR=16
+ARG PG_MAJOR=18
 FROM postgres:${PG_MAJOR}-alpine3.24
 RUN apk add --no-cache rclone ca-certificates wget redis 'age~1.3' \
     && age --version

@@ -11,7 +11,9 @@ import 'package:aura_client/core/network/aura_api_error.dart';
 import 'package:aura_client/core/security/encryption_service.dart';
 import 'package:aura_client/features/chat/data/chat_connection_error.dart';
 import 'package:aura_client/features/chat/data/chat_repository.dart';
+import 'package:aura_client/l10n/l10n.dart';
 import 'package:drift/native.dart';
+import 'package:flutter/widgets.dart' show Locale;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/intl.dart';
@@ -178,6 +180,27 @@ void main() {
           "You’ve reached today’s Engineer limit. Try again after it resets.");
       expect(engineerLimitReachedText({'reset_at': 'soon'}),
           "You’ve reached today’s Engineer limit. Try again after it resets.");
+    });
+  });
+
+  group('stored Engineer refusals in the language on screen', () {
+    final ar = lookupAppLocalizations(const Locale('ar'));
+
+    test('the consent notice row', () {
+      expect(localizedEngineerRefusal(kChatEngineerConsentNeededText, ar), ar.engineerConsentNeededNotice);
+    });
+
+    test('the limit row keeps its stored reset time', () {
+      final stored = engineerLimitReachedText({'reset_at': _resetAt}, now: DateTime.parse(_resetAt).toLocal());
+      final shown = localizedEngineerRefusal(stored, ar)!;
+      expect(shown, isNot(stored));
+      expect(shown, ar.engineerLimitReached(formatLimitReset(DateTime.parse(_resetAt).toLocal(),
+          now: DateTime.parse(_resetAt).toLocal())));
+      expect(localizedEngineerRefusal(engineerLimitReachedText(null), ar), ar.engineerLimitReachedNoTime);
+    });
+
+    test('anything else is left alone', () {
+      expect(localizedEngineerRefusal('Here is the fix.', ar), isNull);
     });
   });
 }

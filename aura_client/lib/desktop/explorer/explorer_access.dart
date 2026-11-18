@@ -14,6 +14,7 @@ import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart' hide HostdRoot;
 import 'package:aura_client/desktop/state/desktop_application_state.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// Confirms with the human, grants [root] to hostd, records it locally, then calls [onGranted] so
 /// the caller can re-fetch. Mirrors `WorkspaceManagerPage._openFolder`'s own grant call.
@@ -25,10 +26,10 @@ Future<void> grantWorkspaceAccess(
 }) async {
   final confirmed = await AuraDialog.show<bool>(
     context: context,
-    title: 'Grant workspace to hostd?',
-    child: Text('This allows the AURA agent to read and write files in "$root".'),
-    confirmLabel: 'Grant',
-    cancelLabel: 'Not now',
+    title: context.l10n.explorerGrantTitle,
+    child: Text(context.l10n.explorerGrantBody(root)),
+    confirmLabel: context.l10n.explorerGrant,
+    cancelLabel: context.l10n.ideNotNow,
     onConfirm: () => Navigator.of(context).pop(true),
   );
   if (confirmed != true || !context.mounted) return;
@@ -40,11 +41,11 @@ Future<void> grantWorkspaceAccess(
     ]);
     onGranted?.call();
     if (context.mounted) {
-      AuraSnackbar.show(context, message: 'Workspace access granted', kind: AuraSnackbarKind.success);
+      AuraSnackbar.show(context, message: context.l10n.explorerAccessGranted, kind: AuraSnackbarKind.success);
     }
   } catch (e) {
     if (context.mounted) {
-      AuraSnackbar.show(context, message: 'Could not grant root: $e', kind: AuraSnackbarKind.error);
+      AuraSnackbar.show(context, message: context.l10n.explorerGrantFailed(e.toString()), kind: AuraSnackbarKind.error);
     }
   }
 }

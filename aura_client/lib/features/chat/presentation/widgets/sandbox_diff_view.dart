@@ -1,3 +1,4 @@
+import 'package:aura_client/core/locale/text_direction.dart';
 import 'package:flutter/material.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
@@ -45,7 +46,7 @@ class SandboxDiffView extends StatelessWidget {
     final truncated = lines.length > maxLines;
     final visible = truncated ? lines.take(maxLines).toList() : lines;
 
-    return Container(
+    return LtrContent(child: Container(
       margin: const EdgeInsets.only(top: AuraSpacing.xs),
       width: double.infinity,
       decoration: BoxDecoration(
@@ -79,7 +80,7 @@ class SandboxDiffView extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.only(top: AuraSpacing.xs),
                   child: Text(
-                    '… ${lines.length - maxLines} more line(s)',
+                    context.l10n.chatMoreLines(lines.length - maxLines),
                     style: TextStyle(fontSize: 11, color: palette.textSecondary),
                   ),
                 ),
@@ -87,6 +88,6 @@ class SandboxDiffView extends StatelessWidget {
           ),
         ),
       ),
-    );
+    ));
   }
 }

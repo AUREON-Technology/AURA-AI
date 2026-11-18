@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { api, fetchMe } from "@/lib/api";
+import { useI18n } from "@/lib/i18n/context";
 import type { Approval, Me } from "@/lib/types";
 
 // Track AP's gates are a Super Admin's decision (ADR-021, ADR-024); the gateway refuses anyone
@@ -11,36 +12,37 @@ import type { Approval, Me } from "@/lib/types";
 const SUPER_ADMIN_KINDS = new Set(["connector_registration", "blueprint_deployment"]);
 
 export default function ApprovalsPage() {
+  const { t, errorText } = useI18n();
   const [me, setMe] = useState<Me | null>(null);
   const [rows, setRows] = useState<Approval[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
 
   function load() {
     api<{ approvals: Approval[] }>("/admin/approvals")
       .then((body) => setRows(body.approvals))
-      .catch((err: Error) => setError(err.message));
+      .catch((err: unknown) => setError(err));
   }
 
   useEffect(() => {
     load();
     fetchMe()
       .then(setMe)
-      .catch((err: Error) => setError(err.message));
+      .catch((err: unknown) => setError(err));
   }, []);
 
   return (
     <>
-      <h1>Approvals</h1>
-      <p className="sub">Human gate for model and source changes. Approvals expire after 14 days.</p>
-      {error ? <div className="banner">{error}</div> : null}
+      <h1>{t("nav.approvals")}</h1>
+      <p className="sub">{t("approvals.sub")}</p>
+      {error ? <div className="banner">{errorText(error)}</div> : null}
       <table className="table">
         <thead>
           <tr>
-            <th>Summary</th>
-            <th>Kind</th>
-            <th>Digest</th>
-            <th>Status</th>
-            <th>Reasons</th>
+            <th>{t("approvals.colSummary")}</th>
+            <th>{t("approvals.colKind")}</th>
+            <th>{t("common.digest")}</th>
+            <th>{t("common.status")}</th>
+            <th>{t("approvals.colReasons")}</th>
             <th></th>
           </tr>
         </thead>
@@ -70,12 +72,12 @@ export default function ApprovalsPage() {
                 </td>
                 <td>
                   {row.status === "pending" && SUPER_ADMIN_KINDS.has(row.kind) && !me?.is_super_admin ? (
-                    <span className="muted">SuperAdmin decides</span>
+                    <span className="muted">{t("approvals.superAdminDecides")}</span>
                   ) : row.status === "pending" ? (
                     <>
                       <ConfirmDialog
-                        title="Approve"
-                        confirmText="approve"
+                        title={t("approvals.approve")}
+                        confirmText={t("approvals.approveWord")}
                         onConfirm={async () => {
                           await api(`/admin/approvals/${encodeURIComponent(row.id)}/decide`, {
                             method: "POST",
@@ -84,12 +86,12 @@ export default function ApprovalsPage() {
                           load();
                         }}
                       >
-                        Approve
+                        {t("approvals.approve")}
                       </ConfirmDialog>
                       <ConfirmDialog
                         danger
-                        title="Reject"
-                        confirmText="reject"
+                        title={t("approvals.reject")}
+                        confirmText={t("approvals.rejectWord")}
                         onConfirm={async () => {
                           await api(`/admin/approvals/${encodeURIComponent(row.id)}/decide`, {
                             method: "POST",
@@ -98,7 +100,7 @@ export default function ApprovalsPage() {
                           load();
                         }}
                       >
-                        Reject
+                        {t("approvals.reject")}
                       </ConfirmDialog>
                     </>
                   ) : null}

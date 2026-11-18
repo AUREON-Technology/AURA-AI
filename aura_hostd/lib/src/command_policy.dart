@@ -32,6 +32,8 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import 'error_codes.dart';
+
 /// Command prefixes that are always refused, in every workspace, trusted or not -- a floor no
 /// consent tier is allowed to lift (ADR-011). This is deliberately conservative and pattern-based,
 /// not a promise of completeness: it exists to catch the obviously catastrophic case (wiping the
@@ -142,11 +144,19 @@ final RegExp destructiveVerbPattern = RegExp(
 /// false split only makes the check stricter, never looser.
 final RegExp _segmentSeparators = RegExp(r'&&|\|\||;|\||\n');
 
+/// A refusal: a stable machine [code] (`error_codes.dart`) and the English [reason] shown to
+/// apps that predate codes.
+typedef PolicyRefusal = ({String code, String reason});
+
+/// Why a trusted-workspace command is refused by destructive-verb containment, or `null` when
+/// it is not. See [destructiveEscapeRefusal]; this is its English text alone.
+String? destructiveEscapeReason(String command) => destructiveEscapeRefusal(command)?.reason;
+
 /// Why a trusted-workspace command is refused by destructive-verb containment, or `null` when
 /// it is not. Each shell segment is judged on its own verb; a `cd`/`pushd` that leaves the
 /// workspace taints every destructive segment in the same command, since their relative paths
 /// would then resolve outside it.
-String? destructiveEscapeReason(String command) {
+PolicyRefusal? destructiveEscapeRefusal(String command) {
   final segments = command
       .split(_segmentSeparators)
       .map((s) => s.trim())
@@ -162,14 +172,20 @@ String? destructiveEscapeReason(String command) {
     if (destructiveVerbPattern.hasMatch(segment)) {
       hasDestructive = true;
       if (_argumentsLeaveWorkspace(segment)) {
-        return 'destructive command names a path outside the workspace; containment applies '
-            'even in a trusted workspace';
+        return (
+          code: HostdErrorCode.destructivePathOutsideWorkspace,
+          reason: 'destructive command names a path outside the workspace; containment applies '
+              'even in a trusted workspace',
+        );
       }
     }
   }
   if (changesDirectoryOutside && hasDestructive) {
-    return 'command changes directory out of the workspace and then runs a destructive '
-        'command; containment applies even in a trusted workspace';
+    return (
+      code: HostdErrorCode.destructiveAfterLeavingWorkspace,
+      reason: 'command changes directory out of the workspace and then runs a destructive '
+          'command; containment applies even in a trusted workspace',
+    );
   }
   return null;
 }
@@ -206,9 +222,14 @@ bool _leavesWorkspace(String path) {
 enum CommandDecision { allow, deny, needsApproval }
 
 class CommandVerdict {
-  const CommandVerdict(this.decision, this.reason);
+  const CommandVerdict(this.decision, this.reason, {required this.code});
   final CommandDecision decision;
+
+  /// English, for people and for apps that predate [code]. Never parsed.
   final String reason;
+
+  /// Stable machine code for [reason] (`error_codes.dart`), which an app translates.
+  final String code;
 
   bool get isAllowed => decision == CommandDecision.allow;
 }
@@ -228,34 +249,43 @@ CommandVerdict evaluateCommand(
   String? workspaceRoot,
   String? cwd,
 }) {
-  CommandVerdict askOrRefuse(String reason) => CommandVerdict(
+  CommandVerdict askOrRefuse(String reason, String code) => CommandVerdict(
         allowApprovalQueue ? CommandDecision.needsApproval : CommandDecision.deny,
         reason,
+        code: code,
       );
 
   final trimmed = command.trim();
   for (final pattern in hardDenylistPatterns) {
     if (pattern.hasMatch(trimmed)) {
-      return CommandVerdict(
+      return const CommandVerdict(
         CommandDecision.deny,
         'command matches the hard denylist and is refused in every workspace',
+        code: HostdErrorCode.commandHardDenied,
       );
     }
   }
   if (workspaceTrusted) {
-    final escape = destructiveEscapeReason(trimmed);
+    final escape = destructiveEscapeRefusal(trimmed);
     if (escape != null) {
-      return CommandVerdict(CommandDecision.deny, escape);
+      return CommandVerdict(CommandDecision.deny, escape.reason, code: escape.code);
     }
-    if (invokesGitPush(trimmed)) return askOrRefuse(_gitPushReason);
+    if (invokesGitPush(trimmed)) {
+      return askOrRefuse(_gitPushReason, HostdErrorCode.gitPushNeedsApproval);
+    }
     final outside = pathOutsideWorkspace(trimmed, workspaceRoot: workspaceRoot, cwd: cwd);
     if (outside != null) {
       return askOrRefuse(
         'command names a path outside this trusted folder ("$outside") -- a trusted folder '
         'runs its own tooling freely, but reaching outside it needs approval (D-06)',
+        HostdErrorCode.pathOutsideTrustedFolder,
       );
     }
-    return const CommandVerdict(CommandDecision.allow, 'workspace is marked trusted');
+    return const CommandVerdict(
+      CommandDecision.allow,
+      'workspace is marked trusted',
+      code: HostdErrorCode.workspaceTrusted,
+    );
   }
   if (_shellMetacharacters.hasMatch(trimmed)) {
     return const CommandVerdict(
@@ -263,16 +293,20 @@ CommandVerdict evaluateCommand(
       'untrusted workspaces only run a single simple read-only command -- no chaining (&&, ;, '
       '|), redirection, substitution, or backticks -- this is a hard floor, never queued for '
       'approval',
+      code: HostdErrorCode.untrustedShellSyntax,
     );
   }
   // Checked after the metacharacter floor, so a chained push in an untrusted folder stays refused
   // rather than becoming something a human could approve.
-  if (invokesGitPush(trimmed)) return askOrRefuse(_gitPushReason);
+  if (invokesGitPush(trimmed)) {
+    return askOrRefuse(_gitPushReason, HostdErrorCode.gitPushNeedsApproval);
+  }
   for (final pattern in readOnlyAllowlistPatterns) {
     if (pattern.hasMatch(trimmed) && !_escapesReadOnlyTier(trimmed)) {
       return const CommandVerdict(
         CommandDecision.allow,
         'read-only command allowlisted for untrusted workspaces',
+        code: HostdErrorCode.readOnlyAllowlisted,
       );
     }
   }
@@ -281,6 +315,7 @@ CommandVerdict evaluateCommand(
       CommandDecision.needsApproval,
       'workspace is not trusted and this command is not on the read-only allowlist -- queued '
       'for interactive approval in the Desktop IDE',
+      code: HostdErrorCode.commandNeedsApproval,
     );
   }
   return const CommandVerdict(
@@ -288,6 +323,7 @@ CommandVerdict evaluateCommand(
     'workspace is not trusted and this command is not on the read-only allowlist -- run '
     '`aura_hostd trust <path>` for this workspace, or connect a Desktop IDE session to answer '
     'interactive approval requests',
+    code: HostdErrorCode.commandNotAllowlisted,
   );
 }
 
@@ -305,14 +341,18 @@ CommandVerdict evaluateRemoteCommand(String command) {
       return const CommandVerdict(
         CommandDecision.deny,
         'command matches the hard denylist and is refused in every workspace',
+        code: HostdErrorCode.commandHardDenied,
       );
     }
   }
-  final escape = destructiveEscapeReason(trimmed);
-  if (escape != null) return CommandVerdict(CommandDecision.deny, escape);
+  final escape = destructiveEscapeRefusal(trimmed);
+  if (escape != null) {
+    return CommandVerdict(CommandDecision.deny, escape.reason, code: escape.code);
+  }
   return const CommandVerdict(
     CommandDecision.needsApproval,
     'a command from the phone or the web runs only once it was approved there',
+    code: HostdErrorCode.remoteCommandNeedsConfirmation,
   );
 }
 
@@ -331,11 +371,16 @@ CommandVerdict evaluateRemoteCommand(String command) {
 /// [readOnlyAllowlistPatterns]'s own doc comment.
 CommandVerdict evaluateWrite({required bool workspaceTrusted}) {
   if (workspaceTrusted) {
-    return const CommandVerdict(CommandDecision.allow, 'workspace is marked trusted');
+    return const CommandVerdict(
+      CommandDecision.allow,
+      'workspace is marked trusted',
+      code: HostdErrorCode.workspaceTrusted,
+    );
   }
   return const CommandVerdict(
     CommandDecision.needsApproval,
     'workspace is not trusted -- queued for interactive approval in the Desktop IDE',
+    code: HostdErrorCode.writeNeedsApproval,
   );
 }
 
@@ -354,7 +399,12 @@ CommandVerdict evaluateWrite({required bool workspaceTrusted}) {
 /// so rewriting it points git at a config and hooks of the writer's choosing. Components compare
 /// case-insensitively (Windows' and macOS's default filesystems are, so `.GIT/hooks` is the same
 /// directory) and without trailing dots or spaces (Windows drops them: `.git.\config`).
-String? protectedGitWriteReason(String absolutePath) {
+String? protectedGitWriteReason(String absolutePath) => protectedGitWriteRefusal(absolutePath)?.reason;
+
+/// [protectedGitWriteReason] with its stable machine code: `protected_git_dir_file` for a `.git`
+/// file, `protected_git_hooks` for any hooks directory under `.git` (submodules' included) and
+/// `protected_git_config` for `config`/`config.worktree` anywhere under `.git`.
+PolicyRefusal? protectedGitWriteRefusal(String absolutePath) {
   final parts = absolutePath
       .split(RegExp(r'[/\\]'))
       .where((s) => s.isNotEmpty)
@@ -362,19 +412,28 @@ String? protectedGitWriteReason(String absolutePath) {
       .toList();
   if (parts.isEmpty) return null;
   if (parts.last == '.git') {
-    return 'writes to a .git file are refused: in a linked worktree or submodule it tells git '
-        'which git directory (config and hooks included) to use';
+    return (
+      code: HostdErrorCode.protectedGitDirFile,
+      reason: 'writes to a .git file are refused: in a linked worktree or submodule it tells git '
+          'which git directory (config and hooks included) to use',
+    );
   }
   final gitIndex = parts.indexOf('.git');
   if (gitIndex < 0) return null;
   final inside = parts.sublist(gitIndex + 1);
   if (inside.contains('hooks')) {
-    return 'writes under .git/hooks (or a submodule\'s hooks) are refused: a hook is a program '
-        'git runs on the next commit, checkout or push';
+    return (
+      code: HostdErrorCode.protectedGitHooks,
+      reason: 'writes under .git/hooks (or a submodule\'s hooks) are refused: a hook is a program '
+          'git runs on the next commit, checkout or push',
+    );
   }
   if (inside.isNotEmpty && (inside.last == 'config' || inside.last == 'config.worktree')) {
-    return 'writes to git config files under .git are refused: they can point git at a program '
-        'to run (core.hooksPath, core.fsmonitor, filter drivers)';
+    return (
+      code: HostdErrorCode.protectedGitConfig,
+      reason: 'writes to git config files under .git are refused: they can point git at a program '
+          'to run (core.hooksPath, core.fsmonitor, filter drivers)',
+    );
   }
   return null;
 }

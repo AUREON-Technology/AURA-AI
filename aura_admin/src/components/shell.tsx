@@ -5,29 +5,32 @@ import { usePathname } from "next/navigation";
 
 import { CommandPalette } from "@/components/command-palette";
 import { Icon } from "@/components/icons";
+import { LanguageToggle } from "@/components/language-toggle";
+import { useI18n } from "@/lib/i18n/context";
 import { NAV_GROUPS, OPEN_PALETTE_EVENT, groupFor } from "@/lib/nav";
 import type { Me } from "@/lib/types";
 
 export function Shell({ me, children }: { me: Me; children: React.ReactNode }) {
+  const { t } = useI18n();
   const pathname = usePathname();
   const current = groupFor(pathname);
   const initial = (me.email || "?").trim().charAt(0);
 
   return (
     <div className="shell">
-      <aside className="nav" aria-label="Console navigation">
+      <aside className="nav" aria-label={t("shell.navAria")}>
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
             A
           </span>
           <span className="brand-text">
-            <span>AURA Console</span>
-            <small>Operator workspace</small>
+            <span>{t("brand.console")}</span>
+            <small>{t("brand.workspace")}</small>
           </span>
         </div>
         {NAV_GROUPS.map((group) => (
-          <nav className="nav-group" key={group.label} aria-label={group.label}>
-            <p className="nav-label">{group.label}</p>
+          <nav className="nav-group" key={group.label} aria-label={t(group.label)}>
+            <p className="nav-label">{t(group.label)}</p>
             {group.items.map((item) => {
               const active = current?.item.href === item.href;
               return (
@@ -38,7 +41,7 @@ export function Shell({ me, children }: { me: Me; children: React.ReactNode }) {
                   aria-current={active ? "page" : undefined}
                 >
                   <Icon name={item.icon} />
-                  {item.label}
+                  {t(item.label)}
                 </Link>
               );
             })}
@@ -66,27 +69,30 @@ export function Shell({ me, children }: { me: Me; children: React.ReactNode }) {
             }}
           >
             <Icon name="logout" size={16} />
-            Sign out
+            {t("shell.signOut")}
           </button>
         </div>
       </aside>
       <div className="content">
         <header className="topbar">
           <div className="crumbs">
-            <span>{current?.group ?? "Console"}</span>
+            <span>{current ? t(current.group) : t("shell.crumbConsole")}</span>
             <span aria-hidden="true">/</span>
-            <strong>{current?.item.label ?? "Page"}</strong>
+            <strong>{current ? t(current.item.label) : t("shell.crumbPage")}</strong>
           </div>
-          <button
-            className="kbd-btn"
-            type="button"
-            aria-label="Open command palette"
-            onClick={() => window.dispatchEvent(new Event(OPEN_PALETTE_EVENT))}
-          >
-            <Icon name="search" size={15} />
-            <span>Jump to…</span>
-            <kbd>⌘K</kbd>
-          </button>
+          <div className="topbar-actions">
+            <button
+              className="kbd-btn"
+              type="button"
+              aria-label={t("shell.openPalette")}
+              onClick={() => window.dispatchEvent(new Event(OPEN_PALETTE_EVENT))}
+            >
+              <Icon name="search" size={15} />
+              <span>{t("shell.jumpTo")}</span>
+              <kbd>⌘K</kbd>
+            </button>
+            <LanguageToggle />
+          </div>
         </header>
         <main className="main">
           <CommandPalette />

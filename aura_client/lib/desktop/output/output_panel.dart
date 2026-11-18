@@ -1,11 +1,13 @@
 /// Output panel widget for Desktop IDE's bottom-panel "Output" tab (D7 Part A.1).
 library;
 
+import 'package:aura_client/core/locale/text_direction.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/desktop/output/output_log_notifier.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class OutputPanel extends ConsumerStatefulWidget {
   const OutputPanel({super.key});
@@ -58,9 +60,9 @@ class _OutputPanelState extends ConsumerState<OutputPanel> {
                   style: TextStyle(fontSize: 12, color: palette.textPrimary),
                   dropdownColor: palette.surfaceVariant,
                   items: [
-                    const DropdownMenuItem(value: null, child: Text('All')),
+                    DropdownMenuItem(value: null, child: Text(context.l10n.outputFilterAll)),
                     ...OutputChannel.values.map(
-                      (c) => DropdownMenuItem(value: c, child: Text(c.label)),
+                      (c) => DropdownMenuItem(value: c, child: Text(_channelLabel(context, c))),
                     ),
                   ],
                   onChanged: (value) => setState(() => _filter = value),
@@ -68,7 +70,7 @@ class _OutputPanelState extends ConsumerState<OutputPanel> {
                 const Spacer(),
                 IconButton(
                   icon: Icon(Icons.clear_all, size: 16, color: palette.textSecondary),
-                  tooltip: 'Clear Output',
+                  tooltip: context.l10n.outputClear,
                   onPressed: () => ref.read(outputLogProvider.notifier).clear(),
                 ),
               ],
@@ -77,7 +79,7 @@ class _OutputPanelState extends ConsumerState<OutputPanel> {
           Expanded(
             child: filtered.isEmpty
                 ? Center(
-                    child: Text('No output yet', style: TextStyle(color: palette.textDisabled, fontSize: 12)),
+                    child: Text(context.l10n.outputEmpty, style: TextStyle(color: palette.textDisabled, fontSize: 12)),
                   )
                 : ListView.builder(
                     controller: _scrollController,
@@ -86,7 +88,7 @@ class _OutputPanelState extends ConsumerState<OutputPanel> {
                     itemBuilder: (context, index) {
                       final entry = filtered[index];
                       final time = entry.timestamp.toIso8601String().substring(11, 19);
-                      return Padding(
+                      return LtrContent(child: Padding(
                         padding: const EdgeInsets.symmetric(vertical: 1),
                         child: RichText(
                           text: TextSpan(
@@ -101,7 +103,7 @@ class _OutputPanelState extends ConsumerState<OutputPanel> {
                             ],
                           ),
                         ),
-                      );
+                      ));
                     },
                   ),
           ),
@@ -109,4 +111,14 @@ class _OutputPanelState extends ConsumerState<OutputPanel> {
       ),
     );
   }
+
+  /// The channel's name in the filter dropdown. The `[label]` tag inside each log line stays
+  /// [OutputChannelLabel.label] (English): that line is log content, not UI chrome.
+  String _channelLabel(BuildContext context, OutputChannel channel) => switch (channel) {
+        OutputChannel.agent => context.l10n.outputChannelAgent,
+        OutputChannel.git => channel.label,
+        OutputChannel.host => context.l10n.outputChannelHost,
+        OutputChannel.tasks => context.l10n.outputChannelTasks,
+        OutputChannel.diagnostics => context.l10n.outputChannelDiagnostics,
+      };
 }

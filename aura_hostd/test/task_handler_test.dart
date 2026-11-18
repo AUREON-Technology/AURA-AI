@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:aura_hostd/src/approval_queue.dart';
 import 'package:aura_hostd/src/config.dart';
 import 'package:aura_hostd/src/containment.dart';
+import 'package:aura_hostd/src/error_codes.dart';
 import 'package:aura_hostd/src/isolated_task_registry.dart';
 import 'package:aura_hostd/src/task_handler.dart';
 import 'package:aura_hostd/src/workspace_store.dart';
@@ -1137,7 +1138,9 @@ void main() {
         ]) {
           await expectLater(
             handler.createTask(params),
-            throwsA(isA<RpcError>().having((e) => e.message, 'message', contains('task_key'))),
+            throwsA(isA<RpcError>()
+                .having((e) => e.message, 'message', contains('task_key'))
+                .having((e) => e.code, 'code', HostdErrorCode.invalidTaskKey)),
             reason: '$params',
           );
         }
@@ -1166,7 +1169,7 @@ void main() {
       Link(p.join(workspaceDir.path, '.aura-workspaces', 'evil')).createSync(outsideDir.path);
       await expectLater(
         handler.createTask({'isolate': true, 'task_key': 'evil', 'cwd': workspaceDir.path}),
-        throwsA(isA<RpcError>()),
+        throwsA(isA<RpcError>().having((e) => e.code, 'code', HostdErrorCode.outsideWorkspace)),
       );
       // Without a cwd the worktree is resolved lazily, on the first call; that must refuse too
       // and must not fall back to reading through the link.
@@ -1192,7 +1195,7 @@ void main() {
       handler = TaskHandler(roots, approvals, null, IsolatedTaskRegistry(WorkspaceRoots(const [])));
       await expectLater(
         handler.createTask({'isolate': true, 'task_key': 'k2', 'cwd': workspaceDir.path}),
-        throwsA(isA<RpcError>()),
+        throwsA(isA<RpcError>().having((e) => e.code, 'code', HostdErrorCode.isolatedTaskUnresolved)),
       );
     });
 
@@ -1202,7 +1205,7 @@ void main() {
       final created = await handler.createTask({'isolate': true, 'task_key': 'k3'});
       await expectLater(
         handler.writeFile({'task_id': created['task_id'], 'path': 'a.txt', 'content': 'leak'}),
-        throwsA(isA<RpcError>()),
+        throwsA(isA<RpcError>().having((e) => e.code, 'code', HostdErrorCode.isolatedTaskUnresolved)),
       );
       await expectLater(
         handler.run({
@@ -1265,8 +1268,17 @@ void main() {
     void setRemoteControl(bool on) => config.save(config.load().copyWith(remoteControl: on));
     void setTrusted(bool trusted) => store.save(store.load()..setTrusted(workspaceDir.path, trusted));
 
-    Matcher rpcErrorStartingWith(String prefix) =>
-        throwsA(isA<RpcError>().having((e) => e.message, 'message', startsWith(prefix)));
+    // The English prefix and the stable code (`error_codes.dart`) travel together.
+    const codeForPrefix = {
+      'remote_control_disabled: ': HostdErrorCode.remoteControlDisabled,
+      'confirmation_required: ': HostdErrorCode.remoteConfirmationRequired,
+    };
+    Matcher rpcErrorStartingWith(String prefix) {
+      final matcher = isA<RpcError>().having((e) => e.message, 'message', startsWith(prefix));
+      final code = codeForPrefix[prefix];
+      // 'command refused: ' carries its verdict's code, which varies; checked where it applies.
+      return throwsA(code == null ? matcher : matcher.having((e) => e.code, 'code', code));
+    }
 
     Future<String> remoteTask() async =>
         (await handler.createTask({'origin': 'remote', 'cwd': root}))['task_id'] as String;
@@ -1295,7 +1307,7 @@ void main() {
             startsWith('remote_control_disabled: '),
             contains("Allow control from my phone and the web"),
           ),
-        )),
+        ).having((e) => e.code, 'code', HostdErrorCode.remoteControlDisabled)),
       );
     });
 
@@ -1517,7 +1529,9 @@ void main() {
       setRemoteControl(true);
       await expectLater(
         handler.createTask({'origin': 'remote', 'cwd': root, 'isolate': true, 'task_key': '../x'}),
-        throwsA(isA<RpcError>().having((e) => e.message, 'message', contains('invalid task_key'))),
+        throwsA(isA<RpcError>()
+            .having((e) => e.message, 'message', contains('invalid task_key'))
+            .having((e) => e.code, 'code', HostdErrorCode.invalidTaskKey)),
       );
     });
 
@@ -1581,7 +1595,9 @@ void main() {
         for (final origin in ['phone', 'REMOTE', '', 1, true]) {
           await expectLater(
             handler.createTask({'origin': origin, 'cwd': root}),
-            throwsA(isA<RpcError>().having((e) => e.message, 'message', contains('origin'))),
+            throwsA(isA<RpcError>()
+                .having((e) => e.message, 'message', contains('origin'))
+                .having((e) => e.code, 'code', HostdErrorCode.invalidOrigin)),
             reason: '$origin',
           );
         }

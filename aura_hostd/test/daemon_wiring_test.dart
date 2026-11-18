@@ -12,6 +12,7 @@ import 'package:aura_hostd/src/backend_connection.dart';
 import 'package:aura_hostd/src/config.dart';
 import 'package:aura_hostd/src/control_server.dart';
 import 'package:aura_hostd/src/debug_session_manager.dart';
+import 'package:aura_hostd/src/error_codes.dart';
 import 'package:aura_hostd/src/isolated_task_registry.dart';
 import 'package:aura_hostd/src/rpc_client.dart';
 import 'package:aura_hostd/src/terminal_session_manager.dart';
@@ -317,6 +318,7 @@ void main() {
       final refused = await conn.call('create_task', {'origin': 'remote', 'cwd': rootA});
       expect(refused['type'], 'error');
       expect(refused['message'], startsWith('remote_control_disabled: '));
+      expect(refused['code'], HostdErrorCode.remoteControlDisabled);
 
       final (status, _) = await control.request('POST', '/remote_control', body: {'enabled': true});
       expect(status, 200);
@@ -338,6 +340,7 @@ void main() {
       });
       expect(unconfirmed['type'], 'error');
       expect(unconfirmed['message'], startsWith('confirmation_required: '));
+      expect(unconfirmed['code'], HostdErrorCode.remoteConfirmationRequired);
       expect(approvals.list(), isEmpty);
       expect(Directory(p.join(rootA, 'unconfirmed')).existsSync(), isFalse);
 

@@ -14,6 +14,7 @@ import 'package:flutter_riverpod/legacy.dart';
 
 import 'package:aura_client/core/hostd/hostd_control_client.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class ControlCenterTask {
   const ControlCenterTask({
@@ -149,9 +150,9 @@ class ControlCenterNotifier extends StateNotifier<ControlCenterState> {
     if (base == null) return;
     try {
       final result = await _hostdClient.gitTaskDiffStat(taskKey: task.taskKey, base: base);
-      _replaceTask(task.taskKey, (t) => t.copyWith(diffStat: (result['stat'] as String?) ?? '(no changes)'));
+      _replaceTask(task.taskKey, (t) => t.copyWith(diffStat: (result['stat'] as String?) ?? currentL10n.controlCenterNoChanges));
     } on HostdControlError catch (error) {
-      _replaceTask(task.taskKey, (t) => t.copyWith(diffStat: 'error: ${error.message}'));
+      _replaceTask(task.taskKey, (t) => t.copyWith(diffStat: currentL10n.controlCenterDiffStatError(error.message)));
     } on HostdControlUnavailable {
       // Daemon dropped between refresh() and this call -- leave diffStat null, refresh will retry.
     }
@@ -172,7 +173,7 @@ class ControlCenterNotifier extends StateNotifier<ControlCenterState> {
     state = state.copyWith(expandedTaskKey: task.taskKey, clearDiffText: true, clearError: true);
     final base = await _baseBranchFor(task.parentRoot);
     if (base == null) {
-      state = state.copyWith(error: 'Could not determine the base branch to diff against.');
+      state = state.copyWith(error: currentL10n.controlCenterBaseBranchUnknown);
       return;
     }
     try {

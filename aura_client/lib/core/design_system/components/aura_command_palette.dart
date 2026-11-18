@@ -282,7 +282,9 @@ class _CommandRow extends StatelessWidget {
       button: true,
       enabled: enabled,
       selected: selected,
-      label: enabled ? item.title : '${item.title}, unavailable: ${item.disabledReason ?? ''}',
+      label: enabled
+          ? item.title
+          : context.l10n.coreCommandItemUnavailable(item.title, item.disabledReason ?? ''),
       child: InkWell(
         onTap: enabled ? onTap : null,
         child: Container(

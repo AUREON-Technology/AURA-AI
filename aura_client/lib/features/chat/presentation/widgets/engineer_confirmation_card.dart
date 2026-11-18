@@ -83,7 +83,7 @@ class _EngineerConfirmationCardState extends ConsumerState<EngineerConfirmationC
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              pending.length > 1 ? 'Confirm actions' : 'Confirm action',
+              pending.length > 1 ? context.l10n.chatConfirmActions : context.l10n.chatConfirmAction,
               style: Theme.of(context).textTheme.titleSmall,
             ),
             const SizedBox(height: AuraSpacing.sm),
@@ -110,7 +110,7 @@ class _EngineerConfirmationCardState extends ConsumerState<EngineerConfirmationC
               children: [
                 Expanded(
                   child: AuraButton(
-                    label: 'Cancel',
+                    label: context.l10n.cancel,
                     variant: AuraButtonVariant.secondary,
                     onPressed: widget.onCancel ??
                         () => ref.read(chatViewModelProvider.notifier).rejectTools(pending),
@@ -119,7 +119,9 @@ class _EngineerConfirmationCardState extends ConsumerState<EngineerConfirmationC
                 const SizedBox(width: AuraSpacing.md),
                 Expanded(
                   child: AuraButton(
-                    label: toConfirm.length < pending.length ? 'Confirm selected' : 'Confirm',
+                    label: toConfirm.length < pending.length
+                        ? context.l10n.chatConfirmSelected
+                        : context.l10n.commonConfirm,
                     onPressed: !canPress
                         ? null
                         : (widget.onConfirm ??
@@ -179,7 +181,7 @@ class _PendingCallSummary extends StatelessWidget {
       case 'github_create_branch':
         return _SummaryShell(
           icon: Icons.call_split,
-          title: 'Create branch',
+          title: context.l10n.chatCreateBranch,
           children: [GithubBranchSummary(arguments: call.arguments)],
         );
       case 'write_file':
@@ -193,7 +195,7 @@ class _PendingCallSummary extends StatelessWidget {
       case 'git_checkout_branch':
         return _SummaryShell(
           icon: Icons.call_split,
-          title: 'Switch to branch',
+          title: context.l10n.chatConfirmSwitchBranch,
           children: [
             Text(
               '${call.arguments['branch'] ?? '?'}',
@@ -261,7 +263,7 @@ class _DraftPrSummary extends StatelessWidget {
     final a = call.arguments;
     return _SummaryShell(
       icon: Icons.merge_type,
-      title: 'Open draft pull request',
+      title: context.l10n.chatConfirmOpenDraftPr,
       children: [
         const SizedBox(height: AuraSpacing.xs),
         if (a['title'] != null)
@@ -304,8 +306,9 @@ class _CommitFilesSummary extends StatelessWidget {
     final fileEntries = files is Map ? files.entries.toList() : const [];
     return _SummaryShell(
       icon: Icons.upload_file,
-      title: 'Commit ${fileEntries.length} file(s)'
-          '${a['branch'] != null ? ' to ${a['branch']}' : ''}',
+      title: a['branch'] != null
+          ? context.l10n.chatConfirmCommitFilesToBranch(fileEntries.length, '${a['branch']}')
+          : context.l10n.chatConfirmCommitFiles(fileEntries.length),
       children: [
         if (a['message'] != null)
           Padding(
@@ -334,7 +337,7 @@ class _WriteFileSummary extends StatelessWidget {
     final a = call.arguments;
     return _SummaryShell(
       icon: Icons.note_add_outlined,
-      title: 'Write file',
+      title: context.l10n.chatConfirmWriteFile,
       children: [
         SandboxFileView(
           path: a['path']?.toString() ?? '?',
@@ -355,7 +358,9 @@ class _EditFileSummary extends StatelessWidget {
     final a = call.arguments;
     return _SummaryShell(
       icon: Icons.edit_note_outlined,
-      title: 'Edit ${a['path'] ?? 'file'}',
+      title: a['path'] != null
+          ? context.l10n.chatConfirmEditFile('${a['path']}')
+          : context.l10n.chatConfirmEditFileUnnamed,
       children: [
         SandboxDiffView.fromBeforeAfter(
           before: a['find']?.toString() ?? '',
@@ -377,7 +382,7 @@ class _RunCommandSummary extends StatelessWidget {
     return _SummaryShell(
       icon: Icons.terminal,
       // Not "in sandbox": a host-routed command runs on the user's own computer (WP8).
-      title: context.l10n.engineerConfirmRunCommand,
+      title: context.l10n.chatConfirmRunCommand,
       children: [SandboxTerminalView(body: command)],
     );
   }
@@ -393,7 +398,7 @@ class _GitCommitSummary extends StatelessWidget {
     final message = call.arguments['message']?.toString() ?? '';
     return _SummaryShell(
       icon: Icons.commit,
-      title: 'Commit sandbox changes',
+      title: context.l10n.chatConfirmCommitSandbox,
       children: [
         if (message.isNotEmpty)
           Padding(

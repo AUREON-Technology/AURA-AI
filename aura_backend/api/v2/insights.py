@@ -19,6 +19,7 @@ from infrastructure.db.models import Insight, User
 from infrastructure.db.user_repo import get_or_create_user
 from services.insights import generate_insights_for_user
 from services.jwt_auth import verify_access_token
+from services.user_language import LANGUAGE_HEADER, remember_language
 from services.user_time import TIMEZONE_HEADER, normalize_timezone
 
 router = APIRouter(prefix="/api/v3/insights", tags=["insights"])
@@ -68,10 +69,12 @@ async def list_insights(
     user_info: dict = Depends(verify_access_token),
     db: AsyncSession = Depends(get_db),
     client_timezone: str | None = Header(default=None, alias=TIMEZONE_HEADER),
+    client_language: str | None = Header(default=None, alias=LANGUAGE_HEADER),
 ):
     _require_db_configured()
     user = await get_or_create_user(db, user_info)
     _remember_timezone(user, client_timezone)
+    remember_language(user, client_language)
     result = await db.execute(
         select(Insight)
         .where(Insight.user_id == user.id, Insight.dismissed_at.is_(None))
@@ -86,10 +89,12 @@ async def generate_insights(
     user_info: dict = Depends(verify_access_token),
     db: AsyncSession = Depends(get_db),
     client_timezone: str | None = Header(default=None, alias=TIMEZONE_HEADER),
+    client_language: str | None = Header(default=None, alias=LANGUAGE_HEADER),
 ):
     _require_db_configured()
     user = await get_or_create_user(db, user_info)
     _remember_timezone(user, client_timezone)
+    remember_language(user, client_language)
     # Flushed before generating: the rules read the zone back from the users row.
     await db.flush()
     created = await generate_insights_for_user(db, user.id)

@@ -34,7 +34,8 @@
   --r-sm: 8px;
   --r-md: 12px;
   --r-lg: 16px;
-  --font: Inter, "SF Pro Text", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+  /* Cairo (app/layout.tsx, Arabic script only via unicode-range) after Inter: plan decision 13. */
+  --font: Inter, var(--font-cairo), "SF Pro Text", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
   --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
 }
 
@@ -74,14 +75,17 @@ html, body {
   color: var(--text);
   font: 14px/1.5 var(--font);
   -webkit-font-smoothing: antialiased;
-  font-feature-settings: "cv11", "ss01";
 }
+/* Inter's character variants; Arabic pages render in Cairo, which they are not meant for. */
+html:not(:lang(ar)), html:not(:lang(ar)) body { font-feature-settings: "cv11", "ss01"; }
 a { color: inherit; text-decoration: none; }
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: 0.55; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
 code, pre { font-family: var(--mono); font-size: 12.5px; }
+/* Code, digests, JSON and the ⌘K hint read left to right inside an RTL page. */
+code, pre, kbd { direction: ltr; unicode-bidi: isolate; }
 ::selection { background: var(--brand-soft); }
 
 h1 { font-size: 24px; line-height: 1.25; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 6px; }
@@ -99,7 +103,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.005em; margin: 0 0 12
   display: flex;
   flex-direction: column;
   background: var(--bg-elev);
-  border-right: 1px solid var(--line);
+  border-inline-end: 1px solid var(--line);
   padding: 18px 12px;
 }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; margin: 0 8px 22px; }
@@ -145,11 +149,12 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.005em; margin: 0 0 12
 .nav a.active::before {
   content: "";
   position: absolute;
-  left: -12px;
+  inset-inline-start: -12px;
   top: 8px;
   bottom: 8px;
   width: 3px;
-  border-radius: 0 3px 3px 0;
+  border-start-end-radius: 3px;
+  border-end-end-radius: 3px;
   background: var(--brand-gradient);
 }
 .nav-foot { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--line); }
@@ -173,7 +178,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.005em; margin: 0 0 12
 .badge {
   display: inline-flex;
   align-items: center;
-  margin-left: 6px;
+  margin-inline-start: 6px;
   padding: 1px 8px;
   border-radius: 999px;
   background: var(--brand-soft);
@@ -185,6 +190,9 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.005em; margin: 0 0 12
 .nav-foot .btn { width: 100%; justify-content: center; }
 
 .content { min-width: 0; display: flex; flex-direction: column; }
+.topbar-actions { display: flex; align-items: center; gap: 8px; }
+.lang-toggle { min-height: 30px; min-width: 40px; padding: 4px 10px; font-weight: 600; }
+.login .brand .lang-toggle { margin-inline-start: auto; }
 .topbar {
   position: sticky;
   top: 0;
@@ -206,7 +214,8 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.005em; margin: 0 0 12
   align-items: center;
   gap: 10px;
   min-width: 220px;
-  padding: 6px 8px 6px 12px;
+  padding-block: 6px;
+  padding-inline: 12px 8px;
   background: var(--bg-elev);
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
@@ -214,7 +223,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.005em; margin: 0 0 12
   font-size: 13px;
 }
 .kbd-btn:hover { border-color: var(--line-strong); color: var(--text); }
-.kbd-btn span { flex: 1; text-align: left; }
+.kbd-btn span { flex: 1; text-align: start; }
 kbd {
   padding: 1px 6px;
   border-radius: 5px;
@@ -275,7 +284,7 @@ kbd {
   box-shadow: var(--shadow);
 }
 .card .table { box-shadow: none; background: transparent; }
-.table th, .table td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.table th, .table td { text-align: start; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 .table th {
   background: var(--bg-soft);
   color: var(--muted);
@@ -294,7 +303,8 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 10px 2px 8px;
+  padding-block: 2px;
+  padding-inline: 8px 10px;
   border-radius: 999px;
   background: var(--bg-soft);
   color: var(--muted);
@@ -315,7 +325,7 @@ kbd {
   align-items: flex-start;
   background: var(--bad-soft);
   border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
-  border-left: 3px solid var(--bad);
+  border-inline-start: 3px solid var(--bad);
   color: var(--text);
   padding: 11px 14px;
   border-radius: var(--r-sm);
@@ -393,8 +403,8 @@ kbd {
   opacity: 0.35;
   pointer-events: none;
 }
-.login-page::before { background: #6366f1; top: -220px; left: -160px; }
-.login-page::after { background: #8b5cf6; bottom: -260px; right: -180px; }
+.login-page::before { background: #6366f1; top: -220px; inset-inline-start: -160px; }
+.login-page::after { background: #8b5cf6; bottom: -260px; inset-inline-end: -180px; }
 .login {
   position: relative;
   z-index: 1;
@@ -453,7 +463,7 @@ iframe.grafana { width: 100%; height: 420px; margin-top: 8px; border: 1px solid 
     align-items: center;
     gap: 2px;
     padding: 12px;
-    border-right: 0;
+    border-inline-end: 0;
     border-bottom: 1px solid var(--line);
   }
   .brand { width: 100%; margin-bottom: 10px; }
@@ -470,6 +480,12 @@ iframe.grafana { width: 100%; height: 420px; margin-top: 8px; border: 1px solid 
   .metric b { font-size: 20px; overflow-wrap: anywhere; }
   .table { display: block; overflow-x: auto; }
 }
+
+/* ---------- Arabic / RTL ---------- */
+/* Tracking breaks Arabic letter joining; the uppercase transforms are no-ops there. */
+:lang(ar) h1, :lang(ar) h2, :lang(ar) .nav-label, :lang(ar) .table th, :lang(ar) .metric, :lang(ar) .metric b { letter-spacing: 0; }
+/* The sign-out arrow points out of the sidebar, which is on the right in RTL. */
+[dir="rtl"] .nav-foot .btn svg { transform: scaleX(-1); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; }

@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:aura_client/l10n/l10n.dart';
+
 /// Parsed v3 error envelope. The gateway has three on-the-wire shapes:
 /// `{error, message, retryable, details}`, `{error, correlation_id}`, and
 /// a plain-text 429 from the IP middleware.
@@ -104,20 +106,20 @@ class AuraApiError implements Exception {
     return AuraApiError(
       error: 'unreachable',
       message: cause == null
-          ? 'Could not reach AURA.'
-          : 'Could not reach AURA: $cause',
+          ? currentL10n.coreApiErrorUnreachable
+          : currentL10n.coreApiErrorUnreachableCause('$cause'),
       retryable: true,
     );
   }
 
   static String _fallbackMessage(int status) {
     return switch (status) {
-      400 => 'AURA blocked this turn.',
-      401 => 'Sign in again to continue.',
-      403 => 'You do not have permission for this action.',
-      429 => 'Too many requests. Try again shortly.',
-      503 => 'AURA is starting up. Try again in a moment.',
-      _ => 'Request failed ($status).',
+      400 => currentL10n.coreApiErrorBlocked,
+      401 => currentL10n.coreApiErrorSignInAgain,
+      403 => currentL10n.coreApiErrorForbidden,
+      429 => currentL10n.coreApiErrorRateLimited,
+      503 => currentL10n.coreApiErrorStartingUp,
+      _ => currentL10n.coreApiErrorRequestFailed(status),
     };
   }
 
