@@ -85,36 +85,47 @@ class CapabilitiesClient {
 
   CapabilitiesClient(this._ref, {http.Client? httpClient}) : _http = httpClient;
 
+  /// What the server says about images. [VisionCapabilities.unavailable] only when the server
+  /// says so -- an answer without images, or a gateway without the route (404) -- and throws when
+  /// it could not be asked (offline, a timeout, a 5xx, a refused token): that is not an answer,
+  /// and must not hide the attach button for the rest of the session (F25).
   Future<VisionCapabilities> vision() async {
     final backendUrl = _ref.read(backendUrlProvider);
-    try {
-      final token = await _ref.read(tokenManagerProvider).getValidAccessToken();
-      final headers = <String, String>{
-        if (token != null) 'Authorization': 'Bearer $token',
-        ...await DeviceValidationService.getAttestationHeaders(backendUrl: backendUrl),
-      };
-      final uri = Uri.parse('$backendUrl/api/v3/capabilities');
-      final client = _http;
-      final response = await (client != null
-              ? client.get(uri, headers: headers)
-              : http.get(uri, headers: headers))
-          .timeout(const Duration(seconds: 10));
-      if (response.statusCode != 200) return VisionCapabilities.unavailable;
-      final decoded = jsonDecode(response.body);
-      return decoded is Map<String, dynamic>
-          ? VisionCapabilities.fromJson(decoded)
-          : VisionCapabilities.unavailable;
-    } catch (e) {
-      debugPrint('[CapabilitiesClient] capabilities unavailable: $e');
-      return VisionCapabilities.unavailable;
+    final token = await _ref.read(tokenManagerProvider).getValidAccessToken();
+    final headers = <String, String>{
+      if (token != null) 'Authorization': 'Bearer $token',
+      ...await DeviceValidationService.getAttestationHeaders(backendUrl: backendUrl),
+    };
+    final uri = Uri.parse('$backendUrl/api/v3/capabilities');
+    final client = _http;
+    final response = await (client != null
+            ? client.get(uri, headers: headers)
+            : http.get(uri, headers: headers))
+        .timeout(const Duration(seconds: 10));
+    // An older gateway has no capabilities route: it cannot understand images either.
+    if (response.statusCode == 404) return VisionCapabilities.unavailable;
+    if (response.statusCode != 200) {
+      throw http.ClientException('capabilities check failed: HTTP ${response.statusCode}', uri);
     }
+    final decoded = jsonDecode(response.body);
+    return decoded is Map<String, dynamic>
+        ? VisionCapabilities.fromJson(decoded)
+        : VisionCapabilities.unavailable;
   }
 }
 
 final capabilitiesClientProvider = Provider<CapabilitiesClient>((ref) => CapabilitiesClient(ref));
 
-final visionCapabilitiesProvider = FutureProvider<VisionCapabilities>(
-  (ref) => ref.read(capabilitiesClientProvider).vision(),
+/// The server's answer is kept for the session; a failed check is not (F25). It is an error the
+/// attach button offers to retry, and is asked again the next time the composer shows.
+final visionCapabilitiesProvider = FutureProvider.autoDispose<VisionCapabilities>(
+  (ref) async {
+    final capabilities = await ref.read(capabilitiesClientProvider).vision();
+    ref.keepAlive();
+    return capabilities;
+  },
+  // The button's own retry (and the next composer) asks again; no background retry loop.
+  retry: (_, _) => null,
 );
 
 /// Why an attachment was not added, for the composer to explain.
