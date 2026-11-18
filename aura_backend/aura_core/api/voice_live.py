@@ -162,9 +162,15 @@ def register_voice_live(
                 return
 
             session_id = str(start.get("session_id") or "").strip()
-            if not session_id:
+            try:
+                live_session_id = SessionId(session_id) if session_id else None
+            except ValueError:
+                live_session_id = None  # F43: a malformed id is a bad request, not a crash
+            if live_session_id is None:
                 await websocket.send_json(
-                    {"type": "error", "error": "validation", "message": "session_id required"}
+                    {"type": "error", "error": "validation",
+                     "message": "session_id required" if not session_id
+                     else "session_id is not a valid identifier"}
                 )
                 await websocket.close(code=_CLOSE_BAD_REQUEST)
                 return
@@ -204,7 +210,7 @@ def register_voice_live(
                 tts=live["tts"],
                 turn_streamer=live["kernel"],
                 user_id=principal.user_id,
-                session_id=SessionId(session_id),
+                session_id=live_session_id,
                 nlp=live.get("nlp"),
                 config=cfg,
                 language=language,

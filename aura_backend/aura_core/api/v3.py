@@ -606,15 +606,27 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         if len({e.id for e in caller_context}) != len(caller_context):
             raise ValidationError("context ids must be unique within a turn")
         images = await normalize_images(payload.images, caller) if payload.images else ()
+        # F43: both are client-supplied; an identifier that fails its own validation is a bad
+        # request (422), not a server error.
+        try:
+            session_id = SessionId(payload.session_id) if payload.session_id else None
+        except ValueError as exc:
+            raise ValidationError("session_id is not a valid identifier",
+                                  details={"field": "session_id"}) from exc
+        try:
+            correlation_id = CorrelationId(
+                request.headers.get("x-correlation-id") or CorrelationId.new().value
+            )
+        except ValueError as exc:
+            raise ValidationError("X-Correlation-Id is not a valid identifier",
+                                  details={"field": "x-correlation-id"}) from exc
         return TurnRequest(
             message=message,
             user_id=caller.user_id,
             knowledge_owner=caller.knowledge_owner,
-            session_id=SessionId(payload.session_id) if payload.session_id else None,
+            session_id=session_id,
             agent=payload.agent,
-            correlation_id=CorrelationId(
-                request.headers.get("x-correlation-id") or CorrelationId.new().value
-            ),
+            correlation_id=correlation_id,
             use_knowledge=payload.use_knowledge,
             # Spec §5.2 / ADR-034: a team turn draws on the team's corpus, never on the person's
             # private memory, which a teammate reading the answer must not see.
