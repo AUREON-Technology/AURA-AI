@@ -31,6 +31,10 @@ on:
         description: "Backend URL to bake into the build"
         required: false
         default: "https://api.aureon-ai.tech"
+      app_base_url:
+        description: "Web app URL for 'Continue in your browser' sign-in (empty hides the button)"
+        required: false
+        default: ""
       rollback_to:
         description: "Roll the update channel back to this earlier tag (desktop-vX.Y.Z); builds nothing"
         required: false
@@ -55,6 +59,9 @@ concurrency:
 
 env:
   BACKEND_URL: ${{ github.event.inputs.backend_url || 'https://api.aureon-ai.tech' }}
+  # WP12: where the desktop app sends people to sign in with Apple or email. Empty (no input and
+  # no APP_BASE_URL repository variable) hides that button; Google sign-in works either way.
+  APP_BASE_URL: ${{ github.event.inputs.app_base_url || vars.APP_BASE_URL || '' }}
   UPDATE_MANIFEST_URL: https://github.com/${{ github.repository }}/releases/latest/download/desktop-update.json
 
 jobs:
@@ -94,6 +101,7 @@ jobs:
           flutter pub get
           dart run build_runner build --delete-conflicting-outputs
           flutter build windows --release --dart-define=BACKEND_URL=$env:BACKEND_URL `
+            --dart-define=APP_BASE_URL=$env:APP_BASE_URL `
             --dart-define=AURA_APP_VERSION=${{ steps.version.outputs.version }} `
             --dart-define=AURA_UPDATE_MANIFEST_URL=$env:UPDATE_MANIFEST_URL
 
@@ -212,6 +220,7 @@ jobs:
           flutter pub get
           dart run build_runner build --delete-conflicting-outputs
           flutter build linux --release --dart-define=BACKEND_URL="$BACKEND_URL" \
+            --dart-define=APP_BASE_URL="$APP_BASE_URL" \
             --dart-define=AURA_APP_VERSION="${{ steps.version.outputs.version }}" \
             --dart-define=AURA_UPDATE_MANIFEST_URL="$UPDATE_MANIFEST_URL"
 

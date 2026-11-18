@@ -1,6 +1,9 @@
+import 'dart:collection';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/network/aura_api_client.dart';
+import 'package:aura_client/core/workspaces/active_workspace.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
 /// One persona from `GET /api/v3/agents` (`aura_core/agents/registry.py`'s
@@ -112,15 +115,44 @@ void _refetchOnResume(Ref ref) {
 /// G-15: refetched when the app comes back to the foreground, so a capability granted (or
 /// revoked) while it was in the background shows without a restart; the persona picker's error
 /// view also offers Retry.
+///
+/// Fetched again when the active workspace changes: `usable` for the Engineer depends on the
+/// active workspace's plan, so switching to a team that includes it must unlock it at once.
 final agentsProvider = FutureProvider<List<AgentInfo>>((ref) async {
   _refetchOnResume(ref);
+  // The id only: a rename or a changed role (ActiveWorkspace.reconcile) changes no plan.
+  ref.watch(activeWorkspaceProvider.select((w) => w?.id));
   final decoded = await ref.read(auraApiClientProvider).json(
         method: 'GET',
         path: '/api/v3/agents',
       );
   final rows = decoded['agents'];
-  return (rows is List ? rows : const [])
-      .whereType<Map>()
-      .map((a) => AgentInfo.fromJson(a.map((k, v) => MapEntry(k.toString(), v))))
-      .toList();
+  final elsewhere = decoded['engineer_workspaces'];
+  return AgentList(
+    (rows is List ? rows : const [])
+        .whereType<Map>()
+        .map((a) => AgentInfo.fromJson(a.map((k, v) => MapEntry(k.toString(), v)))),
+    engineerWorkspaces: (elsewhere is List ? elsewhere : const [])
+        .whereType<Map>()
+        .map((w) => WorkspaceSummary.fromJson(w.map((k, v) => MapEntry(k.toString(), v))))
+        .where((w) => w.id.isNotEmpty)
+        .toList(),
+  );
+});
+
+/// The persona list, plus the caller's *other* workspaces whose plan includes the Engineer
+/// (`engineer_workspaces` on `/api/v3/agents`). Sign-in and pairing accept any of them, but a
+/// turn uses the active workspace, so a team member whose own workspace has no Engineer is told
+/// where it is and offered a switch instead of a dead end.
+class AgentList extends UnmodifiableListView<AgentInfo> {
+  AgentList(super.source, {this.engineerWorkspaces = const []});
+
+  final List<WorkspaceSummary> engineerWorkspaces;
+}
+
+/// [AgentList.engineerWorkspaces] of the current list; empty while it loads, on an error, on an
+/// older backend, and whenever the Engineer is usable where the person is.
+final engineerWorkspacesProvider = Provider<List<WorkspaceSummary>>((ref) {
+  final agents = ref.watch(agentsProvider).value;
+  return agents is AgentList ? agents.engineerWorkspaces : const [];
 });

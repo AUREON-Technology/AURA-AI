@@ -16,6 +16,7 @@ import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
+import 'package:aura_client/core/workspaces/active_workspace.dart';
 import 'package:aura_client/features/chat/data/agent_config_repository.dart';
 import 'package:aura_client/features/chat/data/agents_repository.dart';
 import 'package:aura_client/features/chat/data/chat_repository.dart';
@@ -197,11 +198,7 @@ class _AgentPanelState extends ConsumerState<AgentPanel> {
               Expanded(
                 child: Center(
                   child: SingleChildScrollView(
-                    child: AuraEmptyState(
-                      icon: Icons.lock_outline,
-                      title: context.l10n.agentLockedTitle,
-                      message: context.l10n.agentLockedMessage,
-                    ),
+                    child: _EngineerLocked(elsewhere: ref.watch(engineerWorkspacesProvider)),
                   ),
                 ),
               )
@@ -324,6 +321,49 @@ class _TaskSwitcher extends ConsumerWidget {
           ref.read(chatViewModelProvider.notifier).selectSession(value);
         }
       },
+    );
+  }
+}
+
+
+/// The Engineer is not usable in the active workspace. When another of the person's workspaces
+/// includes it (a team member whose own workspace is on Free), say which and offer to switch:
+/// a turn uses the active workspace's plan, while sign-in and pairing accept any of them, so
+/// without this the app paired fine and then sat locked with no way forward.
+class _EngineerLocked extends ConsumerWidget {
+  const _EngineerLocked({required this.elsewhere});
+
+  final List<WorkspaceSummary> elsewhere;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = context.l10n;
+    if (elsewhere.isEmpty) {
+      return AuraEmptyState(
+        icon: Icons.lock_outline,
+        title: l10n.agentLockedTitle,
+        message: l10n.agentLockedMessage,
+      );
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        AuraEmptyState(
+          icon: Icons.swap_horiz,
+          title: l10n.agentLockedElsewhereTitle,
+          message: l10n.agentLockedElsewhereMessage(elsewhere.first.name),
+        ),
+        const SizedBox(height: AuraSpacing.md),
+        for (final workspace in elsewhere.take(3))
+          Padding(
+            padding: const EdgeInsets.only(bottom: AuraSpacing.sm),
+            child: AuraButton(
+              key: Key('engineer-switch-${workspace.id}'),
+              label: l10n.agentLockedSwitchTo(workspace.name),
+              onPressed: () => ref.read(activeWorkspaceProvider.notifier).select(workspace),
+            ),
+          ),
+      ],
     );
   }
 }

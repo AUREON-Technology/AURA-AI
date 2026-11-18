@@ -646,3 +646,52 @@ control server (`POST /remote_control`) from the desktop app. No RPC can change 
 
 **Status.** Built and tested locally (backend, daemon, client), not CI-run, and never exercised
 between a real phone and a real computer. That proof belongs to the WP10 end-to-end report.
+
+## Amendment 2026-11-18: customers' Engineer outside turns (WP11) and desktop sign-in through the browser (WP12)
+
+Module readiness stage 2 (`docs/module-readiness/engineer-agent/desktop-github/2026-11-17/`),
+built on SaaS P1-E ("Customers", above).
+
+**WP11: the plan grants the Engineer to routes as well as turns.** P1-E gives a customer
+`engineer_agent` per turn, in `admit_turn`, from the active workspace's plan. Three routes are
+not turns and checked only the caller's role capabilities:
+- `GET /api/v3/agents`, which reported the Engineer `usable: false` to a paying customer;
+- `GET /api/v3/host/folders`, which refused the phone's folder picker for remote control;
+- `POST /api/v3/host/folders/git-init`, which refused "Initialize git here".
+
+`engineer_granted(caller)` now applies `admit_turn`'s rule in all three: the role, or the plan
+with `AURA_ENGINEER_FOR_CUSTOMERS` on. A plan lookup failure is 503, never "not entitled". F-09
+stays narrowed exactly as P1-E narrowed it. Nothing widens it further: a Free account is
+refused on every one of these routes (tests in `tests/integration/test_engineer_for_customers.py`).
+
+**WP12: desktop sign-in through the browser.** `firebase_core` has no Linux implementation and
+`firebase_auth` no provider sign-in on Windows, so the desktop app cannot sign in with Firebase
+itself. It hands off to the web app, in RFC 8252's loopback shape
+(`services/desktop_handoff.py`):
+
+1. **The app.** It makes a PKCE verifier, listens on `http://127.0.0.1:<port>/`, and opens
+   `{APP_BASE_URL}/desktop-sign-in` with that redirect, a `state` and the S256 challenge.
+2. **The page.** It signs in with Firebase (Google, Apple or email), then sends the ID token to
+   `POST /api/v3/auth/desktop/handoff`. The server verifies it and stores the identity under a
+   one-time code, bound to the challenge and the redirect. The redirect must be the loopback
+   form. The page then sends the browser to the loopback with the code and `state`, and signs out
+   of Firebase in that browser.
+3. **The exchange.** The app checks `state` and calls `POST /api/v3/auth/desktop/firebase-exchange`
+   with the code and its verifier. That route applies the same gate and device-bound issuance as
+   `/desktop/login`: one shared `_finish_desktop_sign_in`, so the two cannot drift. It admits an
+   operator, or an entitled customer capped at `consumer_desktop` (T-6).
+
+**What it defends.**
+- **A code seen by anyone else** is useless without the verifier, which never leaves the app.
+  That covers browser history, a referrer, and another local process that wins the loopback
+  port.
+- **Every code is single use** (Redis `GET`+`DEL` in one `MULTI`), spent even by a failed
+  exchange, and lives 60 seconds.
+- **The ID token never appears in a URL.**
+- **SEC-08 still holds.** Only a Google sign-in may match an operator email list, so an
+  operator's address registered through Apple or email/password grants nothing.
+
+**What it does not defend.** Malware already running as the person on that computer can read the
+app's memory or its stored refresh token, whatever the sign-in method. Both routes are rate
+limited per address, but per worker. The existing Google loopback path (`/desktop/exchange` +
+`/desktop/login`) stays until it is retired.

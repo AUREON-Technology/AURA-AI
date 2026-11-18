@@ -5,6 +5,7 @@ import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/security/encryption_service.dart';
+import 'package:aura_client/core/workspaces/active_workspace.dart';
 import 'package:aura_client/desktop/agent/agent_panel.dart';
 import 'package:aura_client/desktop/events/ide_event_bus.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
@@ -128,6 +129,24 @@ void main() {
 
     await closePanel();
     expect(container.read(activeAgentIdProvider), 'finance_advisor');
+    await unmount(tester);
+  });
+
+  // The active workspace decides a turn, but sign-in and pairing accept any workspace with the
+  // Engineer: a team member on their own Free workspace is told where it is and can switch.
+  testWidgets('locked here but in a team: the panel names it and switches to it', (tester) async {
+    const team = WorkspaceSummary(id: 'ws_team_1', kind: 'team', name: 'Acme', role: 'member');
+    final (container, closePanel) =
+        await pumpPanel(tester, AgentList(_locked, engineerWorkspaces: const [team]));
+    expect(find.text('The Engineer is in another workspace'), findsOneWidget);
+    expect(find.textContaining("but Acme does"), findsOneWidget);
+    expect(find.byType(ChatComposer), findsNothing);
+
+    await tester.tap(find.byKey(const Key('engineer-switch-ws_team_1')));
+    await tester.pump();
+    expect(container.read(activeWorkspaceProvider)?.id, 'ws_team_1');
+
+    await closePanel();
     await unmount(tester);
   });
 

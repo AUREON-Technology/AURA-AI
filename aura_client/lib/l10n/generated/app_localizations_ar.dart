@@ -399,6 +399,10 @@ class AppLocalizationsAr extends AppLocalizations {
       'جلستك خلصت. سجّل دخول تاني عشان تكمّل من مكان ما وقفت — كل حاجة على الجهاز ده لسه موجودة.';
 
   @override
+  String get loginSessionEndedPlanRequired =>
+      'اتسجّل خروجك: باقتك مبقتش فيها الـEngineer على الكمبيوتر بتاعك. رقّي لـPro أو Team، وبعدين سجّل دخول تاني — كل حاجة على الجهاز ده لسه موجودة.';
+
+  @override
   String get loginGoogle => 'تسجيل الدخول بـ Google';
 
   @override
@@ -1709,7 +1713,21 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get agentLockedMessage =>
-      'المهندس محتاج صلاحية engineer_agent. اطلبها من حد من المسؤولين؛ ولحد ما تتفعّل، الرسايل من هنا هيرد عليها المساعد العام بداله.';
+      'الـEngineer مش جزء من مساحة العمل دي. بييجي مع باقتي Pro وTeam، أو مشغّل السيرفر يقدر يدّيه لدورك. لحد كده، الرسايل من هنا هيرد عليها المساعد العام بدل منه.';
+
+  @override
+  String get agentLockedElsewhereTitle =>
+      'الـEngineer موجود في مساحة عمل تانية';
+
+  @override
+  String agentLockedElsewhereMessage(String workspace) {
+    return 'باقة مساحة العمل دي مفيهاش الـEngineer، لكن $workspace فيها. انقل لها عشان تستخدم الـEngineer هنا.';
+  }
+
+  @override
+  String agentLockedSwitchTo(String workspace) {
+    return 'انقل لـ$workspace';
+  }
 
   @override
   String get agentEmptyTitle => 'مفيش رسايل لسه';
@@ -3185,7 +3203,15 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get failureSignInRefusedMessage =>
-      'السيرفر رفض حساب Google ده، فمتسجّلتش. جرّب حساب تاني، أو اطلب من اللي مشغّل سيرفر AURA ده يراجع الحساب ده.';
+      'السيرفر رفض الحساب ده، فمتسجّلتش. جرّب حساب تاني، أو اطلب من اللي مشغّل سيرفر AURA ده يراجع الحساب ده.';
+
+  @override
+  String get failureDesktopPlanRequiredTitle =>
+      'تطبيق الكمبيوتر محتاج باقة Pro أو Team';
+
+  @override
+  String get failureDesktopPlanRequiredMessage =>
+      'الـEngineer على الكمبيوتر بتاعك جزء من باقتي Pro وTeam. رقّي باقتك، وبعدين سجّل دخول تاني.';
 
   @override
   String get failureSignInIncompleteTitle => 'مقدرناش نكمّل تسجيل الدخول';
@@ -3698,6 +3724,11 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String chatPersonaRequires(String capability) {
     return 'محتاج $capability -- مش متاحة على الحساب ده';
+  }
+
+  @override
+  String chatPersonaSwitchToUse(String workspace) {
+    return 'موجود في $workspace -- دوس عشان تنقل لها وتستخدم الـEngineer';
   }
 
   @override
@@ -5016,4 +5047,66 @@ class AppLocalizationsAr extends AppLocalizations {
   String shareConfirm(String name) {
     return 'تشارك نسخة من المحادثة دي مع $name؟ كل اللي في التيم هيقدروا يقروها.';
   }
+
+  @override
+  String get loginBrowserHandoff =>
+      'تكمّل في المتصفح — Google أو Apple أو الإيميل';
+
+  @override
+  String coreDesktopSignInBrowserError(String error) {
+    return 'تسجيل الدخول في المتصفح رجّع مشكلة: $error';
+  }
+
+  @override
+  String get coreDesktopSignInNoSession => 'سيرفر AURA مرجّعش جلسة دخول.';
+
+  @override
+  String get desktopSignInTitle => 'سجّل دخول على تطبيق AURA للكمبيوتر';
+
+  @override
+  String get desktopSignInSubtitle =>
+      'اختار هتسجّل دخول إزاي. لما تخلّص، التاب ده هيرجّع تسجيل الدخول لتطبيق الكمبيوتر.';
+
+  @override
+  String get desktopSignInSharedComputer =>
+      'AURA هيخرّجك من المتصفح ده تاني أول ما تطبيق الكمبيوتر ياخد تسجيل الدخول.';
+
+  @override
+  String get desktopSignInWorking => 'بنكمّل تسجيل الدخول…';
+
+  @override
+  String get desktopSignInDone =>
+      'سجّلت الدخول. بنرجّعك لتطبيق AURA على الكمبيوتر…';
+
+  @override
+  String get desktopSignInDoneHint =>
+      'لو محصلش حاجة، ارجع لتطبيق الكمبيوتر. تقدر تقفل التاب ده.';
+
+  @override
+  String get desktopSignInInvalidLink =>
+      'لينك تسجيل الدخول ده مش صالح. ابدأ تاني من تطبيق AURA على الكمبيوتر: اختار \"تكمّل في المتصفح\" في شاشة تسجيل الدخول.';
+
+  @override
+  String get desktopSignInWebOnly =>
+      'الصفحة دي للمتصفح. في تطبيق الكمبيوتر، اختار \"تكمّل في المتصفح\" في شاشة تسجيل الدخول وهو هيفتحلك الصفحة دي.';
+
+  @override
+  String get desktopSignInGoToLogin => 'روح لتسجيل الدخول';
+
+  @override
+  String get desktopSignInServerUnreachable =>
+      'مقدرناش نوصل لسيرفر AURA. اتأكد من الاتصال وجرّب تاني.';
+
+  @override
+  String desktopSignInServerFailed(int status) {
+    return 'سيرفر AURA مقدرش يوصّل تسجيل الدخول ده لتطبيق الكمبيوتر (HTTP $status).';
+  }
+
+  @override
+  String get desktopSignInNoIdentityToken =>
+      'خدمة تسجيل الدخول مرجّعتش identity token للحساب ده. جرّب تاني.';
+
+  @override
+  String get desktopSignInReturnFailed =>
+      'مقدرناش نرجع لتطبيق الكمبيوتر. اتأكد إنه لسه مستنيك، وبعدين ابدأ تاني منه.';
 }

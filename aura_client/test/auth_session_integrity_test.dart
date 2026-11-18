@@ -46,6 +46,15 @@ class _SignedInAuth extends AuthNotifier {
   @override
   Future<String?> getIdToken() async => 'google-still-signed-in';
 
+  final expiries = <bool>[];
+
+  @override
+  Future<void> expireSession({bool planRequired = false}) async {
+    expiries.add(planRequired);
+    await ref.read(tokenManagerProvider).clear();
+    state = const AsyncValue.data(null);
+  }
+
   @override
   Future<void> endDeletedAccount() async {
     deletedAccountEnds++;
@@ -102,6 +111,62 @@ void main() {
   }
 
   Iterable<String> paths() => requests.map((r) => r.url.path.substring(r.url.path.lastIndexOf('/')));
+
+  // WP11: a desktop customer downgraded off a plan with the Engineer. The server refuses the
+  // refresh with `X-Aura-Refusal: plan_required`; the session ends at once, with that reason, and
+  // no /token re-exchange is tried (it could not change the plan).
+  group('WP11: a refresh refused because the plan no longer includes the Engineer', () {
+    http.Response planRefusal() => http.Response(
+          '{"detail":"The desktop Engineer needs a Pro or Team plan. Upgrade, then sign in again."}',
+          401,
+          headers: {'x-aura-refusal': 'plan_required'},
+        );
+
+    test('ends the session with the plan reason and never calls /token', () async {
+      store = _MemoryRefreshTokenStore('refresh-of-downgraded-customer');
+      final (container, tm) = scope((request) async {
+        if (request.url.path.endsWith('/auth/refresh')) return planRefusal();
+        return _issued('access-x', 'refresh-x');
+      });
+      await container.read(authProvider.future);
+
+      tm.invalidateAccessToken();
+      expect(await tm.getValidAccessToken(), isNull);
+
+      expect(paths(), isNot(contains('/token')));
+      expect((container.read(authProvider.notifier) as _SignedInAuth).expiries, [true]);
+      expect(container.read(authProvider).value, isNull);
+      expect(store.token, isNull);
+    });
+
+    test('ends it even on a routine renewal, with no 401 before it', () async {
+      store = _MemoryRefreshTokenStore('refresh-of-downgraded-customer');
+      final (container, tm) = scope((request) async {
+        if (request.url.path.endsWith('/auth/refresh')) return planRefusal();
+        return _issued('access-x', 'refresh-x');
+      });
+      await container.read(authProvider.future);
+
+      expect(await tm.getValidAccessToken(), isNull);
+      expect((container.read(authProvider.notifier) as _SignedInAuth).expiries, [true]);
+      expect(paths(), isNot(contains('/token')));
+    });
+
+    test('a refusal without the marker is not a plan refusal', () async {
+      store = _MemoryRefreshTokenStore('refresh-revoked');
+      final (container, tm) = scope((request) async {
+        if (request.url.path.endsWith('/auth/refresh')) {
+          return http.Response('{"detail":"Device access has been revoked."}', 401);
+        }
+        return http.Response('{"detail":"no"}', 401);
+      });
+      await container.read(authProvider.future);
+
+      tm.invalidateAccessToken();
+      await tm.getValidAccessToken();
+      expect((container.read(authProvider.notifier) as _SignedInAuth).expiries, isNot(contains(true)));
+    });
+  });
 
   group('INT-010: an account deleted elsewhere', () {
     test('a refresh answered account_deleted wipes the session and never calls /token', () async {

@@ -107,6 +107,12 @@ class TokenManager {
   /// may silently re-exchange its way back into it (INT-010).
   bool _accountDeleted = false;
 
+  /// Set when `/refresh` refused with `X-Aura-Refusal: plan_required`: a desktop customer's plan
+  /// no longer includes the Engineer (module readiness WP11). Like [_accountDeleted] it ends the
+  /// session at once, with its reason, instead of falling back to `/token` -- which a desktop
+  /// session has nothing to exchange with, and which would not change the plan.
+  bool _planRequired = false;
+
   String get _authUrl => '${_ref.read(backendUrlProvider)}/api/v3/auth';
   String get _backendUrl => _ref.read(backendUrlProvider);
 
@@ -205,6 +211,7 @@ class TokenManager {
     _renewingAfterRejection = false;
     _renewalRefused = false;
     _accountDeleted = false;
+    _planRequired = false;
     final generation = _generation;
 
     // A refresh that failed without being refused (network, 5xx) leaves the
@@ -216,6 +223,7 @@ class TokenManager {
       if (generation != _generation) return null; // signed out meanwhile (INT-027)
       if (refreshed) return _accessToken;
       if (_accountDeleted) return _endDeletedAccount();
+      if (_planRequired) return _endForPlan();
       refreshInconclusive = !_renewalRefused;
     }
 
@@ -239,6 +247,14 @@ class TokenManager {
   Future<String?> _endDeletedAccount() async {
     debugPrint("[TokenManager] the account was deleted -- ending the session and its local data");
     await _ref.read(authProvider.notifier).endDeletedAccount();
+    return null;
+  }
+
+  /// The plan no longer includes the desktop Engineer: end the session now and say why on the
+  /// login page, rather than a generic "session expired" (WP11, "refused with a plain reason").
+  Future<String?> _endForPlan() async {
+    debugPrint("[TokenManager] refresh refused: the plan no longer includes the desktop Engineer");
+    await _ref.read(authProvider.notifier).expireSession(planRequired: true);
     return null;
   }
 
@@ -315,6 +331,8 @@ class TokenManager {
         // one bad minute upstream would cost the user their session.
         _renewalRefused = _isRefusal(response.statusCode);
         _accountDeleted = _isAccountDeleted(response);
+        _planRequired =
+            _renewalRefused && response.headers['x-aura-refusal'] == 'plan_required';
         if (_renewalRefused) await _clearRefreshToken();
         return false;
       }
@@ -485,6 +503,7 @@ class TokenManager {
     String? deviceName,
   }) async {
     lastDesktopLoginRefusal = null;
+    lastDesktopLoginPlanRequired = false;
     try {
       final response = await _post(
         "$_authUrl/desktop/login",
@@ -500,6 +519,7 @@ class TokenManager {
         );
         if (_isRefusal(response.statusCode)) {
           lastDesktopLoginRefusal = _serverDetail(response.body) ?? 'HTTP ${response.statusCode}';
+          lastDesktopLoginPlanRequired = response.headers['x-aura-refusal'] == 'plan_required';
         }
         _ref.read(authExchangeFailureProvider.notifier).set(AuthExchangeFailure.other);
         return null;
@@ -522,10 +542,40 @@ class TokenManager {
     }
   }
 
+  /// Takes the desktop session the browser hand-off produced (`POST
+  /// /api/v3/auth/desktop/firebase-exchange`, `core/auth/desktop_oauth_client.dart`'s
+  /// `signInWithBrowserHandoff`, module readiness WP12) and makes it this manager's session,
+  /// through the same [_applyTokenResponse] path [exchangeDesktopLogin] uses: the refresh token is
+  /// persisted, so [getValidAccessToken] keeps the session alive across launches.
+  ///
+  /// The exchange already happened (the code is single-use and the verifier lives in that flow),
+  /// so this makes no call of its own except, like [startSession], revoking a refresh token an
+  /// earlier session left on this device -- otherwise a different account signing in here would
+  /// leave the old account's session renewable on the server. A renewal of that earlier session
+  /// still in flight is dropped rather than written over this one (INT-027).
+  Future<DesktopDeviceToken> applyDesktopSession(Map<String, dynamic> tokenResponse) async {
+    _generation++;
+    _inFlightAccessToken = null;
+    _unansweredRefresh = null;
+    await _loadCachedRefreshToken();
+    final previous = _refreshToken;
+    await _applyTokenResponse(tokenResponse);
+    if (previous != null && previous.isNotEmpty && previous != _refreshToken) {
+      await _revoke(previous);
+    }
+    lastDesktopLoginRefusal = null;
+    _ref.read(authExchangeFailureProvider.notifier).set(AuthExchangeFailure.none);
+    return DesktopDeviceToken(accessToken: _accessToken!, expiry: _accessTokenExpiry!);
+  }
+
   /// Why the server refused the last [exchangeDesktopLogin] (its `detail`), when it answered
   /// 400/401/403 -- for instance desktop sign-in being limited to operators (F-09). Null when
   /// that call succeeded or failed without an answer.
   String? lastDesktopLoginRefusal;
+
+  /// Whether that refusal was marked `X-Aura-Refusal: plan_required` (a Pro or Team plan would
+  /// let this account in; module readiness WP11).
+  bool lastDesktopLoginPlanRequired = false;
 
   static String? _serverDetail(String body) {
     try {

@@ -400,6 +400,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Your session expired. Sign in again to pick up where you left off — everything on this device is still here.';
 
   @override
+  String get loginSessionEndedPlanRequired =>
+      'You\'ve been signed out: your plan no longer includes the Engineer on your computer. Upgrade to Pro or Team, then sign in again — everything on this device is still here.';
+
+  @override
   String get loginGoogle => 'Sign in with Google';
 
   @override
@@ -1714,7 +1718,21 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get agentLockedMessage =>
-      'Engineer needs the engineer_agent capability. Ask an operator to grant it; until then, messages from here would be answered by the general assistant instead.';
+      'The Engineer isn\'t part of this workspace. It comes with the Pro and Team plans, or an operator can grant it to your role. Until then, messages from here would be answered by the general assistant instead.';
+
+  @override
+  String get agentLockedElsewhereTitle =>
+      'The Engineer is in another workspace';
+
+  @override
+  String agentLockedElsewhereMessage(String workspace) {
+    return 'This workspace\'s plan doesn\'t include the Engineer, but $workspace does. Switch to it to use the Engineer here.';
+  }
+
+  @override
+  String agentLockedSwitchTo(String workspace) {
+    return 'Switch to $workspace';
+  }
 
   @override
   String get agentEmptyTitle => 'No messages yet';
@@ -3170,7 +3188,15 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get failureSignInRefusedMessage =>
-      'The server refused this Google account, so you have not been signed in. Try another account, or ask whoever runs this AURA server to check this one.';
+      'The server refused this account, so you have not been signed in. Try another account, or ask whoever runs this AURA server to check this one.';
+
+  @override
+  String get failureDesktopPlanRequiredTitle =>
+      'The desktop app needs a Pro or Team plan';
+
+  @override
+  String get failureDesktopPlanRequiredMessage =>
+      'The Engineer on your computer is part of the Pro and Team plans. Upgrade your plan, then sign in again.';
 
   @override
   String get failureSignInIncompleteTitle => 'Couldn\'t finish signing in';
@@ -3655,6 +3681,11 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String chatPersonaRequires(String capability) {
     return 'Requires $capability -- not available on this account';
+  }
+
+  @override
+  String chatPersonaSwitchToUse(String workspace) {
+    return 'Included in $workspace -- tap to switch to it and use the Engineer';
   }
 
   @override
@@ -4989,4 +5020,67 @@ class AppLocalizationsEn extends AppLocalizations {
   String shareConfirm(String name) {
     return 'Share a copy of this chat with $name? Everyone in the team can read it.';
   }
+
+  @override
+  String get loginBrowserHandoff =>
+      'Continue in your browser — Google, Apple or email';
+
+  @override
+  String coreDesktopSignInBrowserError(String error) {
+    return 'The browser sign-in reported an error: $error';
+  }
+
+  @override
+  String get coreDesktopSignInNoSession =>
+      'The AURA server did not return a session.';
+
+  @override
+  String get desktopSignInTitle => 'Sign in to the AURA desktop app';
+
+  @override
+  String get desktopSignInSubtitle =>
+      'Choose how to sign in. When you\'re done, this tab hands the sign-in back to the desktop app.';
+
+  @override
+  String get desktopSignInSharedComputer =>
+      'AURA signs you out of this browser again once the desktop app has your sign-in.';
+
+  @override
+  String get desktopSignInWorking => 'Finishing sign-in…';
+
+  @override
+  String get desktopSignInDone =>
+      'Signed in. Returning you to the AURA desktop app…';
+
+  @override
+  String get desktopSignInDoneHint =>
+      'If nothing happens, switch back to the desktop app. You can close this tab.';
+
+  @override
+  String get desktopSignInInvalidLink =>
+      'This sign-in link isn\'t valid. Start again from the AURA desktop app: choose \"Continue in your browser\" on its sign-in screen.';
+
+  @override
+  String get desktopSignInWebOnly =>
+      'This page is for a web browser. In the desktop app, choose \"Continue in your browser\" on the sign-in screen and it opens this page for you.';
+
+  @override
+  String get desktopSignInGoToLogin => 'Go to sign-in';
+
+  @override
+  String get desktopSignInServerUnreachable =>
+      'Couldn\'t reach the AURA server. Check your connection and try again.';
+
+  @override
+  String desktopSignInServerFailed(int status) {
+    return 'The AURA server couldn\'t hand this sign-in to the desktop app (HTTP $status).';
+  }
+
+  @override
+  String get desktopSignInNoIdentityToken =>
+      'The sign-in service returned no identity token for this account. Try again.';
+
+  @override
+  String get desktopSignInReturnFailed =>
+      'Couldn\'t go back to the desktop app. Make sure it\'s still waiting for you, then start again from it.';
 }

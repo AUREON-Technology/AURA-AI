@@ -27,7 +27,9 @@ here ran in CI (no runners, CB-44), and nothing is proven live.
 | Merge of main (Arabic plan) | Done; the consent migration was renumbered to `0023` after main's `0022` | `60cf1e9`, `3a9ef0c` |
 | WP6 | Repo half done: the Railway runbook (`docs/deployment/control-plane.md`, "Claude for the Engineer"), the VPS example (`deploy/.env.example`, `hosted3`), and both compose files now forward `WORKLOADS` and `USER_TPD` (before, a VPS Claude slot booted unfenced and uncapped whatever `.env` said). **Owner half not done:** the Railway variables and the Anthropic key. Not accepted until the four live checks in that runbook pass | this branch, after `d47e064` |
 | WP10a | Runbook written: `docs/guides/engineer-e2e-checklist.md` (10 sections, a report template). **Not run:** it needs WP6's Railway variables live (`claude1` absent from `/health/ready` on 2026-11-18), a real Windows 11 machine, a real Ubuntu 24.04 desktop and a phone, none of which this environment has. No report is committed until it is run | this branch |
-| WP11, WP12, WP10b | Not started | — |
+| WP11 | Done. #246's Plan E built almost all of it; the gap check found that `/agents`, `/host/folders` and `git-init` ignored the plan, so a Pro customer saw the Engineer greyed out and their phone refused. Fixed in `engineer_granted`, with tests. Stacked on #246 (merged into this branch), so it ships when #246 does | `a51b517` |
+| WP12 | Backend done: `/desktop/handoff` and `/desktop/firebase-exchange` (single-use 60 s code bound to PKCE and the loopback; SEC-08 kept), with tests. Client in progress. `desktop-package.yml` passes `APP_BASE_URL`. Not run on a real machine | `63818c6`, `6f0bf63` |
+| WP10b | Runbook written: Part B of `docs/guides/engineer-e2e-checklist.md` (three sign-in methods, the operator run as Pro, downgrade mid-session, a team member, Free refused everywhere, a report template). **Not run:** it needs #246 deployed (live schema was `0023`), `AURA_ENGINEER_FOR_CUSTOMERS`, the web app at `APP_BASE_URL`, WP6's slot, two real machines and a phone | this branch |
 
 ## 0. Ground rules for every work package
 
