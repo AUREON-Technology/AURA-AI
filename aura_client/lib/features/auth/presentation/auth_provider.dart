@@ -9,6 +9,7 @@ import 'package:aura_client/core/auth/identity_service.dart';
 import 'package:aura_client/core/auth/platform_login_support.dart';
 import 'package:aura_client/core/auth/sign_in_refused.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
+import 'package:aura_client/core/config/app_links.dart';
 import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/config/config.dart';
 import 'package:aura_client/core/database/database_provider.dart';
@@ -16,7 +17,8 @@ import 'package:aura_client/core/security/aura_secure_storage.dart';
 import 'package:aura_client/core/sync/sync_client.dart';
 import 'package:aura_client/core/undo/undoable_deletes.dart';
 
-/// Reads the display-only claims (name/email/picture) out of a Google ID token's payload without
+/// Reads the display-only claims (name/email/picture) out of a Google ID token's (or, after the
+/// browser hand-off, the AURA access token's) payload without
 /// verifying its signature -- safe here because it's only for populating [UserProfile] in the
 /// UI; the backend independently verifies the same token's signature/issuer/audience for real
 /// (`services/security.py::verify_identity_token`) during `signInWithDesktopOAuth`'s exchange.
@@ -31,6 +33,17 @@ Map<String, dynamic> _unverifiedJwtPayload(String jwt) {
     return const {};
   }
 }
+
+/// The browser hand-off [AuthNotifier.signInWithDesktopBrowser] runs (`signInWithBrowserHandoff`),
+/// behind a provider so a test can play the browser.
+typedef DesktopBrowserHandoff = Future<DesktopHandoffResult> Function({
+  required Uri signInPage,
+  required Uri exchangeEndpoint,
+  String? deviceName,
+});
+
+final desktopBrowserHandoffProvider =
+    Provider<DesktopBrowserHandoff>((ref) => signInWithBrowserHandoff);
 
 class UserProfile {
   final String id;
@@ -135,6 +148,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
         }
       }
 
+      ref.read(sessionEndedForPlanProvider.notifier).set(false);
       ref.read(sessionExpiredProvider.notifier).set(false);
       state = AsyncValue.data(UserProfile(
         id: restored?.uid ?? cachedId,
@@ -189,7 +203,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
         // A refusal (desktop sign-in is for operators only, F-09) gets its own words and the
         // server's reason; anything else did not get an answer at all.
         final refusal = tokens.lastDesktopLoginRefusal;
-        if (refusal != null) throw SignInRefused(refusal);
+        if (refusal != null) throw SignInRefused(refusal, tokens.lastDesktopLoginPlanRequired);
         throw StateError('The backend did not accept this Google sign-in for desktop login.');
       }
 
@@ -214,6 +228,66 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
       // (`_restorePersistedDesktopToken`) only so a token issued before this change keeps
       // working until it expires, and `expireSession` still deletes them.
       debugPrint("[AuthNotifier] desktop session until ${deviceToken.expiry.toIso8601String()}");
+
+      state = AsyncValue.data(profile);
+    } catch (err, stack) {
+      state = AsyncValue.error(err, stack);
+    }
+  }
+
+  /// Desktop login (Linux/Windows) with any Firebase method -- Google, Apple or email -- through
+  /// the browser (module readiness WP12). The web app's `/desktop-sign-in` page signs in with
+  /// Firebase and hands a one-time code back to this app's loopback listener; the code and the
+  /// PKCE verifier are redeemed at `/api/v3/auth/desktop/firebase-exchange` for the same
+  /// device-bound session `/desktop/login` issues (`signInWithBrowserHandoff`). Same state and
+  /// storage handling as [signInWithDesktopOAuth], which stays as it is.
+  Future<void> signInWithDesktopBrowser() async {
+    state = const AsyncValue.loading();
+    try {
+      final signInPage = desktopSignInPageFor(ref.read(appBaseUrlProvider));
+      if (signInPage.isEmpty) {
+        // The login page only offers this when the build knows where the web app is.
+        throw StateError('No APP_BASE_URL in this build: browser sign-in is not set up.');
+      }
+      final backendUrl = ref.read(backendUrlProvider);
+      final DesktopHandoffResult handoff;
+      try {
+        handoff = await ref.read(desktopBrowserHandoffProvider)(
+          signInPage: Uri.parse(signInPage),
+          exchangeEndpoint: Uri.parse('$backendUrl/api/v3/auth/desktop/firebase-exchange'),
+          deviceName: desktopDeviceName(),
+        );
+      } on DesktopOAuthCancelledException catch (e) {
+        // The server said no to this account (operators only, or a plan without the desktop
+        // Engineer): the same refusal [signInWithDesktopOAuth] reports, with the server's reason.
+        if (e.statusCode == 403) throw SignInRefused(e.message, e.refusal == 'plan_required');
+        rethrow;
+      }
+      final deviceToken =
+          await ref.read(tokenManagerProvider).applyDesktopSession(handoff.tokenResponse);
+
+      // The AURA access token's own claims (`services/jwt_auth.create_access_token`), read for
+      // display only: the server issued it a moment ago and verifies it on every request.
+      final claims = _unverifiedJwtPayload(handoff.accessToken);
+      final email = (claims['email'] as String?) ?? '';
+      final name = (claims['name'] as String?)?.trim();
+      final profile = UserProfile(
+        id: (claims['sub'] as String?) ?? '',
+        email: email,
+        displayName: (name != null && name.isNotEmpty)
+            ? name
+            : (email.contains('@') ? email.split('@').first : 'AURA user'),
+        photoUrl: claims['picture'] as String?,
+      );
+      await _forgetDataOfOtherAccount(profile.id);
+
+      await _storage.write(key: 'user_id', value: profile.id);
+      await _storage.write(key: 'user_email', value: profile.email);
+      await _storage.write(key: 'user_name', value: profile.displayName);
+      if (profile.photoUrl != null) {
+        await _storage.write(key: 'user_photo', value: profile.photoUrl);
+      }
+      debugPrint("[AuthNotifier] desktop browser session until ${deviceToken.expiry.toIso8601String()}");
 
       state = AsyncValue.data(profile);
     } catch (err, stack) {
@@ -355,7 +429,10 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
   /// where the user was, which is what the "Sign in again" copy promises. The
   /// cached profile id stays too, so a *different* account signing in next
   /// still gets a clean device ([_forgetDataOfOtherAccount]).
-  Future<void> expireSession() async {
+  ///
+  /// [planRequired]: the server ended it because the account's plan no longer includes the
+  /// desktop Engineer (a downgrade, WP11); the login page then says so instead of "expired".
+  Future<void> expireSession({bool planRequired = false}) async {
     final current = state.value;
     // The developer bypass never had a backend session to lose.
     if (current == null || current.id == _mockUserId) return;
@@ -366,6 +443,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     await _storage.delete(key: _desktopTokenKey);
     await _storage.delete(key: _desktopTokenExpiryKey);
     ref.read(sessionExpiredProvider.notifier).set(true);
+    ref.read(sessionEndedForPlanProvider.notifier).set(planRequired);
     state = const AsyncValue.data(null);
   }
 
@@ -399,6 +477,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
   /// that data must go first -- the same reason [signOut] wipes it.
   Future<void> _forgetDataOfOtherAccount(String newUserId) async {
     ref.read(sessionExpiredProvider.notifier).set(false);
+    ref.read(sessionEndedForPlanProvider.notifier).set(false);
     final previous = await _storage.read(key: 'user_id');
     if (previous != null && previous.isNotEmpty && previous != newUserId) {
       await ref.read(databaseProvider).wipeUserData();
@@ -529,4 +608,10 @@ class SessionExpiredNotifier extends Notifier<bool> {
 }
 
 final sessionExpiredProvider =
+    NotifierProvider<SessionExpiredNotifier, bool>(SessionExpiredNotifier.new);
+
+/// Whether the session that [sessionExpiredProvider] reports ended because the account's plan no
+/// longer includes the desktop Engineer (`X-Aura-Refusal: plan_required` on `/refresh`, WP11).
+/// Cleared with it by the next sign-in.
+final sessionEndedForPlanProvider =
     NotifierProvider<SessionExpiredNotifier, bool>(SessionExpiredNotifier.new);

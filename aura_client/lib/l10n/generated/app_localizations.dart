@@ -830,6 +830,12 @@ abstract class AppLocalizations {
   /// **'Your session expired. Sign in again to pick up where you left off — everything on this device is still here.'**
   String get loginSessionExpired;
 
+  /// Banner shown after the desktop session ended because the plan no longer includes the desktop Engineer (WP11)
+  ///
+  /// In en, this message translates to:
+  /// **'You\'ve been signed out: your plan no longer includes the Engineer on your computer. Upgrade to Pro or Team, then sign in again — everything on this device is still here.'**
+  String get loginSessionEndedPlanRequired;
+
   /// Native Google sign-in button
   ///
   /// In en, this message translates to:
@@ -3191,8 +3197,26 @@ abstract class AppLocalizations {
   /// IDE Agent panel: explanation when Engineer is locked
   ///
   /// In en, this message translates to:
-  /// **'Engineer needs the engineer_agent capability. Ask an operator to grant it; until then, messages from here would be answered by the general assistant instead.'**
+  /// **'The Engineer isn\'t part of this workspace. It comes with the Pro and Team plans, or an operator can grant it to your role. Until then, messages from here would be answered by the general assistant instead.'**
   String get agentLockedMessage;
+
+  /// Desktop Engineer panel: Engineer is locked in the active workspace but included in another of the person's workspaces
+  ///
+  /// In en, this message translates to:
+  /// **'The Engineer is in another workspace'**
+  String get agentLockedElsewhereTitle;
+
+  /// Desktop Engineer panel: names the workspace whose plan includes the Engineer
+  ///
+  /// In en, this message translates to:
+  /// **'This workspace\'s plan doesn\'t include the Engineer, but {workspace} does. Switch to it to use the Engineer here.'**
+  String agentLockedElsewhereMessage(String workspace);
+
+  /// Button: make this workspace the active one
+  ///
+  /// In en, this message translates to:
+  /// **'Switch to {workspace}'**
+  String agentLockedSwitchTo(String workspace);
 
   /// IDE Agent panel: empty conversation title
   ///
@@ -5558,11 +5582,23 @@ abstract class AppLocalizations {
   /// **'AURA did not accept this sign-in'**
   String get failureSignInRefusedTitle;
 
-  /// Failure message: the server refused the Google account
+  /// Failure message: the server refused the account (any sign-in method)
   ///
   /// In en, this message translates to:
-  /// **'The server refused this Google account, so you have not been signed in. Try another account, or ask whoever runs this AURA server to check this one.'**
+  /// **'The server refused this account, so you have not been signed in. Try another account, or ask whoever runs this AURA server to check this one.'**
   String get failureSignInRefusedMessage;
+
+  /// Failure title: desktop sign-in refused because the account's plan has no desktop Engineer (WP11)
+  ///
+  /// In en, this message translates to:
+  /// **'The desktop app needs a Pro or Team plan'**
+  String get failureDesktopPlanRequiredTitle;
+
+  /// Failure message: upgrade to Pro or Team, then sign in again
+  ///
+  /// In en, this message translates to:
+  /// **'The Engineer on your computer is part of the Pro and Team plans. Upgrade your plan, then sign in again.'**
+  String get failureDesktopPlanRequiredMessage;
 
   /// Failure title: the desktop sign-in flow failed (message comes from the flow)
   ///
@@ -6209,6 +6245,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Requires {capability} -- not available on this account'**
   String chatPersonaRequires(String capability);
+
+  /// Persona picker: subtitle of the Engineer when another of the person's workspaces includes it; tapping switches to that workspace
+  ///
+  /// In en, this message translates to:
+  /// **'Included in {workspace} -- tap to switch to it and use the Engineer'**
+  String chatPersonaSwitchToUse(String workspace);
 
   /// Chat: shown in place of an answer a safety check withheld after it streamed
   ///
@@ -8501,6 +8543,102 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Authenticator app'**
   String get twoStepAuthenticatorApp;
+
+  /// Desktop (Linux/Windows) login button: sign in with any Firebase method on the web app, which hands the sign-in back to this app
+  ///
+  /// In en, this message translates to:
+  /// **'Continue in your browser — Google, Apple or email'**
+  String get loginBrowserHandoff;
+
+  /// Desktop browser sign-in failure: the web page redirected back with an error code; error = that code, left untranslated
+  ///
+  /// In en, this message translates to:
+  /// **'The browser sign-in reported an error: {error}'**
+  String coreDesktopSignInBrowserError(String error);
+
+  /// Desktop browser sign-in failure: the AURA server answered without the session tokens
+  ///
+  /// In en, this message translates to:
+  /// **'The AURA server did not return a session.'**
+  String get coreDesktopSignInNoSession;
+
+  /// Web page the desktop app opens for sign-in: heading
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in to the AURA desktop app'**
+  String get desktopSignInTitle;
+
+  /// Web desktop sign-in page: explains what happens
+  ///
+  /// In en, this message translates to:
+  /// **'Choose how to sign in. When you\'re done, this tab hands the sign-in back to the desktop app.'**
+  String get desktopSignInSubtitle;
+
+  /// Web desktop sign-in page: the browser is signed out afterwards, since the computer may be shared
+  ///
+  /// In en, this message translates to:
+  /// **'AURA signs you out of this browser again once the desktop app has your sign-in.'**
+  String get desktopSignInSharedComputer;
+
+  /// Web desktop sign-in page: busy while handing the sign-in to the desktop app
+  ///
+  /// In en, this message translates to:
+  /// **'Finishing sign-in…'**
+  String get desktopSignInWorking;
+
+  /// Web desktop sign-in page: success, the browser is going back to the desktop app
+  ///
+  /// In en, this message translates to:
+  /// **'Signed in. Returning you to the AURA desktop app…'**
+  String get desktopSignInDone;
+
+  /// Web desktop sign-in page: shown under the success message
+  ///
+  /// In en, this message translates to:
+  /// **'If nothing happens, switch back to the desktop app. You can close this tab.'**
+  String get desktopSignInDoneHint;
+
+  /// Web desktop sign-in page: the link is missing its parameters or points somewhere other than this computer's desktop app
+  ///
+  /// In en, this message translates to:
+  /// **'This sign-in link isn\'t valid. Start again from the AURA desktop app: choose \"Continue in your browser\" on its sign-in screen.'**
+  String get desktopSignInInvalidLink;
+
+  /// Desktop sign-in page opened outside a web browser
+  ///
+  /// In en, this message translates to:
+  /// **'This page is for a web browser. In the desktop app, choose \"Continue in your browser\" on the sign-in screen and it opens this page for you.'**
+  String get desktopSignInWebOnly;
+
+  /// Desktop sign-in page opened outside a browser: button to the normal sign-in screen
+  ///
+  /// In en, this message translates to:
+  /// **'Go to sign-in'**
+  String get desktopSignInGoToLogin;
+
+  /// Web desktop sign-in page: the hand-off request got no answer
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t reach the AURA server. Check your connection and try again.'**
+  String get desktopSignInServerUnreachable;
+
+  /// Web desktop sign-in page: the hand-off was refused without a reason from the server
+  ///
+  /// In en, this message translates to:
+  /// **'The AURA server couldn\'t hand this sign-in to the desktop app (HTTP {status}).'**
+  String desktopSignInServerFailed(int status);
+
+  /// Web desktop sign-in page: Firebase signed in but gave no ID token
+  ///
+  /// In en, this message translates to:
+  /// **'The sign-in service returned no identity token for this account. Try again.'**
+  String get desktopSignInNoIdentityToken;
+
+  /// Web desktop sign-in page: the browser would not navigate back to the desktop app's local address
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t go back to the desktop app. Make sure it\'s still waiting for you, then start again from it.'**
+  String get desktopSignInReturnFailed;
 }
 
 class _AppLocalizationsDelegate

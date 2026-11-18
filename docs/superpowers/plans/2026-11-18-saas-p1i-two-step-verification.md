@@ -20,8 +20,10 @@
   wrong: the backend also accepts raw Google ID tokens, which skip Firebase and so would skip the
   second step. `verify_identity_token` now refuses a raw Google token for an account with a second
   factor enrolled, found by subject and then by email, and refuses it if Firebase cannot answer.
-  Consequence: the Linux and Windows desktop apps (raw Google token only) cannot sign in to such
-  an account.
+  Consequence: the desktop apps' older Google button (raw Google token) cannot sign in to such an
+  account. After merging #263, their "Continue in your browser" sign-in can: the web hand-off
+  page asks for the code (`desktop_sign_in_page.dart`, tested in
+  `test/auth/desktop_browser_sign_in_test.dart`).
 - **Back is disabled while a code is being checked (I#4).** If no authenticator app opens the
   link, a snackbar says so. The enrolled factor is shown in the app's own words.
 - **The login page's dialog wiring is tested (I#3).**

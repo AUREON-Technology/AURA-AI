@@ -8,6 +8,7 @@ import 'email_sign_in_form.dart';
 import 'second_factor_dialog.dart';
 import 'package:aura_client/core/auth/identity_service.dart';
 import 'package:aura_client/core/auth/platform_login_support.dart';
+import 'package:aura_client/core/config/app_links.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/l10n/l10n.dart';
@@ -50,6 +51,12 @@ CachedSessionUnlock cachedSessionUnlock({
 /// Linux/Windows desktop builds offer Google and email instead.
 bool appleSignInOffered({required TargetPlatform platform, required bool isWeb}) =>
     isWeb || platform == TargetPlatform.iOS || platform == TargetPlatform.macOS;
+
+/// Where "Continue in your browser" (Google, Apple or email through the web app, WP12) is
+/// offered: the Linux and Windows apps, which cannot sign in with Firebase themselves, and only
+/// when the build knows where the web app is (`APP_BASE_URL`).
+bool desktopBrowserSignInOffered({required bool nativeSignIn, required String appBaseUrl}) =>
+    !nativeSignIn && appBaseUrl.isNotEmpty;
 
 /// V2 rebuild (Doc/V2_BLUEPRINT.md §4) — same auth flows as V1, restyled
 /// on the design system (light+dark-ready, contrast-checked palette,
@@ -285,7 +292,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                 const SizedBox(height: AuraSpacing.lg),
                                 AuraBanner(
                                   icon: Icons.lock_clock_outlined,
-                                  message: l10n.loginSessionExpired,
+                                  message: ref.watch(sessionEndedForPlanProvider)
+                                      ? l10n.loginSessionEndedPlanRequired
+                                      : l10n.loginSessionExpired,
                                 ),
                               ],
                               const SizedBox(height: AuraSpacing.xxl),
@@ -311,6 +320,22 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                         .read(authProvider.notifier)
                                         .signInWithDesktopOAuth(),
                                   ),
+                                if (desktopBrowserSignInOffered(
+                                  nativeSignIn: supportsNativeGoogleSignIn(),
+                                  appBaseUrl: ref.watch(appBaseUrlProvider),
+                                )) ...[
+                                  const SizedBox(height: AuraSpacing.md),
+                                  AuraButton(
+                                    key: const Key('login-desktop-browser'),
+                                    label: l10n.loginBrowserHandoff,
+                                    icon: Icons.language,
+                                    expand: true,
+                                    variant: AuraButtonVariant.secondary,
+                                    onPressed: () => ref
+                                        .read(authProvider.notifier)
+                                        .signInWithDesktopBrowser(),
+                                  ),
+                                ],
                                 if (supportsNativeGoogleSignIn()) ...[
                                   if (appleSignInOffered(
                                     platform: defaultTargetPlatform,

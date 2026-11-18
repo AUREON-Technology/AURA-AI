@@ -1,9 +1,11 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../features/analytics/presentation/analytics_page.dart';
 import '../../features/auth/presentation/auth_provider.dart';
+import '../../features/auth/presentation/desktop_sign_in_page.dart';
 import '../../features/auth/presentation/linked_accounts_page.dart';
 import '../../features/auth/presentation/two_step_page.dart';
 import '../../features/auth/presentation/login_page.dart';
@@ -13,6 +15,7 @@ import '../../features/chat/presentation/chat_page.dart';
 import '../../features/chat/presentation/chat_route_extra.dart';
 import '../../features/chat/presentation/widgets/capture_sheet.dart';
 import '../../features/command_palette/command_palette.dart';
+import '../platform/browser_address.dart';
 import '../sync/sync_alert_banner.dart';
 import '../../features/engineering/presentation/engineer_history_page.dart';
 import '../../features/engineering/presentation/github_connection_page.dart';
@@ -37,6 +40,7 @@ import '../../features/workspaces/presentation/shared_chats_page.dart';
 import '../../features/workspaces/presentation/team_settings_page.dart';
 import '../../l10n/l10n.dart';
 import '../../features/voice_live/presentation/live_voice_page.dart';
+import '../config/app_links.dart';
 import '../design_system/design_system.dart';
 import '../platform/aura_platform.dart';
 import '../../desktop/shell/desktop_ide_unavailable_page.dart';
@@ -475,6 +479,9 @@ Future<String?> resolveAppRedirect({
   final isLoggingIn = location == '/login';
   final isOnboarding = location == '/onboarding';
 
+  // The page the desktop app opens in the browser to sign in (WP12) is for whoever is at this
+  // browser, signed in to AURA here or not: never sent to login, onboarding or the landing screen.
+  if (location == desktopSignInPath) return null;
   if (!isLoggedIn && !isLoggingIn) return '/login';
   if (isLoggedIn && isLoggingIn) {
     if (onboarded == false) return '/onboarding';
@@ -520,11 +527,38 @@ bool isReachableRoute(String location, {required bool desktop}) {
   return !(under('/today') || under('/life'));
 }
 
+/// Pages opened from a link outside the app, as a real path: the address the desktop app opens
+/// (WP12), and the team invite link (`inviteLinkFor`, SaaS P1-F2).
+const _webDeepLinkPaths = {desktopSignInPath, '/invite'};
+
+/// Where a web build starts when the address bar already names a page the router must open
+/// directly. The web build keeps Flutter's default hash URL strategy, under which a path such as
+/// `https://app.example/invite?token=…` reaches the router as `/` -- an invite link opened in a
+/// browser used to land on the home page with its token lost. This reads it back from [base] so
+/// the page opens with its query intact. Null for every other address, which then starts as it
+/// always has.
+@visibleForTesting
+String? webDeepLinkLocation(Uri base) {
+  if (!_webDeepLinkPaths.contains(base.path)) return null;
+  return base.hasQuery ? '${base.path}?${base.query}' : base.path;
+}
+
+/// The web start location, and -- for an invite -- the single-use token taken out of the real
+/// address. Under the hash strategy the router only rewrites the `#fragment`, so the invite page's
+/// own clean-up (`context.replace('/invite')`) never reached the `?token=` in the path: it stayed
+/// in the address bar and in history. Dropped here, before anything else runs; the token travels
+/// on in the router's initial location only.
+String? _webInitialLocation() {
+  final location = webDeepLinkLocation(Uri.base);
+  if (location != null && location.startsWith('/invite?')) dropAddressPathAndQuery();
+  return location;
+}
+
 final routerProvider = Provider<GoRouter>((ref) {
   final notifier = RouterTransitionNotifier(ref);
 
   return GoRouter(
-    initialLocation: appLandingRoute,
+    initialLocation: (kIsWeb ? _webInitialLocation() : null) ?? appLandingRoute,
     refreshListenable: notifier,
     redirect: (context, state) async {
       final isLoggedIn = ref.read(authProvider).value != null;
@@ -542,6 +576,10 @@ final routerProvider = Provider<GoRouter>((ref) {
     },
     routes: [
       GoRoute(path: '/login', builder: (context, state) => const LoginPage()),
+      GoRoute(
+        path: desktopSignInPath,
+        builder: (context, state) => DesktopSignInPage(query: state.uri.queryParameters),
+      ),
       GoRoute(
         path: '/onboarding',
         builder: (context, state) => const OnboardingPage(),

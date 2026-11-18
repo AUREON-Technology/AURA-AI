@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/workspaces/active_workspace.dart';
 import 'package:aura_client/features/chat/data/agent_config_repository.dart';
 import 'package:aura_client/features/chat/data/agents_repository.dart';
 import 'package:aura_client/features/chat/presentation/widgets/persona_picker.dart';
@@ -65,5 +67,97 @@ void main() {
     await tester.pumpAndSettle();
     expect(container.read(activeAgentIdProvider), 'orchestrator');
     expect(tester.takeException(), isNull);
+  });
+
+  // A team member on their own Free workspace: the Engineer is locked there but part of the team's
+  // plan. The picker names the team and one tap switches to it and selects the Engineer (a turn
+  // uses the active workspace's plan).
+  testWidgets('a locked Engineer that a team includes offers the switch, and one tap does it', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(_phoneSize);
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => SharedPreferences.setMockInitialValues({}));
+    const team = WorkspaceSummary(id: 'ws_team_1', kind: 'team', name: 'Acme', role: 'member');
+
+    final container = ProviderContainer(
+      overrides: [
+        agentsProvider.overrideWith((ref) async => AgentList(
+              const [
+                AgentInfo(id: 'orchestrator', description: '', version: '1'),
+                AgentInfo(
+                  id: 'engineer',
+                  description: '',
+                  version: '1',
+                  usable: false,
+                  requiredCapabilities: {'engineer_agent'},
+                ),
+              ],
+              engineerWorkspaces: const [team],
+            )),
+        activeAgentIdProvider.overrideWith(_OrchestratorAgent.new),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          theme: AuraThemeV2.dark,
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => showModalBottomSheet<void>(
+                  context: context,
+                  builder: (_) => const PersonaPickerSheet(),
+                ),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Included in Acme'), findsOneWidget);
+    expect(find.byIcon(Icons.lock_outline), findsNothing);
+
+    await tester.tap(find.byKey(const Key('persona-engineer-switch')));
+    await tester.pumpAndSettle();
+    expect(container.read(activeWorkspaceProvider)?.id, 'ws_team_1');
+    expect(container.read(activeAgentIdProvider), 'engineer');
+    expect(find.byType(PersonaPickerSheet), findsNothing, reason: 'the sheet closes after the switch');
+  });
+
+  testWidgets('a locked Engineer with no team that includes it stays locked', (tester) async {
+    await tester.binding.setSurfaceSize(_phoneSize);
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final container = ProviderContainer(
+      overrides: [
+        agentsProvider.overrideWith((ref) async => AgentList(const [
+              AgentInfo(
+                id: 'engineer',
+                description: '',
+                version: '1',
+                usable: false,
+                requiredCapabilities: {'engineer_agent'},
+              ),
+            ])),
+        activeAgentIdProvider.overrideWith(_OrchestratorAgent.new),
+      ],
+    );
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(theme: AuraThemeV2.dark, home: const Scaffold(body: PersonaPickerSheet())),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.lock_outline), findsOneWidget);
+    expect(find.byKey(const Key('persona-engineer-switch')), findsNothing);
   });
 }

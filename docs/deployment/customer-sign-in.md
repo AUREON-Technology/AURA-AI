@@ -153,10 +153,12 @@ A person can add a code from an authenticator app (Google Authenticator, Microso
   found by its Google subject, then by its email. If Firebase cannot answer the lookup, the token is
   refused too, because letting it through unchecked is exactly the bypass this check exists to stop.
   (`services/security.py`, `tests/security/test_google_token_respects_second_factor.py`.)
-- **Consequence for the Linux and Windows desktop apps.** They sign in only with that raw Google
-  token, so **an account with two-step verification on cannot sign in there** until desktop
-  sign-in goes through Firebase. This mostly affects operators. Turn it off, or use the web or
-  mobile app, until then.
+- **The Linux and Windows desktop apps.** Their "Continue in your browser" sign-in (WP12, #263)
+  goes through Firebase on the web page. The code is asked for there, so the token handed to the
+  app already carries the second step, and it works. Their older **Google button** (the loopback
+  flow) sends a raw Google token, which is refused for an account with two-step on. So such an
+  account signs in to the desktop app through the browser button only, which needs
+  `APP_BASE_URL` in the desktop build.
 
 **Turn it on for the project (owner, once).** TOTP multi-factor needs **Firebase Authentication
 with Identity Platform**, the upgraded tier. Its pricing is per monthly active user beyond the free
