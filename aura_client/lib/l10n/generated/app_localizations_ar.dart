@@ -109,11 +109,11 @@ class AppLocalizationsAr extends AppLocalizations {
       'كلّمه. هو بيفتكر، وبيدوّر في مستنداتك، وبيقترح إجراءات — وإنت اللي بتأكد أي تعديل.';
 
   @override
-  String get onboardingPrivacyTitle => 'بياناتك الخاصة بتفضل مع AURA';
+  String get onboardingPrivacyTitle => 'طلباتك بتتعالج فين';
 
   @override
   String get onboardingPrivacyBody =>
-      'مفيش حاجة بتتعالج على الموبايل ده. مستنداتك وذكرياتك وملفاتك مبيقراهاش غير نماذج ذكاء اصطناعي AURA مشغّلها بنفسه. الرسايل التانية ممكن يرد عليها مزوّد ذكاء اصطناعي خارجي معتمد، لو مشغّل السيرفر سامح بكده.';
+      'مفيش حاجة بتتعالج على الموبايل ده. مستنداتك وذكرياتك وملفاتك مبيقراهاش غير نماذج ذكاء اصطناعي AURA مشغّلها بنفسه. الاستثناء هو المهندس: بعد ما توافق في التطبيق، الرسايل اللي بتبعتها له، والملفات اللي بيفتحها، ونتيجة الأوامر اللي بيشغّلها بتروح لـ Claude، وده نموذج ذكاء اصطناعي بتشغّله Anthropic. الرسايل التانية ممكن يرد عليها مزوّد ذكاء اصطناعي خارجي معتمد، لو مشغّل السيرفر سامح بكده.';
 
   @override
   String get onboardingTourTitle => 'النهارده، Copilot، حياتي، أنا';
@@ -286,7 +286,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get settingsAboutBody =>
-      'الطلبات بتتعالج على سيرفرات AURA، عمرها ما بتتعالج على الجهاز ده. مستنداتك وذكرياتك وملفاتك ونتايج الأدوات مبيقراهاش غير نماذج ذكاء اصطناعي AURA مشغّلها بنفسه. لو مشغّل السيرفر فعّل الخاصية دي، رسايلك التانية ممكن يرد عليها مزوّد ذكاء اصطناعي خارجي معتمد.';
+      'الطلبات بتتعالج على سيرفرات AURA، عمرها ما بتتعالج على الجهاز ده. مستنداتك وذكرياتك وملفاتك ونتايج الأدوات مبيقراهاش غير نماذج ذكاء اصطناعي AURA مشغّلها بنفسه. الاستثناء هو المهندس: بعد ما توافق في التطبيق، اللي بيقراه واللي بيشغّله بيروح لـ Claude، وده نموذج ذكاء اصطناعي بتشغّله Anthropic. لو مشغّل السيرفر فعّل الخاصية دي، رسايلك التانية ممكن يرد عليها مزوّد ذكاء اصطناعي خارجي معتمد.';
 
   @override
   String get themeSystem => 'زي الجهاز';
@@ -796,7 +796,7 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
-  String get chatAwaitingConfirmation => 'أكّد الإجراء اللي فوق عشان تكمّل.';
+  String get chatAwaitingConfirmation => 'أكّد الإجراء اللي تحت عشان تكمّل.';
 
   @override
   String get personaPickerTitle => 'اختار شخصية';
@@ -1558,7 +1558,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get controlCenterEmpty =>
-      'مفيش مهام معزولة للـ Agent دلوقتي. لما تبدأ مهمة شات جديدة هتتعمل واحدة لوحدها.';
+      'مفيش مهام للمهندس تراجعها لسه. كل شات مع المهندس بيشتغل في نسخة لوحده من الفولدر، على Branch اسمه aura/task-…، وبيظهر هنا علشان تراجعه وتعمل له Merge.';
 
   @override
   String get controlCenterNoChanges => '(مفيش تغييرات)';
@@ -1868,11 +1868,11 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get engineeringRootTrusted =>
-      'موثوق -- الأوامر بتشتغل من غير تأكيد كل مرة (بس برضه جوّه الفولدر ده بس)';
+      'موثوق -- أوامر الـ agent بتشتغل من غير ما تسألك، باسمك، وتقدر توصل لأي حاجة حسابك يقدر يوصلها. المسارات اللي برّه الفولدر ده وأي git push بيسألوك الأول.';
 
   @override
   String get engineeringRootUntrusted =>
-      'مش موثوق -- بيشتغل بس قايمة أوامر للقراية والفحص';
+      'مش موثوق -- أوامر القراية بس هي اللي بتشتغل؛ أي حاجة تانية بتسألك الأول';
 
   @override
   String get engineeringBrowse => 'تصفّح';
@@ -2756,8 +2756,8 @@ class AppLocalizationsAr extends AppLocalizations {
   String get explorerPathCopied => 'اتنسخ المسار';
 
   @override
-  String get explorerRevealWindowsOnly =>
-      'الإظهار في نظام الملفات شغال على ويندوز بس دلوقتي';
+  String get explorerRevealUnsupported =>
+      'الإظهار في نظام الملفات مش مدعوم على المنصة دي';
 
   @override
   String explorerRevealFailed(String error) {
@@ -3559,7 +3559,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get chatConfirmEditFileUnnamed => 'تعديل ملف';
 
   @override
-  String get chatConfirmRunCommand => 'تشغيل أمر في الـ Sandbox';
+  String get chatConfirmRunCommand => 'تشغيل أمر';
 
   @override
   String get chatConfirmCommitSandbox => 'Commit لتغييرات الـ Sandbox';
@@ -4344,4 +4344,259 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get homeInsightDismissFailed =>
       'معرفناش نخفي الملاحظة دي. جرّب تاني بعد شوية.';
+
+  @override
+  String get engineerConsentTitle => 'المهندس بيستخدم Claude من Anthropic';
+
+  @override
+  String get engineerConsentBodyWhat =>
+      'علشان يشتغل على الكود بتاعك، المهندس بيبعت اللي بيقراه واللي بيشغّله لـ Claude، وده نموذج ذكاء اصطناعي بتشغّله Anthropic، شركة برّه AURA.';
+
+  @override
+  String get engineerConsentBodyIncludes =>
+      'ده بيشمل الرسايل اللي بتبعتها للمهندس، ومحتوى الملفات اللي بيفتحها في الفولدرات اللي سمحت بيها أو الريبوهات اللي ربطتها، ونتيجة الأوامر اللي بيشغّلها — واللي ممكن يكون فيها أي حاجة الأوامر دي بتطبعها.';
+
+  @override
+  String get engineerConsentBodyChoice =>
+      'مفيش حاجة بتتبعت غير لما توافق. تقدر تسحب موافقتك من الإعدادات ← المهندس في أي وقت؛ وساعتها المهندس بيقف لحد ما توافق تاني. باقي مميزات AURA مش بتتأثر.';
+
+  @override
+  String get engineerConsentAgree => 'موافق، كمّل';
+
+  @override
+  String get engineerConsentNotNow => 'مش دلوقتي';
+
+  @override
+  String engineerConsentSaveFailed(String reason) {
+    return 'مقدرناش نحفظ ردّك. $reason';
+  }
+
+  @override
+  String get engineerConsentUpdateTitle => 'حدّث AURA علشان تستخدم المهندس';
+
+  @override
+  String get engineerConsentUpdateBody =>
+      'التنبيه اللي بيوضّح المهندس بيبعت إيه لـ Anthropic اتغيّر، والنسخة دي من التطبيق مش هتقدر تعرض الجديد. حدّث التطبيق علشان تقراه وتكمّل.';
+
+  @override
+  String get engineerConsentUpdateOk => 'تمام';
+
+  @override
+  String get engineerConsentNeededNotice =>
+      'المهندس مشغّلش ده: محتاج موافقتك قبل ما يبعت أي حاجة لـ Anthropic. مفيش حاجة اتبعتت لـ Anthropic.';
+
+  @override
+  String engineerLimitReached(String time) {
+    return 'وصلت للحد بتاع المهندس النهارده. هيتجدد الساعة $time.';
+  }
+
+  @override
+  String get engineerLimitReachedNoTime =>
+      'وصلت للحد بتاع المهندس النهارده. جرّب تاني بعد ما يتجدد.';
+
+  @override
+  String get engineerConsentStatusTitle => 'مشاركة الكود مع Anthropic';
+
+  @override
+  String engineerConsentStatusOn(String date) {
+    return 'مشاركة الكود مع Anthropic: شغّالة من $date';
+  }
+
+  @override
+  String get engineerConsentStatusOnNoDate =>
+      'مشاركة الكود مع Anthropic: شغّالة';
+
+  @override
+  String get engineerConsentStatusOff => 'مشاركة الكود مع Anthropic: مقفولة';
+
+  @override
+  String get engineerConsentStatusOnSubtitle =>
+      'المهندس بيبعت اللي بيقراه واللي بيشغّله لـ Claude';
+
+  @override
+  String get engineerConsentStatusOffSubtitle =>
+      'المهندس بيسأل قبل ما يبعت أي حاجة';
+
+  @override
+  String get engineerConsentStatusLoading => 'جاري التحقق…';
+
+  @override
+  String get engineerConsentStatusError =>
+      'مقدرناش نتحقق. دوس علشان تجرّب تاني.';
+
+  @override
+  String get engineerConsentWithdraw => 'اسحب الموافقة';
+
+  @override
+  String get engineerConsentWithdrawTitle => 'توقف مشاركة الكود مع Anthropic؟';
+
+  @override
+  String get engineerConsentWithdrawBody =>
+      'المهندس هيقف لحد ما توافق تاني. باقي مميزات AURA مش هتتأثر.';
+
+  @override
+  String get engineerConsentWithdrawn =>
+      'اتسحبت الموافقة. المهندس هيسأل قبل ما يبعت أي حاجة تاني.';
+
+  @override
+  String engineerConsentWithdrawFailed(String reason) {
+    return 'مقدرناش نسحب الموافقة. $reason';
+  }
+
+  @override
+  String get desktopIdeUnavailableTitle =>
+      'الـ Desktop IDE لسه مش متاح على المنصة دي';
+
+  @override
+  String get desktopIdeUnavailableBody =>
+      'بيشتغل في AURA على ويندوز ولينكس. كل حاجة تانية في AURA شغالة هنا عادي.';
+
+  @override
+  String get desktopIdeUnavailableGoHome => 'روح للشاشة الرئيسية';
+
+  @override
+  String get hostdRemoteControlTitle => 'اسمح بالتحكم من موبايلي ومن الويب';
+
+  @override
+  String get hostdRemoteControlExplanation =>
+      'لما تكون شغّالة، المهندس يقدر يشتغل على الفولدرات المسموح بيها على الكمبيوتر ده من موبايلك أو من الويب. كل تغيير وكل أمر لازم توافق عليه من الموبايل أو الويب الأول. تقدر تقفلها من هنا في أي وقت.';
+
+  @override
+  String get hostdRemoteControlConfirmTitle =>
+      'تسمح بالتحكم من موبايلك ومن الويب؟';
+
+  @override
+  String get hostdRemoteControlConfirmBody =>
+      'أي حد مسجّل دخول على حساب AURA بتاعك من موبايل أو من متصفح هيقدر يطلب من المهندس يقرا ويغيّر ويشغّل أوامر في الفولدرات المسموح بيها على الكمبيوتر ده. كل تغيير وكل أمر برضه هيستنى الموافقة على الجهاز اللي الطلب جاي منه. تقدر تقفل الخاصية دي من هنا في أي وقت.';
+
+  @override
+  String get hostdRemoteControlConfirmAllow => 'اسمح';
+
+  @override
+  String hostdRemoteControlFailed(String error) {
+    return 'مقدرناش نغيّر التحكم عن بُعد: $error';
+  }
+
+  @override
+  String get engineerDesktopNotConnected => 'الكمبيوتر بتاعك مش متوصّل';
+
+  @override
+  String get engineerDesktopRemoteOff =>
+      'التحكم عن بُعد مقفول على الكمبيوتر بتاعك — شغّله من AURA على الكمبيوتر';
+
+  @override
+  String get engineerDesktopNoFolders =>
+      'الكمبيوتر بتاعك لسه مسمحش بأي فولدر — ضيف واحد من AURA على الكمبيوتر';
+
+  @override
+  String get engineerDesktopFolderLabel => 'فولدر على الكمبيوتر بتاعك';
+
+  @override
+  String get engineerDesktopCheckFailed => 'مقدرناش نشيّك على الكمبيوتر بتاعك';
+
+  @override
+  String get engineerDesktopRefresh => 'شيّك تاني';
+
+  @override
+  String get hostdCodeGitPushNeedsApproval =>
+      'الـ agent لما يعمل أي git push بيستنى موافقتك الأول.';
+
+  @override
+  String get hostdCodePathOutsideTrustedFolder =>
+      'الأمر ده بيوصل لحاجات برّه الفولدر الموثوق ده، علشان كده مستني موافقتك.';
+
+  @override
+  String get hostdCodeRemoteCommandNeedsConfirmation =>
+      'الأوامر اللي جاية من الموبايل أو الويب مستنية موافقتك هناك الأول.';
+
+  @override
+  String get hostdCodeProtectedGitDirFile =>
+      'الكتابة في ملف .git بيوجّه Git لمكان تاني ممنوعة دايمًا.';
+
+  @override
+  String get hostdCodeRemoteControlDisabled =>
+      'التحكم عن بُعد مقفول على الكمبيوتر ده. شغّل «اسمح بالتحكم من موبايلي ومن الويب» على الكمبيوتر.';
+
+  @override
+  String get hostdCodeRemoteConfirmationRequired =>
+      'التغييرات اللي جاية من الموبايل أو الويب لازم توافق عليها هناك الأول.';
+
+  @override
+  String get hostdCodeInvalidTaskKey =>
+      'الـ Host Daemon معرفش المهمة دي. حدّث التطبيق وجرّب تاني.';
+
+  @override
+  String get hostdCodeIsolatedTaskUnresolved =>
+      'مقدرناش نجهّز نسخة معزولة من الفولدر للمهمة دي.';
+
+  @override
+  String get hostdCodeInvalidOrigin =>
+      'الـ Host Daemon معرفش الطلب ده جاي منين، علشان كده رفضه. حدّث التطبيق وجرّب تاني.';
+
+  @override
+  String get hostdCodeDiagnosticsUntrusted =>
+      'المشاكل بتتفحص في الفولدرات الموثوقة بس. خلّي الفولدر ده موثوق علشان تفحصه.';
+
+  @override
+  String get hostdCodeInvalidRequestBody =>
+      'الطلب اللي راح للـ Host Daemon مكانش بالشكل اللي مستنيه. حدّث التطبيق وجرّب تاني.';
+
+  @override
+  String get gitInitBannerTitle => 'الفولدر ده مش ريبو Git';
+
+  @override
+  String get gitInitBannerBody =>
+      'المهندس بيشتغل في نسخة لوحده من الفولدر علشان كل تغيير يتراجع ويتلغي لو حبيت، وده محتاج Git. ابدأ Git هنا علشان يقدر يشتغل.';
+
+  @override
+  String get gitInitButton => 'ابدأ Git هنا';
+
+  @override
+  String get gitInitButtonShort => 'ابدأ Git';
+
+  @override
+  String get gitInitConfirmTitle => 'تبدأ Git في الفولدر ده؟';
+
+  @override
+  String gitInitConfirmBody(String path) {
+    return 'ده هيشغّل git init في $path ويعمل أول Commit بالملفات اللي في الفولدر دلوقتي، على الكمبيوتر ده بس. الملفات اللي في الـ .gitignore مش هتدخل؛ أي حاجة تانية — حتى ملفات زي .env — هتدخل في الـ Commit المحلي ده، فلو محتاج .gitignore ضيفه الأول.';
+  }
+
+  @override
+  String get gitInitConfirmAction => 'ابدأ';
+
+  @override
+  String get gitInitDone => 'Git بقى جاهز في الفولدر ده.';
+
+  @override
+  String gitInitFailed(String error) {
+    return 'مقدرناش نبدأ Git: $error';
+  }
+
+  @override
+  String get engineerDesktopNotGit =>
+      'الفولدر ده لسه مش ريبو Git — المهندس محتاج ده علشان يشتغل على نسخة لوحده.';
+
+  @override
+  String get hostdCodeIsolationNeedsGit =>
+      'الفولدر ده مش ريبو Git، علشان كده المهندس مش هيقدر يشتغل على نسخة لوحده منه — استخدم «ابدأ Git هنا» الأول.';
+
+  @override
+  String get hostdCodeAlreadyAGitRepo => 'الفولدر ده ريبو Git أصلًا.';
+
+  @override
+  String hostdCodeGitInitFailed(String detail) {
+    return 'مقدرناش نبدأ Git هنا: $detail';
+  }
+
+  @override
+  String get hostdCodeApprovalQueueFull =>
+      'فيه تغييرات كتير مستنية موافقتك؛ رد على شوية منهم الأول.';
+
+  @override
+  String get chatApprovalExpiredNotice => 'الموافقة دي انتهت مدتها. اطلب تاني.';
+
+  @override
+  String get ideStatusRepairTooltip =>
+      'السيرفر مبقاش بيقبل الكمبيوتر ده. دوس علشان تعمل Pair تاني.';
 }

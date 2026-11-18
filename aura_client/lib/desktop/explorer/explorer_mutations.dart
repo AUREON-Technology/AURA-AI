@@ -13,12 +13,14 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:collection/collection.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/desktop/events/ide_event.dart';
 import 'package:aura_client/desktop/events/ide_event_bus.dart';
+import 'package:aura_client/desktop/shell/ide_platform_commands.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 import 'package:aura_client/desktop/workspace/workspace_file_service.dart';
 import 'package:aura_client/l10n/l10n.dart';
@@ -205,11 +207,9 @@ Future<void> openInTerminal(
   if (existing == null) {
     await notifier.start(workspaceId: workspaceId, rootPath: absoluteDirPath);
   } else {
-    // The desktop terminal is PowerShell-only today (ADR-015, Windows-first; aura_hostd's
-    // PtySession hardcodes powershell.exe) -- its single-quoted strings escape an embedded quote
-    // by doubling it, unlike POSIX shells' '\''.
-    final quoted = "'${absoluteDirPath.replaceAll("'", "''")}'";
-    notifier.sendInput(existing.id, Uint8List.fromList(utf8.encode('cd $quoted\r')));
+    // PowerShell on Windows, a POSIX shell on Linux: each quotes differently (D-08b).
+    final line = ideTerminalCdCommand(absoluteDirPath, defaultTargetPlatform);
+    notifier.sendInput(existing.id, Uint8List.fromList(utf8.encode(line)));
   }
   final layout = ref.read(layoutNotifierProvider.notifier);
   if (!ref.read(layoutNotifierProvider).showBottomPanel) layout.toggleBottomPanel();

@@ -10,6 +10,7 @@ import 'package:aura_client/features/chat/presentation/widgets/github_branch_sum
 import 'package:aura_client/features/chat/presentation/widgets/sandbox_diff_view.dart';
 import 'package:aura_client/features/chat/presentation/widgets/sandbox_file_view.dart';
 import 'package:aura_client/features/chat/presentation/widgets/sandbox_terminal_view.dart';
+import 'package:aura_client/l10n/generated/app_localizations_en.dart';
 
 class _SeededPending extends PendingConfirmation {
   _SeededPending(this._seed);
@@ -64,6 +65,20 @@ void main() {
       ),
     ], turnId: 't1');
     expect(find.byType(SandboxTerminalView), findsOneWidget);
+  });
+
+  testWidgets('run_command is titled "Run a command": it may run on your computer, not only in a '
+      'sandbox (WP8)', (tester) async {
+    await _pump(tester, [
+      const PendingToolCall(
+        callId: 'step_s1',
+        tool: 'run_command',
+        arguments: {'command': 'pytest -q'},
+        turnId: 't1',
+      ),
+    ], turnId: 't1');
+    expect(find.text(AppLocalizationsEn().chatConfirmRunCommand), findsOneWidget);
+    expect(find.text('Run command in sandbox'), findsNothing);
   });
 
   testWidgets('edit_file dispatches to SandboxDiffView', (tester) async {

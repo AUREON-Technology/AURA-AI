@@ -45,6 +45,36 @@ dart run bin/aura_hostd.dart run                               # connect and ser
 Config and granted roots persist under the platform's usual per-user config directory (see
 `lib/src/config.dart::resolveConfigDir`).
 
+## RPC methods and remote control
+
+The backend calls `create_task`, `run`, `write_file`, `write_files`, `read_file`, `list_roots`
+and `init_git` over the WebSocket (`lib/src/task_handler.dart` has the details). `list_roots` needs
+no task and returns `{"roots": [{"path", "trusted", "is_git"}], "remote_control": <bool>}`.
+
+**Isolation needs git (WP4, D-13).** An isolated task (`isolate: true` with a `task_key`) works on
+its own git worktree of the folder. In a folder that is not a git repository with at least one
+commit it is refused with code `isolation_needs_git`, never run in the live folder instead.
+`is_git` says where isolation works. "Initialize git here" runs `git init`, `git add -A` and a
+first commit with the person's own git identity (`AURA <aura@localhost>` only if git has none):
+from the desktop through the control server's `POST /git/init` `{"root": <granted folder>}`, from
+the phone or web through `init_git` `{path, confirmed: true}`, which also needs remote control on.
+Either returns `{"ok": true, "commit": <sha>}`; a folder that already has a commit is refused with
+`already_a_git_repo`.
+
+At most 100 approvals wait on this computer at once (G-21); beyond that a request is refused with
+`approval_queue_full`. A decided approval is no longer kept in memory.
+
+**Remote control (WP8)** lets the Engineer drive this computer from the phone or the web. It is
+**off** until turned on here: `remote_control` in `config.json`, changed only through the local
+control server's `POST /remote_control` `{"enabled": <bool>}` (bearer token, loopback only). `GET
+/status` reports it to a caller holding the token. With it off, a `create_task` with
+`origin: "remote"` fails with `remote_control_disabled: ...`, and so does the next call of a remote
+task already running. A remote task never uses the trusted tier, the read-only allowlist or this
+computer's approval queue. Everything refused in every folder (hard denylist, destructive commands
+outside the folder, `.git` hooks and config, containment) stays refused. Every other `run` or write
+needs `confirmed: true`, meaning the person approved that call on the phone or web; without it the
+call fails with `confirmation_required: ...`. A desktop task ignores `confirmed`.
+
 ## Rebuilding after a change
 
 There is no CI/CD that redeploys this daemon onto your own machine — every change under

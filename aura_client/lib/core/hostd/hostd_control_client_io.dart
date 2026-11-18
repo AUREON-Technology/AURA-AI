@@ -157,7 +157,9 @@ class HostdControlClient {
       // Newer daemons send a stable `code` next to the English `error`; translate by it, and
       // keep the English for an older daemon or a code this app does not know yet.
       final code = decodedMap['code'] as String?;
-      throw HostdControlError(response.statusCode, hostdCodeMessage(code, message), code: code);
+      // `detail` is the underlying tool output a few codes quote (git_init_failed, ...).
+      final detail = decodedMap['detail'] as String?;
+      throw HostdControlError(response.statusCode, hostdCodeMessage(code, message, detail: detail), code: code);
     }
     return decodedMap;
   }
@@ -236,6 +238,13 @@ class HostdControlClient {
   Future<Map<String, dynamic>> gitMerge({required String root, required String branch}) =>
       _request('POST', '/git/merge', body: {'root': root, 'branch': branch}, timeout: hostdLongRequestTimeout);
 
+  /// D-13: makes the granted folder [root] a git repository -- `git init` plus a first commit of
+  /// its current files (respecting an existing `.gitignore`) -- so the Engineer can isolate its
+  /// work there. Human-only, like the other git routes. Answers `{ok, commit}`; refuses a folder
+  /// that already is a repository (`already_a_git_repo`) or one that is not granted.
+  Future<Map<String, dynamic>> initGit({required String root}) =>
+      _request('POST', '/git/init', body: {'root': root}, timeout: hostdLongRequestTimeout);
+
   Future<Map<String, dynamic>> gitMergeAbort({required String root}) =>
       _request('POST', '/git/merge-abort', body: {'root': root});
 
@@ -296,6 +305,14 @@ class HostdControlClient {
 
   Future<Map<String, dynamic>> gitDiscardTask({required String taskKey}) =>
       _request('POST', '/git/discard-task', body: {'task_key': taskKey});
+
+  /// WP8 (D-10b): whether phone and web Engineer turns may use this computer. Settable only
+  /// here, through the local control server -- never by the backend -- and off until the person
+  /// turns it on. Returns the daemon's own answer, which is what the UI then shows.
+  Future<bool> setRemoteControl(bool enabled) async {
+    final result = await _request('POST', '/remote_control', body: {'enabled': enabled});
+    return result['remote_control'] == true;
+  }
 
   Future<Map<String, dynamic>> startPairing({String? backendUrl}) =>
       _request('POST', '/pair/start', body: {'backend_url': ?backendUrl});

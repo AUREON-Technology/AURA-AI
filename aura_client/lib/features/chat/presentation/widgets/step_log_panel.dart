@@ -13,12 +13,28 @@ import '../../data/turn_meta.dart';
 /// plan-executing turn, and there is no client-visible "which agent answered this" signal to
 /// gate on that would be worth the extra plumbing.
 class StepLogPanel extends StatelessWidget {
-  const StepLogPanel({super.key, required this.steps});
+  const StepLogPanel({super.key, required this.steps, this.live = false});
 
   final List<TurnStep> steps;
 
+  /// Whether the turn is still streaming. Only then can a step be running: in a finished turn a
+  /// step stored as `running` never got its final status, and spinning forever would claim
+  /// otherwise (G-14d).
+  final bool live;
+
+  /// One row per `step_id`, each with its latest status: turns stored before steps were
+  /// updated in place ([upsertStep]) kept every status frame as its own row (G-14d).
+  static List<TurnStep> dedupe(List<TurnStep> steps) {
+    final rows = <TurnStep>[];
+    for (final step in steps) {
+      upsertStep(rows, step);
+    }
+    return rows;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final steps = dedupe(this.steps);
     if (steps.isEmpty) return const SizedBox.shrink();
     final palette = AuraPalette.of(context);
 
@@ -33,7 +49,7 @@ class StepLogPanel extends StatelessWidget {
         children: [
           for (var i = 0; i < steps.length; i++) ...[
             if (i > 0) const SizedBox(height: AuraSpacing.xs),
-            _StepRow(step: steps[i], palette: palette),
+            _StepRow(step: steps[i], palette: palette, live: live),
           ],
         ],
       ),
@@ -42,10 +58,11 @@ class StepLogPanel extends StatelessWidget {
 }
 
 class _StepRow extends StatelessWidget {
-  const _StepRow({required this.step, required this.palette});
+  const _StepRow({required this.step, required this.palette, required this.live});
 
   final TurnStep step;
   final AuraPalette palette;
+  final bool live;
 
   @override
   Widget build(BuildContext context) {
@@ -95,7 +112,7 @@ class _StepRow extends StatelessWidget {
 
   Widget _statusIcon() {
     switch (step.status) {
-      case 'running':
+      case 'running' when live:
         return CircularProgressIndicator(strokeWidth: 2, color: palette.brand);
       // `done` is what the vision step sends on success (ADR-031); plan steps send `succeeded`.
       case 'succeeded':

@@ -461,14 +461,44 @@ class TestGithubTools:
         assert "a/NEW.md" in report.diff_preview
 
     async def test_commit_then_read_round_trips(self, ctx) -> None:
+        # On a feature branch since D-07 (2026-11-17): the default branch is refused below.
         client = InMemoryGitHubClient()
         tools = _by_name(build_github_tools(_static_resolver(client), default_repo="acme/widgets"))
-        await client.create_branch("acme/widgets", branch="main", from_ref="main")
+        await client.create_branch("acme/widgets", branch="fix/x", from_ref="main")
         await tools["github_commit_files"].execute(
-            {"branch": "main", "message": "add", "files": {"x.txt": "hello"}}, ctx
+            {"branch": "fix/x", "message": "add", "files": {"x.txt": "hello"}}, ctx
         )
-        content = await tools["github_get_file_contents"].execute({"path": "x.txt"}, ctx)
+        content = await tools["github_get_file_contents"].execute(
+            {"path": "x.txt", "ref": "fix/x"}, ctx
+        )
         assert content == "hello"
+
+    @pytest.mark.parametrize("branch", ["main", "refs/heads/main", " main "])
+    async def test_commit_files_refuses_the_default_branch(self, ctx, branch: str) -> None:
+        """D-07 / SEC-06: like ``git_push``, the GitHub commit tool never writes to the
+        repository's default branch. Changes reach it only through a PR a human merges."""
+        client = InMemoryGitHubClient()
+        client.seed_file("acme/widgets", "main", "README.md", "# Widgets\n")
+        tools = _by_name(build_github_tools(_static_resolver(client), default_repo="acme/widgets"))
+        with pytest.raises(ToolExecutionError, match="default branch"):
+            await tools["github_commit_files"].execute(
+                {"branch": branch, "message": "x", "files": {"README.md": "changed"}}, ctx
+            )
+        assert await client.get_file_contents("acme/widgets", "README.md") == "# Widgets\n"
+
+    async def test_the_default_branch_is_the_repository_s_not_a_guess(self, ctx) -> None:
+        client = InMemoryGitHubClient()
+        client.set_default_branch("acme/widgets", "trunk")
+        tools = _by_name(build_github_tools(_static_resolver(client), default_repo="acme/widgets"))
+        with pytest.raises(ToolExecutionError, match="'trunk'"):
+            await tools["github_commit_files"].execute(
+                {"branch": "trunk", "message": "x", "files": {"a.txt": "a"}}, ctx
+            )
+        await client.create_branch("acme/widgets", branch="main", from_ref="trunk")
+        result = await tools["github_commit_files"].execute(
+            {"branch": "main", "message": "x", "files": {"a.txt": "a"}}, ctx
+        )
+        assert "Committed 1 file" in result
 
 
 class TestRepositoryExploration:

@@ -1031,4 +1031,7 @@ async def verify_access_token(
         "picture": payload.get("picture"),
         "role": payload.get("role"),
         "device_id": device_id,
+        # Set only on the desktop app's own tokens (issue_desktop_session/issue_device_token).
+        # The gateway reads it to tell a desktop turn from a phone or web one (WP8).
+        "platform": payload.get("platform"),
     }

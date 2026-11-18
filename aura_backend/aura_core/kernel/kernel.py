@@ -37,19 +37,21 @@ from ..domain.errors import (
     AllProvidersFailedError,
     AuraError,
     BudgetExceededError,
+    ConsentRequiredError,
     DependencyUnavailableError,
     OutputInvalidError,
     OverloadedError,
     PlanningError,
     SafetyViolationError,
     UserConcurrencyLimitError,
+    UserQuotaExhaustedError,
 )
 from ..domain.events import TurnCompleted, TurnFailed, TurnStarted
 from ..domain.caller_context import CallerContext
 from ..domain.images import ImageInput
 from ..domain.connectors import Credential, connector_token_key
 from ..domain.context import user_facing_citations
-from ..domain.engineering import EngineerRun, EngineerRunStatus
+from ..domain.engineering import ENGINEER_CONSENT_NOTICE_VERSION, EngineerRun, EngineerRunStatus
 from ..domain.identifiers import CorrelationId, EngineerRunId, SessionId, TurnId, UserId
 from ..domain.knowledge import RetrievalResult
 from ..domain.llm import (
@@ -173,6 +175,12 @@ class TurnRequest:
     #: inside a granted root, and refuses it otherwise. `None` for every caller without an open
     #: desktop workspace, which leaves the daemon on its "first granted root" fallback.
     workspace_root: str | None = None
+    #: Where the person driving this turn is (module readiness WP8, D-10): ``"desktop"`` for the
+    #: desktop app (its access token carries the server-signed ``platform: desktop`` claim),
+    #: ``"remote"`` for phone and web. ``None`` (internal callers, evals) behaves as desktop. A
+    #: remote turn's work on the paired desktop is always held for confirmation, and the daemon
+    #: refuses it unless remote control was switched on at the computer itself.
+    origin: str | None = None
     #: Admission class for every generation this turn makes (roadmap P2.4). ``None`` derives it
     #: from ``route``/``agent`` (``llm/workload.py``): Engineer -> coder pool at priority 2,
     #: voice and chat -> general-fast at priority 1. Background callers set it explicitly.
@@ -274,6 +282,10 @@ class KernelDependencies:
     #: Per-run agent state (GAP-024) is recorded by `agentic_executor` itself, through the
     #: `AgentRunStore` extension of this same port.
     engineer_runs: Any = None
+    #: `EngineerConsentStore` (`ports/coding.py`, D-03). When wired, an Engineer turn from someone
+    #: without a current consent is refused before anything is planned or sent anywhere. `None`
+    #: (a bare test kernel) checks nothing -- the container always wires it.
+    engineer_consent: Any = None
     episodic: Any = None
     cache: Any = None
     #: Key/value store (the ``Cache`` port, not ``LLMCache``) for ADR-030 Phase 4's per-session
@@ -323,7 +335,7 @@ def _consume_shadow_result(task: "asyncio.Task[None]") -> None:
 
 def _stream_error_outcome(exc: AuraError) -> TurnOutcome:
     """The telemetry outcome for an error ending a streamed turn, as ``run`` maps them."""
-    if isinstance(exc, UserConcurrencyLimitError):
+    if isinstance(exc, (UserConcurrencyLimitError, UserQuotaExhaustedError)):
         return TurnOutcome.RATE_LIMITED
     if isinstance(exc, SafetyViolationError):
         return TurnOutcome.BLOCKED
@@ -434,7 +446,7 @@ class AIKernel:
                     result = await self._run_turn(request, correlation, turn_id, started)
                     await self._remember_session_classification(request, scope)
                     return result
-            except UserConcurrencyLimitError as exc:
+            except (UserConcurrencyLimitError, UserQuotaExhaustedError) as exc:
                 return self._error_result(
                     request, correlation, turn_id, started, exc, TurnOutcome.RATE_LIMITED
                 )
@@ -470,6 +482,7 @@ class AIKernel:
         if resume is not None:
             request = self._resumed_request(request, resume)
         resolved_spec = self._resolve_agent(request)
+        await self._require_engineer_consent(request)
         resolved_agent = resolved_spec.id if resolved_spec is not None else request.agent
         timings: dict[str, float] = {}
         budget = TurnBudget(
@@ -777,6 +790,7 @@ class AIKernel:
                 if resume is not None:
                     request = self._resumed_request(request, resume)
                 resolved_spec = self._resolve_agent(request)
+                await self._require_engineer_consent(request)
                 resolved_agent = resolved_spec.id if resolved_spec is not None else request.agent
                 message = request.message
                 if deps.safety is not None:
@@ -1377,6 +1391,25 @@ class AIKernel:
             complexity_threshold=threshold,
         )
 
+    async def _require_engineer_consent(self, request: TurnRequest) -> None:
+        """Refuse an Engineer turn from someone without a current Anthropic consent (D-03, WP1).
+
+        Keyed on the same thing the Claude slot is fenced on -- the turn's workload being
+        ENGINEER, from the *resolved* persona (WP6a) -- so consent covers exactly the turns that
+        can reach Anthropic: chat and stream, an approval resume (checked after the held turn's
+        own persona is restored) and a delegated sub-turn (delegation runs the kernel again).
+        Called before planning, so a refused turn sends nothing anywhere.
+        """
+        store = self._deps.engineer_consent
+        if store is None or self._workload_hint(request).workload is not WorkloadClass.ENGINEER:
+            return
+        consent = await store.get(request.user_id)
+        if consent is None or not consent.is_current(ENGINEER_CONSENT_NOTICE_VERSION):
+            raise ConsentRequiredError(
+                "The Engineer sends your code to Anthropic; agree to that in the app first.",
+                details={"current_version": ENGINEER_CONSENT_NOTICE_VERSION},
+            )
+
     def _resolve_agent(self, request: TurnRequest) -> AgentSpec | None:
         """The turn's resolved persona (Phase C1), or ``None`` with no registry configured.
 
@@ -1660,6 +1693,7 @@ class AIKernel:
                 "session_id": str(request.session_id) if request.session_id else None,
                 "desktop_task_isolation": request.desktop_task_isolation,
                 "workspace_root": request.workspace_root,
+                "origin": request.origin,
             },
         )
 
@@ -2409,7 +2443,11 @@ class AIKernel:
         )
         return TurnResult(
             text="", telemetry=telemetry, retry_after_s=getattr(exc, "retry_after", None),
-            error_details=dict(exc.details) if isinstance(exc, OutputInvalidError) else None,
+            error_details=(
+                dict(exc.details)
+                if isinstance(exc, (OutputInvalidError, ConsentRequiredError, UserQuotaExhaustedError))
+                else None
+            ),
         )
 
     async def _record(self, telemetry: TurnTelemetry) -> None:

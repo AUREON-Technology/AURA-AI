@@ -18,7 +18,10 @@ from datetime import datetime
 
 from .identifiers import EngineerRunId, UserId, WorkspaceId
 
-__all__ = ["EngineerRunStatus", "EngineerRun", "WorkspaceStatus", "AgentWorkspace"]
+__all__ = [
+    "EngineerRunStatus", "EngineerRun", "WorkspaceStatus", "AgentWorkspace",
+    "ENGINEER_CONSENT_NOTICE_VERSION", "EngineerConsent",
+]
 
 
 class EngineerRunStatus:
@@ -119,3 +122,27 @@ class AgentWorkspace:
         and a workspace created an hour ago and abandoned is on its way out.
         """
         return (now - self.last_active_at).total_seconds() >= ttl_hours * 3600.0
+
+
+#: The version of the notice a person agrees to before the Engineer sends their code to Anthropic
+#: (module readiness D-03, WP1). The client shows the text that belongs to this version and sends
+#: it back; changing the notice means a new version, and everyone is asked again.
+ENGINEER_CONSENT_NOTICE_VERSION = "2026-11-17"
+
+
+@dataclass(frozen=True, slots=True)
+class EngineerConsent:
+    """One person's answer to the Engineer's Anthropic notice (D-03).
+
+    Server-held on purpose: a client-side flag would let any client (or a stale install) send
+    code to a third party without the person ever having seen the notice. ``withdrawn_at`` set
+    means withdrawn; the row is kept so a withdrawal is itself on record.
+    """
+
+    user_id: UserId
+    notice_version: str
+    accepted_at: datetime
+    withdrawn_at: datetime | None = None
+
+    def is_current(self, version: str = ENGINEER_CONSENT_NOTICE_VERSION) -> bool:
+        return self.withdrawn_at is None and self.notice_version == version

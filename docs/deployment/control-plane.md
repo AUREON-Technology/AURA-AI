@@ -279,7 +279,10 @@ Why each value:
   deployment with a CPU model would need a per-provider cap, which does not exist yet.
 
 What these do not fix: sensitive turns (memory, documents, tools, images, Engineer) still have
-no eligible model while only `hosted1` is healthy, because its ceiling is `internal`. The owner
+no eligible model while only `hosted1` is healthy, because its ceiling is `internal`. For the
+Engineer, the owner's decision (D-02, ADR-033 amendment 2026-11-17) is a Claude slot fenced to
+the Engineer workload; the settings are in `deploy/.env.example`'s Claude block and must not be
+switched on before the consent route and the per-user allowance (`USER_TPD`) are deployed. The owner
 accepted this as the chat-only launch limitation on 2026-11-08. Those turns now end with
 `capability_unavailable` ("This needs a feature that isn't available yet") instead of a
 retryable "model not answering".

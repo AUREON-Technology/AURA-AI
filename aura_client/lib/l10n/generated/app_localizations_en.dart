@@ -109,11 +109,11 @@ class AppLocalizationsEn extends AppLocalizations {
       'Talk to it. It remembers, searches your documents, and proposes actions — you confirm the writes.';
 
   @override
-  String get onboardingPrivacyTitle => 'Your private data stays with AURA';
+  String get onboardingPrivacyTitle => 'Where your requests are processed';
 
   @override
   String get onboardingPrivacyBody =>
-      'Nothing is processed on this phone. Your documents, memories and files are only read by AI models AURA runs itself. Other messages may be answered by an approved hosted AI provider, if the server’s operator allows it.';
+      'Nothing is processed on this phone. Your documents, memories and files are only read by AI models AURA runs itself. The exception is the Engineer: once you agree in the app, the messages you send it, the files it opens and the output of the commands it runs go to Claude, an AI model run by Anthropic. Other messages may be answered by an approved hosted AI provider, if the server’s operator allows it.';
 
   @override
   String get onboardingTourTitle => 'Today, Copilot, Life Hub, You';
@@ -286,7 +286,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsAboutBody =>
-      'Requests are processed on AURA’s servers, never on this device. Your documents, memories, files and tool results are only read by AI models AURA runs itself. If the server’s operator turns it on, your other messages may be answered by an approved hosted AI provider.';
+      'Requests are handled by AURA’s servers, never on this device. Your documents, memories, files and tool results are only read by AI models AURA runs itself. The exception is the Engineer: once you agree in the app, what it reads and runs goes to Claude, an AI model run by Anthropic. If the server’s operator turns it on, your other messages may be answered by an approved hosted AI provider.';
 
   @override
   String get themeSystem => 'System';
@@ -802,7 +802,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chatAwaitingConfirmation =>
-      'Confirm the action above to continue.';
+      'Confirm the action below to continue.';
 
   @override
   String get personaPickerTitle => 'Choose a persona';
@@ -1561,7 +1561,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get controlCenterEmpty =>
-      'No isolated agent tasks right now. Starting a new chat task creates one automatically.';
+      'No Engineer tasks to review yet. Each Engineer chat works in its own copy of the folder, on a branch named aura/task-…, and shows up here for you to review and merge.';
 
   @override
   String get controlCenterNoChanges => '(no changes)';
@@ -1873,11 +1873,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get engineeringRootTrusted =>
-      'Trusted -- commands run without per-call confirmation (still confined to this folder)';
+      'Trusted -- the agent\'s commands run without asking, as you, and can reach anything your account can. Paths outside this folder and any git push ask first.';
 
   @override
   String get engineeringRootUntrusted =>
-      'Untrusted -- only a read-only inspection allowlist runs';
+      'Untrusted -- read-only commands run; anything else asks you first';
 
   @override
   String get engineeringBrowse => 'Browse';
@@ -2747,8 +2747,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get explorerPathCopied => 'Path copied';
 
   @override
-  String get explorerRevealWindowsOnly =>
-      'Reveal in filesystem is only supported on Windows for now';
+  String get explorerRevealUnsupported =>
+      'Reveal in filesystem is not supported on this platform';
 
   @override
   String explorerRevealFailed(String error) {
@@ -3524,7 +3524,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatConfirmEditFileUnnamed => 'Edit file';
 
   @override
-  String get chatConfirmRunCommand => 'Run command in sandbox';
+  String get chatConfirmRunCommand => 'Run a command';
 
   @override
   String get chatConfirmCommitSandbox => 'Commit sandbox changes';
@@ -4312,4 +4312,260 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get homeInsightDismissFailed =>
       'Could not dismiss this insight. Try again shortly.';
+
+  @override
+  String get engineerConsentTitle => 'The Engineer uses Claude, by Anthropic';
+
+  @override
+  String get engineerConsentBodyWhat =>
+      'To work on your code, the Engineer sends what it reads and runs to Claude, an AI model run by Anthropic, a company outside AURA.';
+
+  @override
+  String get engineerConsentBodyIncludes =>
+      'That includes the messages you send the Engineer, the contents of files it opens in folders you granted or repositories you connected, and the output of commands it runs — which can include anything those commands print.';
+
+  @override
+  String get engineerConsentBodyChoice =>
+      'Nothing is sent until you agree. You can withdraw in Settings → Engineer at any time; the Engineer then stops until you agree again. Other AURA features are not affected.';
+
+  @override
+  String get engineerConsentAgree => 'Agree and continue';
+
+  @override
+  String get engineerConsentNotNow => 'Not now';
+
+  @override
+  String engineerConsentSaveFailed(String reason) {
+    return 'Couldn’t save your answer. $reason';
+  }
+
+  @override
+  String get engineerConsentUpdateTitle => 'Update AURA to use the Engineer';
+
+  @override
+  String get engineerConsentUpdateBody =>
+      'The notice about what the Engineer sends to Anthropic has changed, and this version of the app can’t show the new one. Update the app to read it and continue.';
+
+  @override
+  String get engineerConsentUpdateOk => 'OK';
+
+  @override
+  String get engineerConsentNeededNotice =>
+      'The Engineer didn’t run this: it needs your agreement before it sends anything to Anthropic. Nothing was sent to Anthropic.';
+
+  @override
+  String engineerLimitReached(String time) {
+    return 'You’ve reached today’s Engineer limit. It resets at $time.';
+  }
+
+  @override
+  String get engineerLimitReachedNoTime =>
+      'You’ve reached today’s Engineer limit. Try again after it resets.';
+
+  @override
+  String get engineerConsentStatusTitle => 'Sharing code with Anthropic';
+
+  @override
+  String engineerConsentStatusOn(String date) {
+    return 'Sharing code with Anthropic: on since $date';
+  }
+
+  @override
+  String get engineerConsentStatusOnNoDate => 'Sharing code with Anthropic: on';
+
+  @override
+  String get engineerConsentStatusOff => 'Sharing code with Anthropic: off';
+
+  @override
+  String get engineerConsentStatusOnSubtitle =>
+      'The Engineer sends what it reads and runs to Claude';
+
+  @override
+  String get engineerConsentStatusOffSubtitle =>
+      'The Engineer asks before it sends anything';
+
+  @override
+  String get engineerConsentStatusLoading => 'Checking…';
+
+  @override
+  String get engineerConsentStatusError => 'Couldn’t check. Tap to try again.';
+
+  @override
+  String get engineerConsentWithdraw => 'Withdraw';
+
+  @override
+  String get engineerConsentWithdrawTitle =>
+      'Stop sharing code with Anthropic?';
+
+  @override
+  String get engineerConsentWithdrawBody =>
+      'The Engineer stops until you agree again. Other AURA features are not affected.';
+
+  @override
+  String get engineerConsentWithdrawn =>
+      'Withdrawn. The Engineer will ask before it sends anything again.';
+
+  @override
+  String engineerConsentWithdrawFailed(String reason) {
+    return 'Couldn’t withdraw. $reason';
+  }
+
+  @override
+  String get desktopIdeUnavailableTitle =>
+      'The desktop IDE isn\'t available on this platform yet';
+
+  @override
+  String get desktopIdeUnavailableBody =>
+      'It runs in AURA on Windows and Linux. Everything else in AURA works here as usual.';
+
+  @override
+  String get desktopIdeUnavailableGoHome => 'Go to Home';
+
+  @override
+  String get hostdRemoteControlTitle =>
+      'Allow control from my phone and the web';
+
+  @override
+  String get hostdRemoteControlExplanation =>
+      'When on, the Engineer can work on this computer\'s granted folders from your phone or the web. Every change and command is approved on that device first. Turn it off here any time.';
+
+  @override
+  String get hostdRemoteControlConfirmTitle =>
+      'Allow control from your phone and the web?';
+
+  @override
+  String get hostdRemoteControlConfirmBody =>
+      'Anyone signed in to your AURA account on a phone or in a browser will be able to ask the Engineer to read, change and run commands in this computer\'s granted folders. Each change and command still waits for approval on that device. You can turn this off here at any time.';
+
+  @override
+  String get hostdRemoteControlConfirmAllow => 'Allow';
+
+  @override
+  String hostdRemoteControlFailed(String error) {
+    return 'Could not change remote control: $error';
+  }
+
+  @override
+  String get engineerDesktopNotConnected => 'Your computer isn\'t connected';
+
+  @override
+  String get engineerDesktopRemoteOff =>
+      'Remote control is off on your computer — turn it on in AURA on the computer';
+
+  @override
+  String get engineerDesktopNoFolders =>
+      'Your computer hasn\'t shared any folders yet — add one in AURA on the computer';
+
+  @override
+  String get engineerDesktopFolderLabel => 'Folder on your computer';
+
+  @override
+  String get engineerDesktopCheckFailed => 'Couldn\'t check your computer';
+
+  @override
+  String get engineerDesktopRefresh => 'Check again';
+
+  @override
+  String get hostdCodeGitPushNeedsApproval =>
+      'Any git push by the agent waits for your approval.';
+
+  @override
+  String get hostdCodePathOutsideTrustedFolder =>
+      'This command reaches outside this trusted folder, so it waits for your approval.';
+
+  @override
+  String get hostdCodeRemoteCommandNeedsConfirmation =>
+      'Commands sent from your phone or the web wait for your approval there first.';
+
+  @override
+  String get hostdCodeProtectedGitDirFile =>
+      'Writing a .git file that points Git somewhere else is always refused.';
+
+  @override
+  String get hostdCodeRemoteControlDisabled =>
+      'Remote control is off on this computer. Turn on \"Allow control from my phone and the web\" on the computer.';
+
+  @override
+  String get hostdCodeRemoteConfirmationRequired =>
+      'Changes from your phone or the web must be approved there first.';
+
+  @override
+  String get hostdCodeInvalidTaskKey =>
+      'The Host Daemon didn\'t recognize this task. Update the app and try again.';
+
+  @override
+  String get hostdCodeIsolatedTaskUnresolved =>
+      'Couldn\'t set up an isolated copy of the folder for this task.';
+
+  @override
+  String get hostdCodeInvalidOrigin =>
+      'The Host Daemon couldn\'t tell where this request came from, so it refused it. Update the app and try again.';
+
+  @override
+  String get hostdCodeDiagnosticsUntrusted =>
+      'Problems runs only in trusted folders. Trust this folder to check it.';
+
+  @override
+  String get hostdCodeInvalidRequestBody =>
+      'The request to the Host Daemon wasn\'t in the form it expects. Update the app and try again.';
+
+  @override
+  String get gitInitBannerTitle => 'This folder isn\'t a git repository';
+
+  @override
+  String get gitInitBannerBody =>
+      'The Engineer works in its own copy of the folder so every change can be reviewed and undone, and that needs git. Initialize git here to let it start.';
+
+  @override
+  String get gitInitButton => 'Initialize git here';
+
+  @override
+  String get gitInitButtonShort => 'Initialize git';
+
+  @override
+  String get gitInitConfirmTitle => 'Initialize git in this folder?';
+
+  @override
+  String gitInitConfirmBody(String path) {
+    return 'This runs git init in $path and commits the folder\'s current files as a first commit, on this computer only. Files your .gitignore lists are left out; everything else — including files like .env — goes into that local commit, so add a .gitignore first if you need one.';
+  }
+
+  @override
+  String get gitInitConfirmAction => 'Initialize';
+
+  @override
+  String get gitInitDone => 'Git is ready in this folder.';
+
+  @override
+  String gitInitFailed(String error) {
+    return 'Couldn\'t initialize git: $error';
+  }
+
+  @override
+  String get engineerDesktopNotGit =>
+      'This folder isn\'t a git repository yet — the Engineer needs one to work on its own copy.';
+
+  @override
+  String get hostdCodeIsolationNeedsGit =>
+      'This folder isn\'t a git repository, so the Engineer can\'t work on its own copy of it — use Initialize git here first.';
+
+  @override
+  String get hostdCodeAlreadyAGitRepo =>
+      'This folder is already a git repository.';
+
+  @override
+  String hostdCodeGitInitFailed(String detail) {
+    return 'Couldn\'t initialize git here: $detail';
+  }
+
+  @override
+  String get hostdCodeApprovalQueueFull =>
+      'Too many changes are waiting for your approval; answer some first.';
+
+  @override
+  String get chatApprovalExpiredNotice => 'This approval expired. Ask again.';
+
+  @override
+  String get ideStatusRepairTooltip =>
+      'The server no longer accepts this computer. Click to pair it again.';
 }

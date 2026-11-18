@@ -59,8 +59,9 @@ class MessageBubble extends ConsumerWidget {
     final l10n = context.l10n;
     if (content == kChatWithheldText) return l10n.chatWithheldNotice;
     if (content == kChatBlockedText) return l10n.chatBlockedNotice;
+    if (content == kChatApprovalExpiredText) return l10n.chatApprovalExpiredNotice;
     if (content == kChatFeatureUnavailableText) return l10n.chatFeatureUnavailableNotice;
-    return content;
+    return localizedEngineerRefusal(content, l10n) ?? content;
   }
 
   List<Map<String, dynamic>> _decodeToolCalls() {
@@ -178,6 +179,12 @@ class MessageBubble extends ConsumerWidget {
     final agentId = message.agentId;
     final personaInfo = agentId != null ? personaDisplay(agentId) : null;
     final turnMeta = TurnMeta.decode(message.turnMetaJson);
+    // G-14a: whether this turn's held calls are on offer right now (live, or brought back after a
+    // restart). A held turn with none left was answered, or outlived the server's TTL.
+    final turnKey = turnMeta.turnId ?? message.id;
+    final awaitingHere = !isUser &&
+        turnMeta.needsConfirmation &&
+        ref.watch(pendingConfirmationProvider.select((all) => all.any((c) => c.turnId == turnKey)));
     // ADR-031: the stored text ends in the "[N images attached]" marker; the bubble shows the
     // images (or a count) instead of the marker itself.
     final userImages = isUser
@@ -262,7 +269,13 @@ class MessageBubble extends ConsumerWidget {
                     else if (!isStreaming &&
                         message.content.trim().isEmpty &&
                         turnMeta.needsConfirmation)
-                      const _AwaitingConfirmationHint()
+                      // The card is below; if it is gone without an answer, the approval expired
+                      // (no Retry: it would resend the message as a new turn).
+                      awaitingHere
+                          ? _AwaitingConfirmationHint(text: context.l10n.chatAwaitingConfirmation)
+                          : turnMeta.confirmationResolved
+                              ? const SizedBox.shrink()
+                              : _AwaitingConfirmationHint(text: context.l10n.chatApprovalExpiredNotice)
                     else if (!isStreaming && message.content.trim().isEmpty)
                       EmptyAnswerRetryCard(
                         onRetry: () {
@@ -308,7 +321,7 @@ class MessageBubble extends ConsumerWidget {
                     ],
                     if (turnMeta.steps.isNotEmpty) ...[
                       const SizedBox(height: AuraSpacing.sm),
-                      StepLogPanel(steps: turnMeta.steps),
+                      StepLogPanel(steps: turnMeta.steps, live: isStreaming),
                     ],
                     // Only once the turn has finished: mid-stream, a step that
                     // has not completed yet is simply a step in progress.
@@ -405,7 +418,9 @@ class _ResolvedAgentMismatchBanner extends StatelessWidget {
 /// waiting on the user to confirm a proposed tool action, not because it failed outright --
 /// retrying would just resend the same unconfirmed request.
 class _AwaitingConfirmationHint extends StatelessWidget {
-  const _AwaitingConfirmationHint();
+  const _AwaitingConfirmationHint({required this.text});
+
+  final String text;
 
   @override
   Widget build(BuildContext context) {
@@ -417,7 +432,7 @@ class _AwaitingConfirmationHint extends StatelessWidget {
         const SizedBox(width: 6),
         Expanded(
           child: Text(
-            context.l10n.chatAwaitingConfirmation,
+            text,
             style: TextStyle(color: palette.textSecondary, fontSize: 13, height: 1.4),
           ),
         ),

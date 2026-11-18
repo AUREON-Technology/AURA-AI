@@ -42,6 +42,7 @@ class _RecordingSseClient extends SseAgentClient {
     double temperature = 0.3,
     List<ChatImageAttachment> images = const [],
     String? workspaceRoot,
+    bool desktopTaskIsolation = false,
   }) async* {
     calls.add((message: message, images: images));
     if (failFirst && calls.length == 1) {

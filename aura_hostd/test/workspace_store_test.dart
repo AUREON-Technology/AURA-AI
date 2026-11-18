@@ -50,4 +50,28 @@ void main() {
     store.save(roots);
     expect(File(p.join(nested.path, 'workspaces.json')).existsSync(), isTrue);
   });
+
+  group('live view (G-05, SEC-08)', () {
+    test('reflects grant, untrust and revoke saved after it was handed out', () {
+      final workspace = Directory(p.join(tempDir.path, 'project3'))..createSync();
+      final store = WorkspaceStore.forConfigDir(tempDir);
+      final live = store.live;
+      expect(live.all, isEmpty);
+
+      // Saved through the same store (the control server's path): applied in place.
+      store.save(store.load()..addRoot(workspace.path, trusted: true));
+      expect(live.all.single.trusted, isTrue);
+      expect(live.findContainingRoot(p.join(workspace.path, 'x.txt')), isNotNull);
+
+      store.save(store.load()..setTrusted(workspace.path, false));
+      expect(live.all.single.trusted, isFalse);
+
+      // Saved by another store instance (the CLI in another process): seen after refreshLive.
+      final cli = WorkspaceStore.forConfigDir(tempDir);
+      cli.save(cli.load()..removeRoot(workspace.path));
+      store.refreshLive();
+      expect(live.all, isEmpty);
+      expect(live.findContainingRoot(p.join(workspace.path, 'x.txt')), isNull);
+    });
+  });
 }

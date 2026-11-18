@@ -32,6 +32,7 @@ import '../../l10n/l10n.dart';
 import '../../features/voice_live/presentation/live_voice_page.dart';
 import '../design_system/design_system.dart';
 import '../platform/aura_platform.dart';
+import '../../desktop/shell/desktop_ide_unavailable_page.dart';
 import '../../desktop/shell/desktop_shell.dart';
 import '../../desktop/workspace/workspace_welcome_page.dart';
 import '../../desktop/workspace/workspace_manager_page.dart';
@@ -482,7 +483,12 @@ Future<String?> resolveAppRedirect({
   return null;
 }
 
-/// Screens the Windows desktop app shows besides the IDE: account and
+/// The `/ide` shell: the Desktop IDE on Windows and Linux (D-08, D-08b), and on every other
+/// platform a page that says so and offers Home -- not the blank `SizedBox.shrink()` it used to be.
+Widget desktopIdeShellBuilder(BuildContext context, GoRouterState state, Widget child) =>
+    isDesktopIde ? DesktopShell(child: child) : const DesktopIdeUnavailablePage();
+
+/// Screens the desktop app (Windows, Linux) shows besides the IDE: account and
 /// settings, nothing else.
 const _desktopScreens = ['/you', '/profile', '/appearance', '/server-environment'];
 
@@ -622,10 +628,9 @@ final routerProvider = Provider<GoRouter>((ref) {
         ],
       ),
 
-      // Desktop IDE Shell Route (Windows only)
+      // Desktop IDE Shell Route (Windows and Linux; elsewhere a "not available" page)
       ShellRoute(
-        builder: (context, state, child) =>
-            isDesktopIde ? DesktopShell(child: child) : const SizedBox.shrink(),
+        builder: desktopIdeShellBuilder,
         routes: [
           GoRoute(
             path: '/ide',

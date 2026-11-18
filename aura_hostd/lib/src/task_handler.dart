@@ -1,7 +1,31 @@
 /// Implements the RPC methods the backend's `HostAgentSandboxRunner`
 /// (`aura_backend/aura_core/adapters/host_agent.py`) calls: `create_task`, `run`, `write_file`,
-/// `read_file`. Every filesystem/command operation goes through [WorkspaceRoots] for containment
+/// `write_files`, `read_file`, `list_roots` and `init_git` (plus the `cancel` frame,
+/// `rpc_client.dart`). Every
+/// filesystem/command operation goes through [WorkspaceRoots] for containment
 /// before touching disk -- this class has no path-handling logic of its own that bypasses it.
+///
+/// Remote control (WP8; ADR-011, D-10/D-10b/D-10c). `create_task` takes an `origin`: `"desktop"`
+/// (also when absent, as older backends send it) or `"remote"`, a turn started on the phone or the
+/// web. A remote task is refused unless this computer's `remote_control` flag (`config.json`, set
+/// only through the local control server) is on, and that flag is re-read on every later call of
+/// the task, so switching it off stops the next one. A remote task never gets the trusted tier,
+/// the read-only allowlist or the desktop's approval queue -- nobody is at the desk: what is
+/// refused in every tier stays refused, and every other `run`/`write_file`/`write_files` needs
+/// `confirmed: true`, the backend's word that the person approved this exact call on the remote
+/// device; without it the call fails with `confirmation_required:`. `read_file` needs no
+/// confirmation. A desktop task ignores `confirmed`: the backend cannot waive the desktop's own
+/// consent. The origin defends against a stolen phone or web session with an honest backend, not
+/// against a compromised backend (which could simply claim `desktop`); the local opt-in and the
+/// containment, denylist and `.git` rules are what hold then.
+///
+/// Isolation needs git (WP4, D-13). An isolated task (`isolate: true` with a `task_key`, which
+/// the client sends for every Engineer task) works on its own worktree of the folder; in a folder
+/// that is not a git work tree with a commit it is refused with `isolation_needs_git` -- never a
+/// silent fallback to the live folder. `list_roots` says which folders can hold one (`is_git`),
+/// and `init_git` -- the phone's or web's "Initialize git here", so it needs remote control on and
+/// `confirmed: true` -- makes a granted folder a repository with a first commit (`git_init.dart`).
+/// A task without isolation (older clients) works in the folder itself, as before.
 ///
 /// A "task" here does not own a single workspace root the way a Docker sandbox owns one
 /// container: paths arrive workspace-relative from the tool layer's point of view, so each call
@@ -9,6 +33,7 @@
 /// outside every granted root is refused outright, matching ADR-011's "never merely confirmable."
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -16,13 +41,21 @@ import 'approval_queue.dart';
 import 'command_policy.dart';
 import 'containment.dart';
 import 'diff_util.dart';
+import 'error_codes.dart';
+import 'git_init.dart';
 import 'git_service.dart';
 import 'isolated_task_registry.dart';
+import 'process_env.dart';
+import 'process_tree.dart';
 import 'workspace_store.dart';
 
 class RpcError implements Exception {
-  RpcError(this.message, {this.code});
+  RpcError(this.message, {this.code, this.detail});
   final String message;
+
+  /// The underlying error alone (git's own message for `git_init_failed`), sent as the RPC
+  /// `error` frame's `detail` so a translated message can quote it; null when there is none.
+  final String? detail;
 
   /// Stable machine code (`error_codes.dart`) for a refusal, sent as the RPC `error` frame's
   /// `code` next to [message]; null for errors that are not refusals.
@@ -31,6 +64,12 @@ class RpcError implements Exception {
   @override
   String toString() => message;
 }
+
+/// The error every call of a remote task gets while this computer's remote control is off (WP8).
+/// The `remote_control_disabled:` prefix is what the backend and the apps match on; the rest is
+/// shown to the person.
+const remoteControlDisabledMessage = 'remote_control_disabled: Remote control is off on this '
+    "computer. Turn on 'Allow control from my phone and the web' in AURA on the computer.";
 
 /// How long a command may run before this side kills it -- a hard ceiling under whatever
 /// `timeout_s` the tool call requested, in case the caller asks for something unreasonable.
@@ -67,21 +106,43 @@ class TaskHandler {
     IsolatedTaskRegistry? isolatedTasks,
   ])  : _approvals = approvalQueue ?? ApprovalQueue(),
         _isolatedTasks = isolatedTasks ?? IsolatedTaskRegistry(_roots, gitService),
-        _refreshRoots = null;
+        _git = gitService ?? GitService(),
+        _refreshRoots = null,
+        _remoteControlEnabled = _remoteControlOff;
 
   /// The daemon's own wiring (`backend_connection.dart`): resolves every RPC against
   /// [WorkspaceStore.live] -- the same instance the control server's grant/revoke/trust/untrust
   /// updates on save -- and re-reads the store at the start of each RPC, so a change made by the
   /// CLI in another process applies too (audit INT-002). [isolatedTasks] must have been built on
   /// `store.live` as well; the default one is.
+  ///
+  /// [remoteControlEnabled] answers whether this computer accepts remote tasks (WP8), read live
+  /// on every call -- the daemon passes `ConfigStore.remoteControlEnabled`. Without one, remote
+  /// control is off. [gitService] runs `list_roots`' `is_git` probe and `init_git`.
   TaskHandler.live(
     WorkspaceStore store, {
     ApprovalQueue? approvalQueue,
     IsolatedTaskRegistry? isolatedTasks,
+    bool Function()? remoteControlEnabled,
+    GitService? gitService,
   })  : _roots = store.live,
         _approvals = approvalQueue ?? ApprovalQueue(),
-        _isolatedTasks = isolatedTasks ?? IsolatedTaskRegistry(store.live),
-        _refreshRoots = store.refreshLive;
+        _isolatedTasks = isolatedTasks ?? IsolatedTaskRegistry(store.live, gitService),
+        _git = gitService ?? GitService(),
+        _refreshRoots = store.refreshLive,
+        _remoteControlEnabled = remoteControlEnabled ?? _remoteControlOff;
+
+  /// WP4: `list_roots`' `is_git` probe and the `init_git` RPC -- the one way the agent-facing side
+  /// reaches git outside [IsolatedTaskRegistry], see `git_service.dart`'s doc comment.
+  final GitService _git;
+
+  static bool _remoteControlOff() => false;
+
+  /// Whether this computer's `remote_control` flag is on now (WP8, D-10b).
+  final bool Function() _remoteControlEnabled;
+
+  /// Task ids created with `origin: "remote"`. Never reaped, like [_activeTaskIds].
+  final Set<String> _remoteTasks = {};
 
   final WorkspaceRoots _roots;
 
@@ -109,17 +170,28 @@ class TaskHandler {
   /// Non-isolated tasks bound to the IDE's active root at `create_task` (FSA-006); isolated
   /// tasks are bound through [_isolatedTasks] instead. Never reaped: a task_id is minted per
   /// turn and the entries are two strings each, like [_activeTaskIds].
+  /// What [minimalEnvironment] filters an agent command's environment from (G-06, SEC-04). The
+  /// daemon's own environment; a field so a test can plant a secret in it and check the command
+  /// never sees it.
+  Map<String, String> parentEnvironment = Platform.environment;
+
+  /// Running commands by the RPC call id that started them, so a `cancel` frame stops the command
+  /// itself and not only a pending approval (G-16, SEC-09).
+  final Map<String, void Function()> _runningByCall = {};
   final Map<String, WorkspaceRoot> _boundRoots = {};
   final Set<String> _activeTaskIds = {};
 
   Future<Map<String, Object?>> createTask(Map<String, dynamic> params) async {
     _refresh();
+    final remote = _parseOrigin(params['origin']);
+    if (remote && !_remoteControlEnabled()) throw RpcError(remoteControlDisabledMessage, code: HostdErrorCode.remoteControlDisabled);
     final taskId = 't_${DateTime.now().microsecondsSinceEpoch}_${_activeTaskIds.length}';
     _activeTaskIds.add(taskId);
 
     final isolate = params['isolate'] == true;
-    final taskKey = params['task_key'] as String?;
-    if (isolate && taskKey != null) {
+    final rawTaskKey = params['task_key'];
+    final taskKey = isolate && rawTaskKey != null ? _requireSafeTaskKey(rawTaskKey) : null;
+    if (taskKey != null) {
       _isolatedTasks.registerConfig(taskId, taskKey: taskKey, baseBranch: params['base_branch'] as String?);
     }
     // FSA-006: the Desktop IDE's active workspace root, sent by the backend as `cwd`
@@ -135,15 +207,132 @@ class TaskHandler {
       if (root == null) {
         throw RpcError('no granted workspace root contains "$cwdParam" -- grant it first');
       }
-      if (isolate && taskKey != null) {
+      if (taskKey != null) {
         // The worktree is carved out of the root the IDE shows, not out of the first granted one.
-        await _isolatedTasks.resolve(taskId, cwdParam);
+        // G-04: a worktree that resolves outside the folder, or none at all, is an error -- not a
+        // task left unbound, whose writes would then land in the live checkout.
+        final WorkspaceRoot? worktree;
+        try {
+          worktree = await _isolatedTasks.resolve(taskId, cwdParam);
+        } on ContainmentViolation catch (error) {
+          throw RpcError(error.message, code: error.code);
+        } on IsolationNeedsGitError catch (error) {
+          // WP4 (D-13): refused before anything is created; the person is offered "Initialize
+          // git here" instead.
+          throw RpcError(error.message, code: error.code);
+        }
+        if (worktree == null) throw _noWorktreeError(taskKey);
       } else {
         _boundRoots[taskId] = root;
       }
     }
-    return {'task_id': taskId, 'isolated': isolate && taskKey != null};
+    // Recorded only once the task is fully set up, so a refused create_task leaves nothing behind.
+    if (remote) _remoteTasks.add(taskId);
+    return {'task_id': taskId, 'isolated': taskKey != null};
   }
+
+  /// `list_roots` (WP8): the folders the agent may use, as the grants stand now, and whether this
+  /// computer accepts remote tasks -- so the phone or web app can offer a folder picker and say
+  /// when remote control is off. Needs no task, and answers for any origin: it reveals nothing
+  /// the desktop app's own status does not already show the signed-in account.
+  ///
+  /// Each root carries `is_git` (WP4, D-13): true iff an isolated task can work there -- a git
+  /// work tree with at least one commit -- so the app can offer "Initialize git here" where it is
+  /// false. A probe that fails or times out reports false.
+  Future<Map<String, Object?>> listRoots(Map<String, dynamic> params) async {
+    _refresh();
+    final roots = _roots.all.toList(growable: false);
+    final isGit = await Future.wait([for (final root in roots) _isolationReady(root.canonicalPath)]);
+    return {
+      'roots': [
+        for (var i = 0; i < roots.length; i++)
+          {'path': roots[i].canonicalPath, 'trusted': roots[i].trusted, 'is_git': isGit[i]},
+      ],
+      'remote_control': _remoteControlEnabled(),
+    };
+  }
+
+  Future<bool> _isolationReady(String path) async {
+    try {
+      return await _git.isolationState(path) == GitIsolationState.ready;
+    } on Object {
+      return false;
+    }
+  }
+
+  /// `init_git` (WP4, D-13): the phone's or the web's "Initialize git here" for the granted folder
+  /// `path` -- `git init`, `git add -A` and a first commit (`git_init.dart`, the same as the control
+  /// server's `POST /git/init`). This RPC exists only for the phone and the web, so remote control
+  /// must be on, and the person's tap must have reached here as `confirmed: true`. Returns
+  /// `{"ok": true, "commit": <sha>}`.
+  Future<Map<String, Object?>> initGit(Map<String, dynamic> params) async {
+    _refresh();
+    if (!_remoteControlEnabled()) {
+      throw RpcError(remoteControlDisabledMessage, code: HostdErrorCode.remoteControlDisabled);
+    }
+    _requireRemoteConfirmation(params, 'init_git');
+    final path = _requireString(params, 'path');
+    try {
+      return await initializeGrantedFolder(_roots, _git, path);
+    } on GitInitRefusal catch (error) {
+      throw RpcError(error.toString(), code: error.code, detail: error.detail);
+    }
+  }
+
+  /// `true` for a remote task. An absent origin is a desktop task (older backends); any other
+  /// value is refused rather than guessed at.
+  bool _parseOrigin(Object? origin) {
+    if (origin == null || origin == 'desktop') return false;
+    if (origin == 'remote') return true;
+    throw RpcError(
+      'invalid origin ${jsonEncode(origin)}: it must be "desktop" or "remote"',
+      code: HostdErrorCode.invalidOrigin,
+    );
+  }
+
+  /// Whether [params]' task is a remote task -- refusing the call if it is and remote control has
+  /// been switched off since (WP8, D-10b). Called first thing in every task RPC, after the grants
+  /// are re-read, so the switch stops the very next call of a conversation already under way.
+  bool _checkRemote(Map<String, dynamic> params) {
+    final taskId = params['task_id'];
+    if (taskId is! String || !_remoteTasks.contains(taskId)) return false;
+    if (!_remoteControlEnabled()) throw RpcError(remoteControlDisabledMessage, code: HostdErrorCode.remoteControlDisabled);
+    return true;
+  }
+
+  /// D-10c: a remote task's `run`/`write_file`/`write_files` must carry `confirmed: true` -- the
+  /// backend's statement that the person approved this exact call on their phone or the web.
+  /// Only a JSON `true` counts. This is the daemon's own floor: the backend should never send an
+  /// unconfirmed one, and nothing here falls back to the desktop's queue, which nobody is watching.
+  /// Checked after every refusal that applies anyway (containment, `.git`, denylist), so the
+  /// person is never asked to approve a call this daemon would refuse regardless. (An isolated
+  /// task's worktree may already have been created by then, exactly as before a desktop approval.)
+  void _requireRemoteConfirmation(Map<String, dynamic> params, String method) {
+    if (params['confirmed'] == true) return;
+    throw RpcError(
+      'confirmation_required: this computer is being controlled from the phone or the web, so '
+      'every command and file change must be approved there first -- this $method call was not',
+      code: HostdErrorCode.remoteConfirmationRequired,
+    );
+  }
+
+  /// G-04 (SEC-03): see `isolated_task_registry.dart::isSafeTaskKey`.
+  String _requireSafeTaskKey(Object rawTaskKey) {
+    if (rawTaskKey is! String || !isSafeTaskKey(rawTaskKey)) {
+      throw RpcError(
+        'invalid task_key: it must be a single path segment of 1-128 letters, digits, ".", "_" '
+        'or "-", and not "." or ".."',
+        code: HostdErrorCode.invalidTaskKey,
+      );
+    }
+    return rawTaskKey;
+  }
+
+  RpcError _noWorktreeError([String? taskKey]) => RpcError(
+        'isolation was requested${taskKey == null ? '' : ' (task_key "$taskKey")'} but no '
+        'granted folder could hold its worktree -- refusing rather than acting on the live checkout',
+        code: HostdErrorCode.isolatedTaskUnresolved,
+      );
 
   /// The root a task_id was bound to at `create_task` (FSA-006): an isolated task's worktree, or
   /// the IDE root a non-isolated task was created with. `null` for a task created without one,
@@ -166,18 +355,32 @@ class TaskHandler {
     return current;
   }
 
+  /// [root] as the grants stand now, or null if it is no longer granted (G-05, SEC-08) -- used
+  /// after an approval, so a revoke made while the human was deciding is caught. An isolated
+  /// task's worktree is not itself a granted root: it stands or falls with the folder it was carved
+  /// from, and takes that folder's current trust, as `IsolatedTaskRegistry.boundRoot` does.
+  WorkspaceRoot? _currentGrantFor(WorkspaceRoot root) {
+    final direct = _roots.byCanonicalPath(root.canonicalPath);
+    if (direct != null) return direct;
+    final task = _isolatedTasks.parentOf(root.canonicalPath);
+    if (task == null) return null;
+    final parent = _roots.byCanonicalPath(task.parentRootPath);
+    return parent == null ? null : task.root.copyWith(trusted: parent.trusted);
+  }
+
   /// D6 plan section C.3 (the write-gating retrofit): the agent-facing write RPC now goes through
   /// the same trust/approval-queue gate `run()` already had since D5 -- previously this and
   /// `edit_file` (which routes through this same RPC on the backend, see `coding.py::edit_file`)
   /// were the one place an agent could freely mutate any file in a granted-but-untrusted root.
   Future<Map<String, Object?>> writeFile(Map<String, dynamic> params, {String? callId}) async {
     _refresh();
+    final remote = _checkRemote(params);
     final path = _requireString(params, 'path');
     final content = _requireString(params, 'content');
     final taskId = params['task_id'] as String?;
     var root = _boundRootFor(taskId);
     if (root == null && _isolatedTasks.needsResolution(taskId)) {
-      root = await _isolatedTasks.resolve(taskId, path);
+      root = await _isolatedTasks.resolve(taskId, path) ?? (throw _noWorktreeError());
     }
     root ??= _roots.findContainingRoot(path);
     if (root == null) {
@@ -190,8 +393,12 @@ class TaskHandler {
     final protectedWrite = protectedGitWriteRefusal(resolved);
     if (protectedWrite != null) throw RpcError(protectedWrite.reason, code: protectedWrite.code);
 
-    final verdict = evaluateWrite(workspaceTrusted: root.trusted);
-    if (verdict.decision == CommandDecision.needsApproval) {
+    // A remote task skips the trust tier and the desktop queue: approved on the remote device, or
+    // refused (WP8). A desktop task ignores `confirmed`.
+    if (remote) {
+      _requireRemoteConfirmation(params, 'write_file');
+    } else if (evaluateWrite(workspaceTrusted: root.trusted).decision ==
+        CommandDecision.needsApproval) {
       await _awaitWriteApproval(
         [WriteOp(path: path, finalContent: content)],
         cwd: root.canonicalPath,
@@ -215,6 +422,7 @@ class TaskHandler {
   /// gating, which is out of this phase's scope.
   Future<Map<String, Object?>> writeFiles(Map<String, dynamic> params, {String? callId}) async {
     _refresh();
+    final remote = _checkRemote(params);
     final rawOps = params['operations'];
     if (rawOps is! List || rawOps.isEmpty) {
       throw RpcError('"operations" must be a non-empty list');
@@ -228,7 +436,7 @@ class TaskHandler {
       final firstPath = rawOps.isNotEmpty && rawOps.first is Map
           ? (Map<String, dynamic>.from(rawOps.first as Map)['path'] as String?)
           : null;
-      taskRoot = await _isolatedTasks.resolve(taskId, firstPath);
+      taskRoot = await _isolatedTasks.resolve(taskId, firstPath) ?? (throw _noWorktreeError());
     }
 
     WorkspaceRoot? sharedRoot = taskRoot;
@@ -279,8 +487,10 @@ class TaskHandler {
     }
 
     final root = sharedRoot!;
-    final verdict = evaluateWrite(workspaceTrusted: root.trusted);
-    if (verdict.decision == CommandDecision.needsApproval) {
+    if (remote) {
+      _requireRemoteConfirmation(params, 'write_files');
+    } else if (evaluateWrite(workspaceTrusted: root.trusted).decision ==
+        CommandDecision.needsApproval) {
       await _awaitWriteApproval(resolved, cwd: root.canonicalPath, root: root, callId: callId);
     }
 
@@ -297,11 +507,13 @@ class TaskHandler {
 
   Future<Map<String, Object?>> readFile(Map<String, dynamic> params) async {
     _refresh();
+    // Read-only: no confirmation for a remote task, but it still stops once remote control is off.
+    _checkRemote(params);
     final path = _requireString(params, 'path');
     final taskId = params['task_id'] as String?;
     var root = _boundRootFor(taskId);
     if (root == null && _isolatedTasks.needsResolution(taskId)) {
-      root = await _isolatedTasks.resolve(taskId, path);
+      root = await _isolatedTasks.resolve(taskId, path) ?? (throw _noWorktreeError());
     }
     root ??= _roots.findContainingRoot(path);
     if (root == null) {
@@ -333,6 +545,7 @@ class TaskHandler {
     // Tolerate other argv shapes too (a future caller might not go through `sh -c`) by falling
     // back to running the argv's first element as the program.
     _refresh();
+    final remote = _checkRemote(params);
     final commandArgv = _requireStringList(params, 'command');
     if (commandArgv.isEmpty) {
       throw RpcError('"command" must be a non-empty list of arguments');
@@ -349,7 +562,7 @@ class TaskHandler {
     var root = _boundRootFor(taskId);
     final bound = root != null;
     if (root == null && _isolatedTasks.needsResolution(taskId)) {
-      root = await _isolatedTasks.resolve(taskId, cwdParam);
+      root = await _isolatedTasks.resolve(taskId, cwdParam) ?? (throw _noWorktreeError());
     }
     root ??= cwdParam != null
         ? _roots.findContainingRoot(cwdParam)
@@ -366,25 +579,45 @@ class TaskHandler {
         : root.canonicalPath;
 
     final commandForPolicy = _effectiveShellCommand(commandArgv);
-    final verdict = evaluateCommand(commandForPolicy, workspaceTrusted: root.trusted);
+    // WP8: a remote task gets neither the trusted tier nor the read-only allowlist -- only the
+    // every-workspace refusals, then the remote device's approval (`confirmed`), never the queue.
+    final verdict = remote
+        ? evaluateRemoteCommand(commandForPolicy)
+        : evaluateCommand(
+            commandForPolicy,
+            workspaceTrusted: root.trusted,
+            workspaceRoot: root.canonicalPath,
+            cwd: cwd,
+          );
     if (verdict.decision == CommandDecision.deny) {
       throw RpcError('command refused: ${verdict.reason}', code: verdict.code);
     }
-    if (verdict.decision == CommandDecision.needsApproval) {
+    if (remote) {
+      _requireRemoteConfirmation(params, 'run');
+    } else if (verdict.decision == CommandDecision.needsApproval) {
       await _awaitApproval(commandForPolicy, cwd: cwd, root: root, callId: callId);
     }
+    // G-17 (SEC-10): the untrusted tier's allowlisted git runs with the repository's own
+    // fsmonitor, hooks, external diff and textconv programs switched off. An approved command
+    // (on the desktop, or a remote task's confirmed one) is left as the human saw it.
+    final argvToRun = !remote && verdict.isAllowed && !root.trusted
+        ? _hardenUntrustedGit(commandArgv, commandForPolicy)
+        : commandArgv;
 
     final timeout = Duration(
       milliseconds: (requestedTimeout * 1000).clamp(1000, _maxCommandTimeout.inMilliseconds).round(),
     );
 
-    final effectiveArgv = _resolveShellArgv(_lineBuffered(commandArgv));
-    final Process process;
+    final effectiveArgv = _resolveShellArgv(_lineBuffered(argvToRun));
+    final ProcessTree tree;
     try {
-      process = await Process.start(
-        effectiveArgv.first,
-        effectiveArgv.sublist(1),
+      // G-06 (SEC-04): a minimal allowlisted environment, never the daemon's own -- see
+      // `process_env.dart`. G-16 (SEC-09): started so a timeout or cancel can stop everything it
+      // spawns -- see `process_tree.dart`.
+      tree = await ProcessTree.start(
+        effectiveArgv,
         workingDirectory: cwd,
+        environment: minimalEnvironment(parentEnvironment),
       );
     } on ProcessException catch (exc) {
       // A bare ProcessException here gave no way to tell "the resolved shell path was wrong" from
@@ -399,6 +632,7 @@ class TaskHandler {
       );
     }
 
+    final process = tree.process;
     final stdoutBuf = StringBuffer();
     final stderrBuf = StringBuffer();
     var capturedChars = 0;
@@ -426,21 +660,40 @@ class TaskHandler {
 
     int exitCode;
     var timedOut = false;
+    var cancelled = false;
+    // Completed by the timeout or by `cancel`; either way the whole tree is killed (G-16).
+    final stop = Completer<void>();
+    final timer = Timer(timeout, () {
+      timedOut = true;
+      if (!stop.isCompleted) stop.complete();
+    });
+    if (callId != null) {
+      _runningByCall[callId] = () {
+        cancelled = true;
+        if (!stop.isCompleted) stop.complete();
+      };
+    }
     try {
-      exitCode = await process.exitCode.timeout(timeout, onTimeout: () {
-        timedOut = true;
-        process.kill(ProcessSignal.sigkill);
-        return -1;
-      });
+      exitCode = await Future.any<int>([
+        process.exitCode,
+        stop.future.then((_) async {
+          await tree.kill();
+          return -1;
+        }),
+      ]);
+      // The killed process's own exit can win the race above; a stopped command reports -1 either
+      // way, as it always has on timeout.
+      if (timedOut || cancelled) exitCode = -1;
     } finally {
-      // Killing `process` only signals the PID we started -- `sh -c '<command>'` may have forked
-      // rather than exec'd it (shell-dependent, not something this daemon controls), leaving an
-      // orphaned descendant that still holds the stdout/stderr pipe fds open. Waiting on
-      // stdoutDone/stderrDone unboundedly would then hang this whole call until that orphan exits
-      // on its own -- exactly as long as whatever it was doing (observed: a killed `sleep 30`
-      // held the pipes open for the full 30 seconds). Bounding this wait is the fix: a normally
-      // terminating process's streams close well within this window, and a still-running orphan
-      // does not get to stall the RPC response it's no longer even attached to.
+      timer.cancel();
+      if (callId != null) _runningByCall.remove(callId);
+      // A command that exits normally can still leave a background child holding the
+      // stdout/stderr pipe fds open (`sh -c 'server &'`). Waiting on stdoutDone/stderrDone
+      // unboundedly would then hang this whole call until that child exits on its own (observed: a
+      // `sleep 30` held the pipes for the full 30 seconds). Bounding this wait is the fix: a
+      // normally terminating process's streams close well within this window, and a still-running
+      // child does not get to stall the RPC response it's no longer even attached to. (On a
+      // timeout or cancel the whole process group is killed above, so nothing is left to wait on.)
       await Future.wait([stdoutDone, stderrDone]).timeout(
         const Duration(seconds: 2),
         onTimeout: () => const <void>[],
@@ -449,6 +702,8 @@ class TaskHandler {
 
     if (timedOut) {
       stderrBuf.write('\n[aura_hostd] command killed after ${timeout.inSeconds}s timeout');
+    } else if (cancelled) {
+      stderrBuf.write('\n[aura_hostd] command cancelled by the server and killed');
     }
     if (outputTruncated) {
       stderrBuf.write('\n[aura_hostd] output truncated after $_maxOutputCapChars characters');
@@ -462,11 +717,14 @@ class TaskHandler {
   }
 
   /// The server gave up on [callId] (its tool timed out or the turn was cancelled). If the call
-  /// is waiting for a human, the approval is cancelled and the call throws instead of executing;
-  /// a call that already ran is unaffected (audit FSA-041).
+  /// is waiting for a human, the approval is cancelled and the call throws instead of executing
+  /// (audit FSA-041); if it is a running command, the command and everything it started are killed
+  /// and the call returns what it had produced (G-16, SEC-09). A call that already finished is
+  /// unaffected.
   void cancel(String callId) {
     final approvalId = _approvalByCall.remove(callId);
     if (approvalId != null) _approvals.cancel(approvalId);
+    _runningByCall.remove(callId)?.call();
   }
 
   /// The connection these calls arrived on is gone (audit INT-007). The backend failed every
@@ -504,7 +762,12 @@ class TaskHandler {
     required WorkspaceRoot root,
     String? callId,
   }) async {
-    final approval = _approvals.createForCommand(canonicalCommand: command, cwd: cwd, rootPath: root.canonicalPath);
+    final PendingApproval approval;
+    try {
+      approval = _approvals.createForCommand(canonicalCommand: command, cwd: cwd, rootPath: root.canonicalPath);
+    } on ApprovalQueueFullError catch (error) {
+      throw RpcError(error.message, code: error.code); // G-21
+    }
     _trackApproval(callId, approval);
     final ApprovalStatus status;
     try {
@@ -524,8 +787,11 @@ class TaskHandler {
       case ApprovalStatus.pending:
         throw RpcError('command approval resolved with no decision -- this should not happen');
     }
+    // G-05: re-read the grants, then re-derive *this* root from them -- for an isolated task its
+    // worktree from the folder it was carved from, not whichever granted folder contains [cwd]
+    // (that is the parent, whose path would never match the approval's).
     _refresh();
-    final currentRoot = _roots.findContainingRoot(cwd);
+    final currentRoot = _currentGrantFor(root);
     final currentHash = currentRoot == null
         ? null
         : PendingApproval.hashForCommand(command: command, cwd: cwd, rootPath: currentRoot.canonicalPath);
@@ -565,12 +831,17 @@ class TaskHandler {
       diffParts.add(unifiedDiff(path: op.path, before: before, after: op.finalContent));
     }
 
-    final approval = _approvals.createForWrite(
-      operations: operations,
-      diffText: diffParts.join('\n'),
-      cwd: cwd,
-      rootPath: root.canonicalPath,
-    );
+    final PendingApproval approval;
+    try {
+      approval = _approvals.createForWrite(
+        operations: operations,
+        diffText: diffParts.join('\n'),
+        cwd: cwd,
+        rootPath: root.canonicalPath,
+      );
+    } on ApprovalQueueFullError catch (error) {
+      throw RpcError(error.message, code: error.code); // G-21
+    }
     final pathList = operations.map((o) => o.path).join(', ');
     _trackApproval(callId, approval);
     final ApprovalStatus status;
@@ -592,8 +863,10 @@ class TaskHandler {
         throw RpcError('write approval resolved with no decision -- this should not happen');
     }
 
+    // G-05: re-read the grants, then re-derive *this* root from them (an isolated worktree, not
+    // the folder it sits in, so relative paths are re-read where they will be written).
     _refresh();
-    final currentRoot = _roots.findContainingRoot(cwd);
+    final currentRoot = _currentGrantFor(root);
     if (currentRoot == null) {
       throw RpcError('workspace root is no longer granted -- refusing approved write: $pathList');
     }
@@ -625,7 +898,7 @@ class TaskHandler {
   String _requireString(Map<String, dynamic> params, String key) {
     final value = params[key];
     if (value is! String) {
-      throw RpcError('missing or invalid "$key" parameter');
+      throw RpcError('missing or invalid "$key" parameter', code: HostdErrorCode.missingParameter);
     }
     return value;
   }
@@ -633,7 +906,7 @@ class TaskHandler {
   List<String> _requireStringList(Map<String, dynamic> params, String key) {
     final value = params[key];
     if (value is! List) {
-      throw RpcError('missing or invalid "$key" parameter');
+      throw RpcError('missing or invalid "$key" parameter', code: HostdErrorCode.missingParameter);
     }
     return value.map((e) => e.toString()).toList(growable: false);
   }
@@ -649,6 +922,34 @@ String _effectiveShellCommand(List<String> argv) {
       (argv[1] == '-c' || argv[1] == '/c');
   return looksLikeShellWrapper ? argv[2] : argv.join(' ');
 }
+
+/// [commandArgv] with [hardenUntrustedGitCommand] applied (G-17): the shell-wrapper shape the
+/// backend sends has its command string rewritten; a bare `["git", <verb>, ...]` argv gets the same
+/// options inserted as separate arguments. Anything else is returned unchanged.
+List<String> _hardenUntrustedGit(List<String> commandArgv, String commandForPolicy) {
+  final hooks = _emptyHooksDir();
+  if (commandArgv.length == 3 && commandArgv[2] == commandForPolicy) {
+    final hardened = hardenUntrustedGitCommand(commandForPolicy, emptyHooksDir: hooks);
+    return hardened == commandForPolicy ? commandArgv : [commandArgv[0], commandArgv[1], hardened];
+  }
+  if (commandArgv.length >= 2 && commandArgv.first == 'git') {
+    return [
+      'git',
+      ...untrustedGitGlobalArgs(hooks),
+      commandArgv[1],
+      ...untrustedGitVerbFlags(commandArgv[1]),
+      ...commandArgv.sublist(2),
+    ];
+  }
+  return commandArgv;
+}
+
+String? _emptyHooksDirCache;
+
+/// An empty directory, created once per daemon run, for `core.hooksPath` (G-17): pointing git at
+/// it means no hook the repository installed can run.
+String _emptyHooksDir() => _emptyHooksDirCache ??=
+    Directory.systemTemp.createTempSync('aura_hostd_no_hooks_').resolveSymbolicLinksSync();
 
 /// Make a missing executable name itself, whatever `stdbuf` said.
 ///

@@ -6,6 +6,7 @@ library;
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,6 +15,7 @@ import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/desktop/explorer/explorer_access.dart';
 import 'package:aura_client/desktop/explorer/explorer_mutations.dart';
 import 'package:aura_client/desktop/explorer/explorer_service.dart';
+import 'package:aura_client/desktop/shell/ide_platform_commands.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
@@ -549,22 +551,20 @@ String _relativePathOf(String workspaceRoot, String entryPath) {
 
 Future<void> _revealInFilesystem(BuildContext context, String absolutePath,
     {required bool isDirectory}) async {
-  if (!Platform.isWindows) {
+  // Explorer on Windows, xdg-open on Linux (D-08b); nothing elsewhere, where the IDE never runs.
+  final command = ideRevealCommand(absolutePath, isDirectory: isDirectory, platform: defaultTargetPlatform);
+  if (command == null) {
     AuraSnackbar.show(
       context,
-      message: context.l10n.explorerRevealWindowsOnly,
+      message: context.l10n.explorerRevealUnsupported,
       kind: AuraSnackbarKind.info,
     );
     return;
   }
   try {
-    // `explorer <dir>` opens the folder; `explorer /select,<file>` opens the
-    // parent with the file highlighted. Pure argv list, no shell interpolation.
-    await Process.start(
-      'explorer',
-      isDirectory ? [absolutePath] : ['/select,', absolutePath],
-      runInShell: true,
-    );
+    // Pure argv list, no shell interpolation. `explorer` is a shell built-in lookup on Windows
+    // (hence runInShell there); xdg-open is a plain executable.
+    await Process.start(command.$1, command.$2, runInShell: Platform.isWindows);
   } catch (e) {
     if (context.mounted) {
       AuraSnackbar.show(context, message: context.l10n.explorerRevealFailed(e.toString()), kind: AuraSnackbarKind.error);

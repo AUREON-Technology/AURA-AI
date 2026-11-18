@@ -13,6 +13,12 @@
 /// (`approval_queue.dart`) entirely. Do not add a path from [TaskHandler] to this class without
 /// re-reading that decision first.
 ///
+/// One narrow, owner-approved exception (WP4, D-13): [isolationState] (a read-only probe) is used
+/// on the agent's side to refuse isolation in a folder that cannot hold a worktree, and
+/// [initRepository] is reachable from the `init_git` RPC -- but only through `git_init.dart`'s
+/// granted-folder checks, and only when the person tapped "Initialize git here" on their phone or
+/// the web (`confirmed`, with remote control on). That tap is the consent, as a click here is.
+///
 /// No containment logic of its own -- callers (`control_server.dart`'s `/git/*` handlers) resolve
 /// and contain every path via [WorkspaceRoots.requireContained] before it ever reaches a method
 /// here, exactly like every other filesystem-touching route in this daemon. File arguments are
@@ -55,6 +61,27 @@ class GitDecodeError implements Exception {
   String toString() => message;
 }
 
+/// WP4 (D-13): whether a folder can hold the Engineer's isolated worktree.
+enum GitIsolationState {
+  /// A git work tree with at least one commit: `git worktree add` can branch from it.
+  ready,
+
+  /// A git work tree with no commit yet: there is nothing to branch from.
+  noCommit,
+
+  /// Not inside a git work tree at all.
+  notAWorkTree,
+}
+
+/// [GitService.initRepository] failed; [detail] is git's own message (stderr).
+class GitInitError implements Exception {
+  GitInitError(this.message, this.detail);
+  final String message;
+  final String detail;
+  @override
+  String toString() => '$message: $detail';
+}
+
 class _GitResult {
   _GitResult({required this.exitCode, required this.stdout, required this.stderr});
   final int exitCode;
@@ -66,9 +93,80 @@ class GitService {
   /// [networkTimeout] bounds [fetch]/[pull]/[push] (see [_runNetwork]'s doc comment) --
   /// overridable so a test can exercise the timeout-and-kill path deterministically without
   /// waiting out a real 30-second hang.
-  GitService({Duration networkTimeout = const Duration(seconds: 30)}) : _networkTimeout = networkTimeout;
+  ///
+  /// [localTimeout] bounds the WP4 git-init steps (`git add -A` of a large folder can take a
+  /// while; the backend gives the whole `init_git` call 60 seconds). [environment] is added to
+  /// every git process's environment -- a test points `GIT_CONFIG_GLOBAL` at a file of its own to
+  /// control which identity git sees; `GIT_TERMINAL_PROMPT=0` always wins.
+  GitService({
+    Duration networkTimeout = const Duration(seconds: 30),
+    Duration localTimeout = const Duration(seconds: 45),
+    Map<String, String> environment = const {},
+  })  : _networkTimeout = networkTimeout,
+        _localTimeout = localTimeout,
+        _environment = {...environment, ..._gitEnvironment};
 
   final Duration _networkTimeout;
+  final Duration _localTimeout;
+  final Map<String, String> _environment;
+
+  /// Bounds the cheap read-only probes of [isolationState].
+  static const _probeTimeout = Duration(seconds: 10);
+
+  /// WP4 (D-13): whether [cwd] can hold an isolated worktree -- a git work tree with at least one
+  /// commit. Two cheap read-only probes, each bounded; a probe that times out throws
+  /// [GitCommandError] rather than guessing.
+  Future<GitIsolationState> isolationState(String cwd) async {
+    final inside = await _runBounded(cwd, ['rev-parse', '--is-inside-work-tree'], _probeTimeout);
+    if (inside.exitCode != 0 || inside.stdout.trim() != 'true') return GitIsolationState.notAWorkTree;
+    final head = await _runBounded(cwd, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], _probeTimeout);
+    return head.exitCode == 0 ? GitIsolationState.ready : GitIsolationState.noCommit;
+  }
+
+  /// WP4 (D-13), "Initialize git here": `git init` (skipped when [cwd] already is a work tree
+  /// with no commit -- [init] false), `git add -A`, then a first commit with [message], which may
+  /// be empty so even an empty folder gets one to branch from. The commit uses the person's own
+  /// git identity; only if git has none does it retry once with `AURA <aura@localhost>`, given on
+  /// the command line so nothing is written to the repository's config. Returns the commit's sha.
+  /// Throws [GitInitError] with git's own message on any failure. The caller checks the folder is
+  /// granted and not already [GitIsolationState.ready] (`git_init.dart`).
+  Future<String> initRepository(String cwd, {required String message, bool init = true}) async {
+    Future<_GitResult> step(List<String> args) async {
+      try {
+        return await _runBounded(cwd, args, _localTimeout);
+      } on GitCommandError catch (error) {
+        throw GitInitError('git ${args.first} did not finish', error.message);
+      } on GitDecodeError catch (error) {
+        throw GitInitError('git ${args.first} failed', error.message);
+      } on ProcessException catch (error) {
+        throw GitInitError('git could not be started', error.message);
+      }
+    }
+
+    if (init) {
+      final result = await step(['init']);
+      if (result.exitCode != 0) throw GitInitError('git init failed', result.stderr.trim());
+    }
+    final added = await step(['add', '-A']);
+    if (added.exitCode != 0) throw GitInitError('git add failed', added.stderr.trim());
+    final commitArgs = ['commit', '--allow-empty', '-q', '-m', message];
+    var committed = await step(commitArgs);
+    if (committed.exitCode != 0 && _missingIdentity(committed.stderr)) {
+      committed = await step(['-c', 'user.name=AURA', '-c', 'user.email=aura@localhost', ...commitArgs]);
+    }
+    if (committed.exitCode != 0) throw GitInitError('git commit failed', committed.stderr.trim());
+    final head = await step(['rev-parse', 'HEAD']);
+    if (head.exitCode != 0) throw GitInitError('git rev-parse failed', head.stderr.trim());
+    return head.stdout.trim();
+  }
+
+  /// git's messages for "no user.name/user.email to commit with" (its `ident.c`).
+  static bool _missingIdentity(String stderr) =>
+      stderr.contains('Please tell me who you are') ||
+      stderr.contains('empty ident name') ||
+      stderr.contains('unable to auto-detect email address') ||
+      stderr.contains('no email was given and auto-detection is disabled') ||
+      stderr.contains('no name was given and auto-detection is disabled');
 
   Future<Map<String, Object?>> status(String cwd) async {
     final result = await _runOk(cwd, ['-c', 'core.quotepath=false', 'status', '--short', '--branch']);
@@ -538,7 +636,7 @@ class GitService {
       'git',
       args,
       workingDirectory: cwd,
-      environment: _gitEnvironment,
+      environment: _environment,
       stdoutEncoding: null,
       stderrEncoding: null,
     );
@@ -561,16 +659,20 @@ class GitService {
   /// this uses [Process.start] instead specifically so a timeout can actually [Process.kill] it,
   /// rather than merely giving up on waiting for it while it keeps running (and keeps the repo's
   /// `.git/index.lock`, if any) in the background.
-  Future<_GitResult> _runNetwork(String cwd, List<String> args) async {
-    final process = await Process.start('git', args, workingDirectory: cwd, environment: _gitEnvironment);
+  Future<_GitResult> _runNetwork(String cwd, List<String> args) => _runBounded(cwd, args, _networkTimeout);
+
+  /// [args] run with a [timeout] after which git (and, on Windows, its child) is killed and
+  /// [GitCommandError] thrown -- [_runNetwork]'s mechanism, also used for WP4's local steps.
+  Future<_GitResult> _runBounded(String cwd, List<String> args, Duration timeout) async {
+    final process = await Process.start('git', args, workingDirectory: cwd, environment: _environment);
     final stdoutBytes = process.stdout.fold<List<int>>(<int>[], (acc, chunk) => acc..addAll(chunk));
     final stderrBytes = process.stderr.fold<List<int>>(<int>[], (acc, chunk) => acc..addAll(chunk));
     int exitCode;
     try {
-      exitCode = await process.exitCode.timeout(_networkTimeout);
+      exitCode = await process.exitCode.timeout(timeout);
     } on TimeoutException {
       await _killTree(process);
-      throw GitCommandError('git ${args.join(' ')} timed out after ${_networkTimeout.inSeconds}s');
+      throw GitCommandError('git ${args.join(' ')} timed out after ${timeout.inSeconds}s');
     }
     try {
       return _GitResult(exitCode: exitCode, stdout: utf8.decode(await stdoutBytes), stderr: utf8.decode(await stderrBytes));

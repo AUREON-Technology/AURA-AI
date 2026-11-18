@@ -132,13 +132,13 @@
   "@onboardingCopilotBody": {
     "description": "Onboarding page 1 body"
   },
-  "onboardingPrivacyTitle": "Your private data stays with AURA",
+  "onboardingPrivacyTitle": "Where your requests are processed",
   "@onboardingPrivacyTitle": {
-    "description": "Onboarding page 2 title: where requests are processed"
+    "description": "Onboarding page 2 title: where requests are processed. Must not claim that everything stays with AURA: Engineer turns go to Anthropic after consent (D-02, D-03)"
   },
-  "onboardingPrivacyBody": "Nothing is processed on this phone. Your documents, memories and files are only read by AI models AURA runs itself. Other messages may be answered by an approved hosted AI provider, if the server’s operator allows it.",
+  "onboardingPrivacyBody": "Nothing is processed on this phone. Your documents, memories and files are only read by AI models AURA runs itself. The exception is the Engineer: once you agree in the app, the messages you send it, the files it opens and the output of the commands it runs go to Claude, an AI model run by Anthropic. Other messages may be answered by an approved hosted AI provider, if the server’s operator allows it.",
   "@onboardingPrivacyBody": {
-    "description": "Onboarding page 2 body. Must match the backend's data-classification routing (ADR-030): sensitive content stays on self-hosted models; hosted providers are opt-in and see only internal-classified requests"
+    "description": "Onboarding page 2 body. Must match the backend's routing: sensitive content stays on self-hosted models (ADR-030), except Engineer turns, which go to Claude (Anthropic) only after the user's in-app consent (ADR-033 amendment, D-02/D-03); hosted open-weight providers are opt-in and see only internal-classified requests"
   },
   "onboardingTourTitle": "Today, Copilot, Life Hub, You",
   "@onboardingTourTitle": {
@@ -359,9 +359,9 @@
   "@settingsAboutTitle": {
     "description": "About card title"
   },
-  "settingsAboutBody": "Requests are processed on AURA’s servers, never on this device. Your documents, memories, files and tool results are only read by AI models AURA runs itself. If the server’s operator turns it on, your other messages may be answered by an approved hosted AI provider.",
+  "settingsAboutBody": "Requests are handled by AURA’s servers, never on this device. Your documents, memories, files and tool results are only read by AI models AURA runs itself. The exception is the Engineer: once you agree in the app, what it reads and runs goes to Claude, an AI model run by Anthropic. If the server’s operator turns it on, your other messages may be answered by an approved hosted AI provider.",
   "@settingsAboutBody": {
-    "description": "About card body"
+    "description": "About card body (\"Where AURA runs\"). Same routing facts as onboardingPrivacyBody: Engineer turns go to Anthropic only after consent"
   },
   "themeSystem": "System",
   "@themeSystem": {
@@ -1065,9 +1065,9 @@
       }
     }
   },
-  "chatAwaitingConfirmation": "Confirm the action above to continue.",
+  "chatAwaitingConfirmation": "Confirm the action below to continue.",
   "@chatAwaitingConfirmation": {
-    "description": "Hint when a turn waits on a tool confirmation"
+    "description": "Hint when a turn waits on a tool confirmation; the confirmation card is shown below it"
   },
   "personaPickerTitle": "Choose a persona",
   "@personaPickerTitle": {
@@ -2103,9 +2103,9 @@
   "@controlCenterTitle": {
     "description": "Agent Review panel: header title"
   },
-  "controlCenterEmpty": "No isolated agent tasks right now. Starting a new chat task creates one automatically.",
+  "controlCenterEmpty": "No Engineer tasks to review yet. Each Engineer chat works in its own copy of the folder, on a branch named aura/task-…, and shows up here for you to review and merge.",
   "@controlCenterEmpty": {
-    "description": "Agent Review panel: empty state"
+    "description": "Control Center: no isolated Engineer tasks yet. True since WP4: every Engineer turn on the computer asks for its own worktree (D-09)"
   },
   "controlCenterNoChanges": "(no changes)",
   "@controlCenterNoChanges": {
@@ -2546,13 +2546,13 @@
   "@engineeringNoRoots": {
     "description": "Engineer daemon page: empty state for granted folders"
   },
-  "engineeringRootTrusted": "Trusted -- commands run without per-call confirmation (still confined to this folder)",
+  "engineeringRootTrusted": "Trusted -- the agent's commands run without asking, as you, and can reach anything your account can. Paths outside this folder and any git push ask first.",
   "@engineeringRootTrusted": {
-    "description": "Engineer daemon page: subtitle of a trusted granted folder"
+    "description": "Engineer daemon page: what a trusted granted folder allows. Must not promise confinement (D-06, UX-04)"
   },
-  "engineeringRootUntrusted": "Untrusted -- only a read-only inspection allowlist runs",
+  "engineeringRootUntrusted": "Untrusted -- read-only commands run; anything else asks you first",
   "@engineeringRootUntrusted": {
-    "description": "Engineer daemon page: subtitle of an untrusted granted folder"
+    "description": "Engineer daemon page: what an untrusted granted folder allows; other commands are queued for approval, not dropped"
   },
   "engineeringBrowse": "Browse",
   "@engineeringBrowse": {
@@ -3754,9 +3754,9 @@
   "@explorerPathCopied": {
     "description": "Explorer: snackbar after copying a path"
   },
-  "explorerRevealWindowsOnly": "Reveal in filesystem is only supported on Windows for now",
-  "@explorerRevealWindowsOnly": {
-    "description": "Explorer: snackbar on non-Windows platforms"
+  "explorerRevealUnsupported": "Reveal in filesystem is not supported on this platform",
+  "@explorerRevealUnsupported": {
+    "description": "Explorer: snackbar where neither Explorer (Windows) nor xdg-open (Linux) can reveal a file"
   },
   "explorerRevealFailed": "Could not open filesystem: {error}",
   "@explorerRevealFailed": {
@@ -4720,9 +4720,9 @@
   "@chatConfirmEditFileUnnamed": {
     "description": "Chat: confirmation card heading for editing a file whose path is unknown"
   },
-  "chatConfirmRunCommand": "Run command in sandbox",
+  "chatConfirmRunCommand": "Run a command",
   "@chatConfirmRunCommand": {
-    "description": "Chat: confirmation card heading for running a shell command in the sandbox"
+    "description": "Chat: confirmation card heading for run_command. Not \"in sandbox\": a host-routed command runs on the user's own computer (WP8)"
   },
   "chatConfirmCommitSandbox": "Commit sandbox changes",
   "@chatConfirmCommitSandbox": {
@@ -5786,5 +5786,317 @@
   "homeInsightDismissFailed": "Could not dismiss this insight. Try again shortly.",
   "@homeInsightDismissFailed": {
     "description": "Today screen: dismissing an insight failed"
+  },
+  "engineerConsentTitle": "The Engineer uses Claude, by Anthropic",
+  "@engineerConsentTitle": {
+    "description": "Engineer consent notice, version 2026-11-17 (kEngineerConsentNoticeVersion). Owner-reviewed wording: change it only together with that constant and the backend's CURRENT_NOTICE_VERSION. Title. The Arabic text of this notice (app_ar.arb) is a draft that awaits the owner's review (O-03) before it is relied on as the notice an Arabic-speaking user agreed to."
+  },
+  "engineerConsentBodyWhat": "To work on your code, the Engineer sends what it reads and runs to Claude, an AI model run by Anthropic, a company outside AURA.",
+  "@engineerConsentBodyWhat": {
+    "description": "Engineer consent notice, version 2026-11-17 (kEngineerConsentNoticeVersion). Owner-reviewed wording: change it only together with that constant and the backend's CURRENT_NOTICE_VERSION. Paragraph 1. The Arabic text of this notice (app_ar.arb) is a draft that awaits the owner's review (O-03) before it is relied on as the notice an Arabic-speaking user agreed to."
+  },
+  "engineerConsentBodyIncludes": "That includes the messages you send the Engineer, the contents of files it opens in folders you granted or repositories you connected, and the output of commands it runs — which can include anything those commands print.",
+  "@engineerConsentBodyIncludes": {
+    "description": "Engineer consent notice, version 2026-11-17 (kEngineerConsentNoticeVersion). Owner-reviewed wording: change it only together with that constant and the backend's CURRENT_NOTICE_VERSION. Paragraph 2. The Arabic text of this notice (app_ar.arb) is a draft that awaits the owner's review (O-03) before it is relied on as the notice an Arabic-speaking user agreed to."
+  },
+  "engineerConsentBodyChoice": "Nothing is sent until you agree. You can withdraw in Settings → Engineer at any time; the Engineer then stops until you agree again. Other AURA features are not affected.",
+  "@engineerConsentBodyChoice": {
+    "description": "Engineer consent notice, version 2026-11-17 (kEngineerConsentNoticeVersion). Owner-reviewed wording: change it only together with that constant and the backend's CURRENT_NOTICE_VERSION. Paragraph 3. The Arabic text of this notice (app_ar.arb) is a draft that awaits the owner's review (O-03) before it is relied on as the notice an Arabic-speaking user agreed to."
+  },
+  "engineerConsentAgree": "Agree and continue",
+  "@engineerConsentAgree": {
+    "description": "Consent sheet: accept the notice and send"
+  },
+  "engineerConsentNotNow": "Not now",
+  "@engineerConsentNotNow": {
+    "description": "Consent sheet: decline for now; nothing is sent"
+  },
+  "engineerConsentSaveFailed": "Couldn’t save your answer. {reason}",
+  "@engineerConsentSaveFailed": {
+    "description": "Consent sheet: the accept request failed; the message was not sent",
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "engineerConsentUpdateTitle": "Update AURA to use the Engineer",
+  "@engineerConsentUpdateTitle": {
+    "description": "Shown instead of the notice when the server's current notice version is not the one this app carries"
+  },
+  "engineerConsentUpdateBody": "The notice about what the Engineer sends to Anthropic has changed, and this version of the app can’t show the new one. Update the app to read it and continue.",
+  "@engineerConsentUpdateBody": {
+    "description": "Body for engineerConsentUpdateTitle"
+  },
+  "engineerConsentUpdateOk": "OK",
+  "@engineerConsentUpdateOk": {
+    "description": "Dismisses the update-the-app notice"
+  },
+  "engineerConsentNeededNotice": "The Engineer didn’t run this: it needs your agreement before it sends anything to Anthropic. Nothing was sent to Anthropic.",
+  "@engineerConsentNeededNotice": {
+    "description": "Transcript row for a turn the server refused with consent_required. No Retry: agreeing in the sheet resends it"
+  },
+  "engineerLimitReached": "You’ve reached today’s Engineer limit. It resets at {time}.",
+  "@engineerLimitReached": {
+    "description": "Transcript row for a turn refused with user_quota_exhausted; time is the reset moment in the device's local time",
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "engineerLimitReachedNoTime": "You’ve reached today’s Engineer limit. Try again after it resets.",
+  "@engineerLimitReachedNoTime": {
+    "description": "Same as engineerLimitReached when the server did not say when the limit resets"
+  },
+  "engineerConsentStatusTitle": "Sharing code with Anthropic",
+  "@engineerConsentStatusTitle": {
+    "description": "Settings → Engineer: consent row title while loading or on error"
+  },
+  "engineerConsentStatusOn": "Sharing code with Anthropic: on since {date}",
+  "@engineerConsentStatusOn": {
+    "description": "Settings → Engineer: consent is current",
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "engineerConsentStatusOnNoDate": "Sharing code with Anthropic: on",
+  "@engineerConsentStatusOnNoDate": {
+    "description": "Settings → Engineer: consent is on but the server sent no date"
+  },
+  "engineerConsentStatusOff": "Sharing code with Anthropic: off",
+  "@engineerConsentStatusOff": {
+    "description": "Settings → Engineer: no current consent"
+  },
+  "engineerConsentStatusOnSubtitle": "The Engineer sends what it reads and runs to Claude",
+  "@engineerConsentStatusOnSubtitle": {
+    "description": "Subtitle when consent is on"
+  },
+  "engineerConsentStatusOffSubtitle": "The Engineer asks before it sends anything",
+  "@engineerConsentStatusOffSubtitle": {
+    "description": "Subtitle when consent is off"
+  },
+  "engineerConsentStatusLoading": "Checking…",
+  "@engineerConsentStatusLoading": {
+    "description": "Subtitle while the consent status loads"
+  },
+  "engineerConsentStatusError": "Couldn’t check. Tap to try again.",
+  "@engineerConsentStatusError": {
+    "description": "Subtitle when the consent status failed to load"
+  },
+  "engineerConsentWithdraw": "Withdraw",
+  "@engineerConsentWithdraw": {
+    "description": "Settings → Engineer: withdraw consent button"
+  },
+  "engineerConsentWithdrawTitle": "Stop sharing code with Anthropic?",
+  "@engineerConsentWithdrawTitle": {
+    "description": "Withdraw confirmation dialog title"
+  },
+  "engineerConsentWithdrawBody": "The Engineer stops until you agree again. Other AURA features are not affected.",
+  "@engineerConsentWithdrawBody": {
+    "description": "Withdraw confirmation dialog body"
+  },
+  "engineerConsentWithdrawn": "Withdrawn. The Engineer will ask before it sends anything again.",
+  "@engineerConsentWithdrawn": {
+    "description": "Snackbar after a successful withdraw"
+  },
+  "engineerConsentWithdrawFailed": "Couldn’t withdraw. {reason}",
+  "@engineerConsentWithdrawFailed": {
+    "description": "Snackbar when withdraw failed",
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "desktopIdeUnavailableTitle": "The desktop IDE isn't available on this platform yet",
+  "@desktopIdeUnavailableTitle": {
+    "description": "Shown at /ide on a platform without the Desktop IDE (macOS, mobile, web)"
+  },
+  "desktopIdeUnavailableBody": "It runs in AURA on Windows and Linux. Everything else in AURA works here as usual.",
+  "@desktopIdeUnavailableBody": {
+    "description": "Explains where the Desktop IDE runs"
+  },
+  "desktopIdeUnavailableGoHome": "Go to Home",
+  "@desktopIdeUnavailableGoHome": {
+    "description": "Button from the desktop-IDE-unavailable page back to Home"
+  },
+  "hostdRemoteControlTitle": "Allow control from my phone and the web",
+  "@hostdRemoteControlTitle": {
+    "description": "Desktop toggle (WP8, D-10b) that lets phone and web Engineer turns use this computer"
+  },
+  "hostdRemoteControlExplanation": "When on, the Engineer can work on this computer's granted folders from your phone or the web. Every change and command is approved on that device first. Turn it off here any time.",
+  "@hostdRemoteControlExplanation": {
+    "description": "One-line explanation under the remote-control toggle"
+  },
+  "hostdRemoteControlConfirmTitle": "Allow control from your phone and the web?",
+  "@hostdRemoteControlConfirmTitle": {
+    "description": "Confirmation dialog title before remote control is turned on"
+  },
+  "hostdRemoteControlConfirmBody": "Anyone signed in to your AURA account on a phone or in a browser will be able to ask the Engineer to read, change and run commands in this computer's granted folders. Each change and command still waits for approval on that device. You can turn this off here at any time.",
+  "@hostdRemoteControlConfirmBody": {
+    "description": "Confirmation dialog body before remote control is turned on"
+  },
+  "hostdRemoteControlConfirmAllow": "Allow",
+  "@hostdRemoteControlConfirmAllow": {
+    "description": "Confirm button that turns remote control on"
+  },
+  "hostdRemoteControlFailed": "Could not change remote control: {error}",
+  "@hostdRemoteControlFailed": {
+    "description": "Snackbar when the daemon refused or could not be reached",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "engineerDesktopNotConnected": "Your computer isn't connected",
+  "@engineerDesktopNotConnected": {
+    "description": "Engineer chat desktop bar: no paired daemon is online"
+  },
+  "engineerDesktopRemoteOff": "Remote control is off on your computer — turn it on in AURA on the computer",
+  "@engineerDesktopRemoteOff": {
+    "description": "Engineer chat desktop bar: the daemon is online but remote control is off"
+  },
+  "engineerDesktopNoFolders": "Your computer hasn't shared any folders yet — add one in AURA on the computer",
+  "@engineerDesktopNoFolders": {
+    "description": "Engineer chat desktop bar: remote control is on but no folder is granted"
+  },
+  "engineerDesktopFolderLabel": "Folder on your computer",
+  "@engineerDesktopFolderLabel": {
+    "description": "Label of the folder picker in the Engineer chat desktop bar"
+  },
+  "engineerDesktopCheckFailed": "Couldn't check your computer",
+  "@engineerDesktopCheckFailed": {
+    "description": "Engineer chat desktop bar: GET /api/v3/host/folders failed"
+  },
+  "engineerDesktopRefresh": "Check again",
+  "@engineerDesktopRefresh": {
+    "description": "Tooltip of the desktop bar's refresh button"
+  },
+  "hostdCodeGitPushNeedsApproval": "Any git push by the agent waits for your approval.",
+  "@hostdCodeGitPushNeedsApproval": {
+    "description": "aura_hostd error code git_push_needs_approval (hostd_error_codes.dart)"
+  },
+  "hostdCodePathOutsideTrustedFolder": "This command reaches outside this trusted folder, so it waits for your approval.",
+  "@hostdCodePathOutsideTrustedFolder": {
+    "description": "aura_hostd error code path_outside_trusted_folder (hostd_error_codes.dart)"
+  },
+  "hostdCodeRemoteCommandNeedsConfirmation": "Commands sent from your phone or the web wait for your approval there first.",
+  "@hostdCodeRemoteCommandNeedsConfirmation": {
+    "description": "aura_hostd error code remote_command_needs_confirmation (hostd_error_codes.dart)"
+  },
+  "hostdCodeProtectedGitDirFile": "Writing a .git file that points Git somewhere else is always refused.",
+  "@hostdCodeProtectedGitDirFile": {
+    "description": "aura_hostd error code protected_git_dir_file (hostd_error_codes.dart)"
+  },
+  "hostdCodeRemoteControlDisabled": "Remote control is off on this computer. Turn on \"Allow control from my phone and the web\" on the computer.",
+  "@hostdCodeRemoteControlDisabled": {
+    "description": "aura_hostd error code remote_control_disabled (hostd_error_codes.dart)"
+  },
+  "hostdCodeRemoteConfirmationRequired": "Changes from your phone or the web must be approved there first.",
+  "@hostdCodeRemoteConfirmationRequired": {
+    "description": "aura_hostd error code remote_confirmation_required (hostd_error_codes.dart)"
+  },
+  "hostdCodeInvalidTaskKey": "The Host Daemon didn't recognize this task. Update the app and try again.",
+  "@hostdCodeInvalidTaskKey": {
+    "description": "aura_hostd error code invalid_task_key (hostd_error_codes.dart)"
+  },
+  "hostdCodeIsolatedTaskUnresolved": "Couldn't set up an isolated copy of the folder for this task.",
+  "@hostdCodeIsolatedTaskUnresolved": {
+    "description": "aura_hostd error code isolated_task_unresolved (hostd_error_codes.dart)"
+  },
+  "hostdCodeInvalidOrigin": "The Host Daemon couldn't tell where this request came from, so it refused it. Update the app and try again.",
+  "@hostdCodeInvalidOrigin": {
+    "description": "aura_hostd error code invalid_origin (hostd_error_codes.dart)"
+  },
+  "hostdCodeDiagnosticsUntrusted": "Problems runs only in trusted folders. Trust this folder to check it.",
+  "@hostdCodeDiagnosticsUntrusted": {
+    "description": "aura_hostd error code diagnostics_untrusted (hostd_error_codes.dart)"
+  },
+  "hostdCodeInvalidRequestBody": "The request to the Host Daemon wasn't in the form it expects. Update the app and try again.",
+  "@hostdCodeInvalidRequestBody": {
+    "description": "aura_hostd error code invalid_request_body (hostd_error_codes.dart)"
+  },
+  "gitInitBannerTitle": "This folder isn't a git repository",
+  "@gitInitBannerTitle": {
+    "description": "Engineer panel banner (D-13): the bound folder is not a git repository"
+  },
+  "gitInitBannerBody": "The Engineer works in its own copy of the folder so every change can be reviewed and undone, and that needs git. Initialize git here to let it start.",
+  "@gitInitBannerBody": {
+    "description": "Engineer panel banner body: why isolation needs git (D-09, D-13)"
+  },
+  "gitInitButton": "Initialize git here",
+  "@gitInitButton": {
+    "description": "Button that makes the folder a git repository (D-13)"
+  },
+  "gitInitButtonShort": "Initialize git",
+  "@gitInitButtonShort": {
+    "description": "Compact button in the phone/web desktop bar (D-13)"
+  },
+  "gitInitConfirmTitle": "Initialize git in this folder?",
+  "@gitInitConfirmTitle": {
+    "description": "Confirmation dialog title before git init (D-13)"
+  },
+  "gitInitConfirmBody": "This runs git init in {path} and commits the folder's current files as a first commit, on this computer only. Files your .gitignore lists are left out; everything else — including files like .env — goes into that local commit, so add a .gitignore first if you need one.",
+  "@gitInitConfirmBody": {
+    "description": "Confirmation dialog body before git init: what it does and what it commits (D-13)",
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "gitInitConfirmAction": "Initialize",
+  "@gitInitConfirmAction": {
+    "description": "Confirm button of the git-init dialog"
+  },
+  "gitInitDone": "Git is ready in this folder.",
+  "@gitInitDone": {
+    "description": "Snackbar after a successful git init"
+  },
+  "gitInitFailed": "Couldn't initialize git: {error}",
+  "@gitInitFailed": {
+    "description": "Snackbar when git init failed or was refused",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "engineerDesktopNotGit": "This folder isn't a git repository yet — the Engineer needs one to work on its own copy.",
+  "@engineerDesktopNotGit": {
+    "description": "Phone/web desktop bar: the chosen folder is not a git repository (D-13)"
+  },
+  "hostdCodeIsolationNeedsGit": "This folder isn't a git repository, so the Engineer can't work on its own copy of it — use Initialize git here first.",
+  "@hostdCodeIsolationNeedsGit": {
+    "description": "aura_hostd error code isolation_needs_git (hostd_error_codes.dart)"
+  },
+  "hostdCodeAlreadyAGitRepo": "This folder is already a git repository.",
+  "@hostdCodeAlreadyAGitRepo": {
+    "description": "aura_hostd error code already_a_git_repo (hostd_error_codes.dart)"
+  },
+  "hostdCodeGitInitFailed": "Couldn't initialize git here: {detail}",
+  "@hostdCodeGitInitFailed": {
+    "description": "aura_hostd error code git_init_failed; detail is git's own output",
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "hostdCodeApprovalQueueFull": "Too many changes are waiting for your approval; answer some first.",
+  "@hostdCodeApprovalQueueFull": {
+    "description": "aura_hostd error code approval_queue_full (hostd_error_codes.dart)"
+  },
+  "chatApprovalExpiredNotice": "This approval expired. Ask again.",
+  "@chatApprovalExpiredNotice": {
+    "description": "Transcript row when an approval came back confirmation_invalid (expired, used or unknown); no Retry"
+  },
+  "ideStatusRepairTooltip": "The server no longer accepts this computer. Click to pair it again.",
+  "@ideStatusRepairTooltip": {
+    "description": "Status bar: tooltip of the daemon item when it must be paired again (G-12)"
   }
 }

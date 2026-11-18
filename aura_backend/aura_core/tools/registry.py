@@ -38,6 +38,7 @@ from ..domain.output_schema import output_errors
 from ..domain.tools import ToolPolicyDecision, ToolSensitivity, ToolSpec
 from ..llm.sensitivity import escalate
 from ..observability.logging import get_logger
+from ..ports.coding import TOOL_CALL_CONFIRMED
 from ..ports.runtime import Tool, ToolContext
 from .policy import ToolPolicy
 from .schema import validate_arguments
@@ -394,6 +395,7 @@ class ToolRegistry:
 
         # 4. Sandboxed execution
         timeout = self.call_timeout(spec, context, host_routed=on_desktop)
+        confirmed_token = TOOL_CALL_CONFIRMED.set(bool(confirmed))
         try:
             if on_desktop:
                 # The work happens on the user's own machine, and most of the wait is a human
@@ -437,6 +439,8 @@ class ToolRegistry:
                 error_kind="tool_execution_error",
                 policy_reason=decision.reason,
             )
+        finally:
+            TOOL_CALL_CONFIRMED.reset(confirmed_token)
 
         content = str(raw)
         # ADR-030 Phase 4: tool output is whatever the tool reached -- a calendar, a file, a

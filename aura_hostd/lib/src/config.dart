@@ -7,16 +7,31 @@
 /// (a token minted through some other admin/dev path). Either way, everything downstream of
 /// `authToken` -- the WebSocket connection in `rpc_client.dart` -- is unaffected by which one was
 /// used.
+///
+/// `remoteControl` (`remote_control` in the file, WP8 / D-10b) says whether the Engineer may drive
+/// this computer from the phone or the web app. It is off unless the file says `true`, and it is
+/// changed only through the local control server's `POST /remote_control` -- never by anything the
+/// backend sends: the opt-in is enforced on this machine (`task_handler.dart`).
 library;
 
 import 'dart:convert';
 import 'dart:io';
 
 class DaemonConfig {
-  DaemonConfig({required this.backendUrl, required this.authToken});
+  DaemonConfig({required this.backendUrl, required this.authToken, this.remoteControl = false});
 
   final String backendUrl;
   final String? authToken;
+
+  /// Whether a turn started on the phone or the web (`create_task` with `origin: "remote"`) may
+  /// act on this computer at all. Off by default; see the library doc.
+  final bool remoteControl;
+
+  DaemonConfig copyWith({String? backendUrl, String? authToken, bool? remoteControl}) => DaemonConfig(
+        backendUrl: backendUrl ?? this.backendUrl,
+        authToken: authToken ?? this.authToken,
+        remoteControl: remoteControl ?? this.remoteControl,
+      );
 
   /// The `wss://.../api/v3/host/agent` URL derived from [backendUrl], which is stored as the
   /// plain `https://host[:port]` base the same way every other AURA client config does.
@@ -26,11 +41,15 @@ class DaemonConfig {
     return uri.replace(scheme: scheme, path: '/api/v3/host/agent').toString();
   }
 
-  Map<String, Object?> toJson() => {'backend_url': backendUrl, 'auth_token': authToken};
+  Map<String, Object?> toJson() =>
+      {'backend_url': backendUrl, 'auth_token': authToken, 'remote_control': remoteControl};
 
   static DaemonConfig fromJson(Map<String, dynamic> json) => DaemonConfig(
         backendUrl: json['backend_url'] as String? ?? 'https://localhost:8000',
         authToken: json['auth_token'] as String?,
+        // Only a JSON `true` turns it on: an older file without the key, or anything malformed,
+        // leaves this computer refusing remote turns.
+        remoteControl: json['remote_control'] == true,
       );
 }
 
@@ -57,6 +76,36 @@ class ConfigStore {
   void save(DaemonConfig config) {
     _file.parent.createSync(recursive: true);
     writePrivateFile(_file, jsonEncode(config.toJson()));
+  }
+
+  /// Saves a new backend URL and token (pairing, `auth set-token`) and keeps every other setting
+  /// -- `remote_control` above all: re-pairing is not a decision about remote control, so it
+  /// neither switches it on nor silently off. An unreadable file keeps nothing, which leaves
+  /// remote control off.
+  void saveCredentials({required String backendUrl, required String? authToken}) {
+    DaemonConfig current;
+    try {
+      current = load();
+    } on Object {
+      current = DaemonConfig(backendUrl: backendUrl, authToken: authToken);
+    }
+    save(DaemonConfig(
+      backendUrl: backendUrl,
+      authToken: authToken,
+      remoteControl: current.remoteControl,
+    ));
+  }
+
+  /// Whether remote control is on, read from disk now -- `TaskHandler` calls this on every RPC of
+  /// a remote task, so turning it off in the desktop app stops the very next call. A file that
+  /// cannot be read or parsed counts as off: a choice this daemon cannot read must not leave the
+  /// phone in control.
+  bool remoteControlEnabled() {
+    try {
+      return load().remoteControl;
+    } on Object {
+      return false;
+    }
   }
 }
 

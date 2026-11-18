@@ -55,6 +55,23 @@ const _daemonErrorCodes = [
   'terminal_start_failed',
   'debug_start_failed',
   'debug_unreachable',
+  // Trust tier, remote control and isolated tasks (WP3, WP8).
+  'git_push_needs_approval',
+  'path_outside_trusted_folder',
+  'remote_command_needs_confirmation',
+  'protected_git_dir_file',
+  'remote_control_disabled',
+  'remote_confirmation_required',
+  'invalid_task_key',
+  'isolated_task_unresolved',
+  'invalid_origin',
+  'diagnostics_untrusted',
+  'invalid_request_body',
+  // Isolation needs git (WP4, D-13) and the bounded approval queue (WP9).
+  'isolation_needs_git',
+  'already_a_git_repo',
+  'git_init_failed',
+  'approval_queue_full',
 ];
 
 void main() {
@@ -158,6 +175,45 @@ void main() {
         client().gitStatus(root: '/w'),
         throwsA(isA<HostdControlError>().having((e) => e.message, 'message', 'something new')),
       );
+    });
+
+    test('Problems in an untrusted folder (403 diagnostics_untrusted) is shown translated', () async {
+      errorBody = {'error': 'diagnostics run only in trusted folders', 'code': 'diagnostics_untrusted'};
+      await expectLater(
+        client().diagnosticsRun(root: '/w', tool: 'ruff'),
+        throwsA(isA<HostdControlError>()
+            .having((e) => e.message, 'message', _ar.hostdCodeDiagnosticsUntrusted)
+            .having((e) => e.code, 'code', 'diagnostics_untrusted')),
+      );
+    });
+
+    test("the remote-control switch's refusal is shown translated", () async {
+      errorBody = {'error': '"enabled" is required and must be true or false', 'code': 'invalid_request_body'};
+      await expectLater(
+        client().setRemoteControl(true),
+        throwsA(isA<HostdControlError>()
+            .having((e) => e.message, 'message', _ar.hostdCodeInvalidRequestBody)),
+      );
+    });
+
+    test('remote control off, as the daemon reports it, names the switch to turn on', () {
+      expect(_en.hostdCodeRemoteControlDisabled, contains(_en.hostdRemoteControlTitle));
+      expect(_ar.hostdCodeRemoteControlDisabled, contains(_ar.hostdRemoteControlTitle));
+    });
+
+    test('initGit on a folder that already is a repository is refused, in Arabic', () async {
+      errorBody = {'error': '/w is already a git repository', 'code': 'already_a_git_repo'};
+      await expectLater(
+        client().initGit(root: '/w'),
+        throwsA(isA<HostdControlError>()
+            .having((e) => e.message, 'message', _ar.hostdCodeAlreadyAGitRepo)
+            .having((e) => e.code, 'code', 'already_a_git_repo')),
+      );
+    });
+
+    test("a failed git init quotes git's own output", () {
+      expect(hostdCodeMessage('git_init_failed', 'git init failed', detail: 'fatal: x', l10n: _en),
+          _en.hostdCodeGitInitFailed('fatal: x'));
     });
   });
 }

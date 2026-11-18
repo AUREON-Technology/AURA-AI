@@ -35,6 +35,7 @@ class _RecordingSseClient extends SseAgentClient {
     double temperature = 0.3,
     List<ChatImageAttachment> images = const [],
     String? workspaceRoot,
+    bool desktopTaskIsolation = false,
   }) async* {
     requests.add((message: message, approvalIds: List.of(approvalIds)));
     yield SseChatEvent.fromWire('token', {'text': 'Done.'});
@@ -151,8 +152,8 @@ void main() {
     expect(sse.requests, isEmpty);
   });
 
-  test('rejecting removes exactly that call, not every call sharing its call id', () {
-    container.read(chatRepositoryProvider).rejectPendingCalls([_turnOneCall]);
+  test('rejecting removes exactly that call, not every call sharing its call id', () async {
+    await container.read(chatRepositoryProvider).rejectPendingCalls([_turnOneCall]);
 
     final left = container.read(pendingConfirmationProvider);
     expect(left.map((c) => c.approvalId), ['apr.tok2.n1']);
