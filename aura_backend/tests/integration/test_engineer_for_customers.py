@@ -163,3 +163,63 @@ async def test_a_lookup_error_at_recheck_keeps_a_connected_daemon(container, swi
             with client.websocket_connect("/api/v3/host/agent") as ws:
                 ws.send_json({"type": "auth", "token": "hal"})
                 ws.receive_json()
+
+
+# --- WP11 gap check: Plan E meets the stage-1 Engineer routes (module readiness, 2026-11-18) ---
+# admit_turn grants a customer's Engineer per turn; these routes are not turns, so they must ask
+# the plan themselves or a paying customer sees the Engineer greyed out and their phone refused.
+
+
+def _get(container, user: str, path: str):
+    from fastapi.testclient import TestClient
+
+    with TestClient(_customer_app(container)) as client:
+        return client.get(path, headers={"authorization": f"Bearer {user}"})
+
+
+def _engineer_usable(response) -> bool:
+    assert response.status_code == 200, response.text
+    return next(a for a in response.json()["agents"] if a["id"] == "engineer")["usable"]
+
+
+async def test_agents_lists_the_engineer_usable_for_a_pro_customer_only(container, switch) -> None:
+    await _pro(container, "hal")
+    assert _engineer_usable(_get(container, "hal", "/api/v3/agents")) is True
+    assert _engineer_usable(_get(container, "ida", "/api/v3/agents")) is False  # Free
+    switch(False)
+    assert _engineer_usable(_get(container, "hal", "/api/v3/agents")) is False
+
+
+async def test_host_folders_serves_a_pro_customer_and_refuses_free(container, switch) -> None:
+    await _pro(container, "jo")
+    served = _get(container, "jo", "/api/v3/host/folders")
+    assert served.status_code == 200, served.text
+    assert served.json()["connected"] is False  # no daemon paired in this test
+    assert _get(container, "kai", "/api/v3/host/folders").status_code == 403  # Free
+    switch(False)
+    assert _get(container, "jo", "/api/v3/host/folders").status_code == 403
+
+
+async def test_git_init_reaches_the_desktop_check_for_a_pro_customer(container, switch) -> None:
+    from fastapi.testclient import TestClient
+
+    await _pro(container, "lee")
+    with TestClient(_customer_app(container)) as client:
+        def init(user):
+            return client.post("/api/v3/host/folders/git-init", json={"path": "/tmp/x"},
+                               headers={"authorization": f"Bearer {user}"})
+        # Past the entitlement gate: refused only because no computer is connected.
+        assert init("lee").status_code == 503
+        assert init("max").status_code == 403  # Free
+
+
+async def test_a_plan_lookup_failure_is_503_not_a_refusal(container, switch, monkeypatch) -> None:
+    """Not "not entitled": a database blip must not tell a paying customer they lack the Engineer."""
+    await _pro(container, "ned")
+
+    async def broken(_workspace_id):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(container.plans, "entitlement", broken)
+    response = _get(container, "ned", "/api/v3/host/folders")
+    assert response.status_code == 503, response.text

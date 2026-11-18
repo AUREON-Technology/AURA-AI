@@ -421,6 +421,31 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 turn = replace(turn, capabilities=tuple(c for c in turn.capabilities if c != "engineer_agent"))
         return await plans.admit_message(workspace_id), turn
 
+    async def engineer_granted(caller: Principal) -> bool:
+        """Whether the caller has the Engineer outside a turn: by role (``granted``) or, with
+        ``AURA_ENGINEER_FOR_CUSTOMERS``, by the active workspace's plan -- the same rule
+        ``admit_turn`` applies to a turn. Routes that are not turns (``/agents``, ``/host/folders``,
+        ``git-init``) need it, or a paying customer sees the Engineer greyed out and their phone
+        refused (module readiness WP11). A plan lookup failure is 503, never "not entitled"."""
+        if "engineer_agent" in granted(caller):
+            return True
+        if plans is None or not container.settings.security.engineer_for_customers:
+            return False
+        try:
+            workspace_id = await plans.metered_workspace(caller)
+            if workspace_id is None:
+                return False
+            plan, _seats = await plans.entitlement(workspace_id)
+        except Exception as exc:
+            logger.warning("could not read a customer's plan for the Engineer", exc_info=True)
+            raise HTTPException(
+                status_code=503,
+                detail=DependencyUnavailableError(
+                    "could not check your plan just now", dependency="plans"
+                ).to_dict(),
+            ) from exc
+        return bool(plan.engineer)
+
     async def release_turn(reservation: Any) -> None:
         if reservation is not None:
             try:
@@ -1604,6 +1629,8 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
     @router.get("/agents")
     async def list_agents(caller: Principal = Depends(principal)) -> JSONResponse:
         caps = frozenset(granted(caller))
+        if "engineer_agent" not in caps and await engineer_granted(caller):
+            caps = caps | {"engineer_agent"}  # a customer's Engineer comes from their plan (WP11)
         # D-03: whether this caller must agree to the Anthropic notice before the persona runs,
         # so a client can show the notice before the first send instead of after a refusal.
         consent_current = await _engineer_consent_current(caller)
@@ -1765,7 +1792,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         go stale. ``connected: false`` when no paired desktop is online; ``remote_control`` is
         whether the person allowed control from other devices *on the computer*.
         """
-        if "engineer_agent" not in granted(caller):
+        if not await engineer_granted(caller):
             raise HTTPException(
                 status_code=403,
                 detail=AuthorizationError("the Engineer is not available to this account").to_dict(),
@@ -1815,7 +1842,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         a granted folder, not already a repository, and -- from a phone or the web -- remote
         control must be on at the computer. Its refusal comes back as ``desktop_refused``.
         """
-        if "engineer_agent" not in granted(caller):
+        if not await engineer_granted(caller):
             raise HTTPException(
                 status_code=403,
                 detail=AuthorizationError("the Engineer is not available to this account").to_dict(),
