@@ -72,7 +72,7 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 | Target | State (checked 2026-10-28) |
 | --- | --- |
 | **Railway control plane** (`aureon-ai.tech`) | Serves `2337577` (deployment `ae2746c4…`); `environment: production`; **`/health/ready` unhealthy: schema `0013`, expected `0015`**; blueprint v2 active. Providers: `hosted1` healthy, `hfspace` `HTTP 503`. Railway's GitHub auto-deploy ships every `main` push whether or not CI ran (Deploy Control Plane failed instantly for the last three merges, yet they are live). |
-| **Hugging Face GPU Space** (`hfspace`) | Down or asleep (503 from `/health/ready`) |
+| **Hugging Face GPU Space** (`hfspace`) | Down or asleep (503 from `/health/ready`, still so on 2026-11-18 at `api.aureon-ai.tech`, schema `0023`). **SaaS P1-G (owner decision 2026-11-18):** one L4, always on (~$584/mo); the deploy workflow now enforces hardware and no sleep, and `deploy/scripts/verify_gpu_source.py` collects readiness items 2, 3, 6, 9. **Not proven until the owner steps in `docs/deployment/inference-plane.md` §9 are done and a report with no FAIL/SKIP is committed.** Seen live 2026-11-18: `/metrics`, `/docs`, `/openapi.json` → 404 (item 3 holds, unrecorded until the report) |
 | **Contabo VPS** (169.58.188.43, `/opt/aura-stack`) | Stale and unreachable for CI. Deploy VPS has failed on every run since at least 2026-09-27. Since 2026-10-18 the failure is `Host key verification failed`; the new key is ED25519 `SHA256:6dFAzu5+m0A5GSFG5QRt/rNSyZ2JleERZNeRoBWLk2g`. What it runs now is unknown. |
 | **Dev stack** (`dev.aureon-ai.tech`) | DNS no longer resolves |
 
