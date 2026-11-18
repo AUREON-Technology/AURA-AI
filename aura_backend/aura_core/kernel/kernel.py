@@ -325,6 +325,26 @@ def _stream_error_outcome(exc: AuraError) -> TurnOutcome:
     return TurnOutcome.ERROR
 
 
+def _vision_step_outcome(perception: Any) -> dict[str, str]:
+    """Status and wording for the finished vision step (ADR-031).
+
+    ``done`` when a vision model described the images. ``degraded`` when only OCR read them:
+    the usual cause is a vision server that sleeps when idle and is still waking. The step says
+    so, so the user knows to send the image again rather than trust a text-only reading.
+    ``degraded`` is a status value added for this; a client that does not know it still shows
+    the description.
+    """
+    if getattr(perception, "mode", None) == "ocr_fallback":
+        return {
+            "status": "degraded",
+            "description": (
+                "Only the text in the image(s) could be read: the vision model is unavailable "
+                "or still starting. Send it again in a minute for a full look."
+            ),
+        }
+    return {"status": "done", "description": "Looked at the image(s)"}
+
+
 class AIKernel:
     """Runs one turn through the pipeline."""
 
@@ -732,7 +752,7 @@ class AIKernel:
                     request, perception = await self._perceive_images(request, message)
                     yield {
                         "type": "step", "step_id": "vision", "kind": "vision",
-                        "status": "done", "description": "Looked at the image(s)",
+                        **_vision_step_outcome(perception),
                         "detail": perception.as_dict(),
                         "elapsed_ms": round(perception.duration_ms, 2),
                     }

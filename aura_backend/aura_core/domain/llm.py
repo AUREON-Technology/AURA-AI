@@ -418,6 +418,10 @@ class ProviderCapabilities:
     #: than the request's plain ``max_output_tokens``. That is the conservative default the
     #: CPU-only provider's planner sizing depends on.
     tokens_per_second: float = 0.0
+    #: Readiness must not call this provider to learn its health: it reports the circuit
+    #: breaker instead (``AURA_PROVIDER_<NAME>_HEALTH_PROBE=passive``). For a server that wakes
+    #: on any request and bills while awake.
+    passive_health: bool = False
 
     def __post_init__(self) -> None:
         if self.context_window <= 0:

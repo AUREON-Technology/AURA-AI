@@ -96,6 +96,8 @@ class EchoProvider(BaseProvider):
         self._chunk_size = max(1, chunk_size)
         self._healthy = healthy
         self.calls: list[CompletionRequest] = []
+        #: How many times readiness called :meth:`health` (a passive provider must stay at 0).
+        self.health_calls = 0
 
     # -- scripting ---------------------------------------------------------------------
 
@@ -203,6 +205,7 @@ class EchoProvider(BaseProvider):
         )
 
     async def health(self) -> HealthStatus:
+        self.health_calls += 1
         return HealthStatus(self._healthy, "scripted", 0.0)
 
     async def close(self) -> None:

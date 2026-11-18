@@ -243,6 +243,9 @@ def _redact_url_userinfo(value: str) -> str:
 # --------------------------------------------------------------------------------------
 
 
+#: How readiness may learn a provider's health (``ProviderConfig.health_probe``).
+HEALTH_PROBE_MODES = frozenset({"active", "passive"})
+
 @dataclass(frozen=True, slots=True)
 class ProviderConfig:
     """One configured model endpoint.
@@ -303,6 +306,13 @@ class ProviderConfig:
     #: The liveness probe's path under base_url. ``/models`` is universal for OpenAI-compatible
     #: servers; override it for a hosted API that does not serve it at the chat base URL.
     health_path: str = "/models"
+    #: How readiness learns this provider's health. ``active`` (default) calls ``health_path``
+    #: on every ``/health/ready``. ``passive`` never calls it: readiness reports the circuit
+    #: breaker, which only real generations move. For a server that sleeps when idle and wakes
+    #: on any request -- a Hugging Face Space -- an active probe is a request, so a load
+    #: balancer or uptime check polling readiness keeps a paid GPU awake around the clock.
+    #: AURA_PROVIDER_<NAME>_HEALTH_PROBE.
+    health_probe: str = "active"
     #: The most private content this provider may receive -- public | internal | sensitive
     #: (ADR-030 §4). Empty = the category default: ``internal`` for a hosted open-weight API,
     #: ``sensitive`` (everything) for anything else. AURA_PROVIDER_<NAME>_MAX_DATA_CLASSIFICATION.
@@ -364,6 +374,12 @@ class ProviderConfig:
             raise ConfigurationError(
                 f"provider {self.name!r} health_path must start with '/'",
                 details={"provider": self.name, "health_path": self.health_path},
+            )
+        if self.health_probe not in HEALTH_PROBE_MODES:
+            raise ConfigurationError(
+                f"provider {self.name!r} health_probe must be one of "
+                f"{sorted(HEALTH_PROBE_MODES)}",
+                details={"provider": self.name, "health_probe": self.health_probe},
             )
         self._validate_extra_body()
         known_classes = {c.value for c in DataClassification}
@@ -710,6 +726,7 @@ class ProviderConfig:
             tpm=_int(f"{p}_TPM", 0, minimum=0),
             tpd=_int(f"{p}_TPD", 0, minimum=0),
             health_path=_env(f"{p}_HEALTH_PATH", "/models") or "/models",
+            health_probe=(_env(f"{p}_HEALTH_PROBE", "active") or "active").strip().lower(),
             max_data_classification=(_env(f"{p}_MAX_DATA_CLASSIFICATION", "") or "").lower(),
             tokens_per_second=_float(f"{p}_TOKENS_PER_SECOND", 0.0, minimum=0.0),
             extra_body=(_env(f"{p}_EXTRA_BODY", "") or "").strip(),

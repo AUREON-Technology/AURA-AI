@@ -215,6 +215,43 @@ class TestFallback:
         # The text-only model was never handed the pixels.
         assert not any(call.images for call in echo.calls)
 
+    async def test_the_stream_marks_an_ocr_only_look_as_degraded(self, monkeypatch) -> None:
+        """Phase I: the vision Space sleeps when idle, so the first image after a quiet spell
+        often gets OCR only. The step must say so, so the user sends it again instead of
+        trusting a text-only reading."""
+        from aura_core.domain import ProviderCapabilities
+        from aura_core.kernel import TurnRequest
+        from aura_core.vision.engine import VisionEngine
+
+        monkeypatch.setenv("AURA_VISION_ENABLED", "true")
+        container = Container(load_settings(refresh=True, validate=False))
+        await container.startup()
+        echo = container.router.get("echo")
+        echo._capabilities = ProviderCapabilities(  # no image-capable model is up
+            model_id="echo-1", context_window=8192, max_output_tokens=2048, is_local=True,
+            supports_tools=True, supports_json_mode=True, modalities=(Modality.TEXT,),
+        )
+
+        class FakeOcr:
+            name = "fake-ocr"
+
+            async def image_text(self, image: bytes, *, page: int) -> str:
+                return "TOTAL 42 EGP"
+
+        container.kernel._deps.vision = VisionEngine(
+            router=container.router, settings=container.settings.vision, ocr=FakeOcr())
+        echo.queue(ScriptedTurn(text="The receipt total is 42 EGP."))
+
+        frames = [frame async for frame in container.kernel.stream(TurnRequest(
+            message="What is the total?", user_id=CALLER, plan=False, use_tools=False,
+            images=(_image(),),
+        ))]
+
+        steps = [f for f in frames if f["type"] == "step" and f.get("kind") == "vision"]
+        assert [s["status"] for s in steps] == ["running", "degraded"]
+        assert "still starting" in steps[-1]["description"]
+        assert steps[-1]["detail"]["mode"] == "ocr_fallback"
+
 
 class TestOverHttp:
     def _body(self, *pngs: bytes, **extra) -> dict:

@@ -1088,6 +1088,8 @@ class ProviderRouter:
             # `is_local` is what `require_local` filters on, so a caller that needs a local
             # provider can tell from readiness whether one is up.
             is_local = provider.capabilities.is_local
+            if provider.capabilities.passive_health:
+                return name, self._passive_health(name, is_local=is_local)
             try:
                 status = await asyncio.wait_for(provider.health(), timeout=10.0)
                 return name, {
@@ -1108,6 +1110,34 @@ class ProviderRouter:
                     1 if status["healthy"] else 0
                 )
         return report
+
+    def _passive_health(self, name: str, *, is_local: bool) -> dict[str, Any]:
+        """What readiness may say about a provider it must not call (``health_probe=passive``).
+
+        Only real generations move the breaker, so this is the provider's health as traffic
+        last found it. A provider no turn has used yet reads healthy: "not known to be broken"
+        is the honest reading of a sleeping server, and calling it to find out would wake it.
+        The ``probe`` field tells a reader that this was not a live check.
+        """
+        stats = self._stats.get(name)
+        if stats is None:
+            return {"healthy": True, "detail": "passive: no traffic yet", "latency_ms": None,
+                    "is_local": is_local, "probe": "passive"}
+        latency = stats.latency.value_ms
+        if stats.total_requests == 0:
+            detail = "passive: no traffic yet"
+        else:
+            detail = (
+                f"passive: circuit {stats.breaker.state}, "
+                f"{stats.breaker.consecutive_failures} consecutive failures"
+            )
+        return {
+            "healthy": stats.healthy,
+            "detail": detail,
+            "latency_ms": round(latency, 1) if latency else None,
+            "is_local": is_local,
+            "probe": "passive",
+        }
 
     def reset_circuit(self, name: str) -> None:
         """Manual recovery, exposed to admins for when a provider is known to be fixed."""

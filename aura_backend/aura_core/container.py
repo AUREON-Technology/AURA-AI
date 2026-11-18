@@ -1923,7 +1923,11 @@ class Container:
         """Dependency health, for the readiness probe."""
         providers = await self.router.health()
         index = await self.index_manager.active_identity()
-        healthy = any(p["healthy"] for p in providers.values())
+        # A passive provider (health_probe=passive) was not called, so its "healthy" means only
+        # "not known to be broken". It cannot carry readiness on its own while a provider that
+        # *was* checked is down; it counts only when every provider is passive.
+        probed = [p for p in providers.values() if p.get("probe") != "passive"]
+        healthy = any(p["healthy"] for p in (probed or providers.values()))
 
         checks: dict[str, Any] = {}
         for name, check in self._readiness_checks.items():
