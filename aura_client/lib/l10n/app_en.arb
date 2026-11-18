@@ -503,6 +503,10 @@
   "@loginSessionExpired": {
     "description": "Banner shown after the session expired"
   },
+  "loginSessionEndedPlanRequired": "You've been signed out: your plan no longer includes the Engineer on your computer. Upgrade to Pro or Team, then sign in again — everything on this device is still here.",
+  "@loginSessionEndedPlanRequired": {
+    "description": "Banner shown after the desktop session ended because the plan no longer includes the desktop Engineer (WP11)"
+  },
   "loginGoogle": "Sign in with Google",
   "@loginGoogle": {
     "description": "Native Google sign-in button"

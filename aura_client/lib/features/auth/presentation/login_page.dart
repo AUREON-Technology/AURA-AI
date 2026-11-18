@@ -275,7 +275,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                 const SizedBox(height: AuraSpacing.lg),
                                 AuraBanner(
                                   icon: Icons.lock_clock_outlined,
-                                  message: l10n.loginSessionExpired,
+                                  message: ref.watch(sessionEndedForPlanProvider)
+                                      ? l10n.loginSessionEndedPlanRequired
+                                      : l10n.loginSessionExpired,
                                 ),
                               ],
                               const SizedBox(height: AuraSpacing.xxl),

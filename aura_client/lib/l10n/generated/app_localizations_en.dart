@@ -400,6 +400,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Your session expired. Sign in again to pick up where you left off — everything on this device is still here.';
 
   @override
+  String get loginSessionEndedPlanRequired =>
+      'You\'ve been signed out: your plan no longer includes the Engineer on your computer. Upgrade to Pro or Team, then sign in again — everything on this device is still here.';
+
+  @override
   String get loginGoogle => 'Sign in with Google';
 
   @override

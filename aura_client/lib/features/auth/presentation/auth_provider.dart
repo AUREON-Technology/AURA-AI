@@ -148,6 +148,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
         }
       }
 
+      ref.read(sessionEndedForPlanProvider.notifier).set(false);
       ref.read(sessionExpiredProvider.notifier).set(false);
       state = AsyncValue.data(UserProfile(
         id: restored?.uid ?? cachedId,
@@ -418,7 +419,10 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
   /// where the user was, which is what the "Sign in again" copy promises. The
   /// cached profile id stays too, so a *different* account signing in next
   /// still gets a clean device ([_forgetDataOfOtherAccount]).
-  Future<void> expireSession() async {
+  ///
+  /// [planRequired]: the server ended it because the account's plan no longer includes the
+  /// desktop Engineer (a downgrade, WP11); the login page then says so instead of "expired".
+  Future<void> expireSession({bool planRequired = false}) async {
     final current = state.value;
     // The developer bypass never had a backend session to lose.
     if (current == null || current.id == _mockUserId) return;
@@ -429,6 +433,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     await _storage.delete(key: _desktopTokenKey);
     await _storage.delete(key: _desktopTokenExpiryKey);
     ref.read(sessionExpiredProvider.notifier).set(true);
+    ref.read(sessionEndedForPlanProvider.notifier).set(planRequired);
     state = const AsyncValue.data(null);
   }
 
@@ -462,6 +467,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
   /// that data must go first -- the same reason [signOut] wipes it.
   Future<void> _forgetDataOfOtherAccount(String newUserId) async {
     ref.read(sessionExpiredProvider.notifier).set(false);
+    ref.read(sessionEndedForPlanProvider.notifier).set(false);
     final previous = await _storage.read(key: 'user_id');
     if (previous != null && previous.isNotEmpty && previous != newUserId) {
       await ref.read(databaseProvider).wipeUserData();
@@ -592,4 +598,10 @@ class SessionExpiredNotifier extends Notifier<bool> {
 }
 
 final sessionExpiredProvider =
+    NotifierProvider<SessionExpiredNotifier, bool>(SessionExpiredNotifier.new);
+
+/// Whether the session that [sessionExpiredProvider] reports ended because the account's plan no
+/// longer includes the desktop Engineer (`X-Aura-Refusal: plan_required` on `/refresh`, WP11).
+/// Cleared with it by the next sign-in.
+final sessionEndedForPlanProvider =
     NotifierProvider<SessionExpiredNotifier, bool>(SessionExpiredNotifier.new);

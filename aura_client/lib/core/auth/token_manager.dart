@@ -107,6 +107,12 @@ class TokenManager {
   /// may silently re-exchange its way back into it (INT-010).
   bool _accountDeleted = false;
 
+  /// Set when `/refresh` refused with `X-Aura-Refusal: plan_required`: a desktop customer's plan
+  /// no longer includes the Engineer (module readiness WP11). Like [_accountDeleted] it ends the
+  /// session at once, with its reason, instead of falling back to `/token` -- which a desktop
+  /// session has nothing to exchange with, and which would not change the plan.
+  bool _planRequired = false;
+
   String get _authUrl => '${_ref.read(backendUrlProvider)}/api/v3/auth';
   String get _backendUrl => _ref.read(backendUrlProvider);
 
@@ -205,6 +211,7 @@ class TokenManager {
     _renewingAfterRejection = false;
     _renewalRefused = false;
     _accountDeleted = false;
+    _planRequired = false;
     final generation = _generation;
 
     // A refresh that failed without being refused (network, 5xx) leaves the
@@ -216,6 +223,7 @@ class TokenManager {
       if (generation != _generation) return null; // signed out meanwhile (INT-027)
       if (refreshed) return _accessToken;
       if (_accountDeleted) return _endDeletedAccount();
+      if (_planRequired) return _endForPlan();
       refreshInconclusive = !_renewalRefused;
     }
 
@@ -239,6 +247,14 @@ class TokenManager {
   Future<String?> _endDeletedAccount() async {
     debugPrint("[TokenManager] the account was deleted -- ending the session and its local data");
     await _ref.read(authProvider.notifier).endDeletedAccount();
+    return null;
+  }
+
+  /// The plan no longer includes the desktop Engineer: end the session now and say why on the
+  /// login page, rather than a generic "session expired" (WP11, "refused with a plain reason").
+  Future<String?> _endForPlan() async {
+    debugPrint("[TokenManager] refresh refused: the plan no longer includes the desktop Engineer");
+    await _ref.read(authProvider.notifier).expireSession(planRequired: true);
     return null;
   }
 
@@ -315,6 +331,8 @@ class TokenManager {
         // one bad minute upstream would cost the user their session.
         _renewalRefused = _isRefusal(response.statusCode);
         _accountDeleted = _isAccountDeleted(response);
+        _planRequired =
+            _renewalRefused && response.headers['x-aura-refusal'] == 'plan_required';
         if (_renewalRefused) await _clearRefreshToken();
         return false;
       }

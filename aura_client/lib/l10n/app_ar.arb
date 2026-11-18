@@ -146,6 +146,7 @@
   "loginWelcomeBack": "أهلًا بيك تاني",
   "loginSubtitle": "سجّل دخول عشان تزامن مواعيدك ومذاكرتك ومساحة شغلك والـ Agents بتوعك.",
   "loginSessionExpired": "جلستك خلصت. سجّل دخول تاني عشان تكمّل من مكان ما وقفت — كل حاجة على الجهاز ده لسه موجودة.",
+  "loginSessionEndedPlanRequired": "اتسجّل خروجك: باقتك مبقتش فيها الـEngineer على الكمبيوتر بتاعك. رقّي لـPro أو Team، وبعدين سجّل دخول تاني — كل حاجة على الجهاز ده لسه موجودة.",
   "loginGoogle": "تسجيل الدخول بـ Google",
   "loginGoogleBrowser": "تسجيل الدخول بـ Google (من المتصفح)",
   "loginUnlockBiometrics": "افتح بالبصمة",

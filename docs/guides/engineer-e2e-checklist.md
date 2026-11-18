@@ -249,10 +249,10 @@ With the Pro customer signed in on the desktop, paired, and a phone session open
 4. Keep the app open.
    - **Expected, within about 15 minutes:** the session stops refreshing and the app returns to
      the sign-in page.
-   - **Known gap:** the server marks this refusal `plan_required`, but the app's background
-     refresh does not read the marker yet. The app may show a generic "session ended" instead of
-     the plan reason. Record what it shows. Signing in again then shows *The desktop app needs a
-     Pro or Team plan*.
+   - **Expected:** the banner reads *You've been signed out: your plan no longer includes the
+     Engineer on your computer…* (Arabic when the app is in Arabic), not the generic *Your session
+     expired*.
+   - **Expected:** signing in again shows *The desktop app needs a Pro or Team plan*.
 5. From the phone, open the Engineer tab.
    - **Expected:** the folder picker is refused, and the Engineer is greyed out.
 6. Set the workspace back to `pro`, sign in on the desktop again, and confirm the daemon

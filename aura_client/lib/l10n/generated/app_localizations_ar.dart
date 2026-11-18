@@ -399,6 +399,10 @@ class AppLocalizationsAr extends AppLocalizations {
       'جلستك خلصت. سجّل دخول تاني عشان تكمّل من مكان ما وقفت — كل حاجة على الجهاز ده لسه موجودة.';
 
   @override
+  String get loginSessionEndedPlanRequired =>
+      'اتسجّل خروجك: باقتك مبقتش فيها الـEngineer على الكمبيوتر بتاعك. رقّي لـPro أو Team، وبعدين سجّل دخول تاني — كل حاجة على الجهاز ده لسه موجودة.';
+
+  @override
   String get loginGoogle => 'تسجيل الدخول بـ Google';
 
   @override

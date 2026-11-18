@@ -29,6 +29,7 @@ import 'package:aura_client/l10n/l10n.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -401,7 +402,11 @@ void main() {
       expect(desktopBrowserSignInOffered(nativeSignIn: true, appBaseUrl: 'https://a.test'), isFalse);
     });
 
-    Future<_RecordingAuth> openLogin(WidgetTester tester, {required String appBaseUrl}) async {
+    Future<_RecordingAuth> openLogin(
+      WidgetTester tester, {
+      required String appBaseUrl,
+      List<Override> extra = const [],
+    }) async {
       final auth = _RecordingAuth();
       await tester.pumpWidget(
         ProviderScope(
@@ -409,6 +414,7 @@ void main() {
             authProvider.overrideWith(() => auth),
             localAuthenticationProvider.overrideWithValue(_NoBiometrics()),
             appBaseUrlProvider.overrideWithValue(appBaseUrl),
+            ...extra,
           ],
           child: MaterialApp(
             theme: AuraThemeV2.light,
@@ -421,6 +427,25 @@ void main() {
       await tester.pumpAndSettle();
       return auth;
     }
+
+    // WP11: a session the server ended because the plan no longer includes the desktop Engineer
+    // says so on the login page, instead of the generic "your session expired".
+    testWidgets('a session ended for the plan says why, not just "expired"', (tester) async {
+      await openLogin(tester, appBaseUrl: '', extra: [
+        sessionExpiredProvider.overrideWith(() => _Fixed(true)),
+        sessionEndedForPlanProvider.overrideWith(() => _Fixed(true)),
+      ]);
+      expect(find.text(en.loginSessionEndedPlanRequired), findsOneWidget);
+      expect(find.text(en.loginSessionExpired), findsNothing);
+    });
+
+    testWidgets('an ordinary expiry keeps the ordinary message', (tester) async {
+      await openLogin(tester, appBaseUrl: '', extra: [
+        sessionExpiredProvider.overrideWith(() => _Fixed(true)),
+      ]);
+      expect(find.text(en.loginSessionExpired), findsOneWidget);
+      expect(find.text(en.loginSessionEndedPlanRequired), findsNothing);
+    });
 
     testWidgets('Linux shows it next to the Google browser sign-in and starts the hand-off',
         (tester) async {
@@ -605,4 +630,14 @@ void main() {
       expect(opened, isEmpty);
     });
   });
+}
+
+
+class _Fixed extends SessionExpiredNotifier {
+  _Fixed(this.value);
+
+  final bool value;
+
+  @override
+  bool build() => value;
 }

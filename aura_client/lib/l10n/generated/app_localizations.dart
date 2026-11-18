@@ -830,6 +830,12 @@ abstract class AppLocalizations {
   /// **'Your session expired. Sign in again to pick up where you left off — everything on this device is still here.'**
   String get loginSessionExpired;
 
+  /// Banner shown after the desktop session ended because the plan no longer includes the desktop Engineer (WP11)
+  ///
+  /// In en, this message translates to:
+  /// **'You\'ve been signed out: your plan no longer includes the Engineer on your computer. Upgrade to Pro or Team, then sign in again — everything on this device is still here.'**
+  String get loginSessionEndedPlanRequired;
+
   /// Native Google sign-in button
   ///
   /// In en, this message translates to:
