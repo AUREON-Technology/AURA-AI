@@ -7,6 +7,7 @@ import '../auth/token_manager.dart';
 import '../config/backend_url_provider.dart';
 import '../database/database.dart';
 import '../database/database_provider.dart';
+import '../database/health_day.dart';
 import '../security/data_key_client.dart';
 import '../security/data_key_migration.dart';
 import '../security/device_validation_service.dart';
@@ -487,7 +488,8 @@ class SyncClient {
         await (_db.delete(_db.healthRecords)..where((t) => t.id.equals(id))).go();
         continue;
       }
-      final recordDate = _parseDate(row["record_date"])!;
+      // A calendar day, not an instant: never shifted to local time (F4).
+      final recordDate = healthDayOfInstant(DateTime.parse(row["record_date"] as String));
       // One record per day: the server merges a second device's "today" onto
       // the row it already had (audit F-11), so a local row for the same day
       // under another id is that device's own copy. Replace it, or the day

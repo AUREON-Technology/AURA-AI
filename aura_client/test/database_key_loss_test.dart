@@ -5,7 +5,6 @@ import 'dart:io';
 
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/security/encryption_service.dart';
-import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:drift/native.dart';
 import 'package:encrypt/encrypt.dart' as encrypt;
 import 'package:flutter_test/flutter_test.dart';

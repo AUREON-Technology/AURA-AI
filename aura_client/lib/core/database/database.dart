@@ -4,7 +4,9 @@ import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:aura_client/core/database/connection/open_connection.dart';
+import 'package:aura_client/core/database/health_day.dart';
 import 'package:aura_client/core/security/encryption_service.dart';
+import 'package:aura_client/core/sync/sync_payloads.dart';
 
 part 'database.g.dart';
 
@@ -369,7 +371,7 @@ class AppDatabase extends _$AppDatabase {
   static const Uuid _outboxIds = Uuid();
 
   @override
-  int get schemaVersion => 14;
+  int get schemaVersion => 15;
 
   Future<List<TelemetryLog>> getTelemetry() => select(telemetryLogs).get();
   Future<void> insertTelemetry(TelemetryLogsCompanion log) => into(telemetryLogs).insert(log);
@@ -434,6 +436,50 @@ class AppDatabase extends _$AppDatabase {
       ..addColumns([count])
       ..where(outboxEntries.attempts.isBiggerOrEqualValue(kMaxOutboxAttempts));
     return query.map((row) => row.read(count) ?? 0).watchSingle();
+  }
+
+  /// Moves every health record onto its calendar day's UTC midnight (F4), once, on upgrade.
+  ///
+  /// Rows written before F4 are keyed on local midnight; rows pulled from the server on UTC
+  /// midnight. Where both exist for one day (the assistant logged it, then so did the user) they
+  /// become one row: the one already on the key -- the server's -- keeps the day, each counter
+  /// takes the larger of the two (they are day totals, so adding them could double-count), and
+  /// weight the most recently updated value. The server is told the same: the merged-away row is
+  /// deleted and every re-keyed row re-sent. [localOffset] is for tests; otherwise each row's
+  /// own offset on this device is used.
+  @visibleForTesting
+  Future<void> rekeyHealthDays({Duration? localOffset}) async {
+    DateTime touched(HealthRecord r) => r.updatedAt ?? r.createdAt;
+    final byDay = <DateTime, List<HealthRecord>>{};
+    for (final row in await select(healthRecords).get()) {
+      byDay.putIfAbsent(healthDayOfInstant(row.recordDate, localOffset: localOffset), () => []).add(row);
+    }
+    for (final MapEntry(key: day, value: group) in byDay.entries) {
+      if (group.length == 1 && group.single.recordDate.isAtSameMomentAs(day)) continue;
+      group.sort((a, b) => touched(b).compareTo(touched(a)));
+      final keeper = group.firstWhere((r) => r.recordDate.isAtSameMomentAs(day), orElse: () => group.first);
+      int most(int Function(HealthRecord r) field) => group.map(field).reduce((a, b) => a > b ? a : b);
+      for (final other in group.where((r) => r.id != keeper.id)) {
+        await (delete(healthRecords)..where((t) => t.id.equals(other.id))).go();
+        await enqueueOutbox(table: 'health_records', recordId: other.id, operation: 'delete');
+      }
+      await (update(healthRecords)..where((t) => t.id.equals(keeper.id))).write(HealthRecordsCompanion(
+        recordDate: Value(day),
+        weight: Value(group.map((r) => r.weight).firstWhere((w) => w != null, orElse: () => null)),
+        waterIntakeMl: Value(most((r) => r.waterIntakeMl)),
+        sleepMinutes: Value(most((r) => r.sleepMinutes)),
+        caloriesConsumed: Value(most((r) => r.caloriesConsumed)),
+        exerciseMinutes: Value(most((r) => r.exerciseMinutes)),
+        isSynced: const Value(false),
+      ));
+      final merged = await (select(healthRecords)..where((t) => t.id.equals(keeper.id))).getSingle();
+      await enqueueOutbox(
+        table: 'health_records',
+        recordId: keeper.id,
+        operation: 'upsert',
+        payload: SyncPayloads.healthRecord(merged),
+      );
+    }
   }
 
   Future<String?> getSyncCursor() async {
@@ -607,6 +653,9 @@ class AppDatabase extends _$AppDatabase {
           }
           if (from < 14) {
             await m.createTable(desktopUnsavedBuffers);
+          }
+          if (from < 15) {
+            await rekeyHealthDays();
           }
         },
         beforeOpen: (details) async {
