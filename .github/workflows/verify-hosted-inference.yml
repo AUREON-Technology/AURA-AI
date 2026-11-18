@@ -115,7 +115,7 @@ jobs:
         run: |
           test -n "$AURA_PROVIDER_HOSTED1_API_KEY" \
             || { echo "capture needs secrets.AURA_HOSTED1_API_KEY" >&2; exit 1; }
-          pip install --quiet httpx==0.28.1  # requirements.lock's pin
+          pip install --quiet httpx==0.28.1  # the version the runtime lock pins
           python aura_backend/scripts/capture_provider_wire.py \
             --base-url "$HOSTED1_BASE_URL" --model "$HOSTED1_MODEL" \
             --api-key-env AURA_PROVIDER_HOSTED1_API_KEY \
