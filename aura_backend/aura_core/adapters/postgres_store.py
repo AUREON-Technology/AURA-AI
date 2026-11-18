@@ -386,10 +386,13 @@ class PostgresDocumentStore:
     async def list_active(
         self, *, owner_id: UserId | None, limit: int = 100, offset: int = 0
     ) -> Sequence[Document]:
-        """Active documents for one owner, plus global ones.
+        """Active documents of exactly one owner: ``owner_id``'s own, or with ``None`` the global
+        ones -- there is no way to ask this port for a cross-tenant listing.
 
-        ``owner_id=None`` means global only, matching the vector store's rule -- there is no way to
-        ask this port for a cross-tenant listing.
+        Owner-only, like ``InMemoryDocumentStore.list_active`` (INT-111). This used to add every
+        global document to an owner's listing, so on Postgres a user's knowledge list showed
+        documents they could not delete: the delete was refused as not theirs and the document
+        was listed again. Retrieval still reads global content; listing is "what is mine".
         """
         pool = await self._pool._get_pool()
         try:
@@ -408,7 +411,7 @@ class PostgresDocumentStore:
                     rows = await conn.fetch(
                         """
                         SELECT * FROM aura_documents
-                        WHERE status = 'active' AND (owner_id = $1 OR owner_id IS NULL)
+                        WHERE status = 'active' AND owner_id = $1
                         ORDER BY updated_at DESC LIMIT $2 OFFSET $3
                         """,
                         owner_id.value,
