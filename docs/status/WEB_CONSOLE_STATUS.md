@@ -23,7 +23,7 @@ Plan and user decisions: [`docs/plans/console-subdomain-plan.md`](../plans/conso
 
 ## Summary
 
-The console is built: 10 pages, Google sign-in for Developer+ roles, and a same-origin proxy that
+The console is built: 10 pages (11 with the unmerged Customers page, PR #246), Google sign-in for Developer+ roles, and a same-origin proxy that
 turns a cookie into a Bearer token against `/api/v3/admin/*`. It is wired into both compose files
 and both nginx server blocks. None of it is proven:
 - It is **not served anywhere reachable today**: `aureon-ai.tech/console/login` returns 404 on
@@ -46,6 +46,7 @@ and both nginx server blocks. None of it is proven:
 | Providers: ADR-030 ceiling, `third_party`, `may_train_on_prompts` | OPEN | `router.stats()` emits them, but `src/lib/types.ts` `ProviderRow` lacks the fields |
 | Prompts (pin version) | BUILT; e2e spec | `prompts/page.tsx` |
 | Approvals (any kind, including `blueprint_deployment`) | BUILT; e2e spec | `approvals/page.tsx`; `admin.py` |
+| Customers (SaaS P1-F3: subscribed workspaces, plan, status, last payment; SuperAdmin-only "Extend grace" for Fawry subscriptions behind on payment) | BUILT; TESTED locally 2026-11-18 (lint, build, e2e 40 passed incl. 5 in `customers.spec.ts`), not CI-run, branch `claude/saas-production-readiness-f5i61d` (PR #246), unmerged | `customers/page.tsx`; `aura_core/api/billing.py` `/admin/customers`, `/admin/customers/{id}/extend-grace`. Not proven against a real gateway: the mock enforces the same gates and refusals as `BillingService.extend_grace` |
 | Access (operators, roles, session revoke, GDPR forget, last-SuperAdmin guard) | BUILT; e2e spec; backend TESTED at `dc87beb` | `access/page.tsx`; `tests/unit/test_admin_platform.py`. #188 (`3e4e0f5`, `0e27c51`): grant/remove roles, shows who granted each, and assignments now take effect in role resolution — needs migration `0015`, which production lacks (CB-43); not CI-run (CB-44) |
 | Knowledge, Models, Learning, Audit | BUILT; no spec | `knowledge/`, `models/`, `learning/`, `audit/` pages |
 | Track AP Project Factory (connectors, twin, blueprint evaluate / approve / deploy / rollback) | OPEN (not started) | AP9 / GAP-058 / CB-39. Backend routes exist (`admin_adaptation.py`) with no console caller. |
