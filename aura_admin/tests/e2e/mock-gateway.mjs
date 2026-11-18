@@ -49,6 +49,9 @@ const tokens = {
 const refreshTokens = {};
 const refreshReplays = {};
 const revokedRefresh = [];
+// Refresh tokens whose refresh answers with an outage status instead (INT-104): the token is
+// neither spent nor refused, as when the gateway fails before it reaches the refresh store.
+const refreshOutages = {};
 let issued = 0;
 
 function issuePair(principal) {
@@ -233,6 +236,11 @@ const server = http.createServer(async (request, response) => {
 
   if (method === "POST" && path === "/api/v3/auth/refresh") {
     const body = await readBody(request);
+    const outage = refreshOutages[body.refresh_token];
+    if (outage) {
+      json(response, outage, { detail: "Service temporarily unavailable" });
+      return;
+    }
     const principal = refreshTokens[body.refresh_token];
     if (!principal) {
       refreshReplays[body.refresh_token] = (refreshReplays[body.refresh_token] || 0) + 1;
@@ -258,6 +266,18 @@ const server = http.createServer(async (request, response) => {
     const body = await readBody(request);
     delete tokens[body.access_token];
     json(response, 200, { expired: body.access_token });
+    return;
+  }
+
+  // Makes one refresh token's refresh answer `status` (e.g. 503) until called with status null.
+  if (method === "POST" && path === "/__test/refresh-outage") {
+    const body = await readBody(request);
+    if (body.status) {
+      refreshOutages[body.refresh_token] = body.status;
+    } else {
+      delete refreshOutages[body.refresh_token];
+    }
+    json(response, 200, { refresh_token: body.refresh_token, status: body.status ?? null });
     return;
   }
 

@@ -41,3 +41,37 @@ test("three parallel requests after the access token expired share one refresh a
   await expect(page.getByRole("heading", { name: "Overview", level: 1 })).toBeVisible();
   expect(new URL(page.url()).pathname).not.toBe("/login");
 });
+
+// INT-104, proxy side: a 401 whose refresh then fails at the gateway (5xx) is an outage, not a
+// signed-out session. The proxy answers 503 with a retryable error instead of passing the 401
+// on, which api.ts would turn into a redirect to /login.
+test("a proxied request whose refresh hits a gateway outage gets a retryable 503 and stays signed in", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/login");
+  await page.getByRole("button", { name: "Developer mock login" }).click();
+  await expect(page.getByRole("heading", { name: "Overview", level: 1 })).toBeVisible();
+
+  const access = await accessCookie(page);
+  const refresh = (await page.context().cookies()).find((c) => c.name === "aura_refresh")?.value;
+  expect(refresh).toBeTruthy();
+  await request.post(`${gateway}/__test/expire-access`, { data: { access_token: access } });
+  await request.post(`${gateway}/__test/refresh-outage`, { data: { refresh_token: refresh, status: 503 } });
+  try {
+    const answer = await page.evaluate(async () => {
+      const response = await fetch("/api/v3/admin/status", { credentials: "same-origin" });
+      return { status: response.status, body: await response.json() };
+    });
+    expect(answer.status).toBe(503);
+    expect(answer.body.retryable).toBe(true);
+    expect((await page.context().cookies()).find((c) => c.name === "aura_refresh")?.value).toBe(refresh);
+  } finally {
+    await request.post(`${gateway}/__test/refresh-outage`, { data: { refresh_token: refresh, status: null } });
+  }
+
+  const status = await page.evaluate(() =>
+    fetch("/api/v3/admin/status", { credentials: "same-origin" }).then((r) => r.status),
+  );
+  expect(status).toBe(200);
+});

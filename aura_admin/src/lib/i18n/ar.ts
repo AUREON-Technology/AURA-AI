@@ -241,8 +241,7 @@ export const ar: Dictionary = {
   "access.gdprHelp":
     "بيرجّع أعداد بس. عمره ما بيعرض محتوى المستخدم. لو المسح مكملش الحساب بيفضل موجود؛ شغّله تاني لما الأماكن اللي فشلت ترجع.",
   "access.forgetPlaceholder": "الإيميل أو الـ auth subject",
-  "access.forgetTitle": "نسيان المستخدم",
-  "access.forgetWord": "نسيان",
+  "access.forgetTitle": "نسيان {subject}",
   "access.forget": "نسيان",
   "access.erasureComplete": "المسح خلص.",
   "access.erasureFailedFor": "المسح مكملش: فشل في {stores}. الحساب لسه موجود؛ شغّل النسيان تاني.",

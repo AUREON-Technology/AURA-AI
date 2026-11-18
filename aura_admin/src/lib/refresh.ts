@@ -6,6 +6,17 @@ export type RotatedTokens = {
   expires_in: number;
 };
 
+// What a refresh attempt says about the session (audit INT-104). Only "rejected" -- the gateway
+// refusing the refresh token -- means the session is over and its cookies should go. An outage
+// ("unavailable": a 5xx, a rate limit, an unreachable gateway, an unreadable answer) says nothing
+// about the token, which on the real gateway is only spent once a new pair is minted; signing
+// every operator out on a gateway blip would be the console's doing, not the gateway's.
+export type RefreshOutcome =
+  | { ok: true; tokens: RotatedTokens }
+  | { ok: false; reason: "rejected" | "unavailable" };
+
+const UNAVAILABLE: RefreshOutcome = { ok: false, reason: "unavailable" };
+
 // The gateway's refresh tokens are single use: /api/v3/auth/refresh consumes the token with an
 // atomic GETDEL and mints a new pair (aura_backend/services/jwt_auth.py, _refresh_store_take).
 // A page that fires several requests after its access token expired sends the same refresh
@@ -28,7 +39,7 @@ export type RotatedTokens = {
 export const REUSE_WINDOW_MS = 10_000;
 
 type RefreshState = {
-  inflight: Map<string, Promise<RotatedTokens | null>>;
+  inflight: Map<string, Promise<RefreshOutcome>>;
   recent: Map<string, { tokens: RotatedTokens; until: number }>;
 };
 
@@ -37,11 +48,14 @@ const holder = globalThis as typeof globalThis & { [STATE_KEY]?: RefreshState };
 const state: RefreshState = (holder[STATE_KEY] ??= { inflight: new Map(), recent: new Map() });
 const { inflight, recent } = state;
 
+// Only a rotated pair is remembered. A rejection or an outage is not: the next caller asks the
+// gateway again, so a refresh that failed during an outage succeeds once the gateway is back.
+// A `run` that throws is an outage, never a rejection.
 export function singleFlightRefresh(
   refreshToken: string,
-  run: (refreshToken: string) => Promise<RotatedTokens | null>,
+  run: (refreshToken: string) => Promise<RefreshOutcome>,
   now: () => number = Date.now,
-): Promise<RotatedTokens | null> {
+): Promise<RefreshOutcome> {
   const at = now();
   for (const [key, entry] of recent) {
     if (entry.until <= at) {
@@ -50,18 +64,20 @@ export function singleFlightRefresh(
   }
   const settled = recent.get(refreshToken);
   if (settled) {
-    return Promise.resolve(settled.tokens);
+    return Promise.resolve({ ok: true, tokens: settled.tokens });
   }
   const pending = inflight.get(refreshToken);
   if (pending) {
     return pending;
   }
-  const promise = run(refreshToken)
-    .then((tokens) => {
-      if (tokens) {
-        recent.set(refreshToken, { tokens, until: now() + REUSE_WINDOW_MS });
+  const promise = Promise.resolve()
+    .then(() => run(refreshToken))
+    .catch((): RefreshOutcome => UNAVAILABLE)
+    .then((outcome) => {
+      if (outcome.ok) {
+        recent.set(refreshToken, { tokens: outcome.tokens, until: now() + REUSE_WINDOW_MS });
       }
-      return tokens;
+      return outcome;
     })
     .finally(() => {
       inflight.delete(refreshToken);
@@ -70,17 +86,40 @@ export function singleFlightRefresh(
   return promise;
 }
 
-// The one call to the gateway's refresh endpoint, used by both the proxy and the middleware so
-// the two cannot drift apart.
-export async function refreshAtGateway(refreshToken: string): Promise<RotatedTokens | null> {
-  const upstream = await fetch(`${apiOrigin()}/api/v3/auth/refresh`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ refresh_token: refreshToken }),
-    cache: "no-store",
-  });
-  if (!upstream.ok) {
-    return null;
+function isTokenPair(body: unknown): body is RotatedTokens {
+  const pair = body as Partial<RotatedTokens> | null;
+  return (
+    typeof pair === "object" &&
+    pair !== null &&
+    typeof pair.access_token === "string" &&
+    typeof pair.refresh_token === "string"
+  );
+}
+
+// The one call to the gateway's refresh endpoint, used by the proxy, the middleware and the
+// session check so they cannot drift apart. The gateway answers 401 for a refresh token that is
+// invalid, expired, spent or revoked (api/v2/auth.py `refresh`); any other 4xx except a timeout
+// or a rate limit is likewise a verdict on this request, so it is a rejection. Everything else
+// is an outage and leaves the session alone.
+export async function refreshAtGateway(refreshToken: string): Promise<RefreshOutcome> {
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${apiOrigin()}/api/v3/auth/refresh`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+      cache: "no-store",
+    });
+  } catch {
+    return UNAVAILABLE;
   }
-  return (await upstream.json()) as RotatedTokens;
+  const { status } = upstream;
+  if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
+    return { ok: false, reason: "rejected" };
+  }
+  if (!upstream.ok) {
+    return UNAVAILABLE;
+  }
+  const body: unknown = await upstream.json().catch(() => null);
+  return isTokenPair(body) ? { ok: true, tokens: body } : UNAVAILABLE;
 }

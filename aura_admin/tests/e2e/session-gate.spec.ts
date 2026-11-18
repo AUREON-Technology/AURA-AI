@@ -116,3 +116,41 @@ test("a page render and a proxied request with the same refresh cookie share one
   expect(proxied.status).toBe(200);
   expect((await replays(page.request)) - before).toBe(0);
 });
+
+async function refreshOutage(page: Page, refreshToken: string, status: number | null) {
+  await page.request.post(`${gateway}/__test/refresh-outage`, {
+    data: { refresh_token: refreshToken, status },
+  });
+}
+
+// INT-104: the gateway failing the refresh (5xx, unreachable) says nothing about the session.
+// The render answers 503 and keeps both cookies, so the operator is still signed in once the
+// gateway is back; only the gateway refusing the token (the test above) clears them.
+test("a gateway outage during the refresh answers 503 and keeps the session", async ({ page }) => {
+  // A session whose access token has lapsed: only the refresh cookie is left. It is minted at
+  // the gateway rather than through a signed-in page, so no prefetch from an open console page
+  // can spend it before the outage is in place.
+  const pair = await (
+    await page.request.post(`${gateway}/api/v3/auth/web/token`, { headers: { authorization: "Bearer mock_token" } })
+  ).json();
+  const refresh: string = pair.refresh_token;
+  await page.context().addCookies([{ name: "aura_refresh", value: refresh, url: app }]);
+
+  await refreshOutage(page, refresh, 503);
+  try {
+    const outage = await page.goto("/providers");
+    expect(outage?.status()).toBe(503);
+    expect(outage?.headers()["retry-after"]).toBeTruthy();
+    await expect(page.getByRole("heading", { name: "The gateway is unavailable" })).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe("/providers");
+    expect(await cookie(page, "aura_refresh")).toBe(refresh);
+  } finally {
+    await refreshOutage(page, refresh, null);
+  }
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Providers", level: 1 })).toBeVisible();
+  expect(new URL(page.url()).pathname).toBe("/providers");
+  expect(await cookie(page, "aura_access")).toBeTruthy();
+  expect(await cookie(page, "aura_refresh")).not.toBe(refresh);
+});
