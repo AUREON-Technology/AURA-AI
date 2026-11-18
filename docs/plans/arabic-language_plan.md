@@ -514,3 +514,49 @@ Worth a native-speaker review:
 - Plural forms in commit and file counts.
 - The "Discard" wording, which is «مسح» in one place and «تجاهل» in another.
 - The persona names.
+
+## Stage 3: as built (2026-11-17)
+
+- **Server text.** `triggers/briefing.py` (`build_daily_briefing(counts, language)`) and
+  `services/insights.py` (`_text(kind, language, ...)`) carry their own `en`/`ar` strings, with
+  `aura_core.text.plural_ar` for the Arabic plural. The language comes from `users.language`
+  (`services/user_language.py`), which `/token` and the insights routes remember from
+  `X-Client-Language`. Rows already stored stay as written (decision 9).
+  - Deviation: no separate `services/messages.py` catalog. Each of the two writers keeps its
+    strings next to the code that formats them.
+- **Daemon.** `lib/src/error_codes.dart` (`HostdErrorCode`): every control-server and RPC
+  refusal carries a stable `code` next to the English text (`_respond` asserts it). The app maps
+  codes to Arabic in `lib/core/hostd/hostd_error_codes.dart`. The CLI stays English.
+- **Console.** `src/lib/i18n/{en,ar}.ts` (207 keys each), cookie `aura_console_lang`, server-set
+  `<html lang dir>`, EN / ع toggle, logical CSS properties, Cairo via `next/font/local`, backend
+  errors mapped by kind. `tests/e2e/arabic.spec.ts` is new; the other specs still run in English.
+- Verified locally: console lint, tsc, build, e2e 32 passed; daemon analyze clean, 310 passed
+  (1 environmental `debugpy` failure that also fails on `main`).
+
+## Stage 4: as built (2026-11-17)
+
+- **Search.** Measured in `docs/reports/ARABIC_RETRIEVAL_EVAL_2026-11-17.md`. The relevance gate,
+  not the embedder, was what dropped Arabic results, so the owner chose decision 17: the
+  `either` gate (`EitherGateReranker`, heuristic OR the multilingual mmarco cross-encoder) plus
+  E5. recall@5 went 0.70 → 0.95 (English), 0.10 → 0.90 (Arabic asks English), 0.60 → 0.65
+  (Arabic), with no change in the no-answer rate. Both compose files default to E5 and `either`.
+  - Deviation: no new `reembed_corpus.py`. The existing `IndexManager` already builds an index
+    per embedder identity, gates it and promotes it, so `scripts/rebuild_index.py` drives that
+    (`--dry-run`, `--force`; exit 0 promoted, 1 gate failed, 2 error). The old index is kept.
+  - The E5 document prefix is part of the embedder's `model_id`, so changing a prefix also forces
+    a rebuild.
+  - Deviation: the Arabic set is 60 Arabic-corpus questions plus the 23 ADR questions asked in
+    Arabic, not ~100.
+- **Speech-to-text.** `docs/reports/STT_WER_ARABIC_ENGLISH_2026-11-17.md`, on FLEURS (real
+  recorded speech, not Piper-synthesized): `small` gives English 6.46% WER (tiny.en 11.96%) and
+  Egyptian Arabic 24.96%. `VoiceSettings.stt_model` defaults to `small` in code, so Railway picks
+  it up without a variable. `/voice/transcribe` takes an optional `language`; the app sends `ar`
+  only when it is in Arabic. Live voice sends the app language and falls back to English after a
+  `language_unsupported` reply (an older server still on `tiny.en`).
+  - Deviation: the weights are not baked into the image; faster-whisper downloads them into
+    `$HOME`'s Hugging Face cache on first start (~480 MB), as it did for `tiny.en`.
+- **OCR.** The image installs `tesseract-ocr-ara`; `ocr_lang` defaults to `ara+eng`, and missing
+  language packs are dropped rather than failing (`_installed_subset`).
+- **Owner steps before this is proven:** set the four search variables on Railway's dashboard and
+  run `python scripts/rebuild_index.py` there; rebuild the VPS image and run the same script;
+  measure search latency and the WER harness on a deploy target (GAP-020).

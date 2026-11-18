@@ -50,6 +50,7 @@ and both nginx server blocks. None of it is proven:
 | Knowledge, Models, Learning, Audit | BUILT; no spec | `knowledge/`, `models/`, `learning/`, `audit/` pages |
 | Track AP Project Factory (connectors, twin, blueprint evaluate / approve / deploy / rollback) | OPEN (not started) | AP9 / GAP-058 / CB-39. Backend routes exist (`admin_adaptation.py`) with no console caller. |
 | Service keys, scorecard, CAG pin | OPEN | Backend routes exist with no console caller |
+| Egyptian Arabic, right to left (Arabic plan stage 3) | BUILT; TESTED locally 2026-11-17 (lint, tsc, build, e2e 32 passed), not CI-run (CB-44), branch `anas/kind-rubin-dpm0sq`, unmerged | `src/lib/i18n/{en,ar}.ts` (207 keys each), cookie `aura_console_lang` sets `<html lang dir>` on the server, EN / ع toggle in the header, logical CSS properties, Cairo via `next/font/local`; `tests/e2e/arabic.spec.ts`. Translations not yet reviewed by a native speaker |
 
 ## Deployment and verification
 
