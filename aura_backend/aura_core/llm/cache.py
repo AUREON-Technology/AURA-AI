@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import secrets
 import time
 from dataclasses import dataclass
 from typing import Any, Sequence
@@ -35,6 +37,9 @@ from ..ports.storage import Cache
 from .embeddings import cosine_similarity
 
 __all__ = ["LLMCache", "CacheHit", "InMemoryCache", "semantic_tier_useful"]
+
+#: The per-turn DATA fence delimiter (``<<<AURA-DATA:<nonce>``), nonce captured separately.
+_FENCE_NONCE = re.compile(r"(<<<(?:END-)?AURA-DATA:)[0-9A-Za-z]+")
 
 
 def semantic_tier_useful(embedder: Any) -> bool:
@@ -125,6 +130,7 @@ class LLMCache:
     _EXACT_PREFIX = "llm:exact:"
     _SEM_INDEX_PREFIX = "llm:semidx:"
     _SEM_ENTRY_PREFIX = "llm:sem:"
+    _SEM_GEN_PREFIX = "llm:semgen:"
 
     def __init__(
         self,
@@ -150,15 +156,17 @@ class LLMCache:
     # -- keys --------------------------------------------------------------------------
 
     @staticmethod
-    def _fingerprint(request: CompletionRequest, namespace: str) -> str:
-        """Stable hash of everything that can change the answer.
+    def _normalise(content: str) -> str:
+        # Whitespace-insensitive: "hello  world" and "hello world" are the same request. The
+        # per-turn fence nonce (ADR-006) is masked: it changes every turn while the fenced
+        # content -- which is what the answer rests on -- stays in the key byte for byte.
+        return _FENCE_NONCE.sub(r"\1*", " ".join(content.split()))
 
-        Tool *declarations* are included because their presence changes model behaviour, but
-        their descriptions are hashed rather than stored, so a prompt is never reconstructible
-        from a cache key.
-        """
-        payload = {
-            "ns": namespace,
+    @classmethod
+    def _key_payload(cls, request: CompletionRequest, *, skip_last_user: bool = False) -> dict:
+        """Everything about ``request`` that can change the answer, as a JSON-able dict."""
+        last_user = request.conversation.last_user_message if skip_last_user else None
+        return {
             "model": request.model or "",
             "policy": str(request.policy),
             "sampling": list(request.sampling.cache_key_parts()),
@@ -166,13 +174,61 @@ class LLMCache:
             "tool_choice": str(request.tool_choice),
             "tools": sorted(t.get("name", "") for t in request.tools),
             "messages": [
-                # Whitespace-insensitive: "hello  world" and "hello world" are the same request.
-                {"role": str(m.role), "content": " ".join(m.content.split())}
+                {"role": str(m.role), "content": cls._normalise(m.content)}
                 for m in request.conversation
+                if m is not last_user
             ],
         }
+
+    @classmethod
+    def _fingerprint(cls, request: CompletionRequest, namespace: str) -> str:
+        """Stable hash of everything that can change the answer.
+
+        Tool *declarations* are included because their presence changes model behaviour, but
+        their descriptions are hashed rather than stored, so a prompt is never reconstructible
+        from a cache key.
+        """
+        payload = {"ns": namespace, **cls._key_payload(request)}
         blob = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _context_digest(cls, request: CompletionRequest) -> str:
+        """Hash of everything except the final user message (F13).
+
+        The semantic tier compares only the user's words, so everything else -- the system
+        message carrying memory, retrieved chunks and caller evidence, the response schema,
+        sampling, policy -- has to be *identical* for a semantic match to be allowed at all.
+        Otherwise "summarise order 1042" is answered with 1043's cached summary.
+        """
+        blob = json.dumps(
+            cls._key_payload(request, skip_last_user=True),
+            sort_keys=True, ensure_ascii=False, default=str,
+        )
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _scopes(namespace: str) -> list[str]:
+        # The kernel keys a team turn ``member|team`` (ADR-034); either half changing must
+        # invalidate it.
+        return [part for part in namespace.split("|") if part] or [namespace]
+
+    @classmethod
+    def _generation_key(cls, scope: str) -> str:
+        return cls._SEM_GEN_PREFIX + hashlib.sha256(scope.encode("utf-8")).hexdigest()
+
+    async def _semantic_index_key(self, request: CompletionRequest, namespace: str) -> str:
+        """The semantic index for this namespace, this exact context, and its generations."""
+        scopes = self._scopes(namespace)
+        found = await self._cache.get_many([self._generation_key(s) for s in scopes])
+        generations = []
+        for scope in scopes:
+            raw = found.get(self._generation_key(scope))
+            generations.append(
+                raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw or "0")
+            )
+        material = "|".join([namespace, self._context_digest(request), *generations])
+        return self._SEM_INDEX_PREFIX + hashlib.sha256(material.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _serialise(response: CompletionResponse) -> bytes:
@@ -262,9 +318,7 @@ class LLMCache:
         if len(non_system) != 1:
             return None
 
-        index_key = self._SEM_INDEX_PREFIX + hashlib.sha256(
-            f"{namespace}|{request.model or ''}".encode()
-        ).hexdigest()
+        index_key = await self._semantic_index_key(request, namespace)
         raw_index = await self._cache.get(index_key)
         if not raw_index:
             self._record("semantic", "miss")
@@ -332,9 +386,7 @@ class LLMCache:
             embedding = await self._embedder.embed([last_user.content], for_query=True)
             await self._cache.set(self._SEM_ENTRY_PREFIX + fingerprint, payload, ttl_s=self._ttl)
 
-            index_key = self._SEM_INDEX_PREFIX + hashlib.sha256(
-                f"{namespace}|{request.model or ''}".encode()
-            ).hexdigest()
+            index_key = await self._semantic_index_key(request, namespace)
             raw_index = await self._cache.get(index_key)
             try:
                 index = json.loads(raw_index) if raw_index else []
@@ -352,12 +404,22 @@ class LLMCache:
             return
 
     async def invalidate_namespace(self, namespace: str, *, model: str = "") -> None:
-        """Drop the semantic index for a namespace.
+        """Retire every semantic index that rests on ``namespace``.
 
         Called when a user's knowledge changes: a cached answer grounded in a document that has
         since been superseded is stale in a way TTL alone would not catch quickly enough.
+
+        Index keys carry a generation token per scope (F13), so this rotates the token rather
+        than deleting one key: it reaches every model and every context digest, and every team
+        namespace (``member|team``) the scope is part of. ``model`` is accepted for
+        compatibility and no longer narrows anything. The token is random, never a counter, so
+        a token that expires can never come back and resurrect an index written under it; it
+        outlives every index written under the previous one.
         """
-        index_key = self._SEM_INDEX_PREFIX + hashlib.sha256(
-            f"{namespace}|{model}".encode()
-        ).hexdigest()
-        await self._cache.delete(index_key)
+        del model
+        for scope in self._scopes(namespace):
+            await self._cache.set(
+                self._generation_key(scope),
+                secrets.token_hex(8).encode("utf-8"),
+                ttl_s=self._ttl + 60 if self._ttl else 0,
+            )
