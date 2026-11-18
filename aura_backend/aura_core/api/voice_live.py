@@ -31,6 +31,7 @@ _CLOSE_UNAUTHORIZED = 4401
 _CLOSE_TOO_MANY = 4429
 _CLOSE_UNAVAILABLE = 4503
 _CLOSE_BAD_REQUEST = 4400
+_CLOSE_SERVER_ERROR = 1011  # a server-side failure the client should retry (INT-104)
 
 _AUTH_TIMEOUT_S = 5.0
 _SESSION_TTL_S = 60 * 20  # slightly longer than 15 min access TTL
@@ -247,10 +248,21 @@ def register_voice_live(
                     )
                 except asyncio.TimeoutError:
                     message = None
-                if not await credential.still_valid(lambda _p: True):
+                outcome = await credential.recheck(lambda _p: True)
+                if outcome is ws_auth.Recheck.REVOKED:
                     # The token has expired or been revoked and no reauth renewed it. The client
                     # sends one after every turn, so this ends idle sessions, not live ones.
                     await websocket.close(code=_CLOSE_UNAUTHORIZED)
+                    return
+                if outcome is ws_auth.Recheck.UNAVAILABLE:
+                    # The check could not run (database or Redis blip): not a sign-out. 1011
+                    # makes the client reconnect, and that connect's authentication decides
+                    # (INT-104, as on the host-agent socket).
+                    logger.warning(
+                        "voice live credential recheck unavailable; closing for retry",
+                        extra={"user": principal.user_id.value},
+                    )
+                    await websocket.close(code=_CLOSE_SERVER_ERROR)
                     return
                 if message is None:
                     continue
