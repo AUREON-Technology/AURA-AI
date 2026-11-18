@@ -84,7 +84,7 @@ hygiene and doc accuracy.
 | Severity | open | in_progress | built_not_proven | proven | closed_stale |
 | --- | --- | --- | --- | --- | --- |
 | P0 | 4 | 0 | 2 | 1 | 0 |
-| P1 | 8 | 1 | 9 | 0 | 1 |
+| P1 | 7 | 2 | 9 | 0 | 1 |
 | P2 | 14 | 3 | 12 | 0 | 1 |
 | P3 | 6 | 0 | 1 | 0 | 1 |
 
@@ -111,7 +111,7 @@ Sorted by status (`closed_stale` last), then severity. The full text, citations 
 | GAP-028 | P1 | `open` | deploy/disaster-recovery | platform-ops | (2026-09-25) 3d9a318 adds age-encrypted backup sets with an encrypted plaintext-hash manifest and a keyless-checkable CHECKSUMS.sha256, GFS retention that neve… | Drill report from offsite data with measured RPO/RTO in docs/reports/. | GAP-016 |
 | GAP-030 | P1 | `open` | supply-chain/model-pinning-llm | platform-ops | The production LLM is referenced by Ollama tag only (qwen2.5:3b-instruct-q4_K_M, docker-compose.prod.yml:256; AURA_MODEL_ALLOWLIST is tag names, deploy/.env.ex… | Digest recorded in MODEL_REGISTRY.md and enforced at startup. | — |
 | GAP-031 | P1 | `open` | supply-chain/model-pinning-embed-stt | ml | Embedder BAAI/bge-small-en-v1.5 (docker-compose.prod.yml:289) is loaded with SentenceTransformer(model_name) and no revision (aura_core/llm/embeddings.py:358),… | Revisions recorded in MODEL_REGISTRY.md and enforced by test. | — |
-| GAP-036 | P1 | `open` | observability/http-metrics | platform-ops | (2026-09-25) The load harness confirmed two more measurement holes: aura_turns_in_flight is only updated on the non-streaming AIKernel.run path (every client u… | Metrics live on the VPS and wired into PRODUCTION_SLO alerts. | — |
+| GAP-036 | P1 | `in_progress` | observability/http-metrics | platform-ops | (2026-09-25) The load harness confirmed two more measurement holes: aura_turns_in_flight is only updated on the non-streaming AIKernel.run path (every client u… | Metrics live on the VPS and wired into PRODUCTION_SLO alerts. | — |
 | GAP-042 | P1 | `open` | supply-chain/model-licensing | coordinator | No model license review is recorded anywhere in the tree. The production chat model is Qwen2.5-3B-Instruct (via the Ollama tag qwen2.5:3b-instruct-q4_K_M); fro… | License review recorded per model in MODEL_REGISTRY.md; any incompatible model replaced. | — |
 | GAP-046 | P1 | `open` | deploy/backup-secret-scope | platform-ops | The backup service mounts the whole deploy/secrets directory read-only at /run/backup-secrets (docker-compose.prod.yml, since 681780d), in a container on the e… | Backup-only secrets moved to their own directory or individual file mounts, with the fitness test, and one backup cycle run on the VPS after the change. | GAP-028 |
 | GAP-050 | P1 | `built_not_proven` | adaptation/connectors | platform-core | (2026-10-11) AP2's tests ran green in Backend CI run #347 and on PostgreSQL 16.15 (2026-10-11), but its exit criterion also needs the dev-stack run, and the de… | AP2 exit criteria met; docs/reports/ap2-connector-framework.md. | GAP-049, GAP-048 |

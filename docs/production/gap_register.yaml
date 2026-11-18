@@ -935,13 +935,20 @@ gaps:
       non-LLM API latency and 5xx rate SLOs are therefore unmeasurable from Prometheus; only nginx
       access logs via Loki could approximate them. Scrape config has one app job
       (deploy/monitoring/prometheus.yml: aura-gateway).
+      Since then: F-24/CB-15 added the per-route HTTP metrics. Phase R (2026-11-18, branch
+      anas/laughing-hamilton-glfevj, tested locally, not deployed): the Railway image's CMD now
+      shares one PROMETHEUS_MULTIPROC_DIR across its uvicorn workers (each scrape used to see
+      one random worker); request/LLM/turn trace spans exist (none did); and
+      docs/deployment/observability.md is the Grafana Cloud runbook (scrape job aura-gateway,
+      the VPS rule file loaded with mimirtool, synthetic liveness/readiness checks as the
+      external probe). Nothing is configured on Grafana Cloud yet.
     target_state: Bounded-cardinality http_requests_total{route,method,status} and http_request_duration_seconds; external blackbox probe for availability.
     owner: platform-ops
     dependencies: []
     test: metrics unit test asserting labels are route templates, not raw paths
     metric: aura_http_requests_total, aura_http_request_duration_seconds (proposed)
     exit_condition: Metrics live on the VPS and wired into PRODUCTION_SLO alerts.
-    status: open
+    status: in_progress
     reverified_2026_09_25: >-
       The load harness confirmed two more measurement holes: aura_turns_in_flight is only
       updated on the non-streaming AIKernel.run path (every client uses /chat/stream), and no

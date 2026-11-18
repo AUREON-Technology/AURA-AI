@@ -1,6 +1,6 @@
 # Plan: enable built runtime features on Railway, then build Arabic/live voice, vision and ops
 
-**Status:** Approved 2026-11-17; Phases V and I built (see their progress notes) · **Date:** 2026-11-17 · **Base:** `main@446e004`
+**Status:** Approved 2026-11-17; Phases V, I and R built (see their progress notes) · **Date:** 2026-11-17 · **Base:** `main@446e004`
 (the SHA live on Railway) · **Branch:** `anas/laughing-hamilton-glfevj`
 
 ## Goal
@@ -169,6 +169,28 @@ The rest is the owner's: Space variables + resume, Railway variables, then
 | R5 | Backups | Create the Railway backup cron service per `docs/deployment/backups.md` with two offsite targets; then a restore drill into a scratch Postgres/Qdrant, recorded in `docs/reports/` | GAP-028 / GAP-046 |
 | R6 | Real-model eval | Run `real-model-eval.yml` (or locally with the keys) against `hosted1`+bge: simple vs adaptive retrieval, heuristic vs cross-encoder rerank. Keep whichever wins on the RAG SLO; set it on Railway | GAP-021, GAP-023 |
 | R7 | Load | 1→10→25 virtual users against `api.aureon-ai.tech` (test account, `tests/load` harness), with Groq and Cloudflare limits stated. GAP-041 stays **open**: 50 users is beyond the free tiers by arithmetic | Partial evidence only, stated as such |
+
+### Phase R progress (2026-11-18)
+
+Built and tested locally (not CI-run, not deployed):
+- **R1:** the Railway `CMD` gives all uvicorn workers one `PROMETHEUS_MULTIPROC_DIR`
+  (default `/tmp/aura-prometheus`, stale `*.db` wiped, an explicit value wins). Until now each
+  scrape was answered by one random worker.
+- **R2:** spans now exist (none did, so enabling tracing exported nothing):
+  - `<METHOD> <route>` from the HTTP middleware;
+  - `llm.generate` per provider attempt;
+  - `aura.turn` per turn.
+
+  They carry no content, ids, addresses or user agents, which a test checks. The container
+  installs its tracer instead of getting whichever one was created first.
+- **R3–R8 runbook:** `docs/deployment/observability.md`, covering:
+  - the Grafana Cloud scrape job (`aura-gateway`);
+  - `mimirtool rules load deploy/monitoring/alerts/aura.yml` (one rule source);
+  - the OTLP variables, the dashboard import and synthetic checks;
+  - links to backups, the real-model eval and the load test, with Railway-specific values.
+
+Owner actions remain: create the Grafana Cloud stack and the Railway variables, create the backup
+cron + heartbeat and run the restore drill, run the real-model eval, run the 1→25 load test.
 
 ## Contract (all additive)
 

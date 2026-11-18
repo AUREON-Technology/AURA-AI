@@ -7,6 +7,13 @@
 
 ## Summary
 
+**Update 2026-11-18, Phase R (same branch, TESTED locally, not CI-run or deployed).** On Railway,
+`/metrics` was answered by one random uvicorn worker per scrape. The image `CMD` now shares one
+`PROMETHEUS_MULTIPROC_DIR`. Tracing produced no spans at all; requests, provider attempts and turns
+are now traced, with no content or identity in any span. Grafana Cloud runbook:
+`docs/deployment/observability.md`. Nothing is configured on Grafana Cloud yet (GAP-036
+`in_progress`).
+
 **Update 2026-11-17, Phase I (same branch, TESTED locally, not CI-run or deployed).**
 `AURA_PROVIDER_<NAME>_HEALTH_PROBE=passive` lets readiness report a provider from its circuit
 breaker without calling it. That is for the HF Space, which sleeps when idle and wakes (and
