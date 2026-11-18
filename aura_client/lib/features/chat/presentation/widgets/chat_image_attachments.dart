@@ -29,7 +29,17 @@ class AttachImageButton extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final capabilities = ref.watch(visionCapabilitiesProvider).value;
+    final check = ref.watch(visionCapabilitiesProvider);
+    if (check.hasError && !check.isLoading) {
+      // F25: the server could not be asked, which is not a "no". Offer to ask again rather than
+      // hiding image attachments for the rest of the session.
+      return IconButton(
+        tooltip: context.l10n.chatImageCapabilityCheckFailed,
+        icon: const Icon(Icons.image_not_supported_outlined),
+        onPressed: enabled ? () => ref.invalidate(visionCapabilitiesProvider) : null,
+      );
+    }
+    final capabilities = check.value;
     if (capabilities == null || !capabilities.canAttach) return const SizedBox.shrink();
     final count = ref.watch(pendingChatImagesProvider).length;
     final full = count >= capabilities.maxImages;

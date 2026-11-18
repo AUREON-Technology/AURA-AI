@@ -4,14 +4,18 @@ import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
 /// Shown when an assistant turn ends with no tokens instead of a blank body.
+///
+/// [onRetry] is null when this is not the conversation's latest turn: a later message has
+/// followed it, so the card explains instead of offering to resend it out of order (F2).
 class EmptyAnswerRetryCard extends StatelessWidget {
-  final VoidCallback onRetry;
+  final VoidCallback? onRetry;
 
   const EmptyAnswerRetryCard({super.key, required this.onRetry});
 
   @override
   Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
+    final retry = onRetry;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -33,19 +37,21 @@ class EmptyAnswerRetryCard extends StatelessWidget {
         ),
         const SizedBox(height: AuraSpacing.sm),
         Text(
-          context.l10n.chatNoReplyBody,
+          retry != null ? context.l10n.chatNoReplyBody : context.l10n.chatRetryOnlyLatestTurn,
           style: TextStyle(
             color: palette.textSecondary,
             fontSize: 13,
             height: 1.4,
           ),
         ),
-        const SizedBox(height: AuraSpacing.md),
-        AuraButton(
-          label: context.l10n.retry,
-          icon: Icons.refresh,
-          onPressed: onRetry,
-        ),
+        if (retry != null) ...[
+          const SizedBox(height: AuraSpacing.md),
+          AuraButton(
+            label: context.l10n.retry,
+            icon: Icons.refresh,
+            onPressed: retry,
+          ),
+        ],
       ],
     );
   }

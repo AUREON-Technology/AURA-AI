@@ -1,5 +1,10 @@
 {
   "@@locale": "ar",
+  "chatRetryOnlyLatestTurn": "فيه رسايل جت بعد دي، فمينفعش تعيد محاولتها من هنا. ابعتها تاني لو لسه محتاج رد.",
+  "chatImageCapabilityCheckFailed": "معرفناش نتأكد إذا كان ينفع ترفق صور. دوس عشان تجرب تاني.",
+  "memorySaveQueued": "اتحفظت على الجهاز ده. AURA هيفتكرها أول ما يوصل للسيرفر.",
+  "memorySaveRefused": "السيرفر مقبلش الذكرى دي: {fact}",
+  "shareTruncatedOlder": "المحادثة المتشاركة بتساع آخر {count} رسالة بس، فالـ{omitted} رسالة الأقدم مش هتتشارك.",
   "languageSectionTitle": "اللغة",
   "languageSystem": "لغة الجهاز",
   "languageSystemSubtitle": "استخدم نفس لغة جهازك",

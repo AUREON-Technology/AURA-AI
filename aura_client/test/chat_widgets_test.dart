@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/features/chat/data/chat_repository.dart';
@@ -13,6 +14,11 @@ import 'package:aura_client/features/chat/presentation/widgets/streaming_message
 import 'package:aura_client/features/chat/presentation/widgets/turn_status_row.dart';
 import 'package:aura_client/features/chat/presentation/widgets/user_facing_citations.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+
+/// The bubble's "is this the latest turn" lookup, answered without a database (F2): unknown, so
+/// a failed turn keeps its Retry.
+Override _latestTurnUnknown() =>
+    latestAssistantMessageIdProvider.overrideWith((ref, _) => Stream<String?>.value(null));
 
 Widget _wrap(Widget child) {
   return MaterialApp(
@@ -119,6 +125,7 @@ void main() {
       );
       await tester.pumpWidget(
         ProviderScope(
+          overrides: [_latestTurnUnknown()],
           child: _wrap(MessageBubble(message: message, isUser: false)),
         ),
       );
@@ -173,6 +180,7 @@ void main() {
         );
         await tester.pumpWidget(
           ProviderScope(
+            overrides: [_latestTurnUnknown()],
             child: _wrap(MessageBubble(message: message, isUser: false)),
           ),
         );
