@@ -45,6 +45,12 @@ const _ourKeys = [
   'hostdCodeRemoteControlDisabled', 'hostdCodeRemoteConfirmationRequired', 'hostdCodeInvalidTaskKey',
   'hostdCodeIsolatedTaskUnresolved', 'hostdCodeInvalidOrigin', 'hostdCodeDiagnosticsUntrusted',
   'hostdCodeInvalidRequestBody',
+  // WP4 (D-13) and WP9.
+  'gitInitBannerTitle', 'gitInitBannerBody', 'gitInitButton', 'gitInitButtonShort',
+  'gitInitConfirmTitle', 'gitInitConfirmBody', 'gitInitConfirmAction', 'gitInitDone', 'gitInitFailed',
+  'engineerDesktopNotGit', 'hostdCodeIsolationNeedsGit', 'hostdCodeAlreadyAGitRepo',
+  'hostdCodeGitInitFailed', 'hostdCodeApprovalQueueFull', 'chatApprovalExpiredNotice',
+  'ideStatusRepairTooltip', 'controlCenterEmpty', 'chatAwaitingConfirmation',
 ];
 
 final _arabicLetter = RegExp('[ء-ي]');
@@ -84,6 +90,27 @@ void main() {
     expect(en['engineeringRootTrusted'], isNot(contains('confined')));
     expect(en['engineeringRootUntrusted'], contains('anything else asks you first'));
     expect(ar['engineeringRootTrusted'], isNot(contains('جوّه الفولدر ده بس')));
+  });
+
+  test('the git-init dialog names what it commits, in both languages (D-13)', () {
+    for (final arb in [en, ar]) {
+      final body = arb['gitInitConfirmBody'] as String;
+      expect(body, contains('git init'));
+      expect(body, contains('.gitignore'));
+      expect(body, contains('.env'));
+      expect(body, contains('{path}'));
+    }
+  });
+
+  test('the Control Center empty state is true now: tasks are reviewed, not created for you', () {
+    expect(en['controlCenterEmpty'], contains('aura/task-'));
+    expect(en['controlCenterEmpty'], isNot(contains('automatically')));
+    expect(ar['controlCenterEmpty'], contains('aura/task-'));
+  });
+
+  test('the confirmation hint points at the card, which is below it', () {
+    expect(en['chatAwaitingConfirmation'], contains('below'));
+    expect(ar['chatAwaitingConfirmation'], contains('تحت'));
   });
 
   testWidgets('the desktop-IDE-unavailable page renders in Arabic, right to left', (tester) async {

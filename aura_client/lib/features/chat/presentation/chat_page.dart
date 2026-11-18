@@ -129,7 +129,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final activeSessionId = ref.watch(activeConversationIdProvider);
     final messagesAsync = ref.watch(chatMessagesStreamProvider(activeSessionId));
     // G-14a: a confirmation still waiting from before a restart comes back with its card.
-//x
+    ref.watch(pendingConfirmationRehydrationProvider(activeSessionId));
     final visibleLimit = ref.watch(chatVisibleMessageLimitProvider(activeSessionId));
     final sessionsAsync = ref.watch(conversationsStreamProvider);
     final isMobile = MediaQuery.of(context).size.width < 768;

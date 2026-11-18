@@ -152,8 +152,8 @@ void main() {
     expect(sse.requests, isEmpty);
   });
 
-  test('rejecting removes exactly that call, not every call sharing its call id', () {
-    container.read(chatRepositoryProvider).rejectPendingCalls([_turnOneCall]);
+  test('rejecting removes exactly that call, not every call sharing its call id', () async {
+    await container.read(chatRepositoryProvider).rejectPendingCalls([_turnOneCall]);
 
     final left = container.read(pendingConfirmationProvider);
     expect(left.map((c) => c.approvalId), ['apr.tok2.n1']);

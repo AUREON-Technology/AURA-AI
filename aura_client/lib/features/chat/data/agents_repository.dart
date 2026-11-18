@@ -78,6 +78,18 @@ Map<String, (String, IconData)> _knownPersonas(AppLocalizations l10n) => {
     };
 
 /// Labels are read in the language on screen ([currentL10n]) when called, i.e. at build time.
+/// Invalidates [ref]'s provider when the app resumes. No-op where no binding exists yet (a plain
+/// unit test reading the provider), since there is no app lifecycle to follow there.
+void _refetchOnResume(Ref ref) {
+  final AppLifecycleListener listener;
+  try {
+    listener = AppLifecycleListener(onResume: ref.invalidateSelf);
+  } on Object {
+    return;
+  }
+  ref.onDispose(listener.dispose);
+}
+
 (String label, IconData icon) personaDisplay(String agentId) {
   final known = _knownPersonas(currentL10n)[agentId];
   if (known != null) return known;
@@ -96,7 +108,12 @@ Map<String, (String, IconData)> _knownPersonas(AppLocalizations l10n) => {
 ///
 /// Through [AuraApiClient] (INT-024): attestation headers, one retry on 401, and a deadline --
 /// a bare `http.get` had none of the three, so an expired token showed as "failed to load".
+///
+/// G-15: refetched when the app comes back to the foreground, so a capability granted (or
+/// revoked) while it was in the background shows without a restart; the persona picker's error
+/// view also offers Retry.
 final agentsProvider = FutureProvider<List<AgentInfo>>((ref) async {
+  _refetchOnResume(ref);
   final decoded = await ref.read(auraApiClientProvider).json(
         method: 'GET',
         path: '/api/v3/agents',

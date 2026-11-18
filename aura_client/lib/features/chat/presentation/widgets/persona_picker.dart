@@ -86,6 +86,16 @@ void showPersonaPicker(BuildContext context) {
 class PersonaPickerSheet extends ConsumerWidget {
   const PersonaPickerSheet({super.key});
 
+  Widget _failure(WidgetRef ref, Object error) => Padding(
+        padding: const EdgeInsets.all(AuraSpacing.xl),
+        child: AuraFailureView(
+          failure: AuraFailure.from(error),
+          compact: true,
+          // G-15: a failed load is not the last word.
+          onRetry: () => ref.invalidate(agentsProvider),
+        ),
+      );
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = AuraPalette.of(context);
@@ -117,7 +127,12 @@ class PersonaPickerSheet extends ConsumerWidget {
                 ),
                 const SizedBox(height: AuraSpacing.sm),
                 Flexible(
-                  child: agentsAsync.when(
+                  // While Riverpod retries a failed load on its own, the value is "loading,
+                  // with an error": show the error (and Retry) rather than a spinner that may
+                  // run for a long while (G-15).
+                  child: agentsAsync.error != null && !agentsAsync.hasValue
+                      ? _failure(ref, agentsAsync.error!)
+                      : agentsAsync.when(
                     data: (agents) => ListView.builder(
                       shrinkWrap: true,
                       itemCount: agents.length,
@@ -172,13 +187,7 @@ class PersonaPickerSheet extends ConsumerWidget {
                       padding: EdgeInsets.all(AuraSpacing.xl),
                       child: Center(child: CircularProgressIndicator()),
                     ),
-                    error: (e, _) => Padding(
-                      padding: const EdgeInsets.all(AuraSpacing.xl),
-                      child: AuraFailureView(
-                        failure: AuraFailure.from(e),
-                        compact: true,
-                      ),
-                    ),
+                    error: (e, _) => _failure(ref, e),
                   ),
                 ),
               ],

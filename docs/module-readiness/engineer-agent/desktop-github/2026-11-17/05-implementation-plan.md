@@ -22,7 +22,10 @@ proven live.
 | WP2 | Done | `bcdc378` (backend), client in `8cc0e10` |
 | WP7 | Done in code; no real-machine Ubuntu check yet (that belongs to WP10a) | the client commit after `5c7022a` |
 | WP8 | Done; ADR-011 amendment recorded | `b297dfb` (backend), `b3460c2` (daemon), client in the commit after `5c7022a` |
-| WP4, WP6, WP9, WP10a, WP11, WP12, WP10b | Not started | — |
+| WP4 | Done. D-13 (2026-11-18): a non-git folder offers "Initialize git here" instead of working unisolated | `f4426c0` (backend), `fe854c1` (daemon), client in the commit after `348f24c` |
+| WP9 | Done, except G-13: running `desktop-package.yml` on a tag publishes a release and needs the owner's go-ahead. Already on main: G-18 (INT-003) and the `read_file` cap (INT-036) | `f4426c0` (1011 on server errors), `fe854c1` (approval queue), client in the commit after `348f24c` |
+| Merge of main (Arabic plan) | Done; the consent migration was renumbered to `0023` after main's `0022` | `60cf1e9`, `3a9ef0c` |
+| WP6, WP10a, WP11, WP12, WP10b | Not started | — |
 
 ## 0. Ground rules for every work package
 
