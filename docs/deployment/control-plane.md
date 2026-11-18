@@ -207,7 +207,7 @@ AURA_PROVIDER_HOSTED1_EXTRA_BODY={"reasoning_effort": "low"}   # reasoning model
 This turns on Engineer turns for operators. Its gate: the consent route (WP1), the per-user
 allowance (WP2) and the workload fence (WP6a) must already be **live**. They shipped in PR #251;
 check `/health/ready` shows `schema.revision` `0023` and `release.git_sha` at or after that merge
-before going on. Otherwise Engineer code would reach Anthropic without consent, without a cap, or
+before going on. (Met on 2026-11-18 08:46 UTC: `d47e064`, schema `0023`, healthy.) Otherwise Engineer code would reach Anthropic without consent, without a cap, or
 for work that is not the Engineer's.
 
 Set these in the Railway dashboard (Variables). The slot name `claude1` is free on Railway; the
