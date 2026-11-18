@@ -13,6 +13,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:aura_client/core/network/aura_failure.dart';
+import 'package:aura_client/core/network/aura_api_error.dart';
 import 'package:aura_client/core/ai/voice/live/live_audio_sink.dart';
 import 'package:aura_client/core/ai/voice/live/live_mic_source.dart';
 import 'package:aura_client/core/ai/voice/live/live_voice_socket.dart';
@@ -302,6 +304,50 @@ void main() {
     expect(channel.startFrames.single['session_id'], 'conv-1');
     expect(container.read(liveVoiceViewModelProvider).error,
         currentL10n.voiceLiveArabicUnavailable);
+  });
+
+  group('a refused turn reads like the HTTP refusal (F7)', () {
+    Future<String?> refuse(Map<String, dynamic> frame) async {
+      final vm = container.read(liveVoiceViewModelProvider.notifier);
+      container.listen(liveVoiceViewModelProvider, (_, _) {});
+      await vm.startSession(conversationId: 'conv-1');
+      await _settle();
+      channel.incoming.add(jsonEncode({'type': 'error', ...frame}));
+      await _settle();
+      return container.read(liveVoiceViewModelProvider).error;
+    }
+
+    test('a rate limit says when to try again, not the server text', () async {
+      final shown = await refuse({
+        'error': 'rate_limited',
+        'message': 'rate limit exceeded',
+        'retryable': true,
+        'details': {'retry_after': 30},
+      });
+      expect(shown, isNot('rate limit exceeded'));
+      expect(shown, AuraFailure.from(const AuraApiError(
+        error: 'rate_limited', message: 'x', retryable: true,
+        retryAfter: Duration(seconds: 30), details: {'retry_after': 30},
+      )).message);
+    });
+
+    test('a plan limit uses the plan wording', () async {
+      const details = {'plan': 'free', 'limit': 50, 'used': 50};
+      final shown = await refuse({
+        'error': 'plan_limit',
+        'message': 'monthly message limit reached',
+        'retryable': false,
+        'details': details,
+      });
+      expect(shown, isNot('monthly message limit reached'));
+      expect(shown, AuraFailure.from(const AuraApiError(
+        error: 'plan_limit', message: 'x', retryable: false, details: details,
+      )).message);
+    });
+
+    test('an unknown error still shows the server message', () async {
+      expect(await refuse({'error': 'something_new', 'message': 'server says'}), 'server says');
+    });
   });
 
   test('choosing Arabic again retries it after an English-only fallback', () async {

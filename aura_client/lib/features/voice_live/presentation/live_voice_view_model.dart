@@ -9,6 +9,8 @@ import 'package:aura_client/core/ai/voice/live/live_voice_protocol.dart';
 import 'package:aura_client/core/ai/voice/live/live_voice_socket.dart';
 import 'package:aura_client/core/ai/voice/live/pcm_framer.dart';
 import 'package:aura_client/core/ai/voice/voice_language.dart';
+import 'package:aura_client/core/network/aura_api_error.dart';
+import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/features/chat/data/chat_repository.dart';
 import 'package:aura_client/features/chat/data/turn_meta.dart';
 import 'package:aura_client/features/voice_live/data/live_voice_history.dart';
@@ -55,6 +57,9 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
   /// is still arriving and must not play after the user cut it off.
   bool _dropReplyAudio = false;
   final _uuid = const Uuid();
+
+  /// Error frames for a turn the server refused to run (F7); shown with the app's own wording.
+  static const _refusals = {'plan_limit', 'rate_limited', 'dependency_unavailable'};
 
   /// The language this session asked the server to transcribe: the user's voice language
   /// (the app's language unless the live screen's toggle overrides it; Phase V), forced to
@@ -322,6 +327,19 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
         // The socket is gone: stop the mic and playback rather than leave the screen
         // "listening" to nothing. Each close code carries its own message (INT-015).
         unawaited(_fail(message));
+      case LiveErrorFrame(:final error, :final message, :final details, :final retryAfter)
+          when _refusals.contains(error):
+        // A turn the server declined before running it (plan quota, rate limit, plans service
+        // down -- F7): the same wording the HTTP refusal gets, not the server's English text.
+        state = state.copyWith(
+          error: AuraFailure.from(AuraApiError(
+            error: error,
+            message: message,
+            retryable: error != 'plan_limit',
+            retryAfter: retryAfter,
+            details: details,
+          )).message,
+        );
       case LiveErrorFrame(:final message):
         state = state.copyWith(error: message);
       case LivePlaybackHintFrame(:final sampleRate):
