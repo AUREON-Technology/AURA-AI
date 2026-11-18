@@ -626,8 +626,9 @@ class AppDatabase extends _$AppDatabase {
           if (needsReset) {
             debugPrint(
               "[Database] Decryption key mismatch or key loss detected. "
-              "Clearing unreadable content tables; preserving outboxEntries, "
-              "syncMetadata, and pendingDeletes so unsynced mutations are not destroyed.",
+              "Clearing unreadable content tables and the sync cursor; preserving "
+              "outboxEntries, pendingDeletes and the other syncMetadata keys so unsynced "
+              "mutations are not destroyed.",
             );
             await transaction(() async {
               await delete(tasks).go();
@@ -642,8 +643,13 @@ class AppDatabase extends _$AppDatabase {
               await delete(learningLogs).go();
               await delete(offlineModelWeights).go();
               await delete(telemetryLogs).go();
+              // The cursor says "this device has everything up to here". After the wipe it has
+              // nothing, and an incremental pull from the old cursor would never bring the
+              // cleared history back (F3). Only the cursor goes: the other keys in this table
+              // (the notifications watermark) describe the device, not the cleared rows.
+              await (delete(syncMetadata)..where((t) => t.key.equals('cursor'))).go();
             });
-            debugPrint("[Database] Unreadable content tables cleared. Outbox and sync cursor kept.");
+            debugPrint("[Database] Unreadable content tables cleared. Outbox kept; next pull is a full one.");
           }
 
           if (details.versionBefore != null && details.versionBefore! < 6) {
