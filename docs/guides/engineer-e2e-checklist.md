@@ -1,4 +1,4 @@
-# Engineer end-to-end checklist (operators)
+# Engineer end-to-end checklist (operators, then customers)
 
 Module readiness WP10a (NFR-04). Its result is the evidence that stage 1 of the Engineer works for
 real people on real machines. A green `pytest`, `flutter test` or `dart test` cannot stand in for
@@ -179,6 +179,121 @@ On the phone, sign in to the same account. The Engineer tab shows the desktop ba
 
    A run with any fail or not-run is still committed, but those three keep saying "not proven".
 
+## Part B: customers (WP10b)
+
+Module readiness WP10b. Run this after Part A has passed. It repeats the operator run as a
+paying customer, adds the refusals a Free customer must get, and checks a downgrade
+mid-session. The customer launch opens only on a committed report in which every step passed on
+both machines.
+
+### B0. Before you start
+
+Everything in section 0, plus:
+
+| Check | How | Expected |
+|---|---|---|
+| #246 is live | `curl -s https://api.aureon-ai.tech/health/ready` | `checks.schema.revision` is `0029` or later (it was `0023` on 2026-11-18) |
+| Customers are switched on | Railway variables | `AURA_ENGINEER_FOR_CUSTOMERS=true`. The boot succeeded, which also proves its startup guards passed (`docs/deployment/desktop-engineer-customers.md`) |
+| Browser sign-in is set up | That guide, "Desktop sign-in with Apple or email" | The web app answers at `APP_BASE_URL`; the desktop build was made with `--dart-define=APP_BASE_URL=…`; Firebase has Google, Apple and email on; `AURA_REDIS_URL` is set |
+| Two customer accounts, neither an operator | Create them in the app | **Pro customer** and **Free customer**. Use addresses that are on no `*_EMAILS` list and have no Access-page role |
+| Their plans | `PUT /api/v3/admin/workspaces/<id>/plan` (SuperAdmin; `docs/deployment/plans-and-limits.md`) | Pro customer's personal workspace on `pro`; Free customer left on `free`. Check each with `GET /api/v3/workspaces/<id>/plan` |
+
+Run B1 to B4 as the **Pro customer**, on both machines.
+
+### B1. Sign in three ways (WP12)
+
+1. Use the browser sign-in button on the login page. The web page opens.
+   - Sign in with **Google**.
+   - **Expected:** the browser tab says you are signed in and can be closed. The app lands on
+     the IDE, signed in.
+2. Sign out, and repeat with **Apple**.
+3. Sign out, and repeat with **email and password**.
+   - **Expected:** each one lands on the IDE, signed in.
+   - **Expected:** Settings → Desktop devices lists each sign-in as a device.
+   - **Expected:** the web page signed itself out afterwards. Reloading it does not show you as
+     signed in.
+4. Start a browser sign-in, then wait more than a minute on the web page before finishing.
+   - **Expected:** the app says the sign-in code expired, or the sign-in timed out. Starting
+     again works.
+
+### B2. The operator run, as a customer
+
+Repeat sections 1 to 8 of Part A. Differences to check:
+- **Section 1:** pairing is approved with the customer's own session.
+  - **Expected:** it pairs.
+  - **Expected:** the daemon stays connected for at least two minutes, which spans the
+    60-second plan recheck.
+- **Section 2:** the Engineer is **not** greyed out in the persona picker. Before WP11 it was
+  greyed out for customers.
+- **Section 7:** the phone's folder picker lists the computer's folders. Before WP11 a customer
+  got 403 here. "Initialize git here" from the phone also works.
+- **Section 8:** the daily cap applies to customers exactly as to operators.
+- **The plan's message count.** Each Engineer turn counts one message against the month:
+  `GET /api/v3/workspaces/<id>/plan` → `usage`.
+  - **Expected:** a turn that failed or was refused does not count.
+- **The console.** Open `https://console.aureon-ai.tech/` signed in as the customer.
+  - **Expected:** refused. A customer desktop session is capped at `User` and never reaches the
+    console.
+
+### B3. Downgrade mid-session
+
+With the Pro customer signed in on the desktop, paired, and a phone session open:
+
+1. As SuperAdmin, set their workspace to `free` and note the time.
+2. Send an Engineer message from the desktop.
+   - **Expected, at once:** refused with the plan message, and a **See plans** row in the chat.
+     Not a connection error.
+3. Watch the IDE status bar.
+   - **Expected, within about 1 minute:** the daemon disconnects. It shows *Re-pair required* or
+     not connected.
+4. Keep the app open.
+   - **Expected, within about 15 minutes:** the session stops refreshing and the app signs out
+     with *The desktop Engineer needs a Pro or Team plan. Upgrade, then sign in again.*
+5. From the phone, open the Engineer tab.
+   - **Expected:** the folder picker is refused, and the Engineer is greyed out.
+6. Set the workspace back to `pro`, sign in on the desktop again, and confirm the daemon
+   reconnects without re-pairing.
+
+Record each time you observe. "About" is the design. A minute over is a note, not a fail; ten
+minutes over is a fail.
+
+### B4. A team member
+
+1. Create a Team workspace, owned by an operator or a third account, on the `team` plan.
+2. Invite the **Free customer**, who accepts.
+3. They sign in on the desktop and pair.
+   - **Expected:** both work. Sign-in and pairing look at **any** workspace on a plan that
+     includes the Engineer.
+4. With their **personal** (Free) workspace still active, send an Engineer message.
+   - **Expected:** refused with the plan message. A turn uses the **active** workspace's plan.
+5. Switch the active workspace to the team and send it again.
+   - **Expected:** it runs.
+   - **Record:** whether the desktop app offers a way to switch workspace at all. If a team member
+     can pair but has no way on the desktop to make the team active, that is a finding.
+6. Remove them from the team.
+   - **Expected:** their daemon disconnects within about a minute, as in B3.
+
+### B5. The Free customer is refused everywhere
+
+Signed in as the **Free customer**, with no Team membership:
+
+| Where | Expected |
+|---|---|
+| Desktop sign-in, every method | *The desktop Engineer needs a Pro or Team plan. Upgrade, then sign in again.* No session |
+| Approving a pairing code from the phone | The same message. The code is not spent |
+| Phone: Engineer persona | Greyed out |
+| Phone: folder picker (`/api/v3/host/folders`) | Refused |
+| An Engineer message from the phone or web | Refused with the plan message and **See plans**, before anything is sent to Anthropic: no new `llm.third_party_generation` audit row |
+
+### B6. After the run
+
+Section 10, plus:
+1. Set the test workspaces back to their real plans.
+2. Commit the report as `docs/reports/desktop-engineer-e2e-customers-<YYYY-MM-DD>.md`.
+3. Only if every row passed on both machines, record the customer launch as unblocked:
+   - in the module-readiness plan's progress table;
+   - in `docs/status/DESKTOP_APP_STATUS.md`.
+
 ## Report template
 
 ```markdown
@@ -209,4 +324,27 @@ On the phone, sign in to the same account. The Engineer tab shows the desktop ba
 ## Verdict
 <"Proven for operators on Windows and Ubuntu" only if every row passed on both; otherwise what
 remains>
+```
+
+### Customer report template (WP10b)
+
+```markdown
+# Desktop Engineer end-to-end, customers -- <YYYY-MM-DD>
+
+- Backend: release.git_sha <sha>, schema <rev>, AURA_ENGINEER_FOR_CUSTOMERS=true, claude1 healthy <y/n>
+- Web app: <APP_BASE_URL>; desktop build: <run #N | local at <sha>>, built with APP_BASE_URL <y/n>
+- Accounts: Pro customer <id>, Free customer <id>, team <id>
+- Plan changes made during the run, with times: <...>
+
+| # | Step | Windows | Ubuntu | Notes / evidence |
+|---|---|---|---|---|
+| B1 | Sign in: Google, Apple, email; expiry | | | |
+| B2 | Operator run as Pro customer (sections 1-8, persona, phone picker, metering, console refused) | | | |
+| B3 | Downgrade: turn at once, daemon ~1 min, session ~15 min, restore | | | |
+| B4 | Team member entitled; removal disconnects | | | |
+| B5 | Free refused at every point | | | |
+
+## Findings
+## Verdict
+<"Customer launch unblocked" only if every row passed on both machines>
 ```
