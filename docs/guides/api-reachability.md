@@ -77,7 +77,7 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | GET | `/api/v3/admin/twin/versions/{version}/plan` | — | — | — | none | to wire: Console twin browser and diff are Track AP phase AP9 |
 | POST | `/api/v3/admin/users/{subject}/forget` | — | `aura_admin/app/(console)/access/page.tsx:197` | — | called |  |
 | PUT | `/api/v3/admin/workspaces/{workspace_id}/plan` | — | — | — | none | to wire: admin console page missing for this route |
-| GET | `/api/v3/agents` | `aura_client/lib/features/chat/data/agents_repository.dart:6`, `aura_client/lib/features/chat/data/agents_repository.dart:119` | — | — | called |  |
+| GET | `/api/v3/agents` | `aura_client/lib/features/chat/data/agents_repository.dart:9`, `aura_client/lib/features/chat/data/agents_repository.dart:127` (+1) | — | — | called |  |
 | GET | `/api/v3/agents/runs` | — | — | — | none | to wire: agent-run history (wave 2) has no client or admin view yet |
 | GET | `/api/v3/agents/runs/{run_id}` | — | — | — | none | to wire: agent-run history (wave 2) has no client or admin view yet |
 | POST | `/api/v3/auth/consumer/token` | `aura_client/lib/core/auth/token_manager.dart:93` | — | — | called |  |
