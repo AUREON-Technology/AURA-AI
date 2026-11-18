@@ -31,6 +31,12 @@ Source key: `USER` = the owner's answer in this session.
 | D-11 | Open PR #246 makes Engineer a Pro/Team plan feature, but its access still came only from the D-04 roles. Who gets the Engineer? | **Operators (Developer, Admin, SuperAdmin) and paying customers**: a User-role person whose active workspace's plan includes Engineer (Pro or Team in #246). **The desktop is included for them**, which reverses F-09 (2026-11-16, desktop sign-in for Developer and above only) for plan-entitled customers. | USER. The first answer was "Operators only … + the paying customers"; it was clarified in a follow-up question. | FR-01, FR-18, FR-19, SEC-12 |
 | D-12 | Customers who signed up with Apple or email can't use Google-only desktop sign-in. What should launch do? | **Desktop sign-in goes through the same Firebase providers as web** (Google, Apple, email), so every paying customer can sign in on the desktop. | USER (recommended) | FR-20 |
 
+### Added in IMPLEMENT (WP4)
+
+| ID | Question | Decision | Source | Affects |
+|---|---|---|---|---|
+| D-13 | Isolation needs git. What should the Engineer do in a granted folder that is not a git repository? | **Offer "Initialize git here".** The Engineer refuses to work in a non-git folder until it is a repository, with a one-click "Initialize git here" in the IDE and in the phone's folder bar. It runs `git init` and makes a first commit of the folder's current files. D-09's promise holds: every change is reviewable and undoable. | USER (recommended) | FR-08 |
+
 **D-11 supersedes D-04** where they differ. D-04's roles still hold for operators, and plan
 entitlement is a second source of `engineer_agent`.
 

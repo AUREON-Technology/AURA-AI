@@ -228,8 +228,9 @@ class TestTheFolderPicker:
         with self._client(container) as client:
             client.portal.call(daemon.registry.register, daemon.session)
             body = client.get("/api/v3/host/folders").json()
+        # is_git (WP4) is None here: this fake daemon predates the field.
         assert body == {"connected": True, "remote_control": True,
-                        "roots": [{"path": "/home/eng/app", "trusted": True}]}
+                        "roots": [{"path": "/home/eng/app", "trusted": True, "is_git": None}]}
 
     def test_an_older_daemon_reads_as_not_connected(self, container) -> None:
         registry = HostAgentRegistry()
@@ -243,3 +244,92 @@ class TestTheFolderPicker:
             client.portal.call(registry.register, session)
             body = client.get("/api/v3/host/folders").json()
         assert body["connected"] is False
+
+
+class _GitRecorder(_Recorder):
+    """A daemon whose folders say whether they are git repositories, and that can init one."""
+
+    def __init__(self, *, init_error: str | None = None) -> None:
+        super().__init__()
+        self._init_error = init_error
+
+    async def _send(self, frame: dict) -> None:
+        method = frame["method"]
+        if method == "list_roots":
+            self.frames.append(frame)
+            self.session.resolve({"type": "result", "id": frame["id"], "result": {
+                "roots": [{"path": "/home/eng/app", "trusted": True, "is_git": True},
+                          {"path": "/home/eng/notes", "trusted": False, "is_git": False}],
+                "remote_control": True,
+            }})
+            return
+        if method == "init_git":
+            self.frames.append(frame)
+            if self._init_error:
+                self.session.resolve({"type": "error", "id": frame["id"],
+                                      "message": self._init_error, "code": "remote_control_disabled"})
+            else:
+                self.session.resolve({"type": "result", "id": frame["id"],
+                                      "result": {"ok": True, "commit": "abc1234"}})
+            return
+        await super()._send(frame)
+
+
+class TestInitializeGit:
+    """WP4 / D-13: isolation needs git, so a non-git folder offers "Initialize git here". The
+    folder list says which folders are repositories, and the phone can ask the computer to
+    initialize one -- an explicit tap by the person, sent to the daemon as confirmed."""
+
+    def _client(self, container, *, caps=CAPS) -> TestClient:
+        async def authenticator(_request):
+            return Principal(user_id=USER, role="Developer", capabilities=caps)
+
+        return TestClient(build_app(container, authenticator=authenticator))
+
+    def test_folders_say_which_are_git_repositories(self, container) -> None:
+        daemon = _GitRecorder()
+        container.host_agent_registry = daemon.registry
+        with self._client(container) as client:
+            client.portal.call(daemon.registry.register, daemon.session)
+            roots = client.get("/api/v3/host/folders").json()["roots"]
+        assert roots == [
+            {"path": "/home/eng/app", "trusted": True, "is_git": True},
+            {"path": "/home/eng/notes", "trusted": False, "is_git": False},
+        ]
+
+    def test_an_older_daemon_reports_is_git_as_unknown(self, container) -> None:
+        daemon = _Recorder()  # list_roots without is_git
+        container.host_agent_registry = daemon.registry
+        with self._client(container) as client:
+            client.portal.call(daemon.registry.register, daemon.session)
+            [root] = client.get("/api/v3/host/folders").json()["roots"]
+        assert root["is_git"] is None
+
+    def test_initialize_git_asks_the_computer(self, container) -> None:
+        daemon = _GitRecorder()
+        container.host_agent_registry = daemon.registry
+        with self._client(container) as client:
+            client.portal.call(daemon.registry.register, daemon.session)
+            response = client.post("/api/v3/host/folders/git-init", json={"path": "/home/eng/notes"})
+        assert response.status_code == 200 and response.json() == {"ok": True, "commit": "abc1234"}
+        assert daemon.params("init_git") == {"path": "/home/eng/notes", "confirmed": True}
+
+    def test_the_computer_s_refusal_is_passed_on(self, container) -> None:
+        daemon = _GitRecorder(init_error="remote_control_disabled: Remote control is off")
+        container.host_agent_registry = daemon.registry
+        with self._client(container) as client:
+            client.portal.call(daemon.registry.register, daemon.session)
+            response = client.post("/api/v3/host/folders/git-init", json={"path": "/home/eng/notes"})
+        assert response.status_code == 409
+        assert response.json()["error"] == "desktop_refused"
+        assert "Remote control is off" in response.json()["message"]
+
+    def test_no_computer_is_503(self, container) -> None:
+        with self._client(container) as client:
+            response = client.post("/api/v3/host/folders/git-init", json={"path": "/x"})
+        assert response.status_code == 503
+
+    def test_without_the_engineer_it_is_refused(self, container) -> None:
+        with self._client(container, caps=()) as client:
+            response = client.post("/api/v3/host/folders/git-init", json={"path": "/x"})
+        assert response.status_code == 403

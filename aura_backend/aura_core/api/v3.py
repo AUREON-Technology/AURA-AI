@@ -1656,7 +1656,13 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             return JSONResponse(content=offline)
         payload = result if isinstance(result, dict) else {}
         roots = [
-            {"path": str(r.get("path")), "trusted": bool(r.get("trusted"))}
+            {
+                "path": str(r.get("path")),
+                "trusted": bool(r.get("trusted")),
+                # WP4 / D-13: isolation needs git, so the picker offers "Initialize git here" for
+                # a folder that is not a repository. None from a daemon that predates the field.
+                "is_git": r.get("is_git") if isinstance(r.get("is_git"), bool) else None,
+            }
             for r in payload.get("roots") or []
             if isinstance(r, dict) and r.get("path")
         ]
@@ -1665,6 +1671,50 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             "remote_control": bool(payload.get("remote_control", False)),
             "roots": roots,
         })
+
+    class GitInitRequest(BaseModel):
+        path: str = Field(min_length=1, max_length=1024)
+
+    @router.post("/host/folders/git-init")
+    async def host_folder_git_init(
+        payload: GitInitRequest, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Ask the paired computer to make a granted folder a git repository (WP4, D-13).
+
+        Isolation needs git, so the Engineer will not work in a folder that is not a repository;
+        this is the one-tap way out from the phone or the web. It is the person's own explicit
+        action, so it reaches the daemon as confirmed. The daemon still decides: the path must be
+        a granted folder, not already a repository, and -- from a phone or the web -- remote
+        control must be on at the computer. Its refusal comes back as ``desktop_refused``.
+        """
+        if "engineer_agent" not in granted(caller):
+            raise HTTPException(
+                status_code=403,
+                detail=AuthorizationError("the Engineer is not available to this account").to_dict(),
+            )
+        registry = getattr(container, "host_agent_registry", None)
+        session = await registry.resolve(caller.user_id) if registry is not None else None
+        if session is None:
+            raise HTTPException(
+                status_code=503,
+                detail=DependencyUnavailableError(
+                    "your computer is not connected", dependency="host_agent"
+                ).to_dict(),
+            )
+        params: dict[str, Any] = {"path": payload.path, "confirmed": True}
+        try:
+            result = await session.call("init_git", params, timeout_s=60.0)
+        except Exception as exc:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "desktop_refused",
+                    "message": str(exc)[:500],
+                    "retryable": False,
+                    "details": {},
+                },
+            )
+        return JSONResponse(content=result if isinstance(result, dict) else {"ok": True})
 
     @router.get("/engineering/runs")
     async def list_engineer_runs(

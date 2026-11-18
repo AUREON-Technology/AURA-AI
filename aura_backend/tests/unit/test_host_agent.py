@@ -795,3 +795,49 @@ class TestIsolatedTaskKey:
         await runner.create_task(user_id=UserId("u1"), session_id="../..", isolate=False)
         [frame] = calls
         assert "task_key" not in frame["params"]
+
+
+class TestServerErrorsAreNotRejections:
+    """Module readiness G-12 / WP9: 4401 tells the daemon its pairing is dead, so it stops for
+    good and asks to be paired again. Any exception during the auth frame used to close with
+    4401 -- a database blip at the wrong moment unpaired the person's computer. A rejection
+    (AuthenticationError, or the 401/403 HTTPException the JWT layer raises) still gets 4401; a
+    server-side failure gets 1011, which the daemon treats as "reconnect with backoff"."""
+
+    @staticmethod
+    def _app_with(container, error: BaseException):
+        async def authenticator(_request):
+            raise error
+
+        return build_app(container, authenticator=authenticator)
+
+    @staticmethod
+    def _close_code(app) -> int:
+        from fastapi.testclient import TestClient
+
+        with TestClient(app) as client:
+            with pytest.raises(WebSocketDisconnect) as exc:
+                with client.websocket_connect("/api/v3/host/agent") as ws:
+                    ws.send_json({"type": "auth", "token": "t"})
+                    ws.receive_json()
+        return exc.value.code
+
+    async def test_a_server_error_is_1011_so_the_daemon_retries(self, container) -> None:
+        assert self._close_code(self._app_with(container, RuntimeError("db down"))) == 1011
+
+    async def test_an_expired_token_is_still_4401(self, container) -> None:
+        from fastapi import HTTPException
+
+        error = HTTPException(status_code=401, detail="expired")
+        assert self._close_code(self._app_with(container, error)) == 4401
+
+    async def test_a_forbidden_token_is_still_4401(self, container) -> None:
+        from fastapi import HTTPException
+
+        error = HTTPException(status_code=403, detail="revoked")
+        assert self._close_code(self._app_with(container, error)) == 4401
+
+    async def test_an_authentication_error_is_still_4401(self, container) -> None:
+        from aura_core.domain.errors import AuthenticationError
+
+        assert self._close_code(self._app_with(container, AuthenticationError("bad"))) == 4401
