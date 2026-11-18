@@ -44,6 +44,7 @@ def store(request, monkeypatch):
     jwt_auth._local_revoked_devices.clear()
     device_pairing._local_pairings.clear()
     device_pairing._local_pairing_codes.clear()
+    auth_api._reset_auth_rate_limits()  # pairing starts are throttled per address (F39)
     yield fake
     jwt_auth._local_refresh_store.clear()
     jwt_auth._local_erased_accounts.clear()
