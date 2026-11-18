@@ -20,7 +20,7 @@ locally on the merged branch.
 
 | Suite | Result |
 |---|---|
-| Backend `pytest tests --cov=aura_core --cov-fail-under=82` (Python 3.11, hashed locks) | 6161 passed, 70 skipped, 0 failed; coverage 86.19 %. Baseline on `4e31e61` was 5778 passed. This run predates the review fixes; the re-run is recorded in the PR. |
+| Backend `pytest tests --cov=aura_core --cov-fail-under=82` (Python 3.11, hashed locks) | 6171 passed, 70 skipped, 0 failed; coverage 86.27 %, at the branch head after the review fixes. Baseline on `4e31e61` was 5778 passed. |
 | Backend `pytest tests/architecture` | all passed |
 | Legacy `TESTING=True python -m unittest discover` | 148 ran, OK (39 skipped), same as baseline |
 | Postgres 16, `pytest tests/load -m load` | 120 passed, 39 skipped, 0 failed. The skips need Docker, MySQL, MSSQL, Redis, live models or a GitHub token. |
