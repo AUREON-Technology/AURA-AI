@@ -6,8 +6,9 @@ enforces, both from ADR-008:
 **Promotion to production requires a linked approval.** The registry refuses the transition
 without one, so the human gate cannot be bypassed by calling a lower-level API.
 
-**Rollback is always permitted.** Reverting to a previously-good version needs no approval,
-because reverting is safe by definition. This asymmetry is the same one the index manager
+**Rollback is always permitted.** Reverting to a previously-good version needs no new approval,
+because reverting is safe by definition -- but only to a version that reached production through
+that gate (INT-101), so rollback cannot become a way round it. This asymmetry is the same one the index manager
 applies to knowledge generations.
 
 Stages form a deliberate progression:
@@ -286,11 +287,13 @@ class ModelRegistry:
                        ) -> ModelVersion:
         """Restore a previous version to production.
 
-        Deliberately requires no approval. A rollback is a return to a state that was already
+        Deliberately requires no *new* approval. A rollback is a return to a state that was already
         approved and already ran; blocking it behind a second approval would mean an incident
-        waits on a reviewer.
+        waits on a reviewer. But only to such a state (INT-101): the target must have reached
+        production through the gate, or "rollback" would promote any candidate around it.
         """
         target = await self.get(model_id, to_version)
+        await self._require_was_approved_for_production(target)
         current = await self.production(model_id)
 
         restored = replace(
@@ -316,6 +319,35 @@ class ModelRegistry:
             )
         )
         return restored
+
+    async def _require_was_approved_for_production(self, target: ModelVersion) -> None:
+        """Refuse a rollback target that never went live through the promotion gate.
+
+        The evidence is what ``transition`` leaves behind when it promotes: the version's
+        ``approval_id`` names an *approved* decision bound to exactly this version's key -- not a
+        FINETUNE approval bound to a dataset digest (which an imported candidate carries), nor
+        an id handed to a canary transition, which nothing checks. Expiry is not checked: the
+        approval is the record that a person put this version live, not a fresh permission.
+        The version must also have left the candidate track: archived (replaced in production)
+        or still production."""
+        def refuse(reason: str) -> ConflictError:
+            return ConflictError(
+                f"cannot roll back to {target.key}: {reason}",
+                details={"model": target.key, "stage": str(target.stage),
+                         "approval": target.approval_id},
+            )
+
+        if target.stage not in (ModelStage.ARCHIVED, ModelStage.PRODUCTION):
+            raise refuse("it never served production (promote it through the approval gate)")
+        if self._approvals is None or not target.approval_id:
+            raise refuse("no production approval is recorded for it")
+        approval = await self._approvals.get(target.approval_id)
+        if (
+            approval is None
+            or str(approval.status) != "approved"
+            or approval.artefact_digest != target.key
+        ):
+            raise refuse("it was not approved for production")
 
     async def record_metrics(
         self, model_id: str, version: str, metrics: Mapping[str, float]
