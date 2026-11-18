@@ -13,8 +13,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from infrastructure.db.user_repo import get_or_create_user
+from services import desktop_handoff as desktop_handoff_store
 from services import device_pairing
-from services.google_oauth import GoogleExchangeError, exchange_desktop_code
+from services.google_oauth import GoogleExchangeError, exchange_desktop_code, is_loopback_redirect
 from services.jwt_auth import (
     ACCOUNT_DELETED_DETAIL,
     HOST_AGENT_SCOPE,
@@ -339,6 +340,8 @@ _pair_approval_hits: dict = {}
 
 
 def _reset_desktop_rate_limits() -> None:
+    _handoff_hits.clear()
+    _handoff_exchange_hits.clear()
     _desktop_hits.clear()
     _pair_start_hits.clear()
     _pair_approval_hits.clear()
@@ -670,6 +673,13 @@ async def desktop_login(
         _sliding_limit(_desktop_hits, _consumer_client_key(request), DESKTOP_SIGN_INS_PER_MINUTE, 60.0,
                        "Too many sign-in attempts; try again in a minute.")
     user_info = await verify_identity_token(request, authorization)
+    return await _finish_desktop_sign_in(request, user_info, body.device_name if body else None)
+
+
+async def _finish_desktop_sign_in(request: Request, user_info: dict, device_name: str | None) -> dict:
+    """Everything after the identity is proven, shared by ``/desktop/login`` (Google, verified
+    here) and ``/desktop/firebase-exchange`` (Firebase, verified at hand-off): the same gate, the
+    same device-bound issuance. One path, so the two sign-ins cannot drift apart."""
     await stamp_role(user_info)
     await _desktop_gate(request, user_info, what="desktop sign-in", where="the desktop app")
     await _persist_user(user_info)
@@ -680,6 +690,86 @@ async def desktop_login(
         for stale in apps[MAX_DESKTOP_DEVICES_PER_USER - 1:]:  # newest first
             revoke_device(stale["device_id"], requesting_uid=str(user_info["uid"]))
     device_id = secrets.token_urlsafe(16)
-    return issue_desktop_session(
-        user_info, device_id=device_id, device_name=body.device_name if body else None,
+    return issue_desktop_session(user_info, device_id=device_id, device_name=device_name)
+
+
+# --- Desktop sign-in through the browser (module readiness WP12; services/desktop_handoff.py) ---
+
+#: Hand-offs and exchanges per client address per minute. Both are open entry points, whatever
+#: the customer switch says: the hand-off verifies a token, the exchange spends a code.
+DESKTOP_HANDOFFS_PER_MINUTE = 10
+_handoff_hits: dict = {}
+_handoff_exchange_hits: dict = {}
+
+_PKCE_CHALLENGE = r"^[A-Za-z0-9_-]{43}$"  # base64url SHA-256, unpadded (RFC 7636 S256)
+_PKCE_VERIFIER = r"^[A-Za-z0-9\-._~]+$"
+
+
+class DesktopHandoffRequest(BaseModel):
+    #: The app's PKCE challenge, S256 only: the code this returns is useless without its verifier.
+    code_challenge: str = Field(min_length=43, max_length=43, pattern=_PKCE_CHALLENGE)
+    #: Where the page will send the browser: the app's loopback listener, nothing else.
+    redirect_uri: str = Field(min_length=1, max_length=64)
+
+
+class DesktopHandoffResponse(BaseModel):
+    code: str
+    expires_in: int
+
+
+class DesktopFirebaseExchangeRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=128)
+    code_verifier: str = Field(min_length=43, max_length=128, pattern=_PKCE_VERIFIER)
+    redirect_uri: str = Field(min_length=1, max_length=64)
+    device_name: str | None = Field(default=None, max_length=128)
+
+
+def _handoff_rate_limit(request: Request) -> None:
+    _sliding_limit(_handoff_hits, _consumer_client_key(request), DESKTOP_HANDOFFS_PER_MINUTE, 60.0,
+                   "Too many sign-in attempts; try again in a minute.")
+
+
+async def _handoff_identity(
+    request: Request, authorization: HTTPAuthorizationCredentials | None = Depends(_web_bearer),
+) -> dict:
+    # A dependency, so a request with no identity proof is refused (401) before its body is even
+    # parsed; looked up at call time so tests can stand in for the Firebase check.
+    return await verify_identity_token(request, authorization)
+
+
+@router.post("/desktop/handoff", response_model=DesktopHandoffResponse,
+             dependencies=[Depends(_handoff_rate_limit)])
+async def desktop_handoff(
+    body: DesktopHandoffRequest,
+    user_info: dict = Depends(_handoff_identity),
+):
+    """Step 2 of the browser hand-off: the web page, signed in with Firebase, trades its ID token
+    for a one-time code bound to the app's PKCE challenge and loopback redirect.
+
+    It mints no session and grants nothing by itself; the desktop gate runs at the exchange, where
+    the session is issued. The redirect must be the loopback form, so the page can never be made to
+    send a code to another site -- and a code that leaks anyway is useless without the verifier."""
+    if not is_loopback_redirect(body.redirect_uri):
+        raise HTTPException(status_code=400, detail="The redirect must be http://127.0.0.1:<port>/.")
+    code = desktop_handoff_store.create(
+        user_info, code_challenge=body.code_challenge, redirect_uri=body.redirect_uri,
     )
+    return {"code": code, "expires_in": desktop_handoff_store.HANDOFF_TTL_S}
+
+
+@router.post("/desktop/firebase-exchange", response_model=DesktopLoginResponse)
+async def desktop_firebase_exchange(request: Request, body: DesktopFirebaseExchangeRequest):
+    """Step 3: the desktop app redeems the code with its PKCE verifier for a device-bound session,
+    through the same gate as ``/desktop/login`` (operators; entitled customers when the switch is
+    on; T-6). The code is spent by this call whatever its outcome."""
+    _sliding_limit(_handoff_exchange_hits, _consumer_client_key(request), DESKTOP_HANDOFFS_PER_MINUTE,
+                   60.0, "Too many sign-in attempts; try again in a minute.")
+    try:
+        user_info = desktop_handoff_store.redeem(
+            body.code, code_verifier=body.code_verifier, redirect_uri=body.redirect_uri,
+        )
+    except desktop_handoff_store.HandoffError:
+        raise HTTPException(
+            status_code=400, detail="Sign-in code is invalid, expired, or already used. Sign in again.",
+        ) from None
+    return await _finish_desktop_sign_in(request, user_info, body.device_name)

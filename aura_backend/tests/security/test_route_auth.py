@@ -53,6 +53,9 @@ PUBLIC = {
     ("POST", "/api/v3/auth/desktop/exchange"): "runs before any session exists: trades the app's "
         "single-use Google code, useless without its PKCE verifier and a loopback redirect, for "
         "an ID token; mints no session (tests/unit/test_desktop_code_exchange.py)",
+    ("POST", "/api/v3/auth/desktop/firebase-exchange"): "runs before any session exists: spends "
+        "the single-use hand-off code, useless without the app's PKCE verifier, then applies "
+        "/desktop/login's gate (tests/integration/test_desktop_firebase_handoff.py)",
     ("GET", "/api/v3/integrations/github/callback"): "browser redirect; authenticated by the "
         "single-use OAuth `state` (tests/unit/test_github_oauth_state.py); links nothing itself",
     ("POST", "/api/v3/billing/fawry/notify"): "Fawry's server notification; authenticated by its "
@@ -74,6 +77,9 @@ IDENTITY_EXCHANGE = {
     ("POST", "/api/v3/auth/web/token"),
     ("POST", "/api/v3/auth/consumer/token"),
     ("POST", "/api/v3/auth/desktop/login"),
+    # Mints a one-time code, not a session, but from the same external proof: it must refuse a
+    # request without one just as the routes above do (WP12).
+    ("POST", "/api/v3/auth/desktop/handoff"),
 }
 
 
