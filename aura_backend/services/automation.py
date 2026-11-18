@@ -18,7 +18,15 @@ class AnalysisUnavailable(Exception):
     """The model could not produce a usable analysis. The route turns this into a 503.
 
     It used to return a placeholder dictionary with HTTP 200, so the client rendered "Email
-    analysis unavailable" as if it were the analysis, and nothing counted the failure."""
+    analysis unavailable" as if it were the analysis, and nothing counted the failure.
+
+    ``str(exc)`` is the reason slug; ``message`` and ``retryable`` are set when the reason needs
+    explaining to the person (``no_local_provider``)."""
+
+    def __init__(self, reason: str, *, message: str = "", retryable: bool = True) -> None:
+        super().__init__(reason)
+        self.message = message
+        self.retryable = retryable
 
 
 def _parse_json_object(text: str) -> dict | None:
@@ -204,6 +212,7 @@ class AutomationService:
 
     async def _generate(self, router: Any, prompt: str, system_instruction: str) -> dict:
         from aura_core.domain import CompletionRequest, Conversation, Message, SamplingParams
+        from aura_core.domain.errors import CapabilityUnavailableError
         from services.budget import increment_and_check_inference_budget
 
         # The budget check stays: it guards model concurrency, the scarcest resource on the box.
@@ -219,6 +228,18 @@ class AutomationService:
                     ),
                 )
             )
+        except CapabilityUnavailableError as exc:
+            # INT-115: the email or issue is third-party text, as sensitive as a retrieved
+            # document, so it stays unclassified (SENSITIVE) and only a self-hosted provider may
+            # read it. A deployment with only hosted providers refuses it for content; retrying
+            # sends the same text to the same refusal, so say what is missing instead.
+            logger.warning("analysis refused: no provider may receive this content")
+            raise AnalysisUnavailable(
+                "no_local_provider",
+                message="This analysis needs a self-hosted model, and none is available on this "
+                        "server right now.",
+                retryable=False,
+            ) from exc
         except Exception as exc:
             # Log the type only: the message can carry provider detail, and the prompt is user
             # data either way.

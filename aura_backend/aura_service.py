@@ -410,6 +410,9 @@ def create_app():
 
     # Exposed so Celery tasks and the CLI can reach the same wired graph without rebuilding it.
     app.state.aura = container
+    # The one per-user/per-address limiter, for the platform routes mounted outside the v3
+    # router (api/automation.py, F36). ``None`` when rate limiting is off.
+    app.state.rate_limiter = rate_limiter
     # The legacy SQLAlchemy engine (api/v2 sync, insights) lives outside the container and was
     # never disposed at shutdown (audit FSA-073). Registered after build_app's own handler, so
     # it runs after the container's pools close, once uvicorn's graceful drain has finished.
