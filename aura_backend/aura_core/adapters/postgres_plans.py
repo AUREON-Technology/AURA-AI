@@ -1,4 +1,4 @@
-"""Postgres plan stores (SaaS P1-C). Tables owned by Alembic revision 0021; no DDL here (CB-20).
+"""Postgres plan stores (SaaS P1-C). Tables owned by Alembic revision 0023; no DDL here (CB-20).
 
 ``try_consume`` is a single ``INSERT ... ON CONFLICT DO UPDATE ... WHERE`` statement: the limit check
 and the increment happen under the row lock Postgres takes for the upsert, so concurrent requests

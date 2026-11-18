@@ -130,10 +130,17 @@ class AuraThemeV2 {
           borderRadius: BorderRadius.circular(AuraRadius.md),
         ),
       ),
+      // Desktop and web used to fall back to Material's zoom transition; they
+      // now share Android's fade-forwards so every platform but iOS (which
+      // keeps its native swipe-back) moves between pages the same way.
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: {
           TargetPlatform.android: FadeForwardsPageTransitionsBuilder(),
           TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.macOS: FadeForwardsPageTransitionsBuilder(),
+          TargetPlatform.windows: FadeForwardsPageTransitionsBuilder(),
+          TargetPlatform.linux: FadeForwardsPageTransitionsBuilder(),
+          TargetPlatform.fuchsia: FadeForwardsPageTransitionsBuilder(),
         },
       ),
       // App bars sit flush on the page background: the page title is the

@@ -1,4 +1,4 @@
-"""Postgres billing stores (SaaS P1-D1). Tables owned by Alembic revision 0022; no DDL here.
+"""Postgres billing stores (SaaS P1-D1). Tables owned by Alembic revision 0024; no DDL here.
 
 ``PaymentStore.mark`` is ``UPDATE ... WHERE id = $1 AND status = 'pending' RETURNING``: a payment
 leaves pending exactly once across every worker, which is what makes a duplicate or concurrent
@@ -151,7 +151,7 @@ class PostgresPaymentStore:
 
 
 class PostgresBillingContactStore:
-    """Table owned by Alembic revision 0024."""
+    """Table owned by Alembic revision 0026."""
 
     def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
         self._pool = pool or PostgresPool(url)
@@ -175,7 +175,7 @@ class PostgresBillingContactStore:
 
 
 class PostgresStoreBindingStore:
-    """Tables owned by Alembic revision 0023."""
+    """Tables owned by Alembic revision 0025."""
 
     def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
         self._pool = pool or PostgresPool(url)

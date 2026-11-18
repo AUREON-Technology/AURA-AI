@@ -11,6 +11,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:aura_hostd/src/containment.dart';
+import 'package:aura_hostd/src/error_codes.dart';
 import 'package:aura_hostd/src/rpc_client.dart';
 import 'package:aura_hostd/src/task_handler.dart';
 import 'package:test/test.dart';
@@ -60,6 +61,56 @@ void main() {
 
   tearDown(() async {
     await server.close();
+  });
+
+  test(
+      'a run that finishes after the server closed the socket does not crash the daemon, which '
+      'reconnects (INT-019)', () async {
+    final workspace = Directory.systemTemp.createTempSync('aura_hostd_late_send_');
+    addTearDown(() => workspace.deleteSync(recursive: true));
+    final roots = WorkspaceRoots(const [])..addRoot(workspace.path, trusted: true);
+    final sockets = StreamController<WebSocket>();
+    final httpServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => httpServer.close(force: true));
+    httpServer.listen((request) async => sockets.add(await WebSocketTransformer.upgrade(request)));
+    final incoming = StreamIterator(sockets.stream);
+    final logs = <String>[];
+    final client = HostAgentClient(
+      wsUrl: 'ws://127.0.0.1:${httpServer.port}/api/v3/host/agent',
+      authToken: 't',
+      taskHandler: TaskHandler(roots),
+      logger: logs.add,
+      minBackoff: const Duration(milliseconds: 20),
+    );
+    unawaited(client.run());
+    addTearDown(client.stop);
+
+    expect(await incoming.moveNext().timeout(const Duration(seconds: 5)), isTrue);
+    final first = incoming.current;
+    final firstFrames = StreamIterator(first);
+    await firstFrames.moveNext(); // auth
+    // Prints, then keeps running past the close: both its stream frames and its result land on
+    // a socket that is already gone.
+    first.add(jsonEncode({
+      'type': 'call',
+      'id': 'late',
+      'method': 'run',
+      'params': {
+        'command': ['sh', '-c', 'sleep 0.3; echo done'],
+        'cwd': workspace.path,
+        'timeout_s': 5,
+      },
+    }));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await first.close();
+
+    expect(await incoming.moveNext().timeout(const Duration(seconds: 5)), isTrue,
+        reason: 'the daemon reconnects after the drop');
+    // Give the late result time to be attempted on the closed socket.
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    expect(logs.where((l) => l.contains('dropping')), isNotEmpty);
+    expect(client.isFinished, isFalse);
+    await incoming.current.close();
   });
 
   test('stops reconnecting when the server refuses the credentials (4401)', () async {
@@ -194,6 +245,39 @@ void main() {
 
     expect(response['type'], 'error');
     expect(response['id'], 'w1');
+  });
+
+  test('a refused command carries its policy code next to the English message', () async {
+    final tempDir = Directory.systemTemp.createTempSync('aura_hostd_rpc_code_test_');
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+    final roots = WorkspaceRoots(const [])..addRoot(tempDir.path);
+    final client = HostAgentClient(
+      wsUrl: server.wsUrl,
+      authToken: 't',
+      taskHandler: TaskHandler(roots),
+      logger: (_) {},
+    );
+    unawaited(client.run());
+    addTearDown(client.stop);
+
+    final socket = await server.clientSocket;
+    final frames = StreamQueue(socket.map((m) => jsonDecode(m as String) as Map<String, dynamic>));
+    await frames.next; // auth frame
+
+    socket.add(jsonEncode({
+      'type': 'call',
+      'id': 'c1',
+      'method': 'run',
+      'params': {
+        'command': ['sh', '-c', 'rm -rf /'],
+        'cwd': roots.all.single.canonicalPath,
+      },
+    }));
+    final response = await frames.next;
+
+    expect(response['type'], 'error');
+    expect(response['message'], contains('command refused'));
+    expect(response['code'], HostdErrorCode.commandHardDenied);
   });
 
   test('a run call sends stream frames before the terminal result frame', () async {

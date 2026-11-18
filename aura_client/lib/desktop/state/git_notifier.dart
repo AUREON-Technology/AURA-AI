@@ -15,6 +15,7 @@ import 'package:aura_client/core/hostd/hostd_control_client.dart';
 import 'package:aura_client/desktop/events/ide_event.dart';
 import 'package:aura_client/desktop/events/ide_event_bus.dart';
 import 'package:aura_client/desktop/state/desktop_application_state.dart';
+import 'package:aura_client/l10n/l10n.dart';
 import 'package:flutter_riverpod/legacy.dart';
 
 class GitNotifier extends StateNotifier<GitState> {
@@ -138,7 +139,7 @@ class GitNotifier extends StateNotifier<GitState> {
   Future<void> commit(String message) => _write(() async {
         final result = await _hostdClient.gitCommit(root: _rootPath!, message: message);
         if (result['ok'] == false) {
-          state = state.copyWith(error: 'Nothing is staged to commit.');
+          state = state.copyWith(error: currentL10n.gitNothingStaged);
         }
       });
 
@@ -148,8 +149,8 @@ class GitNotifier extends StateNotifier<GitState> {
           final affected = ((result['affected_files'] as List?) ?? const []).join(', ');
           state = state.copyWith(
             error: affected.isEmpty
-                ? 'Switching branches would overwrite local changes.'
-                : 'Switching branches would overwrite local changes in: $affected',
+                ? currentL10n.gitCheckoutOverwrite
+                : currentL10n.gitCheckoutOverwriteIn(affected),
           );
         }
       });
@@ -185,16 +186,19 @@ class GitNotifier extends StateNotifier<GitState> {
         if (result['ok'] == false) _applySyncFailure(result);
       });
 
+  /// Maps the daemon's snake_case `reason` code to the panel's message. No BuildContext here, so
+  /// [currentL10n]: the error is shown as soon as it is set.
   void _applySyncFailure(Map<String, dynamic> result) {
+    final l10n = currentL10n;
     final affected = ((result['affected_files'] as List?) ?? const []).join(', ');
     state = state.copyWith(
       error: switch (result['reason']) {
-        'no_upstream' => 'The current branch has no upstream set.',
-        'diverged' => 'The branch has diverged -- pull (or push) cannot fast-forward.',
+        'no_upstream' => l10n.gitNoUpstream,
+        'diverged' => l10n.gitDiverged,
         'local_changes_would_be_overwritten' => affected.isEmpty
-            ? 'Local changes would be overwritten.'
-            : 'Local changes would be overwritten in: $affected',
-        _ => 'Remote sync failed.',
+            ? l10n.gitLocalChangesOverwritten
+            : l10n.gitLocalChangesOverwrittenIn(affected),
+        _ => l10n.gitRemoteSyncFailed,
       },
     );
   }

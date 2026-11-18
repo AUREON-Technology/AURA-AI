@@ -39,16 +39,16 @@ class _FinanceTransactionFormState
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'Log Transaction',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+            Text(
+              context.l10n.financeLogTransaction,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
             ),
             const SizedBox(height: 16),
             Row(
               children: [
                 Expanded(
                   child: ChoiceChip(
-                    label: const Center(child: Text('Expense')),
+                    label: Center(child: Text(context.l10n.financeExpense)),
                     selected: composer.transactionType == 'expense',
                     onSelected: (val) {
                       if (val) vm.setType('expense');
@@ -65,7 +65,7 @@ class _FinanceTransactionFormState
                 const SizedBox(width: 12),
                 Expanded(
                   child: ChoiceChip(
-                    label: const Center(child: Text('Income')),
+                    label: Center(child: Text(context.l10n.financeIncome)),
                     selected: composer.transactionType == 'income',
                     onSelected: (val) {
                       if (val) vm.setType('income');
@@ -87,8 +87,8 @@ class _FinanceTransactionFormState
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
               ),
-              decoration: const InputDecoration(
-                labelText: r'Amount ($)',
+              decoration: InputDecoration(
+                labelText: context.l10n.financeAmountLabel(r'$'),
                 hintText: '0.00',
               ),
               style: TextStyle(color: palette.textPrimary),
@@ -101,12 +101,12 @@ class _FinanceTransactionFormState
                   : 'Other',
               dropdownColor: palette.surface,
               style: TextStyle(color: palette.textPrimary),
-              decoration: const InputDecoration(labelText: 'Category'),
+              decoration: InputDecoration(labelText: context.l10n.financeCategory),
               items: financeCategories.map((cat) {
                 return DropdownMenuItem(
                   value: cat,
                   child: Text(
-                    cat,
+                    financeCategoryLabel(context.l10n, cat),
                     overflow: TextOverflow.ellipsis,
                     maxLines: 1,
                   ),
@@ -119,9 +119,9 @@ class _FinanceTransactionFormState
             const SizedBox(height: 16),
             TextField(
               controller: _descriptionController,
-              decoration: const InputDecoration(
-                labelText: 'Description (Optional)',
-                hintText: 'e.g. Weekly grocery shopping',
+              decoration: InputDecoration(
+                labelText: context.l10n.financeDescriptionLabel,
+                hintText: context.l10n.financeDescriptionHint,
               ),
               style: TextStyle(color: palette.textPrimary),
             ),
@@ -135,7 +135,7 @@ class _FinanceTransactionFormState
                   color: palette.brandOnSurfaceText,
                 ),
                 title: Text(
-                  'Date',
+                  context.l10n.financeDate,
                   style: TextStyle(
                     fontSize: 13,
                     color: palette.textSecondary,
@@ -183,7 +183,7 @@ class _FinanceTransactionFormState
                 _descriptionController.clear();
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: const Text('Transaction logged successfully!'),
+                    content: Text(context.l10n.financeLogged),
                     backgroundColor: palette.success,
                   ),
                 );
@@ -193,7 +193,7 @@ class _FinanceTransactionFormState
                     ? palette.danger
                     : palette.success,
               ),
-              child: const Text('Submit Ledger Entry'),
+              child: Text(context.l10n.financeSubmit),
             ),
           ],
         ),

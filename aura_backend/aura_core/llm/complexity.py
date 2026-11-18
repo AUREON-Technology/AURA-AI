@@ -31,6 +31,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from ..text import fold
+
 __all__ = ["ComplexityAssessment", "assess_complexity"]
 
 
@@ -45,6 +47,8 @@ _REASONING_TERMS = (
     # Arabic: analyse, compare, design, explain why, step by step, prove, plan, strategy, evaluate
     "حلل", "تحليل", "قارن", "مقارنة", "صمم", "تصميم", "اشرح لماذا", "خطوة بخطوة", "برهن",
     "اثبت", "خطة", "استراتيجية", "قيّم", "تقييم",
+    # Egyptian phrasings of the same asks: explain why, step by step, the difference between
+    "اشرح ليه", "اشرحلي ليه", "خطوة خطوة", "الفرق بين",
 )
 
 #: Requests for formal work -- a proof or a derivation is hard however short the message is.
@@ -62,13 +66,30 @@ _CONSTRAINT_TERMS = (
 _TERM_RE_CACHE: dict[tuple[str, ...], re.Pattern[str]] = {}
 
 
+#: Arabic attaches conjunctions, prepositions and the article to the word, and possessive and
+#: plural endings (and Egyptian "لي", for me) after it: "والتحليل", "تحليلها" and "قارنلي" all
+#: match. Optional on every term; they are Arabic letters, so they never attach to an English one.
+_ARABIC_PREFIX = "(?:وال|بال|فال|كال|لل|ال|و|ف|ب|ل)?"
+_ARABIC_SUFFIX = "(?:ها|هم|ه|ات|لي|لنا)?"
+
+
 def _terms_re(terms: tuple[str, ...]) -> re.Pattern[str]:
+    """One pattern matching any of ``terms`` as a whole word; ``findall`` returns the term itself
+    (prefix and suffix excluded), so "التحليل" and "تحليل" count as one distinct term.
+
+    Terms are folded (``aura_core/text``) and matched against folded text, so a shadda or a
+    hamza form the writer did or did not use makes no difference.
+    """
     pattern = _TERM_RE_CACHE.get(terms)
     if pattern is None:
-        alternatives = "|".join(re.escape(t) for t in sorted(terms, key=len, reverse=True))
+        folded = sorted({fold(t) for t in terms}, key=len, reverse=True)
+        alternatives = "|".join(re.escape(t) for t in folded)
         # \b does not fire between Arabic letters and spaces reliably in every engine, so the
         # boundary is spelled out: start/end of text or a non-word character on each side.
-        pattern = re.compile(rf"(?:^|(?<=\W))(?:{alternatives})(?=\W|$)", re.IGNORECASE)
+        pattern = re.compile(
+            rf"(?:^|(?<=\W)){_ARABIC_PREFIX}({alternatives}){_ARABIC_SUFFIX}(?=\W|$)",
+            re.IGNORECASE,
+        )
         _TERM_RE_CACHE[terms] = pattern
     return pattern
 
@@ -99,7 +120,7 @@ class ComplexityAssessment:
 
 def assess_complexity(message: str) -> ComplexityAssessment:
     """Score how demanding ``message`` is to answer well. Pure, deterministic, no I/O."""
-    text = (message or "").strip()
+    text = fold((message or "").strip())
     if not text:
         return ComplexityAssessment(0.0)
 

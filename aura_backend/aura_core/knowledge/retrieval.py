@@ -24,6 +24,8 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Container, Iterable, Mapping, Sequence
 
+from ..text import ARABIC_STOPWORDS, fold, is_arabic_token, light_stem
+
 __all__ = [
     "BM25Index",
     "reciprocal_rank_fusion",
@@ -32,7 +34,10 @@ __all__ = [
     "tokenize",
 ]
 
-_TOKEN = re.compile(r"[a-z0-9]+(?:[-_.][a-z0-9]+)*")
+#: Latin identifiers keep their punctuation (below); Arabic words are runs of Arabic letters. The
+#: Arabic alternative matters: without it an Arabic document produced no tokens at all and was
+#: invisible to lexical search (docs/plans/arabic-language_plan.md, stage 1).
+_TOKEN = re.compile(r"[a-z0-9]+(?:[-_.][a-z0-9]+)*|[\u0621-\u064A]+")
 
 # Deliberately short. An aggressive stopword list removes the function words that distinguish
 # "leave for staff" from "leave of staff", and BM25's IDF term already discounts common words.
@@ -48,11 +53,21 @@ def tokenize(text: str, *, keep_stopwords: bool = False) -> list[str]:
     ``AURA-4419`` and ``v2.1.0`` stay whole: they are precisely the tokens lexical search exists
     to match, and splitting them on punctuation would defeat the point of having a lexical
     retriever at all.
+
+    Arabic is folded first (diacritics and tatweel dropped, hamza/alef-maqsura/teh-marbuta
+    variants unified, Arabic-Indic digits made ASCII) and each Arabic word light-stemmed, so
+    "الطلاب" and "طلاب" are one term in documents and queries alike (``aura_core/text``).
     """
-    tokens = _TOKEN.findall(text.lower())
-    if keep_stopwords:
-        return tokens
-    return [t for t in tokens if t not in _STOPWORDS]
+    tokens = _TOKEN.findall(fold(text.lower()))
+    result: list[str] = []
+    for token in tokens:
+        if is_arabic_token(token):
+            if not keep_stopwords and token in ARABIC_STOPWORDS:
+                continue
+            result.append(light_stem(token))
+        elif keep_stopwords or token not in _STOPWORDS:
+            result.append(token)
+    return result
 
 
 class BM25Index:

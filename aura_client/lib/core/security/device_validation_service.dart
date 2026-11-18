@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../config/backend_url_policy.dart';
 import '../config/config.dart';
+import '../platform/client_language.dart';
 import 'app_attest_client.dart';
 import 'hardware_attestation_client.dart';
 import 'play_integrity_client.dart';
@@ -19,6 +20,9 @@ class DeviceValidationService {
   static const String devToken = 'aura_dev_attestation';
   static const String unsupportedMarker = 'aura_attestation_unsupported';
 
+  /// How long an attestation is reused for the ordinary API calls that attach these headers
+  /// (KnowledgeCenter, VoiceClient, ...). Never for `/token`, which consumes the attestation's
+  /// server nonce: see [getAttestationHeaders]'s `singleUse`.
   static const Duration tokenCacheTtl = Duration(minutes: 5);
 
   static DeviceAttestation? _cached;
@@ -39,6 +43,7 @@ class DeviceValidationService {
     HardwareAttestationClient? client,
     String? backendUrl,
     http.Client? httpClient,
+    bool singleUse = false,
   }) async {
     final isDebug = debugMode ?? kDebugMode;
     final platformName = platform ?? _platformName();
@@ -47,6 +52,7 @@ class DeviceValidationService {
         isDebug && !BackendUrlPolicy.isSafeForRelease(targetUrl);
 
     if (!useDebugMock &&
+        !singleUse &&
         _cached != null &&
         _cachedAt != null &&
         _cachedDebug == isDebug &&
@@ -100,17 +106,30 @@ class DeviceValidationService {
       isDebugBypass: false,
       nonce: hasHardware ? nonce : null,
     );
-    _storeCache(attestation, isDebug: isDebug, platformName: platformName);
+    if (singleUse) {
+      // The server consumes this nonce at `/token`. Drop whatever is cached as well, rather
+      // than keep an attestation from before a sign-in around.
+      clearCache();
+    } else {
+      _storeCache(attestation, isDebug: isDebug, platformName: platformName);
+    }
     return attestation;
   }
 
   /// Resolves device validation token, platform, and nonce headers.
+  ///
+  /// [singleUse] is for `POST /api/v3/auth/token`, the one call the backend checks the nonce on
+  /// -- and consumes it (`services/security.py`, `nonce_replay`). A cached attestation there
+  /// would replay a spent nonce on the next sign-in within [tokenCacheTtl] and be refused as an
+  /// unverified device (audit INT-011), so it always gets a fresh server nonce and a fresh
+  /// attestation, and is never cached.
   static Future<Map<String, String>> getAttestationHeaders({
     bool? debugMode,
     String? platform,
     HardwareAttestationClient? client,
     String? backendUrl,
     http.Client? httpClient,
+    bool singleUse = false,
   }) async {
     final attestation = await resolve(
       debugMode: debugMode,
@@ -118,10 +137,14 @@ class DeviceValidationService {
       client: client,
       backendUrl: backendUrl,
       httpClient: httpClient,
+      singleUse: singleUse,
     );
     final headers = {
       'X-Device-Platform': attestation.platform,
       'X-Device-Attestation': attestation.token,
+      // Rides with attestation because every API client already sends these headers, sign-in
+      // included; it is not part of attestation itself (see client_language.dart).
+      clientLanguageHeader: ClientLanguage.current(),
     };
     if (attestation.nonce != null) {
       headers['X-Device-Attestation-Nonce'] = attestation.nonce!;

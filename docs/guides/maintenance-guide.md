@@ -195,16 +195,84 @@ rebuild.
 
 ## Quarterly
 
-**Pull one offsite set back and verify it** (when `BACKUP_S3_URI` is set). The nightly job
-already `rclone check`s each upload; this proves the copy is restorable from the far side:
+**Pull one offsite set back and verify it** (from each offsite target). The nightly job already
+`rclone check`s each upload; this proves every copy is restorable from the far side.
+`backup-fetch.sh` downloads a set, checks it against its `CHECKSUMS.sha256` (no key needed) and
+prints its path. Give it one target at a time, so each provider's copy is drilled:
 
 ```bash
-rclone copy "$BACKUP_S3_URI/aura-<stamp>" /root/offsite-check/aura-<stamp>
-./deploy/scripts/backup-open.sh --verify /root/offsite-check/aura-<stamp>
-BACKUP_AGE_IDENTITY_FILE=/path/to/aura-backup.agekey DRILL_RECORD=deploy/backups/drills.tsv \
-  ./deploy/scripts/restore-drill.sh /root/offsite-check/aura-<stamp>
-rm -rf /root/offsite-check
+export RCLONE_CONFIG_FILE=deploy/secrets/backup/rclone.conf
+for target in $BACKUP_OFFSITE_TARGETS; do
+  fetched=$(BACKUP_OFFSITE_TARGETS="$target" ./deploy/scripts/backup-fetch.sh /root/offsite-check) || break
+  BACKUP_AGE_IDENTITY_FILE=/path/to/aura-backup.agekey DRILL_RECORD=deploy/backups/drills.tsv \
+    ./deploy/scripts/restore-drill.sh "$fetched"
+  rm -rf /root/offsite-check
+done
 ```
+
+**Restoring after losing the VPS.** Run `backup-fetch.sh` with every target listed. With no set
+name it takes the newest set held by any provider, and it skips a copy that is missing, partial
+or fails verification and tries the next provider. Pass a set name (`aura-<stamp>`) to fetch an
+older one. Then restore the printed path with `restore.sh`, as for a local set.
+
+### Offsite providers (multi-target)
+
+A set is durable only when `BACKUP_OFFSITE_MIN_COPIES` targets (default 2) verify it. Anything
+below that fails the cycle and fires `AuraBackupUnderReplicated`, because a single provider
+holding the only copy is one outage from data loss.
+
+This section sets up the VPS sidecar. The **live** data on Railway is backed up by a separate
+Railway cron service using the same providers and keys: [deployment/backups.md](../deployment/backups.md).
+
+The chosen pair is **Backblaze B2** and **Cloudflare R2** (two companies, so neither outage nor
+account loss takes both copies). Any other S3-compatible provider works the same way.
+
+1. **Backblaze B2.** Create a private bucket with **Object Lock** enabled, and set a default
+   retention of **6 days**. Then create an application key restricted to that bucket alone, with
+   read and write. Keep its keyID and applicationKey for step 3.
+2. **Cloudflare R2.** Create a bucket and add a **bucket lock** rule of **6 days** for all
+   objects. Then create an R2 API token with *Object Read & Write*, scoped to that bucket. Keep its
+   access key ID, secret, and your Cloudflare account ID (the endpoint is
+   `https://<account-id>.r2.cloudflarestorage.com`).
+3. Copy `deploy/backup/rclone.conf.example` to `deploy/secrets/backup/rclone.conf`, run
+   `chmod 600` on it, and fill in the placeholders. It defines the remotes `b2-aura` and
+   `r2-aura`. Credentials stay in that file, never in the image or the compose file. Check that it
+   parses: `rclone --config deploy/secrets/backup/rclone.conf listremotes`.
+4. Set, in the environment that runs compose:
+   ```bash
+   BACKUP_OFFSITE_TARGETS="b2-aura:<b2-bucket> r2-aura:<r2-bucket>"
+   BACKUP_OFFSITE_MIN_COPIES=2
+   ```
+   `BACKUP_OFFSITE_TARGETS` is a space-separated list. Several targets require `rclone.conf`;
+   one target may still use `BACKUP_S3_URI` with the S3 key files.
+
+**Why 6 days.** The lock is what stops a compromised VPS from deleting the offsite copies, since
+the VPS holds keys that can delete. It must be shorter than the daily retention
+(`BACKUP_OFFSITE_KEEP_DAILY`, 7 by default; the compose file sets
+`BACKUP_OFFSITE_RETENTION_DAYS=14`). Otherwise pruning tries to delete sets that are still
+locked. That is harmless, because the cycle logs `could not remove remote` and retries the next
+night, but those sets keep being billed until the lock expires. Lengthening the lock means
+lengthening the daily retention with it.
+
+**Two settings in the example matter.** `no_check_bucket = true` on R2: a bucket-scoped token
+cannot check or create buckets, so without it every upload fails. `hard_delete = true` on B2:
+otherwise a pruned set is only hidden, and is stored and billed indefinitely. Do not add
+`disable_checksum`. rclone stores an MD5 (R2) or SHA1 (B2) of each large upload, which is what lets
+the nightly `rclone check` compare hashes rather than sizes. For a full re-read of every object
+instead, set `BACKUP_OFFSITE_VERIFY=download`. R2 charges no egress; B2 egress is free only up to
+an allowance.
+4. Confirm both copies after the first cycle: `aura_backup_offsite_copies_verified` should equal
+   `aura_backup_offsite_copies_required`.
+
+Before uploading anything, the cycle refuses a configuration that could miscount copies: two
+targets on the same rclone remote, the same target listed twice, a glob character in a target,
+or a `BACKUP_OFFSITE_MIN_COPIES` that is not a whole number of at least 1. The local set is still
+taken; offsite is reported as failed. Two alerts watch the result: `AuraBackupUnderReplicated`
+(the last set reached too few providers) and `AuraBackupOffsiteStale` (no set has met the
+quorum in 36 hours, including when offsite has never succeeded).
+
+The age private key is still needed for every restore. Losing it loses every backup on every
+provider; see "Backup encryption keys" above.
 
 **Rotate `jwt_secret`.** This invalidates every session, so announce it first.
 
@@ -237,17 +305,33 @@ detection of corruption or tampering (age's AEAD plus the two manifests). It doe
 fully compromised host from deleting sets or writing new forged ones -- anyone holding a public
 key can encrypt to it. Offsite object lock / versioning is the defence against deletion.
 
-### Generate the key pair (once, on a trusted machine -- not the VPS)
+### Generate two key pairs (once, on trusted machines -- never the VPS)
+
+AURA uses **two independent key pairs** (decision recorded in
+`docs/plans/distributed_storage_plan.md`). Every set is encrypted to both public keys, and either
+private key alone can decrypt it. Losing one key, or the place it was kept, then loses no backup.
+`AuraBackupSingleKey` fires while fewer than two distinct public keys are configured.
 
 ```bash
-age-keygen -o aura-backup.agekey          # prints "Public key: age1..."
-age-keygen -y aura-backup.agekey          # re-print the public key at any time
+# Key pair A -- e.g. on the owner's own computer
+age-keygen -o aura-backup-A.agekey        # prints "Public key: age1..."
+# Key pair B -- ideally made by, or for, whoever keeps the second copy
+age-keygen -o aura-backup-B.agekey
+age-keygen -y aura-backup-A.agekey        # re-print a public key at any time
 ```
 
-Store `aura-backup.agekey` offline: a password manager entry plus a printed or USB copy in a
-separate physical place -- alongside the offline copy of `data_encryption_keys` (below), never in
-the backup bucket or on the VPS. It is small text; paper works. Then delete it from the machine you
-generated it on if that machine is not one of the storage places.
+Keep the two private keys **apart**. That is the whole point of having two:
+
+- **A:** a password-manager entry the owner controls.
+- **B:** a different place that does not fail with A, such as a printed copy in a safe, or a
+  trusted second person's password manager.
+
+Neither goes in a backup bucket, the repository or the VPS. Each is small text, so paper works.
+Keep the offline copy of `data_encryption_keys` (below) with them. Delete the key files from the
+machines you generated them on unless that machine is one of the storage places.
+
+Test each key once before relying on it. After the first nightly set, run the restore drill once
+with `aura-backup-A.agekey` and once with `aura-backup-B.agekey` (*Practise a restore* above).
 
 ### Configure the VPS (public key only)
 
@@ -258,10 +342,19 @@ BACKUP_ENCRYPTION=age
 BACKUP_AGE_RECIPIENT=age1...your-public-key...
 ```
 
-or (preferred for multiple keys) one public key per line in
-`deploy/secrets/backup/backup_age_recipients.txt` (gitignored; the `backup/` subdirectory is the
-only part of `deploy/secrets` the sidecar can see -- `deploy/scripts/bootstrap-secrets.sh` creates it
-and moves a file left at the old flat `deploy/secrets/` location). Then:
+or (preferred, and what the two-key setup uses) one public key per line in
+`deploy/secrets/backup/backup_age_recipients.txt`, comments allowed:
+
+```text
+# key pair A -- owner's password manager
+age1...public-key-A...
+# key pair B -- printed copy in the safe
+age1...public-key-B...
+```
+
+The file is gitignored. The `backup/` subdirectory is the only part of `deploy/secrets` the sidecar
+can see. `deploy/scripts/bootstrap-secrets.sh` creates it, and moves a file left at the old flat
+`deploy/secrets/` location into it. Then:
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build backup
@@ -276,8 +369,9 @@ public key belongs. `BACKUP_ENCRYPTION=none` is an explicit, alerted opt-out
 
 ### Restore
 
-Bring the private key to the host for the restore only, mount it read-only into the one-off
-container (see *Practise a restore* above), and delete it from the host afterwards:
+Either private key works; bring **one** of them to the host for the restore only, mount it
+read-only into the one-off container (see *Practise a restore* above), and delete it from the host
+afterwards:
 
 ```bash
 shred -u /path/to/aura-backup.agekey 2>/dev/null || rm -f /path/to/aura-backup.agekey
@@ -289,8 +383,9 @@ untouched. `backup-open.sh --verify` checks a set's integrity without the key.
 
 ### Rotate
 
-Rotate yearly, when anyone who had access to the private key leaves, or at once if it may have
-been exposed.
+Rotate yearly, when anyone who had access to a private key leaves, or at once if it may have
+been exposed. Rotate **one key pair at a time**, so the other keeps every existing set readable
+throughout. During the rotation the recipients file briefly holds three public keys.
 
 1. Generate a new pair (as above) and store the new private key offline.
 2. Put **both** public keys in `deploy/secrets/backup/backup_age_recipients.txt` (new sets are then

@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..domain.goals import GoalSnapshot
+from ..text import plural_ar
 
 __all__ = ["BriefingCounts", "build_daily_briefing"]
 
@@ -24,10 +25,17 @@ class BriefingCounts:
     goals_near_target: tuple[GoalSnapshot, ...] = field(default_factory=tuple)
 
 
-def build_daily_briefing(counts: BriefingCounts) -> tuple[str, str]:
+def build_daily_briefing(counts: BriefingCounts, language: str = "en") -> tuple[str, str]:
     """Returns ``(message, explanation)`` -- the same shape ``services/insights.py``'s rule
     candidates already use, so a briefing renders on the client's Today screen identically to a
-    rule-generated insight."""
+    rule-generated insight.
+
+    ``language`` is the user's saved app language (``users.language``); ``"ar"`` writes it in
+    Egyptian Arabic (docs/plans/arabic-language_plan.md, decision 9), anything else in English,
+    exactly as before.
+    """
+    if language == "ar":
+        return _build_daily_briefing_ar(counts)
     items: list[str] = []
     if counts.overdue_tasks:
         items.append(f"{counts.overdue_tasks} overdue task{'s' if counts.overdue_tasks != 1 else ''}")
@@ -50,4 +58,45 @@ def build_daily_briefing(counts: BriefingCounts) -> tuple[str, str]:
         )
     message = f"{len(items)} thing{'s' if len(items) != 1 else ''} to know about today."
     explanation = "; ".join(items) + "."
+    return message, explanation
+
+
+#: Goal priorities as the briefing names them in Arabic; an unknown value is shown as stored.
+_PRIORITY_AR = {"high": "عالية", "medium": "متوسطة", "low": "منخفضة"}
+
+
+def _build_daily_briefing_ar(counts: BriefingCounts) -> tuple[str, str]:
+    items: list[str] = []
+    if counts.overdue_tasks:
+        items.append(plural_ar(
+            counts.overdue_tasks, one="مهمة واحدة متأخرة", two="مهمتين متأخرين",
+            few="{n} مهام متأخرة", other="{n} مهمة متأخرة",
+        ))
+    if counts.due_today_tasks:
+        items.append(plural_ar(
+            counts.due_today_tasks, one="مهمة واحدة مطلوبة النهارده",
+            two="مهمتين مطلوبين النهارده", few="{n} مهام مطلوبة النهارده",
+            other="{n} مهمة مطلوبة النهارده",
+        ))
+    if counts.events_today:
+        items.append(plural_ar(
+            counts.events_today, one="ميعاد واحد في التقويم النهارده",
+            two="ميعادين في التقويم النهارده", few="{n} مواعيد في التقويم النهارده",
+            other="{n} ميعاد في التقويم النهارده",
+        ))
+    for goal in counts.goals_near_target:
+        priority = _PRIORITY_AR.get(goal.priority, goal.priority)
+        items.append(f"هدف أولويته {priority} وصل لـ {goal.progress_pct}%")
+
+    if not items:
+        return (
+            "مفيش حاجة مستعجلة النهارده.",
+            "مفيش مهام متأخرة ولا مطلوبة النهارده، ولا مواعيد النهارده، ولا أهداف قربت على "
+            "ميعادها.",
+        )
+    message = plural_ar(
+        len(items), one="حاجة واحدة لازم تعرفها النهارده.", two="حاجتين لازم تعرفهم النهارده.",
+        few="{n} حاجات لازم تعرفها النهارده.", other="{n} حاجة لازم تعرفها النهارده.",
+    )
+    explanation = "؛ ".join(items) + "."
     return message, explanation

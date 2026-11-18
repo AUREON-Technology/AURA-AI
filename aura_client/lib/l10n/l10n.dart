@@ -21,3 +21,17 @@ extension AuraL10n on BuildContext {
 }
 
 final AppLocalizations _englishFallback = AppLocalizationsEn();
+
+AppLocalizations? _current;
+
+/// The strings of the language on screen, for code that has no [BuildContext]: failure copy
+/// built from an error (`core/network/aura_failure.dart`), notifiers and services that produce
+/// user-facing text. `AuraApp`'s builder keeps it current; before the first frame, and in a test
+/// that never builds `AuraApp`, it is English -- the same fallback as [AuraL10n.l10n].
+///
+/// Prefer `context.l10n` wherever a context exists: a string read from here when it is *built*
+/// keeps that language until rebuilt, so only use it for text produced at the moment it is shown.
+AppLocalizations get currentL10n => _current ?? _englishFallback;
+
+/// Called by `AuraApp`'s builder with the localizations in scope (null resets to English).
+void setCurrentL10n(AppLocalizations? localizations) => _current = localizations;

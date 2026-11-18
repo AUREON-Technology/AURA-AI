@@ -7,6 +7,34 @@
 
 ## Summary
 
+**Update 2026-11-18, Phase R (same branch, TESTED locally, not CI-run or deployed).** On Railway,
+`/metrics` was answered by one random uvicorn worker per scrape. The image `CMD` now shares one
+`PROMETHEUS_MULTIPROC_DIR`. Tracing produced no spans at all; requests, provider attempts and turns
+are now traced, with no content or identity in any span. Grafana Cloud runbook:
+`docs/deployment/observability.md`. Nothing is configured on Grafana Cloud yet (GAP-036
+`in_progress`).
+
+**Update 2026-11-17, Phase I (same branch, TESTED locally, not CI-run or deployed).**
+`AURA_PROVIDER_<NAME>_HEALTH_PROBE=passive` lets readiness report a provider from its circuit
+breaker without calling it. That is for the HF Space, which sleeps when idle and wakes (and
+bills) on any request, including a `/health/ready` probe. An image turn answered by OCR alone
+now ends its vision step `degraded` with a "send it again in a minute" description. The Space
+itself is **PAUSED** (`a10g-small`). The chosen VLM (`Qwen2.5-VL-7B-Instruct-AWQ` @ `536a3579`)
+is not served yet, so GAP-019 stays `in_progress`.
+
+**Update 2026-11-17 (live probe of `api.aureon-ai.tech` at `446e004`, plus Phase V on branch
+`anas/laughing-hamilton-glfevj`).** `/health/ready`: healthy, schema `0021`, `hfspace` 503. **The
+knowledge alias still points at the `hash-embed-v1` index while the embedder is bge-small**, so
+`resolve_for_read()` refuses it and every retrieval returns `strategy="unavailable"`: RAG is off
+live until an admin runs `POST /api/v3/admin/index/rebuild` (plan Phase 0.2,
+`docs/plans/runtime_feature_enablement_plan.md`). The apex `aureon-ai.tech` answers Railway's
+`Application not found`. Phase V, TESTED locally (pytest 5156 passed / 42 skipped, legacy
+unittest 146 OK), not CI-run or deployed: `/voice/transcribe` reports the `language` it used
+(merged 2026-11-18 with Arabic stage 4, whose rule stands: an unknown code is a 422, and an
+English-only model ignores the hint), an opt-in Silero VAD (`AURA_VOICE_LIVE_VAD=silero`, reported
+as `voice.vad` on `/health/ready`) and `scripts/measure_stt_wer.py`. After the merge: pytest 5307
+passed / 42 skipped, legacy unittest 148 OK.
+
 **Update 2026-11-07 (`main` at `772f9ef`, live probe):** production serves `ffbbb9f` and
 `/health/ready` reports **`schema.revision 0019`**, so open issue 0 below is resolved live and the
 pre-deploy migration path has now (by one route or another) applied real revisions; confirm which in
@@ -72,7 +100,7 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 | Engineer workspaces (ADR-013/014) | BUILT | GAP-025; off by default; no `verify-engineer-workspaces` report |
 | Desktop hostd bridge | BUILT | GAP-026; F-21 (confirmed): non-streaming `run` returns `''` / `-1` |
 | Observability | OPEN | GAP-036, GAP-037 |
-| Backup / DR | TESTED in a sandbox; OPEN on any live target | A2 sandbox (`phase-a2-restore-drill.md`); GAP-028, GAP-046 |
+| Backup / DR | TESTED in a sandbox; OPEN on any live target | A2 sandbox (`phase-a2-restore-drill.md`); GAP-028, GAP-046. Multi-provider offsite (2026-11-17, PR #252, `docs/plans/distributed_storage_plan.md`): copies to every `BACKUP_OFFSITE_TARGETS` remote, durable only at `BACKUP_OFFSITE_MIN_COPIES` (default 2), `backup-fetch.sh` for restore -- BUILT and TESTED with a stub rclone, **not deployed, no real provider used**. **The live Railway data had no backup in this repo** (the sidecar runs only on the VPS): a Railway cron service (`deploy/backup/railway.Dockerfile`, `docs/deployment/backups.md`) now covers Railway Postgres, Redis and Qdrant Cloud -- proven locally end to end against stock services, **not yet created on Railway** |
 | 50-user capacity | OPEN | GAP-011 (P0), GAP-041. Phase 2 (2026-11-09): admission caps are divided among the gateway's workers and daily quotas are shared across processes (FSA-025) -- built and tested, still unmeasured on the live topology |
 | Phase 2 core reliability (audit FSA-010/011/012/015/016/018/025/041/046/059/066/073/091/092/093/094/100/110/111/112) | BUILT and TESTED locally (pytest, legacy unittest, real PG16 for the Postgres-backed items, `dart test` 274, `flutter test` 630); **not CI-run, not deployed** | Branch `anas/magical-bell-e9spvh` after #229: nginx-only forwarded headers, production CORS, dev/prod parity, streamed `fetch_url`, Ollama `done_reason`, `forget_source` vectors, per-turn tool cap, JSON-mode boot warning, finetune drain reuse, asyncpg pool bounds + computed connection budget, Whisper language allow-list, legacy-plaintext read counter, digest-pinned images + required Space revision, model revisions + Whisper warm-up, per-user session index + refresh-family revocation, audit/telemetry retention + pseudonymised erasure, off-host vector payloads without text, host-tool cancel frames + approval-window budget, client Idempotency-Key, cross-process admission/quota. Live-only items (FSA-084/085, load matrix, re-encryption run) remain the owner's |
 | Real-model evaluation gates | OPEN | GAP-021; GAP-006 (`eval-ci.yml`'s deterministic gate runs on PR and push; only its `dispatch-run` job is manual -- FSA-120 correction 2026-11-08) |
@@ -80,13 +108,14 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 | Personal-OS single store (ADR-032, CB-28 / F-18) | BUILT and TESTED locally (pytest, legacy unittest, real PG16); **not deployed, not CI-run** | Owner chose Option A (server-held per-user data key) on 2026-10-31. The agent's `create_/list_/update_/delete_*` tools now read and write the synced `tasks`/`calendar_events`/`finance_records`/`health_records` rows, encrypted `gcm2` with the user's data key; `GET /api/v3/keys/data` hands that key to the user's devices. **The synced fields are no longer zero-knowledge** (threat-model table in ADR-032). Old rows: `scripts/move_personal_os_records.py` (not yet run anywhere) |
 | Workspaces / team scopes (SaaS P1-A, ADR-034) | BUILT and TESTED locally (pytest 4915 passed, legacy unittest, real PG16 contract + migration round-trip); **not CI-run, not deployed** | Branch `claude/saas-production-readiness-f5i61d`: migration `0020` (workspaces, members, invites), `TenancyService`, `X-Aura-Workspace` resolved per request, `/api/v3/workspaces` routes, knowledge/graph/CAG scoped by `Principal.knowledge_owner` (AST fitness test), HTTP isolation + IDOR scenarios. Also `/metrics` now fails closed in production without `AURA_METRICS_TOKEN`. No client/console screens, no invite email, no RLS yet |
 | Customer sign-in (SaaS P1-B) | BUILT and TESTED locally; **not CI-run; inert in production until the owner steps in `docs/deployment/customer-sign-in.md` are done** (no `FIREBASE_CREDENTIALS_JSON` on Railway) | `POST /api/v3/auth/consumer/token` (no attestation, `channel=consumer_web` capped at `User` at issue/refresh/per request, 10/min/IP/worker); `email_verified` on the access token, teams require it; `scripts/import_users_to_firebase.py` (subject-preserving, dry-run default; dry run against a local PG16 quoted in the plan ledger). `tests/unit/test_consumer_web_sign_in.py`, `tests/unit/test_import_users_to_firebase.py` |
-| Plans and metering (SaaS P1-C) | BUILT and TESTED locally (pytest incl. real-PG16 contract with 20-way concurrency, migration `0021` round-trip); **not CI-run, not deployed** | Free/Pro/Team catalogue as data (`AURA_PLAN_CATALOGUE`, placeholder numbers until the owner prices them); per-workspace monthly messages, Engineer gate, storage, team seats; 402 `plan_limit`; `GET /workspaces/{id}/plan`, SuperAdmin `PUT /admin/workspaces/{id}/plan`. Live voice turns not metered yet. `docs/deployment/plans-and-limits.md` |
-| Subscriptions and Fawry billing (SaaS P1-D1) | BUILT and TESTED locally (pytest, real-PG16 store contract, migration `0022` round-trip, Fawry wire format against httpx.MockTransport); **off by default, not proven against Fawry staging, not CI-run, not deployed** | Reference-code checkout, signature-verified Server Notification V2, saved-card renewals, grace and expiry, reconciliation; hourly `scripts/run_billing_cycle.py`. Fawry signature formulas need confirming in the merchant's staging account; first card capture not built. `docs/deployment/billing-fawry.md` |
-| App Store / Google Play subscriptions (SaaS P1-D2) | BUILT and TESTED locally (pytest: Apple JWS chain against a generated root plus the pinned Apple G3 pin, Play API via httpx.MockTransport, service and HTTP tests, real-PG16 contract, migration `0023` round-trip); **off until configured, not proven against App Store or Play sandbox, not CI-run, not deployed**; the app's purchase screens are Plan F | Binding token, verified App Store Server Notifications V2 and Play RTDN, mapped onto the same subscription record. `docs/deployment/billing-stores.md` |
+| Plans and metering (SaaS P1-C) | BUILT and TESTED locally (pytest incl. real-PG16 contract with 20-way concurrency, migration `0023` round-trip); **not CI-run, not deployed** | Free/Pro/Team catalogue as data (`AURA_PLAN_CATALOGUE`, placeholder numbers until the owner prices them); per-workspace monthly messages, Engineer gate, storage, team seats; 402 `plan_limit`; `GET /workspaces/{id}/plan`, SuperAdmin `PUT /admin/workspaces/{id}/plan`. Live voice turns not metered yet. `docs/deployment/plans-and-limits.md` |
+| Subscriptions and Fawry billing (SaaS P1-D1) | BUILT and TESTED locally (pytest, real-PG16 store contract, migration `0024` round-trip, Fawry wire format against httpx.MockTransport); **off by default, not proven against Fawry staging, not CI-run, not deployed** | Reference-code checkout, signature-verified Server Notification V2, saved-card renewals, grace and expiry, reconciliation; hourly `scripts/run_billing_cycle.py`. Fawry signature formulas need confirming in the merchant's staging account; first card capture not built. `docs/deployment/billing-fawry.md` |
+| App Store / Google Play subscriptions (SaaS P1-D2) | BUILT and TESTED locally (pytest: Apple JWS chain against a generated root plus the pinned Apple G3 pin, Play API via httpx.MockTransport, service and HTTP tests, real-PG16 contract, migration `0025` round-trip); **off until configured, not proven against App Store or Play sandbox, not CI-run, not deployed**; the app's purchase screens are Plan F | Binding token, verified App Store Server Notifications V2 and Play RTDN, mapped onto the same subscription record. `docs/deployment/billing-stores.md` |
 | Desktop Engineer for customers (SaaS P1-E) | BUILT and TESTED locally (pytest: entitlement, turn capability, daemon-socket recheck on downgrade, desktop sign-in/refresh/pairing gates and limits, customer session refused by console routes; legacy unittest unchanged); **off by default (`AURA_ENGINEER_FOR_CUSTOMERS`), not CI-run, not deployed, not tried with a real desktop app and daemon** | Pro/Team customers sign in on desktop and pair `aura_hostd`; their sessions are capped at `User`; startup refuses the switch beside the server sandbox, a shared GitHub token, MCP or relaxed confirmation. ADR-011 "Customers", `docs/deployment/desktop-engineer-customers.md` |
-| Customer surfaces, backend (SaaS P1-F1) | BUILT and TESTED locally (pytest incl. real-PG16 contracts, migrations `0024`/`0025` round-trip, IDOR entries); **email off by default (`AURA_EMAIL_ENABLED`), no provider chosen, not CI-run, not deployed** | Invite/receipt/renewal/past-due email over SMTP; shared team chats; account deletion refused while owning a team; operator Customers API and audited grace extension. App screens are F2, console page F3. `docs/deployment/email.md` |
+| Customer surfaces, backend (SaaS P1-F1) | BUILT and TESTED locally (pytest incl. real-PG16 contracts, migrations `0026`/`0027` round-trip, IDOR entries); **email off by default (`AURA_EMAIL_ENABLED`), no provider chosen, not CI-run, not deployed** | Invite/receipt/renewal/past-due email over SMTP; shared team chats; account deletion refused while owning a team; operator Customers API and audited grace extension. App screens are F2, console page F3. `docs/deployment/email.md` |
 | Learning / fine-tuning | BUILT | GAP-017; GAP-018 fixed in code (`finetune.py` records a failed train as failed; FSA-120 correction 2026-11-08), `built_not_proven` |
-| Voice | BUILT | GAP-020: speech-to-text is English-only while an Arabic voice ships |
+| Voice | BUILT | GAP-020: speech-to-text default is now Whisper `small` (multilingual; FLEURS WER English 6.46%, Egyptian Arabic 24.96%, `docs/reports/STT_WER_ARABIC_ENGLISH_2026-11-17.md`), branch `anas/kind-rubin-dpm0sq`, unmerged; built, not proven until measured on a deploy target |
+| Arabic text handling and reply language (Arabic plan, stage 1) | BUILT; TESTED locally 2026-11-17, not CI-run (CB-44), not deployed | `aura_core/text/`: BM25 tokenizer, token counter, chunker, groundedness guard, complexity, adaptive routing and curation read Arabic; migration `0022` (`users.language`, from `X-Client-Language`); persona prompts tell an Arabic reply to be Egyptian (English prompts unchanged). Whether a real model follows the line is untested. Stage 3: insights and the daily briefing are written in `users.language`. Stage 4: search defaults to `multilingual-e5-small` plus the `either` relevance gate (recall@5 English 0.70 → 0.95, Arabic-asks-English 0.10 → 0.90; `docs/reports/ARABIC_RETRIEVAL_EVAL_2026-11-17.md`), needs `scripts/rebuild_index.py` after deploy; OCR `ara+eng`. `docs/plans/arabic-language_plan.md` |
 | Track AP: AP1–AP8 | TESTED (`built_not_proven`) | GAP-049…057; held at BUILT until M0 |
 | Track AP: AP10 | In progress | GAP-059 |
 | Track AP: AP9, AP11–AP13 | OPEN | GAP-058, GAP-060…062 |
@@ -201,6 +230,10 @@ That needs a check in the Firebase console.
 - #187, #185, #188, #143, #165: listed above; #143 is client-only (failure classifier on every
   `AsyncValue.error`), #165 docs-only.
 - PRs #78 and #88 closed as superseded (both features are on `main` in reworked form).
+- 2026-11-17, branch `anas/kind-rubin-dpm0sq`, unmerged: Arabic plan stages 1-4 (above). Adds migration `0022`; after it merges, `/health/ready`'s `schema.revision` should read `0022` (the first merge adding a migration since the pre-deploy fix).
+- #252 (open, 2026-11-17): multi-provider offsite backups with a two-copy quorum, configuration
+  checks, `backup-fetch.sh`, and the `AuraBackupUnderReplicated` / `AuraBackupOffsiteStale`
+  alerts. Deploy-stack only; no backend code. Local checks pass; CI ran with no logs (CB-44).
 
 ## Next steps
 

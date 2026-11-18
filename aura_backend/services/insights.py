@@ -33,6 +33,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.db.models import FinanceRecord, HealthRecord, Insight, Task, User
+from aura_core.text import plural_ar
+from services.user_language import resolve_language
 from services.user_time import local_day_bounds, local_now, resolve_timezone
 
 logger = logging.getLogger("aura_backend.insights")
@@ -46,6 +48,50 @@ HIGH_SPEND_THRESHOLD = 100.0
 GENERATED_KINDS = ("overdue_tasks", "hydration", "high_spend")
 
 
+def _text(kind: str, language: str, **v) -> dict[str, str]:
+    """``message``/``explanation`` for one rule, in the user's language (docs/plans/
+    arabic-language_plan.md, decision 9). English is word-for-word what this module always wrote;
+    Arabic is Egyptian, with the noun agreeing with the count. ``$`` and ``ml`` stay as they are:
+    the language never changes a unit or a currency (decision 15)."""
+    if language == "ar":
+        if kind == "overdue_tasks":
+            tasks = plural_ar(v["count"], one="مهمة واحدة متأخرة", two="مهمتين متأخرين",
+                              few="{n} مهام متأخرة", other="{n} مهمة متأخرة")
+            return {
+                "message": f"عندك {tasks}.",
+                "explanation": f"{tasks}: عدّى ميعادها ولسه مش متعلّم عليها إنها خلصت.",
+            }
+        if kind == "hydration":
+            return {
+                "message": f"سجّلت {v['current']}ml مية بس النهارده.",
+                "explanation": f"الهدف {WATER_GOAL_ML}ml في اليوم، والساعة عدّت 3 العصر وانت لسه موصلتش لنصه.",
+            }
+        if kind == "high_spend":
+            records = plural_ar(v["count"], one="مصروف واحد", two="مصروفين",
+                                few="{n} مصاريف", other="{n} مصروف")
+            return {
+                "message": f"صرفت ${v['total']:.0f} في آخر 7 أيام.",
+                "explanation": f"{records} مجموعهم ${v['total']:.2f} الأسبوع ده.",
+            }
+    if kind == "overdue_tasks":
+        n = v["count"]
+        return {
+            "message": f"You have {n} overdue task{'s' if n != 1 else ''}.",
+            "explanation": f"{n} task(s) passed their due date and aren't marked complete.",
+        }
+    if kind == "hydration":
+        return {
+            "message": f"Only {v['current']}ml of water logged today.",
+            "explanation": f"Goal is {WATER_GOAL_ML}ml/day; it's past 3pm and you're under halfway there.",
+        }
+    if kind == "high_spend":
+        return {
+            "message": f"${v['total']:.0f} spent in the last 7 days.",
+            "explanation": f"{v['count']} expense record(s) totaling ${v['total']:.2f} this week.",
+        }
+    raise ValueError(f"unknown insight kind {kind!r}")
+
+
 async def generate_insights_for_user(
     db: AsyncSession, user_id: uuid.UUID, *, now: datetime | None = None,
 ) -> list[Insight]:
@@ -55,7 +101,12 @@ async def generate_insights_for_user(
     now = now or datetime.now(timezone.utc)
     # "Today" and "past 3pm" are the user's, not UTC's (audit F-17): the client stores a day's
     # health record at local midnight, which east of UTC is before the UTC day's start.
-    tz = resolve_timezone(await db.scalar(select(User.timezone).where(User.id == user_id)))
+    settings = (await db.execute(
+        select(User.timezone, User.language).where(User.id == user_id)
+    )).first()
+    tz = resolve_timezone(settings.timezone if settings else None)
+    # Written in the language the user's app last reported (decision 9); English if never.
+    language = resolve_language(settings.language if settings else None)
     today_start, today_end = local_day_bounds(now, tz)
     candidates: list[dict] = []
 
@@ -74,8 +125,7 @@ async def generate_insights_for_user(
         candidates.append({
             "kind": "overdue_tasks",
             "severity": min(len(overdue), 5),
-            "message": f"You have {len(overdue)} overdue task{'s' if len(overdue) != 1 else ''}.",
-            "explanation": f"{len(overdue)} task(s) passed their due date and aren't marked complete.",
+            **_text("overdue_tasks", language, count=len(overdue)),
             "citations": [str(t.id) for t in overdue],
         })
 
@@ -97,8 +147,7 @@ async def generate_insights_for_user(
         candidates.append({
             "kind": "hydration",
             "severity": 2,
-            "message": f"Only {current}ml of water logged today.",
-            "explanation": f"Goal is {WATER_GOAL_ML}ml/day; it's past 3pm and you're under halfway there.",
+            **_text("hydration", language, current=current),
             "citations": [str(today_health.id)] if today_health else [],
         })
 
@@ -118,8 +167,7 @@ async def generate_insights_for_user(
         candidates.append({
             "kind": "high_spend",
             "severity": 3,
-            "message": f"${total_spent:.0f} spent in the last 7 days.",
-            "explanation": f"{len(week_expenses)} expense record(s) totaling ${total_spent:.2f} this week.",
+            **_text("high_spend", language, total=total_spent, count=len(week_expenses)),
             "citations": [str(r.id) for r in week_expenses],
         })
 

@@ -95,7 +95,7 @@ Ingest, upload, delete and pin/unpin require `manage_knowledge` (Owner or Admin)
 
 ### 7. Plans and metering (SaaS P1-C)
 
-- **One plan per workspace.** It comes from `aura_workspace_entitlements` (migration `0021`); no
+- **One plan per workspace.** It comes from `aura_workspace_entitlements` (migration `0023`); no
   row means Free. The plan catalogue is data (`domain/plans.py`; `AURA_PLAN_CATALOGUE` replaces
   it).
 - **Metering.**
@@ -109,7 +109,7 @@ Ingest, upload, delete and pin/unpin require `manage_knowledge` (Owner or Admin)
 
 ### 8. Subscriptions and billing (SaaS P1-D1)
 
-- **Ownership.** AURA owns each workspace's subscription (`aura_subscriptions`, migration `0022`).
+- **Ownership.** AURA owns each workspace's subscription (`aura_subscriptions`, migration `0024`).
   Fawry only collects payments (`aura_payments`).
 - **Notifications.** A payment leaves `pending` exactly once (a conditional UPDATE), so a duplicate
   or out-of-order provider notification is a no-op.
@@ -128,7 +128,7 @@ Ingest, upload, delete and pin/unpin require `manage_knowledge` (Owner or Admin)
 ### 9. In-app subscriptions (SaaS P1-D2)
 
 - **Binding.** A store purchase reaches a workspace only through a token AURA issued to that
-  workspace's Owner before the purchase (`aura_store_bindings`, migration `0023`). The app passes
+  workspace's Owner before the purchase (`aura_store_bindings`, migration `0025`). The app passes
   it as Apple's `appAccountToken` or Google's `obfuscatedExternalAccountId`. Only personal
   workspaces can buy in the apps; Team is sold on the web.
 - **Trust.** Apple's notifications are trusted only under the pinned Apple Root CA - G3. A Google
@@ -149,7 +149,7 @@ Ingest, upload, delete and pin/unpin require `manage_knowledge` (Owner or Admin)
 ### 10. Shared chats, account deletion and operator tooling (SaaS P1-F1)
 
 - **Shared chats.** A member copies one of their own chats into a team workspace
-  (`aura_shared_conversations`, migration `0025`), and every member can read it. The copy comes
+  (`aura_shared_conversations`, migration `0027`), and every member can read it. The copy comes
   from the app, because the server's episodic memory is a short rolling window, not the
   conversation.
   - Sharing the same chat again replaces the copy.
@@ -165,7 +165,7 @@ Ingest, upload, delete and pin/unpin require `manage_knowledge` (Owner or Admin)
   - one past-due notice when a Fawry subscription falls behind.
 
   Billing email goes to the Owner's verified address, stored at checkout
-  (`aura_billing_contacts`, migration `0024`). A failed email never fails the invite or payment
+  (`aura_billing_contacts`, migration `0026`). A failed email never fails the invite or payment
   behind it. Setup: `docs/deployment/email.md`.
 - **Operator tooling.** `GET /admin/customers` (SuperAdmin, read-only) lists every subscribed
   workspace. `POST /admin/customers/{id}/extend-grace` is the operator's one write, and it is

@@ -27,6 +27,7 @@ from aura_core.domain.service_keys import looks_like_service_token
 from aura_core.domain.tenancy import WorkspaceContext
 from aura_core.observability.logging import get_logger
 from aura_core.security import SlidingWindowRateLimiter
+from aura_core.security.role_capabilities import capabilities_for_role
 from infrastructure.http_limits import PayloadSizeLimitMiddleware
 from infrastructure.secret_hydration import hydrate_secrets_from_files
 
@@ -117,25 +118,13 @@ def _build_authenticator(settings: Any, *, service_keys: Any = None, tenancy: An
         from services.rbac import get_user_role  # type: ignore
 
         role = get_user_role(claims)
-        capabilities: list[str] = []
-        if role in settings.security.admin_roles:
-            capabilities.append("admin.act")
-        if role == "SuperAdmin":
-            capabilities.append("admin.super")
-        # Gates the `engineer` persona and every tool in tools/coding.py (sandboxed
-        # filesystem/command/git, GitHub read+write) -- empty by default, so nobody has it
-        # until an operator explicitly opts a role in via AURA_ENGINEER_AGENT_ROLES.
-        if role in settings.security.engineer_agent_roles:
-            capabilities.append("engineer_agent")
-        # Gates agents and tools compiled from a deployed Project Blueprint (Track AP7) --
-        # empty by default; AURA_PROJECT_DATA_ROLES opts roles in.
-        if role in settings.security.project_data_roles:
-            capabilities.append("project_data")
+        # One rule shared with the pairing approval route (audit INT-003), so a daemon can only
+        # be paired to an account the host-agent socket will accept.
         return Principal(
             user_id=UserId(str(subject)),
             email=claims.get("email") or "",
             role=role,
-            capabilities=tuple(capabilities),
+            capabilities=capabilities_for_role(settings.security, role),
             email_verified=claims.get("email_verified") is True,
         )
 

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/platform/aura_platform.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
 import 'onboarding_gate.dart';
@@ -49,7 +50,7 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
 
   Future<void> _finish() async {
     await ref.read(onboardingGateProvider.notifier).complete();
-    if (mounted) context.go('/today');
+    if (mounted) context.go(appLandingRoute);
   }
 
   @override
@@ -82,51 +83,67 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
                     final page = _pages(context)[i];
                     return Column(
                       mainAxisAlignment: MainAxisAlignment.center,
+                      // Each page's hero, title and text arrive in turn as the
+                      // page is swiped in (PageView builds a page as it enters).
                       children: [
-                        ExcludeSemantics(
-                          child: Container(
-                            width: 112,
-                            height: 112,
-                            decoration: BoxDecoration(
-                              gradient: palette.brandGradient,
-                              borderRadius: BorderRadius.circular(
-                                AuraRadius.xl + 8,
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: palette.brand.withValues(alpha: 0.35),
-                                  blurRadius: 36,
-                                  offset: const Offset(0, 14),
+                        for (final (j, part) in <Widget>[
+                          ExcludeSemantics(
+                            child: AuraBreathe(
+                              child: Container(
+                                width: 112,
+                                height: 112,
+                                decoration: BoxDecoration(
+                                  gradient: palette.brandGradient,
+                                  borderRadius: BorderRadius.circular(
+                                    AuraRadius.xl + 8,
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: palette.brand.withValues(
+                                        alpha: 0.35,
+                                      ),
+                                      blurRadius: 36,
+                                      offset: const Offset(0, 14),
+                                    ),
+                                  ],
                                 ),
-                              ],
-                            ),
-                            child: Icon(
-                              page.$1,
-                              size: 52,
-                              color: palette.onBrand,
+                                child: Icon(
+                                  page.$1,
+                                  size: 52,
+                                  color: palette.onBrand,
+                                ),
+                              ),
                             ),
                           ),
-                        ),
-                        const SizedBox(height: AuraSpacing.xxl),
-                        Text(
-                          page.$2,
-                          style: Theme.of(context).textTheme.headlineMedium
-                              ?.copyWith(fontWeight: FontWeight.w700),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: AuraSpacing.md),
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 420),
-                          child: Text(
-                            page.$3,
-                            style: Theme.of(context).textTheme.bodyLarge
-                                ?.copyWith(
-                                  color: palette.textSecondary,
-                                  height: 1.5,
-                                ),
+                          const SizedBox(height: AuraSpacing.xxl),
+                          Text(
+                            page.$2,
+                            style: Theme.of(context).textTheme.headlineMedium
+                                ?.copyWith(fontWeight: FontWeight.w700),
                             textAlign: TextAlign.center,
                           ),
-                        ),
+                          const SizedBox(height: AuraSpacing.md),
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 420),
+                            child: Text(
+                              page.$3,
+                              style: Theme.of(context).textTheme.bodyLarge
+                                  ?.copyWith(
+                                    color: palette.textSecondary,
+                                    height: 1.5,
+                                  ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ].indexed)
+                          AuraEntrance(
+                            delay: AuraEntrance.stagger(
+                              j,
+                              step: const Duration(milliseconds: 70),
+                            ),
+                            offset: 16,
+                            child: part,
+                          ),
                       ],
                     );
                   },

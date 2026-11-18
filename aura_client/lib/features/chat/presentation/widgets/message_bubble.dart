@@ -1,3 +1,4 @@
+import 'package:aura_client/core/locale/text_direction.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -51,6 +52,16 @@ class MessageBubble extends ConsumerWidget {
     } catch (_) {
       return const [];
     }
+  }
+
+  /// The fixed notices the repository stores in English (persisted and synced as the turn's
+  /// text) are shown in the language on screen; anything else is the model's own answer.
+  static String _displayContent(BuildContext context, String content) {
+    final l10n = context.l10n;
+    if (content == kChatWithheldText) return l10n.chatWithheldNotice;
+    if (content == kChatBlockedText) return l10n.chatBlockedNotice;
+    if (content == kChatFeatureUnavailableText) return l10n.chatFeatureUnavailableNotice;
+    return content;
   }
 
   List<Map<String, dynamic>> _decodeToolCalls() {
@@ -277,24 +288,29 @@ class MessageBubble extends ConsumerWidget {
                         },
                       )
                     else
-                      MarkdownBody(
-                        data: message.content,
-                        styleSheet: MarkdownStyleSheet(
-                          p: TextStyle(
-                            color: palette.textPrimary,
-                            fontSize: 15,
-                            height: 1.4,
-                          ),
-                          code: TextStyle(
-                            backgroundColor: palette.surfaceVariant,
-                            color: palette.warning,
-                            fontFamily: 'Courier',
-                            fontSize: 13,
-                          ),
-                          codeblockDecoration: BoxDecoration(
-                            color: palette.background,
-                            borderRadius: BorderRadius.circular(AuraRadius.sm),
-                            border: Border.all(color: palette.border),
+                      // The message reads in its own direction (first strong letter outside
+                      // code); its fenced code blocks stay left-to-right (text_direction.dart).
+                      Directionality(
+                        textDirection: directionOfText(message.content) ?? Directionality.of(context),
+                        child: _MarkdownWithLtrCode(
+                          data: _displayContent(context, message.content),
+                          styleSheet: MarkdownStyleSheet(
+                            p: TextStyle(
+                              color: palette.textPrimary,
+                              fontSize: 15,
+                              height: 1.4,
+                            ),
+                            code: TextStyle(
+                              backgroundColor: palette.surfaceVariant,
+                              color: palette.warning,
+                              fontFamily: 'Courier',
+                              fontSize: 13,
+                            ),
+                            codeblockDecoration: BoxDecoration(
+                              color: palette.background,
+                              borderRadius: BorderRadius.circular(AuraRadius.sm),
+                              border: Border.all(color: palette.border),
+                            ),
                           ),
                         ),
                       ),
@@ -419,5 +435,57 @@ class _AwaitingConfirmationHint extends StatelessWidget {
         ),
       ],
     );
+  }
+}
+
+
+/// Markdown whose closed fenced code blocks are laid out left-to-right whatever the message's
+/// direction: in a right-to-left paragraph a line like `foo();` would show its trailing
+/// punctuation on the wrong side (docs/plans/arabic-language_plan.md, stage 2). Prose between
+/// the blocks renders through [MarkdownBody] as before; an unclosed fence (mid-stream) stays in
+/// the prose until it closes.
+class _MarkdownWithLtrCode extends StatelessWidget {
+  const _MarkdownWithLtrCode({required this.data, required this.styleSheet});
+
+  final String data;
+  final MarkdownStyleSheet styleSheet;
+
+  static final _fence = RegExp(r'```[^\n]*\n([\s\S]*?)```');
+
+  @override
+  Widget build(BuildContext context) {
+    final matches = _fence.allMatches(data).toList();
+    if (matches.isEmpty) return MarkdownBody(data: data, styleSheet: styleSheet);
+
+    final children = <Widget>[];
+    var cursor = 0;
+    void prose(String text) {
+      if (text.trim().isEmpty) return;
+      children.add(MarkdownBody(data: text, styleSheet: styleSheet));
+    }
+
+    for (final match in matches) {
+      prose(data.substring(cursor, match.start));
+      children.add(
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: AuraSpacing.xs),
+          child: LtrContent(
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(AuraSpacing.sm),
+              clipBehavior: Clip.hardEdge,
+              decoration: styleSheet.codeblockDecoration,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Text(match.group(1)!.trimRight(), style: styleSheet.code),
+              ),
+            ),
+          ),
+        ),
+      );
+      cursor = match.end;
+    }
+    prose(data.substring(cursor));
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children);
   }
 }

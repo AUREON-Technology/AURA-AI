@@ -5,7 +5,7 @@ async function confirm(page: Page, text: string) {
   await page.getByRole("button", { name: "Confirm" }).click();
 }
 
-test("superadmin can grant and remove a role, forget returns counts, last SuperAdmin demote is refused", async ({
+test("superadmin can grant and remove a role, forget returns counts, an env-granted role cannot be lowered", async ({
   page,
 }) => {
   await page.goto("/login");
@@ -25,12 +25,19 @@ test("superadmin can grant and remove a role, forget returns counts, last SuperA
   await confirm(page, "User");
   await expect(ops.getByRole("cell", { name: "User", exact: true })).toBeVisible();
 
+  await ops.getByRole("button", { name: "Revoke sessions" }).click();
+  await confirm(page, "revoke");
+  await expect(page.getByLabel("Type revoke")).toHaveCount(0);
+
   await page.getByPlaceholder("email or auth subject").fill("user@example.com");
   await page.getByRole("button", { name: "Forget" }).click();
   await confirm(page, "forget");
   await expect(page.getByTestId("forget-counts")).toContainText("sessions");
+  await expect(page.getByTestId("forget-status")).toHaveText("Erasure complete.");
 
+  // root@ is granted SuperAdmin by SUPERADMIN_EMAILS: the real handler checks that floor first
+  // and answers 409 naming where to change it (api/admin_platform.py assign_role).
   await root.getByRole("button", { name: "Make Admin" }).click();
   await confirm(page, "Admin");
-  await expect(page.getByText("cannot demote the last SuperAdmin")).toBeVisible();
+  await expect(page.getByText("is granted SuperAdmin by SUPERADMIN_EMAILS")).toBeVisible();
 });

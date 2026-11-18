@@ -7,7 +7,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/desktop/shell/activity_bar.dart';
 import 'package:aura_client/desktop/shell/bottom_panel.dart';
@@ -27,6 +26,7 @@ import 'package:aura_client/desktop/events/ide_event.dart';
 import 'package:aura_client/desktop/events/ide_event_bus.dart';
 import 'package:aura_client/desktop/state/desktop_application_state.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// [child] is the currently routed `/ide/*` page (welcome or workspace
 /// manager) — shown in the main content area only while no file is open,
@@ -85,7 +85,6 @@ class _DesktopShellState extends ConsumerState<DesktopShell> {
       commands: buildDesktopCommands(
         ref,
         platform: Theme.of(context).platform,
-        onLeaveIde: () => GoRouter.of(context).go('/today'),
       ),
     );
   }
@@ -314,7 +313,7 @@ class _OverlayScrim extends StatelessWidget {
   Widget build(BuildContext context) {
     return Semantics(
       button: true,
-      label: 'Close panel',
+      label: context.l10n.ideClosePanel,
       child: GestureDetector(
         onTap: onDismiss,
         child: ColoredBox(color: Colors.black.withValues(alpha: 0.32)),

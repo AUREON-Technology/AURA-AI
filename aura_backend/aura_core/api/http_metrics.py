@@ -11,6 +11,12 @@ duration runs to the last body byte, so for ``/api/v3/chat/stream`` it is the wh
 The ``route`` label is the matched route template (``/api/v3/sessions/{session_id}``), read
 from ``scope["route"]`` after routing. A path that matched nothing is ``unmatched`` -- labelling
 it with the raw path would let any scanner mint one series per URL it tries.
+
+The same middleware opens the request's trace span (Phase R2), so every span the kernel and
+router record nests under it. The span carries the method, the route template and the status
+code only: no URL, query string, client address or user agent, because spans leave for a
+third-party collector. Health checks and the metrics scrape are not traced; at one probe a
+minute they would be most of the trace volume and say nothing.
 """
 
 from __future__ import annotations
@@ -18,7 +24,12 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from ..observability.tracing import span
+
 __all__ = ["HttpMetricsMiddleware", "route_label"]
+
+#: Paths never traced: liveness/readiness probes and the metrics scrape.
+UNTRACED_PREFIXES = ("/health", "/metrics")
 
 UNMATCHED = "unmatched"
 
@@ -47,8 +58,21 @@ class HttpMetricsMiddleware:
                 status = int(message.get("status", 500))
             await send(message)
 
+        method = scope.get("method", "GET")
         try:
-            await self.app(scope, receive, send_wrapper)
+            if str(scope.get("path", "")).startswith(UNTRACED_PREFIXES):
+                await self.app(scope, receive, send_wrapper)
+            else:
+                with span(f"HTTP {method}", **{"http.request.method": method}) as timer:
+                    try:
+                        await self.app(scope, receive, send_wrapper)
+                    finally:
+                        route = route_label(scope)
+                        timer.rename(f"{method} {route}")
+                        timer.set("http.route", route)
+                        timer.set("http.response.status_code", status)
+                        if status >= 500:
+                            timer.mark_error()
         finally:
             # A raised exception (or a client disconnect cancelling the stream) still counts:
             # a request that leaves no trace is how an error rate becomes invisible.

@@ -527,11 +527,12 @@ services:
       # cannot observe the recovery at all and /health/ready reports the same
       # `healthy: false` for "asleep, warming" as for "broken".
       AURA_PROVIDER_HFSPACE_HEALTH_TIMEOUT_S: ${AURA_PROVIDER_HFSPACE_HEALTH_TIMEOUT_S:-30}
+      AURA_PROVIDER_HFSPACE_HEALTH_PROBE: ${AURA_PROVIDER_HFSPACE_HEALTH_PROBE:-active}
       AURA_PROVIDER_HFSPACE_MAX_CONCURRENCY: ${AURA_PROVIDER_HFSPACE_MAX_CONCURRENCY:-8}
       AURA_PROVIDER_HFSPACE_IS_LOCAL: ${AURA_PROVIDER_HFSPACE_IS_LOCAL:-false}
       AURA_PROVIDER_HFSPACE_API_KEY_ENV: ${AURA_PROVIDER_HFSPACE_API_KEY_ENV:-}
       AURA_EMBEDDING_PROVIDER: ${AURA_EMBEDDING_PROVIDER:-sentence-transformers}
-      AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-intfloat/multilingual-e5-small}
       # Hub commit of the embedding weights (audit FSA-110). Part of the index identity: changing
       # it builds and promotes a new index. Empty = the repo's head, as before.
       AURA_EMBEDDING_MODEL_REVISION: ${AURA_EMBEDDING_MODEL_REVISION:-}
@@ -550,6 +551,13 @@ services:
       # /health/ready. Whisper is also loaded at startup in production so the first live-voice
       # turn of a fresh container does not pay the download (AURA_VOICE_STT_WARM_ON_STARTUP).
       AURA_VOICE_STT_MODEL_REVISION: ${AURA_VOICE_STT_MODEL_REVISION:-}
+      # Arabic search (docs/plans/arabic-language_plan.md, stage 4, decision 17; measured in
+      # docs/reports/ARABIC_RETRIEVAL_EVAL_2026-11-17.md): multilingual E5 embeddings (384-dim,
+      # so the dimension is unchanged, but a new index -- run scripts/rebuild_index.py after the
+      # first deploy) and the "either" relevance gate, which passes a passage the word-overlap
+      # heuristic OR the multilingual cross-encoder accepts (~100-300 ms CPU per search).
+      AURA_KNOWLEDGE_RERANK_PROVIDER: ${AURA_KNOWLEDGE_RERANK_PROVIDER:-either}
+      AURA_KNOWLEDGE_RERANK_MODEL: ${AURA_KNOWLEDGE_RERANK_MODEL:-cross-encoder/mmarco-mMiniLMv2-L12-H384-v1}
       AURA_KNOWLEDGE_RERANK_MODEL_REVISION: ${AURA_KNOWLEDGE_RERANK_MODEL_REVISION:-}
       AURA_POSTGRES_POOL_MAX_SIZE: ${AURA_POSTGRES_POOL_MAX_SIZE:-10}
       AURA_LEGACY_DB_POOL_SIZE: ${AURA_LEGACY_DB_POOL_SIZE:-5}
@@ -892,12 +900,13 @@ services:
       # cannot observe the recovery at all and /health/ready reports the same
       # `healthy: false` for "asleep, warming" as for "broken".
       AURA_PROVIDER_HFSPACE_HEALTH_TIMEOUT_S: ${AURA_PROVIDER_HFSPACE_HEALTH_TIMEOUT_S:-30}
+      AURA_PROVIDER_HFSPACE_HEALTH_PROBE: ${AURA_PROVIDER_HFSPACE_HEALTH_PROBE:-active}
       AURA_PROVIDER_HFSPACE_MAX_CONCURRENCY: ${AURA_PROVIDER_HFSPACE_MAX_CONCURRENCY:-8}
       AURA_PROVIDER_HFSPACE_IS_LOCAL: ${AURA_PROVIDER_HFSPACE_IS_LOCAL:-false}
       AURA_PROVIDER_HFSPACE_API_KEY_ENV: ${AURA_PROVIDER_HFSPACE_API_KEY_ENV:-}
       AURA_PROVIDER_HFSPACE_API_KEY_FILE: /run/secrets/hfspace_api_key
       AURA_EMBEDDING_PROVIDER: ${AURA_EMBEDDING_PROVIDER:-sentence-transformers}
-      AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-intfloat/multilingual-e5-small}
       # Hub commit of the embedding weights (audit FSA-110). Part of the index identity: changing
       # it builds and promotes a new index. Empty = the repo's head, as before.
       AURA_EMBEDDING_MODEL_REVISION: ${AURA_EMBEDDING_MODEL_REVISION:-}
@@ -1325,6 +1334,11 @@ services:
       REDIS_HOST: redis
       REDIS_PASSWORD_FILE: /run/secrets/redis_password
       BACKUP_S3_URI: ${BACKUP_S3_URI:-}
+      # Multi-provider offsite (docs/plans/distributed_storage_plan.md): space-separated rclone
+      # remotes named in rclone.conf, e.g. "b2-aura:aura-backups r2-aura:aura-backups". A set
+      # counts as durable only when BACKUP_OFFSITE_MIN_COPIES of them verify (default 2).
+      BACKUP_OFFSITE_TARGETS: ${BACKUP_OFFSITE_TARGETS:-}
+      BACKUP_OFFSITE_MIN_COPIES: ${BACKUP_OFFSITE_MIN_COPIES:-2}
       BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
       BACKUP_S3_PROVIDER: ${BACKUP_S3_PROVIDER:-Other}
       BACKUP_S3_ACCESS_KEY_FILE: /run/backup-secrets/backup_s3_access_key

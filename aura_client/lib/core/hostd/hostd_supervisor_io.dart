@@ -30,6 +30,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:aura_client/core/hostd/hostd_supervisor_state.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 export 'package:aura_client/core/hostd/hostd_supervisor_state.dart';
 
@@ -154,7 +155,7 @@ class HostdSupervisor {
       return;
     }
     if (code == 64) {
-      _giveUp(code, 'aura_hostd rejected its arguments (exit 64) -- check the configured executable');
+      _giveUp(code, currentL10n.coreHostdRejectedArguments);
       return;
     }
     final startedAt = _startedAt;
@@ -163,7 +164,7 @@ class HostdSupervisor {
     }
     _crashesInARow++;
     if (_crashesInARow > maxRestarts) {
-      _giveUp(code, 'aura_hostd crashed $maxRestarts times in a row; see the log above');
+      _giveUp(code, currentL10n.coreHostdCrashedRepeatedly(maxRestarts));
       return;
     }
     final delay = _backoff(_crashesInARow);
@@ -187,7 +188,7 @@ class HostdSupervisor {
       // The binary moved, lost its permissions, or similar: retrying the same path will not
       // help, and the user has to fix the setting.
       _log('[could not restart aura_hostd: $error]');
-      _giveUp(lastExitCode, 'could not restart aura_hostd: $error');
+      _giveUp(lastExitCode, currentL10n.coreHostdRestartFailed('$error'));
     }
   }
 

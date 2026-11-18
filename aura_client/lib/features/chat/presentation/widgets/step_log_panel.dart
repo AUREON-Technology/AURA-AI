@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 import '../../data/turn_meta.dart';
 
@@ -62,7 +63,7 @@ class _StepRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                step.label ?? step.kind ?? 'step',
+                step.label ?? step.kind ?? context.l10n.chatStepFallback,
                 style: TextStyle(fontSize: 13, color: palette.textPrimary),
               ),
               if ((step.status == 'failed' || step.status == 'blocked') &&
@@ -75,7 +76,7 @@ class _StepRow extends StatelessWidget {
                     // (Plan.mark_blocked_steps/StepStatus.BLOCKED, aura_core/domain/planning.py)
                     // -- worded and coloured distinctly so it never reads as "this step failed".
                     step.status == 'blocked'
-                        ? 'Blocked: ${step.detail!}'
+                        ? context.l10n.chatStepBlocked(step.detail!)
                         : step.detail!,
                     style: TextStyle(
                       fontSize: 12,
@@ -96,8 +97,13 @@ class _StepRow extends StatelessWidget {
     switch (step.status) {
       case 'running':
         return CircularProgressIndicator(strokeWidth: 2, color: palette.brand);
+      // `done` is what the vision step sends on success (ADR-031); plan steps send `succeeded`.
       case 'succeeded':
+      case 'done':
         return Icon(Icons.check_circle, size: 16, color: palette.success);
+      // The vision step when only OCR could read the image (the vision model was asleep).
+      case 'degraded':
+        return Icon(Icons.warning_amber_rounded, size: 16, color: palette.warning);
       case 'failed':
         return Icon(Icons.error, size: 16, color: palette.danger);
       case 'skipped':

@@ -27,8 +27,13 @@ class AuraTypography {
         labelMedium: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, height: 1.3, color: palette.textSecondary),
         labelSmall: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, height: 1.3, color: palette.textSecondary),
       ),
-    );
+    ).apply(fontFamilyFallback: arabicFallback);
   }
+
+  /// Outfit has no Arabic glyphs. Cairo is bundled (pubspec `fonts:`, SIL OFL) so Arabic renders
+  /// the same on every platform and offline, instead of whatever system font each OS picks
+  /// (docs/plans/arabic-language_plan.md, decision 13).
+  static const arabicFallback = <String>['Cairo'];
 
   /// Primary monospace family. `'monospace'` is the generic alias Android
   /// resolves; the desktop platforms do not have it, which is what

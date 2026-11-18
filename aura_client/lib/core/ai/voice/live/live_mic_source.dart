@@ -18,7 +18,10 @@ class LiveMicSource {
   Stream<List<int>> get pcm => _pcm.stream;
   Stream<double> get amplitude => _amplitude.stream;
 
-  bool get isSupported {
+  bool get isSupported => platformSupported;
+
+  /// Whether this platform can stream the mic at all, without constructing a recorder.
+  static bool get platformSupported {
     if (kIsWeb) return false;
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
@@ -31,6 +34,8 @@ class LiveMicSource {
 
   Future<bool> ensurePermission() => _recorder.hasPermission();
 
+  /// Starts streaming at [sampleRate] -- the capture rate the server announced in its `ready`
+  /// frame (INT-020); 16 kHz only as the protocol's documented default.
   Future<void> start({int sampleRate = 16000}) async {
     if (!isSupported) {
       throw UnsupportedError('live mic is mobile-only');
@@ -91,3 +96,6 @@ class LiveMicSource {
     return (mean / (32767.0 * 32767.0)).clamp(0.0, 1.0);
   }
 }
+
+/// Builds the mic a live-voice session records with; overridden in tests.
+typedef LiveMicSourceFactory = LiveMicSource Function();

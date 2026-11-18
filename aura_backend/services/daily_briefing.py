@@ -26,6 +26,7 @@ from aura_core.domain.goals import GoalSnapshot
 from aura_core.triggers.briefing import BriefingCounts, build_daily_briefing
 from infrastructure.db.models import CalendarEvent, Goal, Insight, Task, User
 from services.user_time import local_day_bounds, local_now, resolve_timezone
+from services.user_language import resolve_language
 
 logger = logging.getLogger("aura_backend.daily_briefing")
 
@@ -63,7 +64,12 @@ async def generate_daily_briefing_for_user(
     replace-not-accumulate rule ``services/insights.py`` uses for its own candidates)."""
     now = now or datetime.now(timezone.utc)
     # The user's own day, not the UTC one (audit F-17).
-    tz = resolve_timezone(await db.scalar(select(User.timezone).where(User.id == user_id)))
+    settings = (await db.execute(
+        select(User.timezone, User.language).where(User.id == user_id)
+    )).first()
+    tz = resolve_timezone(settings.timezone if settings else None)
+    # Written in the language the user's app last reported (decision 9); English if never.
+    language = resolve_language(settings.language if settings else None)
     today_start, today_end = local_day_bounds(now, tz)
 
     overdue_result = await db.execute(
@@ -114,7 +120,8 @@ async def generate_daily_briefing_for_user(
         BriefingCounts(
             overdue_tasks=len(overdue), due_today_tasks=len(due_today),
             events_today=len(events), goals_near_target=goals_near_target,
-        )
+        ),
+        language,
     )
 
     stale = await db.execute(

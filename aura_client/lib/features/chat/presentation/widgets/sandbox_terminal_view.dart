@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// A terminal-styled monospace block. Used two ways: rendering a `run_command` confirmation's
 /// proposed command (before it has run, so there is no output yet -- pass [body] as the command
@@ -74,7 +75,7 @@ class SandboxTerminalView extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.only(top: AuraSpacing.xs),
                   child: Text(
-                    '… ${lines.length - maxLines} more line(s)',
+                    context.l10n.chatMoreLines(lines.length - maxLines),
                     style: const TextStyle(fontSize: 11, color: Color(0xFF808080)),
                   ),
                 ),

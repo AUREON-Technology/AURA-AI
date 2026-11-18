@@ -45,6 +45,10 @@ and healthcheck. Railway does not support declaring four services with different
 in one config file today — the other three are dashboard/CLI service creations pointed at the
 same repo, using the commands in the table above.
 
+**Backups are a separate, sixth service.** Nothing above backs up Railway's Postgres or Redis,
+or Qdrant Cloud. A cron service built from `deploy/backup/railway.Dockerfile` does it nightly, to
+Backblaze B2 and Cloudflare R2: see [backups.md](backups.md).
+
 ## 3. Environment variables (Control Plane)
 
 Set these as Railway **service variables** (encrypted at rest by Railway, never committed).
@@ -71,8 +75,13 @@ DEBUG_MODE=false
 # Changing model or dimension after documents exist means re-indexing (see the knowledge
 # engine's index manager); the dimension must match the model (bge-small = 384).
 AURA_EMBEDDING_PROVIDER=sentence-transformers
-AURA_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+AURA_EMBEDDING_MODEL=intfloat/multilingual-e5-small
 AURA_EMBEDDING_DIMENSION=384
+# Arabic search (docs/plans/arabic-language_plan.md, stage 4): the "either" relevance gate.
+AURA_KNOWLEDGE_RERANK_PROVIDER=either
+AURA_KNOWLEDGE_RERANK_MODEL=cross-encoder/mmarco-mMiniLMv2-L12-H384-v1
+# After changing the embedder, rebuild the index once (reads refuse an index built by another
+# model until then): `railway ssh`, then `python scripts/rebuild_index.py` (--dry-run first).
 # Pin the weights to a Hub commit (audit FSA-110): the revision is part of the index identity,
 # so changing it builds and promotes a new index rather than silently re-reading the live one.
 # AURA_KNOWLEDGE_RERANK_MODEL_REVISION and AURA_VOICE_STT_MODEL_REVISION pin the cross-encoder

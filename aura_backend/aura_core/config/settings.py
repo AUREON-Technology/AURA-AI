@@ -129,6 +129,18 @@ def _env(key: str, default: str | None = None) -> str | None:
     return os.environ.get(f"AURA_{key}", default)
 
 
+def _embedding_prefix(kind: str) -> str:
+    """``AURA_EMBEDDING_<kind>_PREFIX`` if set (even to empty), else the model family's own:
+    ``query: `` / ``passage: `` for E5 models, nothing for anything else."""
+    explicit = _env(f"EMBEDDING_{kind}_PREFIX")
+    if explicit is not None:
+        return explicit
+    model = (_env("EMBEDDING_MODEL", "") or "").rsplit("/", 1)[-1].lower()
+    if model.startswith(("e5-", "multilingual-e5-")):
+        return "query: " if kind == "QUERY" else "passage: "
+    return ""
+
+
 def _bool(key: str, default: bool) -> bool:
     raw = _env(key)
     if raw is None:
@@ -244,6 +256,9 @@ def _redact_url_userinfo(value: str) -> str:
 # --------------------------------------------------------------------------------------
 
 
+#: How readiness may learn a provider's health (``ProviderConfig.health_probe``).
+HEALTH_PROBE_MODES = frozenset({"active", "passive"})
+
 @dataclass(frozen=True, slots=True)
 class ProviderConfig:
     """One configured model endpoint.
@@ -304,6 +319,13 @@ class ProviderConfig:
     #: The liveness probe's path under base_url. ``/models`` is universal for OpenAI-compatible
     #: servers; override it for a hosted API that does not serve it at the chat base URL.
     health_path: str = "/models"
+    #: How readiness learns this provider's health. ``active`` (default) calls ``health_path``
+    #: on every ``/health/ready``. ``passive`` never calls it: readiness reports the circuit
+    #: breaker, which only real generations move. For a server that sleeps when idle and wakes
+    #: on any request -- a Hugging Face Space -- an active probe is a request, so a load
+    #: balancer or uptime check polling readiness keeps a paid GPU awake around the clock.
+    #: AURA_PROVIDER_<NAME>_HEALTH_PROBE.
+    health_probe: str = "active"
     #: The most private content this provider may receive -- public | internal | sensitive
     #: (ADR-030 §4). Empty = the category default: ``internal`` for a hosted open-weight API,
     #: ``sensitive`` (everything) for anything else. AURA_PROVIDER_<NAME>_MAX_DATA_CLASSIFICATION.
@@ -365,6 +387,12 @@ class ProviderConfig:
             raise ConfigurationError(
                 f"provider {self.name!r} health_path must start with '/'",
                 details={"provider": self.name, "health_path": self.health_path},
+            )
+        if self.health_probe not in HEALTH_PROBE_MODES:
+            raise ConfigurationError(
+                f"provider {self.name!r} health_probe must be one of "
+                f"{sorted(HEALTH_PROBE_MODES)}",
+                details={"provider": self.name, "health_probe": self.health_probe},
             )
         self._validate_extra_body()
         known_classes = {c.value for c in DataClassification}
@@ -711,6 +739,7 @@ class ProviderConfig:
             tpm=_int(f"{p}_TPM", 0, minimum=0),
             tpd=_int(f"{p}_TPD", 0, minimum=0),
             health_path=_env(f"{p}_HEALTH_PATH", "/models") or "/models",
+            health_probe=(_env(f"{p}_HEALTH_PROBE", "active") or "active").strip().lower(),
             max_data_classification=(_env(f"{p}_MAX_DATA_CLASSIFICATION", "") or "").lower(),
             tokens_per_second=_float(f"{p}_TOKENS_PER_SECOND", 0.0, minimum=0.0),
             extra_body=(_env(f"{p}_EXTRA_BODY", "") or "").strip(),
@@ -729,6 +758,14 @@ class LLMSettings:
     embedding_model_revision: str = ""
     embedding_dimension: int = 384
     embedding_batch_size: int = 64
+    #: Asymmetric embedders want different text in front of queries and documents. E5 models
+    #: (``intfloat/multilingual-e5-*``) are trained with ``query: `` / ``passage: `` and lose
+    #: several points of recall without them, so those are the default for an E5 model; any
+    #: other model gets none unless ``AURA_EMBEDDING_QUERY_PREFIX`` / ``..._DOCUMENT_PREFIX`` say
+    #: so (an explicitly empty value means none). The document prefix is part of the index
+    #: identity (``SentenceTransformerProvider.model_id``): changing it builds a new index.
+    embedding_query_prefix: str = ""
+    embedding_document_prefix: str = ""
     request_timeout_s: float = 60.0
     max_fallbacks: int = 2
     circuit_failure_threshold: int = 5
@@ -803,6 +840,8 @@ class LLMSettings:
             embedding_model_revision=_env("EMBEDDING_MODEL_REVISION", "") or "",
             embedding_dimension=_int("EMBEDDING_DIMENSION", 384, minimum=16),
             embedding_batch_size=_int("EMBEDDING_BATCH_SIZE", 64, minimum=1, maximum=1024),
+            embedding_query_prefix=_embedding_prefix("QUERY"),
+            embedding_document_prefix=_embedding_prefix("DOCUMENT"),
             request_timeout_s=_float("LLM_TIMEOUT_S", 60.0, minimum=1.0),
             max_fallbacks=_int("LLM_MAX_FALLBACKS", 2, minimum=0, maximum=5),
             circuit_failure_threshold=_int("LLM_CIRCUIT_THRESHOLD", 5, minimum=1),
@@ -886,7 +925,10 @@ class KnowledgeSettings:
     #: PATH -- this flag lets an operator opt out even when it is, e.g. to keep CPU free for the
     #: generator; it can never opt *in* to an engine that was never present.
     ocr_enabled: bool = True
-    ocr_lang: str = "eng"
+    #: Tesseract languages, ``+``-joined. Arabic and English (decision 16): the image installs
+    #: ``tesseract-ocr-ara``; a host without it falls back to the installed subset
+    #: (``TesseractOcrEngine._installed_subset``).
+    ocr_lang: str = "ara+eng"
     #: Whether chunk text (and a memory's ``subject``) is copied into the vector payload (audit
     #: FSA-018 / CB-22). ``None`` decides by where the vector store runs
     #: (:func:`vector_payload_content_enabled`): on-host stores keep it for speed; an off-host
@@ -925,7 +967,7 @@ class KnowledgeSettings:
             max_document_bytes=_int("KNOWLEDGE_MAX_DOC_BYTES", 8 * 1024 * 1024, minimum=1024),
             prompt_chunk_max_chars=_int("KNOWLEDGE_PROMPT_CHUNK_CHARS", 280, minimum=64, maximum=4000),
             ocr_enabled=_bool("KNOWLEDGE_OCR_ENABLED", True),
-            ocr_lang=_env("KNOWLEDGE_OCR_LANG", "eng") or "eng",
+            ocr_lang=_env("KNOWLEDGE_OCR_LANG", "ara+eng") or "ara+eng",
         )
 
     def __post_init__(self) -> None:
@@ -1714,6 +1756,10 @@ class SandboxSettings:
         )
 
 
+#: The voice-activity detectors ``AURA_VOICE_LIVE_VAD`` may name.
+LIVE_VAD_KINDS = frozenset({"energy", "silero"})
+
+
 @dataclass(frozen=True, slots=True)
 class VoiceSettings:
     """Self-hosted speech recognition and synthesis (Phase F2) -- both engines are only ever
@@ -1731,7 +1777,11 @@ class VoiceSettings:
     """
 
     stt_enabled: bool = True
-    stt_model: str = "tiny.en"
+    #: faster-whisper size. ``small`` is multilingual: Egyptian Arabic and English, measured on
+    #: FLEURS (docs/reports/STT_WER_ARABIC_ENGLISH_2026-11-17.md): English WER 6.5% (``tiny.en``
+    #: was 12.0%), Egyptian Arabic 25.0%, at ~0.3 real-time factor on 4 CPU cores (``tiny.en``
+    #: ~0.1). An ``.en`` model keeps live voice English-only (``LiveVoiceConfig.english_only_stt``).
+    stt_model: str = "small"
     #: Hub commit of the Whisper weights (audit FSA-110); empty loads the repo's head.
     stt_model_revision: str = ""
     #: Load Whisper at container startup instead of on the first transcription of every fresh
@@ -1764,12 +1814,41 @@ class VoiceSettings:
     live_max_utterance_ms: int = 15_000
     live_max_output_tokens: int = 400
     live_playback_sample_rate: int = 22_050
+    #: Which voice-activity detector a live session uses (GAP-020). ``energy`` is the RMS +
+    #: zero-crossing detector in ``voice/vad.py``; ``silero`` is the Silero ONNX model that
+    #: faster-whisper ships, run frame by frame (``adapters/silero_vad.py``). It ignores noise
+    #: an energy threshold mistakes for speech. It needs a 16 kHz capture rate and falls back to
+    #: ``energy`` with a warning when it cannot load, so a session is never refused over it.
+    #: AURA_VOICE_LIVE_VAD.
+    live_vad: str = "energy"
+    #: Silero speech probability above which a frame counts as speech, and the higher bar used
+    #: while AURA is thinking or speaking, so its own playback leaking into the mic does not
+    #: barge in. AURA_VOICE_LIVE_VAD_THRESHOLD / AURA_VOICE_LIVE_VAD_BARGE_IN_THRESHOLD.
+    live_vad_threshold: float = 0.5
+    live_vad_barge_in_threshold: float = 0.7
+
+    def __post_init__(self) -> None:
+        if self.live_vad not in LIVE_VAD_KINDS:
+            raise ConfigurationError(
+                "AURA_VOICE_LIVE_VAD is not a known voice-activity detector",
+                details={"value": self.live_vad, "supported": sorted(LIVE_VAD_KINDS)},
+            )
+        if self.live_vad_barge_in_threshold < self.live_vad_threshold:
+            raise ConfigurationError(
+                "AURA_VOICE_LIVE_VAD_BARGE_IN_THRESHOLD cannot be below "
+                "AURA_VOICE_LIVE_VAD_THRESHOLD -- barge-in would trigger more easily than a "
+                "new utterance",
+                details={
+                    "threshold": self.live_vad_threshold,
+                    "barge_in_threshold": self.live_vad_barge_in_threshold,
+                },
+            )
 
     @classmethod
     def from_env(cls) -> "VoiceSettings":
         return cls(
             stt_enabled=_bool("VOICE_STT_ENABLED", True),
-            stt_model=_env("VOICE_STT_MODEL", "tiny.en") or "tiny.en",
+            stt_model=_env("VOICE_STT_MODEL", "small") or "small",
             stt_model_revision=_env("VOICE_STT_MODEL_REVISION", "") or "",
             stt_warm_on_startup=(
                 None if not _env("VOICE_STT_WARM_ON_STARTUP", "") else _bool("VOICE_STT_WARM_ON_STARTUP", True)
@@ -1826,6 +1905,13 @@ class VoiceSettings:
             ),
             live_playback_sample_rate=_int(
                 "VOICE_LIVE_PLAYBACK_SAMPLE_RATE", 22_050, minimum=8_000, maximum=48_000,
+            ),
+            live_vad=(_env("VOICE_LIVE_VAD", "energy") or "energy").strip().lower(),
+            live_vad_threshold=_float(
+                "VOICE_LIVE_VAD_THRESHOLD", 0.5, minimum=0.05, maximum=0.95,
+            ),
+            live_vad_barge_in_threshold=_float(
+                "VOICE_LIVE_VAD_BARGE_IN_THRESHOLD", 0.7, minimum=0.05, maximum=0.99,
             ),
         )
 

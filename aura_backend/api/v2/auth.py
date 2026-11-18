@@ -8,7 +8,7 @@ import logging
 import secrets
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
@@ -16,12 +16,17 @@ from infrastructure.db.user_repo import get_or_create_user
 from services import device_pairing
 from services.google_oauth import GoogleExchangeError, exchange_desktop_code
 from services.jwt_auth import (
+    ACCOUNT_DELETED_DETAIL,
     HOST_AGENT_SCOPE,
+    RETRY_KEY_MAX_CHARS,
+    account_erased_and_not_reinstated,
     issue_desktop_session,
     issue_device_token,
     issue_token_pair,
     consume_refresh_token,
     list_devices_for_uid,
+    mark_account_reinstated,
+    refresh_token_of_erased_account,
     reissue_for_refreshed_identity,
     restore_refresh_token,
     revoke_device,
@@ -33,14 +38,23 @@ from services.rbac import (
     CONSUMER_DESKTOP_CHANNEL,
     CONSUMER_WEB_CHANNEL,
     console_operators_configured,
+    get_user_role,
     is_console_operator,
     stamp_role,
 )
 from services.security import store_nonce, verify_identity_token, verify_token
+from services.user_language import LANGUAGE_HEADER, remember_language
 
 logger = logging.getLogger("aura.auth")
 
 router = APIRouter(prefix="/api/v3/auth", tags=["auth"])
+
+#: Sent by the client on ``/token`` when a person has just signed in (``interactive``), as opposed
+#: to a silent re-exchange after a refresh failed. Only a deliberate sign-in may start a fresh
+#: account under a subject that was erased (INT-010). Not a security boundary -- anyone with the
+#: Google identity and an attestation could sign in anyway -- but it stops a device that is merely
+#: still signed in from recreating an account its owner deleted elsewhere.
+SIGN_IN_HEADER = "X-Aura-Sign-In"
 
 
 class TokenResponse(BaseModel):
@@ -56,6 +70,10 @@ class NonceResponse(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: str
+    #: The client's random name for this refresh *attempt*, re-sent unchanged when it retries
+    #: after losing the response (INT-012; ``services/jwt_auth.REFRESH_RETRY_GRACE``). Optional:
+    #: a client that sends none gets the strict single-use behaviour.
+    retry_key: str | None = Field(default=None, max_length=RETRY_KEY_MAX_CHARS)
 
 
 class PairingStartRequest(BaseModel):
@@ -157,13 +175,17 @@ async def issue_nonce():
     return {"nonce": nonce}
 
 
-async def _persist_user(user_info: dict) -> None:
+async def _persist_user(user_info: dict, *, client_language: str | None = None) -> None:
     """Write the verified subject into ``users`` so Access can list operators.
 
     Token exchange used to issue JWTs only. SuperAdmin then existed solely via
     ``SUPERADMIN_EMAILS`` and never appeared in ``GET /admin/operators``.
     Skip when Postgres is unset so unit tests and local-without-DB still login.
     Persistence failures are logged and do not block token issue.
+
+    Also remembers the app's display language (``X-Client-Language``) when sent, so the daily
+    briefing can be written in it (``services/user_language.py``); an absent or unknown value
+    leaves the stored one alone.
     """
     from infrastructure.db.base import get_session_factory, is_configured
 
@@ -172,18 +194,32 @@ async def _persist_user(user_info: dict) -> None:
     try:
         factory = get_session_factory()
         async with factory() as db:
-            await get_or_create_user(db, user_info)
+            user = await get_or_create_user(db, user_info)
+            remember_language(user, client_language)
             await db.commit()
     except Exception:
         logger.exception("failed to persist authenticated user")
 
 
 @router.post("/token", response_model=TokenResponse)
-async def exchange_token(user_info: dict = Depends(verify_token)):
+async def exchange_token(
+    request: Request,
+    user_info: dict = Depends(verify_token),
+    client_language: str | None = Header(default=None, alias=LANGUAGE_HEADER),
+):
     """Exchanges a verified Google/Firebase ID token (+ device attestation,
-    both checked by verify_token) for a backend-issued access/refresh pair."""
+    both checked by verify_token) for a backend-issued access/refresh pair.
+
+    For a subject erased within the last ``DEVICE_ACCESS_TOKEN_TTL`` only a deliberate sign-in
+    (``SIGN_IN_HEADER: interactive``) goes ahead, starting a fresh account; a silent re-exchange
+    gets 401 ``account_deleted`` and writes nothing (INT-010)."""
+    uid = str(user_info.get("uid") or "")
+    if uid and account_erased_and_not_reinstated(uid):
+        if (request.headers.get(SIGN_IN_HEADER) or "").strip().lower() != "interactive":
+            raise HTTPException(status_code=401, detail=dict(ACCOUNT_DELETED_DETAIL))
+        mark_account_reinstated(uid)
     await stamp_role(user_info)
-    await _persist_user(user_info)
+    await _persist_user(user_info, client_language=client_language)
     return issue_token_pair(user_info)
 
 
@@ -402,8 +438,11 @@ def _require_operator(user_info: dict, *, what: str, where: str) -> None:
 
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh(request: RefreshRequest, http_request: Request):
-    user_info = consume_refresh_token(request.refresh_token)
+    user_info = consume_refresh_token(request.refresh_token, retry_key=request.retry_key)
     if user_info is None:
+        if refresh_token_of_erased_account(request.refresh_token):
+            # INT-010: the client must wipe its copy and stop, not fall back to /token.
+            raise HTTPException(status_code=401, detail=dict(ACCOUNT_DELETED_DETAIL))
         raise HTTPException(status_code=401, detail="Refresh token is invalid, expired, or already used.")
     # A desktop app's refresh token is bound to its device (FSA-004): the re-issued pair keeps
     # the device claims, and a revoked device gets nothing even with a valid refresh token.
@@ -465,19 +504,25 @@ async def approve_desktop_pairing(
     attestation here: proof of an already-authenticated session, not proof of the new device's
     integrity (ADR-011 explains why the latter has no desktop equivalent worth relying on).
 
-    The approver must be an operator or an entitled customer (SaaS P1-E): the daemon token
-    inherits the approver's identity, channel cap included. Per person: a few approvals an hour
-    and a bounded number of live devices."""
+    The approver must also be someone the host-agent socket will serve (INT-003): otherwise the
+    daemon pairs, is closed with 4401 on its first connect, and gives up for good while the app
+    shows "reconnecting". Refused here with the reason, before the code is consumed. With
+    ``AURA_ENGINEER_FOR_CUSTOMERS`` the socket also serves an entitled customer (SaaS P1-E), who
+    then carries the ``consumer_desktop`` cap into the daemon token. Per person: a bounded number
+    of paired daemons, and a few wrong codes an hour."""
     user_info = dict(user_info)
     if not user_info.get("role"):
         await stamp_role(user_info)
     if _customers_open(request):
-        # With the switch off nothing changes: any session may approve, and the daemon socket
-        # decides who may host. With it on, the approver is an operator, a role granted the
-        # Engineer by the deployment, or an entitled customer (who then carries the cap).
-        engineer_roles = request.app.state.aura.settings.security.engineer_agent_roles
-        if user_info["role"] not in engineer_roles:
-            await _desktop_gate(request, user_info, what="pairing a desktop", where="the desktop app")
+        try:
+            _require_host_agent_capability(user_info)
+        except HTTPException:
+            if not await _engineer_entitled(request, str(user_info["uid"])):
+                raise HTTPException(status_code=403, detail=_UPGRADE_DETAIL) from None
+            user_info["channel"] = CONSUMER_DESKTOP_CHANNEL
+            await stamp_role(user_info)
+    else:
+        _require_host_agent_capability(user_info)
     uid = str(user_info["uid"])
     daemons = [d for d in list_devices_for_uid(uid) if d.get("kind") != "app"]
     if _customers_open(request) and len(daemons) >= MAX_DESKTOP_DEVICES_PER_USER:
@@ -495,6 +540,35 @@ async def approve_desktop_pairing(
             _record_hit(_pair_approval_hits, uid, 3600.0)
         raise HTTPException(status_code=400, detail="Pairing code is invalid, expired, or already used.")
     return {"status": "approved", "device_id": device_id, "device_name": device_name}
+
+
+def _require_host_agent_capability(user_info: dict) -> None:
+    """403 unless the socket's own rule (``aura_core/api/host_agent.may_host``) would accept this
+    account, with its capabilities resolved exactly as the gateway's authenticator resolves them
+    (``aura_core/security/role_capabilities``) -- reused, not restated, so the two cannot drift."""
+    from aura_core.api import host_agent
+    from aura_core.api.v3 import Principal
+    from aura_core.config import load_settings
+    from aura_core.domain.identifiers import UserId
+    from aura_core.security.role_capabilities import ENGINEER_AGENT, capabilities_for_role
+
+    role = get_user_role(user_info)
+    principal = Principal(
+        user_id=UserId(str(user_info["uid"])),
+        email=user_info.get("email") or "",
+        role=role,
+        capabilities=capabilities_for_role(load_settings().security, role),
+    )
+    if host_agent.may_host(principal):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            f"Pairing a desktop agent requires the {ENGINEER_AGENT} capability, which your role "
+            f"({role}) does not have on this deployment; the daemon would be refused when it "
+            "connects. An operator grants it by adding the role to AURA_ENGINEER_AGENT_ROLES."
+        ),
+    )
 
 
 @router.post("/desktop/pair/poll", response_model=PairingPollResponse)

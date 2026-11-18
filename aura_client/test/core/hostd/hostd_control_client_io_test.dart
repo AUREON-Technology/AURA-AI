@@ -45,7 +45,8 @@ void main() {
     await expectLater(client.roots(), throwsA(isA<HostdControlUnavailable>()));
   });
 
-  test('status() succeeds without an Authorization header', () async {
+  test('status() sends the token, since the daemon only lists roots to an authorized caller '
+      '(INT-037)', () async {
     final server = await _FakeControlServer.start(
       respond: (request, body) => {'authenticated': false, 'backend_url': null, 'roots': []},
     );
@@ -57,7 +58,25 @@ void main() {
     final result = await client.status();
 
     expect(result['authenticated'], false);
-    expect(server.receivedAuthHeaders.single, '');
+    expect(server.receivedAuthHeaders.single, 'Bearer tok');
+  });
+
+  test('a daemon that accepts the connection but never answers is reported unavailable after '
+      'the timeout, not awaited forever (INT-038)', () async {
+    final httpServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final held = <HttpRequest>[];
+    httpServer.listen(held.add); // never responds
+    addTearDown(() => httpServer.close(force: true));
+    final client = HostdControlClient(
+      discoverEndpoint: () async => HostdControlEndpoint(port: httpServer.port, token: 'tok'),
+      requestTimeout: const Duration(milliseconds: 200),
+    );
+    addTearDown(client.close);
+
+    await expectLater(
+      client.pairingStatus(),
+      throwsA(isA<HostdControlUnavailable>().having((e) => e.message, 'message', contains('did not answer'))),
+    );
   });
 
   test('every other call sends the discovered token as a bearer header', () async {

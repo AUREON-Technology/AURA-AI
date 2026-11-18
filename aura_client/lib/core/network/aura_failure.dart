@@ -17,6 +17,8 @@
 /// vocabulary and which parts of it are not distinguishable today.
 library;
 
+import 'package:aura_client/l10n/l10n.dart';
+
 import '../auth/desktop_oauth_client.dart' show DesktopOAuthCancelledException;
 import '../auth/sign_in_refused.dart';
 import 'aura_api_error.dart';
@@ -24,11 +26,10 @@ import 'aura_api_error.dart';
 /// Copy for [AuraFailureKind.featureUnavailable] (backend slug
 /// `capability_unavailable`). Shared with the chat transcript, which shows a
 /// failed turn as message text rather than through [AuraFailureView].
-/// Owner-approved wording, 2026-11-08.
-const kFeatureUnavailableTitle = "This needs a feature that isn't available yet";
-const kFeatureUnavailableMessage =
-    'AURA can answer plain questions right now. Answers that use your memory, '
-    'documents, tools or images are coming soon.';
+/// Owner-approved wording, 2026-11-08. Getters, not constants: the text is read in the
+/// language on screen ([currentL10n]) at the moment it is built.
+String get kFeatureUnavailableTitle => currentL10n.failureFeatureUnavailableTitle;
+String get kFeatureUnavailableMessage => currentL10n.failureFeatureUnavailableMessage;
 
 /// The kinds of failure that deserve different words and different buttons.
 ///
@@ -122,9 +123,8 @@ class AuraFailure {
     if (error is SignInRefused) {
       return AuraFailure(
         kind: AuraFailureKind.forbidden,
-        title: 'AURA did not accept this sign-in',
-        message: 'The server refused this Google account, so you have not been signed in. '
-            'Try another account, or ask whoever runs this AURA server to check this one.',
+        title: currentL10n.failureSignInRefusedTitle,
+        message: currentL10n.failureSignInRefusedMessage,
         canRetry: false,
         detail: error.detail,
       );
@@ -137,15 +137,15 @@ class AuraFailure {
       // after the browser step looked identical to an unrelated crash.
       return AuraFailure(
         kind: AuraFailureKind.unknown,
-        title: "Couldn't finish signing in",
+        title: currentL10n.failureSignInIncompleteTitle,
         message: error.message,
         canRetry: true,
       );
     }
     return AuraFailure(
       kind: AuraFailureKind.unknown,
-      title: 'Something went wrong',
-      message: 'AURA hit an error it could not classify. Your work is unaffected.',
+      title: currentL10n.commonSomethingWentWrong,
+      message: currentL10n.failureUnclassifiedMessage,
       canRetry: true,
       detail: error?.toString(),
     );
@@ -214,9 +214,8 @@ class AuraFailure {
       case 'unreachable':
         return AuraFailure(
           kind: AuraFailureKind.unreachable,
-          title: "Couldn't reach AURA",
-          message: 'Nothing answered — this may be your connection or the server. '
-              'Anything you have already saved is safe on this device.',
+          title: currentL10n.failureUnreachableTitle,
+          message: currentL10n.failureUnreachableMessage,
           canRetry: true,
           detail: detail,
         );
@@ -224,9 +223,8 @@ class AuraFailure {
       case 'provider_error':
         return AuraFailure(
           kind: AuraFailureKind.inferenceUnavailable,
-          title: 'AURA reached the server, but the model is not answering',
-          message: 'The Control Plane is up; inference is not. Your workspace and '
-              'conversations are untouched.',
+          title: currentL10n.failureInferenceUnavailableTitle,
+          message: currentL10n.failureInferenceUnavailableMessage,
           canRetry: true,
           retryAfter: error.retryAfter,
           detail: detail,
@@ -242,8 +240,8 @@ class AuraFailure {
       case 'overloaded':
         return AuraFailure(
           kind: AuraFailureKind.busy,
-          title: 'AURA is busy',
-          message: 'Too much is running at once. Waiting a moment usually clears it.',
+          title: currentL10n.failureBusyTitle,
+          message: currentL10n.failureBusyMessage,
           canRetry: true,
           retryAfter: error.retryAfter,
           detail: detail,
@@ -251,9 +249,8 @@ class AuraFailure {
       case 'rate_limited':
         return AuraFailure(
           kind: AuraFailureKind.rateLimited,
-          title: 'Too many requests',
-          message: _waitSentence(error.retryAfter) ??
-              'You have hit the request limit. Try again shortly.',
+          title: currentL10n.failureRateLimitedTitle,
+          message: _waitSentence(error.retryAfter) ?? currentL10n.failureRateLimitedMessage,
           canRetry: true,
           retryAfter: error.retryAfter,
           detail: detail,
@@ -261,24 +258,24 @@ class AuraFailure {
       case 'user_concurrency_limit':
         return AuraFailure(
           kind: AuraFailureKind.turnInFlight,
-          title: 'AURA is still working on your last request',
-          message: 'Only one turn runs at a time. Wait for it to finish, or stop it first.',
+          title: currentL10n.failureTurnInFlightTitle,
+          message: currentL10n.failureTurnInFlightMessage,
           canRetry: false,
           detail: detail,
         );
       case 'authentication_error':
         return AuraFailure(
           kind: AuraFailureKind.authRequired,
-          title: 'Sign in again',
-          message: 'Your session expired. Signing in again picks up exactly where you left off.',
+          title: currentL10n.failureAuthRequiredTitle,
+          message: currentL10n.failureAuthRequiredMessage,
           canRetry: false,
           detail: detail,
         );
       case 'authorization_error':
         return AuraFailure(
           kind: AuraFailureKind.forbidden,
-          title: 'Not allowed',
-          message: 'Your account does not have permission for this. Retrying will not change that.',
+          title: currentL10n.failureForbiddenTitle,
+          message: currentL10n.failureForbiddenMessage,
           canRetry: false,
           detail: detail,
         );
@@ -287,26 +284,24 @@ class AuraFailure {
       case 'budget_exceeded':
         return AuraFailure(
           kind: AuraFailureKind.budgetExceeded,
-          title: 'Budget reached',
-          message: 'This request would go over the configured spend limit.',
+          title: currentL10n.failureBudgetTitle,
+          message: currentL10n.failureBudgetMessage,
           canRetry: false,
           detail: detail,
         );
       case 'safety_violation':
         return AuraFailure(
           kind: AuraFailureKind.blocked,
-          title: 'AURA declined this request',
-          message: 'It was refused on safety grounds. Sending the same thing again will be '
-              'refused the same way — rephrasing is what changes the outcome.',
+          title: currentL10n.failureBlockedTitle,
+          message: currentL10n.failureBlockedMessage,
           canRetry: false,
           detail: detail,
         );
       case 'index_not_ready':
         return AuraFailure(
           kind: AuraFailureKind.indexing,
-          title: 'Still indexing',
-          message: 'AURA is building the search index for this content. It will work once '
-              'that finishes.',
+          title: currentL10n.failureIndexingTitle,
+          message: currentL10n.failureIndexingMessage,
           canRetry: true,
           detail: detail,
         );
@@ -314,8 +309,8 @@ class AuraFailure {
       case 'dependency_unavailable':
         return AuraFailure(
           kind: AuraFailureKind.degraded,
-          title: 'AURA is degraded',
-          message: 'Part of the system did not respond in time. Your data is unaffected.',
+          title: currentL10n.failureDegradedTitle,
+          message: currentL10n.failureDegradedMessage,
           canRetry: true,
           detail: detail,
         );
@@ -327,9 +322,8 @@ class AuraFailure {
     if (status == null) {
       return AuraFailure(
         kind: AuraFailureKind.unreachable,
-        title: "Couldn't reach AURA",
-        message: 'Nothing answered — this may be your connection or the server. '
-            'Anything you have already saved is safe on this device.',
+        title: currentL10n.failureUnreachableTitle,
+        message: currentL10n.failureUnreachableMessage,
         canRetry: true,
         detail: detail,
       );
@@ -337,8 +331,8 @@ class AuraFailure {
     if (status == 401) {
       return AuraFailure(
         kind: AuraFailureKind.authRequired,
-        title: 'Sign in again',
-        message: 'Your session expired. Signing in again picks up exactly where you left off.',
+        title: currentL10n.failureAuthRequiredTitle,
+        message: currentL10n.failureAuthRequiredMessage,
         canRetry: false,
         detail: detail,
       );
@@ -346,8 +340,8 @@ class AuraFailure {
     if (status == 403) {
       return AuraFailure(
         kind: AuraFailureKind.forbidden,
-        title: 'Not allowed',
-        message: 'Your account does not have permission for this. Retrying will not change that.',
+        title: currentL10n.failureForbiddenTitle,
+        message: currentL10n.failureForbiddenMessage,
         canRetry: false,
         detail: detail,
       );
@@ -355,9 +349,8 @@ class AuraFailure {
     if (status == 429) {
       return AuraFailure(
         kind: AuraFailureKind.rateLimited,
-        title: 'Too many requests',
-        message: _waitSentence(error.retryAfter) ??
-            'You have hit the request limit. Try again shortly.',
+        title: currentL10n.failureRateLimitedTitle,
+        message: _waitSentence(error.retryAfter) ?? currentL10n.failureRateLimitedMessage,
         canRetry: true,
         retryAfter: error.retryAfter,
         detail: detail,
@@ -366,8 +359,8 @@ class AuraFailure {
     if (status >= 500) {
       return AuraFailure(
         kind: AuraFailureKind.degraded,
-        title: 'AURA had a problem',
-        message: 'The server failed to complete this. Your data is unaffected.',
+        title: currentL10n.failureServerErrorTitle,
+        message: currentL10n.failureServerErrorMessage,
         canRetry: true,
         retryAfter: error.retryAfter,
         detail: detail,
@@ -375,8 +368,8 @@ class AuraFailure {
     }
     return AuraFailure(
       kind: AuraFailureKind.unknown,
-      title: 'Something went wrong',
-      message: 'AURA could not complete this request. Your work is unaffected.',
+      title: currentL10n.commonSomethingWentWrong,
+      message: currentL10n.failureUnknownMessage,
       canRetry: error.isRetryable,
       detail: detail,
     );
@@ -386,12 +379,8 @@ class AuraFailure {
     if (retryAfter == null) return null;
     final seconds = retryAfter.inSeconds;
     if (seconds <= 0) return null;
-    if (seconds < 60) {
-      return 'You have hit the request limit. Try again in $seconds second'
-          '${seconds == 1 ? '' : 's'}.';
-    }
+    if (seconds < 60) return currentL10n.failureRateLimitedWaitSeconds(seconds);
     final minutes = (seconds / 60).ceil();
-    return 'You have hit the request limit. Try again in about $minutes minute'
-        '${minutes == 1 ? '' : 's'}.';
+    return currentL10n.failureRateLimitedWaitMinutes(minutes);
   }
 }

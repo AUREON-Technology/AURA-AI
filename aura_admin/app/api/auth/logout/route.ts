@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
 
-import { ACCESS_COOKIE, REFRESH_COOKIE, apiOrigin, cookieBase } from "@/lib/session";
+import { crossOriginRefusal } from "@/lib/same-origin";
+import { REFRESH_COOKIE, apiOrigin, clearSessionCookies } from "@/lib/session";
 
 export async function POST(request: Request) {
+  // A cross-site page must not be able to sign the operator out (audit INT-009).
+  const crossOrigin = crossOriginRefusal(request);
+  if (crossOrigin) {
+    return crossOrigin;
+  }
   const refresh = request.headers.get("cookie")?.match(new RegExp(`${REFRESH_COOKIE}=([^;]+)`))?.[1];
   if (refresh) {
     await fetch(`${apiOrigin()}/api/v3/auth/revoke`, {
@@ -12,7 +18,6 @@ export async function POST(request: Request) {
     }).catch(() => undefined);
   }
   const response = NextResponse.json({ ok: true });
-  response.cookies.set(ACCESS_COOKIE, "", { ...cookieBase, maxAge: 0 });
-  response.cookies.set(REFRESH_COOKIE, "", { ...cookieBase, maxAge: 0 });
+  clearSessionCookies(response.cookies);
   return response;
 }

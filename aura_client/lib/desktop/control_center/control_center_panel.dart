@@ -21,6 +21,7 @@ import 'package:path/path.dart' as p;
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/desktop/control_center/control_center_notifier.dart';
 import 'package:aura_client/features/chat/presentation/widgets/sandbox_diff_view.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class ControlCenterPanel extends ConsumerStatefulWidget {
   const ControlCenterPanel({super.key});
@@ -44,17 +45,14 @@ class _ControlCenterPanelState extends ConsumerState<ControlCenterPanel> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Discard this task?'),
-        content: Text(
-          'This permanently deletes the "${task.branch}" branch and its worktree at '
-          '${task.worktreePath}. Any unmerged work in it is lost. This cannot be undone.',
-        ),
+        title: Text(dialogContext.l10n.controlCenterDiscardTitle),
+        content: Text(dialogContext.l10n.controlCenterDiscardBody(task.branch, task.worktreePath)),
         actions: [
-          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: Text(dialogContext.l10n.cancel)),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: AuraPalette.of(context).danger),
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Discard'),
+            child: Text(dialogContext.l10n.controlCenterDiscard),
           ),
         ],
       ),
@@ -70,13 +68,16 @@ class _ControlCenterPanelState extends ConsumerState<ControlCenterPanel> {
     final discardAfter = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Merged'),
-        content: Text('"${task.branch}" was merged locally. Discard its now-merged worktree?'),
+        title: Text(dialogContext.l10n.controlCenterMergedTitle),
+        content: Text(dialogContext.l10n.controlCenterMergedBody(task.branch)),
         actions: [
-          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Keep it')),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(dialogContext.l10n.controlCenterKeepIt),
+          ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Discard'),
+            child: Text(dialogContext.l10n.controlCenterDiscard),
           ),
         ],
       ),
@@ -105,7 +106,7 @@ class _ControlCenterPanelState extends ConsumerState<ControlCenterPanel> {
                 const SizedBox(width: AuraSpacing.xs),
                 Expanded(
                   child: Text(
-                    'Agent Review',
+                    context.l10n.controlCenterTitle,
                     style: TextStyle(color: palette.textPrimary, fontWeight: FontWeight.w600),
                   ),
                 ),
@@ -116,7 +117,7 @@ class _ControlCenterPanelState extends ConsumerState<ControlCenterPanel> {
                   ),
                 IconButton(
                   icon: const Icon(Icons.refresh, size: 18),
-                  tooltip: 'Refresh',
+                  tooltip: context.l10n.commonRefresh,
                   onPressed: () => ref.read(controlCenterNotifierProvider.notifier).refresh(),
                 ),
               ],
@@ -139,8 +140,7 @@ class _ControlCenterPanelState extends ConsumerState<ControlCenterPanel> {
                     child: Padding(
                       padding: const EdgeInsets.all(AuraSpacing.lg),
                       child: Text(
-                        'No isolated agent tasks right now. Starting a new chat task creates one '
-                        'automatically.',
+                        context.l10n.controlCenterEmpty,
                         textAlign: TextAlign.center,
                         style: TextStyle(color: palette.textSecondary, fontSize: 12),
                       ),
@@ -236,7 +236,7 @@ class _TaskCard extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(top: AuraSpacing.xs),
               child: Text(
-                task.diffStat!.trim().isEmpty ? '(no changes)' : task.diffStat!.trim(),
+                task.diffStat!.trim().isEmpty ? context.l10n.controlCenterNoChanges : task.diffStat!.trim(),
                 style: TextStyle(color: palette.textSecondary, fontSize: 11, fontFamily: 'Courier'),
               ),
             ),
@@ -252,7 +252,7 @@ class _TaskCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Merge conflict -- resolve in the main worktree, then commit there directly.',
+                    context.l10n.controlCenterMergeConflict,
                     style: TextStyle(color: palette.warning, fontSize: 11, fontWeight: FontWeight.w600),
                   ),
                   for (final file in conflictedFiles)
@@ -266,21 +266,21 @@ class _TaskCard extends StatelessWidget {
               children: [
                 TextButton(
                   onPressed: onToggleDiff,
-                  child: Text(expanded ? 'Hide diff' : 'View diff'),
+                  child: Text(expanded ? context.l10n.controlCenterHideDiff : context.l10n.controlCenterViewDiff),
                 ),
                 const Spacer(),
                 IconButton(
                   icon: const Icon(Icons.delete_outline, size: 16),
-                  tooltip: 'Discard',
+                  tooltip: context.l10n.controlCenterDiscard,
                   onPressed: busy ? null : onDiscard,
                 ),
                 TextButton(
                   onPressed: busy ? null : onMergeSquash,
-                  child: const Text('Squash merge'),
+                  child: Text(context.l10n.controlCenterSquashMerge),
                 ),
                 FilledButton(
                   onPressed: busy ? null : onMerge,
-                  child: busy ? const Text('Working...') : const Text('Merge'),
+                  child: busy ? Text(context.l10n.controlCenterWorking) : Text(context.l10n.controlCenterMerge),
                 ),
               ],
             ),

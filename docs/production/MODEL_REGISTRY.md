@@ -42,7 +42,19 @@ Verified against tree `11abb50` on 2026-09-24.
 | known limitations | Single in-flight generation (GAP-011). 700-token planner ceiling tuned to the 180 s timeout (`aura_core/planning/engine.py`). `SystemPromptLeakGuard` fired on 3/15 real turns in A4, unresolved (GAP-022) |
 | status | **production** |
 
-### 1.2 Embeddings: `BAAI/bge-small-en-v1.5` (sentence-transformers, in-process)
+### 1.2a Embeddings: `intfloat/multilingual-e5-small` (compose default since the Arabic plan, stage 4)
+
+| Field | Value |
+| --- | --- |
+| model_id | `intfloat/multilingual-e5-small`, 384-dim (both compose files; `deploy/.env.example`; Railway is a dashboard variable). E5 `query: ` / `passage: ` prefixes applied automatically (`AURA_EMBEDDING_QUERY_PREFIX` / `_DOCUMENT_PREFIX`); the document prefix is part of the index identity |
+| revision/SHA | UNPINNED (GAP-031), like the model it replaces |
+| language coverage | Multilingual, incl. Arabic |
+| benchmark results | [ARABIC_RETRIEVAL_EVAL_2026-11-17.md](../reports/ARABIC_RETRIEVAL_EVAL_2026-11-17.md): with the `either` gate, recall@5 0.95 English / 0.90 Arabic-asks-English / 0.65 Arabic (bge-small-en with the same gate: 0.95 / 0.80 / 0.65) |
+| rollout | A new index: `scripts/rebuild_index.py` after the first deploy |
+| status | **built, not proven** (offline eval only; not deployed) |
+| future | `BAAI/bge-m3` (568M parameters, 1024-dim, roughly 5× the RAM/CPU, a new collection): stronger Arabic, documented as the next step (owner decision 10), not built |
+
+### 1.2 Embeddings: `BAAI/bge-small-en-v1.5` (sentence-transformers, in-process) -- previous default
 
 | Field | Value |
 | --- | --- |
@@ -80,8 +92,18 @@ Verified against tree `11abb50` on 2026-09-24.
 | latency / throughput | NOT MEASURED |
 | known limitations | No learned reranking in production |
 | status | heuristic: **production**. Cross-encoder: **candidate** (opt-in, unevaluated) |
+| update (Arabic plan, stage 4) | Compose default is now `AURA_KNOWLEDGE_RERANK_PROVIDER=either` with `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` (multilingual): a candidate passes if the heuristic **or** the cross-encoder accepts it (`EitherGateReranker`, decision 17). Measured in [ARABIC_RETRIEVAL_EVAL_2026-11-17.md](../reports/ARABIC_RETRIEVAL_EVAL_2026-11-17.md). Latency NOT MEASURED on the production host (expected 100-300 ms CPU per search). Status: **built, not proven** |
 
-### 1.4 Speech-to-text: faster-whisper `tiny.en`
+### 1.4a Speech-to-text: faster-whisper `small` (code default since the Arabic plan, stage 4)
+
+| Field | Value |
+| --- | --- |
+| model_id | `small` (`VoiceSettings.stt_model`), multilingual: live voice accepts Arabic |
+| benchmark results | [STT_WER_ARABIC_ENGLISH_2026-11-17.md](../reports/STT_WER_ARABIC_ENGLISH_2026-11-17.md), FLEURS: English WER 6.46% (tiny.en 11.96%), Egyptian Arabic 24.96%; RTF ~0.3 on 4 dev CPU cores (tiny.en ~0.1) |
+| status | **built, not proven** (GAP-020 closes after a production-host run) |
+| future | Whisper `large-v3-turbo` on the GPU inference plane for Egyptian dialect quality (decision 11), not built |
+
+### 1.4 Speech-to-text: faster-whisper `tiny.en` -- previous default
 
 | Field | Value |
 | --- | --- |
@@ -94,10 +116,10 @@ Verified against tree `11abb50` on 2026-09-24.
 | quantization | CTranslate2, compute type per adapter config. NOT MEASURED |
 | VRAM requirement | N/A (CPU) |
 | tool-calling support | N/A |
-| language coverage | **English only.** Arabic speech input unsupported by default (GAP-020) |
-| benchmark results | WER NOT MEASURED. Phase F2 proved a synthesize→transcribe round trip works, but didn't measure WER |
+| language coverage | **English only.** Arabic speech input unsupported by default (GAP-020). Phase V plans `AURA_VOICE_STT_MODEL=base` (multilingual) on Railway; the route refuses `language=ar` with 422 while a `*.en` size is configured |
+| benchmark results | WER NOT MEASURED on human speech. `scripts/measure_stt_wer.py` produces the report. Smoke on synthetic speech only (`docs/reports/STT_WER_SMOKE_2026-11-17.md`): `base`, 4 Piper Arabic clips 22% WER; 2 espeak English clips 0% |
 | latency / throughput | NOT MEASURED |
-| known limitations | Smallest Whisper size. Energy-based VAD (`aura_core/voice/vad.py`) |
+| known limitations | Smallest Whisper size. Energy-based VAD by default (`aura_core/voice/vad.py`); Silero (`AURA_VOICE_LIVE_VAD=silero`, ships inside faster-whisper, MIT) is opt-in |
 | status | **production** |
 
 ### 1.5 Text-to-speech: Piper (primary) + espeak-ng (fallback)
@@ -133,6 +155,7 @@ with `KNOWLEDGE_OCR_LANG=eng` by default (`settings.py:447`). Proven on one scan
 | `smollm2:135m` (Ollama) | Opt-in `tests/load/test_multi_model_routing.py` (Phase G2) | **test-only** |
 | `hash-embed-v1` | In-code default embedder (`settings.py:317`), refused outside dev/test by `AuraSettings.validate()` | **test-only** |
 | `Qwen/Qwen2.5-32B-Instruct-AWQ` | Default `AURA_VLLM_MODEL` for the `gpu` compose profile (`docker-compose.prod.yml:713`). Never run, no GPU host exists | **candidate** (superseded by the Qwen3 set below) |
+| `Qwen/Qwen2.5-VL-7B-Instruct-AWQ` @ `536a35794df8831aa814970ee8f89eff577e7718` | Chosen 2026-11-17 for the HF Space (`a10g-small`) to serve chat failover and ADR-031 image perception (one VLM, decision D2). Licence **Apache-2.0** (Hub tag on that revision, not gated). Weights ~6 GB AWQ. Not yet served, no `phase-6-vision` report or eval (GAP-019). Qwen3-VL-8B (below) remains the upgrade once a bigger GPU is justified | **candidate** |
 | `Qwen/Qwen2.5-7B-Instruct-AWQ` | Example `AURA_PROVIDER_HFSPACE_MODEL` (`.env.example:132`). Remote failover, off by default (GAP-034) | **rejected for production**: rented off-host inference conflicts with the "no hosted-AI fallback" rule unless an ADR says otherwise |
 
 ---

@@ -23,16 +23,15 @@ class _StubTokenManager extends TokenManager {
   Future<String?> getValidAccessToken() async => 'jwt-test';
 }
 
-Future<bool> _never() async => false;
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
   test('#2: the invite waits through onboarding', () async {
     expect(await resolveAppRedirect(isLoggedIn: true, onboarded: true, location: '/onboarding',
-        prefersDesktopIde: _never, hasPendingInvite: true), '/invite');
+        desktop: false, hasPendingInvite: true), '/invite');
     expect(await resolveAppRedirect(isLoggedIn: true, onboarded: false, location: '/login',
-        prefersDesktopIde: _never, hasPendingInvite: true), '/onboarding');
+        desktop: false, hasPendingInvite: true), '/onboarding');
   });
 
   group('API client', () {

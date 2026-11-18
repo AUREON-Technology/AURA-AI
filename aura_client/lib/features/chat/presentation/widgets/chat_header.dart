@@ -148,7 +148,11 @@ class _DesktopTitle extends StatelessWidget {
             const SizedBox(width: 6),
             Expanded(
               child: Text(
-                'Active • ${status.activeModel} (${status.status}) • ${status.latencyMs.toStringAsFixed(0)}ms',
+                context.l10n.chatHeaderStatus(
+                  status.activeModel,
+                  status.status,
+                  status.latencyMs.toStringAsFixed(0),
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(fontSize: 11, color: palette.textSecondary),

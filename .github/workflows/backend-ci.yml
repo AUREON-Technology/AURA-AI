@@ -192,7 +192,7 @@ jobs:
         run: |
           shellcheck -x -s sh \
             deploy/scripts/backup-lib.sh deploy/scripts/backup.sh deploy/scripts/backup-open.sh \
-            deploy/scripts/restore.sh deploy/scripts/restore-drill.sh \
+            deploy/scripts/backup-fetch.sh deploy/scripts/restore.sh deploy/scripts/restore-drill.sh \
             deploy/scripts/tests/test_backup_crypto.sh
 
       - name: Backup crypto / integrity / retention tests

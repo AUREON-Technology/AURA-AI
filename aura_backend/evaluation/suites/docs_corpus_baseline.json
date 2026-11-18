@@ -1,11 +1,11 @@
 {
   "suite": "docs_corpus",
   "metrics": {
-    "pass_rate": 0.6087,
+    "pass_rate": 0.6522,
     "empty_correct": 0.3333,
-    "mrr": 0.3683,
-    "ndcg": 0.5114,
-    "precision_at_k": 0.2867,
-    "recall_at_k": 0.65
+    "mrr": 0.4542,
+    "ndcg": 0.5174,
+    "precision_at_k": 0.3867,
+    "recall_at_k": 0.7
   }
 }

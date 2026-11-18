@@ -1,15 +1,36 @@
+"use client";
+
+import { ExternalLink } from "lucide-react";
+
+import { buttonVariants } from "@/components/ui/button";
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useI18n } from "@/lib/i18n/context";
+
 export function GrafanaFrame({ title, uid }: { title: string; uid: string }) {
+  const { t } = useI18n();
   const embed = process.env.NEXT_PUBLIC_GRAFANA_EMBED === "1";
   const src = `/grafana/d/${uid}?orgId=1&kiosk`;
   return (
-    <div className="card" style={{ marginTop: 16 }}>
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <h2>{title}</h2>
-        <a className="btn" href={src} target="_blank" rel="noreferrer">
-          Open in Grafana
+    <Card className="mt-4">
+      <CardHeader className={embed ? undefined : "mb-0 items-center"}>
+        <div className="min-w-0">
+          <CardTitle>{title}</CardTitle>
+          <CardDescription>
+            {t("grafana.dashboard")} <code className="text-xs">{uid}</code>
+          </CardDescription>
+        </div>
+        <a className={buttonVariants({ size: "sm" })} href={src} target="_blank" rel="noreferrer">
+          {t("grafana.open")}
+          <ExternalLink aria-hidden="true" className="rtl:-scale-x-100" />
         </a>
-      </div>
-      {embed ? <iframe className="grafana" title={title} src={src} /> : null}
-    </div>
+      </CardHeader>
+      {embed ? (
+        <iframe
+          className="h-[420px] w-full rounded-sm border border-line bg-black"
+          title={title}
+          src={src}
+        />
+      ) : null}
+    </Card>
   );
 }

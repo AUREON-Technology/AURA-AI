@@ -168,6 +168,53 @@ expect_fail "backup-open.sh --verify rejects a tampered set" sh "$HERE/../backup
 expect_ok "backup-open.sh decrypts into an empty dir" sh "$HERE/../backup-open.sh" "$SET" "$T/out-cli"
 
 # ---------------------------------------------------------------------------------------------
+echo "# two key pairs: each private key alone opens a set sealed to both public keys"
+age-keygen -o "$T/second.key" 2>/dev/null
+SECOND=$(age-keygen -y "$T/second.key")
+printf '# key pair A\n%s\n# key pair B\n%s\n' "$RECIPIENT" "$SECOND" > "$T/two-recipients.txt"
+seal_two() (
+    unset BACKUP_AGE_RECIPIENT
+    BACKUP_AGE_RECIPIENTS_FILE="$T/two-recipients.txt"; export BACKUP_AGE_RECIPIENTS_FILE
+    bk_seal_set "$@"
+)
+open_with() ( BACKUP_AGE_IDENTITY_FILE=$1; export BACKUP_AGE_IDENTITY_FILE; bk_open_set "$2" "$3" )
+# count_with <recipients-file or ""> [BACKUP_AGE_RECIPIENT value]
+count_with() (
+    unset BACKUP_AGE_RECIPIENT BACKUP_AGE_RECIPIENTS_FILE
+    if [ -n "$1" ]; then BACKUP_AGE_RECIPIENTS_FILE=$1; export BACKUP_AGE_RECIPIENTS_FILE; fi
+    if [ -n "${2:-}" ]; then BACKUP_AGE_RECIPIENT=$2; export BACKUP_AGE_RECIPIENT; fi
+    bk_recipient_count
+)
+
+make_staging "$T/staging-two"
+cp -R "$T/staging-two" "$T/original-two"
+mkdir -p "$T/backups-two"
+SET_TWO="$T/backups-two/aura-$STAMP"
+expect_ok "a set seals to both public keys" seal_two "$T/staging-two" "$SET_TWO"
+expect_ok "private key A alone opens it" open_with "$T/id.key" "$SET_TWO" "$T/out-two-a"
+expect_ok "private key B alone opens it" open_with "$T/second.key" "$SET_TWO" "$T/out-two-b"
+if cmp -s "$T/original-two/postgres-$STAMP.dump" "$T/out-two-a/postgres-$STAMP.dump" \
+    && cmp -s "$T/original-two/postgres-$STAMP.dump" "$T/out-two-b/postgres-$STAMP.dump" \
+    && cmp -s "$T/original-two/redis-$STAMP.rdb" "$T/out-two-b/redis-$STAMP.rdb"; then
+    ok "...and each recovers byte-identical data"
+else
+    bad "a key recovered different data"
+fi
+expect_fail "a third key that was not listed cannot open it" open_with "$T/other.key" "$SET_TWO" "$T/out-two-x"
+
+[ "$(count_with "$T/two-recipients.txt")" = 2 ] && ok "two distinct public keys count as 2" \
+    || bad "two keys counted as $(count_with "$T/two-recipients.txt")"
+printf '%s\n%s\n' "$RECIPIENT" "$RECIPIENT" > "$T/dup-recipients.txt"
+[ "$(count_with "$T/dup-recipients.txt")" = 1 ] && ok "the same key listed twice counts as 1" \
+    || bad "a duplicated key counted as $(count_with "$T/dup-recipients.txt")"
+[ "$(count_with "" "$RECIPIENT,$RECIPIENT")" = 1 ] && ok "...also when repeated in BACKUP_AGE_RECIPIENT" \
+    || bad "repeated BACKUP_AGE_RECIPIENT counted as $(count_with "" "$RECIPIENT,$RECIPIENT")"
+[ "$(count_with "$T/dup-recipients.txt" "$SECOND")" = 2 ] && ok "the file and BACKUP_AGE_RECIPIENT combine" \
+    || bad "file + env counted as $(count_with "$T/dup-recipients.txt" "$SECOND")"
+[ "$(count_with "" "not-a-key")" = 0 ] && ok "an invalid recipient list counts as 0" \
+    || bad "invalid list counted as $(count_with "" "not-a-key")"
+
+# ---------------------------------------------------------------------------------------------
 echo "# explicit plaintext opt-out"
 BACKUP_ENCRYPTION=none; export BACKUP_ENCRYPTION
 make_staging "$T/staging-none"
@@ -220,14 +267,19 @@ echo "# offsite push / verify / prune (stub rclone)"
 mkdir -p "$T/bin" "$T/remote"
 cat > "$T/bin/rclone" <<'STUB'
 #!/bin/sh
-# Minimal rclone stand-in: "stub:<path>" maps to $STUB_ROOT/<path>.
+# Minimal rclone stand-in: "stub<anything>:<path>" maps to $STUB_ROOT/<path>, so tests can name
+# several distinct remotes (stub-a:, stub-b:) that share one local root.
 set -eu
-map() { case "$1" in stub:*) echo "$STUB_ROOT/${1#stub:}" ;; *) echo "$1" ;; esac; }
+map() { case "$1" in stub*:*) echo "$STUB_ROOT/${1#*:}" ;; *) echo "$1" ;; esac; }
 cmd=$1; shift
 case "$cmd" in
     copy)
         src=$(map "$1"); dst=$(map "$2"); mkdir -p "$dst"; cp -R "$src/." "$dst/"
-        if [ "${STUB_CORRUPT_COPY:-0}" = 1 ]; then
+        corrupt=${STUB_CORRUPT_COPY:-0}
+        if [ -n "${STUB_CORRUPT_DST:-}" ]; then
+            case "$2" in *"$STUB_CORRUPT_DST"*) corrupt=1 ;; esac
+        fi
+        if [ "$corrupt" = 1 ]; then
             f=$(find "$dst" -name '*.dump.age' | head -n 1); printf 'Z' | dd of="$f" bs=1 seek=40 conv=notrunc 2>/dev/null
         fi ;;
     check)
@@ -265,6 +317,245 @@ expect_fail "offsite prune refuses when the newest remote set is not the one jus
 [ -d "$T/remote/bucket/aura-20260803T020000Z" ] && ok "...and deletes nothing" || bad "offsite deleted despite refusal"
 
 # ---------------------------------------------------------------------------------------------
+echo "# multi-target offsite quorum (copy_offsite and resolve_offsite_remote, from backup.sh)"
+# Extracted rather than sourced: backup.sh runs its cycle loop as soon as it is loaded.
+sed -n '/^offsite_config_error() (/,/^)/p; /^offsite_required_metric() {/,/^}/p; /^resolve_offsite_remote() {/,/^}/p; /^copy_offsite() {/,/^}/p' \
+    "$HERE/../backup.sh" > "$T/offsite-funcs.sh"
+for fn in offsite_config_error offsite_required_metric resolve_offsite_remote copy_offsite; do
+    grep -q "^$fn() " "$T/offsite-funcs.sh" && ok "extracted $fn from backup.sh" || bad "could not extract $fn"
+done
+RCLONE_CONFIG_FILE="$T/rclone.conf"; export RCLONE_CONFIG_FILE
+: > "$RCLONE_CONFIG_FILE"
+
+# offsite_case <min> <target>...  -- runs copy_offsite in a subshell; writes the verified count to $T/verified
+# The OFFSITE_* variables are read by the function sourced from $T below, which shellcheck cannot see.
+# shellcheck disable=SC2034,SC1091
+offsite_case() (
+    OFFSITE_MIN_COPIES=$1; shift
+    OFFSITE_TARGETS="$*"
+    OFFSITE_TARGET_COUNT=$#
+    OFFSITE_KEEP_DAILY=7; OFFSITE_KEEP_WEEKLY=4; OFFSITE_KEEP_MONTHLY=6
+    BACKUP_DIR="$T/offsite-dir"; STAGING="$T/offsite-staging"
+    mkdir -p "$BACKUP_DIR" "$STAGING"
+    . "$T/offsite-funcs.sh"
+    rc=0
+    copy_offsite "$SET" || rc=$?
+    echo "$OFFSITE_VERIFIED" > "$T/verified"
+    exit "$rc"
+)
+verified() { cat "$T/verified"; }
+
+rm -rf "$T/offsite-dir" "$T/remote/ob-good-a" "$T/remote/ob-good-b" "$T/remote/ob-bad"
+expect_ok "two targets both verify: durable at min=2" offsite_case 2 "stub-a:ob-good-a" "stub-b:ob-good-b"
+[ "$(verified)" = 2 ] && ok "...verified count is 2" || bad "verified count $(verified), wanted 2"
+[ -f "$T/offsite-dir/.last_offsite_success" ] && ok "...and the success marker advances" || bad "no success marker after a durable cycle"
+
+rm -rf "$T/offsite-dir" "$T/remote/ob-good-a" "$T/remote/ob-good-b" "$T/remote/ob-bad"
+STUB_CORRUPT_DST=ob-bad; export STUB_CORRUPT_DST
+expect_fail "one of two targets corrupt at min=2: the cycle reports failure" offsite_case 2 "stub-a:ob-bad" "stub-b:ob-good-a"
+[ "$(verified)" = 1 ] && ok "...only the good target counts as verified" || bad "verified count $(verified), wanted 1"
+[ -d "$T/remote/ob-good-a/aura-$STAMP" ] && ok "...the good copy is still uploaded" || bad "good copy missing"
+[ ! -f "$T/offsite-dir/.last_offsite_success" ] && ok "...and the success marker does NOT advance" || bad "success marker advanced on an under-replicated set"
+unset STUB_CORRUPT_DST
+
+rm -rf "$T/offsite-dir" "$T/remote/ob-good-a" "$T/remote/ob-bad"
+STUB_CORRUPT_DST=ob-bad; export STUB_CORRUPT_DST
+expect_ok "the same split passes when min=1" offsite_case 1 "stub-a:ob-bad" "stub-b:ob-good-a"
+[ "$(verified)" = 1 ] && ok "...with one verified copy" || bad "verified count $(verified)"
+unset STUB_CORRUPT_DST
+
+rm -rf "$T/offsite-dir" "$T/remote/ob-good-a"
+expect_fail "one target cannot meet min=2 even when it verifies" offsite_case 2 "stub-a:ob-good-a"
+[ "$(verified)" = 1 ] && ok "...it is still uploaded and counted" || bad "single target not counted"
+
+rm -rf "$T/offsite-dir" "$T/remote/ob-good-a" "$T/remote/ob-good-b"
+RCLONE_CONFIG_FILE="$T/no-such.conf"; export RCLONE_CONFIG_FILE
+expect_fail "several targets without named remotes in rclone.conf are refused" offsite_case 2 "stub-a:ob-good-a" "stub-b:ob-good-b"
+[ ! -e "$T/remote/ob-good-a" ] && ok "...and nothing is uploaded" || bad "upload happened without a named-remote config"
+RCLONE_CONFIG_FILE="$T/rclone.conf"; export RCLONE_CONFIG_FILE
+
+echo "# offsite configuration is checked before any upload"
+rm -rf "$T/remote/ob-good-a" "$T/remote/ob-good-b"
+expect_fail "two buckets behind one rclone remote do not count as two copies" offsite_case 2 "stub-a:ob-good-a" "stub-a:ob-good-b"
+[ ! -e "$T/remote/ob-good-a" ] && ok "...and nothing is uploaded" || bad "uploaded despite a shared remote"
+expect_fail "the same target listed twice is refused" offsite_case 2 "stub-a:ob-good-a" "stub-a:ob-good-a"
+expect_fail "a non-numeric BACKUP_OFFSITE_MIN_COPIES is refused" offsite_case two "stub-a:ob-good-a" "stub-b:ob-good-b"
+expect_fail "BACKUP_OFFSITE_MIN_COPIES=0 is refused" offsite_case 0 "stub-a:ob-good-a" "stub-b:ob-good-b"
+expect_fail "a target with a glob character is refused" offsite_case 1 "stub-a:ob-*"
+[ ! -e "$T/remote/ob-good-a" ] && [ ! -e "$T/remote/ob-good-b" ] && ok "...none of them uploaded anything" || bad "an invalid configuration uploaded"
+# shellcheck disable=SC2034,SC1091 # read by the sourced offsite_required_metric
+metric_for() ( OFFSITE_MIN_COPIES=$1; . "$T/offsite-funcs.sh"; offsite_required_metric )
+[ "$(metric_for two)" = 1 ] && [ "$(metric_for 0)" = 1 ] && [ "$(metric_for 3)" = 3 ] \
+    && ok "the required-copies gauge stays a positive number for any setting" \
+    || bad "required-copies gauge: two=$(metric_for two) 0=$(metric_for 0) 3=$(metric_for 3)"
+
+echo "# the shipped B2 + R2 rclone example is a configuration backup.sh accepts"
+EXAMPLE="$HERE/../../backup/rclone.conf.example"
+remotes=$(sed -n 's/^\[\(.*\)\]$/\1/p' "$EXAMPLE")
+[ "$(echo "$remotes" | sort -u | wc -l | tr -d ' ')" = 2 ] \
+    && ok "the example names two distinct remotes ($(echo "$remotes" | tr '\n' ' '))" || bad "example remotes: $remotes"
+example_targets=$(echo "$remotes" | sed 's/$/:aura-backups/' | tr '\n' ' ')
+# shellcheck disable=SC2034,SC1091 # read by the sourced offsite_config_error
+example_problem=$( OFFSITE_MIN_COPIES=2; OFFSITE_TARGETS=$example_targets; . "$T/offsite-funcs.sh"; offsite_config_error )
+[ -z "$example_problem" ] && ok "...and backup.sh accepts them as two independent targets" || bad "example rejected: $example_problem"
+grep -Eq '^[[:space:]]*disable_checksum' "$EXAMPLE" \
+    && bad "the example disables upload checksums (rclone check would compare sizes only)" \
+    || ok "the example keeps upload checksums on"
+
+echo "# backup-fetch.sh: newest set from the first target whose copy verifies"
+FETCH="$HERE/../backup-fetch.sh"
+OLD=aura-20260101T000000Z
+reset_fetch() { rm -rf "$T/remote/fetch-a" "$T/remote/fetch-b" "$T/fetch-out"; mkdir -p "$T/remote/fetch-a" "$T/remote/fetch-b"; }
+corrupt_remote() { f=$(find "$1" -name '*.dump.age' | head -n 1); printf 'Z' | dd of="$f" bs=1 seek=40 conv=notrunc 2>/dev/null; }
+fetch() { BACKUP_OFFSITE_TARGETS="stub-a:fetch-a stub-b:fetch-b" sh "$FETCH" "$T/fetch-out" "$@" 2>>"$T/fetch.log"; }
+
+reset_fetch
+cp -R "$SET" "$T/remote/fetch-a/$OLD"
+cp -R "$SET" "$T/remote/fetch-b/aura-$STAMP"
+got=$(fetch) && [ "$got" = "$T/fetch-out/aura-$STAMP" ] \
+    && ok "picks the newest set held by any target, not the first target's newest" || bad "fetched '$got'"
+expect_ok "...and the fetched copy verifies" bk_verify_set "$T/fetch-out/aura-$STAMP"
+
+reset_fetch
+cp -R "$SET" "$T/remote/fetch-a/aura-$STAMP"; corrupt_remote "$T/remote/fetch-a/aura-$STAMP"
+cp -R "$SET" "$T/remote/fetch-b/aura-$STAMP"
+got=$(fetch) && [ "$got" = "$T/fetch-out/aura-$STAMP" ] && bk_verify_set "$got" >/dev/null 2>&1 \
+    && ok "a corrupt copy at the first target falls through to a good one" || bad "corrupt fall-through: '$got'"
+
+reset_fetch
+cp -R "$SET" "$T/remote/fetch-a/aura-$STAMP"; corrupt_remote "$T/remote/fetch-a/aura-$STAMP"
+cp -R "$SET" "$T/remote/fetch-b/aura-$STAMP"; corrupt_remote "$T/remote/fetch-b/aura-$STAMP"
+expect_fail "no verifying copy anywhere fails" fetch
+[ ! -e "$T/fetch-out/aura-$STAMP" ] && ok "...and leaves no partial set behind" || bad "a corrupt copy was left in place"
+
+reset_fetch
+cp -R "$SET" "$T/remote/fetch-a/$OLD"
+cp -R "$SET" "$T/remote/fetch-b/aura-$STAMP"
+got=$(fetch "$OLD") && [ "$got" = "$T/fetch-out/$OLD" ] && ok "an older set can be fetched by name" || bad "named fetch: '$got'"
+expect_fail "an existing destination set is not overwritten" fetch "$OLD"
+expect_fail "a name that is not a set name is refused" fetch "../etc"
+
+# ---------------------------------------------------------------------------------------------
+echo "# Railway inputs: Qdrant Cloud, connection URLs (backup_* functions from backup.sh, stubbed services)"
+SVC="$T/bin-svc"
+mkdir -p "$SVC"
+cat > "$SVC/wget" <<'STUB'
+#!/bin/sh
+# Qdrant stand-in: two collections, a snapshot per collection, and DELETE. Logs every call.
+echo "$*" >> "$WGET_LOG"
+out=""; url=""; method=GET
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -qO-) out=- ;;
+        -qO|-O) shift; out=$1 ;;
+        --post-data=*) method=POST ;;
+        --method=*) method=${1#--method=} ;;
+        http*) url=$1 ;;
+    esac
+    shift
+done
+case "$method $url" in
+    "GET "*/collections) body='{"result":{"collections":[{"name":"knowledge"},{"name":"memory"}]},"status":"ok"}' ;;
+    "POST "*/snapshots) c=${url%/snapshots}; c=${c##*/}; body="{\"result\":{\"name\":\"$c-1.snapshot\",\"size\":9},\"status\":\"ok\"}" ;;
+    "GET "*/snapshots/*) body="SNAPSHOT-BYTES" ;;
+    "DELETE "*) body='{"result":true}' ;;
+    *) exit 8 ;;
+esac
+if [ "$out" = - ]; then printf '%s' "$body"; else printf '%s' "$body" > "$out"; fi
+STUB
+cat > "$SVC/pg_dump" <<'STUB'
+#!/bin/sh
+echo "$*" > "$PGDUMP_LOG"
+for a in "$@"; do case "$a" in --file=*) echo "PGDMP" > "${a#--file=}" ;; esac; done
+STUB
+cat > "$SVC/pg_restore" <<'STUB'
+#!/bin/sh
+echo "3445; 0 16384 TABLE DATA public users postgres"
+STUB
+cat > "$SVC/redis-cli" <<'STUB'
+#!/bin/sh
+echo "$*" > "$REDIS_LOG"
+while [ $# -gt 0 ]; do [ "$1" = --rdb ] && { shift; echo "REDIS0011" > "$1"; }; shift; done
+STUB
+chmod +x "$SVC/wget" "$SVC/pg_dump" "$SVC/pg_restore" "$SVC/redis-cli"
+sed -n '/^backup_postgres() {/,/^}/p; /^backup_qdrant() {/,/^}/p; /^backup_redis() {/,/^}/p' \
+    "$HERE/../backup.sh" > "$T/svc-funcs.sh"
+WGET_LOG="$T/wget.log"; PGDUMP_LOG="$T/pgdump.log"; REDIS_LOG="$T/redis.log"
+export WGET_LOG PGDUMP_LOG REDIS_LOG
+# Variables are read by the sourced backup_* functions; PATH is changed only inside the subshell.
+# shellcheck disable=SC2034,SC1091,SC2030
+svc_run() (
+    PATH="$SVC:$PATH"; STAGING="$T/svc-staging"; QDRANT_URL=https://qdrant.example
+    mkdir -p "$STAGING"
+    . "$T/svc-funcs.sh"
+    "$@"
+)
+
+: > "$WGET_LOG"
+rm -rf "$T/svc-staging"
+QDRANT_API_KEY=qkey-from-env; export QDRANT_API_KEY
+expect_ok "backup_qdrant runs against a key-protected Qdrant" svc_run backup_qdrant S1
+[ -f "$T/svc-staging/qdrant-S1/knowledge.snapshot" ] && [ -f "$T/svc-staging/qdrant-S1/memory.snapshot" ] \
+    && ok "EVERY collection is snapshotted, not only the last one in the JSON" \
+    || bad "collections snapshotted: $(ls "$T/svc-staging/qdrant-S1" 2>/dev/null | tr '\n' ' ')"
+[ "$(grep -c -- '--method=DELETE' "$WGET_LOG")" = 2 ] && ok "...and each snapshot is deleted from Qdrant afterwards" \
+    || bad "DELETE calls: $(grep -c -- '--method=DELETE' "$WGET_LOG")"
+grep -q 'api-key: qkey-from-env' "$WGET_LOG" && ok "the API key comes from QDRANT_API_KEY when there is no secret file" \
+    || bad "QDRANT_API_KEY not used"
+unset QDRANT_API_KEY
+
+BACKUP_DATABASE_URL='postgresql+asyncpg://u:p@db.internal:5432/railway'; export BACKUP_DATABASE_URL
+expect_ok "backup_postgres dumps from BACKUP_DATABASE_URL" svc_run backup_postgres S2
+grep -q -- '--dbname=postgresql://u:p@db.internal:5432/railway' "$PGDUMP_LOG" \
+    && ok "...with the SQLAlchemy driver suffix stripped for libpq" || bad "pg_dump args: $(cat "$PGDUMP_LOG")"
+unset BACKUP_DATABASE_URL
+expect_ok "backup_postgres without a URL still uses the PG* variables" svc_run backup_postgres S3
+grep -q -- '--dbname' "$PGDUMP_LOG" && bad "pg_dump got --dbname without BACKUP_DATABASE_URL" \
+    || ok "...and passes no --dbname"
+
+BACKUP_REDIS_URL='redis://default:rpw@redis.internal:6379'; export BACKUP_REDIS_URL
+expect_ok "backup_redis dumps from BACKUP_REDIS_URL" svc_run backup_redis S4
+grep -q -- '-u redis://default:rpw@redis.internal:6379' "$REDIS_LOG" && ok "...through redis-cli -u" \
+    || bad "redis-cli args: $(cat "$REDIS_LOG")"
+unset BACKUP_REDIS_URL
+
+echo "# BACKUP_RUN_ONCE: one cycle, exit status for the scheduler"
+mkdir -p "$T/once-dir" "$T/once-metrics"
+once_status=0
+# shellcheck disable=SC2031 # the stubbed PATH is meant for this one run only
+(
+    unset BACKUP_AGE_RECIPIENT BACKUP_AGE_RECIPIENTS_FILE
+    BACKUP_RUN_ONCE=1 BACKUP_ENCRYPTION=age BACKUP_DIR="$T/once-dir" BACKUP_METRICS_DIR="$T/once-metrics" \
+        PATH="$SVC:$PATH" timeout 60 sh "$HERE/../backup.sh" > "$T/once.log" 2>&1
+) || once_status=$?
+[ "$once_status" = 1 ] && ok "a refused cycle exits 1 instead of sleeping until the next one" \
+    || bad "BACKUP_RUN_ONCE exit status $once_status (124 = it looped)"
+grep -q 'aura_backup_config_error 1' "$T/once-metrics/aura_backup.prom" && ok "...after writing its metrics" \
+    || bad "no metrics written in once mode"
+
+echo "# the Railway image stays in step with the VPS image"
+VPS_DF="$HERE/../../backup/Dockerfile"
+RAIL_DF="$HERE/../../backup/railway.Dockerfile"
+[ "$(grep 'apk add' "$VPS_DF")" = "$(grep 'apk add' "$RAIL_DF")" ] \
+    && ok "both images install the same packages" || bad "apk lines differ between the two backup Dockerfiles"
+vps_alpine=$(sed -n 's/^FROM postgres:[0-9]*-\(alpine[0-9.]*\).*/\1/p' "$VPS_DF")
+grep -q "^FROM postgres:\${PG_MAJOR}-$vps_alpine\$" "$RAIL_DF" && ok "...on the same Alpine branch ($vps_alpine)" \
+    || bad "the Railway image is not on $vps_alpine"
+missing=""
+for s in backup.sh backup-lib.sh backup-fetch.sh backup-open.sh restore.sh restore-drill.sh; do
+    grep -q "scripts/$s" "$RAIL_DF" || missing="$missing $s"
+done
+[ -z "$missing" ] && ok "the Railway image copies every backup script" || bad "not copied into the Railway image:$missing"
+rail_major=$(sed -n 's/^ARG PG_MAJOR=\([0-9]*\)$/\1/p' "$RAIL_DF")
+# shellcheck disable=SC2016 # the ${...} is matched literally in restore-drill.sh's text
+drill_major=$(sed -n 's/^DRILL_PG_IMAGE=\${DRILL_PG_IMAGE:-postgres:\([0-9]*\)-alpine}$/\1/p' "$HERE/../restore-drill.sh")
+if [ -n "$rail_major" ] && [ -n "$drill_major" ] && [ "$drill_major" -ge "$rail_major" ]; then
+    ok "the restore drill's Postgres ($drill_major) can read what the Railway image's pg_dump ($rail_major) writes"
+else
+    bad "restore-drill.sh Postgres '$drill_major' is older than the Railway image's PG_MAJOR '$rail_major'"
+fi
+
+# ---------------------------------------------------------------------------------------------
 echo "# library functions do not clobber caller variables"
 set_dir=caller-set; remote=caller-remote; names=caller-names; dir=caller-dir; mode=caller-mode
 bk_verify_set "$SET" >/dev/null 2>&1 || true
@@ -279,7 +570,7 @@ fi
 
 # ---------------------------------------------------------------------------------------------
 echo "# scripts parse"
-for s in backup.sh backup-lib.sh backup-open.sh restore.sh restore-drill.sh; do
+for s in backup.sh backup-lib.sh backup-open.sh backup-fetch.sh restore.sh restore-drill.sh; do
     expect_ok "sh -n $s" sh -n "$HERE/../$s"
 done
 

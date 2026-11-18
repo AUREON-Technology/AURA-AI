@@ -9,6 +9,7 @@ import 'package:record/record.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 
 import '../../../../core/ai/voice/voice_client.dart';
+import '../../../../core/ai/voice/voice_language.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
 enum _VoiceState { idle, recording, transcribing }
@@ -99,7 +100,9 @@ class _VoiceRecorderButtonState extends ConsumerState<VoiceRecorderButton> {
         // Best-effort cleanup of the scratch recording; a leftover temp file is harmless.
       }
 
-      final text = await ref.read(voiceClientProvider).transcribe(bytes);
+      final text = await ref
+          .read(voiceClientProvider)
+          .transcribe(bytes, language: ref.read(voiceLanguageProvider).code);
       if (!mounted) return;
       if (text == null) {
         AuraSnackbar.show(

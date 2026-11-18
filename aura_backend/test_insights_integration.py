@@ -394,6 +394,66 @@ class TestInsightsIntegration(unittest.TestCase):
         self.assertEqual(call(generate_insights, None), "Asia/Riyadh")
         self.assertEqual(call(generate_insights, "America/Bogota"), "America/Bogota")
 
+    def test_an_arabic_user_gets_arabic_insights_and_briefing(self):
+        """``users.language = 'ar'`` writes both producers' text in Egyptian Arabic (decision 9);
+        a user who never reported a language keeps English."""
+        from infrastructure.db.base import get_session_factory
+        from infrastructure.db.models import Task
+        from services.daily_briefing import generate_daily_briefing_for_user
+        from services.insights import generate_insights_for_user
+
+        now = datetime(2026, 11, 17, 9, 0, tzinfo=timezone.utc)
+
+        async def scenario(language):
+            async with get_session_factory()() as db:
+                user = self._user("lang", "Africa/Cairo")
+                user.language = language
+                db.add(user)
+                await db.flush()
+                for _ in range(2):
+                    db.add(Task(id=uuid.uuid4(), user_id=user.id, title_enc="x",
+                                due_date=now - timedelta(days=1)))
+                await db.commit()
+                insights = await generate_insights_for_user(db, user.id, now=now)
+                briefing = await generate_daily_briefing_for_user(db, user.id, now=now)
+                await db.commit()
+                overdue = next(json.loads(r.payload_json) for r in insights if r.kind == "overdue_tasks")
+                return overdue["message"], json.loads(briefing.payload_json)["message"]
+
+        self.assertEqual(self._arun(scenario("ar")),
+                         ("عندك مهمتين متأخرين.", "حاجة واحدة لازم تعرفها النهارده."))
+        self.assertEqual(self._arun(scenario(None)),
+                         ("You have 2 overdue tasks.", "1 thing to know about today."))
+
+    def test_the_insights_endpoints_remember_the_clients_language(self):
+        """``X-Client-Language`` is persisted as ``ar``/``en``; a bad, unsupported or missing value
+        never overwrites a good one (docs/plans/arabic-language_plan.md, stage 1)."""
+        from sqlalchemy import select
+
+        from api.v2.insights import generate_insights, list_insights
+        from infrastructure.db.base import get_session_factory
+        from infrastructure.db.models import User
+
+        user_info = {"uid": f"lang-{uuid.uuid4()}", "email": f"lang-{uuid.uuid4()}@example.com"}
+
+        def call(endpoint, language):
+            async def go():
+                async with get_session_factory()() as db:
+                    await endpoint(user_info=user_info, db=db, client_timezone=None,
+                                   client_language=language)
+                async with get_session_factory()() as db:
+                    return await db.scalar(
+                        select(User.language).where(User.auth_subject == user_info["uid"])
+                    )
+            return self._arun(go())
+
+        self.assertIsNone(call(list_insights, None))
+        self.assertEqual(call(list_insights, "ar-EG"), "ar")
+        self.assertEqual(call(generate_insights, "fr-FR"), "ar")
+        self.assertEqual(call(generate_insights, "../../etc"), "ar")
+        self.assertEqual(call(generate_insights, None), "ar")
+        self.assertEqual(call(generate_insights, "en_US"), "en")
+
 
 if __name__ == "__main__":
     unittest.main()

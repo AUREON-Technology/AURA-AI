@@ -191,236 +191,253 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                 padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.xl),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
+                  // Logo, wordmark and the sign-in card rise in one after
+                  // another: the first thing a new user sees moves with intent.
                   children: [
-                    Container(
-                      width: 96,
-                      height: 96,
-                      decoration: BoxDecoration(
-                        gradient: palette.brandGradient,
-                        borderRadius: BorderRadius.circular(AuraRadius.xl),
-                        boxShadow: [
-                          BoxShadow(
-                            color: palette.brand.withValues(alpha: 0.5),
-                            blurRadius: 30,
-                            offset: const Offset(0, 8),
-                          ),
-                        ],
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(AuraRadius.xl),
-                        child: Padding(
-                          padding: const EdgeInsets.all(12.0),
-                          child: Image.asset(
-                            'assets/app_icon.png',
-                            fit: BoxFit.contain,
+                    for (final (i, part) in <Widget>[
+                      Container(
+                        width: 96,
+                        height: 96,
+                        decoration: BoxDecoration(
+                          gradient: palette.brandGradient,
+                          borderRadius: BorderRadius.circular(AuraRadius.xl),
+                          boxShadow: [
+                            BoxShadow(
+                              color: palette.brand.withValues(alpha: 0.5),
+                              blurRadius: 30,
+                              offset: const Offset(0, 8),
+                            ),
+                          ],
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(AuraRadius.xl),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12.0),
+                            child: Image.asset(
+                              'assets/app_icon.png',
+                              fit: BoxFit.contain,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: AuraSpacing.xl),
-                    ShaderMask(
-                      blendMode: BlendMode.srcIn,
-                      shaderCallback: (bounds) => LinearGradient(
-                        colors: [
-                          palette.textPrimary,
-                          palette.brandOnSurfaceText,
-                        ],
-                      ).createShader(bounds),
-                      child: Text(
-                        l10n.appName,
-                        style: Theme.of(context).textTheme.displayLarge
-                            ?.copyWith(
-                              letterSpacing: 4.0,
-                              fontWeight: FontWeight.w800,
-                            ),
-                      ),
-                    ),
-                    const SizedBox(height: AuraSpacing.xs),
-                    Text(
-                      l10n.loginTagline,
-                      style: Theme.of(
-                        context,
-                      ).textTheme.bodyMedium?.copyWith(letterSpacing: 1.0),
-                    ),
-                    const SizedBox(height: AuraSpacing.xxxl),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 440),
-                      child: AuraCard(
-                        padding: const EdgeInsets.all(AuraSpacing.xxl),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Text(
-                              l10n.loginWelcomeBack,
-                              style: Theme.of(context).textTheme.titleLarge,
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: AuraSpacing.sm),
-                            Text(
-                              l10n.loginSubtitle,
-                              textAlign: TextAlign.center,
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                            if (ref.watch(sessionExpiredProvider)) ...[
-                              const SizedBox(height: AuraSpacing.lg),
-                              AuraBanner(
-                                icon: Icons.lock_clock_outlined,
-                                message: l10n.loginSessionExpired,
+                      const SizedBox(height: AuraSpacing.xl),
+                      ShaderMask(
+                        blendMode: BlendMode.srcIn,
+                        shaderCallback: (bounds) => LinearGradient(
+                          colors: [
+                            palette.textPrimary,
+                            palette.brandOnSurfaceText,
+                          ],
+                        ).createShader(bounds),
+                        child: Text(
+                          l10n.appName,
+                          style: Theme.of(context).textTheme.displayLarge
+                              ?.copyWith(
+                                letterSpacing: 4.0,
+                                fontWeight: FontWeight.w800,
                               ),
-                            ],
-                            const SizedBox(height: AuraSpacing.xxl),
-                            if (authState.isLoading)
-                              Center(
-                                child: CircularProgressIndicator(
-                                  color: palette.brand,
+                        ),
+                      ),
+                      const SizedBox(height: AuraSpacing.xs),
+                      Text(
+                        l10n.loginTagline,
+                        style: Theme.of(
+                          context,
+                        ).textTheme.bodyMedium?.copyWith(letterSpacing: 1.0),
+                      ),
+                      const SizedBox(height: AuraSpacing.xxxl),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 440),
+                        child: AuraCard(
+                          padding: const EdgeInsets.all(AuraSpacing.xxl),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text(
+                                l10n.loginWelcomeBack,
+                                style: Theme.of(context).textTheme.titleLarge,
+                                textAlign: TextAlign.center,
+                              ),
+                              const SizedBox(height: AuraSpacing.sm),
+                              Text(
+                                l10n.loginSubtitle,
+                                textAlign: TextAlign.center,
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                              if (ref.watch(sessionExpiredProvider)) ...[
+                                const SizedBox(height: AuraSpacing.lg),
+                                AuraBanner(
+                                  icon: Icons.lock_clock_outlined,
+                                  message: l10n.loginSessionExpired,
                                 ),
-                              )
-                            else ...[
-                              if (supportsNativeGoogleSignIn())
-                                _GoogleSignInButton(
-                                  onPressed: () => ref
-                                      .read(authProvider.notifier)
-                                      .signInWithGoogle(),
+                              ],
+                              const SizedBox(height: AuraSpacing.xxl),
+                              if (authState.isLoading)
+                                Center(
+                                  child: CircularProgressIndicator(
+                                    color: palette.brand,
+                                  ),
                                 )
-                              else
-                                AuraButton(
-                                  label: l10n.loginGoogleBrowser,
-                                  icon: Icons.open_in_browser,
-                                  expand: true,
-                                  onPressed: () => ref
-                                      .read(authProvider.notifier)
-                                      .signInWithDesktopOAuth(),
-                                ),
-                              if (supportsNativeGoogleSignIn()) ...[
-                                if (appleSignInOffered(
-                                  platform: defaultTargetPlatform,
-                                  isWeb: kIsWeb,
-                                )) ...[
-                                  const SizedBox(height: AuraSpacing.md),
-                                  AuraButton(
-                                    label: l10n.loginApple,
-                                    icon: Icons.apple,
-                                    expand: true,
-                                    variant: AuraButtonVariant.secondary,
+                              else ...[
+                                if (supportsNativeGoogleSignIn())
+                                  _GoogleSignInButton(
                                     onPressed: () => ref
                                         .read(authProvider.notifier)
-                                        .signInWithApple(),
-                                  ),
-                                ],
-                                const SizedBox(height: AuraSpacing.md),
-                                if (_showEmailForm)
-                                  const EmailSignInForm()
+                                        .signInWithGoogle(),
+                                  )
                                 else
                                   AuraButton(
-                                    label: l10n.loginEmail,
-                                    icon: Icons.mail_outline,
-                                    expand: true,
-                                    variant: AuraButtonVariant.secondary,
-                                    onPressed: () =>
-                                        setState(() => _showEmailForm = true),
-                                  ),
-                              ],
-                              const SizedBox(height: AuraSpacing.md),
-                              // The owner's terms and privacy policy, where this build has them (spec 5.5).
-                              const LegalLinksText(),
-                              const SizedBox(height: AuraSpacing.md),
-                              if (_canCheckBiometrics &&
-                                  _hasCachedCredentials) ...[
-                                AuraButton(
-                                  label: l10n.loginUnlockBiometrics,
-                                  icon: Icons.fingerprint,
-                                  onPressed: _authenticateBiometrically,
-                                  expand: true,
-                                ),
-                                const SizedBox(height: AuraSpacing.md),
-                              ],
-                              if (kDebugMode) ...[
-                                TextButton(
-                                  onPressed: () => setState(
-                                    () => _showDeveloperPanel =
-                                        !_showDeveloperPanel,
-                                  ),
-                                  child: Text(
-                                    _showDeveloperPanel
-                                        ? l10n.loginHideDeveloperPanel
-                                        : l10n.loginShowDeveloperPanel,
-                                    style: TextStyle(
-                                      color: palette.textSecondary,
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                ),
-                                if (_showDeveloperPanel) ...[
-                                  Divider(
-                                    color: palette.border,
-                                    height: AuraSpacing.xxl,
-                                  ),
-                                  TextField(
-                                    controller: _nameController,
-                                    decoration: InputDecoration(
-                                      labelText: l10n.loginDeveloperName,
-                                      hintText: l10n.loginDeveloperNameHint,
-                                    ),
-                                  ),
-                                  const SizedBox(height: AuraSpacing.md),
-                                  TextField(
-                                    controller: _emailController,
-                                    decoration: InputDecoration(
-                                      labelText: l10n.loginDeveloperEmail,
-                                      hintText: l10n.loginDeveloperEmailHint,
-                                    ),
-                                  ),
-                                  const SizedBox(height: AuraSpacing.lg),
-                                  AuraButton(
-                                    label: l10n.loginDeveloperAccess,
+                                    label: l10n.loginGoogleBrowser,
+                                    icon: Icons.open_in_browser,
                                     expand: true,
                                     onPressed: () => ref
                                         .read(authProvider.notifier)
-                                        .signInMock(
-                                          _nameController.text.trim(),
-                                          _emailController.text.trim(),
-                                        ),
+                                        .signInWithDesktopOAuth(),
                                   ),
+                                if (supportsNativeGoogleSignIn()) ...[
+                                  if (appleSignInOffered(
+                                    platform: defaultTargetPlatform,
+                                    isWeb: kIsWeb,
+                                  )) ...[
+                                    const SizedBox(height: AuraSpacing.md),
+                                    AuraButton(
+                                      label: l10n.loginApple,
+                                      icon: Icons.apple,
+                                      expand: true,
+                                      variant: AuraButtonVariant.secondary,
+                                      onPressed: () => ref
+                                          .read(authProvider.notifier)
+                                          .signInWithApple(),
+                                    ),
+                                  ],
+                                  const SizedBox(height: AuraSpacing.md),
+                                  if (_showEmailForm)
+                                    const EmailSignInForm()
+                                  else
+                                    AuraButton(
+                                      label: l10n.loginEmail,
+                                      icon: Icons.mail_outline,
+                                      expand: true,
+                                      variant: AuraButtonVariant.secondary,
+                                      onPressed: () =>
+                                          setState(() => _showEmailForm = true),
+                                    ),
+                                ],
+                                const SizedBox(height: AuraSpacing.md),
+                                // The owner's terms and privacy policy, where this build has them (spec 5.5).
+                                const LegalLinksText(),
+                                const SizedBox(height: AuraSpacing.md),
+                                if (_canCheckBiometrics &&
+                                    _hasCachedCredentials) ...[
+                                  AuraButton(
+                                    label: l10n.loginUnlockBiometrics,
+                                    icon: Icons.fingerprint,
+                                    onPressed: _authenticateBiometrically,
+                                    expand: true,
+                                  ),
+                                  const SizedBox(height: AuraSpacing.md),
+                                ],
+                                if (kDebugMode) ...[
+                                  TextButton(
+                                    onPressed: () => setState(
+                                      () => _showDeveloperPanel =
+                                          !_showDeveloperPanel,
+                                    ),
+                                    child: Text(
+                                      _showDeveloperPanel
+                                          ? l10n.loginHideDeveloperPanel
+                                          : l10n.loginShowDeveloperPanel,
+                                      style: TextStyle(
+                                        color: palette.textSecondary,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ),
+                                  if (_showDeveloperPanel) ...[
+                                    Divider(
+                                      color: palette.border,
+                                      height: AuraSpacing.xxl,
+                                    ),
+                                    TextField(
+                                      controller: _nameController,
+                                      decoration: InputDecoration(
+                                        labelText: l10n.loginDeveloperName,
+                                        hintText: l10n.loginDeveloperNameHint,
+                                      ),
+                                    ),
+                                    const SizedBox(height: AuraSpacing.md),
+                                    TextField(
+                                      controller: _emailController,
+                                      decoration: InputDecoration(
+                                        labelText: l10n.loginDeveloperEmail,
+                                        hintText: l10n.loginDeveloperEmailHint,
+                                      ),
+                                    ),
+                                    const SizedBox(height: AuraSpacing.lg),
+                                    AuraButton(
+                                      label: l10n.loginDeveloperAccess,
+                                      expand: true,
+                                      onPressed: () => ref
+                                          .read(authProvider.notifier)
+                                          .signInMock(
+                                            _nameController.text.trim(),
+                                            _emailController.text.trim(),
+                                          ),
+                                    ),
+                                  ],
                                 ],
                               ],
-                            ],
-                            if (authState.hasError) ...[
-                              const SizedBox(height: AuraSpacing.md),
-                              Container(
-                                padding: const EdgeInsets.all(AuraSpacing.md),
-                                decoration: BoxDecoration(
-                                  color: palette.danger.withValues(alpha: 0.1),
-                                  borderRadius: BorderRadius.circular(
-                                    AuraRadius.sm,
-                                  ),
-                                  border: Border.all(
+                              if (authState.hasError) ...[
+                                const SizedBox(height: AuraSpacing.md),
+                                Container(
+                                  padding: const EdgeInsets.all(AuraSpacing.md),
+                                  decoration: BoxDecoration(
                                     color: palette.danger.withValues(
-                                      alpha: 0.3,
+                                      alpha: 0.1,
+                                    ),
+                                    borderRadius: BorderRadius.circular(
+                                      AuraRadius.sm,
+                                    ),
+                                    border: Border.all(
+                                      color: palette.danger.withValues(
+                                        alpha: 0.3,
+                                      ),
                                     ),
                                   ),
-                                ),
-                                child: Column(
-                                  children: [
-                                    // Through AuraFailure, not the raw exception (audit F-33); the
-                                    // exception itself is only shown to developers.
-                                    Text(
-                                      _signInFailureText(authState.error, l10n),
-                                      style: TextStyle(
-                                        color: palette.danger,
-                                        fontSize: 12,
+                                  child: Column(
+                                    children: [
+                                      // Through AuraFailure, not the raw exception (audit F-33); the
+                                      // exception itself is only shown to developers.
+                                      Text(
+                                        _signInFailureText(authState.error, l10n),
+                                        style: TextStyle(
+                                          color: palette.danger,
+                                          fontSize: 12,
+                                        ),
+                                        textAlign: TextAlign.center,
                                       ),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                    if (kDebugMode) ...[
-                                      if (AuraFailure.from(
-                                            authState.error,
-                                          ).detail !=
-                                          null) ...[
+                                      if (kDebugMode) ...[
+                                        if (AuraFailure.from(
+                                              authState.error,
+                                            ).detail !=
+                                            null) ...[
+                                          const SizedBox(
+                                            height: AuraSpacing.sm,
+                                          ),
+                                          Text(
+                                            AuraFailure.from(
+                                              authState.error,
+                                            ).detail!,
+                                            style: TextStyle(
+                                              color: palette.textSecondary,
+                                              fontSize: 11,
+                                            ),
+                                            textAlign: TextAlign.center,
+                                          ),
+                                        ],
                                         const SizedBox(height: AuraSpacing.sm),
                                         Text(
-                                          AuraFailure.from(
-                                            authState.error,
-                                          ).detail!,
+                                          l10n.loginDeveloperTip,
                                           style: TextStyle(
                                             color: palette.textSecondary,
                                             fontSize: 11,
@@ -428,24 +445,23 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                           textAlign: TextAlign.center,
                                         ),
                                       ],
-                                      const SizedBox(height: AuraSpacing.sm),
-                                      Text(
-                                        l10n.loginDeveloperTip,
-                                        style: TextStyle(
-                                          color: palette.textSecondary,
-                                          fontSize: 11,
-                                        ),
-                                        textAlign: TextAlign.center,
-                                      ),
                                     ],
-                                  ],
+                                  ),
                                 ),
-                              ),
+                              ],
                             ],
-                          ],
+                          ),
                         ),
                       ),
-                    ),
+                    ].indexed)
+                      AuraEntrance(
+                        delay: AuraEntrance.stagger(
+                          i,
+                          step: const Duration(milliseconds: 60),
+                        ),
+                        offset: 18,
+                        child: part,
+                      ),
                   ],
                 ),
               ),

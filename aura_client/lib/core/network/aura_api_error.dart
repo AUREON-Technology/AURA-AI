@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:aura_client/l10n/l10n.dart';
+
 /// Parsed v3 error envelope. The gateway has three on-the-wire shapes:
 /// `{error, message, retryable, details}`, `{error, correlation_id}`, and
 /// a plain-text 429 from the IP middleware.
@@ -52,9 +54,26 @@ class AuraApiError implements Exception {
 
     if (json != null) {
       final nested = json['detail'];
-      final map = nested is Map<String, dynamic> ? nested : json;
+      // FastAPI's own errors (an unknown route, a validation failure, an HTTPException raised
+      // with a plain string) put a string or a list under `detail`. Showing the raw body there
+      // put `{"detail":[{"loc":...}]}` in front of the user (INT-028).
+      final detailText = _formatDetail(nested);
+      if (detailText != null) {
+        return AuraApiError(
+          error: nested is List ? 'validation_error' : 'http_$statusCode',
+          message: detailText,
+          retryable: statusCode == 429 || (statusCode >= 500 && statusCode < 600),
+          statusCode: statusCode,
+          retryAfter: retryAfter,
+          correlationId: (json['correlation_id'] ?? correlationId)?.toString(),
+        );
+      }
+      final map = nested is Map
+          ? nested.map((k, v) => MapEntry(k.toString(), v))
+          : json;
       final error = (map['error'] ?? 'http_$statusCode').toString();
-      final message = (map['message'] ?? map['error'] ?? body).toString();
+      // Never the raw JSON body: an envelope without a message or slug gets the status copy.
+      final message = (map['message'] ?? map['error'] ?? _fallbackMessage(statusCode)).toString();
       final retryable = map['retryable'] == true ||
           statusCode == 429 ||
           (statusCode >= 500 && statusCode < 600);
@@ -87,21 +106,49 @@ class AuraApiError implements Exception {
     return AuraApiError(
       error: 'unreachable',
       message: cause == null
-          ? 'Could not reach AURA.'
-          : 'Could not reach AURA: $cause',
+          ? currentL10n.coreApiErrorUnreachable
+          : currentL10n.coreApiErrorUnreachableCause('$cause'),
       retryable: true,
     );
   }
 
   static String _fallbackMessage(int status) {
     return switch (status) {
-      400 => 'AURA blocked this turn.',
-      401 => 'Sign in again to continue.',
-      403 => 'You do not have permission for this action.',
-      429 => 'Too many requests. Try again shortly.',
-      503 => 'AURA is starting up. Try again in a moment.',
-      _ => 'Request failed ($status).',
+      400 => currentL10n.coreApiErrorBlocked,
+      401 => currentL10n.coreApiErrorSignInAgain,
+      403 => currentL10n.coreApiErrorForbidden,
+      429 => currentL10n.coreApiErrorRateLimited,
+      503 => currentL10n.coreApiErrorStartingUp,
+      _ => currentL10n.coreApiErrorRequestFailed(status),
     };
+  }
+
+  /// A readable sentence from FastAPI's `detail` when it is a string or a validation list;
+  /// null when it is absent or a map (the v3 envelope, handled by the caller).
+  static String? _formatDetail(Object? detail) {
+    if (detail is String) {
+      final trimmed = detail.trim();
+      return trimmed.isEmpty ? null : trimmed;
+    }
+    if (detail is! List || detail.isEmpty) return null;
+    final parts = <String>[];
+    for (final item in detail) {
+      if (item is Map) {
+        final msg = item['msg']?.toString() ?? 'Invalid value';
+        final loc = item['loc'];
+        // Drop the location's first element when it is only where the field came from.
+        final path = loc is List
+            ? loc
+                .where((p) => !const {'body', 'query', 'path', 'header'}.contains(p))
+                .map((p) => p.toString())
+                .join('.')
+            : '';
+        parts.add(path.isEmpty ? msg : '$path: $msg');
+      } else if (item != null) {
+        parts.add(item.toString());
+      }
+    }
+    return parts.isEmpty ? null : parts.join('; ');
   }
 
   static Duration? _parseRetryAfter(String? header) {

@@ -74,6 +74,7 @@ def capabilities_from_config(config: ProviderConfig) -> ProviderCapabilities:
         third_party=config.third_party,
         may_train_on_prompts=config.allow_prompt_training,
         tokens_per_second=config.tokens_per_second,
+        passive_health=config.health_probe == "passive",
     )
 
 

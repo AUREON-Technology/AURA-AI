@@ -15,7 +15,7 @@ from .logging import (
     get_logger,
 )
 from .metrics import PROMETHEUS_AVAILABLE, Metrics, get_metrics, reset_metrics
-from .tracing import Tracer, get_tracer, span
+from .tracing import Tracer, get_tracer, install_tracer, record_span, span
 
 __all__ = [
     "configure_logging",
@@ -30,5 +30,7 @@ __all__ = [
     "PROMETHEUS_AVAILABLE",
     "Tracer",
     "get_tracer",
+    "install_tracer",
+    "record_span",
     "span",
 ]

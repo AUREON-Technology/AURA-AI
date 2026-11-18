@@ -7,10 +7,37 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
 import 'package:aura_client/core/network/aura_api_client.dart';
 import 'package:aura_client/core/security/aura_secure_storage.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 // ----------------------------------------------------
 // Models
 // ----------------------------------------------------
+//
+// The analyses are model output. The server validates them now (INT-018), but these parse
+// defensively anyway: an older gateway passed the model's JSON through verbatim, and a `"true"`
+// string, a bare string where an object belongs, or a numeric date was a TypeError here.
+
+String? _text(Object? value) {
+  if (value == null || value is Map || value is List || value is bool) return null;
+  final text = value.toString().trim();
+  return text.isEmpty ? null : text;
+}
+
+String _oneOf(Object? value, List<String> allowed, String fallback) {
+  final text = value is String ? value.trim().toLowerCase() : '';
+  return allowed.firstWhere((a) => a.toLowerCase() == text, orElse: () => fallback);
+}
+
+DateTime? _date(Object? value) => value is String ? DateTime.tryParse(value.trim()) : null;
+
+bool _flag(Object? value) {
+  if (value is bool) return value;
+  if (value is String) return const {'true', 'yes', '1'}.contains(value.trim().toLowerCase());
+  return false;
+}
+
+const _levels = ['low', 'medium', 'high'];
+const _emailCategories = ['Academic', 'Tasks', 'Finance', 'Health', 'Social', 'Spam', 'General'];
 
 class EmailActionItem {
   final String title;
@@ -19,14 +46,23 @@ class EmailActionItem {
   EmailActionItem({required this.title, this.dueDate});
 
   factory EmailActionItem.fromMap(Map<String, dynamic> map) {
-    DateTime? due;
-    if (map['due_date'] != null) {
-      due = DateTime.tryParse(map['due_date']);
-    }
     return EmailActionItem(
-      title: map['title'] ?? '',
-      dueDate: due,
+      title: _text(map['title']) ?? '',
+      dueDate: _date(map['due_date']),
     );
+  }
+
+  /// One entry of `action_items`: an object, or a bare title string. Null for anything else.
+  static EmailActionItem? fromAny(Object? item) {
+    if (item is String) {
+      final title = _text(item);
+      return title == null ? null : EmailActionItem(title: title);
+    }
+    if (item is Map) {
+      final parsed = EmailActionItem.fromMap(item.map((k, v) => MapEntry(k.toString(), v)));
+      return parsed.title.isEmpty ? null : parsed;
+    }
+    return null;
   }
 }
 
@@ -52,18 +88,21 @@ class EmailAnalysisResult {
   });
 
   factory EmailAnalysisResult.fromMap(Map<String, dynamic> map) {
-    final list = (map['action_items'] as List?) ?? [];
-    final items = list.map((item) => EmailActionItem.fromMap(item as Map<String, dynamic>)).toList();
+    final raw = map['action_items'];
+    final items = (raw is List ? raw : const [])
+        .map(EmailActionItem.fromAny)
+        .whereType<EmailActionItem>()
+        .toList();
 
     return EmailAnalysisResult(
-      category: map['category'] ?? 'General',
-      summary: map['summary'] ?? '',
-      urgency: map['urgency'] ?? 'low',
+      category: _oneOf(map['category'], _emailCategories, 'General'),
+      summary: map['summary'] is String ? map['summary'] as String : '',
+      urgency: _oneOf(map['urgency'], _levels, 'low'),
       actionItems: items,
-      shouldCreateEvent: map['should_create_event'] ?? false,
-      eventTitle: map['event_title'],
-      eventStart: map['event_start'] != null ? DateTime.tryParse(map['event_start']) : null,
-      eventEnd: map['event_end'] != null ? DateTime.tryParse(map['event_end']) : null,
+      shouldCreateEvent: _flag(map['should_create_event']),
+      eventTitle: _text(map['event_title']),
+      eventStart: _date(map['event_start']),
+      eventEnd: _date(map['event_end']),
     );
   }
 }
@@ -82,12 +121,13 @@ class GitHubIssueResult {
   });
 
   factory GitHubIssueResult.fromMap(Map<String, dynamic> map) {
-    final list = (map['subtasks'] as List?) ?? [];
+    final raw = map['subtasks'];
+    final list = raw is List ? raw : (raw is String ? [raw] : const []);
     return GitHubIssueResult(
-      summary: map['summary'] ?? '',
-      subtasks: list.map((e) => e.toString()).toList(),
-      complexity: map['complexity'] ?? 'medium',
-      suggestedPriority: map['suggested_priority'] ?? 'medium',
+      summary: map['summary'] is String ? map['summary'] as String : '',
+      subtasks: list.map(_text).whereType<String>().toList(),
+      complexity: _oneOf(map['complexity'], _levels, 'medium'),
+      suggestedPriority: _oneOf(map['suggested_priority'], _levels, 'medium'),
     );
   }
 }
@@ -162,8 +202,8 @@ class AutomationRepository {
       if (msg.id == null) continue;
       final fullMsg = await gmailApi.users.messages.get('me', msg.id!);
       
-      String subject = "No Subject";
-      String sender = "Unknown Sender";
+      String subject = currentL10n.automationsGmailNoSubject;
+      String sender = currentL10n.automationsGmailUnknownSender;
       
       final headers = fullMsg.payload?.headers ?? [];
       for (final header in headers) {
@@ -212,9 +252,15 @@ class AutomationRepository {
     }
   }
 
+  /// The analyses run a model generation server-side, capped to finish inside the router's
+  /// 180 s request deadline (`services/automation.py`); the client waits a little past that
+  /// rather than the shared client's default, so a slow CPU model is not cut off at 30 s.
+  static const _analysisTimeout = Duration(seconds: 200);
+
   Future<EmailAnalysisResult> analyzeEmail(GmailMessageHeader email) async {
     final data = await _ref.read(auraApiClientProvider).json(
       method: 'POST',
+      timeout: _analysisTimeout,
       path: '/api/v3/automation/analyze-email',
       body: {
         'subject': email.subject,
@@ -253,6 +299,7 @@ class AutomationRepository {
   Future<GitHubIssueResult> analyzeGitHubIssue(GitHubIssueItem issue) async {
     final data = await _ref.read(auraApiClientProvider).json(
       method: 'POST',
+      timeout: _analysisTimeout,
       path: '/api/v3/automation/analyze-issue',
       body: {
         'title': issue.title,
@@ -268,7 +315,7 @@ class AutomationRepository {
     required String description,
   }) async {
     final logs = <String>[];
-    logs.add("Requesting Drive storage permissions...");
+    logs.add(currentL10n.automationsDriveRequestingPermissions);
 
     final driveScopes = [
       'https://www.googleapis.com/auth/drive.readonly',
@@ -281,7 +328,7 @@ class AutomationRepository {
     final client = authorization.authClient(scopes: driveScopes);
 
     final driveApi = drive.DriveApi(client);
-    logs.add("Established connection with Google Drive.");
+    logs.add(currentL10n.automationsDriveConnected);
 
     // 1. Create Workspace Folder
     final folder = drive.File()
@@ -292,7 +339,7 @@ class AutomationRepository {
     if (createdFolder.id == null) {
       throw Exception("Failed to create Drive folder.");
     }
-    logs.add("Created Folder: AURA Workspace - $name");
+    logs.add(currentL10n.automationsDriveCreatedFolder("AURA Workspace - $name"));
 
     // 2. Create Project Doc inside the folder
     final docContent = """
@@ -324,9 +371,9 @@ $description
     );
 
     await driveApi.files.create(documentFile, uploadMedia: media);
-    logs.add("Created document: AURA Project Plan - $name");
+    logs.add(currentL10n.automationsDriveCreatedDocument("AURA Project Plan - $name"));
 
-    logs.add("Drive Workspace generated successfully!");
+    logs.add(currentL10n.automationsDriveDone);
     return logs;
   }
 }

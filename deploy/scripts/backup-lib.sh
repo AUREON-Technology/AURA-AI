@@ -95,6 +95,20 @@ bk_write_recipients() (
 )
 
 # Fail-closed gate, run before anything is dumped. Prints nothing on success.
+# Prints how many DISTINCT public keys the effective recipient list holds, or 0 when the list is
+# missing or invalid. The same key listed twice is one key: it gives no second way to decrypt. An
+# SSH key is identified by type and key material, not by its trailing comment.
+bk_recipient_count() (
+    tmp=$(mktemp) || { echo 0; exit 0; }
+    if bk_write_recipients "$tmp" 2>/dev/null; then
+        awk '{ print $1, $2 }' "$tmp" | LC_ALL=C sort -u | grep -c . || true
+    else
+        echo 0
+    fi
+    rm -f "$tmp"
+    exit 0
+)
+
 bk_require_encryption_config() (
     mode=$(bk_encryption_mode) || exit 1
     if [ "$mode" = none ]; then

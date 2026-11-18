@@ -73,10 +73,10 @@ from .memory.session import EpisodicMemory, build_session_summariser
 from .observability.logging import configure_logging, get_logger
 from .observability.metrics import get_metrics
 from .rag import StrategyFacade, build_strategies
-from .observability.tracing import get_tracer
+from .observability.tracing import Tracer, install_tracer
 from .planning.engine import PlanningEngine
 from .ports.runtime import Closeable
-from .prompts import build_default_registry
+from .prompts import PIN_SYNC_INTERVAL_S, build_default_registry
 from .reasoning.engine import ReasoningEngine
 from .safety.pipeline import SafetyPipeline
 from .tools.builtin import default_tools
@@ -110,9 +110,13 @@ class Container:
 
         configure_logging(level=obs.log_level, fmt=obs.log_format, service=obs.service_name)
         self.metrics = get_metrics(enabled=obs.metrics_enabled)
-        self.tracer = get_tracer(service_name=obs.service_name, enabled=obs.tracing_enabled)
+        # Installed, not fetched: get_tracer() keeps whichever tracer was created first, so a
+        # module that touched it before this point would leave tracing off whatever the setting.
+        self.tracer = Tracer(service_name=obs.service_name, enabled=obs.tracing_enabled)
         if obs.tracing_enabled and obs.otlp_endpoint:
-            self.tracer.configure_exporter(obs.otlp_endpoint)
+            if not self.tracer.configure_exporter(obs.otlp_endpoint):
+                logger.warning("tracing is enabled but the OTLP exporter could not be configured")
+        install_tracer(self.tracer)
 
         # Publish which security bypasses are active, so `aura_insecure_mode != 0` is a one-line
         # alert rule. SEC-05 was invisible partly because nothing reported it.
@@ -234,7 +238,10 @@ class Container:
             metrics=self.metrics,
         )
 
-        self.prompts = build_default_registry()
+        # INT-004: pins live in a store every gateway worker reads, not in this worker's memory.
+        self.prompt_pins = self._build_prompt_pins()
+        self.prompts = build_default_registry(pins=self.prompt_pins)
+        self._prompt_pin_sync_task: asyncio.Task[None] | None = None
         self.agents = build_default_agent_registry()
         if settings.adaptation.enabled:
             # Track AP7: the same registry interface, over a snapshot a blueprint deploy can swap
@@ -346,6 +353,7 @@ class Container:
         self.nlp = NlpEngine()
         # Phase H live-voice info is built after `self.kernel` exists (see below).
         self.live_voice = None
+        self.live_vad_name: str | None = None
 
         learning = settings.learning
         from .learning.knowledge_refresh import KnowledgeRefreshPipeline
@@ -723,6 +731,8 @@ class Container:
                 model=model, dimension=dimension,
                 max_batch_size=self.settings.llm.embedding_batch_size,
                 revision=self.settings.llm.embedding_model_revision,
+                query_prefix=self.settings.llm.embedding_query_prefix,
+                document_prefix=self.settings.llm.embedding_document_prefix,
             )
         # Anything else is treated as the name of a configured provider whose base_url serves an
         # OpenAI-compatible /v1/embeddings endpoint.
@@ -1255,6 +1265,7 @@ class Container:
         return {
             "enabled": True,
             "config": cfg,
+            "vad_factory": self._live_vad_factory(cfg.sample_rate),
             "stt": self.stt_engine,
             "tts": self.tts_engine,
             "nlp": self.nlp,
@@ -1263,6 +1274,33 @@ class Container:
             "cache": self.cache_backend,
             "safety_guards_enabled": self.settings.safety.output_guards_enabled,
         }
+
+    def _live_vad_factory(self, sample_rate: int) -> Any:
+        """A ``() -> VoiceActivityDetector | None`` that gives each live session its own
+        detector, per ``AURA_VOICE_LIVE_VAD``. ``None`` from it means the energy default.
+
+        Silero is tried once, here: if it cannot serve (wrong capture rate, model missing or
+        failing to load) the factory logs why and hands out the energy detector for the life of
+        the process instead of retrying on every connection.
+        """
+        voice = self.settings.voice
+        if voice.live_vad != "silero":
+            self.live_vad_name = "energy"
+            return lambda: None
+        from .adapters.silero_vad import build_silero_vad
+
+        def build() -> Any:
+            return build_silero_vad(
+                sample_rate=sample_rate,
+                threshold=voice.live_vad_threshold,
+                barge_in_threshold=voice.live_vad_barge_in_threshold,
+            )
+
+        if build() is None:
+            self.live_vad_name = "energy"
+            return lambda: None
+        self.live_vad_name = "silero"
+        return build
 
     def _build_goals_port(self) -> Any:
         """The `GoalsPort` (Phase D2): reads the legacy `goals` table's plaintext columns.
@@ -1474,6 +1512,19 @@ class Container:
             settings=billing, products=load_store_products(billing.store_products_json, self.plans.catalogue),
             apple=apple, google_push=google_push, google_play=google_play,
         )
+
+    def _build_prompt_pins(self) -> Any:
+        """Prompt-version pins (INT-004). Postgres-backed with the other stores, so a pin reaches
+        every gateway worker within ``PIN_SYNC_INTERVAL_S`` and survives a restart."""
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_prompt_pins import PostgresPromptPinStore
+
+            return PostgresPromptPinStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        from .adapters.prompt_pins import InMemoryPromptPinStore
+
+        return InMemoryPromptPinStore()
 
     def _build_idempotency_store(self) -> Any:
         """`Idempotency-Key` bookkeeping (roadmap P1.4). Gated like the outbox: replay only means
@@ -1845,6 +1896,15 @@ class Container:
             # Never raises: a blueprint that cannot load leaves the core personas serving.
             await self.blueprint_deployment.startup()
             self._blueprint_sync_task = asyncio.get_running_loop().create_task(self._sync_blueprints())
+        # Pins made before this process started (or by another worker) apply before the first
+        # turn; a store that is not answering must not stop the gateway from serving -- the
+        # templates' default versions are a working configuration, and the sync retries.
+        try:
+            await self.prompts.refresh_pins()
+        except Exception:
+            logger.exception("prompt pin load failed; serving default prompt versions until sync")
+        if self._prompt_pin_sync_task is None or self._prompt_pin_sync_task.done():
+            self._prompt_pin_sync_task = asyncio.get_running_loop().create_task(self._sync_prompt_pins())
         if self._should_warm_stt():
             # In the background: readiness must not wait on a Hub download, but the first
             # live-voice turn of a fresh container should not pay for it either (audit FSA-110).
@@ -1876,6 +1936,18 @@ class Container:
                 await self.blueprint_deployment.sync()
             except Exception:  # pragma: no cover - defensive; sync() already swallows store errors
                 logger.exception("blueprint sync failed")
+
+    async def _sync_prompt_pins(self) -> None:
+        """Keep this worker on the shared prompt pins (INT-004): one store read per interval, so
+        the per-turn ``prompts.get()`` stays an in-memory lookup."""
+        while True:
+            await asyncio.sleep(PIN_SYNC_INTERVAL_S)
+            try:
+                await self.prompts.refresh_pins()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("prompt pin sync failed; keeping the last known pins")
 
     async def shutdown(self) -> None:
         """Release every connection this container opened (R2.7). Idempotent; never raises.
@@ -1911,6 +1983,17 @@ class Container:
         warm, self._stt_warm_task = self._stt_warm_task, None
         if warm is not None and not warm.done():
             warm.cancel()
+        pin_sync, self._prompt_pin_sync_task = self._prompt_pin_sync_task, None
+        if pin_sync is not None:
+            pin_sync.cancel()
+
+            async def stop_prompt_pin_sync() -> None:
+                try:
+                    await pin_sync
+                except asyncio.CancelledError:
+                    pass
+
+            closers.append(("prompt pin sync", stop_prompt_pin_sync))
         task, self._blueprint_sync_task = self._blueprint_sync_task, None
         if task is not None:
             task.cancel()
@@ -1993,7 +2076,11 @@ class Container:
         """Dependency health, for the readiness probe."""
         providers = await self.router.health()
         index = await self.index_manager.active_identity()
-        healthy = any(p["healthy"] for p in providers.values())
+        # A passive provider (health_probe=passive) was not called, so its "healthy" means only
+        # "not known to be broken". It cannot carry readiness on its own while a provider that
+        # *was* checked is down; it counts only when every provider is passive.
+        probed = [p for p in providers.values() if p.get("probe") != "passive"]
+        healthy = any(p["healthy"] for p in (probed or providers.values()))
 
         checks: dict[str, Any] = {}
         for name, check in self._readiness_checks.items():
@@ -2020,6 +2107,9 @@ class Container:
                 "tts": getattr(self.tts_engine, "name", None) if self.tts_engine else None,
                 "stt": getattr(self.stt_engine, "name", None) if self.stt_engine else None,
                 "live": bool(self.live_voice),
+                # The detector live sessions actually get, after any fallback: "silero" only
+                # when the model loaded, never just because it was asked for.
+                "vad": self.live_vad_name if self.live_voice else None,
             },
             "environment": str(self.settings.environment),
             # Which embedder indexes and queries this deployment's knowledge and memory. The

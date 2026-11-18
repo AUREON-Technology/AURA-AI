@@ -9,6 +9,7 @@ import 'dart:io';
 import 'package:aura_hostd/src/approval_queue.dart';
 import 'package:aura_hostd/src/config.dart';
 import 'package:aura_hostd/src/control_server.dart';
+import 'package:aura_hostd/src/error_codes.dart';
 import 'package:aura_hostd/src/isolated_task_registry.dart';
 import 'package:aura_hostd/src/debug_session_manager.dart';
 import 'package:aura_hostd/src/terminal_session_manager.dart';
@@ -153,7 +154,8 @@ void main() {
     expect(mode, 0x180, reason: 'expected 0600, got ${mode.toRadixString(8)}');
   }, testOn: '!windows');
 
-  test('GET /status requires no token and reports roots', () async {
+  test('GET /status without a token answers, but never names roots or the backend (INT-037)',
+      () async {
     final (status, body) = await client.request('GET', '/status', withToken: false);
     expect(status, 200);
     expect(body['authenticated'], false);
@@ -162,7 +164,66 @@ void main() {
     // (the shared setUp above), which must report the honest answer -- not connected -- rather
     // than silently defaulting to a value that would make a dead connection look live.
     expect(body['backend_connected'], false);
+    expect(body['credentials_rejected'], false);
+    expect(body.containsKey('roots'), isFalse);
+    expect(body.containsKey('backend_url'), isFalse);
+    expect(jsonEncode(body), isNot(contains(workspaceRoot)));
+  });
+
+  test('GET /status with the token reports roots', () async {
+    final (status, body) = await client.request('GET', '/status');
+    expect(status, 200);
     expect((body['roots'] as List).length, 1);
+    expect(body.containsKey('backend_url'), isTrue);
+  });
+
+  test('GET /status reports credentials_rejected and last_close_code from the wired callbacks '
+      '(INT-003)', () async {
+    final rejectedServer = ControlServer(
+      workspaceStore: workspaceStore,
+      configStore: configStore,
+      onPaired: (_) {},
+      terminalSessions: TerminalSessionManager(workspaceStore),
+      debugSessions: DebugSessionManager(workspaceStore),
+      approvalQueue: approvalQueue,
+      isolatedTasks: IsolatedTaskRegistry(workspaceStore.load()),
+      isCredentialsRejected: () => true,
+      lastCloseCode: () => 4401,
+      logger: (_) {},
+    );
+    await rejectedServer.start(configDir);
+    addTearDown(rejectedServer.stop);
+    final controlFile = jsonDecode(File('${configDir.path}/control.json').readAsStringSync())
+        as Map<String, dynamic>;
+    final rejectedClient = _ControlClient(controlFile['port'] as int, controlFile['token'] as String);
+    addTearDown(rejectedClient.close);
+
+    final (_, body) = await rejectedClient.request('GET', '/status', withToken: false);
+    expect(body['credentials_rejected'], true);
+    expect(body['last_close_code'], 4401);
+  });
+
+  test('a request whose Host is not loopback is refused, token or not (DNS rebinding, INT-037)',
+      () async {
+    final http = HttpClient();
+    addTearDown(() => http.close(force: true));
+    for (final path in ['/status', '/roots']) {
+      final request = await http.openUrl('GET', Uri.parse('http://127.0.0.1:${client.port}$path'));
+      request.headers.host = 'attacker.example';
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ${client.token}');
+      final response = await request.close();
+      await response.drain<void>();
+      expect(response.statusCode, 403, reason: path);
+    }
+    final (ok, _) = await client.request('GET', '/roots');
+    expect(ok, 200, reason: 'a loopback Host still works');
+  });
+
+  test('constantTimeEquals matches == on equal, different and differently-sized strings', () {
+    expect(constantTimeEquals('Bearer abc', 'Bearer abc'), isTrue);
+    expect(constantTimeEquals('Bearer abc', 'Bearer abd'), isFalse);
+    expect(constantTimeEquals('Bearer abc', 'Bearer ab'), isFalse);
+    expect(constantTimeEquals('', ''), isTrue);
   });
 
   test('GET /status reports backend_connected from the wired callback, independent of the '
@@ -234,6 +295,7 @@ void main() {
         await client.request('POST', '/roots', body: {'action': 'grant', 'path': denylisted});
     expect(status, 400);
     expect(body['error'], contains('denylist'));
+    expect(body['code'], HostdErrorCode.rootDenylisted);
   });
 
   test('GET /list returns entries inside the granted root', () async {
@@ -250,6 +312,7 @@ void main() {
     );
     expect(status, 403);
     expect(body['error'], contains('outside the granted workspace root'));
+    expect(body['code'], HostdErrorCode.outsideWorkspace);
   });
 
   test('GET /read returns file content inside the granted root', () async {
@@ -313,6 +376,7 @@ void main() {
         await client.request('POST', '/approvals/appr_does_not_exist/respond', body: {'approved': true});
     expect(status, 404);
     expect(body['error'], contains('no such pending approval'));
+    expect(body['code'], HostdErrorCode.approvalNotFound);
   });
 
   test('POST /approvals/<id>/respond is idempotent on an already-resolved id', () async {
@@ -350,6 +414,7 @@ void main() {
     final (status, body) = await client.request('GET', '/git/status?root=${Uri.encodeComponent(workspaceRoot)}');
     expect(status, 409);
     expect(body['error'], contains('not a git repository'));
+    expect(body['code'], HostdErrorCode.notAGitRepository);
   });
 
   test('GET /git/status reports a real change after init', () async {
@@ -471,6 +536,7 @@ void main() {
     final (status, body) = await client.request('GET', '/pair/status');
     expect(status, 409);
     expect(body['error'], contains('/pair/start'));
+    expect(body['code'], HostdErrorCode.noPairingSession);
   });
 
   test('GET /pair/status reports pending then approved, and calls onPaired on approval', () async {
@@ -523,6 +589,51 @@ void main() {
     await pairingServer.stop();
   });
 
+  test(
+      'the daemon collects an approved pairing itself, with no /pair/status poll from a UI, and '
+      'a late /pair/status still reports it (INT-038)', () async {
+    final fakeBackend = await _FakeAuthServer.start(userCode: 'AB3D-9XYZ', deviceId: 'dev-9', pendingPolls: 2);
+    addTearDown(fakeBackend.close);
+    final pairingConfigDir = Directory.systemTemp.createTempSync('aura_hostd_control_test_bgpair_');
+    addTearDown(() => pairingConfigDir.deleteSync(recursive: true));
+    final pairedTokens = <String>[];
+    final pairingServer = ControlServer(
+      workspaceStore: WorkspaceStore.forConfigDir(pairingConfigDir),
+      configStore: ConfigStore.forConfigDir(pairingConfigDir),
+      onPaired: pairedTokens.add,
+      terminalSessions: TerminalSessionManager(WorkspaceStore.forConfigDir(pairingConfigDir)),
+      debugSessions: DebugSessionManager(WorkspaceStore.forConfigDir(pairingConfigDir)),
+      approvalQueue: ApprovalQueue(),
+      isolatedTasks: IsolatedTaskRegistry(WorkspaceStore.forConfigDir(pairingConfigDir).load()),
+      minPairingPollInterval: const Duration(milliseconds: 20),
+      logger: (_) {},
+    );
+    await pairingServer.start(pairingConfigDir);
+    addTearDown(pairingServer.stop);
+    final controlFile =
+        jsonDecode(File('${pairingConfigDir.path}/control.json').readAsStringSync()) as Map<String, dynamic>;
+    final pairingClient = _ControlClient(controlFile['port'] as int, controlFile['token'] as String);
+    addTearDown(pairingClient.close);
+
+    final (startStatus, _) =
+        await pairingClient.request('POST', '/pair/start', body: {'backend_url': fakeBackend.backendUrl});
+    expect(startStatus, 200);
+
+    // The UI went away: nobody polls /pair/status. The daemon must still pick the token up.
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (pairedTokens.isEmpty && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(pairedTokens, ['tok-abc'], reason: 'onPaired is called exactly once');
+    expect(ConfigStore.forConfigDir(pairingConfigDir).load().authToken, 'tok-abc');
+
+    final (lateStatus, lateBody) = await pairingClient.request('GET', '/pair/status');
+    expect(lateStatus, 200);
+    expect(lateBody['status'], 'approved');
+    expect(lateBody['device_id'], 'dev-9');
+    expect(pairedTokens, hasLength(1));
+  });
+
   group('diagnostics (D7 Part A.2)', () {
     test('GET /diagnostics/detect reports the marker-detected tool', () async {
       File('${workspaceDir.path}/pubspec.yaml').writeAsStringSync('name: fixture\n');
@@ -541,6 +652,7 @@ void main() {
       final (status, body) = await client.request('GET', '/diagnostics/detect?root=/not/granted');
       expect(status, 404);
       expect(body['error'], contains('not a granted root'));
+      expect(body['code'], HostdErrorCode.rootNotGranted);
     });
 
     test('POST /diagnostics/run reports a real tool run', () async {
@@ -580,6 +692,7 @@ void main() {
       );
       expect(status, 400);
       expect(body['error'], contains('unknown diagnostics tool'));
+      expect(body['code'], HostdErrorCode.unknownDiagnosticsTool);
     });
 
     test('POST /diagnostics/run refuses an ungranted root', () async {
@@ -590,6 +703,7 @@ void main() {
       );
       expect(status, 404);
       expect(body['error'], contains('not a granted root'));
+      expect(body['code'], HostdErrorCode.rootNotGranted);
     });
   });
 
@@ -608,6 +722,7 @@ void main() {
       final decoded = jsonDecode(iterator.current as String) as Map<String, dynamic>;
       expect(decoded['type'], 'error');
       expect(decoded['message'], contains('not trusted'));
+      expect(decoded['code'], HostdErrorCode.workspaceNotTrusted);
     });
 
     test('start spawns a real debugpy process and tunnels DAP bytes both ways', () async {
@@ -740,6 +855,7 @@ void main() {
       );
       expect(status, 404);
       expect(body['error'], contains('no isolated workspace'));
+      expect(body['code'], HostdErrorCode.taskNotFound);
     });
 
     test('POST /git/merge-task merges the task branch into the main worktree, locally only',
@@ -827,6 +943,7 @@ void main() {
       final (status, body) = await client.request('POST', '/git/discard-task', body: {'task_key': 'nope'});
       expect(status, 404);
       expect(body['error'], contains('no isolated workspace'));
+      expect(body['code'], HostdErrorCode.taskNotFound);
     });
   });
 }

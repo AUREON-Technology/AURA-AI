@@ -84,8 +84,8 @@ hygiene and doc accuracy.
 | Severity | open | in_progress | built_not_proven | proven | closed_stale |
 | --- | --- | --- | --- | --- | --- |
 | P0 | 4 | 0 | 2 | 1 | 0 |
-| P1 | 8 | 1 | 9 | 0 | 1 |
-| P2 | 15 | 2 | 12 | 0 | 1 |
+| P1 | 7 | 2 | 9 | 0 | 1 |
+| P2 | 14 | 2 | 13 | 0 | 1 |
 | P3 | 6 | 0 | 1 | 0 | 1 |
 
 ## All gaps
@@ -111,7 +111,7 @@ Sorted by status (`closed_stale` last), then severity. The full text, citations 
 | GAP-028 | P1 | `open` | deploy/disaster-recovery | platform-ops | (2026-09-25) 3d9a318 adds age-encrypted backup sets with an encrypted plaintext-hash manifest and a keyless-checkable CHECKSUMS.sha256, GFS retention that neve… | Drill report from offsite data with measured RPO/RTO in docs/reports/. | GAP-016 |
 | GAP-030 | P1 | `open` | supply-chain/model-pinning-llm | platform-ops | The production LLM is referenced by Ollama tag only (qwen2.5:3b-instruct-q4_K_M, docker-compose.prod.yml:256; AURA_MODEL_ALLOWLIST is tag names, deploy/.env.ex… | Digest recorded in MODEL_REGISTRY.md and enforced at startup. | — |
 | GAP-031 | P1 | `open` | supply-chain/model-pinning-embed-stt | ml | Embedder BAAI/bge-small-en-v1.5 (docker-compose.prod.yml:289) is loaded with SentenceTransformer(model_name) and no revision (aura_core/llm/embeddings.py:358),… | Revisions recorded in MODEL_REGISTRY.md and enforced by test. | — |
-| GAP-036 | P1 | `open` | observability/http-metrics | platform-ops | (2026-09-25) The load harness confirmed two more measurement holes: aura_turns_in_flight is only updated on the non-streaming AIKernel.run path (every client u… | Metrics live on the VPS and wired into PRODUCTION_SLO alerts. | — |
+| GAP-036 | P1 | `in_progress` | observability/http-metrics | platform-ops | (2026-09-25) The load harness confirmed two more measurement holes: aura_turns_in_flight is only updated on the non-streaming AIKernel.run path (every client u… | Metrics live on the VPS and wired into PRODUCTION_SLO alerts. | — |
 | GAP-042 | P1 | `open` | supply-chain/model-licensing | coordinator | No model license review is recorded anywhere in the tree. The production chat model is Qwen2.5-3B-Instruct (via the Ollama tag qwen2.5:3b-instruct-q4_K_M); fro… | License review recorded per model in MODEL_REGISTRY.md; any incompatible model replaced. | — |
 | GAP-046 | P1 | `open` | deploy/backup-secret-scope | platform-ops | The backup service mounts the whole deploy/secrets directory read-only at /run/backup-secrets (docker-compose.prod.yml, since 681780d), in a container on the e… | Backup-only secrets moved to their own directory or individual file mounts, with the fitness test, and one backup cycle run on the VPS after the change. | GAP-028 |
 | GAP-050 | P1 | `built_not_proven` | adaptation/connectors | platform-core | (2026-10-11) AP2's tests ran green in Backend CI run #347 and on PostgreSQL 16.15 (2026-10-11), but its exit criterion also needs the dev-stack run, and the de… | AP2 exit criteria met; docs/reports/ap2-connector-framework.md. | GAP-049, GAP-048 |
@@ -126,7 +126,7 @@ Sorted by status (`closed_stale` last), then severity. The full text, citations 
 | GAP-014 | P2 | `built_not_proven` | safety/taint | security | (2026-09-25) Fixed in the P1.5 merge (371bdc1): ExecutionEngine._taint_ordered and ToolRegistry.execute_many defer any side-effecting, non-workspace_local call… | Test added and green; residual either removed or documented as proven-harmless. | — |
 | GAP-015 | P2 | `built_not_proven` | backend/idempotency | backend | (2026-09-25) Built in 9b9f9e5: IdempotencyStore port, in-memory and Postgres adapters, Alembic 0006, opt-in route dependency on 11 v3 and 6 admin side-effectin… | Middleware + tests green, verified against real Postgres. | — |
 | GAP-019 | P2 | `in_progress` | multimodal/vision-video | ml | (2026-10-30-phase7) Eval harness built: evaluation/vision_eval.py over evaluation/suites/vision_cases.py (240 generated, exactly labelled cases in 12 categorie… | Vision turn served end to end with a pinned model and an eval report. | GAP-012 |
-| GAP-020 | P2 | `open` | voice/stt-language | ml | STT default is faster-whisper `tiny.en` (aura_core/config/settings.py:1048, :1080), English-only, while TTS ships an Arabic Piper voice (ar_JO-kareem-medium, a… | WER report in docs/reports/ for both languages on the production ASR model. | GAP-012 |
+| GAP-020 | P2 | `built_not_proven` | voice/stt-language | ml | 2026-11-17 (Arabic plan stage 4, branch anas/kind-rubin-dpm0sq, since merged): the STT default is faster-whisper `small` (multilingual; VoiceSettings.stt_model… | WER report in docs/reports/ for both languages on the production ASR model. | GAP-012 |
 | GAP-022 | P2 | `open` | safety/system-prompt-leak-guard | security | The first time guards ran on real model output (A4), SystemPromptLeakGuard blocked 3 of 15 concurrency-test turns and GroundednessGuard flagged 9 (phase-a4-loa… | Labelled evaluation report; thresholds tuned or confirmed. | GAP-021 |
 | GAP-023 | P2 | `built_not_proven` | knowledge/graph | backend | (2026-09-25-w2) Wave 2 (7768855..99abeab): owner-scoped graph schema with aliases, type vocabulary, per- source provenance, recomputed confidence and valid_fro… | Real-Postgres test green and a strategy comparison report. | GAP-021 |
 | GAP-024 | P2 | `built_not_proven` | agents/autonomy-isolation | backend | (2026-11-16) current_state above is from 2026-09-25 and is superseded: finance_advisor, health_companion and engineer have their own memory scopes (agents/regi… | ADR recording the decision; isolation tests if adopted. | — |

@@ -20,6 +20,7 @@ import binascii
 import hashlib
 from dataclasses import replace
 import json
+import os
 from datetime import datetime, timedelta
 from typing import Any, AsyncIterator, Mapping
 
@@ -36,6 +37,7 @@ from ..domain.caller_context import MAX_CALLER_CONTEXT, CallerContext
 from ..domain.connectors import CONNECTOR_ID_PATTERN, Credential
 from ..domain.identifiers import CorrelationId, DocumentId, SessionId, UserId
 from ..domain.llm import RoutingPolicy
+from ..text.language import CLIENT_LANGUAGE_HEADER, normalize_language
 from ..domain.memory import MemoryKind, MemoryQuery
 from ..domain.output_schema import check_output_schema
 from ..domain.reasoning import ReasoningStrategy
@@ -45,6 +47,7 @@ from ..domain.untrusted import MAX_UNTRUSTED_CHARS
 from ..kernel.kernel import TurnRequest
 from ..observability.logging import get_logger
 from ..ports.runtime import AuditEvent
+from ..prompts import PIN_SYNC_INTERVAL_S
 from ..security.rate_limit import extract_client_ip
 from .admin import register_admin_ops
 
@@ -65,6 +68,11 @@ _MAX_RESPONSE_SCHEMA_CHARS = 8000
 CONNECTOR_TOKEN_HEADER = "x-aura-connector-token"
 _MAX_CONNECTOR_TOKENS = 8
 _MAX_CONNECTOR_TOKEN_CHARS = 8192
+
+
+def _client_language(request: Any) -> str | None:
+    """The app's display language from ``X-Client-Language`` (``"ar"``/``"en"``), or ``None``."""
+    return normalize_language(request.headers.get(CLIENT_LANGUAGE_HEADER))
 
 
 def _connector_tokens(request: Any) -> dict[str, Credential]:
@@ -588,6 +596,9 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             response_schema=payload.response_schema,
             connector_tokens=connector_tokens or None,
             images=images,
+            # The app's display language (X-Client-Language), the fallback for a message with no
+            # clear language of its own (prompts/language.py). A service key has no app.
+            preferred_language=None if caller.is_service else _client_language(request),
         )
 
     def vision_status() -> dict[str, bool]:
@@ -743,10 +754,25 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         """What optional features this deployment can serve right now, for any signed-in
         caller -- the client hides an attach-image button rather than offering one that 503s
         (ADR-031). ``available`` reflects configuration and provider declarations, not a probe.
+
+        ``max_request_image_bytes`` is the decoded total ``/chat`` enforces across one turn's
+        images (INT-026); without it a client checking only the per-image limit could build a
+        turn of individually-fine images that the server refuses as a whole.
+
+        ``knowledge.max_upload_bytes`` is the size ``/knowledge/documents/upload`` refuses above
+        (its 422 reports the same number as ``limit_bytes``), read from the same setting so a
+        client can check a file before sending it.
         """
-        return JSONResponse(content={"vision": {**vision_status(),
-                                                "max_images": settings.vision.max_images,
-                                                "max_image_bytes": settings.vision.max_image_bytes}})
+        vision = settings.vision
+        return JSONResponse(content={
+            "vision": {
+                **vision_status(),
+                "max_images": vision.max_images,
+                "max_image_bytes": vision.max_image_bytes,
+                "max_request_image_bytes": vision.max_request_image_bytes,
+            },
+            "knowledge": {"max_upload_bytes": settings.knowledge.max_document_bytes},
+        })
 
     @router.post("/chat/stream")
     async def chat_stream(
@@ -1229,24 +1255,63 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     @router.post("/voice/transcribe")
     async def transcribe_audio(
-        request: Request, file: UploadFile = File(...), caller: Principal = Depends(principal),
+        request: Request,
+        file: UploadFile = File(...),
+        language: str | None = Form(default=None, max_length=40),
+        caller: Principal = Depends(principal),
     ) -> JSONResponse:
         """Speech to text via the container's `SpeechToText` engine (self-hosted
         `faster-whisper`, Phase F2). 503s with a clear `dependency_unavailable` body when no
-        engine is configured, rather than pretending an empty transcript is a real answer."""
+        engine is configured, rather than pretending an empty transcript is a real answer.
+
+        ``language`` (optional, ISO-639-1 such as ``ar``; ``AR-eg`` folds to ``ar``) is a hint
+        for a multilingual model, validated exactly as a live-voice start frame is; an unknown
+        code is a 422. Without it the model detects the language itself. An English-only
+        (``*.en``) model ignores the hint, exactly as before the field existed: clients already
+        in use send ``ar`` whenever the app is in Arabic, and must keep getting a transcript
+        (docs/plans/arabic-language_plan.md, stage 4).
+
+        The response's ``language`` (Phase V, additive) is the language the engine used --
+        the hint it honoured, or the one it detected -- or ``null`` when it cannot say.
+        """
+        from ..ports.speech import LanguageAwareSpeechToText
+        from ..voice.session import normalise_language
+
         await enforce_rate_limit(request, caller, "voice")
-        if container.stt_engine is None:
+        engine = container.stt_engine
+        if engine is None:
             raise DependencyUnavailableError(
                 "no speech-to-text engine is configured on this deployment",
                 dependency="faster-whisper",
             )
+        hint: str | None = None
+        if language is not None and language.strip():
+            hint = normalise_language(language)
+            if hint is None:
+                raise ValidationError(
+                    "language is not a supported language code; send an ISO-639-1 code such "
+                    "as en or ar",
+                    details={"field": "language", "reason": "language_unsupported"},
+                )
+        language_aware = isinstance(engine, LanguageAwareSpeechToText)
+        english_only = (
+            not engine.multilingual if language_aware
+            else settings.voice.stt_model.endswith(".en")
+        )
+        if english_only:
+            hint = None
         data = await file.read()
         if len(data) > MAX_AUDIO_BYTES:
             raise ValidationError(
                 "uploaded audio exceeds the size limit", details={"limit_bytes": MAX_AUDIO_BYTES}
             )
-        text = await container.stt_engine.transcribe(data)
-        return JSONResponse(content={"text": text, "engine": container.stt_engine.name})
+        if language_aware:
+            text, used = await engine.transcribe_detect(data, language=hint)
+        else:
+            text, used = await engine.transcribe(data, language=hint), hint
+        if english_only:
+            used = "en"
+        return JSONResponse(content={"text": text, "engine": engine.name, "language": used})
 
     @router.post("/voice/speak")
     async def synthesize_speech(
@@ -1278,17 +1343,24 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         caller: Principal = Depends(principal),
         query: str = Query(default="", max_length=500),
         limit: int = Query(default=20, ge=1, le=100),
+        # The client pages with ``offset`` (INT-043); it used to be dropped, so every page was
+        # page one. Bounded so a ranked search cannot be asked to over-fetch without limit.
+        offset: int = Query(default=0, ge=0, le=1000),
     ) -> JSONResponse:
         await enforce_rate_limit(request, caller, "read")
         if container.memory is None:
             return JSONResponse(content={"memories": [], "enabled": False})
         if query:
+            # Recall ranks rather than pages, so take the first ``offset + limit`` by rank and
+            # drop the ones already shown: the same ordering as the page before it.
             hits = await container.memory.recall(
-                MemoryQuery(owner_id=caller.user_id, text=query, limit=limit)
+                MemoryQuery(owner_id=caller.user_id, text=query, limit=offset + limit)
             )
-            records = [h.record for h in hits]
+            records = [h.record for h in hits][offset:offset + limit]
         else:
-            records = await container.memory_store.list_for_owner(caller.user_id, limit=limit)
+            records = await container.memory_store.list_for_owner(
+                caller.user_id, limit=limit, offset=offset
+            )
         return JSONResponse(
             content={
                 "enabled": True,
@@ -1673,6 +1745,16 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     # -- admin -------------------------------------------------------------------------
 
+    async def _shared_prompt_inventory() -> list[dict[str, Any]]:
+        """The prompt inventory with pins re-read from the shared store first, so whichever
+        worker answers reports the same pins (INT-004). A store error degrades to this worker's
+        last synced view rather than failing the whole status page."""
+        try:
+            await container.prompts.refresh_pins()
+        except Exception:
+            logger.warning("prompt pin refresh failed; reporting this worker's last synced pins")
+        return container.prompts.describe()
+
     @router.get("/admin/status")
     async def admin_status(caller: Principal = Depends(principal)) -> JSONResponse:
         require_admin(caller)
@@ -1683,7 +1765,11 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             content={
                 "health": await container.health(),
                 "providers": container.router.stats(),
-                "prompts": container.prompts.describe(),
+                # Circuit-breaker state above is this worker's own (INT-004); pins below are
+                # shared, re-read here so every worker reports the same thing.
+                "providers_scope": "worker",
+                "worker_pid": os.getpid(),
+                "prompts": await _shared_prompt_inventory(),
                 "tools": container.tools.describe(),
                 "settings": container.settings.as_dict(),
                 "learning": extra_payload.get("learning") or {},
@@ -1729,20 +1815,73 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         version: str = Body(embed=True),
         caller: Principal = Depends(principal),
     ) -> JSONResponse:
-        """Pin a prompt version -- the rollback mechanism for a bad prompt change (TD-11)."""
+        """Pin a prompt version -- the rollback mechanism for a bad prompt change (TD-11).
+
+        Written to the shared pin store (INT-004): this worker serves it at once, every other
+        worker within ``PIN_SYNC_INTERVAL_S``, and it survives a restart."""
         require_admin(caller)
-        container.prompts.pin(template_id, version)
+        await container.prompts.set_pin(template_id, version, pinned_by=str(caller.user_id))
         await audit_admin(request, caller, "admin.prompt.pin", f"{template_id}@{version}", "ok")
-        return JSONResponse(content={"pinned": f"{template_id}@{version}"})
+        return JSONResponse(
+            content={
+                "pinned": f"{template_id}@{version}",
+                "shared": container.prompts.pins_shared,
+                "propagation_s": PIN_SYNC_INTERVAL_S,
+            }
+        )
+
+    @router.delete("/admin/prompts/{template_id}/pin")
+    async def unpin_prompt(
+        request: Request, template_id: str, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Release a pin: the template goes back to its highest registered version everywhere.
+
+        Without this, the only way out of a rollback was pinning forward, which freezes the
+        template against the next release."""
+        require_admin(caller)
+        if template_id not in container.prompts:
+            raise HTTPException(status_code=404, detail=f"unknown prompt template {template_id!r}")
+        existed = await container.prompts.clear_pin(template_id)
+        await audit_admin(
+            request, caller, "admin.prompt.unpin", template_id, "ok" if existed else "noop"
+        )
+        return JSONResponse(
+            content={
+                "unpinned": template_id,
+                "was_pinned": existed,
+                "active": container.prompts.get(template_id).version,
+                "propagation_s": PIN_SYNC_INTERVAL_S,
+            }
+        )
 
     @router.post("/admin/providers/{name}/reset-circuit")
     async def reset_circuit(
         request: Request, name: str, caller: Principal = Depends(principal)
     ) -> JSONResponse:
+        """Close one provider's circuit breaker -- **in the worker that serves this request only**.
+
+        Breaker state is per worker by design: each worker opens its breaker from the failures
+        it observed itself, and every breaker half-opens on its own after
+        ``circuit_open_seconds``. A cross-worker reset would need a broadcast channel the router
+        does not have (and Redis is optional), so the response says what it did rather than
+        imply a fleet-wide reset (INT-004). Repeat it, or wait for the half-open probe."""
         require_admin(caller)
         container.router.reset_circuit(name)
-        await audit_admin(request, caller, "admin.provider.reset_circuit", name, "ok")
-        return JSONResponse(content={"reset": name})
+        await audit_admin(
+            request, caller, "admin.provider.reset_circuit", name, "ok",
+            detail={"scope": "worker", "worker_pid": os.getpid()},
+        )
+        return JSONResponse(
+            content={
+                "reset": name,
+                "scope": "worker",
+                "worker_pid": os.getpid(),
+                "note": (
+                    "Reset in this gateway worker only; other workers keep their own breaker "
+                    "state and half-open on their own after the circuit cool-down."
+                ),
+            }
+        )
 
     register_admin_ops(
         router,

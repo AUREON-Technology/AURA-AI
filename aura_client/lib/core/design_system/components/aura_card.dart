@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../aura_palette.dart';
 import '../tokens.dart';
+import '../motion/aura_motion_widgets.dart';
 
 /// Standard elevated/glass card. Replaces the copy-pasted
 /// `Card(color: AuraTheme.cardBg, ...)` + `Padding` boilerplate repeated in
@@ -42,13 +43,17 @@ class AuraCard extends StatelessWidget {
       button: onTap != null,
       child: onTap == null
           ? content
-          : Material(
-              color: Colors.transparent,
-              borderRadius: BorderRadius.circular(AuraRadius.lg),
-              child: InkWell(
+          // A tappable card dips slightly under the finger, so a press reads
+          // as a press before the next screen arrives.
+          : AuraPressScale(
+              child: Material(
+                color: Colors.transparent,
                 borderRadius: BorderRadius.circular(AuraRadius.lg),
-                onTap: onTap,
-                child: content,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(AuraRadius.lg),
+                  onTap: onTap,
+                  child: content,
+                ),
               ),
             ),
     );

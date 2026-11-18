@@ -18,7 +18,7 @@ from ..kernel.kernel import TurnRequest
 from ..nlp import NlpEngine, normalize_for_turn
 from .sentences import SentenceAccumulator
 from .turn_taking import EndpointConfig, EndpointDetector, EndpointEvent
-from .vad import EnergyVad, VadConfig
+from .vad import EnergyVad, VadConfig, VoiceActivityDetector
 from .wav_pcm import pcm16_mono_to_wav, wav_to_pcm16
 
 __all__ = [
@@ -111,13 +111,16 @@ class LiveVoiceSession:
     voice: str | None = None
     capabilities: tuple[str, ...] = ()
     safety_guards_enabled: bool = True
+    #: This session's own detector (one per session: detectors are stateful). ``None`` uses
+    #: :class:`EnergyVad`; the container passes a neural one when ``AURA_VOICE_LIVE_VAD`` asks.
+    vad: VoiceActivityDetector | None = None
 
     def __post_init__(self) -> None:
         vad_cfg = VadConfig(
             sample_rate=self.config.sample_rate,
             frame_ms=self.config.frame_ms,
         )
-        self._vad = EnergyVad(vad_cfg)
+        self._vad: VoiceActivityDetector = self.vad or EnergyVad(vad_cfg)
         self._endpoint = EndpointDetector(
             EndpointConfig(
                 frame_ms=self.config.frame_ms,

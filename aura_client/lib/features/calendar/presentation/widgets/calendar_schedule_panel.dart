@@ -33,7 +33,7 @@ class CalendarSchedulePanel extends ConsumerWidget {
                     children: [
                       Text(DateFormat('EEEE').format(ui.selectedDate), style: Theme.of(context).textTheme.titleMedium),
                       Text(
-                        DateFormat('MMMM d, yyyy').format(ui.selectedDate),
+                        DateFormat.yMMMMd().format(ui.selectedDate),
                         style: TextStyle(color: palette.textSecondary, fontSize: 13),
                       ),
                     ],
@@ -60,7 +60,7 @@ class CalendarSchedulePanel extends ConsumerWidget {
                           Icon(Icons.calendar_today, size: 48, color: palette.textSecondary.withValues(alpha: 0.4)),
                           const SizedBox(height: 12),
                           Text(
-                            'No events scheduled for today',
+                            context.l10n.calendarNoEvents,
                             style: TextStyle(color: palette.textSecondary, fontSize: 13),
                             textAlign: TextAlign.center,
                           ),
@@ -71,8 +71,8 @@ class CalendarSchedulePanel extends ConsumerWidget {
                       itemCount: dayEvents.length,
                       itemBuilder: (context, index) {
                         final event = dayEvents[index];
-                        final startText = DateFormat('hh:mm a').format(event.startTime);
-                        final endText = DateFormat('hh:mm a').format(event.endTime);
+                        final startText = DateFormat.jm().format(event.startTime);
+                        final endText = DateFormat.jm().format(event.endTime);
                         return Container(
                           margin: const EdgeInsets.only(bottom: 12),
                           padding: const EdgeInsets.all(14),
@@ -112,7 +112,7 @@ class CalendarSchedulePanel extends ConsumerWidget {
                                           const SizedBox(width: 12),
                                           Icon(Icons.cloud_done_outlined, size: 12, color: palette.success),
                                           const SizedBox(width: 4),
-                                          Text('Cloud Synced', style: TextStyle(color: palette.success, fontSize: 11)),
+                                          Text(context.l10n.calendarCloudSynced, style: TextStyle(color: palette.success, fontSize: 11)),
                                         ],
                                       ],
                                     ),
@@ -127,8 +127,8 @@ class CalendarSchedulePanel extends ConsumerWidget {
                                     context: context,
                                     builder: (context) => AlertDialog(
                                       backgroundColor: palette.surface,
-                                      title: const Text('Delete Event'),
-                                      content: Text("Are you sure you want to delete '${event.title}'?"),
+                                      title: Text(context.l10n.calendarDeleteEventTitle),
+                                      content: Text(context.l10n.calendarDeleteEventConfirm(event.title)),
                                       actions: [
                                         TextButton(
                                           onPressed: () => Navigator.pop(context, false),
@@ -137,7 +137,7 @@ class CalendarSchedulePanel extends ConsumerWidget {
                                         ElevatedButton(
                                           onPressed: () => Navigator.pop(context, true),
                                           style: ElevatedButton.styleFrom(backgroundColor: palette.danger),
-                                          child: const Text('Delete'),
+                                          child: Text(context.l10n.commonDelete),
                                         ),
                                       ],
                                     ),
@@ -146,7 +146,7 @@ class CalendarSchedulePanel extends ConsumerWidget {
                                     await vm.deleteEvent(event.id);
                                     if (context.mounted) {
                                       ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(content: Text('Event deleted successfully.')),
+                                        SnackBar(content: Text(context.l10n.calendarEventDeleted)),
                                       );
                                     }
                                   }

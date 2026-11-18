@@ -1,5 +1,6 @@
 // SaaS P1-F2 Task 4: accepting an invite and sharing chats with the team.
 
+import 'package:aura_client/core/platform/aura_platform.dart';
 import 'package:aura_client/core/routing/router.dart';
 import 'package:aura_client/core/workspaces/active_workspace.dart';
 import 'package:aura_client/features/chat/data/chat_connection_error.dart';
@@ -16,18 +17,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'workspace_fakes.dart';
 
-Future<bool> _never() async => false;
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
   test('signed in with a pending invite lands on /invite, not home', () async {
     expect(await resolveAppRedirect(isLoggedIn: true, onboarded: true, location: '/login',
-        prefersDesktopIde: _never, hasPendingInvite: true), '/invite');
+        desktop: false, hasPendingInvite: true), '/invite');
     expect(await resolveAppRedirect(isLoggedIn: true, onboarded: true, location: '/login',
-        prefersDesktopIde: _never), '/today');
+        desktop: false), landingRouteFor(desktop: false));
     expect(await resolveAppRedirect(isLoggedIn: false, onboarded: null, location: '/invite',
-        prefersDesktopIde: _never), '/login');
+        desktop: false), '/login');
   });
 
   testWidgets('a held token is used once and never written to disk', (tester) async {

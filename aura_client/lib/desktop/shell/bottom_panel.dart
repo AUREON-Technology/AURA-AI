@@ -15,6 +15,7 @@ import 'package:aura_client/desktop/events/ide_event.dart';
 import 'package:aura_client/desktop/events/ide_event_bus.dart';
 import 'package:aura_client/desktop/output/output_panel.dart';
 import 'package:aura_client/desktop/terminal/terminal_view.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// Index of the Terminal tab in [_BottomPanelState._tabController] -- must match the order the
 /// tabs are declared in below.
@@ -69,10 +70,14 @@ class _BottomPanelState extends ConsumerState<BottomPanel> with SingleTickerProv
             child: TabBar(
               controller: _tabController,
               tabs: [
-                const Tab(text: 'Terminal'),
-                const Tab(text: 'Output'),
-                Tab(text: problemsCount > 0 ? 'Problems ($problemsCount)' : 'Problems'),
-                const Tab(text: 'Debug Console'),
+                Tab(text: context.l10n.ideBottomTerminal),
+                Tab(text: context.l10n.ideBottomOutput),
+                Tab(
+                  text: problemsCount > 0
+                      ? context.l10n.ideBottomProblemsCount(problemsCount)
+                      : context.l10n.ideBottomProblems,
+                ),
+                Tab(text: context.l10n.ideBottomDebugConsole),
               ],
               labelColor: palette.textPrimary,
               unselectedLabelColor: palette.textSecondary,

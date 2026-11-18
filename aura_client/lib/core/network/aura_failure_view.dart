@@ -5,6 +5,7 @@
 /// failure, this knows which failure it is.
 library;
 
+import 'package:aura_client/l10n/l10n.dart';
 import 'package:flutter/material.dart';
 
 import '../design_system/aura_palette.dart';
@@ -97,7 +98,7 @@ class AuraFailureView extends StatelessWidget {
       tone: toneFor(failure.kind),
       title: failure.title,
       message: detail == null ? failure.message : '${failure.message}\n\n$detail',
-      actionLabel: showRetry ? 'Retry' : null,
+      actionLabel: showRetry ? context.l10n.retry : null,
       onAction: showRetry ? onRetry : null,
       secondaryActionLabel: onSecondaryAction == null ? null : secondaryActionLabel,
       onSecondaryAction: onSecondaryAction,
@@ -142,7 +143,7 @@ class AuraFailureView extends StatelessWidget {
                   visualDensity: VisualDensity.compact,
                   foregroundColor: palette.brandOnSurfaceText,
                 ),
-                child: const Text('Retry'),
+                child: Text(context.l10n.retry),
               ),
             ],
           ],

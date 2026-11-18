@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:aura_client/l10n/l10n.dart';
+
 import '../../tasks/data/task_repository.dart';
 import '../data/automation_repository.dart';
 
@@ -67,11 +69,11 @@ class GitHubViewModel extends Notifier<GitHubUiState> {
 
   Future<String?> fetchIssues({required String token, required String repoRaw}) async {
     if (token.trim().isEmpty) {
-      return 'Please provide both GitHub PAT and Repository Path.';
+      return currentL10n.automationsGithubMissingInput;
     }
     final repo = sanitizeGitHubRepoPath(repoRaw);
     if (repo == null) {
-      return "Repository Path must be in 'owner/repo' format (e.g., owner/AURA-AI).";
+      return currentL10n.automationsGithubRepoFormat;
     }
 
     state = state.copyWith(loading: true, issues: const []);
@@ -82,7 +84,7 @@ class GitHubViewModel extends Notifier<GitHubUiState> {
       return null;
     } catch (e) {
       state = state.copyWith(loading: false);
-      return 'GitHub fetch failed: $e';
+      return currentL10n.automationsGithubFetchFailed('$e');
     }
   }
 
@@ -97,7 +99,7 @@ class GitHubViewModel extends Notifier<GitHubUiState> {
     } catch (e) {
       final analyzing = Set<int>.from(state.analyzingIds)..remove(issue.number);
       state = state.copyWith(analyzingIds: analyzing);
-      return 'Issue analysis failed: $e';
+      return currentL10n.automationsGithubAnalysisFailed('$e');
     }
   }
 

@@ -12,6 +12,7 @@ root unless noted.
 | `seed-dev.sh` | Seed Loop B data on **`aura-dev` only** (refuses prod project) |
 | `backup.sh` / `restore.sh` | Backup cycle (invoked by backup service): encrypted, manifested, GFS-retained sets + verified offsite copy; restore verifies and decrypts a set first |
 | `backup-lib.sh` | Shared set primitives (age encryption, SHA-256 manifests, retention, offsite verify); sourced, not run |
+| `backup-fetch.sh` | Pull a set back from offsite: newest set across all `BACKUP_OFFSITE_TARGETS`, first copy that verifies keyless; prints its path for `restore.sh` / `restore-drill.sh` |
 | `backup-open.sh` | `--verify` a set without a key, or decrypt one (Qdrant/Redis recovery) |
 | `restore-drill.sh` | Throwaway-Postgres restore drill; records timing (RTO evidence) with `DRILL_RECORD` |
 | `tests/test_backup_crypto.sh` | Docker-free tests for `backup-lib.sh` (run in Backend CI) |

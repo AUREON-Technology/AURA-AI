@@ -22,11 +22,34 @@ class InMemoryStt:
 
     name = "in-memory-stt"
 
-    def __init__(self, transcripts: Mapping[bytes, str] | None = None, *, default: str = "hello") -> None:
+    def __init__(
+        self,
+        transcripts: Mapping[bytes, str] | None = None,
+        *,
+        default: str = "hello",
+        multilingual: bool = True,
+        detected_language: str | None = "en",
+    ) -> None:
         self._map = dict(transcripts or {})
         self._default = default
+        self._multilingual = multilingual
+        self._detected = detected_language
+        #: The ``language`` the most recent call received, so a test can see what the caller
+        #: passed through without wrapping the engine.
+        self.last_language: str | None = None
+
+    @property
+    def multilingual(self) -> bool:
+        return self._multilingual
+
+    async def transcribe_detect(
+        self, audio: bytes, *, language: str | None = None
+    ) -> tuple[str, str | None]:
+        text = await self.transcribe(audio, language=language)
+        return text, (language or self._detected)
 
     async def transcribe(self, audio: bytes, *, language: str | None = None) -> str:
+        self.last_language = language
         if audio in self._map:
             return self._map[audio]
         # Accept raw PCM by wrapping; callers normally send WAV.

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
 import '../health_view_model.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class HealthProgressBar extends StatelessWidget {
   final String title;
@@ -108,7 +109,7 @@ void showHealthLogDialog({
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('Cancel', style: TextStyle(color: palette.textSecondary)),
+            child: Text(context.l10n.cancel, style: TextStyle(color: palette.textSecondary)),
           ),
           ElevatedButton(
             onPressed: () {
@@ -116,7 +117,7 @@ void showHealthLogDialog({
               if (input.isNotEmpty) onSubmit(input);
               Navigator.pop(context);
             },
-            child: const Text('Save'),
+            child: Text(context.l10n.commonSave),
           ),
         ],
       );
