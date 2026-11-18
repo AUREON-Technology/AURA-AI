@@ -114,6 +114,7 @@ Future<void> pumpScreen(WidgetTester tester, Widget child, {String uid = 'own', 
     ...routes,
   ]);
   await tester.pumpWidget(ProviderScope(
+    key: UniqueKey(), // a fresh container per pump: tests vary the overrides
     overrides: [
       workspacesClientProvider.overrideWith((ref) {
         fake = FakeWorkspaces(ref);

@@ -32,7 +32,10 @@ import '../../features/settings/presentation/backend_environment_page.dart';
 import '../../features/settings/presentation/appearance_page.dart';
 import '../../features/settings/presentation/desktop_devices_page.dart';
 import '../../features/settings/presentation/settings_page.dart';
+import '../../features/workspaces/presentation/invite_accept_page.dart';
+import '../../features/workspaces/presentation/pending_invite.dart';
 import '../../features/workspaces/presentation/plan_page.dart';
+import '../../features/workspaces/presentation/shared_chats_page.dart';
 import '../../features/workspaces/presentation/team_settings_page.dart';
 import '../../l10n/generated/app_localizations.dart';
 import '../../features/voice_live/presentation/live_voice_page.dart';
@@ -463,6 +466,7 @@ Future<String?> resolveAppRedirect({
   required bool? onboarded,
   required String location,
   required Future<bool> Function() prefersDesktopIde,
+  bool hasPendingInvite = false,
 }) async {
   final isLoggingIn = location == '/login';
   final isOnboarding = location == '/onboarding';
@@ -472,7 +476,9 @@ Future<String?> resolveAppRedirect({
 
   if (!isLoggedIn && !isLoggingIn) return '/login';
   if (isLoggedIn && isLoggingIn) {
-    return onboarded == false ? '/onboarding' : landing();
+    if (onboarded == false) return '/onboarding';
+    // An invite link opened while signed out picks up where it left off (SaaS P1-F2).
+    return hasPendingInvite ? '/invite' : landing();
   }
   if (isLoggedIn && onboarded == false && !isOnboarding) {
     return '/onboarding';
@@ -490,8 +496,15 @@ final routerProvider = Provider<GoRouter>((ref) {
     initialLocation: '/today',
     refreshListenable: notifier,
     redirect: (context, state) async {
+      final isLoggedIn = ref.read(authProvider).value != null;
+      final inviteToken = state.uri.queryParameters['token'];
+      if (!isLoggedIn && state.matchedLocation == '/invite' && inviteToken != null && inviteToken.isNotEmpty) {
+        // Held in memory only, never in the URL we redirect to or on disk.
+        ref.read(pendingInviteProvider.notifier).hold(inviteToken);
+      }
       return resolveAppRedirect(
-        isLoggedIn: ref.read(authProvider).value != null,
+        isLoggedIn: isLoggedIn,
+        hasPendingInvite: ref.read(pendingInviteProvider) != null,
         onboarded: ref.read(onboardingGateProvider),
         location: state.matchedLocation,
         prefersDesktopIde: _prefersDesktopIde,
@@ -548,6 +561,12 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (context, state) => const SettingsPage(),
           ),
           GoRoute(path: '/plan', builder: (context, state) => const PlanPage()),
+          GoRoute(path: '/invite', builder: (context, state) => InviteAcceptPage(token: state.uri.queryParameters['token'])),
+          GoRoute(path: '/team-chats', builder: (context, state) => const SharedChatsPage()),
+          GoRoute(
+            path: '/team-chats/:sid',
+            builder: (context, state) => SharedChatView(sharedId: state.pathParameters['sid']!),
+          ),
           GoRoute(
             path: '/workspaces/:id',
             builder: (context, state) => TeamSettingsPage(workspaceId: state.pathParameters['id']!),

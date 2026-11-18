@@ -46,6 +46,7 @@ class SettingsPage extends ConsumerWidget {
                 child: Column(
                   children: [
                     const WorkspaceTile(),
+                    const TeamChatsTile(),
                     const _RowDivider(),
                     AuraListTile(
                       key: const Key('plan-tile'),
