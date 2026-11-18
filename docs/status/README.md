@@ -14,6 +14,8 @@ corrected in the same change.
 | Mobile app (`aura_client` Android/iOS) | [MOBILE_APP_STATUS.md](MOBILE_APP_STATUS.md) | 2026-11-14 release pass: account deletion, backup-key, guard and live-voice fixes, 673 tests green locally, not CI-run; iOS still blocked on owner items (Google client id, team id, Sign in with Apple, privacy policy) |
 | Web console (`aura_admin/`) | [WEB_CONSOLE_STATUS.md](WEB_CONSOLE_STATUS.md) | Built and wired into both stacks; not served anywhere reachable; **Admin CI green once** (run #3, dispatched 2026-11-07: typecheck, build, Playwright e2e) |
 
+**Launch (SaaS phase 1):** [`docs/deployment/launch-readiness.md`](../deployment/launch-readiness.md) maps each of the ten readiness-floor items (spec §6.1) to its evidence, its state on 2026-11-18, and who acts next.
+
 ## The evidence scale
 
 The repository's standing rule is that "built" and "tested" are not "proven". Every status line

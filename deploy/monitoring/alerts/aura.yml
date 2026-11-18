@@ -334,3 +334,85 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: "Dependency {{ $labels.dependency }} is failing its health probe"
+
+  # SaaS P1-H (spec 6.1 item 5): payments and email. Every rule is conjoined with
+  # aura_billing_enabled == 1, so a deployment with billing off never pages for it. The cycle runs
+  # in a cron process; its numbers reach the gateway through the heartbeat it leaves in the cache.
+  - name: aura-billing
+    rules:
+      - alert: AuraBillingCycleStale
+        expr: |
+          (time() - max(aura_billing_cycle_last_run_timestamp_seconds) > 10800)
+          and on() max(aura_billing_enabled) == 1
+        for: 15m
+        labels: {severity: critical}
+        annotations:
+          summary: "The billing cycle has not run for over 3 hours (or never has)"
+          description: >
+            Renewals, past-due -> grace -> Free, and reconciliation of lost Fawry notifications all
+            stop. Check the Railway cron service running scripts/run_billing_cycle.py (schedule,
+            last exit code, its logs) and that it shares the gateway's Redis.
+
+      - alert: AuraBillingCycleErrors
+        expr: |
+          max(aura_billing_cycle_last_errors) > 0
+          and on() max(aura_billing_enabled) == 1
+        for: 2h
+        labels: {severity: warning}
+        annotations:
+          summary: "The billing cycle keeps failing to process some payments or renewals"
+          description: >
+            Two hours of cycles each left work undone. Read the cron service's log for
+            "could not be applied" or "status could not be read" (Fawry's API, or a payment stuck
+            in received).
+
+      - alert: AuraBillingNotificationsRejected
+        expr: |
+          sum(increase(aura_billing_notifications_total{result=~"invalid_signature|malformed|too_large"}[1h])) > 3
+          and on() max(aura_billing_enabled) == 1
+        for: 0m
+        labels: {severity: warning}
+        annotations:
+          summary: "Payment notifications are being rejected"
+          description: >
+            More than three notifications in an hour failed their signature or shape check: a
+            forgery attempt, or a key that no longer matches (Fawry secure key, Apple bundle id,
+            Google push audience). Real payments in that window are reconciled by the cycle for
+            Fawry only; store events are retried by the store.
+
+      - alert: AuraBillingNotifyErrors
+        expr: |
+          sum(increase(aura_billing_notifications_total{result="error"}[15m])) > 0
+          and on() max(aura_billing_enabled) == 1
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "A payment notification crashed the gateway (HTTP 500)"
+          description: >
+            A bug, not a bad request: the provider will retry, but a paying customer may not get
+            their plan. Search the gateway log for the traceback on /api/v3/billing/*/notify.
+
+      - alert: AuraStoreApiUnavailable
+        expr: |
+          sum(increase(aura_billing_notifications_total{result="store_unavailable"}[30m])) > 0
+          and on() max(aura_billing_enabled) == 1
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Google Play's API has not answered for 30 minutes"
+          description: >
+            Play notifications are answered 503 so Pub/Sub redelivers them; nothing is lost yet,
+            but purchases are not activating. Check the Play service account and Google's status.
+
+      - alert: AuraEmailFailing
+        expr: |
+          (sum(increase(aura_email_sends_total{result="failed"}[1h]) or vector(0))
+            + (max(aura_billing_cycle_last_email_failures) or vector(0))) > 3
+          and on() max(aura_billing_enabled) == 1
+        for: 0m
+        labels: {severity: warning}
+        annotations:
+          summary: "Transactional email is failing"
+          description: >
+            Invites, receipts, renewal references or past-due notices are not reaching people.
+            Check the SMTP settings in docs/deployment/email.md and the audit log's email.failed.

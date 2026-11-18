@@ -37,6 +37,8 @@ class World:
         self.answer_provider = "hfspace"
         self.answer_wrong_code = False
         self.load_failures = 0
+        self.load_status = 503
+        self.delete_status = 200
         self.code: str | None = None
         self.deleted: list[str] = []
         self.chats = 0
@@ -103,7 +105,7 @@ def _handler(world: World):
                     if failing:
                         world.load_failures -= 1
                 if failing:
-                    return self._send(503, {"error": "all_providers_failed"})
+                    return self._send(world.load_status, {"error": "refused"})
                 if body.get("use_knowledge"):
                     code = "000000" if world.answer_wrong_code else world.code
                     return self._send(200, {"message": f"The code is {code}.", "provider": world.answer_provider})
@@ -113,7 +115,7 @@ def _handler(world: World):
         def do_DELETE(self) -> None:  # noqa: N802
             if self.path.startswith("/api/v3/knowledge/documents/"):
                 world.deleted.append(self.path.rsplit("/", 1)[-1])
-                return self._send(200, {"deleted": True})
+                return self._send(world.delete_status, {"deleted": world.delete_status == 200})
             self._send(404, {})
 
     return Handler
@@ -220,3 +222,28 @@ def test_missing_credentials_are_skip_not_pass(world, monkeypatch) -> None:
     assert failed == 0
     assert "SKIP   2." in report and "SKIP   5." in report
     assert "NOT PROVEN" in report
+
+
+def test_a_document_left_behind_fails_check_6(world) -> None:
+    """Review G#2: a failed cleanup leaves a test document in a real person's knowledge base."""
+    world.delete_status = 500
+    _, report = _run()
+    assert "FAIL   6." in report and "left behind: doc-1" in report
+
+
+def test_rate_limited_turns_are_named_as_such(world) -> None:
+    """Review G#3: a 429 under load is the chat limit, not the GPU; say which."""
+    world.load_failures = 3
+    world.load_status = 429
+    _, report = _run()
+    assert "FAIL   7." in report and "rate-limited" in report
+
+
+def test_p95_is_nearest_rank(world) -> None:
+    import importlib.util as iu
+
+    spec = iu.spec_from_file_location("verify_gpu_source", DRIVER)
+    module = iu.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.percentile_95([float(i) for i in range(1, 31)]) == 29.0   # ceil(28.5) = 29th value
+    assert module.percentile_95([float(i) for i in range(1, 11)]) == 10.0
