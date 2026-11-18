@@ -97,16 +97,67 @@ def test_notify_outcomes_are_counted_by_source_and_result(client, container, ena
         assert f'aura_billing_notifications_total{{result="{result}",source="fawry"}} 1.0' in text, result
 
 
-def test_a_cache_outage_never_changes_the_notify_answer(client, container, enabled, monkeypatch) -> None:
+def test_a_metrics_failure_never_changes_the_notify_answer(client, container, enabled, monkeypatch) -> None:
+    """Review H: the counter is in-process, so the failure to rule out is the metric itself raising."""
     note = _paid_note(client, enabled)
 
-    async def broken(*args, **kwargs):
-        raise ConnectionError("redis down")
+    def broken(**labels):
+        raise RuntimeError("metrics broken")
 
-    monkeypatch.setattr(container.cache_backend, "set", broken)
-    monkeypatch.setattr(container.cache_backend, "incr", broken)
+    monkeypatch.setattr(container.metrics.billing_notifications_total, "labels", broken)
     answer = client.post("/api/v3/billing/fawry/notify", content=note)
     assert answer.status_code == 200 and answer.json()["result"] == "applied"
+
+
+def test_alerting_series_exist_at_zero_before_the_first_event(container, enabled) -> None:
+    """Review H#1: increase() cannot see a series' first sample, so the series an alert watches
+    must already exist at 0 -- or the first crash on a customer's payment would never page."""
+    text = _rendered(container)
+    for source in ("fawry", "apple", "google"):
+        for result in ("error", "invalid_signature", "malformed", "too_large", "store_unavailable"):
+            assert f'aura_billing_notifications_total{{result="{result}",source="{source}"}} 0.0' in text
+
+
+def test_a_cache_outage_at_scrape_keeps_billing_marked_enabled(container, enabled, monkeypatch) -> None:
+    """Review H#2: a Redis blip must not set billing_enabled to 0, which would silence every rule."""
+    async def broken(key):
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr(container.cache_backend, "get", broken)
+    asyncio.run(refresh_scrape_gauges(container))
+    assert "aura_billing_enabled 1.0" in _rendered(container)
+
+
+def test_a_cycle_that_raises_still_reports_an_error_and_releases_the_lock(container, enabled, monkeypatch) -> None:
+    """Review H#4: an aborted cycle is counted, so AuraBillingCycleErrors can see it."""
+    async def poison(*args, **kwargs):
+        raise RuntimeError("poison")
+
+    monkeypatch.setattr(enabled.subscriptions, "due", poison)
+
+    async def scenario():
+        with pytest.raises(RuntimeError):
+            await enabled.run_cycle()
+        beat = json.loads(await container.cache_backend.get(BILLING_HEARTBEAT_KEY))
+        assert beat["errors"] >= 1
+        monkeypatch.undo()
+        assert not (await enabled.run_cycle()).get("skipped"), "the cycle lock was not released"
+
+    asyncio.run(scenario())
+
+
+def test_a_client_disconnect_is_not_a_crash(client, container, enabled, monkeypatch) -> None:
+    """Review H#5: a provider hanging up mid-body must not page as 'crashed the gateway'."""
+    from starlette.requests import ClientDisconnect
+
+    async def gone(body):
+        raise ClientDisconnect()
+
+    monkeypatch.setattr(enabled, "handle_notification", gone)
+    client.post("/api/v3/billing/fawry/notify", content=b"{}")
+    text = _rendered(container)
+    assert 'aura_billing_notifications_total{result="error",source="fawry"} 0.0' in text
+    assert 'aura_billing_notifications_total{result="client_disconnect",source="fawry"} 1.0' in text
 
 
 def test_an_unexpected_error_is_counted_and_still_raises(client, container, enabled, monkeypatch) -> None:

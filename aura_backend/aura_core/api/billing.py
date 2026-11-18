@@ -83,8 +83,9 @@ def register_billing_ops(
                 except AuraError:
                     _count(source, "refused")
                     raise
-                except Exception:
-                    _count(source, "error")
+                except Exception as exc:
+                    # A provider hanging up mid-body is not a crash of ours (review H#5).
+                    _count(source, "client_disconnect" if type(exc).__name__ == "ClientDisconnect" else "error")
                     raise
                 result = _BY_STATUS.get(response.status_code, "other")
                 if response.status_code == 200:

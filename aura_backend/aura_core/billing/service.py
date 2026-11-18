@@ -299,6 +299,12 @@ class BillingService:
         failures_before = getattr(self.notifier, "failures", 0)
         try:
             await self._run_cycle(counts)
+        except Exception:
+            # An aborted cycle is still a cycle that ran with an error: the heartbeat says so, so
+            # AuraBillingCycleErrors sees it rather than only a stale cycle hours later (review H#4).
+            counts["errors"] += 1
+            await self._beat(counts, getattr(self.notifier, "failures", 0) - failures_before)
+            raise
         finally:
             await cycle_lock.release()
         await self._beat(counts, getattr(self.notifier, "failures", 0) - failures_before)
@@ -344,6 +350,11 @@ class BillingService:
             lock = await self.locks.lock_workspace(payment.workspace_id)
             try:
                 outcome = await self._settle(payment.id, answer.status, answer.amount_piastres, answer.provider_ref, None)
+            except Exception:
+                # One payment that cannot be settled must not stop the rest of the cycle (review H#4).
+                counts["errors"] += 1
+                logger.warning("pending payment could not be settled", exc_info=True, extra={"payment_id": payment.id})
+                continue
             finally:
                 await lock.release()
             if outcome == "applied":

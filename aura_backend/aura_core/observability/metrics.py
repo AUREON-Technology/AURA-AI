@@ -209,26 +209,37 @@ class Metrics:
             "Payment notifications by source (fawry/apple/google) and outcome.",
             ("source", "result"),
         )
+        # increase() cannot see a series' first sample, so every series an alert watches exists
+        # at 0 from the start; otherwise the first crash on a customer's payment would not page.
+        if self.enabled:
+            for source in ("fawry", "apple", "google"):
+                for result in ("error", "invalid_signature", "malformed", "too_large", "store_unavailable"):
+                    self.billing_notifications_total.labels(source=source, result=result)
         self.email_sends_total = self._counter(
             "email_sends_total", "Transactional emails by kind and outcome (ok/failed).", ("tag", "result")
         )
+        if self.enabled:
+            for tag in ("invite", "receipt", "renewal_due", "past_due"):
+                self.email_sends_total.labels(tag=tag, result="failed")
         # The cycle runs in a cron process nobody scrapes: these are read from its heartbeat in the
         # shared cache at scrape time (refresh_scrape_gauges), like the outbox gauges below.
+        # "livemostrecent": each uvicorn worker sets them only when it serves a scrape, so the
+        # newest write is the true reading; max would pin an error count after it went down.
         self.billing_enabled = self._gauge(
-            "billing_enabled", "1 when AURA_BILLING_ENABLED is on.", multiprocess_mode="livemax"
+            "billing_enabled", "1 when AURA_BILLING_ENABLED is on.", multiprocess_mode="livemostrecent"
         )
         self.billing_cycle_last_run = self._gauge(
             "billing_cycle_last_run_timestamp_seconds",
             "Unix time the billing cycle last ran to completion; 0 when it never has.",
-            multiprocess_mode="livemax",
+            multiprocess_mode="livemostrecent",
         )
         self.billing_cycle_last_errors = self._gauge(
             "billing_cycle_last_errors", "Payments or renewals the last cycle could not process.",
-            multiprocess_mode="livemax",
+            multiprocess_mode="livemostrecent",
         )
         self.billing_cycle_last_email_failures = self._gauge(
             "billing_cycle_last_email_failures", "Emails the last cycle could not send.",
-            multiprocess_mode="livemax",
+            multiprocess_mode="livemostrecent",
         )
         # Read from the outbox at scrape time, not pushed by the drain worker: the worker is a
         # different process (often a different host) from the one Prometheus scrapes.

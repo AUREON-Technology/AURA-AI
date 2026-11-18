@@ -238,6 +238,7 @@ def test_billing_alerts_exist_reference_catalogue_metrics_and_respect_the_switch
         assert not missing, (name, missing)
     # Billing on but the cycle never ran: the timestamp is 0 and that must fire, so no "> 0 and"
     # guard of the kind AuraBackupStale has (a backup never configured is its own alert there).
-    assert "> 0" not in by_name["AuraBillingCycleStale"]["expr"].split("time()")[0]
+    assert not re.search(r">\s*0\s+and", by_name["AuraBillingCycleStale"]["expr"])
+    assert "time() - max(aura_billing_cycle_last_run_timestamp_seconds) > 10800" in by_name["AuraBillingCycleStale"]["expr"]
     names = [r["alert"] for g in rules["groups"] for r in g["rules"]]
     assert len(names) == len(set(names)), "alert names must be unique"

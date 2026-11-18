@@ -2363,21 +2363,30 @@ async def refresh_scrape_gauges(container: Any) -> None:
 async def _refresh_billing_gauges(container: Any) -> None:
     """The billing cycle's heartbeat, left in the shared cache by the cron process (SaaS P1-H).
     No heartbeat reads as 0, never as healthy: with billing on, "never ran" must alert."""
-    try:
-        from ..billing.service import BILLING_HEARTBEAT_KEY
+    from ..billing.service import BILLING_HEARTBEAT_KEY
 
-        enabled = bool(container.settings.billing.enabled)
-        beat: dict[str, Any] = {}
-        if enabled:
-            raw = await asyncio.wait_for(container.cache_backend.get(BILLING_HEARTBEAT_KEY),
-                                         timeout=SCRAPE_REFRESH_TIMEOUT_S)
-            beat = json.loads(raw) if raw else {}
+    enabled = bool(container.settings.billing.enabled)
+    try:
+        # The switch first: a cache outage must not read as "billing off", which would silence
+        # every billing rule at once (review H#2).
+        container.metrics.billing_enabled.set(1 if enabled else 0)
+        if not enabled:
+            container.metrics.set_billing(enabled=False, last_run=0, errors=0, email_failures=0)
+            return
+        raw = await asyncio.wait_for(container.cache_backend.get(BILLING_HEARTBEAT_KEY),
+                                     timeout=SCRAPE_REFRESH_TIMEOUT_S)
+    except Exception:
+        # The other gauges keep their last reading; a long outage then shows as a stale cycle.
+        logger.warning("billing heartbeat could not be read", exc_info=True)
+        return
+    try:
+        beat = json.loads(raw) if raw else {}
         container.metrics.set_billing(
-            enabled=enabled, last_run=float(beat.get("at") or 0), errors=int(beat.get("errors") or 0),
+            enabled=True, last_run=float(beat.get("at") or 0), errors=int(beat.get("errors") or 0),
             email_failures=int(beat.get("email_failures") or 0),
         )
     except Exception:
-        logger.debug("billing gauge refresh failed", exc_info=True)
+        logger.warning("billing heartbeat unreadable", exc_info=True)
 
 
 def _strip_data_url(value: str) -> str:
