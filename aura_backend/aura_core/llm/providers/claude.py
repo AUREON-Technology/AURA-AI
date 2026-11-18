@@ -200,6 +200,7 @@ class ClaudeProvider(BaseProvider):
                     f"{self.name}: the 'anthropic' package is required for kind=claude",
                     provider=self.name,
                     retryable=False,
+                    details={"operation": "configure"},
                 ) from exc
             options: dict[str, Any] = {}
             if self._http_client is not None:
