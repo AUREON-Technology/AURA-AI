@@ -68,6 +68,7 @@ from ..domain.llm import (
     TokenUsage,
     WorkloadHint,
 )
+from ..observability.tracing import record_span
 from ..ports.llm import LLMProvider
 from .admission import AdmissionController, AdmissionTicket, PoolLimits
 from .circuit import CircuitBreaker, CircuitState, LatencyTracker, ProviderStats
@@ -613,6 +614,24 @@ class ProviderRouter:
         )
 
     def _observe_timing(self, timing: GenerationTiming) -> None:
+        # One span per provider attempt (Phase R2). GenerationTiming carries no prompt or
+        # response content, so neither does the span.
+        record_span(
+            "llm.generate",
+            duration_ms=timing.total_ms,
+            attributes={
+                "aura.llm.provider": timing.provider,
+                "aura.llm.model": timing.model,
+                "aura.llm.pool": timing.pool,
+                "aura.llm.outcome": timing.outcome,
+                "aura.llm.streamed": timing.streamed,
+                "aura.llm.queue_wait_ms": round(timing.queue_wait_ms, 1),
+                "aura.llm.ttft_ms": None if timing.ttft_ms is None else round(timing.ttft_ms, 1),
+                "aura.llm.prompt_tokens": timing.prompt_tokens,
+                "aura.llm.completion_tokens": timing.completion_tokens,
+            },
+            error=timing.outcome not in ("success", "rate_limited", "cancelled"),
+        )
         if self._metrics is None:
             return
         observe = getattr(self._metrics, "observe_generation", None)

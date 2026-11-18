@@ -73,7 +73,7 @@ from .memory.session import EpisodicMemory, build_session_summariser
 from .observability.logging import configure_logging, get_logger
 from .observability.metrics import get_metrics
 from .rag import StrategyFacade, build_strategies
-from .observability.tracing import get_tracer
+from .observability.tracing import Tracer, install_tracer
 from .planning.engine import PlanningEngine
 from .ports.runtime import Closeable
 from .prompts import PIN_SYNC_INTERVAL_S, build_default_registry
@@ -110,9 +110,13 @@ class Container:
 
         configure_logging(level=obs.log_level, fmt=obs.log_format, service=obs.service_name)
         self.metrics = get_metrics(enabled=obs.metrics_enabled)
-        self.tracer = get_tracer(service_name=obs.service_name, enabled=obs.tracing_enabled)
+        # Installed, not fetched: get_tracer() keeps whichever tracer was created first, so a
+        # module that touched it before this point would leave tracing off whatever the setting.
+        self.tracer = Tracer(service_name=obs.service_name, enabled=obs.tracing_enabled)
         if obs.tracing_enabled and obs.otlp_endpoint:
-            self.tracer.configure_exporter(obs.otlp_endpoint)
+            if not self.tracer.configure_exporter(obs.otlp_endpoint):
+                logger.warning("tracing is enabled but the OTLP exporter could not be configured")
+        install_tracer(self.tracer)
 
         # Publish which security bypasses are active, so `aura_insecure_mode != 0` is a one-line
         # alert rule. SEC-05 was invisible partly because nothing reported it.

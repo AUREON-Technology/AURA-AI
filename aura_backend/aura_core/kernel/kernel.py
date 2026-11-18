@@ -85,6 +85,7 @@ from ..llm.router import TurnBudget
 from ..llm.sensitivity import DataScope, data_scope, escalate
 from ..llm.workload import effective_workload, workload_for_turn, workload_scope
 from ..observability.logging import LogContext, get_logger
+from ..observability.tracing import record_span
 from ..ports.runtime import ToolContext
 from ..prompts.library import AGENT_PROMPT_IDS
 from ..agents.registry import AgentRegistry, AgentSpec
@@ -323,6 +324,47 @@ def _stream_error_outcome(exc: AuraError) -> TurnOutcome:
     if isinstance(exc, BudgetExceededError):
         return TurnOutcome.BUDGET_EXCEEDED
     return TurnOutcome.ERROR
+
+
+def _trace_turn(telemetry: TurnTelemetry) -> None:
+    """One ``aura.turn`` span per finished turn (Phase R2), built from its telemetry record.
+
+    Bounded labels, durations and counts only. No session, user or conversation id, no prompt
+    or answer text: spans leave for a third-party collector, and the per-user detail stays in
+    AURA's own telemetry store. The stage durations are attributes rather than child spans:
+    the kernel measures them as values, not as nested blocks.
+    """
+    t = telemetry.timings
+    record_span(
+        "aura.turn",
+        duration_ms=telemetry.total_ms,
+        attributes={
+            "aura.route": telemetry.route,
+            "aura.agent": telemetry.agent,
+            "aura.strategy": telemetry.strategy,
+            "aura.outcome": str(telemetry.outcome),
+            "aura.error_kind": telemetry.error_kind,
+            "aura.provider": telemetry.provider,
+            "aura.model": telemetry.model,
+            "aura.fallback_count": telemetry.fallback_count,
+            "aura.prompt_tokens": telemetry.prompt_tokens,
+            "aura.completion_tokens": telemetry.completion_tokens,
+            "aura.ttft_ms": None if telemetry.ttft_ms is None else round(telemetry.ttft_ms, 1),
+            "aura.degraded": telemetry.degraded,
+            "aura.tainted": telemetry.tainted,
+            "aura.retrieval.strategy": telemetry.retrieval.strategy,
+            "aura.retrieval.returned": telemetry.retrieval.returned,
+            **{f"aura.stage.{name}_ms": round(getattr(t, name), 1) for name in _TRACED_STAGES},
+        },
+        error=telemetry.error_kind is not None,
+    )
+
+
+#: The `StageTiming` fields a turn span reports.
+_TRACED_STAGES = (
+    "guards_in", "memory", "retrieval", "context", "planning", "reasoning", "tools",
+    "generation", "guards_out",
+)
 
 
 def _vision_step_outcome(perception: Any) -> dict[str, str]:
@@ -2360,6 +2402,7 @@ class AIKernel:
         )
 
     async def _record(self, telemetry: TurnTelemetry) -> None:
+        _trace_turn(telemetry)
         if self._metrics is not None:
             try:
                 self._metrics.observe_turn(telemetry)
