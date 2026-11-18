@@ -9,6 +9,7 @@ import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/network/aura_api_client.dart';
 import 'package:aura_client/core/network/aura_api_error.dart';
 import 'package:aura_client/core/security/device_validation_service.dart';
+import 'package:aura_client/core/workspaces/active_workspace.dart';
 import 'package:aura_client/features/chat/data/agents_repository.dart';
 import 'package:aura_client/features/chat/presentation/widgets/persona_picker.dart';
 import 'package:aura_client/l10n/generated/app_localizations.dart';
@@ -18,6 +19,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 final _l10n = AppLocalizationsEn();
 
@@ -77,6 +79,36 @@ void main() {
     addTearDown(container.dispose);
     return container;
   }
+
+  // A team member whose own workspace is on Free: the Engineer is locked there, and /agents names
+  // the team whose plan includes it. Switching to that team refetches and unlocks it.
+  test('names the workspaces with the Engineer, and refetches when the active one changes',
+      () async {
+    const team = {'id': 'ws_team_1', 'kind': 'team', 'name': 'Acme', 'role': 'member'};
+    http.Response lockedHere() {
+      final body = jsonDecode(_list(engineerUsable: false).body) as Map<String, dynamic>;
+      body['engineer_workspaces'] = [team];
+      return http.Response(jsonEncode(body), 200);
+    }
+
+    final agents = _Agents([lockedHere, () => _list(engineerUsable: true)]);
+    final container = containerFor(agents);
+    final sub = container.listen(agentsProvider, (_, _) {});
+    addTearDown(sub.close);
+    // The choice is saved to SharedPreferences, which outlives this test: put personal back.
+    addTearDown(() => SharedPreferences.setMockInitialValues({}));
+
+    final first = await container.read(agentsProvider.future);
+    expect(first.singleWhere((a) => a.id == 'engineer').usable, isFalse);
+    final elsewhere = container.read(engineerWorkspacesProvider);
+    expect(elsewhere.map((w) => (w.id, w.name, w.isTeam)), [('ws_team_1', 'Acme', true)]);
+
+    await container.read(activeWorkspaceProvider.notifier).select(elsewhere.single);
+    final second = await container.read(agentsProvider.future);
+    expect(agents.calls, 2);
+    expect(second.singleWhere((a) => a.id == 'engineer').usable, isTrue);
+    expect(container.read(engineerWorkspacesProvider), isEmpty);
+  });
 
   test('coming back to the app refetches, so a newly granted Engineer unlocks', () async {
     final agents = _Agents([() => _list(engineerUsable: false), () => _list(engineerUsable: true)]);

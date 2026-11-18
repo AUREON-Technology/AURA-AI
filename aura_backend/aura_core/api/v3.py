@@ -1631,6 +1631,19 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         caps = frozenset(granted(caller))
         if "engineer_agent" not in caps and await engineer_granted(caller):
             caps = caps | {"engineer_agent"}  # a customer's Engineer comes from their plan (WP11)
+        # Not here, but in another of the caller's workspaces: name them, so the app can offer to
+        # switch (a turn uses the active workspace; sign-in and pairing accept any of them).
+        engineer_elsewhere: list[dict[str, Any]] = []
+        if ("engineer_agent" not in caps and plans is not None
+                and container.settings.security.engineer_for_customers):
+            try:
+                engineer_elsewhere = [
+                    {"id": ws.id, "kind": ws.kind.value, "name": ws.name, "role": m.role.value}
+                    for ws, m in await plans.engineer_workspaces(caller.user_id.value)
+                ]
+            except Exception:
+                # A pointer, not a gate: the list still loads without it.
+                logger.warning("could not list the caller's Engineer workspaces", exc_info=True)
         # D-03: whether this caller must agree to the Anthropic notice before the persona runs,
         # so a client can show the notice before the first send instead of after a refusal.
         consent_current = await _engineer_consent_current(caller)
@@ -1663,7 +1676,8 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                         ),
                     }
                     for spec in container.agents
-                ]
+                ],
+                "engineer_workspaces": engineer_elsewhere,
             }
         )
 

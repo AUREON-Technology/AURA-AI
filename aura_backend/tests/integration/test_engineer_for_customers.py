@@ -223,3 +223,68 @@ async def test_a_plan_lookup_failure_is_503_not_a_refusal(container, switch, mon
     monkeypatch.setattr(container.plans, "entitlement", broken)
     response = _get(container, "ned", "/api/v3/host/folders")
     assert response.status_code == 503, response.text
+
+
+# --- The active workspace decides a turn; tell a team member where their Engineer is ---
+# Sign-in and pairing accept any workspace with the Engineer, but a turn (and /agents) uses the
+# active one. A team member whose Free personal workspace is active would otherwise see the
+# Engineer locked with no pointer to the team that has it.
+
+
+async def _team_member(container, owner: str, member: str, name: str = "Acme") -> str:
+    team = await container.tenancy.create_team(owner, name)
+    await container.plans.set_plan("sa", team.id, "team", 3)
+    _invite, token = await container.tenancy.invite(owner, team.id, f"{member}@example.com", WorkspaceRole.MEMBER)
+    await container.tenancy.accept(member, token)
+    return team.id
+
+
+def _workspace_aware_app(container):
+    """Like ``_customer_app``, but resolves ``X-Aura-Workspace`` the way the gateway's own
+    authenticator does (``aura_service._build_authenticator``): membership checked, then the
+    caller carries that workspace."""
+    from aura_core.domain.tenancy import WorkspaceContext
+
+    async def authenticator(request):
+        caller = Principal(user_id=UserId(request.headers["authorization"][7:]), email="", role="User",
+                           capabilities=(), email_verified=True)
+        requested = (request.headers.get("X-Aura-Workspace") or "").strip()
+        if requested:
+            workspace, membership = await container.tenancy.resolve(str(caller.user_id), requested)
+            caller.workspace = WorkspaceContext(
+                workspace_id=workspace.id, kind=workspace.kind, role=membership.role)
+        return caller
+
+    return build_app(container, authenticator=authenticator)
+
+
+def _get_in(container, user: str, path: str, workspace: str | None = None):
+    from fastapi.testclient import TestClient
+
+    headers = {"authorization": f"Bearer {user}"}
+    if workspace:
+        headers["X-Aura-Workspace"] = workspace
+    with TestClient(_workspace_aware_app(container)) as client:
+        return client.get(path, headers=headers)
+
+
+async def test_agents_names_the_workspaces_that_include_the_engineer(container, switch) -> None:
+    team_id = await _team_member(container, "own", "tam")
+    personal = _get_in(container, "tam", "/api/v3/agents")
+    assert _engineer_usable(personal) is False
+    assert personal.json()["engineer_workspaces"] == [
+        {"id": team_id, "kind": "team", "name": "Acme", "role": "member"},
+    ]
+    # With the team active the Engineer is usable, and there is nothing to point at.
+    in_team = _get_in(container, "tam", "/api/v3/agents", workspace=team_id)
+    assert _engineer_usable(in_team) is True
+    assert in_team.json().get("engineer_workspaces", []) == []
+
+
+async def test_no_pointer_without_an_entitled_workspace_or_with_customers_off(container, switch) -> None:
+    free = _get_in(container, "uma", "/api/v3/agents")
+    assert free.json().get("engineer_workspaces", []) == []
+    await _team_member(container, "own2", "vic", name="Beta")
+    switch(False)
+    off = _get_in(container, "vic", "/api/v3/agents")
+    assert off.json().get("engineer_workspaces", []) == []

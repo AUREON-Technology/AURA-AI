@@ -268,12 +268,13 @@ minutes over is a fail.
 3. They sign in on the desktop and pair.
    - **Expected:** both work. Sign-in and pairing look at **any** workspace on a plan that
      includes the Engineer.
-4. With their **personal** (Free) workspace still active, send an Engineer message.
-   - **Expected:** refused with the plan message. A turn uses the **active** workspace's plan.
-5. Switch the active workspace to the team and send it again.
-   - **Expected:** it runs.
-   - **Record:** whether the desktop app offers a way to switch workspace at all. If a team member
-     can pair but has no way on the desktop to make the team active, that is a finding.
+4. With their **personal** (Free) workspace still active, open the Engineer panel.
+   - **Expected:** it is locked. It reads *The Engineer is in another workspace*, names the
+     team, and offers **Switch to <team>**. A turn uses the active workspace's plan, while
+     sign-in and pairing accept any of them.
+5. Press **Switch to <team>**.
+   - **Expected:** the panel unlocks without a restart, and an Engineer message runs. It counts
+     against the team's messages, not the personal workspace's.
 6. Remove them from the team.
    - **Expected:** their daemon disconnects within about a minute, as in B3.
 

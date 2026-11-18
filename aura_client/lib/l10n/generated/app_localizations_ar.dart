@@ -1713,7 +1713,21 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get agentLockedMessage =>
-      'المهندس محتاج صلاحية engineer_agent. اطلبها من حد من المسؤولين؛ ولحد ما تتفعّل، الرسايل من هنا هيرد عليها المساعد العام بداله.';
+      'الـEngineer مش جزء من مساحة العمل دي. بييجي مع باقتي Pro وTeam، أو مشغّل السيرفر يقدر يدّيه لدورك. لحد كده، الرسايل من هنا هيرد عليها المساعد العام بدل منه.';
+
+  @override
+  String get agentLockedElsewhereTitle =>
+      'الـEngineer موجود في مساحة عمل تانية';
+
+  @override
+  String agentLockedElsewhereMessage(String workspace) {
+    return 'باقة مساحة العمل دي مفيهاش الـEngineer، لكن $workspace فيها. انقل لها عشان تستخدم الـEngineer هنا.';
+  }
+
+  @override
+  String agentLockedSwitchTo(String workspace) {
+    return 'انقل لـ$workspace';
+  }
 
   @override
   String get agentEmptyTitle => 'مفيش رسايل لسه';

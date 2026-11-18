@@ -3197,8 +3197,26 @@ abstract class AppLocalizations {
   /// IDE Agent panel: explanation when Engineer is locked
   ///
   /// In en, this message translates to:
-  /// **'Engineer needs the engineer_agent capability. Ask an operator to grant it; until then, messages from here would be answered by the general assistant instead.'**
+  /// **'The Engineer isn\'t part of this workspace. It comes with the Pro and Team plans, or an operator can grant it to your role. Until then, messages from here would be answered by the general assistant instead.'**
   String get agentLockedMessage;
+
+  /// Desktop Engineer panel: Engineer is locked in the active workspace but included in another of the person's workspaces
+  ///
+  /// In en, this message translates to:
+  /// **'The Engineer is in another workspace'**
+  String get agentLockedElsewhereTitle;
+
+  /// Desktop Engineer panel: names the workspace whose plan includes the Engineer
+  ///
+  /// In en, this message translates to:
+  /// **'This workspace\'s plan doesn\'t include the Engineer, but {workspace} does. Switch to it to use the Engineer here.'**
+  String agentLockedElsewhereMessage(String workspace);
+
+  /// Button: make this workspace the active one
+  ///
+  /// In en, this message translates to:
+  /// **'Switch to {workspace}'**
+  String agentLockedSwitchTo(String workspace);
 
   /// IDE Agent panel: empty conversation title
   ///
