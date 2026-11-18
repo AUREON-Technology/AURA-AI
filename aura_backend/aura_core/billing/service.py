@@ -34,6 +34,7 @@ from ..domain.billing import (
     advance,
     apply_payment,
     price_for,
+    proration_for,
 )
 from ..domain.errors import AuthorizationError, ConflictError, ValidationError
 from ..domain.tenancy import WorkspaceRole
@@ -79,7 +80,7 @@ class BillingService:
         if membership.role is not WorkspaceRole.OWNER:
             raise AuthorizationError("only the workspace owner can buy a plan")
         await self.plans.validate_plan(workspace_id, plan_id, seats)
-        amount = price_for(self.prices, plan_id, seats)
+        price = price_for(self.prices, plan_id, seats)
         if email and self.contacts is not None:
             await self.contacts.put(workspace_id, email, self.clock.now(), set_by=actor)
         lock = await self.locks.lock_workspace(workspace_id)
@@ -92,15 +93,20 @@ class BillingService:
                     SubscriptionStatus.ACTIVE, SubscriptionStatus.PAST_DUE, SubscriptionStatus.GRACE):
                 # The store would keep renewing too: cancel there first (D2 review #7).
                 raise ConflictError("cancel the subscription in the app store before paying here")
+            # The new plan applies as soon as this is paid, the month it buys after the current one:
+            # the rest of the current period at the higher price is owed now (F42).
+            proration = proration_for(self.prices, current, plan_id, seats, self.clock.now())
             await self._void_pending_renewals(workspace_id)
         finally:
             await lock.release()
-        payment = await self._issue(workspace_id, plan_id, seats, amount, "initial", email=email, card_token=None)
-        await self._audit("billing.checkout", actor, workspace_id, {"payment_id": payment.id, "plan": plan_id, "seats": seats})
+        payment = await self._issue(workspace_id, plan_id, seats, price + proration, "initial", email=email, card_token=None)
+        await self._audit("billing.checkout", actor, workspace_id,
+                          {"payment_id": payment.id, "plan": plan_id, "seats": seats, "proration_piastres": proration})
         return {
             "payment_id": payment.id,
             "reference_number": payment.reference_number,
             "amount_piastres": payment.amount_piastres,
+            "proration_piastres": proration,
             "expires_at": payment.expires_at.isoformat() if payment.expires_at else None,
         }
 
@@ -121,6 +127,21 @@ class BillingService:
         finally:
             await lock.release()
         await self._audit("billing.cancel", actor, workspace_id, {})
+
+    async def forget_card(self, workspace_id: str) -> None:
+        """The workspace's Owner is about to change: stop charging the saved card, which is the
+        outgoing Owner's (F41). Renewals fall back to a reference code until the new Owner pays
+        and saves a card of their own. Wired as ``TenancyService.owner_changing``; it runs before
+        the transfer, so a failure here stops the transfer rather than leaving the card charged."""
+        lock = await self.locks.lock_workspace(workspace_id)
+        try:
+            sub = await self.subscriptions.get(workspace_id)
+            if sub is None or sub.card_token is None:
+                return
+            await self.subscriptions.put(replace(sub, card_token=None, updated_at=self.clock.now()))
+        finally:
+            await lock.release()
+        await self._audit("billing.card_forgotten", "billing", workspace_id, {"reason": "owner_transfer"})
 
     async def status(self, workspace_id: str) -> dict:
         sub = await self.subscriptions.get(workspace_id)
@@ -209,11 +230,31 @@ class BillingService:
             logger.warning("payment notification for an unknown payment", extra={"payment_id": note.payment_id[:64]})
             await self._audit("billing.unknown_payment", "provider", "", {"payment_id": note.payment_id[:64]})
             return "ignored"
+        card_token = await self._confirmed_card(payment.workspace_id, note.card_token)
         lock = await self.locks.lock_workspace(payment.workspace_id)
         try:
-            return await self._settle(payment.id, note.status, note.amount_piastres, note.provider_ref, note.card_token)
+            return await self._settle(payment.id, note.status, note.amount_piastres, note.provider_ref, card_token)
         finally:
             await lock.release()
+
+    async def _confirmed_card(self, workspace_id: str, card_token: str | None) -> str | None:
+        """A card token is kept only if the provider vouches for it (F58). Fawry's notification
+        signature does not cover ``cardToken``, so its adapter offers ``confirm_card_token``: the
+        token must be one Fawry lists for this workspace's customer profile. A provider without
+        it signs the whole notification (the fake). Any doubt drops the token -- the payment still
+        applies, and renewals fall back to a reference code."""
+        if not card_token:
+            return None
+        confirm = getattr(self.provider, "confirm_card_token", None)
+        if confirm is None:
+            return card_token
+        try:
+            if await confirm(workspace_id, card_token):
+                return card_token
+        except Exception:
+            logger.warning("card token could not be confirmed", exc_info=True)
+        await self._audit("billing.card_unconfirmed", "provider", workspace_id, {})
+        return None
 
     async def _settle(self, payment_id: str, status: PaymentStatus, amount: int | None,
                       provider_ref: str | None, card_token: str | None) -> str:
@@ -259,18 +300,29 @@ class BillingService:
         if status is PaymentStatus.REFUNDED:
             refunded = await self.payments.mark(payment.id, PaymentStatus.REFUNDED, provider_ref=provider_ref,
                                                 paid_at=None, expected=(PaymentStatus.PAID, PaymentStatus.RECEIVED))
+            if refunded is None and payment.status is not PaymentStatus.REFUNDED:
+                return "duplicate"
+            # On a replay too (the mark is already there): a refund whose downgrade failed
+            # half-way is finished by the provider's retry, not left on the paid plan (F8).
+            await self._end_refunded(await self.subscriptions.get(payment.workspace_id), payment.id, now)
             if refunded is None:
                 return "duplicate"
-            sub = await self.subscriptions.get(payment.workspace_id)
-            if sub is not None and sub.last_payment_id == payment.id:
-                await self.subscriptions.put(replace(sub, status=SubscriptionStatus.EXPIRED, updated_at=now))
-                await self._downgrade(payment.workspace_id)
             await self._audit("billing.refund", "provider", payment.workspace_id, {"payment_id": payment.id})
             return "refunded"
         if status in (PaymentStatus.EXPIRED, PaymentStatus.FAILED):
             marked = await self.payments.mark(payment.id, status, provider_ref=provider_ref, paid_at=None)
             return "recorded" if marked is not None else "duplicate"
         return "pending"
+
+    async def _end_refunded(self, sub, payment_id: str, now) -> None:
+        """End the period a refunded payment bought, if it still holds it. Idempotent: Free first,
+        then the status, so a failure in between leaves nothing a retry cannot finish (F8). A
+        store that took the workspace over since keeps it."""
+        if sub is None or sub.last_payment_id != payment_id or sub.provider != "fawry":
+            return
+        await self._downgrade(sub.workspace_id)
+        if sub.status is not SubscriptionStatus.EXPIRED:
+            await self.subscriptions.put(replace(sub, status=SubscriptionStatus.EXPIRED, updated_at=now))
 
     async def _apply(self, payment: Payment, card_token: str | None) -> str:
         """Apply received money to the subscription, then mark it paid. Re-applying the same
@@ -325,13 +377,28 @@ class BillingService:
         now = self.clock.now()
         lead = timedelta(days=self.settings.renewal_lead_days)
         for due in await self.subscriptions.due(now + lead):
-            lock = await self.locks.lock_workspace(due.workspace_id)
+            try:
+                lock = await self.locks.lock_workspace(due.workspace_id)
+            except Exception:
+                counts["errors"] += 1
+                logger.warning("workspace billing lock not taken", exc_info=True, extra={"workspace_id": due.workspace_id})
+                continue
             try:
                 await self._cycle_one(due.workspace_id, counts)
+            except Exception:
+                # One workspace that cannot be moved must not stop the rest (F8); its state is
+                # left for the next cycle, which repeats the step.
+                counts["errors"] += 1
+                logger.warning("subscription could not be advanced", exc_info=True, extra={"workspace_id": due.workspace_id})
             finally:
                 await lock.release()
         for payment in await self.payments.received():
-            lock = await self.locks.lock_workspace(payment.workspace_id)
+            try:
+                lock = await self.locks.lock_workspace(payment.workspace_id)
+            except Exception:
+                counts["errors"] += 1
+                logger.warning("workspace billing lock not taken", exc_info=True, extra={"payment_id": payment.id})
+                continue
             try:
                 if await self._settle(payment.id, PaymentStatus.PAID, payment.amount_piastres, None, None) == "applied":
                     counts["reconciled"] += 1
@@ -347,7 +414,12 @@ class BillingService:
                 counts["errors"] += 1
                 logger.warning("payment status could not be read", exc_info=True, extra={"payment_id": payment.id})
                 continue
-            lock = await self.locks.lock_workspace(payment.workspace_id)
+            try:
+                lock = await self.locks.lock_workspace(payment.workspace_id)
+            except Exception:
+                counts["errors"] += 1
+                logger.warning("workspace billing lock not taken", exc_info=True, extra={"payment_id": payment.id})
+                continue
             try:
                 outcome = await self._settle(payment.id, answer.status, answer.amount_piastres, answer.provider_ref, None)
             except Exception:
@@ -366,6 +438,14 @@ class BillingService:
         sub = await self.subscriptions.get(workspace_id)
         if sub is None:
             return
+        if sub.provider == "fawry" and sub.last_payment_id and sub.status is not SubscriptionStatus.EXPIRED:
+            # A refund whose ending failed and was never replayed: finish it, renew nothing (F8).
+            last = await self.payments.get(sub.last_payment_id)
+            if last is not None and last.status is PaymentStatus.REFUNDED:
+                await self._end_refunded(sub, last.id, now)
+                await self._audit("billing.refund_repaired", "billing", workspace_id, {"payment_id": last.id})
+                counts["expired"] += 1
+                return
         lead = timedelta(days=self.settings.renewal_lead_days)
         if (sub.status is not SubscriptionStatus.CANCELED and sub.status is not SubscriptionStatus.EXPIRED
                 and sub.period_end - lead <= now and sub.provider not in ("apple", "google")
@@ -389,6 +469,10 @@ class BillingService:
                 break
             moved = step
         if moved is not sub:
+            if moved.status is SubscriptionStatus.EXPIRED:
+                # Free before the status: if this fails the subscription is still live, so the
+                # next cycle repeats the step instead of skipping an expired one (F8).
+                await self._downgrade(workspace_id)
             await self.subscriptions.put(moved)
             counts["advanced"] += 1
             unpaid = (SubscriptionStatus.PAST_DUE, SubscriptionStatus.GRACE)
@@ -397,16 +481,16 @@ class BillingService:
                 await self._email(workspace_id, lambda to, name: self.notifier.past_due(
                     to, name, moved.grace_until or (moved.period_end + grace)))
             if moved.status is SubscriptionStatus.EXPIRED:
-                await self._downgrade(workspace_id)
                 await self._audit("billing.expired", "billing", workspace_id, {"plan": sub.plan_id})
                 counts["expired"] += 1
 
     # -- helpers --------------------------------------------------------------------------
 
     async def _downgrade(self, workspace_id: str) -> None:
-        """Back to Free -- unless an operator set a plan by hand since (review D1#8)."""
+        """Back to Free -- unless an operator set a plan by hand since (review D1#8). Idempotent:
+        already Free is left alone, so a replay can call it again (F8)."""
         current = await self.plans.entitlements.get(workspace_id)
-        if current is not None and current.source == "manual":
+        if current is not None and (current.source == "manual" or current.plan_id == FREE_PLAN):
             return
         await self.plans.set_entitlement("billing", workspace_id, FREE_PLAN, 1, source="subscription")
 

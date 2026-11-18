@@ -29,6 +29,7 @@ __all__ = [
     "DEFAULT_PRICES",
     "load_prices",
     "price_for",
+    "proration_for",
     "add_month",
     "apply_payment",
     "advance",
@@ -121,6 +122,30 @@ def price_for(prices: Mapping[str, int], plan_id: str, seats: int) -> int:
     if plan_id not in prices:
         raise ValidationError(f"plan {plan_id!r} cannot be bought", details={"plans": sorted(prices)})
     return prices[plan_id] * max(seats, 1) if plan_id in PER_SEAT_PLANS else prices[plan_id]
+
+
+#: Statuses whose paid period still runs: an upgrade inside it owes the difference (F42).
+_PRORATED = frozenset({SubscriptionStatus.ACTIVE, SubscriptionStatus.CANCELED})
+
+
+def proration_for(prices: Mapping[str, int], sub: Subscription | None, plan_id: str, seats: int,
+                  now: datetime) -> int:
+    """What an upgrade bought at ``now`` owes for the rest of the period already paid for.
+
+    A payment bought early starts its month when the current one ends (``apply_payment``), but the
+    new plan or seats take effect at once -- so without this, the rest of the current period at the
+    higher price was free (F42). It is the price difference times the fraction of the period left,
+    in whole piastres rounded up. Nothing for a downgrade, for a period that is over or not paid
+    (past due, grace, expired), or when the current plan has no price to compare against.
+    """
+    if sub is None or sub.status not in _PRORATED or sub.plan_id not in prices or now >= sub.period_end:
+        return 0
+    difference = price_for(prices, plan_id, seats) - price_for(prices, sub.plan_id, sub.seats)
+    total = (sub.period_end - sub.period_start) // timedelta(microseconds=1)
+    if difference <= 0 or total <= 0:
+        return 0
+    left = (sub.period_end - max(now, sub.period_start)) // timedelta(microseconds=1)
+    return -(-difference * left // total)
 
 
 def add_month(at: datetime) -> datetime:
