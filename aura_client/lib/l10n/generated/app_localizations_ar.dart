@@ -5077,4 +5077,11 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get twoStepEnabled => 'التحقق بخطوتين اتفعّل.';
+
+  @override
+  String get twoStepNoApp =>
+      'مفيش تطبيق مصادقة فتحه. انسخ المفتاح وحطّه في تطبيق المصادقة بنفسك.';
+
+  @override
+  String get twoStepAuthenticatorApp => 'تطبيق المصادقة';
 }

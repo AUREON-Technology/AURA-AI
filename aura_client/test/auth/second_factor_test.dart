@@ -1,5 +1,7 @@
 // SaaS P1-I: the second sign-in step's code dialog.
 
+import 'dart:async';
+
 import 'package:aura_client/core/auth/identity_service.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/features/auth/presentation/second_factor_dialog.dart';
@@ -68,5 +70,20 @@ void main() {
     expect(find.byKey(const Key('two-step-unsupported')), findsOneWidget);
     expect(find.byKey(const Key('two-step-code')), findsNothing);
     expect(find.byKey(const Key('two-step-verify')), findsNothing);
+  });
+
+  testWidgets('system back cannot close the dialog while a code is being checked', (tester) async {
+    // Review I#4: a pop mid-check would sign the person out while Firebase then signs them in.
+    final pending = Completer<IdentityUser>();
+    await open(tester, SecondFactorRequired(totp: true, resolve: (code) => pending.future));
+    await tester.enterText(find.byKey(const Key('two-step-code')), '123456');
+    await tester.tap(find.byKey(const Key('two-step-verify')));
+    await tester.pump();
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    expect(find.byKey(const Key('two-step-code')), findsOneWidget, reason: 'still open while checking');
+    pending.complete(_ann);
+    await tester.pumpAndSettle();
+    expect(result, same(_ann));
   });
 }

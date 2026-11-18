@@ -59,10 +59,16 @@ class _SecondFactorDialogState extends State<_SecondFactorDialog> {
     final l10n = context.l10n;
     final cancel = AuraButton(
       key: const Key('two-step-cancel'),
-      label: MaterialLocalizations.of(context).cancelButtonLabel,
+      label: l10n.cancel,
       variant: AuraButtonVariant.ghost,
       onPressed: _busy ? null : () => Navigator.of(context).pop(),
     );
+    // No system back while a code is being checked: popping then would sign the person out while
+    // Firebase finishes signing them in (review I#4).
+    return PopScope(canPop: !_busy, child: _content(context, l10n, cancel));
+  }
+
+  Widget _content(BuildContext context, AppLocalizations l10n, Widget cancel) {
     if (!widget.challenge.totp) {
       return AuraDialog(
         title: l10n.twoStepTitle,

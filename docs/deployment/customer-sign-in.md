@@ -146,8 +146,17 @@ A person can add a code from an authenticator app (Google Authenticator, Microso
 1Password and others) as a second sign-in step: **You → Sign-in methods → Two-step verification**.
 - **It is optional and enforced nowhere** (spec §5.1). Every sign-in method then asks for the code:
   Google, Apple and email/password.
-- **The backend needs nothing new.** Firebase issues no ID token until the second step is done, and
-  the backend accepts only Firebase ID tokens.
+- **The server enforces it, not only the app.** Firebase issues no ID token until the second step
+  is done. The backend also accepts a *raw Google* ID token, which Firebase never sees: it is used
+  by the desktop loopback login and older clients. For an account with a second factor enrolled,
+  that raw Google token is refused (401, "This account uses two-step verification"). The account is
+  found by its Google subject, then by its email. If Firebase cannot answer the lookup, the token is
+  refused too, because letting it through unchecked is exactly the bypass this check exists to stop.
+  (`services/security.py`, `tests/security/test_google_token_respects_second_factor.py`.)
+- **Consequence for the Linux and Windows desktop apps.** They sign in only with that raw Google
+  token, so **an account with two-step verification on cannot sign in there** until desktop
+  sign-in goes through Firebase. This mostly affects operators. Turn it off, or use the web or
+  mobile app, until then.
 
 **Turn it on for the project (owner, once).** TOTP multi-factor needs **Firebase Authentication
 with Identity Platform**, the upgraded tier. Its pricing is per monthly active user beyond the free
@@ -168,7 +177,8 @@ Until this is done, "Set up" fails with the generic "sign-in is unavailable" mes
 - Firebase also requires a recent sign-in to add or remove the step. Otherwise the screen says to
   sign out and in again.
 - At sign-in, a code dialog follows the first step. A wrong code can be retried, and Cancel leaves
-  the person signed out.
+  the person signed out. Back is disabled while a code is being checked.
+- If no authenticator app opens the link, a message says to copy the key instead.
 - An account whose only second step is SMS is refused with a clear message. SMS is out of phase 1.
 
 **Lost authenticator (recovery).** There are no backup codes in phase 1. An operator removes the

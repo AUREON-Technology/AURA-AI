@@ -8489,6 +8489,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Two-step verification is on.'**
   String get twoStepEnabled;
+
+  /// The otpauth link could not be opened
+  ///
+  /// In en, this message translates to:
+  /// **'No authenticator app opened it. Copy the key into your authenticator app instead.'**
+  String get twoStepNoApp;
+
+  /// An enrolled authenticator-app factor
+  ///
+  /// In en, this message translates to:
+  /// **'Authenticator app'**
+  String get twoStepAuthenticatorApp;
 }
 
 class _AppLocalizationsDelegate

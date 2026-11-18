@@ -84,6 +84,20 @@ class _TwoStepPageState extends ConsumerState<TwoStepPage> {
         await _load();
       });
 
+  /// No authenticator app installed (or none on this platform): say so and point at the key.
+  Future<void> _openAuthenticator(String url) async {
+    final l10n = context.l10n;
+    bool opened;
+    try {
+      opened = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } catch (_) {
+      opened = false;
+    }
+    if (!opened && mounted) {
+      AuraSnackbar.show(context, message: l10n.twoStepNoApp, kind: AuraSnackbarKind.info);
+    }
+  }
+
   Future<void> _turnOff(SecondFactor factor) async {
     final l10n = context.l10n;
     if (!await confirm(context, title: l10n.twoStepTitle, body: l10n.twoStepTurnOffConfirm,
@@ -111,7 +125,8 @@ class _TwoStepPageState extends ConsumerState<TwoStepPage> {
       for (final factor in factors) {
         children.add(AuraListTile(
           icon: Icons.verified_user_outlined,
-          title: factor.displayName.isEmpty ? l10n.twoStepTitle : factor.displayName,
+          // Firebase stores an English display name; the app's own words are shown instead.
+          title: l10n.twoStepAuthenticatorApp,
           trailing: AuraButton(
             key: const Key('two-step-off'),
             label: l10n.twoStepTurnOff,
@@ -139,7 +154,7 @@ class _TwoStepPageState extends ConsumerState<TwoStepPage> {
         AuraButton(
           label: l10n.twoStepOpenApp,
           variant: AuraButtonVariant.secondary,
-          onPressed: () => launchUrl(Uri.parse(enrolling.otpauthUrl), mode: LaunchMode.externalApplication),
+          onPressed: () => _openAuthenticator(enrolling.otpauthUrl),
         ),
         const SizedBox(height: AuraSpacing.md),
         AuraTextField(

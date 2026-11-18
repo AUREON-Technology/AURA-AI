@@ -14,6 +14,18 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-16-saas-phase1-design.md` §5.1, "Owner-only two-factor: optional TOTP, through Firebase multi-factor, for workspace Owners and Admins. It is not required at launch."
 
+## As built (after review)
+
+- **The server enforces it (review I#1).** The plan said "the backend changes nothing". That was
+  wrong: the backend also accepts raw Google ID tokens, which skip Firebase and so would skip the
+  second step. `verify_identity_token` now refuses a raw Google token for an account with a second
+  factor enrolled, found by subject and then by email, and refuses it if Firebase cannot answer.
+  Consequence: the Linux and Windows desktop apps (raw Google token only) cannot sign in to such
+  an account.
+- **Back is disabled while a code is being checked (I#4).** If no authenticator app opens the
+  link, a snackbar says so. The enrolled factor is shown in the app's own words.
+- **The login page's dialog wiring is tested (I#3).**
+
 ## Global Constraints
 
 - **Optional, and offered to everyone signed in.** Every person owns their personal workspace, so "Owners" is everyone. Nothing enforces it, and no route refuses a session without it (per the spec).

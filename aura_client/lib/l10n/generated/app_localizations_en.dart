@@ -5051,4 +5051,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get twoStepEnabled => 'Two-step verification is on.';
+
+  @override
+  String get twoStepNoApp =>
+      'No authenticator app opened it. Copy the key into your authenticator app instead.';
+
+  @override
+  String get twoStepAuthenticatorApp => 'Authenticator app';
 }

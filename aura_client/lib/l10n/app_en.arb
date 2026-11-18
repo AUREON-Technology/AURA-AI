@@ -6765,5 +6765,13 @@
   "twoStepEnabled": "Two-step verification is on.",
   "@twoStepEnabled": {
     "description": "Snackbar after enrolling"
+  },
+  "twoStepNoApp": "No authenticator app opened it. Copy the key into your authenticator app instead.",
+  "@twoStepNoApp": {
+    "description": "The otpauth link could not be opened"
+  },
+  "twoStepAuthenticatorApp": "Authenticator app",
+  "@twoStepAuthenticatorApp": {
+    "description": "An enrolled authenticator-app factor"
   }
 }
