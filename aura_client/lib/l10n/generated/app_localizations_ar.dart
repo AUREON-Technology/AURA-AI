@@ -4023,6 +4023,10 @@ class AppLocalizationsAr extends AppLocalizations {
   String get voiceLiveUnsupported => 'الصوت المباشر متاح على Android و iOS بس';
 
   @override
+  String get voiceLiveAudioUnavailable =>
+      'الصوت مش متاح على الجهاز ده، الردود هتظهر كتابة بس';
+
+  @override
   String get homeAskAuraLabel => 'اسأل AURA أي حاجة';
 
   @override

@@ -1112,6 +1112,7 @@
   "voiceLiveInterrupt": "مقاطعة",
   "voiceLiveEndShort": "إنهاء",
   "voiceLiveUnsupported": "الصوت المباشر متاح على Android و iOS بس",
+  "voiceLiveAudioUnavailable": "الصوت مش متاح على الجهاز ده، الردود هتظهر كتابة بس",
   "homeAskAuraLabel": "اسأل AURA أي حاجة",
   "homeSendToAura": "ابعت لـ AURA",
   "homeInsightsLoadFailed": "معرفناش نحمّل الملاحظات",

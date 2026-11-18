@@ -3987,6 +3987,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Live voice is available on Android and iOS only';
 
   @override
+  String get voiceLiveAudioUnavailable =>
+      'Audio playback is unavailable on this device. Replies are shown as text only.';
+
+  @override
   String get homeAskAuraLabel => 'Ask AURA anything';
 
   @override

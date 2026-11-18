@@ -16,11 +16,6 @@ import 'package:aura_client/l10n/l10n.dart';
 /// Shown when native audio could not start (INT-102): the session still runs, but replies are
 /// text only. Worded here, in both app languages, until the string moves into the ARB files
 /// (`voiceLiveAudioUnavailable`), which this change does not own.
-String _audioUnavailableText(BuildContext context) =>
-    Localizations.localeOf(context).languageCode == 'ar'
-        ? 'الصوت مش متاح على الجهاز ده، الردود هتظهر كتابة بس'
-        : 'Audio playback is unavailable on this device. Replies are shown as text only.';
-
 /// Full-screen live voice surface (outside the shell nav bar).
 class LiveVoicePage extends ConsumerStatefulWidget {
   const LiveVoicePage({super.key});
@@ -116,7 +111,7 @@ class _LiveVoicePageState extends ConsumerState<LiveVoicePage>
                     const SizedBox(width: AuraSpacing.xs),
                     Flexible(
                       child: Text(
-                        _audioUnavailableText(context),
+                        context.l10n.voiceLiveAudioUnavailable,
                         style: TextStyle(color: palette.textSecondary),
                         textAlign: TextAlign.center,
                       ),

@@ -11,6 +11,7 @@ import 'package:aura_client/core/auth/token_manager.dart';
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/security/encryption_service.dart';
+import 'package:aura_client/core/sync/sync_client.dart';
 import 'package:aura_client/features/chat/data/memory_repository.dart';
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -103,6 +104,26 @@ void main() {
 
     await repo.flushPendingSaves();
     expect(server.posts, hasLength(2), reason: 'nothing left to send');
+  });
+
+  test('the regular sync sends a queued save, not only the memory screen', () async {
+    final client = server.client();
+    final c = ProviderContainer(overrides: [
+      databaseProvider.overrideWith((ref) => db),
+      tokenManagerProvider.overrideWith((ref) => _StubTokenManager(ref)),
+      memoryRepositoryProvider.overrideWith((ref) => MemoryRepository(db, ref, httpClient: client)),
+      syncClientProvider.overrideWith((ref) => SyncClient(db, ref, httpClient: client)),
+    ]);
+    addTearDown(c.dispose);
+    expect(await c.read(memoryRepositoryProvider).saveMemory('I live in Cairo'),
+        MemorySaveOutcome.queued);
+    server.mode = 'up';
+
+    await c.read(syncClientProvider).synchronize();
+
+    final memoryPosts = server.posts.where((r) => r.url.path == '/api/v3/memory').toList();
+    expect(memoryPosts, hasLength(2), reason: 'the queued attempt, then the retry during sync');
+    expect(await c.read(memoryRepositoryProvider).pendingSaveIds(), isEmpty);
   });
 
   test('syncMemories sends queued saves first, so the list it fetches already has them', () async {

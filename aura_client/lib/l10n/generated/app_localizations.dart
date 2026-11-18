@@ -6780,6 +6780,12 @@ abstract class AppLocalizations {
   /// **'Live voice is available on Android and iOS only'**
   String get voiceLiveUnsupported;
 
+  /// Live voice: the playback engine could not start (INT-102); replies arrive as text only.
+  ///
+  /// In en, this message translates to:
+  /// **'Audio playback is unavailable on this device. Replies are shown as text only.'**
+  String get voiceLiveAudioUnavailable;
+
   /// Home: screen-reader label of the capture bar
   ///
   /// In en, this message translates to:

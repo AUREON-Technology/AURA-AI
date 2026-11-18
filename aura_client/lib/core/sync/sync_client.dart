@@ -15,6 +15,7 @@ import '../security/encryption_service.dart';
 import 'outbox_ack.dart';
 import 'remote_deletes.dart';
 import 'sync_result.dart';
+import 'package:aura_client/features/chat/data/memory_repository.dart';
 
 /// V2 cursor-based sync client (Doc/V2_BLUEPRINT.md §5/§7) — talks to
 /// `/api/v3/sync` on the FastAPI backend, which owns Postgres as the
@@ -120,6 +121,15 @@ class SyncClient {
     // Deletes the outbox does not carry (a memory in the server's memory
     // store, a chat transcript) are retried here until confirmed (F-07).
     await RemoteDeletes(_db, _ref, httpClient: _http).flush();
+    // Memory saves the server never confirmed are sent again here too (F22), on this sync's own
+    // database. A save the user makes at the same moment may go out twice; both carry the same
+    // stable idempotency key, so the server keeps one. A failure here must not cost the rest of
+    // the sync: the save stays queued for the next one.
+    try {
+      await MemoryRepository(_db, _ref, httpClient: _http).flushPendingSaves();
+    } catch (e) {
+      debugPrint('sync: queued memory saves not flushed: $e');
+    }
     final pulled = await pull();
     if (!pulled.ok) return pulled;
     if (await adoptDataKey()) {

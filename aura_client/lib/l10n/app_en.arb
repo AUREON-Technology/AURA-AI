@@ -5376,6 +5376,10 @@
   "@voiceLiveUnsupported": {
     "description": "Live voice: error on platforms without live voice support"
   },
+  "voiceLiveAudioUnavailable": "Audio playback is unavailable on this device. Replies are shown as text only.",
+  "@voiceLiveAudioUnavailable": {
+    "description": "Live voice: the playback engine could not start (INT-102); replies arrive as text only."
+  },
   "homeAskAuraLabel": "Ask AURA anything",
   "@homeAskAuraLabel": {
     "description": "Home: screen-reader label of the capture bar"

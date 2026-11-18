@@ -6,6 +6,7 @@ import 'package:aura_client/core/design_system/design_system.dart';
 import '../../data/memory_repository.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
+import 'package:aura_client/features/memory/presentation/memory_save_feedback.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
 void showMemoryBankDialog(BuildContext context) {
@@ -97,10 +98,13 @@ void showMemoryBankDialog(BuildContext context) {
                           onPressed: () async {
                             final fact = factController.text.trim();
                             if (fact.isNotEmpty) {
-                              await ref
+                              final outcome = await ref
                                   .read(memoryRepositoryProvider)
                                   .saveMemory(fact);
                               factController.clear();
+                              if (context.mounted) {
+                                showMemorySaveOutcome(context, outcome, fact);
+                              }
                             }
                           },
                         ),
