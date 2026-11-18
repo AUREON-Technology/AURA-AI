@@ -30,8 +30,8 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | POST | `/api/v3/admin/connectors/{connector_id}/disable` | — | — | — | none | to wire: Console Project Factory is Track AP phase AP9 |
 | POST | `/api/v3/admin/connectors/{connector_id}/discover` | — | — | — | none | to wire: Console Project Factory is Track AP phase AP9 |
 | POST | `/api/v3/admin/connectors/{connector_id}/health` | — | — | — | none | to wire: Console Project Factory is Track AP phase AP9 |
-| GET | `/api/v3/admin/customers` | — | `aura_admin/app/(console)/customers/page.tsx:92` | — | called |  |
-| POST | `/api/v3/admin/customers/{workspace_id}/extend-grace` | — | `aura_admin/app/(console)/customers/page.tsx:69` | — | called |  |
+| GET | `/api/v3/admin/customers` | — | `aura_admin/app/(console)/customers/page.tsx:93` | — | called |  |
+| POST | `/api/v3/admin/customers/{workspace_id}/extend-grace` | — | `aura_admin/app/(console)/customers/page.tsx:70` | — | called |  |
 | POST | `/api/v3/admin/index/rebuild` | — | `aura_admin/app/(console)/knowledge/page.tsx:166` | — | called |  |
 | POST | `/api/v3/admin/index/rollback` | — | `aura_admin/app/(console)/knowledge/page.tsx:202` | — | called |  |
 | GET | `/api/v3/admin/indexes` | — | `aura_admin/app/(console)/knowledge/page.tsx:31` | — | called |  |
