@@ -88,7 +88,8 @@ class PaymentStatus(str, Enum):
 class Payment:
     #: Our id; sent to Fawry as ``merchantRefNum``, the idempotency key for its notifications.
     id: str
-    workspace_id: str
+    #: ``None`` once the workspace was erased: the ledger row outlives it (revision 0030, F34).
+    workspace_id: str | None
     plan_id: str
     seats: int
     amount_piastres: int

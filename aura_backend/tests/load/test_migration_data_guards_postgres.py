@@ -171,3 +171,29 @@ async def test_0030_downgrade_restores_the_cascade(head_url) -> None:
         assert await conn.fetchval("SELECT count(*) FROM aura_payments WHERE id = $1", payment_id) == 0
     finally:
         await conn.close()
+
+
+async def test_the_billing_cycle_queries_skip_payments_whose_workspace_was_erased(head_url) -> None:
+    """After 0030 a pending or received payment can outlive its workspace. The cycle's queries must
+    not hand such a row to the service, which has no workspace to apply it to."""
+    import asyncpg
+
+    from aura_core.adapters.postgres_billing import PostgresPaymentStore
+
+    conn = await asyncpg.connect(head_url)
+    try:
+        subject = await _user(conn)
+        workspace_id = await _personal_workspace(conn, subject)
+        ids = {}
+        for status in ("pending", "received"):
+            ids[status] = await _payment(conn, workspace_id)
+            await conn.execute("UPDATE aura_payments SET status = $2 WHERE id = $1", ids[status], status)
+        await conn.execute("DELETE FROM users WHERE auth_subject = $1", subject)
+    finally:
+        await conn.close()
+
+    store = PostgresPaymentStore(head_url)
+    assert ids["pending"] not in {p.id for p in await store.pending(before=None)}
+    assert ids["received"] not in {p.id for p in await store.received()}
+    orphan = await store.get(ids["pending"])
+    assert orphan is not None and orphan.workspace_id is None

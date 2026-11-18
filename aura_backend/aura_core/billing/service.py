@@ -230,6 +230,13 @@ class BillingService:
             logger.warning("payment notification for an unknown payment", extra={"payment_id": note.payment_id[:64]})
             await self._audit("billing.unknown_payment", "provider", "", {"payment_id": note.payment_id[:64]})
             return "ignored"
+        if payment.workspace_id is None:
+            # Its workspace was erased after the payment was created (revision 0030 keeps the row
+            # with ``workspace_id`` NULL, F34). There is nothing to apply it to: hold it for a person.
+            logger.warning("payment notification for an erased workspace", extra={"payment_id": payment.id})
+            await self._audit("billing.needs_review", "provider", "",
+                              {"payment_id": payment.id, "reason": "workspace erased"})
+            return "needs_review"
         card_token = await self._confirmed_card(payment.workspace_id, note.card_token)
         lock = await self.locks.lock_workspace(payment.workspace_id)
         try:

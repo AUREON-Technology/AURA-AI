@@ -119,7 +119,7 @@ class PostgresPaymentStore:
         pool = await self._pool._get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
-                f"SELECT {_PAY} FROM aura_payments WHERE status = 'pending' "
+                f"SELECT {_PAY} FROM aura_payments WHERE status = 'pending' AND workspace_id IS NOT NULL "
                 "AND ($1::timestamptz IS NULL OR created_at < $1) ORDER BY created_at, id",
                 before,
             )
@@ -147,7 +147,8 @@ class PostgresPaymentStore:
     async def received(self) -> list[Payment]:
         pool = await self._pool._get_pool()
         async with pool.acquire() as conn:
-            rows = await conn.fetch(f"SELECT {_PAY} FROM aura_payments WHERE status = 'received' ORDER BY created_at")
+            rows = await conn.fetch(f"SELECT {_PAY} FROM aura_payments WHERE status = 'received' "
+                                    "AND workspace_id IS NOT NULL ORDER BY created_at")
         return [_pay(r) for r in rows]
 
 

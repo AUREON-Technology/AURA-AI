@@ -280,3 +280,28 @@ async def test_unconfirmed_card_token_is_not_saved(container, clock) -> None:
     checkout = await billing.checkout("bob", bob, "pro", 1, email=None)
     await billing.handle_notification(provider.notification(checkout["payment_id"], "paid", 15000, card_token="bob-card"))
     assert (await billing.subscriptions.get(bob)).card_token == "bob-card"   # one Fawry vouches for is kept
+
+
+async def _orphan(billing, container, user="ann"):
+    """A pending payment whose workspace was erased afterwards: revision 0030 keeps the payment
+    row with ``workspace_id`` NULL (F34) instead of cascading it away."""
+    from dataclasses import replace
+
+    ws = (await container.tenancy.ensure_personal(user)).id
+    checkout = await billing.checkout(user, ws, "pro", 1, email=None)
+    payment = await billing.payments.get(checkout["payment_id"])
+    await billing.payments.put(replace(payment, workspace_id=None))
+    return checkout["payment_id"]
+
+
+async def test_a_notification_for_an_erased_workspace_is_held_for_review(billing, provider, container) -> None:
+    payment_id = await _orphan(billing, container)
+    outcome = await billing.handle_notification(provider.notification(payment_id, "paid", 15000))
+    assert outcome == "needs_review"
+    assert (await billing.payments.get(payment_id)).status is PaymentStatus.PENDING
+
+
+async def test_the_cycle_skips_payments_whose_workspace_was_erased(billing, container) -> None:
+    await _orphan(billing, container)
+    counts = await billing.run_cycle()
+    assert counts.get("errors", 0) == 0
