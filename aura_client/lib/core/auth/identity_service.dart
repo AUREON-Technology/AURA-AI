@@ -42,6 +42,8 @@ enum IdentityErrorKind {
   invalidEmail,
   network,
   accountExistsWithDifferentMethod,
+  /// The sign-in being linked already belongs to another account (SaaS P1-F2).
+  credentialInUse,
   unavailable,
 }
 
@@ -75,6 +77,9 @@ IdentityErrorKind identityErrorKindFor(String code) {
       return IdentityErrorKind.network;
     case 'account-exists-with-different-credential':
       return IdentityErrorKind.accountExistsWithDifferentMethod;
+    case 'credential-already-in-use':
+    case 'provider-already-linked':
+      return IdentityErrorKind.credentialInUse;
     case 'popup-closed-by-user':
     case 'cancelled-popup-request':
     case 'web-context-canceled':
@@ -114,6 +119,15 @@ abstract class IdentityService {
   Future<IdentityUser?> reload();
   Future<String?> idToken({bool forceRefresh = false});
   Future<void> signOut();
+
+  /// The sign-in methods on this account: `google.com`, `apple.com`, `password` (SaaS P1-F2).
+  List<String> linkedProviders();
+
+  /// Adds a sign-in method to the signed-in account, so the same AURA account opens with it.
+  /// Firebase keeps one account per email and does not merge on its own (spec §5.1).
+  Future<void> linkGoogle();
+  Future<void> linkApple();
+  Future<void> linkEmailPassword(String email, String password);
 }
 
 const _googleWebClientId = '87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com';
@@ -235,6 +249,43 @@ class FirebaseIdentityService implements IdentityService {
       if (!kIsWeb && _googleReady) await _google.signOut();
     } catch (_) {} // never signed in with Google on this device
     await _auth.signOut();
+  }
+
+  @override
+  List<String> linkedProviders() =>
+      _auth.currentUser?.providerData.map((p) => p.providerId).toList() ?? const [];
+
+  @override
+  Future<void> linkGoogle() => _guard(() async {
+        final user = _requireUser();
+        if (kIsWeb) return (await user.linkWithPopup(GoogleAuthProvider())).user;
+        await initialize();
+        final account = await _google.authenticate();
+        final idToken = account.authentication.idToken;
+        if (idToken == null) {
+          throw const IdentityError(IdentityErrorKind.unavailable, 'Google returned no ID token');
+        }
+        return (await user.linkWithCredential(GoogleAuthProvider.credential(idToken: idToken))).user;
+      });
+
+  @override
+  Future<void> linkApple() => _guard(() async {
+        final user = _requireUser();
+        final apple = AppleAuthProvider()..addScope('email');
+        return kIsWeb ? (await user.linkWithPopup(apple)).user : (await user.linkWithProvider(apple)).user;
+      });
+
+  @override
+  Future<void> linkEmailPassword(String email, String password) => _guard(() async {
+        final user = _requireUser();
+        final credential = EmailAuthProvider.credential(email: email.trim(), password: password);
+        return (await user.linkWithCredential(credential)).user;
+      });
+
+  User _requireUser() {
+    final user = _auth.currentUser;
+    if (user == null) throw const IdentityError(IdentityErrorKind.unavailable, 'not signed in');
+    return user;
   }
 
   Future<IdentityUser> _guard(Future<User?> Function() signIn) async {

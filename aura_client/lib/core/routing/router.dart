@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../features/analytics/presentation/analytics_page.dart';
 import '../../features/auth/presentation/auth_provider.dart';
+import '../../features/auth/presentation/linked_accounts_page.dart';
 import '../../features/auth/presentation/login_page.dart';
 import '../../features/auth/presentation/profile_page.dart';
 import '../../features/automations/presentation/automations_page.dart';
@@ -561,6 +562,7 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (context, state) => const SettingsPage(),
           ),
           GoRoute(path: '/plan', builder: (context, state) => const PlanPage()),
+          GoRoute(path: '/sign-in-methods', builder: (context, state) => const LinkedAccountsPage()),
           GoRoute(path: '/invite', builder: (context, state) => InviteAcceptPage(token: state.uri.queryParameters['token'])),
           GoRoute(path: '/team-chats', builder: (context, state) => const SharedChatsPage()),
           GoRoute(

@@ -1,4 +1,6 @@
+import 'package:aura_client/core/auth/account_client.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
@@ -50,6 +52,9 @@ class _DeleteAccountTileState extends ConsumerState<DeleteAccountTile> {
         kind: result.forgotten ? AuraSnackbarKind.success : AuraSnackbarKind.error,
         duration: const Duration(seconds: 8),
       );
+    } on AccountDeletionBlocked catch (blocked) {
+      // Nothing was erased: the person owns teams that need another owner first.
+      if (mounted) await showDeletionBlocked(context, blocked);
     } catch (error) {
       // Nothing local changed: still signed in, free to try again.
       AuraSnackbar.showOn(
@@ -81,4 +86,32 @@ class _DeleteAccountTileState extends ConsumerState<DeleteAccountTile> {
       onTap: _deleting ? null : _confirmAndDelete,
     );
   }
+}
+
+
+/// Which teams stop the deletion, and the way to each one's settings.
+Future<void> showDeletionBlocked(BuildContext context, AccountDeletionBlocked blocked) {
+  final l10n = context.l10n;
+  return showDialog<void>(
+    context: context,
+    useRootNavigator: true,
+    builder: (dialogContext) => AuraDialog(
+      title: l10n.deleteBlockedTitle,
+      cancelLabel: MaterialLocalizations.of(dialogContext).closeButtonLabel,
+      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(l10n.deleteBlockedBody),
+        const SizedBox(height: AuraSpacing.sm),
+        for (final team in blocked.workspaces)
+          AuraListTile(
+            key: Key('blocked-${team.id}'),
+            icon: Icons.groups_outlined,
+            title: team.name,
+            onTap: () {
+              Navigator.of(dialogContext).pop();
+              context.push('/workspaces/${team.id}');
+            },
+          ),
+      ]),
+    ),
+  );
 }

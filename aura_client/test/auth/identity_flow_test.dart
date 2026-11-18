@@ -46,6 +46,15 @@ class _CountingDb extends AppDatabase {
 }
 
 class FakeIdentityService implements IdentityService {
+  @override
+  List<String> linkedProviders() => const [];
+  @override
+  Future<void> linkGoogle() async {}
+  @override
+  Future<void> linkApple() async {}
+  @override
+  Future<void> linkEmailPassword(String email, String password) async {}
+
   FakeIdentityService({this.user, this.error, this.token = 'firebase-id-token'});
 
   IdentityUser? user;

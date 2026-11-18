@@ -1,3 +1,4 @@
+import 'package:aura_client/features/auth/presentation/legal_links_text.dart';
 import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform, kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -320,6 +321,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                   ),
                               ],
                               const SizedBox(height: AuraSpacing.md),
+                              // The owner's terms and privacy policy, where this build has them (spec 5.5).
+                              const LegalLinksText(),
+                              const SizedBox(height: AuraSpacing.md),
                               if (_canCheckBiometrics &&
                                   _hasCachedCredentials) ...[
                                 AuraButton(
@@ -501,5 +505,6 @@ String identityErrorText(IdentityErrorKind kind, AppLocalizations l10n) => switc
       IdentityErrorKind.invalidEmail => l10n.identityInvalidEmail,
       IdentityErrorKind.network => l10n.identityNetwork,
       IdentityErrorKind.accountExistsWithDifferentMethod => l10n.identityDifferentMethod,
+      IdentityErrorKind.credentialInUse => l10n.signInMethodInUse,
       IdentityErrorKind.cancelled || IdentityErrorKind.unavailable => l10n.identityUnavailable,
     };
