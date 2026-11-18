@@ -91,10 +91,10 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | POST | `/api/v3/auth/desktop/pair/poll` | — | — | `aura_hostd/lib/src/pairing_client.dart:129` | called |  |
 | POST | `/api/v3/auth/desktop/pair/start` | — | — | `aura_hostd/lib/src/pairing_client.dart:98` | called |  |
 | POST | `/api/v3/auth/nonce` | `aura_client/lib/core/security/device_validation_service.dart:162` | — | — | called |  |
-| POST | `/api/v3/auth/refresh` | `aura_client/lib/core/auth/token_manager.dart:101`, `aura_client/lib/core/auth/token_manager.dart:125` (+3) | `aura_admin/src/lib/refresh.ts:76` | — | called |  |
+| POST | `/api/v3/auth/refresh` | `aura_client/lib/core/auth/token_manager.dart:101`, `aura_client/lib/core/auth/token_manager.dart:110` (+4) | `aura_admin/src/lib/refresh.ts:76` | — | called |  |
 | POST | `/api/v3/auth/revoke` | `aura_client/lib/core/auth/desktop_devices_client.dart:41`, `aura_client/lib/core/auth/desktop_devices_client.dart:82` (+1) | `aura_admin/app/api/auth/login/route.ts:10`, `aura_admin/app/api/auth/logout/route.ts:14` | — | called |  |
-| POST | `/api/v3/auth/token` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:91`, `aura_client/lib/core/auth/token_manager.dart:61` (+7) | — | — | called |  |
-| POST | `/api/v3/auth/web/token` | `aura_client/lib/core/auth/token_manager.dart:449`, `aura_client/lib/core/auth/token_manager.dart:455` | `aura_admin/app/api/auth/login/route.ts:38` | — | called |  |
+| POST | `/api/v3/auth/token` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:91`, `aura_client/lib/core/auth/token_manager.dart:61` (+8) | — | — | called |  |
+| POST | `/api/v3/auth/web/token` | `aura_client/lib/core/auth/token_manager.dart:467`, `aura_client/lib/core/auth/token_manager.dart:473` | `aura_admin/app/api/auth/login/route.ts:38` | — | called |  |
 | POST | `/api/v3/automation/analyze-email` | `aura_client/lib/features/automations/data/automation_repository.dart:264` | — | — | called |  |
 | POST | `/api/v3/automation/analyze-issue` | `aura_client/lib/features/automations/data/automation_repository.dart:303` | — | — | called |  |
 | POST | `/api/v3/billing/apple/notify` | — | — | — | none | server-only: App Store Server Notifications V2 (SaaS P1-D2) |
