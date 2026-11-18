@@ -4989,4 +4989,66 @@ class AppLocalizationsEn extends AppLocalizations {
   String shareConfirm(String name) {
     return 'Share a copy of this chat with $name? Everyone in the team can read it.';
   }
+
+  @override
+  String get twoStepTitle => 'Two-step verification';
+
+  @override
+  String get twoStepSignInBody => 'Enter the code from your authenticator app.';
+
+  @override
+  String get twoStepCodeLabel => '6-digit code';
+
+  @override
+  String get twoStepVerify => 'Verify';
+
+  @override
+  String get twoStepWrongCode =>
+      'That code didn\'t match. Use the newest code from your authenticator app.';
+
+  @override
+  String get twoStepUnsupported =>
+      'This account\'s second sign-in step isn\'t supported in this app. Contact support to reset it.';
+
+  @override
+  String get identityReauthRequired =>
+      'For your security, sign out and sign in again, then try once more.';
+
+  @override
+  String get identityWrongCode => 'That code didn\'t match.';
+
+  @override
+  String get twoStepIntro =>
+      'Add a code from an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password…) to every sign-in.';
+
+  @override
+  String get twoStepVerifyEmailFirst =>
+      'Verify your email address first, then come back to turn this on.';
+
+  @override
+  String get twoStepSetUp => 'Set up';
+
+  @override
+  String get twoStepScanOrEnter =>
+      'Add this key to your authenticator app, then type the 6-digit code it shows.';
+
+  @override
+  String get twoStepOpenApp => 'Open in authenticator app';
+
+  @override
+  String get twoStepCopyKey => 'Copy key';
+
+  @override
+  String get twoStepOn =>
+      'On: sign-ins ask for a code from your authenticator app.';
+
+  @override
+  String get twoStepTurnOff => 'Turn off';
+
+  @override
+  String get twoStepTurnOffConfirm =>
+      'Sign-ins will no longer ask for a code. Turn off two-step verification?';
+
+  @override
+  String get twoStepEnabled => 'Two-step verification is on.';
 }

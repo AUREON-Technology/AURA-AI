@@ -11,6 +11,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _Identity implements IdentityService {
+  @override
+  Future<List<SecondFactor>> secondFactors() async => const [];
+  @override
+  Future<TotpEnrollment> startTotpEnrollment() async =>
+      const TotpEnrollment(secretKey: 'KEY', otpauthUrl: 'otpauth://totp/AURA:x?secret=KEY');
+  @override
+  Future<void> finishTotpEnrollment(TotpEnrollment enrollment, String code) async {}
+  @override
+  Future<void> removeSecondFactor(String uid) async {}
   _Identity(this.current);
 
   @override

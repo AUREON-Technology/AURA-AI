@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:local_auth/local_auth.dart';
 import 'auth_provider.dart';
 import 'email_sign_in_form.dart';
+import 'second_factor_dialog.dart';
 import 'package:aura_client/core/auth/identity_service.dart';
 import 'package:aura_client/core/auth/platform_login_support.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
@@ -149,6 +150,22 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     // nested Builder callback (which _buildBody's own context is, since
     // it's used purely to get a BuildContext scoped under the Theme override).
     ref.listen(authProvider, (previous, next) {
+      final challenge = next.error;
+      if (challenge is SecondFactorRequired && previous?.error != challenge) {
+        // The account has a second step: ask for the code, then finish the sign-in with the
+        // resolved user, or leave the person signed out (SaaS P1-I).
+        WidgetsBinding.instance.addPostFrameCallback((_) async {
+          if (!mounted) return;
+          final user = await showSecondFactorDialog(context, challenge);
+          final auth = ref.read(authProvider.notifier);
+          if (user == null) {
+            await auth.cancelSecondFactor();
+          } else {
+            await auth.completeSecondFactor(user);
+          }
+        });
+        return;
+      }
       if (next.hasError && kDebugMode) {
         if (!mounted) return;
         setState(() => _showDeveloperPanel = true);
@@ -387,7 +404,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                   ],
                                 ],
                               ],
-                              if (authState.hasError) ...[
+                              // The second sign-in step is a dialog, not an error (SaaS P1-I).
+                              if (authState.hasError && authState.error is! SecondFactorRequired) ...[
                                 const SizedBox(height: AuraSpacing.md),
                                 Container(
                                   padding: const EdgeInsets.all(AuraSpacing.md),
@@ -522,5 +540,7 @@ String identityErrorText(IdentityErrorKind kind, AppLocalizations l10n) => switc
       IdentityErrorKind.network => l10n.identityNetwork,
       IdentityErrorKind.accountExistsWithDifferentMethod => l10n.identityDifferentMethod,
       IdentityErrorKind.credentialInUse => l10n.signInMethodInUse,
+      IdentityErrorKind.reauthRequired => l10n.identityReauthRequired,
+      IdentityErrorKind.wrongCode => l10n.identityWrongCode,
       IdentityErrorKind.cancelled || IdentityErrorKind.unavailable => l10n.identityUnavailable,
     };

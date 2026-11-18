@@ -252,6 +252,16 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     return true;
   }
 
+  /// The second sign-in step answered (SaaS P1-I): the resolved user goes through the same
+  /// completion as every sign-in, which starts the backend session.
+  Future<void> completeSecondFactor(IdentityUser user) => _signInWith(() async => user);
+
+  /// The second sign-in step abandoned: nobody is signed in, and no session was started.
+  Future<void> cancelSecondFactor() async {
+    await _abandonIdentity();
+    state = const AsyncValue.data(null);
+  }
+
   /// Every sign-in method ends here: exchange the provider's ID token for a backend session,
   /// forget another account's local data, cache the profile.
   Future<void> _signInWith(Future<IdentityUser> Function() signIn) async {

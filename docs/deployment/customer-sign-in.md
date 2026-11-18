@@ -139,3 +139,40 @@ the app's router. That is the normal single-page-app fallback on any static host
 
 Sign-in methods (You → Sign-in methods) adds Google, Apple or a password to an existing account.
 It needs those providers enabled in Firebase, as in the steps above.
+
+## Two-step verification (TOTP, SaaS P1-I)
+
+A person can add a code from an authenticator app (Google Authenticator, Microsoft Authenticator,
+1Password and others) as a second sign-in step: **You → Sign-in methods → Two-step verification**.
+- **It is optional and enforced nowhere** (spec §5.1). Every sign-in method then asks for the code:
+  Google, Apple and email/password.
+- **The backend needs nothing new.** Firebase issues no ID token until the second step is done, and
+  the backend accepts only Firebase ID tokens.
+
+**Turn it on for the project (owner, once).** TOTP multi-factor needs **Firebase Authentication
+with Identity Platform**, the upgraded tier. Its pricing is per monthly active user beyond the free
+tier, so check the Firebase pricing page.
+1. Firebase Console → Authentication → Settings → upgrade to Identity Platform, if it is not
+   already.
+2. Enable TOTP. The Console path is Authentication → Sign-in method → Advanced →
+   **Multi-factor authentication** → enable **TOTP**. The equivalent REST call is
+   `projects.updateConfig` with
+   `mfa: {providerConfigs: [{state: "ENABLED", totpProviderConfig: {adjacentIntervals: 5}}]}`.
+
+Until this is done, "Set up" fails with the generic "sign-in is unavailable" message.
+
+**What people see:**
+- Setting up shows a key once, with "Copy key" and "Open in authenticator app" (an `otpauth://`
+  link). The app neither stores nor logs the key.
+- A code confirms the set-up. Firebase requires a verified email first, and the screen says so.
+- Firebase also requires a recent sign-in to add or remove the step. Otherwise the screen says to
+  sign out and in again.
+- At sign-in, a code dialog follows the first step. A wrong code can be retried, and Cancel leaves
+  the person signed out.
+- An account whose only second step is SMS is refused with a clear message. SMS is out of phase 1.
+
+**Lost authenticator (recovery).** There are no backup codes in phase 1. An operator removes the
+factor in Firebase Console → Authentication → Users → the user → Multi-factor authentication,
+after confirming who is asking by the account's email. Record each removal: it is the weakest
+point of this feature.
+

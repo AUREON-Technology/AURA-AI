@@ -19,6 +19,15 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 class _Identity implements IdentityService {
+  @override
+  Future<List<SecondFactor>> secondFactors() async => const [];
+  @override
+  Future<TotpEnrollment> startTotpEnrollment() async =>
+      const TotpEnrollment(secretKey: 'KEY', otpauthUrl: 'otpauth://totp/AURA:x?secret=KEY');
+  @override
+  Future<void> finishTotpEnrollment(TotpEnrollment enrollment, String code) async {}
+  @override
+  Future<void> removeSecondFactor(String uid) async {}
   _Identity(this.linked);
 
   List<String> linked;

@@ -6693,5 +6693,77 @@
         "type": "String"
       }
     }
+  },
+  "twoStepTitle": "Two-step verification",
+  "@twoStepTitle": {
+    "description": "Title of the second sign-in step dialog and settings page"
+  },
+  "twoStepSignInBody": "Enter the code from your authenticator app.",
+  "@twoStepSignInBody": {
+    "description": "Shown in the sign-in code dialog"
+  },
+  "twoStepCodeLabel": "6-digit code",
+  "@twoStepCodeLabel": {
+    "description": "Code field label"
+  },
+  "twoStepVerify": "Verify",
+  "@twoStepVerify": {
+    "description": "Submit the code"
+  },
+  "twoStepWrongCode": "That code didn't match. Use the newest code from your authenticator app.",
+  "@twoStepWrongCode": {
+    "description": "Wrong authenticator code"
+  },
+  "twoStepUnsupported": "This account's second sign-in step isn't supported in this app. Contact support to reset it.",
+  "@twoStepUnsupported": {
+    "description": "Second factor other than an authenticator app"
+  },
+  "identityReauthRequired": "For your security, sign out and sign in again, then try once more.",
+  "@identityReauthRequired": {
+    "description": "Firebase requires a recent sign-in"
+  },
+  "identityWrongCode": "That code didn't match.",
+  "@identityWrongCode": {
+    "description": "Wrong authenticator code (generic)"
+  },
+  "twoStepIntro": "Add a code from an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password…) to every sign-in.",
+  "@twoStepIntro": {
+    "description": "Two-step settings page intro"
+  },
+  "twoStepVerifyEmailFirst": "Verify your email address first, then come back to turn this on.",
+  "@twoStepVerifyEmailFirst": {
+    "description": "Firebase needs a verified email for a second factor"
+  },
+  "twoStepSetUp": "Set up",
+  "@twoStepSetUp": {
+    "description": "Start enrolling an authenticator app"
+  },
+  "twoStepScanOrEnter": "Add this key to your authenticator app, then type the 6-digit code it shows.",
+  "@twoStepScanOrEnter": {
+    "description": "Enrollment instructions"
+  },
+  "twoStepOpenApp": "Open in authenticator app",
+  "@twoStepOpenApp": {
+    "description": "Launch the otpauth link"
+  },
+  "twoStepCopyKey": "Copy key",
+  "@twoStepCopyKey": {
+    "description": "Copy the secret key"
+  },
+  "twoStepOn": "On: sign-ins ask for a code from your authenticator app.",
+  "@twoStepOn": {
+    "description": "Status when enrolled"
+  },
+  "twoStepTurnOff": "Turn off",
+  "@twoStepTurnOff": {
+    "description": "Remove the second factor"
+  },
+  "twoStepTurnOffConfirm": "Sign-ins will no longer ask for a code. Turn off two-step verification?",
+  "@twoStepTurnOffConfirm": {
+    "description": "Confirm removing the second factor"
+  },
+  "twoStepEnabled": "Two-step verification is on.",
+  "@twoStepEnabled": {
+    "description": "Snackbar after enrolling"
   }
 }
