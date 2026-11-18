@@ -113,12 +113,15 @@ late FakeWorkspaces fake;
 
 /// A store whose purchase sheet the test answers by calling [emit].
 class FakeStore implements StoreGateway {
-  FakeStore({this.kind = StoreKind.apple, this.price = 'EGP 149.99', this.known = true});
+  FakeStore({this.kind = StoreKind.apple, this.price = 'EGP 149.99', this.known = true, this.opens = true});
 
   @override
   final StoreKind? kind;
   final String price;
   final bool known;
+
+  /// False: the store refuses to open its sheet, as Play's `launchBillingFlow` can.
+  final bool opens;
   final calls = <String>[];
   final completed = <String>[];
   final _updates = StreamController<List<StoreUpdate>>.broadcast();
@@ -131,7 +134,10 @@ class FakeStore implements StoreGateway {
   @override
   Future<StoreProduct?> product(String id) async => known ? StoreProduct(id: id, price: price) : null;
   @override
-  Future<void> buy(StoreProduct product, String bindingToken) async => calls.add('buy:${product.id}:$bindingToken');
+  Future<void> buy(StoreProduct product, String bindingToken) async {
+    calls.add('buy:${product.id}:$bindingToken');
+    if (!opens) throw const StoreSheetRefused();
+  }
   @override
   Stream<List<StoreUpdate>> get updates => _updates.stream;
   @override

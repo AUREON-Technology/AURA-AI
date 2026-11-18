@@ -19,10 +19,11 @@ Every route answers 503 ``billing_unavailable`` until ``AURA_BILLING_ENABLED`` i
 # function, and FastAPI must resolve their annotations at decoration time (as in v3.py).
 from typing import Any, Callable
 
-from ..domain.billing import BillingUnavailableError
+from ..domain.billing import BillingUnavailableError, PaymentStatus
 from ..domain.errors import (
     AuthenticationError,
     AuthorizationError,
+    ConflictError,
     DependencyUnavailableError,
     RateLimitedError,
     ValidationError,
@@ -115,6 +116,14 @@ def register_billing_ops(
         decision = await limiter.check_limit(key=str(caller.user_id), scope="billing_checkout", limit=CHECKOUTS_PER_MINUTE)
         if not decision.allowed:
             raise RateLimitedError("too many checkout requests", retry_after=decision.retry_after_s)
+        # A Fawry reference that can still be paid would, once paid, turn the store subscription
+        # into a Fawry one while the store kept charging (SaaS P1-F2b review #2).
+        now = billing.clock.now()
+        for payment in await billing.payments.for_workspace(workspace_id, limit=10):
+            waiting = payment.status is PaymentStatus.RECEIVED or (
+                payment.status is PaymentStatus.PENDING and (payment.expires_at is None or payment.expires_at > now))
+            if waiting:
+                raise ConflictError("a payment is waiting for this workspace; try again once it is paid or has expired")
         token = await stores.issue_token(str(caller.user_id), workspace_id)
         if caller.email and billing.contacts is not None:
             await billing.contacts.put(workspace_id, caller.email, billing.clock.now(), set_by=str(caller.user_id))

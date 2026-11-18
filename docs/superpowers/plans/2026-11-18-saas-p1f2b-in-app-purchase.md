@@ -43,6 +43,16 @@
 4. **`store-token` fails** (403 email not verified, or 429), or the store is unavailable. The failure shows, and no store sheet opens. Test: the fake client throws a 403, so `buy` is never called on the fake store and the failure text shows.
 5. **A Fawry subscription is live on mobile, or a store subscription is live on the web.** There is no purchase and no Fawry cancel for a store subscription, and the store subscription shows "Manage subscription" on its own platform. Test: both cases.
 
+## As built (after review)
+
+- `planStoreDone` was dropped. A finished purchase shows **Manage subscription** in place of the buy button.
+- Android's **Manage** opens Play's general subscriptions page. The `sku` / `package` form needs the package name, and the app has no package-info dependency.
+- **Review fixes:**
+  - Android reports a cancelled or failed sheet with an empty product id. It is handled while the sheet is open.
+  - A sheet the store refuses to open is a failure, not a stuck spinner.
+  - Ask to Buy, or a slow payment approved later, still activates.
+  - A Fawry reference that can still be paid blocks a store purchase. The app hides the button, and `store-token` answers 409.
+
 ---
 
 ### Task 1: Backend — `provider`, `store_products`, refusing a store cancel

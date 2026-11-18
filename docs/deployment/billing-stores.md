@@ -121,7 +121,10 @@ You → Plan, on iOS and Android, for the Owner of a **personal** workspace:
 What the app will not do:
 - It sells only personal plans. Teams see "Team plans can't be bought in this app." In line with
   the stores' anti-steering rules, no iOS or Android screen mentions another way to pay.
-- It offers no store purchase while a Fawry subscription is active, past due or in grace.
+- It offers no store purchase while a Fawry subscription is active, past due or in grace, or while
+  a Fawry reference can still be paid. In that last case `store-token` itself answers 409: paying
+  the reference later would otherwise turn the store subscription into a Fawry one while the store
+  kept charging.
 - A store subscription shows **Manage subscription**, which opens the store's own page. On the web
   and desktop, a store subscription shows no Fawry buy or cancel. The backend also refuses
   `billing/cancel` for a store subscription with 409, because only the store can stop its

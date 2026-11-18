@@ -39,6 +39,10 @@ enum StoreUpdateKind { pending, purchased, restored, canceled, error }
 
 @immutable
 class StoreUpdate {
+  /// Play reports a cancelled or failed sheet with no purchase at all: the plugin then sends one
+  /// update whose product id is empty (`in_app_purchase_android_platform.dart`, empty list).
+  bool get aboutNoProduct => productId.isEmpty;
+
   const StoreUpdate({required this.kind, required this.productId, this.error, this.needsCompletion = false, this.raw});
   final StoreUpdateKind kind;
   final String productId;
@@ -51,6 +55,11 @@ class StoreUpdate {
   final Object? raw;
 }
 
+/// The store would not open its purchase sheet (Play's `launchBillingFlow` was not OK).
+class StoreSheetRefused implements Exception {
+  const StoreSheetRefused();
+}
+
 abstract class StoreGateway {
   /// Null on a platform with no in-app purchase: the web, desktop.
   StoreKind? get kind;
@@ -59,7 +68,8 @@ abstract class StoreGateway {
   /// Null when the store does not know the product.
   Future<StoreProduct?> product(String id);
 
-  /// Opens the store's purchase sheet. The result arrives on [updates].
+  /// Opens the store's purchase sheet; the result arrives on [updates]. Throws [StoreSheetRefused]
+  /// when the store will not open it, since no update would follow.
   Future<void> buy(StoreProduct product, String bindingToken);
   Stream<List<StoreUpdate>> get updates;
   Future<void> complete(StoreUpdate update);
@@ -124,7 +134,9 @@ class InAppPurchaseGateway implements StoreGateway {
     final details = product.raw;
     if (details is! ProductDetails) throw StateError('not a store product');
     // A subscription is a non-consumable in this plugin's terms.
-    await _iap.buyNonConsumable(purchaseParam: PurchaseParam(productDetails: details, applicationUserName: bindingToken));
+    final opened = await _iap.buyNonConsumable(
+        purchaseParam: PurchaseParam(productDetails: details, applicationUserName: bindingToken));
+    if (!opened) throw const StoreSheetRefused();
   }
 
   @override

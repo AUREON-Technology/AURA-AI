@@ -172,7 +172,11 @@ class _BillingSection extends ConsumerWidget {
     if (sub != null && sub.live && sub.fromStore) {
       return StoreManage(subscription: sub, storeProducts: status.storeProducts);
     }
-    if (sub != null && sub.provider == 'fawry' && const {'active', 'past_due', 'grace'}.contains(sub.status)) {
+    // A Fawry reference that can still be paid would, once paid, turn a store subscription into a
+    // Fawry one while the store kept charging (F2b review #2). The backend refuses it too.
+    final now = DateTime.now().toUtc();
+    final payable = status.payments.any((p) => p.status == 'pending' && (p.expiresAt?.isAfter(now) ?? false));
+    if (payable || (sub != null && sub.provider == 'fawry' && const {'active', 'past_due', 'grace'}.contains(sub.status))) {
       return Text(l10n.planFawryActive, key: const Key('plan-fawry-active'));
     }
     return StoreUpgrade(workspace: workspace);

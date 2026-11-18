@@ -100,11 +100,21 @@ class StorePurchaseController extends Notifier<StorePurchaseState> {
 
   void _onUpdates(List<StoreUpdate> updates) {
     for (final update in updates) {
-      if (update.productId != _productId || _disposed) continue;
+      if (_disposed) continue;
+      if (update.aboutNoProduct) {
+        // Android's answer to a sheet that was cancelled or failed: it names no product, so it is
+        // ours only while our sheet is open, and only as a cancel or an error.
+        if (state.phase != StorePhase.buying) continue;
+        if (update.kind == StoreUpdateKind.canceled) state = const StorePurchaseState(StorePhase.idle);
+        if (update.kind == StoreUpdateKind.error) state = StorePurchaseState(StorePhase.failed, update.error);
+        continue;
+      }
+      if (update.productId != _productId) continue;
       switch (update.kind) {
         case StoreUpdateKind.purchased:
         case StoreUpdateKind.restored:
-          if (state.phase == StorePhase.buying) unawaited(_awaitActivation());
+          // From `pending` too: Ask to Buy, or a slow Play payment, approved while the page is open.
+          if (state.phase == StorePhase.buying || state.phase == StorePhase.pending) unawaited(_awaitActivation());
         case StoreUpdateKind.pending:
           state = const StorePurchaseState(StorePhase.pending);
         case StoreUpdateKind.canceled:
@@ -196,7 +206,7 @@ class StoreUpgrade extends ConsumerWidget {
 /// The store's own error text is not shown (it may be English on an Arabic phone, or technical); a
 /// refusal from AURA (unverified email, too many attempts) is, in AuraFailure's words.
 String _failureText(BuildContext context, Object? error) {
-  if (error == null || error is String) return context.l10n.planStoreFailed;
+  if (error == null || error is String || error is StoreSheetRefused) return context.l10n.planStoreFailed;
   final failure = AuraFailure.from(error);
   return '${failure.title}. ${failure.message}';
 }

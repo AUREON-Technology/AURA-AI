@@ -15,6 +15,13 @@ const _apple = {'apple': ['aura.pro.monthly']};
 SubscriptionView _sub(String provider, String status) =>
     SubscriptionView(plan: 'pro', seats: 1, status: status, provider: provider, periodEnd: DateTime.utc(2026, 12, 18));
 
+/// Store anti-steering: no iOS or Android screen mentions another way to pay.
+void _expectNoOtherWayToPay() {
+  for (final word in const ['web', 'Web', 'Fawry', 'fawry', 'browser', 'website']) {
+    expect(find.textContaining(word), findsNothing, reason: 'mentions "$word"');
+  }
+}
+
 void main() {
   late FakeStore store;
 
@@ -59,6 +66,7 @@ void main() {
 
   testWidgets('a purchase whose notification is late says so and offers no second buy', (tester) async {
     await pumpPlan(tester);
+    final loads = fake.calls.where((c) => c == 'billing:ws-me').length;
     await tester.tap(find.byKey(const Key('plan-store-buy')));
     await tester.pump();
     store.emit(StoreUpdateKind.purchased);
@@ -70,7 +78,7 @@ void main() {
     expect(find.text('Purchase received. Your plan will update in a few minutes.'), findsOneWidget);
     expect(find.byKey(const Key('plan-store-buy')), findsNothing);
     expect(find.textContaining("didn't go through"), findsNothing);
-    expect(fake.calls.where((c) => c == 'billing:ws-me').length, greaterThanOrEqualTo(3));
+    expect(fake.calls.where((c) => c == 'billing:ws-me').length - loads, 3); // every configured check
   });
 
   testWidgets('cancelling the store sheet returns to the buy button', (tester) async {
@@ -140,7 +148,7 @@ void main() {
     await pumpPlan(tester, teamActive: true);
     expect(find.text("Team plans can't be bought in this app."), findsOneWidget);
     expect(find.byKey(const Key('plan-store-buy')), findsNothing);
-    expect(find.textContaining('web'), findsNothing);
+    _expectNoOtherWayToPay();
   });
 
   testWidgets('no store product configured, or unknown to the store: no purchase', (tester) async {
@@ -149,5 +157,61 @@ void main() {
     await pumpPlan(tester, using: FakeStore(known: false));
     expect(find.byKey(const Key('plan-billing-off')), findsOneWidget);
     expect(find.byKey(const Key('plan-store-buy')), findsNothing);
+  });
+
+  testWidgets('Android: a cancelled or failed sheet arrives with no product id and is still handled', (tester) async {
+    await pumpPlan(tester, using: FakeStore(kind: StoreKind.google),
+        billing: const BillingStatus(storeProducts: {'google': ['aura_pro']}));
+    await tester.tap(find.byKey(const Key('plan-store-buy')));
+    await tester.pump();
+    store.emit(StoreUpdateKind.canceled, product: '', needsCompletion: false);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('plan-store-buy')));
+    await tester.pump();
+    expect(store.calls.length, 2, reason: 'the button works again after the cancel');
+    store.emit(StoreUpdateKind.error, product: '', needsCompletion: false);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('plan-store-failed')), findsOneWidget);
+  });
+
+  testWidgets('the store refusing to open the sheet is a failure, not a stuck spinner', (tester) async {
+    await pumpPlan(tester, using: FakeStore(opens: false));
+    await tester.tap(find.byKey(const Key('plan-store-buy')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('plan-store-failed')), findsOneWidget);
+    expect(find.text("The purchase didn't go through."), findsOneWidget);
+  });
+
+  testWidgets('an approval that arrives later (Ask to Buy) still activates', (tester) async {
+    await pumpPlan(tester);
+    await tester.tap(find.byKey(const Key('plan-store-buy')));
+    await tester.pump();
+    store.emit(StoreUpdateKind.pending, needsCompletion: false);
+    await tester.pump();
+    expect(find.byKey(const Key('plan-store-pending')), findsOneWidget);
+    fake.billingStatus = BillingStatus(subscription: _sub('apple', 'active'), storeProducts: _apple);
+    store.emit(StoreUpdateKind.purchased);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('plan-store-manage')), findsOneWidget);
+  });
+
+  testWidgets('a Fawry reference still payable blocks a store purchase', (tester) async {
+    await pumpPlan(tester, billing: BillingStatus(storeProducts: _apple, payments: [
+      PaymentView(id: 'p1', plan: 'pro', amountPiastres: 15000, status: 'pending',
+          expiresAt: DateTime.now().toUtc().add(const Duration(days: 1))),
+    ]));
+    expect(find.byKey(const Key('plan-fawry-active')), findsOneWidget);
+    expect(find.byKey(const Key('plan-store-buy')), findsNothing);
+    _expectNoOtherWayToPay();
+  });
+
+  testWidgets('an expired Fawry reference does not block a store purchase', (tester) async {
+    await pumpPlan(tester, billing: BillingStatus(storeProducts: _apple, payments: [
+      PaymentView(id: 'p1', plan: 'pro', amountPiastres: 15000, status: 'pending',
+          expiresAt: DateTime.utc(2020)),
+    ]));
+    expect(find.byKey(const Key('plan-store-buy')), findsOneWidget);
   });
 }
