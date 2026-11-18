@@ -199,6 +199,26 @@ void main() {
       expect(await tm.getValidAccessToken(), 'device-access-1');
     });
 
+    test('remembers that a refusal was marked plan_required (WP11)', () async {
+      final httpClient = MockClient((request) async => http.Response(
+            '{"detail":"The desktop Engineer needs a Pro or Team plan."}',
+            403,
+            headers: {'x-aura-refusal': 'plan_required'},
+          ));
+      final container = ProviderContainer(
+        overrides: [
+          tokenManagerProvider.overrideWith(
+            (ref) => TokenManager(ref, httpClient: httpClient, store: _MemoryRefreshTokenStore()),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final tm = container.read(tokenManagerProvider);
+      expect(await tm.exchangeDesktopLogin('google-id-token'), isNull);
+      expect(tm.lastDesktopLoginPlanRequired, isTrue);
+    });
+
     test('returns null and does not cache anything on a non-200 response', () async {
       final httpClient = MockClient((request) async {
         return http.Response('{"detail":"Invalid or expired credentials."}', 401);
@@ -220,6 +240,7 @@ void main() {
         AuthExchangeFailure.other,
       );
       expect(tm.lastDesktopLoginRefusal, 'Invalid or expired credentials.');
+      expect(tm.lastDesktopLoginPlanRequired, isFalse);
     });
 
     test('records the server\'s reason when desktop sign-in is refused (F-09)', () async {

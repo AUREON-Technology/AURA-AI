@@ -120,6 +120,15 @@ class AuraFailure {
 
   static AuraFailure from(Object? error) {
     if (error is AuraApiError) return _fromApiError(error);
+    if (error is SignInRefused && error.planRequired) {
+      return AuraFailure(
+        kind: AuraFailureKind.forbidden,
+        title: currentL10n.failureDesktopPlanRequiredTitle,
+        message: currentL10n.failureDesktopPlanRequiredMessage,
+        canRetry: false,
+        detail: error.detail,
+      );
+    }
     if (error is SignInRefused) {
       return AuraFailure(
         kind: AuraFailureKind.forbidden,

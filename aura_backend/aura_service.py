@@ -304,6 +304,9 @@ def _apply_cors(app) -> None:
         allow_credentials=not allow_all,
         allow_methods=["*"],
         allow_headers=["*"],
+        # A browser hides response headers from page scripts unless listed here; the web app
+        # reads this one to explain a plan refusal (api/v2/auth.py REFUSAL_HEADER).
+        expose_headers=["X-Aura-Refusal"],
     )
 
 

@@ -161,6 +161,8 @@ def test_only_google_proves_an_operators_email(client, switch, provider) -> None
 def test_a_non_operator_is_refused_while_customers_are_off(client, switch) -> None:
     response = _sign_in(client, _person("ann"))
     assert response.status_code == 403
+    # Not a plan problem: upgrading would not help while customers are off.
+    assert "X-Aura-Refusal" not in response.headers
 
 
 async def test_customers_by_plan_when_switched_on(client, container, switch) -> None:
@@ -168,6 +170,7 @@ async def test_customers_by_plan_when_switched_on(client, container, switch) -> 
     switch(True)
     refused = _sign_in(client, _person("fay"))
     assert refused.status_code == 403 and "Pro or Team" in refused.json()["detail"]
+    assert refused.headers["X-Aura-Refusal"] == "plan_required"
     await _plan(container, "fay", "pro")
     allowed = _sign_in(client, _person("fay"))
     assert allowed.status_code == 200, allowed.text

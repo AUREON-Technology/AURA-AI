@@ -3185,7 +3185,15 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get failureSignInRefusedMessage =>
-      'السيرفر رفض حساب Google ده، فمتسجّلتش. جرّب حساب تاني، أو اطلب من اللي مشغّل سيرفر AURA ده يراجع الحساب ده.';
+      'السيرفر رفض الحساب ده، فمتسجّلتش. جرّب حساب تاني، أو اطلب من اللي مشغّل سيرفر AURA ده يراجع الحساب ده.';
+
+  @override
+  String get failureDesktopPlanRequiredTitle =>
+      'تطبيق الكمبيوتر محتاج باقة Pro أو Team';
+
+  @override
+  String get failureDesktopPlanRequiredMessage =>
+      'الـEngineer على الكمبيوتر بتاعك جزء من باقتي Pro وTeam. رقّي باقتك، وبعدين سجّل دخول تاني.';
 
   @override
   String get failureSignInIncompleteTitle => 'مقدرناش نكمّل تسجيل الدخول';

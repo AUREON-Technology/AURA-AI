@@ -10,10 +10,11 @@
 library;
 
 class DesktopOAuthCancelledException implements Exception {
-  DesktopOAuthCancelledException(this.message, {this.statusCode});
+  DesktopOAuthCancelledException(this.message, {this.statusCode, this.refusal});
 
   final String message;
   final int? statusCode;
+  final String? refusal;
 
   @override
   String toString() => 'DesktopOAuthCancelledException: $message';

@@ -375,6 +375,11 @@ class _EntitlementUnavailable(HTTPException):
 
 
 _UPGRADE_DETAIL = "The desktop Engineer needs a Pro or Team plan. Upgrade, then sign in again."
+#: Marks a refusal whose fix is a Pro or Team plan, so a client can say so in the person's own
+#: language instead of matching the English detail (module readiness WP11: "refused with a plain
+#: reason"). Additive: the detail string stays as it was.
+REFUSAL_HEADER = "X-Aura-Refusal"
+_PLAN_REQUIRED = {REFUSAL_HEADER: "plan_required"}
 
 
 async def _desktop_gate(request: Request, user_info: dict, *, what: str, where: str) -> None:
@@ -388,7 +393,7 @@ async def _desktop_gate(request: Request, user_info: dict, *, what: str, where: 
         await stamp_role(user_info)
         return
     if _customers_open(request):
-        raise HTTPException(status_code=403, detail=_UPGRADE_DETAIL)
+        raise HTTPException(status_code=403, detail=_UPGRADE_DETAIL, headers=_PLAN_REQUIRED)
     _require_operator(user_info, what=what, where=where)
 
 
@@ -466,7 +471,7 @@ async def refresh(request: RefreshRequest, http_request: Request):
                 if issued is None:
                     raise HTTPException(status_code=401, detail="Device access has been revoked.")
                 return issued
-            raise HTTPException(status_code=401, detail=_UPGRADE_DETAIL)
+            raise HTTPException(status_code=401, detail=_UPGRADE_DETAIL, headers=_PLAN_REQUIRED)
         raise HTTPException(
             status_code=401,
             detail=f"Desktop sign-in now requires at least {CONSOLE_MIN_ROLE}; please sign in again.",
@@ -521,7 +526,7 @@ async def approve_desktop_pairing(
             _require_host_agent_capability(user_info)
         except HTTPException:
             if not await _engineer_entitled(request, str(user_info["uid"])):
-                raise HTTPException(status_code=403, detail=_UPGRADE_DETAIL) from None
+                raise HTTPException(status_code=403, detail=_UPGRADE_DETAIL, headers=_PLAN_REQUIRED) from None
             user_info["channel"] = CONSUMER_DESKTOP_CHANNEL
             await stamp_role(user_info)
     else:

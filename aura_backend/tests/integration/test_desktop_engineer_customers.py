@@ -120,8 +120,10 @@ async def test_free_customer_cannot_sign_in_pair_or_refresh(client, container, s
     await container.plans.set_plan("sa", ws, "free", 1)
     downgraded = client.post("/api/v3/auth/refresh", json={"refresh_token": session["refresh_token"]})
     assert downgraded.status_code == 401
+    assert downgraded.headers["X-Aura-Refusal"] == "plan_required"
     _start, approve = _approve(client, _web_token("rex"))
     assert approve.status_code == 403
+    assert approve.headers["X-Aura-Refusal"] == "plan_required"
 
 
 async def test_switch_off_keeps_operators_only(client, container, switch) -> None:

@@ -202,7 +202,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
         // A refusal (desktop sign-in is for operators only, F-09) gets its own words and the
         // server's reason; anything else did not get an answer at all.
         final refusal = tokens.lastDesktopLoginRefusal;
-        if (refusal != null) throw SignInRefused(refusal);
+        if (refusal != null) throw SignInRefused(refusal, tokens.lastDesktopLoginPlanRequired);
         throw StateError('The backend did not accept this Google sign-in for desktop login.');
       }
 
@@ -259,7 +259,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
       } on DesktopOAuthCancelledException catch (e) {
         // The server said no to this account (operators only, or a plan without the desktop
         // Engineer): the same refusal [signInWithDesktopOAuth] reports, with the server's reason.
-        if (e.statusCode == 403) throw SignInRefused(e.message);
+        if (e.statusCode == 403) throw SignInRefused(e.message, e.refusal == 'plan_required');
         rethrow;
       }
       final deviceToken =

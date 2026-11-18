@@ -5558,11 +5558,23 @@ abstract class AppLocalizations {
   /// **'AURA did not accept this sign-in'**
   String get failureSignInRefusedTitle;
 
-  /// Failure message: the server refused the Google account
+  /// Failure message: the server refused the account (any sign-in method)
   ///
   /// In en, this message translates to:
-  /// **'The server refused this Google account, so you have not been signed in. Try another account, or ask whoever runs this AURA server to check this one.'**
+  /// **'The server refused this account, so you have not been signed in. Try another account, or ask whoever runs this AURA server to check this one.'**
   String get failureSignInRefusedMessage;
+
+  /// Failure title: desktop sign-in refused because the account's plan has no desktop Engineer (WP11)
+  ///
+  /// In en, this message translates to:
+  /// **'The desktop app needs a Pro or Team plan'**
+  String get failureDesktopPlanRequiredTitle;
+
+  /// Failure message: upgrade to Pro or Team, then sign in again
+  ///
+  /// In en, this message translates to:
+  /// **'The Engineer on your computer is part of the Pro and Team plans. Upgrade your plan, then sign in again.'**
+  String get failureDesktopPlanRequiredMessage;
 
   /// Failure title: the desktop sign-in flow failed (message comes from the flow)
   ///

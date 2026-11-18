@@ -3170,7 +3170,15 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get failureSignInRefusedMessage =>
-      'The server refused this Google account, so you have not been signed in. Try another account, or ask whoever runs this AURA server to check this one.';
+      'The server refused this account, so you have not been signed in. Try another account, or ask whoever runs this AURA server to check this one.';
+
+  @override
+  String get failureDesktopPlanRequiredTitle =>
+      'The desktop app needs a Pro or Team plan';
+
+  @override
+  String get failureDesktopPlanRequiredMessage =>
+      'The Engineer on your computer is part of the Pro and Team plans. Upgrade your plan, then sign in again.';
 
   @override
   String get failureSignInIncompleteTitle => 'Couldn\'t finish signing in';

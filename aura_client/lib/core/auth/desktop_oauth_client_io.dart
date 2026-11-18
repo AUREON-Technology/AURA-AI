@@ -49,9 +49,13 @@ import 'package:flutter/foundation.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class DesktopOAuthCancelledException implements Exception {
-  DesktopOAuthCancelledException(this.message, {this.statusCode});
+  DesktopOAuthCancelledException(this.message, {this.statusCode, this.refusal});
 
   final String message;
+
+  /// The server's `X-Aura-Refusal` marker on a refusal, e.g. `plan_required` when the fix is a Pro
+  /// or Team plan (module readiness WP11). Null when absent.
+  final String? refusal;
 
   /// The AURA server's HTTP status when it answered the exchange with a refusal; null for every
   /// failure that was not such an answer (browser, timeout, network). `AuthNotifier` reads it to
@@ -401,7 +405,7 @@ Future<String> _exchangeCodeViaBackend({
 /// sentence, so the sign-in screen never has to guess between "the server said no" and "AURA is
 /// unreachable"; an answer comes back as its status and its JSON object (empty when the body was
 /// not one).
-Future<({int status, Map<String, dynamic> body})> _postJsonToBackend(
+Future<({int status, Map<String, dynamic> body, String? refusal})> _postJsonToBackend(
   Uri endpoint,
   Map<String, Object?> payload,
 ) async {
@@ -409,12 +413,14 @@ Future<({int status, Map<String, dynamic> body})> _postJsonToBackend(
   try {
     final String raw;
     final int status;
+    final String? refusal;
     try {
       final request = await client.postUrl(endpoint).timeout(const Duration(seconds: 30));
       request.headers.contentType = ContentType.json;
       request.write(jsonEncode(payload));
       final response = await request.close().timeout(const Duration(seconds: 30));
       status = response.statusCode;
+      refusal = response.headers.value('x-aura-refusal');
       raw = await response.transform(utf8.decoder).join().timeout(const Duration(seconds: 30));
     } on SocketException {
       throw DesktopOAuthCancelledException(currentL10n.coreDesktopSignInServerUnreachable);
@@ -432,7 +438,11 @@ Future<({int status, Map<String, dynamic> body})> _postJsonToBackend(
     } on FormatException {
       decoded = null;
     }
-    return (status: status, body: decoded is Map<String, dynamic> ? decoded : <String, dynamic>{});
+    return (
+      status: status,
+      body: decoded is Map<String, dynamic> ? decoded : <String, dynamic>{},
+      refusal: refusal,
+    );
   } finally {
     client.close(force: true);
   }
@@ -440,13 +450,16 @@ Future<({int status, Map<String, dynamic> body})> _postJsonToBackend(
 
 /// A non-200 answer from the AURA server, worded by its own `detail` (already written to be shown)
 /// or, without one, by the status.
-DesktopOAuthCancelledException _backendRefusal(({int status, Map<String, dynamic> body}) answer) {
+DesktopOAuthCancelledException _backendRefusal(
+  ({int status, Map<String, dynamic> body, String? refusal}) answer,
+) {
   final detail = answer.body['detail'];
   return DesktopOAuthCancelledException(
     detail is String && detail.isNotEmpty
         ? detail
         : currentL10n.coreDesktopSignInServerFailed(answer.status),
     statusCode: answer.status,
+    refusal: answer.refusal,
   );
 }
 

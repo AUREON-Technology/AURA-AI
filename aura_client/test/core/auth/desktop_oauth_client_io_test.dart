@@ -47,7 +47,11 @@ class _FakeBackend {
   String? lastContentType;
   int requestCount = 0;
 
-  static Future<_FakeBackend> start({required Object? response, int statusCode = 200}) async {
+  static Future<_FakeBackend> start({
+    required Object? response,
+    int statusCode = 200,
+    Map<String, String> headers = const {},
+  }) async {
     final httpServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final server = _FakeBackend(httpServer);
     unawaited(() async {
@@ -58,6 +62,7 @@ class _FakeBackend {
         server.lastRequestBody = jsonDecode(raw) as Map<String, dynamic>;
         request.response.statusCode = statusCode;
         request.response.headers.contentType = ContentType.json;
+        headers.forEach(request.response.headers.set);
         request.response.write(response is String ? response : jsonEncode(response));
         await request.response.close();
       }
@@ -544,6 +549,28 @@ void main() {
         throwsA(isA<DesktopOAuthCancelledException>()
             .having((e) => e.message, 'message', detail)
             .having((e) => e.statusCode, 'statusCode', 403)),
+      );
+    });
+
+    // WP11: the server marks a refusal a Pro or Team plan would fix, so the app can say that in
+    // the person's own language rather than a bare "refused".
+    test('a plan refusal carries the server\'s plan_required marker', () async {
+      final backend = await _FakeBackend.start(
+        response: {'detail': 'The desktop Engineer needs a Pro or Team plan.'},
+        statusCode: 403,
+        headers: {'X-Aura-Refusal': 'plan_required'},
+      );
+      addTearDown(backend.close);
+
+      await expectLater(
+        signInWithBrowserHandoff(
+          signInPage: signInPage,
+          exchangeEndpoint: backend.uri,
+          launch: _fakeLaunch({'code': 'handoff-code-1'}),
+        ),
+        throwsA(isA<DesktopOAuthCancelledException>()
+            .having((e) => e.statusCode, 'statusCode', 403)
+            .having((e) => e.refusal, 'refusal', 'plan_required')),
       );
     });
 

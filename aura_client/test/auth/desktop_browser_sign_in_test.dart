@@ -485,6 +485,7 @@ void main() {
         request.response
           ..statusCode = status
           ..headers.contentType = ContentType.json
+          ..headers.set('X-Aura-Refusal', status == 403 ? 'plan_required' : 'none')
           ..write(jsonEncode(answer));
         await request.response.close();
       });
@@ -566,6 +567,8 @@ void main() {
       final error = c.read(authProvider).error;
       expect(error, isA<SignInRefused>());
       expect((error! as SignInRefused).detail, 'The desktop Engineer needs a Pro or Team plan.');
+      // WP11: the server's plan_required marker reaches the refusal, so the app can say why.
+      expect((error as SignInRefused).planRequired, isTrue);
       expect(store.token, isNull);
     });
 

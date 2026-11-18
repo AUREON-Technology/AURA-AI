@@ -485,6 +485,7 @@ class TokenManager {
     String? deviceName,
   }) async {
     lastDesktopLoginRefusal = null;
+    lastDesktopLoginPlanRequired = false;
     try {
       final response = await _post(
         "$_authUrl/desktop/login",
@@ -500,6 +501,7 @@ class TokenManager {
         );
         if (_isRefusal(response.statusCode)) {
           lastDesktopLoginRefusal = _serverDetail(response.body) ?? 'HTTP ${response.statusCode}';
+          lastDesktopLoginPlanRequired = response.headers['x-aura-refusal'] == 'plan_required';
         }
         _ref.read(authExchangeFailureProvider.notifier).set(AuthExchangeFailure.other);
         return null;
@@ -552,6 +554,10 @@ class TokenManager {
   /// 400/401/403 -- for instance desktop sign-in being limited to operators (F-09). Null when
   /// that call succeeded or failed without an answer.
   String? lastDesktopLoginRefusal;
+
+  /// Whether that refusal was marked `X-Aura-Refusal: plan_required` (a Pro or Team plan would
+  /// let this account in; module readiness WP11).
+  bool lastDesktopLoginPlanRequired = false;
 
   static String? _serverDetail(String body) {
     try {
