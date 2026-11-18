@@ -6,6 +6,7 @@ import 'package:aura_client/features/workspaces/presentation/workspace_switcher.
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'workspace_fakes.dart';
@@ -117,4 +118,30 @@ void main() {
     await tester.pumpAndSettle();
     expect(fake.calls.where((c) => c.startsWith('remove')), isEmpty);
   });
+
+  // F23: leaving or deleting refreshed the workspace list first; the page rebuilt without the team
+  // (an error view), its button's context was gone, and the navigation away never happened.
+  for (final (role, button, call) in [('member', 'team-leave', 'remove:amy'), ('owner', 'team-delete', 'delete:ws-team')]) {
+    testWidgets('after $call the page goes away instead of showing an error', (tester) async {
+      await pumpScreen(
+        tester,
+        const TeamSettingsPage(workspaceId: 'ws-team'),
+        uid: role == 'owner' ? 'own' : 'amy',
+        active: team(role: role),
+        setup: (f) => _as(f, role),
+        routes: [GoRoute(path: '/you', builder: (_, _) => const Scaffold(body: Text('YOU PAGE')))],
+      );
+      await tester.tap(find.byKey(Key(button)));
+      await tester.pumpAndSettle();
+      // From here the server no longer lists the team for us.
+      fake.workspaces = [personal];
+      await tester.tap(find.text(role == 'owner' ? 'Delete team' : 'Leave team').last); // the dialog's confirm
+      await tester.pumpAndSettle();
+
+      expect(fake.calls, contains(call));
+      expect(find.text('YOU PAGE'), findsOneWidget);
+      final container = ProviderScope.containerOf(tester.element(find.text('YOU PAGE')));
+      expect(container.read(activeWorkspaceProvider), isNull);
+    });
+  }
 }
