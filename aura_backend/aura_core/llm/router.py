@@ -44,6 +44,7 @@ Two rules that are not obvious and matter a great deal:
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass, field, replace
 from typing import Any, AsyncIterator, Callable, Mapping, Sequence
@@ -80,6 +81,33 @@ from .sensitivity import effective_classification
 from .workload import effective_workload
 
 __all__ = ["ProviderRouter", "RoutingDecision", "TurnBudget"]
+
+logger = logging.getLogger(__name__)
+
+#: HTTP statuses that say this provider's credentials or permissions are wrong (F15): a fault of
+#: the deployment's configuration for that one provider, not of the request and not of its health.
+_CREDENTIAL_STATUSES = frozenset({401, 403})
+
+
+def _fault_kind(exc: BaseException) -> str:
+    """What a failed attempt says, and so what the router may learn from it (F15).
+
+    * ``"health"`` -- the provider is down or struggling: 5xx, timeouts, transport failures, an
+      adapter crash. Only these count toward the circuit breaker.
+    * ``"credentials"`` -- 401/403, or a provider with no usable key. Says nothing about the
+      request (another provider can serve it) nor about the provider's health.
+    * ``"request"`` -- any other non-retryable failure (400, 404, 413, 422, ...): the request was
+      refused. Counting it toward the breaker would let one malformed request take a healthy
+      provider away from every other caller.
+    """
+    if not isinstance(exc, ProviderError):
+        return "health"
+    status = exc.details.get("status")
+    if status in _CREDENTIAL_STATUSES or exc.details.get("operation") == "configure":
+        return "credentials"
+    if exc.retryable or status == 408:
+        return "health"
+    return "request"
 
 
 def _prompt_tokens(request: CompletionRequest) -> int:
@@ -592,8 +620,14 @@ class ProviderRouter:
         usage: TokenUsage | None,
         *,
         streamed: bool,
+        result: str = "success",
     ) -> None:
         """Record that a third party received this generation. Never its content.
+
+        Called for every attempt that was dispatched, whatever became of it (F29): a request that
+        reached a hosted provider and then failed, timed out or was cancelled still left the
+        deployment. ``result`` is the attempt's outcome (``success``, ``error``, ``timeout``,
+        ``rate_limited``, ``cancelled``, ``turn_deadline``).
 
         Best-effort: an audit sink that is down must not fail a generation that already
         happened. The record is the evidence an operator needs to answer "what left, when, for
@@ -609,9 +643,10 @@ class ProviderRouter:
                 AuditEvent(
                     action="llm.third_party_generation",
                     actor=hint.user_key or "system",
-                    outcome="success",
+                    outcome="success" if result == "success" else "failure",
                     resource=name,
                     detail={
+                        "result": result,
                         "model": provider.capabilities.model_id,
                         "data_classification": effective_classification(request).value,
                         "prompt_tokens": usage.prompt_tokens if usage else None,
@@ -725,9 +760,12 @@ class ProviderRouter:
         if probe:
             stats.breaker.release_probe()
 
-    def _record_failure(self, name: str, error: BaseException) -> None:
+    def _record_failure(self, name: str, error: BaseException, *, health: bool = True) -> None:
+        """Count a failed attempt. Only a ``health`` failure is a verdict for the breaker (F15);
+        the caller releases a held probe slot otherwise."""
         stats = self._stats[name]
-        stats.breaker.record_failure()
+        if health:
+            stats.breaker.record_failure()
         stats.total_requests += 1
         stats.total_failures += 1
         if self._metrics is not None:
@@ -736,6 +774,20 @@ class ProviderRouter:
                 model=self._providers[name].capabilities.model_id,
                 outcome="error",
             ).inc()
+
+    @staticmethod
+    def _log_credential_fault(name: str, exc: BaseException) -> None:
+        # An operator's problem, not a provider outage: say so loudly, once per attempt, without
+        # opening the circuit for everyone (F15).
+        details = getattr(exc, "details", None) or {}
+        logger.warning(
+            "provider refused its credentials; failing over without opening its circuit",
+            extra={
+                "provider": name,
+                "status": details.get("status"),
+                "operation": details.get("operation"),
+            },
+        )
 
     async def complete(
         self, request: CompletionRequest, *, budget: TurnBudget | None = None
@@ -809,9 +861,6 @@ class ProviderRouter:
                 self._record_success(name, latency_ms=elapsed, ttft_ms=None, response=response)
                 if budget is not None:
                     budget.consume(cost_usd=response.cost_usd)
-                await self._audit_third_party(
-                    name, request, hint, response.usage, streamed=False
-                )
                 if index > 0:
                     # Attribute the fallback to the provider that actually failed, not to the
                     # one that succeeded -- otherwise the metric points at the healthy node.
@@ -837,9 +886,14 @@ class ProviderRouter:
                     used_tokens = 0
                     attempts.append(self._record_rate_limited(name, exc))
                 else:
-                    verdict = True
-                    self._record_failure(name, exc)
+                    fault = _fault_kind(exc)
+                    verdict = fault == "health"
+                    self._record_failure(name, exc, health=verdict)
                     attempts.append({"provider": name, "error": exc.kind, "detail": exc.message})
+                    if fault == "credentials":
+                        self._log_credential_fault(name, exc)
+                        # This provider's configuration, not the request: another can serve it.
+                        continue
                     if not exc.retryable:
                         # A malformed request fails identically everywhere; trying more
                         # providers just multiplies latency and cost.
@@ -853,9 +907,13 @@ class ProviderRouter:
                 raise
             finally:
                 if not verdict:
-                    # Cancelled or rate-limited: nothing was learned about the provider's
-                    # health, but a held probe slot must still be given back.
+                    # Cancelled, rate-limited or refused as a bad request: nothing was learned
+                    # about the provider's health, but a held probe slot must be given back.
                     self._release_probe(stats, probe)
+                await self._audit_third_party(
+                    name, request, hint, response.usage if response is not None else None,
+                    streamed=False, result=outcome,
+                )
                 self._quota.settle(reservation, used_tokens)
                 stats.inflight -= 1
                 self._admission.release(ticket)
@@ -1019,7 +1077,6 @@ class ProviderRouter:
                         else 0.0
                     )
                     budget.consume(cost_usd=cost)
-                await self._audit_third_party(name, request, hint, usage, streamed=True)
                 return
             except asyncio.CancelledError:
                 outcome = "cancelled"
@@ -1046,8 +1103,9 @@ class ProviderRouter:
                         "timeout_s": round(attempt_timeout, 1),
                     })
                     break
-                verdict = True
-                self._record_failure(name, exc)
+                fault = _fault_kind(exc)
+                verdict = fault == "health"
+                self._record_failure(name, exc, health=verdict)
                 kind = getattr(exc, "kind", None) or (
                     "timeout" if isinstance(exc, asyncio.TimeoutError) else type(exc).__name__
                 )
@@ -1062,12 +1120,19 @@ class ProviderRouter:
                         retryable=False,
                         details={"partial_output": True},
                     ) from exc
+                if fault == "credentials":
+                    self._log_credential_fault(name, exc)
+                    continue
                 if isinstance(exc, ProviderError) and not exc.retryable:
                     break
             finally:
                 if not verdict:
-                    # Cancelled, closed by the consumer, or rate-limited: see `complete`.
+                    # Cancelled, closed by the consumer, rate-limited or refused as a bad
+                    # request: see `complete`.
                     self._release_probe(stats, probe)
+                await self._audit_third_party(
+                    name, request, hint, usage, streamed=True, result=outcome
+                )
                 self._quota.settle(reservation, used_tokens)
                 stats.inflight -= 1
                 self._admission.release(ticket)
