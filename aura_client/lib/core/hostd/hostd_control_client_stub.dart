@@ -60,6 +60,7 @@ class HostdControlClient {
   Future<Map<String, dynamic>> gitCheckout({required String root, required String branch, bool create = false}) async =>
       _unavailable();
   Future<Map<String, dynamic>> gitMerge({required String root, required String branch}) async => _unavailable();
+  Future<Map<String, dynamic>> initGit({required String root}) async => _unavailable();
   Future<Map<String, dynamic>> gitMergeAbort({required String root}) async => _unavailable();
   Future<Map<String, dynamic>> gitBranches({required String root}) async => _unavailable();
   Future<Map<String, dynamic>> gitFetch({required String root}) async => _unavailable();

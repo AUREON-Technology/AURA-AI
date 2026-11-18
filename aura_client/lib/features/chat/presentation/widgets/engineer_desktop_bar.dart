@@ -15,6 +15,8 @@ import 'package:aura_client/core/ai/engineer/host_folders_client.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
+import 'package:aura_client/features/engineering/presentation/git_init_prompt.dart';
+
 import '../../data/engineer_remote_folder.dart';
 
 class EngineerDesktopBar extends ConsumerWidget {
@@ -47,21 +49,48 @@ class EngineerDesktopBar extends ConsumerWidget {
         color: palette.surfaceVariant,
         border: Border(top: BorderSide(color: palette.border)),
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.computer_outlined, size: 16, color: palette.textSecondary),
-          const SizedBox(width: AuraSpacing.sm),
-          Expanded(child: content),
-          IconButton(
-            tooltip: l10n.engineerDesktopRefresh,
-            visualDensity: VisualDensity.compact,
-            icon: Icon(Icons.refresh, size: 18, color: palette.textSecondary),
-            onPressed: () => ref.invalidate(hostFoldersProvider),
+          Row(
+            children: [
+              Icon(Icons.computer_outlined, size: 16, color: palette.textSecondary),
+              const SizedBox(width: AuraSpacing.sm),
+              Expanded(child: content),
+              IconButton(
+                tooltip: l10n.engineerDesktopRefresh,
+                visualDensity: VisualDensity.compact,
+                icon: Icon(Icons.refresh, size: 18, color: palette.textSecondary),
+                onPressed: () => ref.invalidate(hostFoldersProvider),
+              ),
+            ],
           ),
+          // D-13: the chosen folder is not a git repository, so the Engineer cannot isolate its
+          // work there yet. Sending is still allowed: the turn itself explains the refusal.
+          if (_chosenNotGit(ref, folders.value) case final path?)
+            CompactGitInitRow(
+              key: ValueKey('git-init-$path'),
+              path: path,
+              onInit: () async {
+                await ref.read(hostFoldersClientProvider).initGit(path);
+                ref.invalidate(hostFoldersProvider);
+              },
+            ),
         ],
       ),
     );
   }
+}
+
+/// The chosen folder's path when the computer reports it is not a git repository (`is_git:
+/// false`); null otherwise, including for an older daemon that does not say.
+String? _chosenNotGit(WidgetRef ref, HostFolders? folders) {
+  if (folders == null || folders.state != HostFoldersState.available) return null;
+  final chosen = ref.watch(engineerRemoteWorkspaceRootProvider);
+  for (final root in folders.roots) {
+    if (root.path == chosen && root.isGit == false) return root.path;
+  }
+  return null;
 }
 
 class _Message extends StatelessWidget {

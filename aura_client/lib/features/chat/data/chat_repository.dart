@@ -117,6 +117,8 @@ class ChatRepository {
   /// approval resend (`confirmPendingCalls`) keeps running in the root the user was looking at
   /// rather than falling back to the daemon's first granted root.
   final Map<String, String> _lastWorkspaceRoot = {};
+  /// WP4: the conversations whose turns asked for an isolated worktree, kept for the same reason.
+  final Set<String> _isolatedConversations = {};
   String? _stoppedMessageId;
 
   ChatRepository(this._db, this._ref);
@@ -208,6 +210,8 @@ class ChatRepository {
     // The Desktop IDE's active workspace root (FSA-006), or null from any surface without one.
     // Remembered per conversation so a retry of this message runs its commands in the same place.
     String? workspaceRoot,
+    // WP4 (D-09): work in the conversation's own git worktree. Remembered like [workspaceRoot].
+    bool desktopTaskIsolation = false,
   }) async {
     if (_ref.read(streamingMessageIdProvider) != null) {
       debugPrint("[ChatRepository] ignoring send while a stream is already in flight");
@@ -216,6 +220,7 @@ class ChatRepository {
     if (workspaceRoot != null) {
       _lastWorkspaceRoot[conversationId] = workspaceRoot;
     }
+    if (desktopTaskIsolation) _isolatedConversations.add(conversationId);
 
     _ref.read(pendingActionsProvider.notifier).clear();
     // Pending confirmations are turn-scoped (each `PendingToolCall.turnId`), not cleared wholesale
@@ -277,6 +282,7 @@ class ChatRepository {
         assistantMsgId: assistantMsgId,
         images: images,
         workspaceRoot: workspaceRoot ?? _lastWorkspaceRoot[conversationId],
+        desktopTaskIsolation: _isolatedConversations.contains(conversationId),
       );
 
       if (sseOutcome.outcome == _SseSendOutcome.interrupted) {
@@ -433,6 +439,7 @@ class ChatRepository {
     required String assistantMsgId,
     List<ChatImageAttachment> images = const [],
     String? workspaceRoot,
+    bool desktopTaskIsolation = false,
   }) async {
     final stopwatch = Stopwatch()..start();
     String displayText = "";
@@ -473,6 +480,7 @@ class ChatRepository {
         approvalIds: approvalIds,
         images: images,
         workspaceRoot: workspaceRoot,
+        desktopTaskIsolation: desktopTaskIsolation,
       );
 
       events = StreamIterator(stream);

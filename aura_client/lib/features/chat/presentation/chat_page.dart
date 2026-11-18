@@ -61,9 +61,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     // The query stays in the composer when the user declines the Engineer notice.
     if (!await _engineerConsentGiven() || !mounted) return;
     _messageController.clear();
+    final root = _remoteWorkspaceRoot();
     unawaited(ref
         .read(chatViewModelProvider.notifier)
-        .consumeInitialQuery(query, workspaceRoot: _remoteWorkspaceRoot()));
+        .consumeInitialQuery(query, workspaceRoot: root, desktopTaskIsolation: root != null));
   }
 
   @override
@@ -107,9 +108,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _messageController.clear();
     if (mounted) FocusScope.of(context).unfocus();
 
+    // WP4 (D-09): work on the user's computer happens in the conversation's own git worktree.
+    final root = _remoteWorkspaceRoot();
     final sent = await ref
         .read(chatViewModelProvider.notifier)
-        .sendMessage(text, workspaceRoot: _remoteWorkspaceRoot());
+        .sendMessage(text, workspaceRoot: root, desktopTaskIsolation: root != null);
     if (!sent || !mounted) return;
     Future.delayed(const Duration(milliseconds: 100), () {
       if (mounted) _scrollToBottom();

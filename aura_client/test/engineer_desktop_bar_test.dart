@@ -16,6 +16,8 @@ import 'package:aura_client/core/auth/token_manager.dart';
 import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
+import 'package:aura_client/core/hostd/hostd_control_client.dart';
+import 'package:aura_client/core/hostd/hostd_providers.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/security/device_validation_service.dart';
 import 'package:aura_client/core/security/encryption_service.dart';
@@ -27,6 +29,7 @@ import 'package:aura_client/features/chat/data/agents_repository.dart';
 import 'package:aura_client/features/chat/data/engineer_remote_folder.dart';
 import 'package:aura_client/features/chat/presentation/chat_page.dart';
 import 'package:aura_client/features/chat/presentation/widgets/engineer_desktop_bar.dart';
+import 'package:aura_client/features/engineering/presentation/git_init_prompt.dart';
 import 'package:aura_client/l10n/generated/app_localizations.dart';
 import 'package:aura_client/l10n/generated/app_localizations_en.dart';
 import 'package:drift/native.dart';
@@ -57,6 +60,9 @@ class _Backend {
 
   Map<String, dynamic> folders;
   final log = <String>[];
+
+  /// The computer's answer to a git-init request, when it refuses one.
+  String? gitInitRefusal;
   final streamBodies = <Map<String, dynamic>>[];
 
   late final http.Client client = MockClient.streaming((request, bodyStream) async {
@@ -72,6 +78,21 @@ class _Backend {
       case '/api/v3/host/folders':
         log.add('GET folders');
         return _json(folders);
+      case '/api/v3/host/folders/git-init':
+        final path = (jsonDecode(await bodyStream.bytesToString()) as Map)['path'];
+        log.add('POST git-init $path');
+        final refusal = gitInitRefusal;
+        if (refusal != null) {
+          return _json({'error': 'desktop_refused', 'message': refusal, 'retryable': false, 'details': {}}, 409);
+        }
+        folders = {
+          ...folders,
+          'roots': [
+            for (final root in folders['roots'] as List)
+              (root as Map)['path'] == path ? {...root, 'is_git': true} : root,
+          ],
+        };
+        return _json({'ok': true, 'commit': 'abc123'});
     }
     return _json({'error': 'not_found'}, 404);
   });
@@ -103,6 +124,7 @@ class _RecordingSseClient extends SseAgentClient {
     double temperature = 0.3,
     List<ChatImageAttachment> images = const [],
     String? workspaceRoot,
+    bool desktopTaskIsolation = false,
   }) async* {
     backend.log.add('stream');
     final body = chatStreamBody(
@@ -117,10 +139,34 @@ class _RecordingSseClient extends SseAgentClient {
       temperature: temperature,
       images: images,
       workspaceRoot: workspaceRoot,
+      desktopTaskIsolation: desktopTaskIsolation,
     );
     backend.streamBodies.add(jsonDecode(jsonEncode(body)) as Map<String, dynamic>);
     yield SseChatEvent.fromWire('token', {'text': 'On it.'});
     yield SseChatEvent.fromWire('done', {});
+  }
+}
+
+/// The local daemon, for the IDE: `gitStatus` says whether the folder is a repository.
+class _FakeHostd extends HostdControlClient {
+  _FakeHostd({required this.isGit});
+
+  bool isGit;
+  final inits = <String>[];
+
+  @override
+  Future<Map<String, dynamic>> gitStatus({required String root}) async {
+    if (!isGit) {
+      throw HostdControlError(409, '$root is not a git repository', code: 'not_a_git_repository');
+    }
+    return {'branch': 'main', 'files': []};
+  }
+
+  @override
+  Future<Map<String, dynamic>> initGit({required String root}) async {
+    inits.add(root);
+    isGit = true;
+    return {'ok': true, 'commit': 'abc123'};
   }
 }
 
@@ -159,8 +205,9 @@ void main() {
     await db.close();
   });
 
-  ProviderContainer containerFor(_Backend backend, {String account = 'user-1'}) {
+  ProviderContainer containerFor(_Backend backend, {String account = 'user-1', _FakeHostd? hostd}) {
     final container = ProviderContainer(overrides: [
+      if (hostd != null) hostdControlClientProvider.overrideWithValue(hostd),
       databaseProvider.overrideWithValue(db),
       ideEventBusProvider.overrideWithValue(bus),
       workspaceNotifierProvider.overrideWith((ref) => WorkspaceNotifier(db, bus)),
@@ -305,6 +352,8 @@ void main() {
       expect(find.text('/home/me/api'), findsOneWidget, reason: 'the first folder until one is chosen');
       await send(tester, 'run the tests');
       expect(backend.streamBodies.last['workspace_root'], '/home/me/api');
+      // WP4: work on the computer happens in the conversation's own worktree.
+      expect(backend.streamBodies.last['desktop_task_isolation'], isTrue);
 
       await choose(tester, '/home/me/web');
       await send(tester, 'and lint');
@@ -319,6 +368,7 @@ void main() {
       await send(tester, 'what is in the repo?');
 
       expect(backend.streamBodies.single.containsKey('workspace_root'), isFalse);
+      expect(backend.streamBodies.single.containsKey('desktop_task_isolation'), isFalse);
       await unmount(tester, container);
     });
 
@@ -368,6 +418,124 @@ void main() {
     expect(backend.log, isNot(contains('GET folders')));
     expect(backend.streamBodies.single.containsKey('workspace_root'), isFalse,
         reason: 'no IDE workspace open, and no remote folder substituted for it');
+    // WP4: every Engineer turn from the IDE panel asks for its own worktree.
+    expect(backend.streamBodies.single['desktop_task_isolation'], isTrue);
     await unmount(tester, container);
+  });
+
+  // WP4 (D-13): isolation needs git, so a folder that is not a repository offers to become one.
+  group('initialize git', () {
+    Map<String, dynamic> notGit() => {
+          'connected': true,
+          'remote_control': true,
+          'roots': [
+            {'path': '/home/me/notes', 'trusted': false, 'is_git': false},
+            {'path': '/home/me/api', 'trusted': false, 'is_git': true},
+          ],
+        };
+
+    testWidgets('phone: a chosen folder that is not a repository explains and offers to initialize it',
+        (tester) async {
+      final backend = _Backend(notGit());
+      final container = await pumpChat(tester, backend);
+
+      expect(find.text(_l10n.engineerDesktopNotGit), findsOneWidget);
+      await tester.tap(find.text(_l10n.gitInitButtonShort));
+      await settle(tester);
+      expect(find.text(_l10n.gitInitConfirmTitle), findsOneWidget);
+      expect(find.text(_l10n.gitInitConfirmBody('/home/me/notes')), findsOneWidget);
+
+      await tester.tap(find.text(_l10n.gitInitConfirmAction));
+      await settle(tester);
+
+      expect(backend.log, contains('POST git-init /home/me/notes'));
+      expect(backend.log.where((e) => e == 'GET folders'), hasLength(2), reason: 'refreshed after');
+      expect(find.text(_l10n.engineerDesktopNotGit), findsNothing);
+      expect(find.text(_l10n.gitInitDone), findsOneWidget);
+      await unmount(tester, container);
+    });
+
+    testWidgets('phone: Cancel sends nothing', (tester) async {
+      final backend = _Backend(notGit());
+      final container = await pumpChat(tester, backend);
+
+      await tester.tap(find.text(_l10n.gitInitButtonShort));
+      await settle(tester);
+      await tester.tap(find.text(_l10n.cancel));
+      await settle(tester);
+
+      expect(backend.log.where((e) => e.startsWith('POST git-init')), isEmpty);
+      expect(find.text(_l10n.engineerDesktopNotGit), findsOneWidget);
+      await unmount(tester, container);
+    });
+
+    testWidgets("phone: the computer's refusal is shown in its own words", (tester) async {
+      final backend = _Backend(notGit())..gitInitRefusal = 'remote control is off on this computer';
+      final container = await pumpChat(tester, backend);
+
+      await tester.tap(find.text(_l10n.gitInitButtonShort));
+      await settle(tester);
+      await tester.tap(find.text(_l10n.gitInitConfirmAction));
+      await settle(tester);
+
+      expect(find.text(_l10n.gitInitFailed('remote control is off on this computer')), findsOneWidget);
+      expect(find.text(_l10n.engineerDesktopNotGit), findsOneWidget);
+      await unmount(tester, container);
+    });
+
+    testWidgets('phone: a repository, or an older daemon that does not say, offers nothing', (tester) async {
+      final backend = _Backend({
+        'connected': true,
+        'remote_control': true,
+        'roots': [
+          {'path': '/home/me/old', 'trusted': false},
+        ],
+      });
+      final container = await pumpChat(tester, backend);
+
+      expect(find.text(_l10n.engineerDesktopNotGit), findsNothing);
+      expect(find.text(_l10n.gitInitButtonShort), findsNothing);
+      await unmount(tester, container);
+    });
+
+    Future<ProviderContainer> pumpIde(WidgetTester tester, _FakeHostd hostd) async {
+      tester.view.physicalSize = const Size(900, 1400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final container = containerFor(_Backend(_available()), hostd: hostd);
+      await container
+          .read(workspaceNotifierProvider.notifier)
+          .createWorkspace(id: 'w1', rootPath: '/home/me/notes', displayName: 'notes');
+      await tester.pumpWidget(UncontrolledProviderScope(container: container, child: app(const AgentPanel())));
+      await settle(tester);
+      return container;
+    }
+
+    testWidgets('IDE: a bound folder that is not a repository shows why, and initializes on confirm',
+        (tester) async {
+      final hostd = _FakeHostd(isGit: false);
+      final container = await pumpIde(tester, hostd);
+
+      expect(find.byType(WorkspaceGitInitBanner), findsOneWidget);
+      expect(find.text(_l10n.gitInitBannerTitle), findsOneWidget);
+      expect(find.text(_l10n.gitInitBannerBody), findsOneWidget);
+
+      await tester.tap(find.text(_l10n.gitInitButton));
+      await settle(tester);
+      expect(find.text(_l10n.gitInitConfirmBody('/home/me/notes')), findsOneWidget);
+      await tester.tap(find.text(_l10n.gitInitConfirmAction));
+      await settle(tester);
+
+      expect(hostd.inits, ['/home/me/notes']);
+      expect(find.text(_l10n.gitInitBannerTitle), findsNothing, reason: 'refreshed: now a repository');
+      await unmount(tester, container);
+    });
+
+    testWidgets('IDE: a repository shows no banner', (tester) async {
+      final container = await pumpIde(tester, _FakeHostd(isGit: true));
+
+      expect(find.text(_l10n.gitInitBannerTitle), findsNothing);
+      await unmount(tester, container);
+    });
   });
 }

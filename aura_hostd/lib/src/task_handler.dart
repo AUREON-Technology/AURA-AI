@@ -1,6 +1,7 @@
 /// Implements the RPC methods the backend's `HostAgentSandboxRunner`
 /// (`aura_backend/aura_core/adapters/host_agent.py`) calls: `create_task`, `run`, `write_file`,
-/// `write_files`, `read_file` and `list_roots` (plus the `cancel` frame, `rpc_client.dart`). Every
+/// `write_files`, `read_file`, `list_roots` and `init_git` (plus the `cancel` frame,
+/// `rpc_client.dart`). Every
 /// filesystem/command operation goes through [WorkspaceRoots] for containment
 /// before touching disk -- this class has no path-handling logic of its own that bypasses it.
 ///
@@ -18,6 +19,14 @@
 /// against a compromised backend (which could simply claim `desktop`); the local opt-in and the
 /// containment, denylist and `.git` rules are what hold then.
 ///
+/// Isolation needs git (WP4, D-13). An isolated task (`isolate: true` with a `task_key`, which
+/// the client sends for every Engineer task) works on its own worktree of the folder; in a folder
+/// that is not a git work tree with a commit it is refused with `isolation_needs_git` -- never a
+/// silent fallback to the live folder. `list_roots` says which folders can hold one (`is_git`),
+/// and `init_git` -- the phone's or web's "Initialize git here", so it needs remote control on and
+/// `confirmed: true` -- makes a granted folder a repository with a first commit (`git_init.dart`).
+/// A task without isolation (older clients) works in the folder itself, as before.
+///
 /// A "task" here does not own a single workspace root the way a Docker sandbox owns one
 /// container: paths arrive workspace-relative from the tool layer's point of view, so each call
 /// resolves against whichever granted root actually contains it (`findContainingRoot`). A path
@@ -33,6 +42,7 @@ import 'command_policy.dart';
 import 'containment.dart';
 import 'diff_util.dart';
 import 'error_codes.dart';
+import 'git_init.dart';
 import 'git_service.dart';
 import 'isolated_task_registry.dart';
 import 'process_env.dart';
@@ -40,8 +50,12 @@ import 'process_tree.dart';
 import 'workspace_store.dart';
 
 class RpcError implements Exception {
-  RpcError(this.message, {this.code});
+  RpcError(this.message, {this.code, this.detail});
   final String message;
+
+  /// The underlying error alone (git's own message for `git_init_failed`), sent as the RPC
+  /// `error` frame's `detail` so a translated message can quote it; null when there is none.
+  final String? detail;
 
   /// Stable machine code (`error_codes.dart`) for a refusal, sent as the RPC `error` frame's
   /// `code` next to [message]; null for errors that are not refusals.
@@ -92,6 +106,7 @@ class TaskHandler {
     IsolatedTaskRegistry? isolatedTasks,
   ])  : _approvals = approvalQueue ?? ApprovalQueue(),
         _isolatedTasks = isolatedTasks ?? IsolatedTaskRegistry(_roots, gitService),
+        _git = gitService ?? GitService(),
         _refreshRoots = null,
         _remoteControlEnabled = _remoteControlOff;
 
@@ -103,17 +118,23 @@ class TaskHandler {
   ///
   /// [remoteControlEnabled] answers whether this computer accepts remote tasks (WP8), read live
   /// on every call -- the daemon passes `ConfigStore.remoteControlEnabled`. Without one, remote
-  /// control is off.
+  /// control is off. [gitService] runs `list_roots`' `is_git` probe and `init_git`.
   TaskHandler.live(
     WorkspaceStore store, {
     ApprovalQueue? approvalQueue,
     IsolatedTaskRegistry? isolatedTasks,
     bool Function()? remoteControlEnabled,
+    GitService? gitService,
   })  : _roots = store.live,
         _approvals = approvalQueue ?? ApprovalQueue(),
-        _isolatedTasks = isolatedTasks ?? IsolatedTaskRegistry(store.live),
+        _isolatedTasks = isolatedTasks ?? IsolatedTaskRegistry(store.live, gitService),
+        _git = gitService ?? GitService(),
         _refreshRoots = store.refreshLive,
         _remoteControlEnabled = remoteControlEnabled ?? _remoteControlOff;
+
+  /// WP4: `list_roots`' `is_git` probe and the `init_git` RPC -- the one way the agent-facing side
+  /// reaches git outside [IsolatedTaskRegistry], see `git_service.dart`'s doc comment.
+  final GitService _git;
 
   static bool _remoteControlOff() => false;
 
@@ -195,6 +216,10 @@ class TaskHandler {
           worktree = await _isolatedTasks.resolve(taskId, cwdParam);
         } on ContainmentViolation catch (error) {
           throw RpcError(error.message, code: error.code);
+        } on IsolationNeedsGitError catch (error) {
+          // WP4 (D-13): refused before anything is created; the person is offered "Initialize
+          // git here" instead.
+          throw RpcError(error.message, code: error.code);
         }
         if (worktree == null) throw _noWorktreeError(taskKey);
       } else {
@@ -210,14 +235,48 @@ class TaskHandler {
   /// computer accepts remote tasks -- so the phone or web app can offer a folder picker and say
   /// when remote control is off. Needs no task, and answers for any origin: it reveals nothing
   /// the desktop app's own status does not already show the signed-in account.
+  ///
+  /// Each root carries `is_git` (WP4, D-13): true iff an isolated task can work there -- a git
+  /// work tree with at least one commit -- so the app can offer "Initialize git here" where it is
+  /// false. A probe that fails or times out reports false.
   Future<Map<String, Object?>> listRoots(Map<String, dynamic> params) async {
     _refresh();
+    final roots = _roots.all.toList(growable: false);
+    final isGit = await Future.wait([for (final root in roots) _isolationReady(root.canonicalPath)]);
     return {
       'roots': [
-        for (final root in _roots.all) {'path': root.canonicalPath, 'trusted': root.trusted},
+        for (var i = 0; i < roots.length; i++)
+          {'path': roots[i].canonicalPath, 'trusted': roots[i].trusted, 'is_git': isGit[i]},
       ],
       'remote_control': _remoteControlEnabled(),
     };
+  }
+
+  Future<bool> _isolationReady(String path) async {
+    try {
+      return await _git.isolationState(path) == GitIsolationState.ready;
+    } on Object {
+      return false;
+    }
+  }
+
+  /// `init_git` (WP4, D-13): the phone's or the web's "Initialize git here" for the granted folder
+  /// `path` -- `git init`, `git add -A` and a first commit (`git_init.dart`, the same as the control
+  /// server's `POST /git/init`). This RPC exists only for the phone and the web, so remote control
+  /// must be on, and the person's tap must have reached here as `confirmed: true`. Returns
+  /// `{"ok": true, "commit": <sha>}`.
+  Future<Map<String, Object?>> initGit(Map<String, dynamic> params) async {
+    _refresh();
+    if (!_remoteControlEnabled()) {
+      throw RpcError(remoteControlDisabledMessage, code: HostdErrorCode.remoteControlDisabled);
+    }
+    _requireRemoteConfirmation(params, 'init_git');
+    final path = _requireString(params, 'path');
+    try {
+      return await initializeGrantedFolder(_roots, _git, path);
+    } on GitInitRefusal catch (error) {
+      throw RpcError(error.toString(), code: error.code, detail: error.detail);
+    }
   }
 
   /// `true` for a remote task. An absent origin is a desktop task (older backends); any other
@@ -703,7 +762,12 @@ class TaskHandler {
     required WorkspaceRoot root,
     String? callId,
   }) async {
-    final approval = _approvals.createForCommand(canonicalCommand: command, cwd: cwd, rootPath: root.canonicalPath);
+    final PendingApproval approval;
+    try {
+      approval = _approvals.createForCommand(canonicalCommand: command, cwd: cwd, rootPath: root.canonicalPath);
+    } on ApprovalQueueFullError catch (error) {
+      throw RpcError(error.message, code: error.code); // G-21
+    }
     _trackApproval(callId, approval);
     final ApprovalStatus status;
     try {
@@ -767,12 +831,17 @@ class TaskHandler {
       diffParts.add(unifiedDiff(path: op.path, before: before, after: op.finalContent));
     }
 
-    final approval = _approvals.createForWrite(
-      operations: operations,
-      diffText: diffParts.join('\n'),
-      cwd: cwd,
-      rootPath: root.canonicalPath,
-    );
+    final PendingApproval approval;
+    try {
+      approval = _approvals.createForWrite(
+        operations: operations,
+        diffText: diffParts.join('\n'),
+        cwd: cwd,
+        rootPath: root.canonicalPath,
+      );
+    } on ApprovalQueueFullError catch (error) {
+      throw RpcError(error.message, code: error.code); // G-21
+    }
     final pathList = operations.map((o) => o.path).join(', ');
     _trackApproval(callId, approval);
     final ApprovalStatus status;
@@ -829,7 +898,7 @@ class TaskHandler {
   String _requireString(Map<String, dynamic> params, String key) {
     final value = params[key];
     if (value is! String) {
-      throw RpcError('missing or invalid "$key" parameter');
+      throw RpcError('missing or invalid "$key" parameter', code: HostdErrorCode.missingParameter);
     }
     return value;
   }

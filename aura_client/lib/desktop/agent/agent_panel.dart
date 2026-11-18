@@ -24,6 +24,7 @@ import 'package:aura_client/features/chat/presentation/widgets/chat_composer.dar
 import 'package:aura_client/features/chat/presentation/widgets/message_bubble.dart';
 import 'package:aura_client/features/chat/presentation/widgets/pending_actions_card.dart';
 import 'package:aura_client/features/engineering/presentation/engineer_consent_sheet.dart';
+import 'package:aura_client/features/engineering/presentation/git_init_prompt.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
@@ -121,7 +122,9 @@ class _AgentPanelState extends ConsumerState<AgentPanel> {
     final workspaceRoot = ref.read(workspaceNotifierProvider).activeWorkspace?.rootPath;
     final sent = await ref
         .read(chatViewModelProvider.notifier)
-        .sendMessage(text, workspaceRoot: workspaceRoot);
+        // WP4 (D-09): each Engineer chat works in its own git worktree (branch `aura/task-…`),
+        // reviewed and merged from the Control Center.
+        .sendMessage(text, workspaceRoot: workspaceRoot, desktopTaskIsolation: true);
     if (!sent || !mounted) return;
     Future.delayed(const Duration(milliseconds: 100), () {
       if (mounted) _scrollToBottom();
@@ -186,6 +189,8 @@ class _AgentPanelState extends ConsumerState<AgentPanel> {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
+            // D-13: isolation needs git; a bound folder that is not a repository says so here.
+            if (workspaceRoot != null) WorkspaceGitInitBanner(root: workspaceRoot),
             if (locked)
               Expanded(
                 child: Center(

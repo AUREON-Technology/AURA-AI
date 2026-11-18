@@ -115,6 +115,7 @@ class _ScriptedSseClient extends SseAgentClient {
     double temperature = 0.3,
     List<ChatImageAttachment> images = const [],
     String? workspaceRoot,
+    bool desktopTaskIsolation = false,
   }) async* {
     server.log.add('send $agentId: $message');
     server.onSend?.call();

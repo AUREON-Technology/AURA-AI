@@ -13,6 +13,7 @@ import 'package:flutter_test/flutter_test.dart';
 /// in the root the user was looking at rather than in whichever root was granted first.
 class _RecordingSseClient extends SseAgentClient {
   final roots = <String?>[];
+  final isolation = <bool>[];
   final bool failFirst;
 
   _RecordingSseClient(super.ref, {this.failFirst = false});
@@ -31,8 +32,10 @@ class _RecordingSseClient extends SseAgentClient {
     double temperature = 0.3,
     List<ChatImageAttachment> images = const [],
     String? workspaceRoot,
+    bool desktopTaskIsolation = false,
   }) async* {
     roots.add(workspaceRoot);
+    isolation.add(desktopTaskIsolation);
     if (failFirst && roots.length == 1) {
       throw Exception('SSE chat request failed with status 503: unavailable');
     }
@@ -110,6 +113,44 @@ void main() {
           conversationId: 'conv-1', userContent: 'second', workspaceRoot: '/home/me/other');
 
       expect(sse.roots, [root, '/home/me/other']);
+    });
+  });
+
+  // WP4 (D-09, G-10): an Engineer turn that works on the user's computer asks the daemon for its
+  // own git worktree, keyed by the conversation, and the request carries that wish.
+  group('desktop task isolation', () {
+    test('the wire body carries desktop_task_isolation only when asked for', () {
+      final plain = chatStreamBody(message: 'hi', sessionId: 's', agentId: 'engineer');
+      expect(plain.containsKey('desktop_task_isolation'), isFalse,
+          reason: 'a turn without it looks exactly as it did before the field existed');
+      final isolated = chatStreamBody(
+          message: 'hi', sessionId: 's', agentId: 'engineer', workspaceRoot: root, desktopTaskIsolation: true);
+      expect(isolated['desktop_task_isolation'], isTrue);
+      expect(isolated['workspace_root'], root);
+    });
+
+    test('goes with the turn, and a retry and later turns of the conversation keep it', () async {
+      late _RecordingSseClient sse;
+      final container = containerWith((ref) => sse = _RecordingSseClient(ref, failFirst: true));
+      final repo = container.read(chatRepositoryProvider);
+
+      await repo.sendChatMessage(
+          conversationId: 'conv-1', userContent: 'run the tests', workspaceRoot: root, desktopTaskIsolation: true);
+      final error = (await db.select(db.messages).get()).singleWhere((m) => m.role == 'assistant');
+      await repo.retryLastFailedTurn(conversationId: 'conv-1', errorMessageId: error.id);
+
+      expect(sse.isolation, [true, true]);
+    });
+
+    test('is off for a conversation that never asked for it', () async {
+      late _RecordingSseClient sse;
+      final container = containerWith((ref) => sse = _RecordingSseClient(ref));
+
+      await container
+          .read(chatRepositoryProvider)
+          .sendChatMessage(conversationId: 'conv-2', userContent: 'hello');
+
+      expect(sse.isolation, [false]);
     });
   });
 }

@@ -10,6 +10,7 @@ import 'package:aura_hostd/src/approval_queue.dart';
 import 'package:aura_hostd/src/config.dart';
 import 'package:aura_hostd/src/control_server.dart';
 import 'package:aura_hostd/src/error_codes.dart';
+import 'package:aura_hostd/src/git_service.dart';
 import 'package:aura_hostd/src/isolated_task_registry.dart';
 import 'package:aura_hostd/src/debug_session_manager.dart';
 import 'package:aura_hostd/src/task_handler.dart';
@@ -218,6 +219,156 @@ void main() {
     }
     final (ok, _) = await client.request('GET', '/roots');
     expect(ok, 200, reason: 'a loopback Host still works');
+  });
+
+  group('POST /git/init (WP4, D-13)', () {
+    Future<ProcessResult> git(String cwd, List<String> args) =>
+        Process.run('git', args, workingDirectory: cwd);
+
+    /// A second control server over the same stores, whose git sees only [globalConfig] as the
+    /// person's own git configuration -- how a test controls the identity git would use.
+    Future<_ControlClient> serverWithGitConfig(String globalConfig) async {
+      final dir = Directory.systemTemp.createTempSync('aura_hostd_git_init_cfg_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final file = File('${dir.path}/gitconfig')..writeAsStringSync(globalConfig);
+      final gitServer = ControlServer(
+        workspaceStore: workspaceStore,
+        configStore: configStore,
+        onPaired: (_) {},
+        terminalSessions: TerminalSessionManager(workspaceStore),
+        debugSessions: DebugSessionManager(workspaceStore),
+        approvalQueue: approvalQueue,
+        isolatedTasks: IsolatedTaskRegistry(workspaceStore.live),
+        gitService: GitService(environment: {
+          'GIT_CONFIG_GLOBAL': file.path,
+          'GIT_CONFIG_NOSYSTEM': '1',
+          'HOME': dir.path,
+        }),
+        logger: (_) {},
+      );
+      await gitServer.start(dir);
+      addTearDown(gitServer.stop);
+      final controlFile =
+          jsonDecode(File('${dir.path}/control.json').readAsStringSync()) as Map<String, dynamic>;
+      final gitClient = _ControlClient(controlFile['port'] as int, controlFile['token'] as String);
+      addTearDown(gitClient.close);
+      return gitClient;
+    }
+
+    Future<String> authorOf(String cwd) async =>
+        ((await git(cwd, ['log', '-1', '--format=%an <%ae>'])).stdout as String).trim();
+
+    test('makes a granted folder a repository with one commit, after which isolation works',
+        () async {
+      final (status, body) = await client.request('POST', '/git/init', body: {'root': workspaceRoot});
+      expect(status, 200, reason: '$body');
+      expect(body['ok'], isTrue);
+      final head = ((await git(workspaceRoot, ['rev-parse', 'HEAD'])).stdout as String).trim();
+      expect(body['commit'], head);
+      expect(((await git(workspaceRoot, ['log', '-1', '--format=%s'])).stdout as String).trim(),
+          "Initial commit (made by AURA before the Engineer's first change)");
+      expect((await git(workspaceRoot, ['ls-files'])).stdout, contains('hello.txt'));
+
+      final agent = TaskHandler.live(
+        workspaceStore,
+        approvalQueue: approvalQueue,
+        isolatedTasks: IsolatedTaskRegistry(workspaceStore.live),
+      );
+      final created = await agent.createTask({'isolate': true, 'task_key': 'chat-1', 'cwd': workspaceRoot});
+      expect(created['isolated'], isTrue);
+      expect((await agent.listRoots(const {}))['roots'], [
+        {'path': workspaceRoot, 'trusted': false, 'is_git': true},
+      ]);
+    });
+
+    test('commits even an empty folder, so isolation has a commit to start from', () async {
+      File('$workspaceRoot/hello.txt').deleteSync();
+      Directory('$workspaceRoot/subdir').deleteSync();
+      final (status, body) = await client.request('POST', '/git/init', body: {'root': workspaceRoot});
+      expect(status, 200, reason: '$body');
+      expect(((await git(workspaceRoot, ['rev-list', '--count', 'HEAD'])).stdout as String).trim(), '1');
+    });
+
+    test('a repository with no commit yet gets its first commit, not a 409', () async {
+      await git(workspaceRoot, ['init', '-q']);
+      final (status, body) = await client.request('POST', '/git/init', body: {'root': workspaceRoot});
+      expect(status, 200, reason: '$body');
+      expect(((await git(workspaceRoot, ['rev-parse', 'HEAD'])).stdout as String).trim(), body['commit']);
+    });
+
+    test('a folder that already is a repository is refused with 409 already_a_git_repo', () async {
+      await client.request('POST', '/git/init', body: {'root': workspaceRoot});
+      final (status, body) = await client.request('POST', '/git/init', body: {'root': workspaceRoot});
+      expect(status, 409);
+      expect(body['code'], HostdErrorCode.alreadyAGitRepo);
+      expect(body['error'], isNotEmpty);
+      expect(((await git(workspaceRoot, ['rev-list', '--count', 'HEAD'])).stdout as String).trim(), '1');
+    });
+
+    test('a folder that is not a granted root is refused with 404 root_not_granted', () async {
+      final other = Directory.systemTemp.createTempSync('aura_hostd_git_init_other_');
+      addTearDown(() => other.deleteSync(recursive: true));
+      for (final path in [other.path, '$workspaceRoot/subdir', 'relative/path', '${other.path}/missing']) {
+        final (status, body) = await client.request('POST', '/git/init', body: {'root': path});
+        expect(status, 404, reason: path);
+        expect(body['code'], HostdErrorCode.rootNotGranted, reason: path);
+      }
+      expect(Directory('${other.path}/.git').existsSync(), isFalse);
+      expect(Directory('$workspaceRoot/subdir/.git').existsSync(), isFalse);
+    });
+
+    test('a missing or non-string root is refused with 400 missing_parameter', () async {
+      for (final body in <Map<String, Object?>>[{}, {'root': 1}, {'path': workspaceRoot}]) {
+        final (status, response) = await client.request('POST', '/git/init', body: body);
+        expect(status, 400, reason: '$body');
+        expect(response['code'], HostdErrorCode.missingParameter, reason: '$body');
+      }
+      expect(Directory('$workspaceRoot/.git').existsSync(), isFalse);
+    });
+
+    test('needs the token and a loopback Host like every other route', () async {
+      final (missing, _) = await client.request('POST', '/git/init',
+          body: {'root': workspaceRoot}, withToken: false);
+      expect(missing, 401);
+      final http = HttpClient();
+      addTearDown(() => http.close(force: true));
+      final request = await http.openUrl('POST', Uri.parse('http://127.0.0.1:${client.port}/git/init'));
+      request.headers.host = 'attacker.example';
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ${client.token}');
+      request.write(jsonEncode({'root': workspaceRoot}));
+      final response = await request.close();
+      await response.drain<void>();
+      expect(response.statusCode, 403);
+      expect(Directory('$workspaceRoot/.git').existsSync(), isFalse);
+    });
+
+    test("commits with the person's own git identity when they have one", () async {
+      final gitClient = await serverWithGitConfig(
+          '[user]\n\tname = Person Example\n\temail = person@example.com\n');
+      final (status, body) = await gitClient.request('POST', '/git/init', body: {'root': workspaceRoot});
+      expect(status, 200, reason: '$body');
+      expect(await authorOf(workspaceRoot), 'Person Example <person@example.com>');
+    });
+
+    test('falls back to AURA <aura@localhost> only when git has no identity to use', () async {
+      // useConfigOnly stops git guessing one from the account and host name, as on a machine
+      // where nobody ever ran `git config --global user.name`.
+      final gitClient = await serverWithGitConfig('[user]\n\tuseConfigOnly = true\n');
+      final (status, body) = await gitClient.request('POST', '/git/init', body: {'root': workspaceRoot});
+      expect(status, 200, reason: '$body');
+      expect(await authorOf(workspaceRoot), 'AURA <aura@localhost>');
+      final config = await git(workspaceRoot, ['config', '--local', '--get', 'user.name']);
+      expect(config.exitCode, isNot(0), reason: 'the fallback identity is not written to the repo');
+    });
+
+    test('a git failure is a 500 git_init_failed carrying git\'s own message as detail', () async {
+      final gitClient = await serverWithGitConfig('this is not [valid git config\n');
+      final (status, body) = await gitClient.request('POST', '/git/init', body: {'root': workspaceRoot});
+      expect(status, 500);
+      expect(body['code'], HostdErrorCode.gitInitFailed);
+      expect(body['error'], isNotEmpty);
+      expect(body['detail'], contains('config'));
+    });
   });
 
   group('remote control opt-in (WP8, D-10b)', () {

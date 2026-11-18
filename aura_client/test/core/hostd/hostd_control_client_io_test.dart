@@ -258,4 +258,27 @@ void main() {
       );
     });
   });
+
+  test('initGit POSTs {root} to /git/init with the token and returns the first commit (D-13)', () async {
+    final seen = <String>[];
+    Map<String, dynamic>? seenBody;
+    final server = await _FakeControlServer.start(
+      respond: (request, body) {
+        seen.add('${request.method} ${request.uri.path}');
+        seenBody = body;
+        return {'ok': true, 'commit': 'abc123'};
+      },
+    );
+    addTearDown(server.close);
+    final client = HostdControlClient(
+      discoverEndpoint: () async => HostdControlEndpoint(port: server._httpServer.port, token: 'tok'),
+    );
+
+    final result = await client.initGit(root: '/home/me/notes');
+
+    expect(seen.single, 'POST /git/init');
+    expect(seenBody, {'root': '/home/me/notes'});
+    expect(server.receivedAuthHeaders.single, 'Bearer tok');
+    expect(result['commit'], 'abc123');
+  });
 }

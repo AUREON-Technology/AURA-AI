@@ -795,7 +795,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chatAwaitingConfirmation =>
-      'Confirm the action above to continue.';
+      'Confirm the action below to continue.';
 
   @override
   String get personaPickerTitle => 'Choose a persona';
@@ -1554,7 +1554,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get controlCenterEmpty =>
-      'No isolated agent tasks right now. Starting a new chat task creates one automatically.';
+      'No Engineer tasks to review yet. Each Engineer chat works in its own copy of the folder, on a branch named aura/task-…, and shows up here for you to review and merge.';
 
   @override
   String get controlCenterNoChanges => '(no changes)';
@@ -4501,4 +4501,64 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get hostdCodeInvalidRequestBody =>
       'The request to the Host Daemon wasn\'t in the form it expects. Update the app and try again.';
+
+  @override
+  String get gitInitBannerTitle => 'This folder isn\'t a git repository';
+
+  @override
+  String get gitInitBannerBody =>
+      'The Engineer works in its own copy of the folder so every change can be reviewed and undone, and that needs git. Initialize git here to let it start.';
+
+  @override
+  String get gitInitButton => 'Initialize git here';
+
+  @override
+  String get gitInitButtonShort => 'Initialize git';
+
+  @override
+  String get gitInitConfirmTitle => 'Initialize git in this folder?';
+
+  @override
+  String gitInitConfirmBody(String path) {
+    return 'This runs git init in $path and commits the folder\'s current files as a first commit, on this computer only. Files your .gitignore lists are left out; everything else — including files like .env — goes into that local commit, so add a .gitignore first if you need one.';
+  }
+
+  @override
+  String get gitInitConfirmAction => 'Initialize';
+
+  @override
+  String get gitInitDone => 'Git is ready in this folder.';
+
+  @override
+  String gitInitFailed(String error) {
+    return 'Couldn\'t initialize git: $error';
+  }
+
+  @override
+  String get engineerDesktopNotGit =>
+      'This folder isn\'t a git repository yet — the Engineer needs one to work on its own copy.';
+
+  @override
+  String get hostdCodeIsolationNeedsGit =>
+      'This folder isn\'t a git repository, so the Engineer can\'t work on its own copy of it — use Initialize git here first.';
+
+  @override
+  String get hostdCodeAlreadyAGitRepo =>
+      'This folder is already a git repository.';
+
+  @override
+  String hostdCodeGitInitFailed(String detail) {
+    return 'Couldn\'t initialize git here: $detail';
+  }
+
+  @override
+  String get hostdCodeApprovalQueueFull =>
+      'Too many changes are waiting for your approval; answer some first.';
+
+  @override
+  String get chatApprovalExpiredNotice => 'This approval expired. Ask again.';
+
+  @override
+  String get ideStatusRepairTooltip =>
+      'The server no longer accepts this computer. Click to pair it again.';
 }

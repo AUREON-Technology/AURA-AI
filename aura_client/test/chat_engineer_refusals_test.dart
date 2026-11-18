@@ -42,6 +42,7 @@ class _RefusingSseClient extends SseAgentClient {
     double temperature = 0.3,
     List<ChatImageAttachment> images = const [],
     String? workspaceRoot,
+    bool desktopTaskIsolation = false,
   }) async* {
     if (asHttp) {
       throw AuraApiError(

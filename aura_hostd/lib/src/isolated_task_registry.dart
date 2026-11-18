@@ -14,6 +14,8 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import 'containment.dart';
+import 'error_codes.dart';
+import 'git_init.dart';
 import 'git_service.dart';
 
 /// Recorded once per task_id at `TaskHandler.createTask` time, so a task's later write/run calls
@@ -57,6 +59,20 @@ class IsolatedTask {
 final RegExp _safeTaskKey = RegExp(r'^[A-Za-z0-9._-]{1,128}$');
 
 bool isSafeTaskKey(String key) => key != '.' && key != '..' && _safeTaskKey.hasMatch(key);
+
+/// WP4 (D-13): isolation was requested in a folder that is not a git work tree with a commit.
+/// Refused before `git worktree add` -- never a silent fallback to the live folder; the person
+/// is offered "Initialize git here" instead.
+class IsolationNeedsGitError implements Exception {
+  IsolationNeedsGitError(this.folder);
+
+  /// The granted folder the worktree would have been carved from.
+  final String folder;
+  final String message = isolationNeedsGitMessage;
+  final String code = HostdErrorCode.isolationNeedsGit;
+  @override
+  String toString() => message;
+}
 
 class TaskNotFoundError implements Exception {
   TaskNotFoundError(this.taskKey);
@@ -190,6 +206,11 @@ class IsolatedTaskRegistry {
       // warm cache of it.
       canonicalWorktreePath = Directory(worktreePath).resolveSymbolicLinksSync();
     } else {
+      // WP4 (D-13): checked cheaply, before anything is created -- `worktree add` in a folder
+      // that is not a repository, or has nothing to branch from, would only fail later and
+      // messier. A timed-out probe throws rather than guessing.
+      final state = await _git.isolationState(parentRoot.canonicalPath);
+      if (state != GitIsolationState.ready) throw IsolationNeedsGitError(parentRoot.canonicalPath);
       final created = await _git.createWorktree(
         parentRoot.canonicalPath,
         taskId: taskKey,

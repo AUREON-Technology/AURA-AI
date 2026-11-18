@@ -1057,9 +1057,9 @@
       }
     }
   },
-  "chatAwaitingConfirmation": "Confirm the action above to continue.",
+  "chatAwaitingConfirmation": "Confirm the action below to continue.",
   "@chatAwaitingConfirmation": {
-    "description": "Hint when a turn waits on a tool confirmation"
+    "description": "Hint when a turn waits on a tool confirmation; the confirmation card is shown below it"
   },
   "personaPickerTitle": "Choose a persona",
   "@personaPickerTitle": {
@@ -2095,9 +2095,9 @@
   "@controlCenterTitle": {
     "description": "Agent Review panel: header title"
   },
-  "controlCenterEmpty": "No isolated agent tasks right now. Starting a new chat task creates one automatically.",
+  "controlCenterEmpty": "No Engineer tasks to review yet. Each Engineer chat works in its own copy of the folder, on a branch named aura/task-…, and shows up here for you to review and merge.",
   "@controlCenterEmpty": {
-    "description": "Agent Review panel: empty state"
+    "description": "Control Center: no isolated Engineer tasks yet. True since WP4: every Engineer turn on the computer asks for its own worktree (D-09)"
   },
   "controlCenterNoChanges": "(no changes)",
   "@controlCenterNoChanges": {
@@ -6011,5 +6011,84 @@
   "hostdCodeInvalidRequestBody": "The request to the Host Daemon wasn't in the form it expects. Update the app and try again.",
   "@hostdCodeInvalidRequestBody": {
     "description": "aura_hostd error code invalid_request_body (hostd_error_codes.dart)"
+  },
+  "gitInitBannerTitle": "This folder isn't a git repository",
+  "@gitInitBannerTitle": {
+    "description": "Engineer panel banner (D-13): the bound folder is not a git repository"
+  },
+  "gitInitBannerBody": "The Engineer works in its own copy of the folder so every change can be reviewed and undone, and that needs git. Initialize git here to let it start.",
+  "@gitInitBannerBody": {
+    "description": "Engineer panel banner body: why isolation needs git (D-09, D-13)"
+  },
+  "gitInitButton": "Initialize git here",
+  "@gitInitButton": {
+    "description": "Button that makes the folder a git repository (D-13)"
+  },
+  "gitInitButtonShort": "Initialize git",
+  "@gitInitButtonShort": {
+    "description": "Compact button in the phone/web desktop bar (D-13)"
+  },
+  "gitInitConfirmTitle": "Initialize git in this folder?",
+  "@gitInitConfirmTitle": {
+    "description": "Confirmation dialog title before git init (D-13)"
+  },
+  "gitInitConfirmBody": "This runs git init in {path} and commits the folder's current files as a first commit, on this computer only. Files your .gitignore lists are left out; everything else — including files like .env — goes into that local commit, so add a .gitignore first if you need one.",
+  "@gitInitConfirmBody": {
+    "description": "Confirmation dialog body before git init: what it does and what it commits (D-13)",
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "gitInitConfirmAction": "Initialize",
+  "@gitInitConfirmAction": {
+    "description": "Confirm button of the git-init dialog"
+  },
+  "gitInitDone": "Git is ready in this folder.",
+  "@gitInitDone": {
+    "description": "Snackbar after a successful git init"
+  },
+  "gitInitFailed": "Couldn't initialize git: {error}",
+  "@gitInitFailed": {
+    "description": "Snackbar when git init failed or was refused",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "engineerDesktopNotGit": "This folder isn't a git repository yet — the Engineer needs one to work on its own copy.",
+  "@engineerDesktopNotGit": {
+    "description": "Phone/web desktop bar: the chosen folder is not a git repository (D-13)"
+  },
+  "hostdCodeIsolationNeedsGit": "This folder isn't a git repository, so the Engineer can't work on its own copy of it — use Initialize git here first.",
+  "@hostdCodeIsolationNeedsGit": {
+    "description": "aura_hostd error code isolation_needs_git (hostd_error_codes.dart)"
+  },
+  "hostdCodeAlreadyAGitRepo": "This folder is already a git repository.",
+  "@hostdCodeAlreadyAGitRepo": {
+    "description": "aura_hostd error code already_a_git_repo (hostd_error_codes.dart)"
+  },
+  "hostdCodeGitInitFailed": "Couldn't initialize git here: {detail}",
+  "@hostdCodeGitInitFailed": {
+    "description": "aura_hostd error code git_init_failed; detail is git's own output",
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "hostdCodeApprovalQueueFull": "Too many changes are waiting for your approval; answer some first.",
+  "@hostdCodeApprovalQueueFull": {
+    "description": "aura_hostd error code approval_queue_full (hostd_error_codes.dart)"
+  },
+  "chatApprovalExpiredNotice": "This approval expired. Ask again.",
+  "@chatApprovalExpiredNotice": {
+    "description": "Transcript row when an approval came back confirmation_invalid (expired, used or unknown); no Retry"
+  },
+  "ideStatusRepairTooltip": "The server no longer accepts this computer. Click to pair it again.",
+  "@ideStatusRepairTooltip": {
+    "description": "Status bar: tooltip of the daemon item when it must be paired again (G-12)"
   }
 }

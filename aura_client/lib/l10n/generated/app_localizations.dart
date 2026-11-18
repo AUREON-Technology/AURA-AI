@@ -1538,10 +1538,10 @@ abstract class AppLocalizations {
   /// **'This request was handled by {resolved}, not {requested} -- your account may not have access to {requested}.'**
   String chatPersonaFallback(String resolved, String requested);
 
-  /// Hint when a turn waits on a tool confirmation
+  /// Hint when a turn waits on a tool confirmation; the confirmation card is shown below it
   ///
   /// In en, this message translates to:
-  /// **'Confirm the action above to continue.'**
+  /// **'Confirm the action below to continue.'**
   String get chatAwaitingConfirmation;
 
   /// Persona picker sheet title
@@ -2912,10 +2912,10 @@ abstract class AppLocalizations {
   /// **'Agent Review'**
   String get controlCenterTitle;
 
-  /// Agent Review panel: empty state
+  /// Control Center: no isolated Engineer tasks yet. True since WP4: every Engineer turn on the computer asks for its own worktree (D-09)
   ///
   /// In en, this message translates to:
-  /// **'No isolated agent tasks right now. Starting a new chat task creates one automatically.'**
+  /// **'No Engineer tasks to review yet. Each Engineer chat works in its own copy of the folder, on a branch named aura/task-…, and shows up here for you to review and merge.'**
   String get controlCenterEmpty;
 
   /// Agent Review panel: diff stat of a task with no changes
@@ -7553,6 +7553,102 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The request to the Host Daemon wasn\'t in the form it expects. Update the app and try again.'**
   String get hostdCodeInvalidRequestBody;
+
+  /// Engineer panel banner (D-13): the bound folder is not a git repository
+  ///
+  /// In en, this message translates to:
+  /// **'This folder isn\'t a git repository'**
+  String get gitInitBannerTitle;
+
+  /// Engineer panel banner body: why isolation needs git (D-09, D-13)
+  ///
+  /// In en, this message translates to:
+  /// **'The Engineer works in its own copy of the folder so every change can be reviewed and undone, and that needs git. Initialize git here to let it start.'**
+  String get gitInitBannerBody;
+
+  /// Button that makes the folder a git repository (D-13)
+  ///
+  /// In en, this message translates to:
+  /// **'Initialize git here'**
+  String get gitInitButton;
+
+  /// Compact button in the phone/web desktop bar (D-13)
+  ///
+  /// In en, this message translates to:
+  /// **'Initialize git'**
+  String get gitInitButtonShort;
+
+  /// Confirmation dialog title before git init (D-13)
+  ///
+  /// In en, this message translates to:
+  /// **'Initialize git in this folder?'**
+  String get gitInitConfirmTitle;
+
+  /// Confirmation dialog body before git init: what it does and what it commits (D-13)
+  ///
+  /// In en, this message translates to:
+  /// **'This runs git init in {path} and commits the folder\'s current files as a first commit, on this computer only. Files your .gitignore lists are left out; everything else — including files like .env — goes into that local commit, so add a .gitignore first if you need one.'**
+  String gitInitConfirmBody(String path);
+
+  /// Confirm button of the git-init dialog
+  ///
+  /// In en, this message translates to:
+  /// **'Initialize'**
+  String get gitInitConfirmAction;
+
+  /// Snackbar after a successful git init
+  ///
+  /// In en, this message translates to:
+  /// **'Git is ready in this folder.'**
+  String get gitInitDone;
+
+  /// Snackbar when git init failed or was refused
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t initialize git: {error}'**
+  String gitInitFailed(String error);
+
+  /// Phone/web desktop bar: the chosen folder is not a git repository (D-13)
+  ///
+  /// In en, this message translates to:
+  /// **'This folder isn\'t a git repository yet — the Engineer needs one to work on its own copy.'**
+  String get engineerDesktopNotGit;
+
+  /// aura_hostd error code isolation_needs_git (hostd_error_codes.dart)
+  ///
+  /// In en, this message translates to:
+  /// **'This folder isn\'t a git repository, so the Engineer can\'t work on its own copy of it — use Initialize git here first.'**
+  String get hostdCodeIsolationNeedsGit;
+
+  /// aura_hostd error code already_a_git_repo (hostd_error_codes.dart)
+  ///
+  /// In en, this message translates to:
+  /// **'This folder is already a git repository.'**
+  String get hostdCodeAlreadyAGitRepo;
+
+  /// aura_hostd error code git_init_failed; detail is git's own output
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t initialize git here: {detail}'**
+  String hostdCodeGitInitFailed(String detail);
+
+  /// aura_hostd error code approval_queue_full (hostd_error_codes.dart)
+  ///
+  /// In en, this message translates to:
+  /// **'Too many changes are waiting for your approval; answer some first.'**
+  String get hostdCodeApprovalQueueFull;
+
+  /// Transcript row when an approval came back confirmation_invalid (expired, used or unknown); no Retry
+  ///
+  /// In en, this message translates to:
+  /// **'This approval expired. Ask again.'**
+  String get chatApprovalExpiredNotice;
+
+  /// Status bar: tooltip of the daemon item when it must be paired again (G-12)
+  ///
+  /// In en, this message translates to:
+  /// **'The server no longer accepts this computer. Click to pair it again.'**
+  String get ideStatusRepairTooltip;
 }
 
 class _AppLocalizationsDelegate

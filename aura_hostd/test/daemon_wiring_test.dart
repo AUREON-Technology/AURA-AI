@@ -389,6 +389,35 @@ void main() {
     });
   });
 
+  group('WP4 (D-13): isolation needs git, over the real socket', () {
+    test('an isolated task in a folder that is not a repository is refused with its code, and '
+        'init_git from the phone makes it work', () async {
+      final conn = await connect();
+      final refused = await conn.call('create_task', {'isolate': true, 'task_key': 'chat-1', 'cwd': rootA});
+      expect(refused['type'], 'error');
+      expect(refused['code'], 'isolation_needs_git');
+      expect((await conn.call('list_roots', {}))['result']['roots'][0]['is_git'], isFalse);
+
+      final off = await conn.call('init_git', {'path': rootA, 'confirmed': true});
+      expect(off['type'], 'error');
+      expect(off['code'], 'remote_control_disabled');
+      expect(Directory(p.join(rootA, '.git')).existsSync(), isFalse);
+
+      await control.request('POST', '/remote_control', body: {'enabled': true});
+      final init = await conn.call('init_git', {'path': rootA, 'confirmed': true});
+      expect(init['type'], 'result', reason: '$init');
+      expect(init['result']['ok'], isTrue);
+      expect(init['result']['commit'], isA<String>());
+      expect((await conn.call('list_roots', {}))['result']['roots'][0]['is_git'], isTrue);
+
+      final again = await conn.call('init_git', {'path': rootA, 'confirmed': true});
+      expect(again['code'], 'already_a_git_repo');
+
+      final created = await conn.call('create_task', {'isolate': true, 'task_key': 'chat-1', 'cwd': rootA});
+      expect(created['type'], 'result', reason: '$created');
+    });
+  });
+
   test('INT-007: a dropped connection cancels approvals its calls were waiting on', () async {
     final conn = await connect();
     await control.request('POST', '/roots', body: {'action': 'untrust', 'path': rootA});

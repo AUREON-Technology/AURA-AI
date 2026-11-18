@@ -126,6 +126,24 @@ abstract final class HostdErrorCode {
   /// WP8: `create_task`'s `origin` is neither "desktop" nor "remote".
   static const invalidOrigin = 'invalid_origin';
 
+  /// WP4 (D-13): isolation was requested in a folder that is not a git work tree with at least one
+  /// commit. The Engineer refuses rather than working in the live folder; the person is offered
+  /// "Initialize git here" (`POST /git/init`, or the `init_git` RPC from the phone or the web).
+  static const isolationNeedsGit = 'isolation_needs_git';
+
+  /// WP4 (D-13): "Initialize git here" on a folder that already is a git repository with a
+  /// commit -- there is nothing to do (409 from `POST /git/init`).
+  static const alreadyAGitRepo = 'already_a_git_repo';
+
+  /// WP4 (D-13): `git init`, `git add` or the first commit failed; git's own message travels as
+  /// `detail` (500 from `POST /git/init`).
+  static const gitInitFailed = 'git_init_failed';
+
+  // --- approval_queue.dart ------------------------------------------------------------------
+  /// G-21 (WP9): too many approvals are already waiting for a human; the new one is refused
+  /// instead of queued.
+  static const approvalQueueFull = 'approval_queue_full';
+
   /// Every code above, for tests that check a code is one of ours.
   static const Set<String> all = {
     hostNotLoopback,
@@ -176,5 +194,9 @@ abstract final class HostdErrorCode {
     invalidTaskKey,
     isolatedTaskUnresolved,
     invalidOrigin,
+    isolationNeedsGit,
+    alreadyAGitRepo,
+    gitInitFailed,
+    approvalQueueFull,
   };
 }

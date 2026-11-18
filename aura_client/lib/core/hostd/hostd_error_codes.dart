@@ -63,6 +63,11 @@ String hostdCodeMessage(String? code, String fallback, {String? detail, AppLocal
     'invalid_origin' => t.hostdCodeInvalidOrigin,
     'diagnostics_untrusted' => t.hostdCodeDiagnosticsUntrusted,
     'invalid_request_body' => t.hostdCodeInvalidRequestBody,
+    // Isolation needs git (WP4, D-13) and the bounded approval queue (WP9).
+    'isolation_needs_git' => t.hostdCodeIsolationNeedsGit,
+    'already_a_git_repo' => t.hostdCodeAlreadyAGitRepo,
+    'git_init_failed' => t.hostdCodeGitInitFailed(quoted),
+    'approval_queue_full' => t.hostdCodeApprovalQueueFull,
     _ => fallback,
   };
 }

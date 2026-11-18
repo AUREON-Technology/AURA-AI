@@ -789,7 +789,7 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
-  String get chatAwaitingConfirmation => 'أكّد الإجراء اللي فوق عشان تكمّل.';
+  String get chatAwaitingConfirmation => 'أكّد الإجراء اللي تحت عشان تكمّل.';
 
   @override
   String get personaPickerTitle => 'اختار شخصية';
@@ -1551,7 +1551,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get controlCenterEmpty =>
-      'مفيش مهام معزولة للـ Agent دلوقتي. لما تبدأ مهمة شات جديدة هتتعمل واحدة لوحدها.';
+      'مفيش مهام للمهندس تراجعها لسه. كل شات مع المهندس بيشتغل في نسخة لوحده من الفولدر، على Branch اسمه aura/task-…، وبيظهر هنا علشان تراجعه وتعمل له Merge.';
 
   @override
   String get controlCenterNoChanges => '(مفيش تغييرات)';
@@ -4533,4 +4533,63 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get hostdCodeInvalidRequestBody =>
       'الطلب اللي راح للـ Host Daemon مكانش بالشكل اللي مستنيه. حدّث التطبيق وجرّب تاني.';
+
+  @override
+  String get gitInitBannerTitle => 'الفولدر ده مش ريبو Git';
+
+  @override
+  String get gitInitBannerBody =>
+      'المهندس بيشتغل في نسخة لوحده من الفولدر علشان كل تغيير يتراجع ويتلغي لو حبيت، وده محتاج Git. ابدأ Git هنا علشان يقدر يشتغل.';
+
+  @override
+  String get gitInitButton => 'ابدأ Git هنا';
+
+  @override
+  String get gitInitButtonShort => 'ابدأ Git';
+
+  @override
+  String get gitInitConfirmTitle => 'تبدأ Git في الفولدر ده؟';
+
+  @override
+  String gitInitConfirmBody(String path) {
+    return 'ده هيشغّل git init في $path ويعمل أول Commit بالملفات اللي في الفولدر دلوقتي، على الكمبيوتر ده بس. الملفات اللي في الـ .gitignore مش هتدخل؛ أي حاجة تانية — حتى ملفات زي .env — هتدخل في الـ Commit المحلي ده، فلو محتاج .gitignore ضيفه الأول.';
+  }
+
+  @override
+  String get gitInitConfirmAction => 'ابدأ';
+
+  @override
+  String get gitInitDone => 'Git بقى جاهز في الفولدر ده.';
+
+  @override
+  String gitInitFailed(String error) {
+    return 'مقدرناش نبدأ Git: $error';
+  }
+
+  @override
+  String get engineerDesktopNotGit =>
+      'الفولدر ده لسه مش ريبو Git — المهندس محتاج ده علشان يشتغل على نسخة لوحده.';
+
+  @override
+  String get hostdCodeIsolationNeedsGit =>
+      'الفولدر ده مش ريبو Git، علشان كده المهندس مش هيقدر يشتغل على نسخة لوحده منه — استخدم «ابدأ Git هنا» الأول.';
+
+  @override
+  String get hostdCodeAlreadyAGitRepo => 'الفولدر ده ريبو Git أصلًا.';
+
+  @override
+  String hostdCodeGitInitFailed(String detail) {
+    return 'مقدرناش نبدأ Git هنا: $detail';
+  }
+
+  @override
+  String get hostdCodeApprovalQueueFull =>
+      'فيه تغييرات كتير مستنية موافقتك؛ رد على شوية منهم الأول.';
+
+  @override
+  String get chatApprovalExpiredNotice => 'الموافقة دي انتهت مدتها. اطلب تاني.';
+
+  @override
+  String get ideStatusRepairTooltip =>
+      'السيرفر مبقاش بيقبل الكمبيوتر ده. دوس علشان تعمل Pair تاني.';
 }

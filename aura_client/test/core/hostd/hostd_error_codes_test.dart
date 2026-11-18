@@ -67,6 +67,11 @@ const _daemonErrorCodes = [
   'invalid_origin',
   'diagnostics_untrusted',
   'invalid_request_body',
+  // Isolation needs git (WP4, D-13) and the bounded approval queue (WP9).
+  'isolation_needs_git',
+  'already_a_git_repo',
+  'git_init_failed',
+  'approval_queue_full',
 ];
 
 void main() {
@@ -194,6 +199,21 @@ void main() {
     test('remote control off, as the daemon reports it, names the switch to turn on', () {
       expect(_en.hostdCodeRemoteControlDisabled, contains(_en.hostdRemoteControlTitle));
       expect(_ar.hostdCodeRemoteControlDisabled, contains(_ar.hostdRemoteControlTitle));
+    });
+
+    test('initGit on a folder that already is a repository is refused, in Arabic', () async {
+      errorBody = {'error': '/w is already a git repository', 'code': 'already_a_git_repo'};
+      await expectLater(
+        client().initGit(root: '/w'),
+        throwsA(isA<HostdControlError>()
+            .having((e) => e.message, 'message', _ar.hostdCodeAlreadyAGitRepo)
+            .having((e) => e.code, 'code', 'already_a_git_repo')),
+      );
+    });
+
+    test("a failed git init quotes git's own output", () {
+      expect(hostdCodeMessage('git_init_failed', 'git init failed', detail: 'fatal: x', l10n: _en),
+          _en.hostdCodeGitInitFailed('fatal: x'));
     });
   });
 }

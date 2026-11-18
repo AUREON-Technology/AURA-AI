@@ -157,7 +157,9 @@ class HostdControlClient {
       // Newer daemons send a stable `code` next to the English `error`; translate by it, and
       // keep the English for an older daemon or a code this app does not know yet.
       final code = decodedMap['code'] as String?;
-      throw HostdControlError(response.statusCode, hostdCodeMessage(code, message), code: code);
+      // `detail` is the underlying tool output a few codes quote (git_init_failed, ...).
+      final detail = decodedMap['detail'] as String?;
+      throw HostdControlError(response.statusCode, hostdCodeMessage(code, message, detail: detail), code: code);
     }
     return decodedMap;
   }
@@ -235,6 +237,13 @@ class HostdControlClient {
   /// [gitMergeTask] below, which only ever targets a task's isolated worktree.
   Future<Map<String, dynamic>> gitMerge({required String root, required String branch}) =>
       _request('POST', '/git/merge', body: {'root': root, 'branch': branch}, timeout: hostdLongRequestTimeout);
+
+  /// D-13: makes the granted folder [root] a git repository -- `git init` plus a first commit of
+  /// its current files (respecting an existing `.gitignore`) -- so the Engineer can isolate its
+  /// work there. Human-only, like the other git routes. Answers `{ok, commit}`; refuses a folder
+  /// that already is a repository (`already_a_git_repo`) or one that is not granted.
+  Future<Map<String, dynamic>> initGit({required String root}) =>
+      _request('POST', '/git/init', body: {'root': root}, timeout: hostdLongRequestTimeout);
 
   Future<Map<String, dynamic>> gitMergeAbort({required String root}) =>
       _request('POST', '/git/merge-abort', body: {'root': root});

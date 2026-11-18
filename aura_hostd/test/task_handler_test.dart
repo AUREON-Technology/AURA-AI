@@ -1634,6 +1634,213 @@ void main() {
       expect((await plain.listRoots(const {}))['remote_control'], isFalse);
     });
   });
+
+  group('isolation needs a git repository; list_roots is_git; init_git (WP4, D-13)', () {
+    late ApprovalQueue approvals;
+    late ConfigStore config;
+    late WorkspaceStore store;
+    late String root;
+
+    Future<ProcessResult> git(List<String> args) =>
+        Process.run('git', args, workingDirectory: workspaceDir.path);
+
+    Future<void> initRepo({bool commit = true}) async {
+      await git(['init', '-q', '-b', 'main']);
+      await git(['config', 'user.name', 'Test User']);
+      await git(['config', 'user.email', 'test@example.com']);
+      await git(['config', 'commit.gpgsign', 'false']);
+      if (!commit) return;
+      File(p.join(workspaceDir.path, 'a.txt')).writeAsStringSync('original');
+      await git(['add', '--', 'a.txt']);
+      await git(['commit', '-q', '-m', 'initial commit']);
+    }
+
+    void setRemoteControl(bool on) => config.save(config.load().copyWith(remoteControl: on));
+
+    Matcher rpcErrorWithCode(String code) =>
+        throwsA(isA<RpcError>().having((e) => e.code, 'code', code));
+
+    setUp(() {
+      approvals = ApprovalQueue();
+      final configDir = Directory(p.join(tempDir.path, 'config'));
+      config = ConfigStore.forConfigDir(configDir);
+      store = WorkspaceStore.forConfigDir(configDir);
+      store.save(roots);
+      root = workspaceDir.resolveSymbolicLinksSync();
+      handler = TaskHandler.live(
+        store,
+        approvalQueue: approvals,
+        remoteControlEnabled: config.remoteControlEnabled,
+      );
+    });
+
+    for (final (label, setup) in <(String, Future<void> Function())>[
+      ('not a git repository', () async {}),
+      ('a repository with no commit yet', () => initRepo(commit: false)),
+    ]) {
+      test('create_task with isolation in $label is refused with isolation_needs_git, and nothing '
+          'is created', () async {
+        await setup();
+        File(p.join(workspaceDir.path, 'a.txt')).writeAsStringSync('live');
+        final hadGit = Directory(p.join(workspaceDir.path, '.git')).existsSync();
+        await expectLater(
+          handler.createTask({'isolate': true, 'task_key': 'chat-1', 'cwd': root}),
+          throwsA(isA<RpcError>()
+              .having((e) => e.code, 'code', HostdErrorCode.isolationNeedsGit)
+              .having((e) => e.message, 'message',
+                  'This folder isn\'t a git repository, so the Engineer can\'t work on its own copy '
+                  'of it. Use "Initialize git here" in AURA first.')),
+        );
+        expect(Directory(p.join(workspaceDir.path, '.aura-workspaces')).existsSync(), isFalse);
+        expect(Directory(p.join(workspaceDir.path, '.git')).existsSync(), hadGit,
+            reason: 'refusing must not initialize anything by itself');
+        expect(File(p.join(workspaceDir.path, 'a.txt')).readAsStringSync(), 'live');
+      });
+    }
+
+    test('an isolated task created without a cwd is refused with the same code on its first call',
+        () async {
+      store.save(store.load()..setTrusted(workspaceDir.path, true));
+      final created = await handler.createTask({'isolate': true, 'task_key': 'chat-late'});
+      await expectLater(
+        handler.writeFile({'task_id': created['task_id'], 'path': 'a.txt', 'content': 'x'}),
+        throwsA(isA<IsolationNeedsGitError>()
+            .having((e) => e.code, 'code', HostdErrorCode.isolationNeedsGit)),
+      );
+      expect(File(p.join(workspaceDir.path, 'a.txt')).existsSync(), isFalse,
+          reason: 'no silent fallback to the live folder');
+    });
+
+    test('a desktop task without isolation still works in a folder that is not a repository',
+        () async {
+      store.save(store.load()..setTrusted(workspaceDir.path, true));
+      final created = await handler.createTask({'cwd': root});
+      await handler.writeFile({'task_id': created['task_id'], 'path': 'a.txt', 'content': 'x'});
+      expect(File(p.join(root, 'a.txt')).readAsStringSync(), 'x');
+    });
+
+    test('create_task with isolation works in a repository with a commit', () async {
+      await initRepo();
+      final created = await handler.createTask({'isolate': true, 'task_key': 'chat-1', 'cwd': root});
+      expect(created['isolated'], isTrue);
+      expect(Directory(p.join(root, '.aura-workspaces', 'chat-1')).existsSync(), isTrue);
+    });
+
+    test('list_roots says which folders can hold an isolated task (is_git)', () async {
+      final plain = Directory(p.join(tempDir.path, 'plain'))..createSync();
+      final empty = Directory(p.join(tempDir.path, 'empty'))..createSync();
+      await Process.run('git', ['init', '-q'], workingDirectory: empty.path);
+      await initRepo();
+      store.save(store.load()
+        ..addRoot(plain.path)
+        ..addRoot(empty.path));
+      final listed = await handler.listRoots(const {});
+      expect(listed['roots'], [
+        {'path': root, 'trusted': false, 'is_git': true},
+        {'path': plain.resolveSymbolicLinksSync(), 'trusted': false, 'is_git': false},
+        {'path': empty.resolveSymbolicLinksSync(), 'trusted': false, 'is_git': false},
+      ]);
+    });
+
+    group('init_git RPC', () {
+      test('needs remote control on, whatever else the call says', () async {
+        await expectLater(
+          handler.initGit({'path': root, 'confirmed': true}),
+          rpcErrorWithCode(HostdErrorCode.remoteControlDisabled),
+        );
+        expect(Directory(p.join(root, '.git')).existsSync(), isFalse);
+      });
+
+      test('needs confirmed to be a literal true', () async {
+        setRemoteControl(true);
+        for (final confirmed in [null, false, 'true', 1]) {
+          await expectLater(
+            handler.initGit({'path': root, if (confirmed != null) 'confirmed': confirmed}),
+            rpcErrorWithCode(HostdErrorCode.remoteConfirmationRequired),
+            reason: '$confirmed',
+          );
+        }
+        expect(Directory(p.join(root, '.git')).existsSync(), isFalse);
+      });
+
+      test('makes a granted folder a repository with one commit, and isolation then works',
+          () async {
+        setRemoteControl(true);
+        File(p.join(root, 'notes.txt')).writeAsStringSync('mine');
+        final result = await handler.initGit({'path': root, 'confirmed': true});
+        expect(result['ok'], isTrue);
+        final sha = result['commit'] as String;
+        expect(sha, matches(RegExp(r'^[0-9a-f]{40,64}$')));
+        final head = await git(['rev-parse', 'HEAD']);
+        expect((head.stdout as String).trim(), sha);
+        final subject = await git(['log', '-1', '--format=%s']);
+        expect((subject.stdout as String).trim(),
+            "Initial commit (made by AURA before the Engineer's first change)");
+        final tracked = await git(['ls-files']);
+        expect(tracked.stdout, contains('notes.txt'));
+
+        expect((await handler.listRoots(const {}))['roots'], [
+          {'path': root, 'trusted': false, 'is_git': true},
+        ]);
+        final created = await handler.createTask({'isolate': true, 'task_key': 'chat-1', 'cwd': root});
+        expect(created['isolated'], isTrue);
+      });
+
+      test('refuses a folder that already is a repository with already_a_git_repo', () async {
+        setRemoteControl(true);
+        await initRepo();
+        await expectLater(
+          handler.initGit({'path': root, 'confirmed': true}),
+          rpcErrorWithCode(HostdErrorCode.alreadyAGitRepo),
+        );
+        final count = await git(['rev-list', '--count', 'HEAD']);
+        expect((count.stdout as String).trim(), '1', reason: 'nothing was committed');
+      });
+
+      test('refuses a folder that is not a granted root with root_not_granted', () async {
+        setRemoteControl(true);
+        final other = Directory(p.join(tempDir.path, 'other'))..createSync();
+        final sub = Directory(p.join(root, 'sub'))..createSync();
+        for (final path in [other.path, sub.path, 'workspace', p.join(tempDir.path, 'missing')]) {
+          await expectLater(
+            handler.initGit({'path': path, 'confirmed': true}),
+            rpcErrorWithCode(HostdErrorCode.rootNotGranted),
+            reason: path,
+          );
+        }
+        expect(Directory(p.join(other.path, '.git')).existsSync(), isFalse);
+        expect(Directory(p.join(sub.path, '.git')).existsSync(), isFalse);
+      });
+
+      test('refuses a missing path with missing_parameter', () async {
+        setRemoteControl(true);
+        await expectLater(
+          handler.initGit({'confirmed': true}),
+          rpcErrorWithCode(HostdErrorCode.missingParameter),
+        );
+      });
+    });
+
+    test('a desktop command beyond the pending-approval cap is refused with approval_queue_full',
+        () async {
+      approvals = ApprovalQueue(maxPending: 1);
+      handler = TaskHandler.live(store, approvalQueue: approvals);
+      final first = handler.run({'command': ['sh', '-c', 'mkdir one'], 'cwd': root, 'timeout_s': 5.0});
+      expect(approvals.list(), hasLength(1));
+      await expectLater(
+        handler.run({'command': ['sh', '-c', 'mkdir two'], 'cwd': root, 'timeout_s': 5.0}),
+        rpcErrorWithCode(HostdErrorCode.approvalQueueFull),
+      );
+      await expectLater(
+        handler.writeFile({'path': 'w.txt', 'content': 'x'}),
+        rpcErrorWithCode(HostdErrorCode.approvalQueueFull),
+      );
+      approvals.respond(approvals.list().single.id, false);
+      await expectLater(first, throwsA(isA<RpcError>()));
+      expect(Directory(p.join(root, 'two')).existsSync(), isFalse);
+      expect(File(p.join(root, 'w.txt')).existsSync(), isFalse);
+    });
+  });
 }
 
 void _nameMissingExecutableTests() {

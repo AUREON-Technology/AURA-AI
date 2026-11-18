@@ -7,10 +7,14 @@ import '../../platform/aura_platform.dart';
 
 /// One folder the paired computer has granted the Engineer.
 class HostFolder {
-  const HostFolder({required this.path, required this.trusted});
+  const HostFolder({required this.path, required this.trusted, this.isGit});
 
   final String path;
   final bool trusted;
+
+  /// Whether the folder is a git repository, which isolation needs (D-13). Null from a daemon
+  /// too old to say: unknown, so nothing offers to initialize it.
+  final bool? isGit;
 }
 
 /// What the Engineer chat's desktop bar can say about the user's computer.
@@ -46,7 +50,11 @@ class HostFolders {
       roots: [
         for (final root in roots)
           if (root is Map && root['path'] is String)
-            HostFolder(path: root['path'] as String, trusted: root['trusted'] == true),
+            HostFolder(
+              path: root['path'] as String,
+              trusted: root['trusted'] == true,
+              isGit: root['is_git'] is bool ? root['is_git'] as bool : null,
+            ),
       ],
     );
   }
@@ -86,6 +94,16 @@ class HostFoldersClient {
   /// Throws [AuraApiError] when the request fails and [FormatException] on a body that is not
   /// the documented shape.
   Future<HostFolders> fetch() async => HostFolders.fromJson(await _api.json(method: 'GET', path: path));
+
+  /// Makes the granted folder [folder] on the user's computer a git repository (D-13): `git init`
+  /// and a first commit of its current files. Returns that commit's sha (empty if the daemon did
+  /// not say). The computer's refusal is a 409 `desktop_refused` whose `message` is the daemon's
+  /// own text; 503 means no computer is connected. Both surface as [AuraApiError].
+  Future<String> initGit(String folder) async {
+    final body = await _api.json(method: 'POST', path: '$path/git-init', body: {'path': folder});
+    final commit = body['commit'];
+    return commit is String ? commit : '';
+  }
 }
 
 final hostFoldersClientProvider = Provider<HostFoldersClient>((ref) => HostFoldersClient(ref));

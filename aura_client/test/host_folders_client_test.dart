@@ -143,4 +143,54 @@ void main() {
     expect((await container.read(hostFoldersProvider.future)).connected, isTrue);
     expect(requests, hasLength(2));
   });
+
+  group('git (WP4, D-13)', () {
+    test('is_git is read per folder; an older daemon without it is unknown', () async {
+      final container = containerWith((_) => http.Response(
+          jsonEncode({
+            'connected': true,
+            'remote_control': true,
+            'roots': [
+              {'path': '/a', 'trusted': false, 'is_git': true},
+              {'path': '/b', 'trusted': false, 'is_git': false},
+              {'path': '/c', 'trusted': false},
+            ],
+          }),
+          200));
+
+      final folders = await container.read(hostFoldersClientProvider).fetch();
+
+      expect(folders.roots.map((r) => r.isGit), [true, false, null]);
+    });
+
+    test('initGit POSTs the folder to git-init and returns the first commit', () async {
+      final container = containerWith((_) => http.Response(jsonEncode({'ok': true, 'commit': 'abc123'}), 200));
+
+      final commit = await container.read(hostFoldersClientProvider).initGit('/home/me/notes');
+
+      expect(commit, 'abc123');
+      expect(requests.single.method, 'POST');
+      expect(requests.single.url.path, '/api/v3/host/folders/git-init');
+      expect(jsonDecode(requests.single.body), {'path': '/home/me/notes'});
+      expect(requests.single.headers['Authorization'], 'Bearer jwt-test');
+    });
+
+    test("the computer's refusal (409 desktop_refused) carries its own message", () async {
+      final container = containerWith((_) => http.Response(
+          jsonEncode({
+            'error': 'desktop_refused',
+            'message': '/home/me/notes is already a git repository',
+            'retryable': false,
+            'details': {},
+          }),
+          409));
+
+      await expectLater(
+        container.read(hostFoldersClientProvider).initGit('/home/me/notes'),
+        throwsA(isA<AuraApiError>()
+            .having((e) => e.statusCode, 'statusCode', 409)
+            .having((e) => e.message, 'message', contains('already a git repository'))),
+      );
+    });
+  });
 }
