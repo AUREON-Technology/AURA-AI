@@ -120,3 +120,31 @@ class TestCreationTime:
 def test_created_at_is_still_not_a_free_payload_column(column) -> None:
     """Accepted only on insert, through `creation_time` -- never overwritten by a later upsert."""
     assert column in sync._SERVER_OWNED_COLUMNS
+
+
+class TestLockConflictsAreRetryable:
+    """A mutation aborted over a row lock (deadlock, serialization, lock timeout) is a conflict with
+    another device's push, not a bad value: it must come back retryable, never parked."""
+
+    @staticmethod
+    def _wrapped(sqlstate: str) -> Exception:
+        from sqlalchemy.exc import DBAPIError
+
+        class _Driver(Exception):
+            pass
+
+        driver = _Driver("driver error")
+        driver.sqlstate = sqlstate
+        return DBAPIError("UPDATE tasks ...", {}, driver)
+
+    @pytest.mark.parametrize("sqlstate", ["40P01", "40001", "55P03"])
+    def test_lock_conflicts_are_recognised(self, sqlstate: str) -> None:
+        from api.v2.sync import _lock_conflict
+
+        assert _lock_conflict(self._wrapped(sqlstate))
+
+    @pytest.mark.parametrize("sqlstate", ["22P02", "23505", None])
+    def test_other_failures_are_not(self, sqlstate) -> None:
+        from api.v2.sync import _lock_conflict
+
+        assert not _lock_conflict(self._wrapped(sqlstate))

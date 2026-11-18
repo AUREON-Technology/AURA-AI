@@ -222,6 +222,22 @@ def _require_jwt_secret(settings) -> None:
         )
 
 
+def _register_auth_state_handler(app) -> None:
+    """Auth state Redis cannot answer (erasure, device revocation) is a retryable 503 wherever it
+    surfaces -- the same body the sign-in routes return themselves -- never an unstructured 500
+    that a client would read as a hard failure and sign out on."""
+    from services.jwt_auth import AUTH_STATE_UNAVAILABLE_DETAIL, AuthStateUnavailable
+
+    @app.exception_handler(AuthStateUnavailable)
+    async def auth_state_unavailable_handler(request, exc: AuthStateUnavailable):
+        logger.warning("auth state unavailable: %s", exc)
+        return JSONResponse(
+            status_code=503,
+            content={"detail": dict(AUTH_STATE_UNAVAILABLE_DETAIL)},
+            headers={"Retry-After": "5"},
+        )
+
+
 def _register_inference_budget_handler(app) -> None:
     from services.budget import InferenceBudgetExceededException
 
@@ -406,6 +422,7 @@ def create_app():
     _mount_platform_routers(app)
     _warn_if_no_console_operator(settings)
     _register_inference_budget_handler(app)
+    _register_auth_state_handler(app)
     _apply_http_limits(app, settings)
     _apply_cors(app)
     # Last, so outermost: a request the size limit, rate limiter or CORS refuses is counted too.

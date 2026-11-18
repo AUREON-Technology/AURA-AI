@@ -49,7 +49,7 @@ from typing import Any, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import DateTime, select, text, tuple_
-from sqlalchemy.exc import DataError, IntegrityError, InterfaceError, OperationalError, StatementError
+from sqlalchemy.exc import IntegrityError, InterfaceError, OperationalError, StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.db.base import get_db, is_configured
@@ -616,6 +616,25 @@ async def _apply_mutation(
     return result("applied")
 
 
+#: SQLSTATEs meaning "another writer holds this row", never "this value is bad": deadlock victim,
+#: serialization failure, lock timeout. Postgres aborts only the mutation's SAVEPOINT.
+_LOCK_CONFLICT_SQLSTATES = frozenset({"40P01", "40001", "55P03"})
+
+
+def _lock_conflict(exc: BaseException) -> bool:
+    """Whether ``exc`` is a row-lock conflict with a concurrent push. F31's row locks are taken in
+    the order each client sends its mutations, so two devices can deadlock."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        for attr in ("sqlstate", "pgcode"):
+            if getattr(current, attr, None) in _LOCK_CONFLICT_SQLSTATES:
+                return True
+        current = getattr(current, "orig", None) or current.__cause__
+    return False
+
+
 @router.post("/sync", response_model=list[SyncMutationResult], response_model_exclude_none=True)
 async def push_sync(
     body: SyncPushRequest,
@@ -665,13 +684,24 @@ async def push_sync(
             continue
         except _RowError as exc:
             detail, retryable = exc.detail, exc.retryable
-        except (OperationalError, InterfaceError):
-            raise
-        except IntegrityError as exc:
-            # Possibly ordering (a goal whose project has not arrived yet), so worth a retry.
-            logger.info("sync mutation violated a constraint: %s", str(exc.orig)[:300])
-            detail, retryable = "violates a database constraint", True
-        except (ValueError, TypeError, DataError, StatementError) as exc:
+        except StatementError as exc:
+            if _lock_conflict(exc):
+                # Another device's push holds this row. Only this mutation's SAVEPOINT was
+                # aborted; the client sends it again on its next push, once that writer is done.
+                # It used to fall through to "invalid value", not retryable, and the edit was
+                # parked for good.
+                logger.info("sync mutation lost a row-lock conflict: %s", str(exc)[:200])
+                detail, retryable = "row busy with a concurrent edit", True
+            elif isinstance(exc, (OperationalError, InterfaceError)):
+                raise
+            elif isinstance(exc, IntegrityError):
+                # Possibly ordering (a goal whose project has not arrived yet), so worth a retry.
+                logger.info("sync mutation violated a constraint: %s", str(exc.orig)[:300])
+                detail, retryable = "violates a database constraint", True
+            else:  # DataError and other statement failures: the value itself
+                logger.info("sync mutation carried an invalid value: %s", str(exc)[:300])
+                detail, retryable = "invalid value in payload", False
+        except (ValueError, TypeError) as exc:
             logger.info("sync mutation carried an invalid value: %s", str(exc)[:300])
             detail, retryable = "invalid value in payload", False
         results.append(SyncMutationResult(

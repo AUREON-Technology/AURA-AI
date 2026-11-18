@@ -99,6 +99,9 @@ class RetrievalTelemetry:
     returned: int = 0
     top_score: float = 0.0
     below_threshold: int = 0
+    #: Context items the guards quarantined this turn: retrieved chunks, recalled memories (F35)
+    #: and caller-supplied evidence -- not only retrieval. A rise here is a poisoning signal for
+    #: any of the three, not evidence that the knowledge base itself is poisoned.
     quarantined: int = 0
     citations: int = 0
     strategy: str = "none"

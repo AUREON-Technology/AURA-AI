@@ -701,3 +701,59 @@ async def test_an_implausible_creation_time_is_replaced_by_the_envelope_or_serve
         await api.push(_chat(other, at=ancient, created=ancient))
         stamped = _created(await api.pull(), [other])[0]
         assert abs(stamped - datetime.now(timezone.utc)) < timedelta(minutes=5)
+
+
+async def test_a_deadlocked_mutation_is_a_retryable_row_error_and_lands_on_the_next_push(
+        migrated_url, monkeypatch) -> None:
+    """Row locks (F31) are taken in the order the client sent its mutations, so two writers that
+    touch the same rows in opposite orders can deadlock. Postgres aborts the waiting mutation's
+    SAVEPOINT, not the push. That row used to come back as "invalid value", *not* retryable, so
+    the client parked the user's edit for good. It is a conflict over a lock, not a bad value:
+    the row is reported retryable, the rest of the batch still applies, and the next push lands it.
+
+    Made deterministic: another session holds row A and then reaches for row B while the push
+    holds B and waits on A. That session's ``deadlock_timeout`` is long, so the push's own check
+    fires first and the push's mutation is the one Postgres aborts."""
+    import asyncio
+
+    import asyncpg
+
+    async with _Api(migrated_url, monkeypatch) as api:
+        a, b = str(uuid.uuid4()), str(uuid.uuid4())
+        assert (await api.push(_task(a, at="2026-03-01T10:00:00Z"), _task(b, at="2026-03-01T10:00:00Z"))).status_code == 200
+        conn = await asyncpg.connect(migrated_url)
+        other = await asyncpg.connect(migrated_url)
+        try:
+            transaction = other.transaction()
+            await transaction.start()
+            await other.execute("SET LOCAL deadlock_timeout = '30s'")
+            await other.execute("SELECT 1 FROM tasks WHERE id = $1 FOR UPDATE", uuid.UUID(a))
+            edit_a = _task(a, at="2026-03-01T10:00:10Z", title_enc="gcm:pushed-a:x")
+            push = asyncio.create_task(api.push(
+                _task(b, at="2026-03-01T10:00:10Z", title_enc="gcm:pushed-b:x"), edit_a,
+            ))
+            await _wait_until_blocked(conn, urlsplit(migrated_url).path.lstrip("/"))
+            # Completes the cycle: this session now waits on B, which the push holds.
+            reach_b = asyncio.create_task(
+                other.execute("SELECT 1 FROM tasks WHERE id = $1 FOR UPDATE", uuid.UUID(b))
+            )
+            response = await push
+            await reach_b
+            await transaction.commit()
+
+            assert response.status_code == 200, response.text
+            first, second = response.json()
+            assert first["status"] == "applied"
+            assert second["status"] == "error"
+            assert second["retryable"] is True, "a lock conflict must not park the user's edit"
+
+            assert (await api.push(edit_a)).json()[0]["status"] == "applied"
+            titles = {
+                str(r["id"]): r["title_enc"]
+                for r in await conn.fetch("SELECT id, title_enc FROM tasks WHERE id = ANY($1::uuid[])",
+                                          [uuid.UUID(a), uuid.UUID(b)])
+            }
+            assert titles == {a: "gcm:pushed-a:x", b: "gcm:pushed-b:x"}
+        finally:
+            await other.close()
+            await conn.close()

@@ -997,10 +997,6 @@ class ProviderRouter:
                     # Cancelled, rate-limited or refused as a bad request: nothing was learned
                     # about the provider's health, but a held probe slot must be given back.
                     self._release_probe(stats, probe)
-                await self._audit_third_party(
-                    name, request, hint, response.usage if response is not None else None,
-                    streamed=False, result=outcome,
-                )
                 self._quota.settle(reservation, used_tokens)
                 stats.inflight -= 1
                 self._admission.release(ticket)
@@ -1014,6 +1010,12 @@ class ProviderRouter:
                         usage=response.usage if response is not None else None,
                         model=response.model if response is not None else None,
                     )
+                )
+                # Last, after every slot is given back: this await can itself be cancelled, and
+                # a cancel landing here must not leak the admission ticket, quota or inflight.
+                await self._audit_third_party(
+                    name, request, hint, response.usage if response is not None else None,
+                    streamed=False, result=outcome,
                 )
 
         raise _exhausted(
@@ -1216,9 +1218,6 @@ class ProviderRouter:
                     # Cancelled, closed by the consumer, rate-limited or refused as a bad
                     # request: see `complete`.
                     self._release_probe(stats, probe)
-                await self._audit_third_party(
-                    name, request, hint, usage, streamed=True, result=outcome
-                )
                 self._quota.settle(reservation, used_tokens)
                 stats.inflight -= 1
                 self._admission.release(ticket)
@@ -1237,6 +1236,10 @@ class ProviderRouter:
                         ),
                         usage=usage,
                     )
+                )
+                # Last, after every slot is given back: see `complete`.
+                await self._audit_third_party(
+                    name, request, hint, usage, streamed=True, result=outcome
                 )
 
         raise _exhausted(

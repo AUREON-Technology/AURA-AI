@@ -27,7 +27,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from ..domain.errors import DependencyUnavailableError
 from ..domain.events import DomainEvent
@@ -104,6 +104,7 @@ class PostgresEventOutbox:
                         )
         except Exception as exc:
             raise _unavailable(f"could not claim outbox entries: {exc}") from exc
+        self._forget_expired(claimed_at)
         if rows:
             claim = _Claim(claimed_at=claimed_at, ids={row["id"] for row in rows})
             for entry_id in claim.ids:
@@ -116,6 +117,17 @@ class PostgresEventOutbox:
             )
             for row in rows
         ]
+
+    def _forget_expired(self, now: datetime | None) -> None:
+        """Drop claims whose lease has run out. An entry whose dispatch or ``mark_*`` raised is
+        never finished here, so without this its claim would stay in memory for the life of the
+        worker; once the lease is gone any worker may reclaim it, and renewing it would be fenced
+        off anyway."""
+        if now is None:
+            now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(seconds=_LEASE_SECONDS)
+        for entry_id in [e for e, claim in self._claims.items() if claim.claimed_at < cutoff]:
+            del self._claims[entry_id]
 
     async def _renew_rest(self, conn, entry_id: str) -> None:
         """Restart the lease on the entries of ``entry_id``'s batch not finished yet (F33).

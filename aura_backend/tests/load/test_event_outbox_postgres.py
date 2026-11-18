@@ -130,3 +130,22 @@ async def test_a_stale_worker_does_not_renew_a_claim_another_worker_took(outbox_
     finally:
         await worker_a._pool.close()
         await worker_b._pool.close()
+
+
+async def test_a_claim_never_finished_is_forgotten_once_its_lease_runs_out(outbox_url) -> None:
+    """A dispatch (or its ``mark_*``) that raised leaves its entry unfinished in this worker's
+    bookkeeping. Once the lease is gone the entry is anyone's to reclaim, so the worker forgets it
+    rather than holding it for its whole life."""
+    from datetime import datetime, timedelta, timezone
+
+    from aura_core.adapters import postgres_outbox
+    from aura_core.adapters.postgres_outbox import PostgresEventOutbox, _Claim
+
+    outbox = PostgresEventOutbox(outbox_url)
+    long_ago = datetime.now(timezone.utc) - timedelta(seconds=postgres_outbox._LEASE_SECONDS + 60)
+    stale = _Claim(claimed_at=long_ago, ids={"lost-1", "lost-2"})
+    outbox._claims.update({"lost-1": stale, "lost-2": stale})
+
+    await outbox.claim_batch(limit=10)   # nothing to claim; still tidies up
+
+    assert "lost-1" not in outbox._claims and "lost-2" not in outbox._claims

@@ -216,3 +216,26 @@ class TestFailedThirdPartyGenerationsAreAudited:
         assert len(events) == 2
         assert {e.outcome for e in events} == {"success"}
         assert {e.detail["result"] for e in events} == {"success"}
+
+
+class TestAnAuditCancelledMidWriteLeaksNoSlot:
+    """The audit is awaited inside the attempt's ``finally``. A cancel that lands during that
+    write must not skip giving back the admission ticket, quota and inflight count."""
+
+    class _CancelledSink(InMemoryAuditSink):
+        async def record(self, event) -> None:  # noqa: D401 - a sink that is torn down mid-write
+            raise asyncio.CancelledError()
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_every_slot_is_released(self, stream: bool) -> None:
+        router = ProviderRouter([_hosted([ScriptedTurn(text="hi")])], audit=self._CancelledSink())
+        with data_scope(DataClassification.INTERNAL):
+            with pytest.raises(asyncio.CancelledError):
+                if stream:
+                    _ = [c async for c in router.stream(_request())]
+                else:
+                    await router.complete(_request())
+
+        assert router._stats["hosted"].inflight == 0
+        for group in router._admission._groups:
+            assert router._admission.inflight(group) == 0
