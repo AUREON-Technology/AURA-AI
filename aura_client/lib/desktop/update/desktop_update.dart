@@ -8,11 +8,14 @@
 ///
 /// * **The person decides.** A check only finds out; nothing downloads or installs until they
 ///   choose to.
+/// * **Authenticity (F18).** The manifest is signed: Ed25519 over its exact bytes, published next
+///   to it as `desktop-update.json.sig` (base64). Nothing in the manifest is read until that
+///   signature verifies against the public key compiled into the app
+///   (`update_signing_key.dart`), so a release whose installer *and* checksum were swapped
+///   together is refused. With no real key configured, updates fail closed.
 /// * **Integrity.** The download is hashed as it streams and refused unless its SHA-256 matches
-///   the manifest; a mismatched file is deleted, never run. That catches corruption and a swapped
-///   mirror. It does not protect against a compromised release, because the file and the hash
-///   come from the same place -- that is what Authenticode signing is for (the workflow signs
-///   once a certificate exists).
+///   the (verified) manifest; a mismatched file is deleted, never run. Authenticode signing of the
+///   installer itself is separate (the workflow signs once a certificate exists).
 /// * **Rollback is a channel decision.** An older version is never offered, unless the manifest
 ///   says `"rollback": true` -- which the owner publishes by re-marking a previous release as
 ///   latest (`desktop-package.yml`'s `rollback_to`). Installed apps then offer that version as
@@ -25,7 +28,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:cryptography/cryptography.dart' as ed;
 import 'package:http/http.dart' as http;
+
+import 'update_signing_key.dart';
 
 /// The version this build is, baked in by `desktop-package.yml`. Empty for a source build.
 const String kAppVersion = String.fromEnvironment('AURA_APP_VERSION');
@@ -45,6 +51,61 @@ class UpdateFormatException implements Exception {
   final String message;
   @override
   String toString() => 'UpdateFormatException: $message';
+}
+
+/// The manifest's signature is missing, malformed or wrong, or no signing key is configured: the
+/// manifest is not trusted and nothing is offered.
+class UpdateSignatureException implements Exception {
+  UpdateSignatureException(this.message);
+  final String message;
+  @override
+  String toString() => 'UpdateSignatureException: $message';
+}
+
+/// Where the manifest's signature is published: the manifest URL plus `.sig`.
+Uri manifestSignatureUrl(String manifestUrl) => Uri.parse('$manifestUrl.sig');
+
+/// Verifies [signatureText] (base64 of a 64-byte Ed25519 signature) over exactly [manifestBytes]
+/// with [publicKeyBase64] (base64 of a raw 32-byte Ed25519 public key). Throws
+/// [UpdateSignatureException] on anything short of a valid signature -- including a key that is
+/// not configured.
+Future<void> verifyManifestSignature(
+  List<int> manifestBytes,
+  String signatureText,
+  String publicKeyBase64,
+) async {
+  final key = _decodeBase64(publicKeyBase64);
+  if (key == null || key.length != 32) {
+    throw UpdateSignatureException('no update signing key is configured in this build');
+  }
+  final signature = _decodeBase64(signatureText.trim());
+  if (signature == null || signature.length != 64) {
+    throw UpdateSignatureException('the manifest signature is malformed');
+  }
+  final bool valid;
+  try {
+    valid = await ed.Ed25519().verify(
+      manifestBytes,
+      signature: ed.Signature(
+        signature,
+        publicKey: ed.SimplePublicKey(key, type: ed.KeyPairType.ed25519),
+      ),
+    );
+  } catch (e) {
+    throw UpdateSignatureException('the manifest signature could not be checked: $e');
+  }
+  if (!valid) {
+    throw UpdateSignatureException('the manifest signature does not match the release key');
+  }
+}
+
+List<int>? _decodeBase64(String text) {
+  if (text.isEmpty) return null;
+  try {
+    return base64.decode(text);
+  } on FormatException {
+    return null;
+  }
 }
 
 class UpdateIntegrityException implements Exception {
@@ -181,6 +242,7 @@ class DesktopUpdater {
     this.appVersion = kAppVersion,
     this.manifestUrl = kUpdateManifestUrl,
     String? platformKey,
+    this.signingPublicKey = kUpdateSigningPublicKeyBase64,
     Directory Function()? downloadDir,
     DetachedLauncher? launch,
   })  : _client = client ?? http.Client(),
@@ -193,6 +255,9 @@ class DesktopUpdater {
 
   final String appVersion;
   final String manifestUrl;
+
+  /// The pinned key the manifest must be signed with (base64, raw 32-byte Ed25519).
+  final String signingPublicKey;
   final http.Client _client;
   final String? _platformKey;
   final Directory Function() _downloadDir;
@@ -203,14 +268,33 @@ class DesktopUpdater {
   bool get enabled =>
       AppVersion.tryParse(appVersion) != null && manifestUrl.startsWith('https://') && _platformKey != null;
 
-  /// Checks the channel. `null` when there is nothing to offer, or updates are off.
+  /// Checks the channel. `null` when there is nothing to offer, or updates are off. Throws
+  /// [UpdateSignatureException] when the manifest is not signed by [signingPublicKey] (or no key
+  /// is configured) -- the caller logs it and offers nothing.
   Future<AvailableUpdate?> check() async {
     if (!enabled) return null;
+    // Fail closed before touching the network: without a key nothing could be trusted anyway.
+    final key = _decodeBase64(signingPublicKey);
+    if (key == null || key.length != 32) {
+      throw UpdateSignatureException('no update signing key is configured in this build');
+    }
     final response = await _client.get(Uri.parse(manifestUrl));
     if (response.statusCode != 200) {
       throw http.ClientException('update manifest returned ${response.statusCode}');
     }
-    final decoded = jsonDecode(response.body);
+    final signature = await _client.get(manifestSignatureUrl(manifestUrl));
+    if (signature.statusCode != 200) {
+      throw UpdateSignatureException('no manifest signature published (${signature.statusCode})');
+    }
+    // The exact bytes as downloaded: re-encoding parsed JSON would not be what was signed.
+    final manifestBytes = response.bodyBytes;
+    await verifyManifestSignature(manifestBytes, signature.body, signingPublicKey);
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(utf8.decode(manifestBytes));
+    } on FormatException catch (e) {
+      throw UpdateFormatException('manifest is not JSON: ${e.message}');
+    }
     if (decoded is! Map<String, dynamic>) throw UpdateFormatException('manifest is not an object');
     final manifest = UpdateManifest.fromJson(decoded);
     return decideUpdate(AppVersion.tryParse(appVersion)!, manifest, _platformKey!);
