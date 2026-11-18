@@ -9,8 +9,8 @@
 
 ## Progress (2026-11-17)
 
-Built and tested locally on PR #251. Nothing here ran in CI (no runners, CB-44), and nothing is
-proven live.
+Built and tested locally on PR #251, which merged into `main` on 2026-11-18 (`d47e064`). Nothing
+here ran in CI (no runners, CB-44), and nothing is proven live.
 
 | WP | Status | Commits |
 |---|---|---|
@@ -25,7 +25,8 @@ proven live.
 | WP4 | Done. D-13 (2026-11-18): a non-git folder offers "Initialize git here" instead of working unisolated | `f4426c0` (backend), `fe854c1` (daemon), client in the commit after `348f24c` |
 | WP9 | Done, except G-13: running `desktop-package.yml` on a tag publishes a release and needs the owner's go-ahead. Already on main: G-18 (INT-003) and the `read_file` cap (INT-036) | `f4426c0` (1011 on server errors), `fe854c1` (approval queue), client in the commit after `348f24c` |
 | Merge of main (Arabic plan) | Done; the consent migration was renumbered to `0023` after main's `0022` | `60cf1e9`, `3a9ef0c` |
-| WP6, WP10a, WP11, WP12, WP10b | Not started | — |
+| WP6 | Repo half done: the Railway runbook (`docs/deployment/control-plane.md`, "Claude for the Engineer"), the VPS example (`deploy/.env.example`, `hosted3`), and both compose files now forward `WORKLOADS` and `USER_TPD` (before, a VPS Claude slot booted unfenced and uncapped whatever `.env` said). **Owner half not done:** the Railway variables and the Anthropic key. Not accepted until the four live checks in that runbook pass | this branch, after `d47e064` |
+| WP10a, WP11, WP12, WP10b | Not started | — |
 
 ## 0. Ground rules for every work package
 
