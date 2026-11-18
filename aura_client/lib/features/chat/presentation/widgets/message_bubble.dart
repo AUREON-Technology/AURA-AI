@@ -27,6 +27,7 @@ import 'tool_call_chip.dart';
 import 'turn_status_row.dart';
 import 'user_facing_citations.dart';
 import 'voice_playback_button.dart';
+import 'package:aura_client/features/workspaces/presentation/plan_limit_card.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
 class MessageBubble extends ConsumerWidget {
@@ -69,6 +70,17 @@ class MessageBubble extends ConsumerWidget {
     final maxWidthFraction = MediaQuery.of(context).size.width < 768
         ? 0.85
         : 0.65;
+
+    if (!isUser && isChatPlanLimitText(message.content)) {
+      return Align(
+        alignment: AlignmentDirectional.centerStart,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: AuraSpacing.lg),
+          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * maxWidthFraction),
+          child: PlanLimitCard(text: message.content.substring(kChatPlanLimitPrefix.length + 2)),
+        ),
+      );
+    }
 
     if (!isUser && isChatConnectionErrorText(message.content)) {
       return Align(

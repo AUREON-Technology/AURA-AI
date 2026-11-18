@@ -15,7 +15,7 @@ class WorkspaceTile extends ConsumerWidget {
     final active = ref.watch(activeWorkspaceProvider);
     return AuraListTile(
       key: const Key('workspace-tile'),
-      icon: active?.isTeam == true ? Icons.groups_outlined : Icons.person_outline,
+      icon: active?.isTeam == true ? Icons.groups_outlined : Icons.workspaces_outlined,
       title: context.l10n.workspaceTileTitle,
       subtitle: active?.isTeam == true ? active!.name : context.l10n.workspacePersonal,
       onTap: () => showWorkspaceSwitcher(context),

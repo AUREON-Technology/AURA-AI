@@ -20,7 +20,7 @@ import 'turn_meta.dart';
 // arrived was kept, marked [TurnMeta.interrupted] -- never replaced by the error bubble.
 /// `unavailable`: the backend refused the turn's content class (`capability_unavailable`, the
 /// chat-only launch). Not a connection error, so it gets plain copy and no Retry card.
-enum _SseSendOutcome { succeeded, failed, interrupted, unavailable, withheld, blocked }
+enum _SseSendOutcome { succeeded, failed, interrupted, unavailable, withheld, blocked, planLimit }
 
 class _SseResult {
   final _SseSendOutcome outcome;
@@ -262,6 +262,8 @@ class ChatRepository {
         await _updateMessageText(assistantMsgId, kChatWithheldText);
       } else if (sseOutcome.outcome == _SseSendOutcome.blocked) {
         await _updateMessageText(assistantMsgId, kChatBlockedText);
+      } else if (sseOutcome.outcome == _SseSendOutcome.planLimit) {
+        await _updateMessageText(assistantMsgId, sseOutcome.message!);
       } else if (sseOutcome.outcome == _SseSendOutcome.unavailable) {
         // Deliberately without `kChatConnectionErrorPrefix`: that prefix is what puts a Retry
         // card on the row, and retrying this turn reaches the same refusal.
@@ -570,6 +572,10 @@ class ChatRepository {
       debugPrint("[ChatRepository] SSE path failed: $e");
       if (displayText.isNotEmpty || _stoppedMessageId == assistantMsgId) {
         return keepPartial("stream_failed", error: e.message);
+      }
+      if (e.statusCode == 402 && e.error == 'plan_limit') {
+        // Refused before generating: not a connection problem, and retrying cannot help.
+        return _SseResult(_SseSendOutcome.planLimit, chatPlanLimitText(e));
       }
       await _logTelemetry(
         eventType: "failover",

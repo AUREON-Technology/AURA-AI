@@ -48,6 +48,13 @@ class SettingsPage extends ConsumerWidget {
                     const WorkspaceTile(),
                     const _RowDivider(),
                     AuraListTile(
+                      key: const Key('plan-tile'),
+                      icon: Icons.workspace_premium_outlined,
+                      title: l10n.planTitle,
+                      onTap: () => context.push('/plan'),
+                    ),
+                    const _RowDivider(),
+                    AuraListTile(
                       icon: Icons.person_outline,
                       title: l10n.settingsProfileTitle,
                       subtitle: l10n.settingsProfileSubtitle,

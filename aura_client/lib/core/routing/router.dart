@@ -32,6 +32,7 @@ import '../../features/settings/presentation/backend_environment_page.dart';
 import '../../features/settings/presentation/appearance_page.dart';
 import '../../features/settings/presentation/desktop_devices_page.dart';
 import '../../features/settings/presentation/settings_page.dart';
+import '../../features/workspaces/presentation/plan_page.dart';
 import '../../features/workspaces/presentation/team_settings_page.dart';
 import '../../l10n/generated/app_localizations.dart';
 import '../../features/voice_live/presentation/live_voice_page.dart';
@@ -546,6 +547,7 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/you',
             builder: (context, state) => const SettingsPage(),
           ),
+          GoRoute(path: '/plan', builder: (context, state) => const PlanPage()),
           GoRoute(
             path: '/workspaces/:id',
             builder: (context, state) => TeamSettingsPage(workspaceId: state.pathParameters['id']!),

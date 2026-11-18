@@ -46,6 +46,7 @@ class FakeWorkspaces extends WorkspacesClient {
     storageAllowed: 10 * 1024 * 1024, engineer: false,
   );
   BillingStatus billingStatus = const BillingStatus();
+  Object? billingFailure;
   List<SharedChatSummary> sharedList = const [];
 
   Future<T> _answer<T>(String call, T value) async {
@@ -79,7 +80,10 @@ class FakeWorkspaces extends WorkspacesClient {
   @override
   Future<PlanUsage> plan(String id) => _answer('plan:$id', usage);
   @override
-  Future<BillingStatus> billing(String id) => _answer('billing:$id', billingStatus);
+  Future<BillingStatus> billing(String id) async {
+    if (billingFailure != null) throw billingFailure!;
+    return _answer('billing:$id', billingStatus);
+  }
   @override
   Future<Checkout> checkout(String id, String plan, int seats) => _answer('checkout:$plan:$seats',
       Checkout(paymentId: 'p1', amountPiastres: 15000, referenceNumber: '912345678', expiresAt: DateTime.utc(2026, 11, 21)));
@@ -142,4 +146,10 @@ class _FixedActive extends ActiveWorkspace {
 
   @override
   Future<void> clear() async => state = null;
+}
+
+
+extension WorkspaceSummaryCopy on WorkspaceSummary {
+  static WorkspaceSummary personalAs(String role) =>
+      WorkspaceSummary(id: personal.id, kind: 'personal', name: personal.name, role: role);
 }
