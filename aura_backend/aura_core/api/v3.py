@@ -714,7 +714,9 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             await release_turn(reservation)
             raise
         if result.telemetry.outcome.value != "success":
-            # A failed turn does not use up the month (spec 5.3).
+            # A failed turn does not use up the month: the same rule as /chat/stream, where a
+            # message counts once its first token is sent -- a failed turn sends this caller
+            # no answer text at all (F6).
             await release_turn(reservation)
         if caller.is_service:
             # Chat turns are not audited for people; a service's are, so one interpretation can be
@@ -851,21 +853,23 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         reservation, turn = await admit_turn(caller, payload.agent, turn)
 
         async def events() -> AsyncIterator[bytes]:
-            completed = False
+            counted = False
             try:
                 async for frame in container.kernel.stream(turn):
                     event = frame.get("type", "message")
-                    if event == "done":
-                        completed = True
+                    if event in ("token", "done"):
+                        counted = True
                     yield f"event: {event}\ndata: {json.dumps(frame)}\n\n".encode()
             except Exception as exc:  # pragma: no cover - defensive
                 logger.exception("stream failed")
                 payload_ = {"type": "error", "error": "internal_error", "message": type(exc).__name__}
                 yield f"event: error\ndata: {json.dumps(payload_)}\n\n".encode()
             finally:
-                # Counted only once the turn finished (a `done` frame): an error frame, an
-                # exception or a client gone before `done` gives the message back (spec 5.3).
-                if not completed:
+                # The message counts once the first token frame is sent (or the turn reaches
+                # `done` without one): the person has had an answer, so a failure or a client
+                # gone after that point keeps it counted (F6). Only a turn that fails, errors or
+                # loses its client before any token gives the message back.
+                if not counted:
                     await release_turn(reservation)
 
         return StreamingResponse(
