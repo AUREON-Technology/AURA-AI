@@ -42,11 +42,21 @@ async def run_memory_consolidate(
 ) -> dict[str, Any]:
     if not enabled or memory is None:
         return {"status": "skipped", "reason": "consolidation_disabled"}
-    owners = 0
+    owners = errors = 0
     for owner_id in owner_ids:
-        await memory.consolidate(owner_id)
         owners += 1
-    return {"status": "success", "owners": owners}
+        try:
+            await memory.consolidate(owner_id)
+        except Exception as exc:
+            # One owner's failure must not halt the nightly run for every owner after it (F28).
+            # Counted and logged; the next night retries it with everyone else.
+            errors += 1
+            logger.warning(
+                "memory consolidation failed for one owner",
+                extra={"owner": owner_id.value, "error": type(exc).__name__},
+                exc_info=True,
+            )
+    return {"status": "partial" if errors else "success", "owners": owners, "errors": errors}
 
 
 async def run_outbox_drain(
