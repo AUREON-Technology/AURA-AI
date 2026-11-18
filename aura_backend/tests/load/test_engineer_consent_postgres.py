@@ -1,4 +1,4 @@
-"""WP1 against a real Postgres: migration 0022 and ``PostgresEngineerConsentStore``.
+"""WP1 against a real Postgres: migration 0023 and ``PostgresEngineerConsentStore``.
 
 Opt-in (``-m load``); skips unless ``AURA_TEST_DATABASE_URL`` names a superuser DSN. The database
 is built by ``alembic upgrade head`` -- the adapter creates nothing.

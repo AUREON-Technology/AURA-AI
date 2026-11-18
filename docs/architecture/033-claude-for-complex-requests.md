@@ -136,7 +136,7 @@ warning. Three things keep that from becoming "Anthropic sees everything sensiti
    server presents (`ENGINEER_CONSENT_NOTICE_VERSION`). The check sits where the persona is
    resolved, after an approval resume restores the held turn's persona, and delegation runs the
    kernel again, so no path reaches the fenced slot without it. `GET/POST/DELETE
-   /api/v3/engineering/consent`; table `aura_engineer_consents` (migration `0022`); erased with
+   /api/v3/engineering/consent`; table `aura_engineer_consents` (migration `0023`); erased with
    the account.
 3. **A per-user daily allowance (WP2, D-05).** `AURA_PROVIDER_<NAME>_USER_TPD` caps the tokens one
    person may spend on the slot per UTC day, shared across workers through the cache's atomic

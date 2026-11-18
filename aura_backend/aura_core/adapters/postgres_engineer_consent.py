@@ -1,6 +1,6 @@
 """Postgres :class:`~aura_core.ports.coding.EngineerConsentStore` (module readiness WP1).
 
-Reads and writes ``aura_engineer_consents``, which Alembic revision 0022 creates; the adapter
+Reads and writes ``aura_engineer_consents``, which Alembic revision 0023 creates; the adapter
 issues no DDL (one schema authority, CB-20). Shares the container's ``PostgresPool``.
 
 Read once per Engineer turn by primary key. A withdrawal keeps the row (``withdrawn_at`` set) so
