@@ -42,6 +42,30 @@ Fixed:
 Still the owner's: the iOS OAuth client values, the same setup for macOS (plus its keychain
 entitlement), the Firebase console check (SEC-08), and Sign in with Apple.
 
+## Update 2026-11-17 (Phase I, same branch)
+
+**TESTED locally**, not released. Turn steps now update in place by `step_id`. Before, every
+finished plan step, and the vision step of every image turn, left a spinning "running" row
+beside its result. The vision step's `done` shows a check mark. The new `degraded` status (only
+OCR could read the image, because the vision model was asleep) shows a warning and the server's
+"send it again in a minute" text.
+
+## Update 2026-11-17/18 (Phase V voice language, branch `anas/laughing-hamilton-glfevj`)
+
+**TESTED locally** after merging `main` (Arabic stages 3–4). Flutter 3.44.6: `flutter analyze`
+clean, `flutter test` 830 passed, 4 skipped. Not CI-run, not released, not tried on a device.
+
+- Voice language follows the app language (Appearance → Language). An English / العربية toggle
+  on the live voice screen overrides it for speech, and the choice is remembered on the device
+  (`core/ai/voice/voice_language.dart`). Switching restarts an open session in the same
+  conversation.
+- The chat mic uses the same choice: only Arabic is sent as a `language` hint, so the server
+  auto-detects otherwise.
+- On a server still running English-only Whisper, live voice restarts in English and shows a
+  localized notice (stage 4's fallback plus the notice). Choosing Arabic again retries it.
+- Merge fix: `main`'s `app_en.arb` had lost `hostdPairedToOtherServer` (its committed generated
+  code still had it); restored, so `flutter gen-l10n` + `analyze` pass again.
+
 ## Update 2026-11-14 (release readiness pass, on `b655421`)
 
 A contract and release audit of the app against everything merged since 2026-10-28. Everything
@@ -149,7 +173,7 @@ capability rows below that cite those findings as open describe `dc87beb`; treat
 | Device attestation | TESTED (unit) | Play Integrity (`IntegrityAttestationPlugin.kt`) and App Attest (`AppAttestPlugin.swift`), with backend tests green. F-09: until 2026-11-16 any account could skip attestation through `/desktop/login`; that route is now for operators only, like `/web/token` (owner decision; TESTED locally, not deployed). |
 | Account deletion | TESTED locally (2026-11-14) | `POST /api/v3/account/delete` + You → Account → Delete account; `test/account_deletion_test.dart`, `tests/unit/test_account_self_deletion.py`. Not deployed. |
 | Push notifications | OPEN | No `firebase_messaging`; a failed `Firebase.initializeApp()` is ignored (`main.dart:26`); iOS has no `GoogleService-Info.plist`; in-app notification centre only |
-| Accessibility / i18n | BUILT; TESTED locally (F-36 foundation 2026-10-30; Arabic 2026-11-17), not CI-run (CB-44), not device-checked | `design_system_contrast_test.dart`, `test/ux/`, `test/l10n/`. Every `IconButton` has a tooltip (`icon_button_tooltip_test.dart`). **Egyptian Arabic UI (Arabic plan stage 2):** 1,131 keys in `app_en.arb`, all translated in `app_ar.arb` (parity, placeholder and not-copied checks in `test/l10n/arabic_locale_test.dart`); Settings → Appearance → Language (System / English / العربية), persisted and sent as `X-Client-Language`; `ar` without region so digits stay Western; Cairo bundled as the Arabic font fallback; dates via locale skeletons, calendar week starts Saturday in Arabic; code panes, terminal, diffs and chat code blocks stay LTR, chat messages and the composer take their own direction. Hard-coded `Text('...')` literals under `lib/features`: 209 → 28 (ratchet). `rtl_layout_test.dart` now renders the real Arabic strings. Not done: iOS/macOS translated permission prompts (need `.lproj` entries added in Xcode), live voice still sends `en` until stage 4's multilingual speech-to-text. Screen-reader output, Arabic glyph shaping and the translations themselves have not been checked by a native speaker on a device. Plan: `docs/plans/arabic-language_plan.md`. |
+| Accessibility / i18n | BUILT; TESTED locally (F-36 foundation 2026-10-30; Arabic 2026-11-17), not CI-run (CB-44), not device-checked | `design_system_contrast_test.dart`, `test/ux/`, `test/l10n/`. Every `IconButton` has a tooltip (`icon_button_tooltip_test.dart`). **Egyptian Arabic UI (Arabic plan stage 2):** 1,131 keys in `app_en.arb`, all translated in `app_ar.arb` (parity, placeholder and not-copied checks in `test/l10n/arabic_locale_test.dart`); Settings → Appearance → Language (System / English / العربية), persisted and sent as `X-Client-Language`; `ar` without region so digits stay Western; Cairo bundled as the Arabic font fallback; dates via locale skeletons, calendar week starts Saturday in Arabic; code panes, terminal, diffs and chat code blocks stay LTR, chat messages and the composer take their own direction. Hard-coded `Text('...')` literals under `lib/features`: 209 → 28 (ratchet). `rtl_layout_test.dart` now renders the real Arabic strings. Not done: iOS/macOS translated permission prompts (need `.lproj` entries added in Xcode), live voice now sends the app language (stage 4, falls back to English if the server is still on `tiny.en`). Screen-reader output, Arabic glyph shaping and the translations themselves have not been checked by a native speaker on a device. Plan: `docs/plans/arabic-language_plan.md`. |
 | Android release (APK/AAB) | BUILT; not currently built in CI | See below |
 | iOS release (IPA) | OPEN | No CI, no team ID, Google sign-in config missing (below) |
 

@@ -123,11 +123,6 @@ class AppLocalizationsAr extends AppLocalizations {
       'سجّل من أي مكان. تصفّح المهام والتقويم والماليات والصحة في «حياتي». أدوات الحساب موجودة تحت «أنا».';
 
   @override
-  String hostdPairedToOtherServer(String appBackendUrl) {
-    return 'التطبيق ده مسجّل دخول على $appBackendUrl. اعمل Pair تاني عشان تنقل الـ daemon هناك.';
-  }
-
-  @override
   String get onboardingSkip => 'تخطّي';
 
   @override
@@ -268,7 +263,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get settingsAutomationsTitle => 'الأتمتة';
 
   @override
-  String get settingsAutomationsSubtitle => 'مساعدين Gmail وGitHub وDrive';
+  String get settingsAutomationsSubtitle => 'مساعدين Gmail و GitHub و Drive';
 
   @override
   String get settingsUsageTitle => 'الاستخدام على الجهاز ده';
@@ -745,7 +740,19 @@ class AppLocalizationsAr extends AppLocalizations {
   String get hostdSaveExecutable => 'حفظ مسار ملف التشغيل';
 
   @override
+  String hostdPairedToOtherServer(String appBackendUrl) {
+    return 'التطبيق ده مسجّل دخول على $appBackendUrl. اعمل Pair تاني عشان تنقل الـ daemon هناك.';
+  }
+
+  @override
   String get liveVoiceEnd => 'إنهاء الصوت المباشر';
+
+  @override
+  String get voiceLanguageLabel => 'لغة الكلام';
+
+  @override
+  String get voiceLiveArabicUnavailable =>
+      'الصوت المباشر بالعربي مش متاح على السيرفر ده لسه، فالجلسة هتكمل بالإنجليزي.';
 
   @override
   String get eventChangeStart => 'تغيير وقت البداية';
@@ -3960,7 +3967,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get voiceLiveEndShort => 'إنهاء';
 
   @override
-  String get voiceLiveUnsupported => 'الصوت المباشر متاح على Android وiOS بس';
+  String get voiceLiveUnsupported => 'الصوت المباشر متاح على Android و iOS بس';
 
   @override
   String get homeAskAuraLabel => 'اسأل AURA أي حاجة';

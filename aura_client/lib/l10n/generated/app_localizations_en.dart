@@ -123,11 +123,6 @@ class AppLocalizationsEn extends AppLocalizations {
       'Capture from anywhere. Browse tasks, calendar, finance, and health in Life Hub. Account tools live under You.';
 
   @override
-  String hostdPairedToOtherServer(String appBackendUrl) {
-    return 'This app is signed in to $appBackendUrl. Pair again to move the daemon there.';
-  }
-
-  @override
   String get onboardingSkip => 'Skip';
 
   @override
@@ -750,7 +745,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String get hostdSaveExecutable => 'Save executable path';
 
   @override
+  String hostdPairedToOtherServer(String appBackendUrl) {
+    return 'This app is signed in to $appBackendUrl. Pair again to move the daemon there.';
+  }
+
+  @override
   String get liveVoiceEnd => 'End live voice';
+
+  @override
+  String get voiceLanguageLabel => 'Voice language';
+
+  @override
+  String get voiceLiveArabicUnavailable =>
+      'Arabic live voice isn\'t available on this server yet, so this session continues in English.';
 
   @override
   String get eventChangeStart => 'Change start time';

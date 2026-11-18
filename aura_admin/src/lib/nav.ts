@@ -1,8 +1,21 @@
-import type { IconName } from "@/components/icons";
+import {
+  Boxes,
+  LayoutDashboard,
+  Library,
+  MessageSquareText,
+  ScrollText,
+  Server,
+  Settings,
+  ShieldCheck,
+  TrendingUp,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
+
 import type { MessageKey } from "@/lib/i18n";
 
 /** Labels are dictionary keys (src/lib/i18n), translated where they are rendered. */
-export type NavItem = { href: string; label: MessageKey; icon: IconName };
+export type NavItem = { href: string; label: MessageKey; icon: LucideIcon };
 export type NavGroup = { label: MessageKey; items: NavItem[] };
 
 /** The one list of console destinations: the sidebar and the command palette both read it. */
@@ -10,26 +23,26 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: "nav.group.operate",
     items: [
-      { href: "/", label: "nav.overview", icon: "overview" },
-      { href: "/providers", label: "nav.providers", icon: "providers" },
-      { href: "/models", label: "nav.models", icon: "models" },
-      { href: "/knowledge", label: "nav.knowledge", icon: "knowledge" },
+      { href: "/", label: "nav.overview", icon: LayoutDashboard },
+      { href: "/providers", label: "nav.providers", icon: Server },
+      { href: "/models", label: "nav.models", icon: Boxes },
+      { href: "/knowledge", label: "nav.knowledge", icon: Library },
     ],
   },
   {
     label: "nav.group.intelligence",
     items: [
-      { href: "/prompts", label: "nav.prompts", icon: "prompts" },
-      { href: "/learning", label: "nav.learning", icon: "learning" },
+      { href: "/prompts", label: "nav.prompts", icon: MessageSquareText },
+      { href: "/learning", label: "nav.learning", icon: TrendingUp },
     ],
   },
   {
     label: "nav.group.governance",
     items: [
-      { href: "/approvals", label: "nav.approvals", icon: "approvals" },
-      { href: "/audit", label: "nav.audit", icon: "audit" },
-      { href: "/access", label: "nav.access", icon: "access" },
-      { href: "/settings", label: "nav.settings", icon: "settings" },
+      { href: "/approvals", label: "nav.approvals", icon: ShieldCheck },
+      { href: "/audit", label: "nav.audit", icon: ScrollText },
+      { href: "/access", label: "nav.access", icon: Users },
+      { href: "/settings", label: "nav.settings", icon: Settings },
     ],
   },
 ];

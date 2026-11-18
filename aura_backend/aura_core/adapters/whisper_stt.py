@@ -87,14 +87,27 @@ class FasterWhisperEngine:
                 dependency="faster-whisper",
             ) from exc
 
+    @property
+    def multilingual(self) -> bool:
+        """Whisper's ``*.en`` sizes recognise English only; every other size is multilingual."""
+        return not self._model_size.endswith(".en")
+
     async def transcribe(self, audio: bytes, *, language: str | None = None) -> str:
+        text, _language = await self.transcribe_detect(audio, language=language)
+        return text
+
+    async def transcribe_detect(
+        self, audio: bytes, *, language: str | None = None
+    ) -> tuple[str, str | None]:
         model = await self._ensure_model()
         return await asyncio.to_thread(self._transcribe, model, audio, language)
 
-    def _transcribe(self, model, audio: bytes, language: str | None) -> str:
+    def _transcribe(self, model, audio: bytes, language: str | None) -> tuple[str, str | None]:
         try:
-            segments, _info = model.transcribe(io.BytesIO(audio), language=language)
-            return " ".join(segment.text.strip() for segment in segments).strip()
+            segments, info = model.transcribe(io.BytesIO(audio), language=language)
+            # `segments` is lazy: the decode happens while it is consumed, so join first.
+            text = " ".join(segment.text.strip() for segment in segments).strip()
         except Exception:
             logger.warning("faster-whisper transcription failed")
             raise
+        return text, (language or getattr(info, "language", None) or None)

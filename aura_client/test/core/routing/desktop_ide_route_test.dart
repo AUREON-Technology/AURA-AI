@@ -20,7 +20,8 @@ void main() {
     final router = GoRouter(
       initialLocation: location,
       routes: [
-        GoRoute(path: '/today', builder: (context, state) => const Text('home page')),
+        // The platform's home: Copilot everywhere but the desktop app (mobile-desktop split).
+        GoRoute(path: '/chat', builder: (context, state) => const Text('home page')),
         ShellRoute(
           builder: desktopIdeShellBuilder,
           routes: [

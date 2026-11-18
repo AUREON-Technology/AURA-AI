@@ -578,15 +578,8 @@ class ChatRepository {
             break;
           case SseEventKind.step:
             if (event.step != null) {
-              // G-14d: one row per step: a later frame for the same `step_id` is that step's new
-              // status, not another step.
-              final step = event.step!;
-              final existing = step.stepId == null ? -1 : steps.indexWhere((s) => s.stepId == step.stepId);
-              if (existing >= 0) {
-                steps[existing] = step;
-              } else {
-                steps.add(step);
-              }
+              // G-14d: a later frame for the same `step_id` is that step's new status.
+              upsertStep(steps, event.step!);
               meta = meta.copyWith(steps: List.of(steps));
               await _updateMessageTurnMeta(assistantMsgId, meta);
             }

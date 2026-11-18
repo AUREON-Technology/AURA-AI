@@ -17,6 +17,14 @@ bool get isDesktopIde =>
     !kIsWeb &&
     (defaultTargetPlatform == TargetPlatform.windows || defaultTargetPlatform == TargetPlatform.linux);
 
+/// Where AURA lands after sign-in and onboarding. The desktop app (Windows, and Linux since
+/// D-08b) is the IDE and nothing else; every other build is the one AURA app, which opens on
+/// Copilot (docs/plans/mobile-desktop-split_plan.md).
+String landingRouteFor({required bool desktop}) => desktop ? '/ide' : '/chat';
+
+/// The landing route for the platform this build is running on.
+String get appLandingRoute => landingRouteFor(desktop: isDesktopIde);
+
 /// Whether the current platform can run the desktop IDE (Windows and Linux).
 bool get canRunDesktopIde => isDesktopIde;
 

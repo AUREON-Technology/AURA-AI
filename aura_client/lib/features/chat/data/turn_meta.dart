@@ -338,3 +338,21 @@ class PendingToolCall {
     );
   }
 }
+
+/// Records a streamed step: a frame for a step already shown replaces it where it stands.
+///
+/// The server sends one frame when a step starts (`running`) and another when it ends
+/// (`succeeded`, `done`, `failed`, `degraded`, ...) under the same `step_id`. Appending both left
+/// every finished step's "running" row spinning forever beside its result. A step without an id
+/// cannot be matched and is appended, as before.
+void upsertStep(List<TurnStep> steps, TurnStep step) {
+  final id = step.stepId;
+  if (id != null) {
+    final index = steps.indexWhere((s) => s.stepId == id);
+    if (index >= 0) {
+      steps[index] = step;
+      return;
+    }
+  }
+  steps.add(step);
+}

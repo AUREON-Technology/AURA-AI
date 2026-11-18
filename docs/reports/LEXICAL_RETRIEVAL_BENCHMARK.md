@@ -138,12 +138,44 @@ at all three points measured:
 
 The metrics:
 
-- nDCG 0.6082
+- nDCG 0.6082 (**overstated; corrected value 0.5358**, see the note below)
 - recall@5 0.70
 - MRR 0.4792
 - precision@5 0.3867
 - pass rate 0.6522
 - empty-correct 0.3333
+
+> **Correction (2026-11-17): the nDCG above was computed by a broken metric.**
+> `RetrievalEvaluator` passed `_ndcg` one document id per returned *chunk*. DCG added a gain for
+> every chunk of a relevant document, while the ideal DCG counted each relevant document once.
+> nDCG could therefore exceed 1.0; a threshold-0 run of the multilingual eval reported 1.19. The
+> harness now counts only the first chunk of each relevant document, so DCG and the ideal use the
+> same unit (`aura_core/evaluation/harness.py::_ndcg`, pinned by `tests/unit/test_evaluation.py`).
+> Recall, MRR, precision and pass rate were never affected.
+>
+> Re-run at `b242efaf`, the commit that added this report, the old metric reproduces nDCG 0.6082
+> exactly. The corrected metric on the same retrievals gives **nDCG 0.5358**; one case
+> (`hitl-finetune-approval`, four chunks of ADR-008 in the top 5) had scored 2.45 on its own.
+> **R2.4's threshold is therefore nDCG 0.5358 under the corrected metric.** Compare Option B
+> against that, measured with the corrected harness, never against 0.6082.
+>
+> Current `main` (`446e004`) gives corrected nDCG 0.5174, MRR 0.4542, with recall, precision and
+> pass rate unchanged from the list above. The drop does not come from the retrieval code, and not
+> from the metric fix either (MRR does not use `_ndcg`). It comes from the corpus text. A bisect
+> over `b242efaf..446e004` finds one commit that moves the metrics, `a0cd9cfd` (CB-20, remove
+> runtime DDL). That commit rewrote one sentence of `docs/architecture/005-hybrid-retrieval.md`,
+> and the docs_corpus suite ingests that file. With only that file restored to its earlier text,
+> both `a0cd9cfd` and `446e004` reproduce every `b242efaf` metric exactly. The edit changes one
+> case: `hitl-refresh-time` now ranks `overview` above ADR-008, its relevant document, which
+> falls from rank 1 to rank 2. That one case accounts for the whole MRR drop: (1 − 0.5) / 20 =
+> 0.025. ADR-005 is not that case's relevant document. With 10 documents and a non-semantic
+> embedder, changing one document's wording moves corpus-wide BM25 statistics enough to swap a
+> close pair. The drop is within the gate's 0.03 nDCG tolerance.
+> `evaluation/suites/docs_corpus_baseline.json` now holds current `main`'s numbers.
+>
+> The consequence for R2.4: the gate's numbers depend on the ADR text as well as the code. Measure
+> Option B and its comparison point on the same corpus text. That point is 0.5358 on the
+> `b242efaf` text and 0.5174 on the `446e004` text.
 
 The default suite has the gate as well.
 
@@ -209,7 +241,8 @@ design. It is **not** shipped in this change, for three reasons:
 - It needs a migration. The owner has to coordinate that with a production upgrade (see CB-43
   for how the last one went).
 - R2.4's decision rule requires recall@k and nDCG on the phase-a3 corpus within 1 point of the
-  numbers above (nDCG 0.6082). `ts_rank_cd` does not rank like BM25, so that rule could fail.
+  numbers above (nDCG 0.5358 under the corrected metric on the `b242efaf` corpus text; the 0.6082
+  first published here was inflated, see §3). `ts_rank_cd` does not rank like BM25, so that rule could fail.
 - The Arabic tokenization configuration has to be settled first: the `simple` dictionary loses
   stemming.
 

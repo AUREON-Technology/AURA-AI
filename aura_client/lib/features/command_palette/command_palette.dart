@@ -21,13 +21,8 @@ class _Destination {
 }
 
 List<_Destination> _destinations(AppLocalizations l10n) => [
-  _Destination(l10n.navToday, Icons.today_outlined, '/today'),
   _Destination(l10n.navCopilot, Icons.auto_awesome_outlined, '/chat'),
-  _Destination(l10n.navLifeHub, Icons.view_week_outlined, '/life'),
-  _Destination(l10n.lifeHubFilterTasks, Icons.check_circle_outline, '/life?type=tasks'),
-  _Destination(l10n.lifeHubFilterCalendar, Icons.calendar_month_outlined, '/life?type=calendar'),
-  _Destination(l10n.lifeHubFilterFinance, Icons.monetization_on_outlined, '/life?type=finance'),
-  _Destination(l10n.lifeHubFilterHealth, Icons.favorite_outline, '/life?type=health'),
+  _Destination(l10n.settingsEngineerTitle, Icons.code_outlined, '/engineer-history'),
   _Destination(l10n.navYou, Icons.person_outline, '/you'),
   _Destination(l10n.knowledgeTitle, Icons.folder_shared_outlined, '/knowledge'),
   _Destination(l10n.memoryTitle, Icons.psychology_outlined, '/memory'),
@@ -96,11 +91,10 @@ class _CommandPaletteDialogState extends ConsumerState<_CommandPaletteDialog> {
     });
   }
 
-  /// ADR-015's "Open Desktop IDE" command: with the landing preference no
-  /// longer redirecting `/today`, this and the IDE's own "Leave IDE" are how
-  /// a Windows or Linux user moves between the two shells (audit F-34).
+  /// On the desktop app (Windows, Linux) it is the IDE and You, so Copilot and Engineer are not
+  /// offered there. "Open Desktop IDE" is the way back to the IDE from You.
   List<_Destination> get _allDestinations => [
-        ..._destinations(context.l10n),
+        ..._destinations(context.l10n).where((d) => !canRunDesktopIde || d.route == '/you'),
         if (canRunDesktopIde)
           _Destination(context.l10n.paletteOpenDesktopIde, Icons.dashboard_customize_outlined, '/ide'),
       ];

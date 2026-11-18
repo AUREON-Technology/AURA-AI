@@ -3,9 +3,22 @@
 import { useEffect, useState } from "react";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { Alert } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { PageHeader } from "@/components/ui/page-header";
+import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow, TableSkeleton } from "@/components/ui/table";
 import { api, fetchMe } from "@/lib/api";
 import { useI18n } from "@/lib/i18n/context";
 import type { Me, ModelVersion } from "@/lib/types";
+
+function stageTone(stage: string) {
+  if (stage === "production") return "ok" as const;
+  if (stage === "canary" || stage === "shadow") return "warn" as const;
+  if (stage === "candidate") return "brand" as const;
+  return "neutral" as const;
+}
 
 type Approval = { id: string; kind: string; status: string; artefact_digest: string };
 
@@ -18,6 +31,7 @@ export default function ModelsPage() {
   const [promotionApprovals, setPromotionApprovals] = useState<Approval[]>([]);
   const [pullName, setPullName] = useState("");
   const [error, setError] = useState<unknown>(null);
+  const [loaded, setLoaded] = useState(false);
   const [importUri, setImportUri] = useState("");
   const [importDigest, setImportDigest] = useState("");
   const [importApproval, setImportApproval] = useState("");
@@ -42,22 +56,30 @@ export default function ModelsPage() {
   }
 
   useEffect(() => {
-    load().catch((err: unknown) => setError(err));
+    load()
+      .catch((err: unknown) => setError(err))
+      .finally(() => setLoaded(true));
   }, []);
 
   return (
     <>
-      <h1>{t("nav.models")}</h1>
-      <p className="sub">{t("models.sub")}</p>
-      {error ? <div className="banner">{errorText(error)}</div> : null}
+      <PageHeader title={t("nav.models")}>{t("models.sub")}</PageHeader>
+      {error ? <Alert>{errorText(error)}</Alert> : null}
 
       {approvals.length > 0 ? (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <h2>{t("models.approvedFinetunes")}</h2>
-          <ul>
+        <Card className="mb-4 border-ok/30">
+          <CardHeader className="mb-3">
+            <CardTitle>{t("models.approvedFinetunes")}</CardTitle>
+          </CardHeader>
+          <ul className="divide-y divide-line">
             {approvals.map((row) => (
-              <li key={row.id}>
-                  {row.id} · {row.artefact_digest} · {row.status}{" "}
+              <li key={row.id} className="flex flex-wrap items-center justify-between gap-2 py-2 first:pt-0 last:pb-0">
+                  <span className="text-[13.5px]">
+                    <span className="font-medium">{row.id}</span>{" "}
+                    <span className="text-muted">
+                      · <code className="text-xs">{row.artefact_digest}</code> · {row.status}
+                    </span>
+                  </span>{" "}
                   {me?.is_super_admin ? (
                     <ConfirmDialog
                       title={t("models.launchTitle", { id: row.id })}
@@ -79,31 +101,38 @@ export default function ModelsPage() {
                 </li>
               ))}
           </ul>
-        </div>
+        </Card>
       ) : null}
 
-      <table className="table">
-        <thead>
-          <tr>
-            <th>{t("models.colModel")}</th>
-            <th>{t("models.colStage")}</th>
-            <th>{t("common.artefact")}</th>
-            <th>{t("common.digest")}</th>
-            <th>{t("models.colCanary")}</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>{t("models.colModel")}</TableHead>
+            <TableHead>{t("models.colStage")}</TableHead>
+            <TableHead>{t("common.artefact")}</TableHead>
+            <TableHead>{t("common.digest")}</TableHead>
+            <TableHead>{t("models.colCanary")}</TableHead>
+            <TableHead></TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {rows.map((row) => (
-            <tr key={`${row.model_id}@${row.version}`}>
-              <td>
+            <TableRow key={`${row.model_id}@${row.version}`}>
+              <TableCell className="font-medium">
                 {row.model_id}@{row.version}
-              </td>
-              <td>{row.stage}</td>
-              <td>{(row as ModelVersion & { artefact_uri?: string }).artefact_uri || "—"}</td>
-              <td>{row.dataset_digest || "—"}</td>
-              <td>{row.canary_percent}</td>
-              <td>
+              </TableCell>
+              <TableCell>
+                <Badge tone={stageTone(row.stage)} dot pulse={row.stage === "production"}>
+                  {row.stage}
+                </Badge>
+              </TableCell>
+              <TableCell className="text-muted">{(row as ModelVersion & { artefact_uri?: string }).artefact_uri || "—"}</TableCell>
+              <TableCell>
+                <code className="text-xs">{row.dataset_digest || "—"}</code>
+              </TableCell>
+              <TableCell>{row.canary_percent}</TableCell>
+              <TableCell>
+                <div className="flex flex-wrap justify-end gap-1.5">
                 {row.stage === "canary" || row.stage === "shadow" ? (
                   <ConfirmDialog
                     title={t("models.requestTitle", { model: `${row.model_id}@${row.version}` })}
@@ -180,33 +209,44 @@ export default function ModelsPage() {
                 >
                   {t("common.rollback")}
                 </ConfirmDialog>
-              </td>
-            </tr>
+                </div>
+              </TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+          {!loaded ? <TableSkeleton cols={6} /> : null}
+          {loaded && rows.length === 0 && !error ? <TableEmpty colSpan={6}>{t("models.empty")}</TableEmpty> : null}
+        </TableBody>
+      </Table>
 
       {me?.is_super_admin ? (
-        <div className="card" style={{ marginTop: 16 }}>
-          <h2>{t("models.importHeading")}</h2>
-          <p className="muted">{t("models.importHelp")}</p>
-          <div className="row">
-            <input
+        <Card className="mt-4">
+          <CardHeader>
+            <div>
+              <CardTitle>{t("models.importHeading")}</CardTitle>
+              <CardDescription>{t("models.importHelp")}</CardDescription>
+            </div>
+          </CardHeader>
+          <div className="grid gap-2 desk:grid-cols-[1fr_1fr_1fr_auto]">
+            <Input
+              aria-label={t("models.importUriPlaceholder")}
               value={importUri}
               onChange={(e) => setImportUri(e.target.value)}
               placeholder={t("models.importUriPlaceholder")}
             />
-            <input
+            <Input
+              aria-label={t("models.datasetDigestPlaceholder")}
               value={importDigest}
               onChange={(e) => setImportDigest(e.target.value)}
               placeholder={t("models.datasetDigestPlaceholder")}
             />
-            <input
+            <Input
+              aria-label={t("models.approvalIdPlaceholder")}
               value={importApproval}
               onChange={(e) => setImportApproval(e.target.value)}
               placeholder={t("models.approvalIdPlaceholder")}
             />
             <ConfirmDialog
+              size="md"
               title={t("models.importTitle")}
               confirmText={t("models.importWord")}
               onConfirm={async () => {
@@ -225,15 +265,17 @@ export default function ModelsPage() {
               {t("models.import")}
             </ConfirmDialog>
           </div>
-        </div>
+        </Card>
       ) : null}
 
-      <div className="card" style={{ marginTop: 16 }}>
-        <h2>{t("models.localOllama")}</h2>
-        <ul>
+      <Card className="mt-4">
+        <CardHeader className="mb-3">
+          <CardTitle>{t("models.localOllama")}</CardTitle>
+        </CardHeader>
+        <ul className="divide-y divide-line">
           {local.map((model) => (
-            <li key={model.name}>
-              {model.name}
+            <li key={model.name} className="flex items-center justify-between gap-2 py-2 first:pt-0">
+              <code className="text-[13px]">{model.name}</code>
               {me?.is_super_admin ? (
                 <ConfirmDialog
                   danger
@@ -253,9 +295,16 @@ export default function ModelsPage() {
           ))}
         </ul>
         {me?.is_super_admin ? (
-          <div className="row">
-            <input value={pullName} onChange={(e) => setPullName(e.target.value)} placeholder={t("models.allowlistedPlaceholder")} />
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Input
+              className="w-full max-w-xs"
+              value={pullName}
+              onChange={(e) => setPullName(e.target.value)}
+              placeholder={t("models.allowlistedPlaceholder")}
+              aria-label={t("models.allowlistedPlaceholder")}
+            />
             <ConfirmDialog
+              size="md"
               title={t("models.pullTitle")}
               confirmText={pullName || t("models.pullWord")}
               onConfirm={async () => {
@@ -270,7 +319,7 @@ export default function ModelsPage() {
             </ConfirmDialog>
           </div>
         ) : null}
-      </div>
+      </Card>
     </>
   );
 }

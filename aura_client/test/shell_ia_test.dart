@@ -1,56 +1,83 @@
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/routing/router.dart';
 import 'package:aura_client/core/sync/sync_client.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 
-void main() {
-  testWidgets('shell exposes Today, Copilot, Life Hub, and You', (tester) async {
-    tester.view.physicalSize = const Size(400, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-
-    final router = GoRouter(
-      initialLocation: '/today',
+GoRouter _shellRouter(String initialLocation) => GoRouter(
+      initialLocation: initialLocation,
       routes: [
         ShellRoute(
           builder: (context, state, child) => ShellLayout(child: child),
           routes: [
-            GoRoute(path: '/today', builder: (_, _) => const Text('Today body')),
             GoRoute(path: '/chat', builder: (_, _) => const Text('Chat body')),
-            GoRoute(path: '/life', builder: (_, _) => const Text('Life body')),
+            GoRoute(
+              path: '/engineer-history',
+              builder: (_, _) => const Text('Engineer body'),
+            ),
             GoRoute(path: '/you', builder: (_, _) => const Text('You body')),
           ],
         ),
       ],
     );
 
-    await tester.pumpWidget(
-      ProviderScope(
-        // ShellLayout now carries SyncAlertBanner, which reads the parked
-        // outbox count from the database. Left to the real provider that opens
-        // sqlite and leaves a pending timer behind, which fails this test at
-        // teardown; this test is about shell IA, so the count is stubbed —
-        // same reason overflow_layout_test stubs it for ChatHeader.
-        overrides: [
-          parkedOutboxCountProvider.overrideWith((ref) => Stream.value(0)),
-        ],
-        child: MaterialApp.router(
-          theme: AuraThemeV2.light,
-          darkTheme: AuraThemeV2.dark,
-          routerConfig: router,
-        ),
+Widget _app(GoRouter router) => ProviderScope(
+      // ShellLayout now carries SyncAlertBanner, which reads the parked
+      // outbox count from the database. Left to the real provider that opens
+      // sqlite and leaves a pending timer behind, which fails this test at
+      // teardown; this test is about shell IA, so the count is stubbed —
+      // same reason overflow_layout_test stubs it for ChatHeader.
+      overrides: [
+        parkedOutboxCountProvider.overrideWith((ref) => Stream.value(0)),
+      ],
+      child: MaterialApp.router(
+        theme: AuraThemeV2.light,
+        darkTheme: AuraThemeV2.dark,
+        routerConfig: router,
       ),
     );
+
+void main() {
+  testWidgets('mobile shell exposes Copilot, Engineer and You, not Today or Life Hub',
+      (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+
+    await tester.pumpWidget(_app(_shellRouter('/chat')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Today'), findsWidgets);
     expect(find.text('Copilot'), findsOneWidget);
-    expect(find.text('Life Hub'), findsOneWidget);
+    expect(find.text('Engineer'), findsOneWidget);
     expect(find.text('You'), findsOneWidget);
-    expect(find.text('Finance'), findsNothing);
+    expect(find.text('Today'), findsNothing);
+    expect(find.text('Life Hub'), findsNothing);
+    expect(find.text('Desktop IDE'), findsNothing);
+  });
+
+  testWidgets('Windows shell exposes only the Desktop IDE and You', (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+
+    // Foundation debug variables must be restored inside the test body.
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    try {
+      await tester.pumpWidget(_app(_shellRouter('/you')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Desktop IDE'), findsOneWidget);
+      expect(find.text('You'), findsOneWidget);
+      expect(find.text('Copilot'), findsNothing);
+      expect(find.text('Engineer'), findsNothing);
+      expect(find.text('Today'), findsNothing);
+      expect(find.text('Life Hub'), findsNothing);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 
   testWidgets('navigation bar indicator is themed and centered at 360px', (
@@ -60,38 +87,7 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
 
-    final router = GoRouter(
-      initialLocation: '/chat',
-      routes: [
-        ShellRoute(
-          builder: (context, state, child) => ShellLayout(child: child),
-          routes: [
-            GoRoute(path: '/today', builder: (_, _) => const Text('Today body')),
-            GoRoute(path: '/chat', builder: (_, _) => const Text('Chat body')),
-            GoRoute(path: '/life', builder: (_, _) => const Text('Life body')),
-            GoRoute(path: '/you', builder: (_, _) => const Text('You body')),
-          ],
-        ),
-      ],
-    );
-
-    await tester.pumpWidget(
-      ProviderScope(
-        // ShellLayout now carries SyncAlertBanner, which reads the parked
-        // outbox count from the database. Left to the real provider that opens
-        // sqlite and leaves a pending timer behind, which fails this test at
-        // teardown; this test is about shell IA, so the count is stubbed —
-        // same reason overflow_layout_test stubs it for ChatHeader.
-        overrides: [
-          parkedOutboxCountProvider.overrideWith((ref) => Stream.value(0)),
-        ],
-        child: MaterialApp.router(
-          theme: AuraThemeV2.light,
-          darkTheme: AuraThemeV2.dark,
-          routerConfig: router,
-        ),
-      ),
-    );
+    await tester.pumpWidget(_app(_shellRouter('/chat')));
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);

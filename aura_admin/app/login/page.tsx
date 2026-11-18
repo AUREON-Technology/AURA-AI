@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ShieldCheck } from "lucide-react";
 
+import { Brand } from "@/components/brand";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { LanguageToggle } from "@/components/language-toggle";
 import { type AuraApiError, errorFromBody } from "@/lib/api";
 import { useI18n } from "@/lib/i18n/context";
@@ -72,42 +77,53 @@ export default function LoginPage() {
   }, []);
 
   return (
-    <div className="login-page">
-      <div className="login card">
-        <div className="brand">
-          <span className="brand-mark" aria-hidden="true">
-            A
-          </span>
-          <span className="brand-text">
-            <span>AURA</span>
-            <small>{t("brand.workspace")}</small>
-          </span>
+    <div className="relative grid min-h-screen place-items-center overflow-hidden p-6">
+      {/* Split glow: indigo top-left, violet bottom-right, drifting slowly. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -top-56 -start-40 size-[560px] rounded-full bg-brand opacity-35 blur-[90px] motion-safe:animate-drift"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -end-44 -bottom-64 size-[560px] rounded-full bg-brand-2 opacity-35 blur-[90px] motion-safe:animate-drift-reverse"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-[linear-gradient(var(--line)_1px,transparent_1px),linear-gradient(90deg,var(--line)_1px,transparent_1px)] bg-size-[44px_44px] [mask-image:radial-gradient(ellipse_at_center,black_20%,transparent_70%)] opacity-60"
+      />
+
+      <Card className="relative z-10 w-full max-w-[440px] rounded-lg p-8 shadow-raised motion-safe:animate-card-in">
+        <div className="mb-7 flex items-center justify-between gap-3">
+          <Brand title="AURA" />
           <LanguageToggle />
         </div>
-        <h1>{t("brand.console")}</h1>
-        <p className="sub">{t("login.subtitle")}</p>
+        <h1 className="mb-1.5 text-[26px] leading-tight font-bold tracking-[-0.02em]">{t("brand.console")}</h1>
+        <p className="mb-6 text-muted">{t("login.subtitle")}</p>
         {error ? (
-          <div className="banner">
+          <Alert>
             {error === "role"
               ? t("login.roleRequired")
               : error === "refused"
                 ? t("login.refused")
                 : errorText(error)}
-          </div>
+          </Alert>
         ) : null}
         <div id="google-btn" />
         {process.env.NEXT_PUBLIC_DEV_LOGIN === "1" ? (
-          <div className="row" style={{ marginTop: 16 }}>
-            <button className="btn primary" type="button" onClick={() => void exchange("mock_token")}>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button variant="primary" size="lg" className="flex-1" onClick={() => void exchange("mock_token")}>
               {t("login.devMock")}
-            </button>
-            <button className="btn" type="button" onClick={() => void exchange("mock_token_super")}>
+            </Button>
+            <Button size="lg" className="flex-1" onClick={() => void exchange("mock_token_super")}>
               {t("login.superMock")}
-            </button>
+            </Button>
           </div>
         ) : null}
-        <p className="fine">{t("login.fine")}</p>
-      </div>
+        <p className="mt-6 flex items-center gap-2 border-t border-line pt-4 text-xs text-faint">
+          <ShieldCheck aria-hidden="true" className="size-3.5 shrink-0" />
+          {t("login.fine")}
+        </p>
+      </Card>
     </div>
   );
 }

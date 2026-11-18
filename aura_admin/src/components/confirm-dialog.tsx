@@ -1,8 +1,14 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
+import { LoaderCircle, ShieldCheck, TriangleAlert } from "lucide-react";
 
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { useI18n } from "@/lib/i18n/context";
+import { cn } from "@/lib/utils";
 
 /**
  * Fold the Arabic letter variants a keyboard makes easy to mix up (أ إ آ → ا, ى → ي), so a typed
@@ -19,6 +25,7 @@ export function ConfirmDialog({
   children,
   danger = false,
   disabled = false,
+  size = "sm",
 }: {
   title: string;
   confirmText: string;
@@ -26,6 +33,7 @@ export function ConfirmDialog({
   children: ReactNode;
   danger?: boolean;
   disabled?: boolean;
+  size?: "sm" | "md";
 }) {
   const { t, errorText } = useI18n();
   const [open, setOpen] = useState(false);
@@ -33,6 +41,7 @@ export function ConfirmDialog({
   const [busy, setBusy] = useState(false);
   const [mismatch, setMismatch] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const inputId = useId();
 
   async function run() {
     if (foldConfirm(typed) !== foldConfirm(confirmText)) {
@@ -54,36 +63,66 @@ export function ConfirmDialog({
     }
   }
 
+  const Icon = danger ? TriangleAlert : ShieldCheck;
+  // "Type {text}" with the word itself set as code, in whichever order the language puts it.
+  const [labelBefore, labelAfter = ""] = t("confirm.typeLabel", { text: "\u0000" }).split("\u0000");
+
   return (
     <>
-      <button
-        className={`btn ${danger ? "danger" : ""}`}
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen(true)}
-      >
+      <Button variant={danger ? "danger" : "default"} size={size} disabled={disabled} onClick={() => setOpen(true)}>
         {children}
-      </button>
-      {open ? (
-        <div className="card" style={{ marginTop: 12 }}>
-          <strong>{title}</strong>
-          <p className="muted">{t("confirm.auditNote")}</p>
-          <label className="field">
-            {t("confirm.typeLabel", { text: confirmText })}
-            <input value={typed} onChange={(e) => setTyped(e.target.value)} />
-          </label>
-          {mismatch ? <p className="banner">{t("confirm.mismatch", { text: confirmText })}</p> : null}
-          {error ? <p className="banner">{errorText(error)}</p> : null}
-          <div className="row" style={{ marginTop: 10 }}>
-            <button className="btn primary" type="button" disabled={busy} onClick={run}>
-              {t("common.confirm")}
-            </button>
-            <button className="btn" type="button" onClick={() => setOpen(false)}>
-              {t("common.cancel")}
-            </button>
-          </div>
-        </div>
-      ) : null}
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void run();
+            }}
+          >
+            <div className="flex items-start gap-3.5">
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "grid size-10 shrink-0 place-items-center rounded-full",
+                  danger ? "bg-bad-soft text-bad" : "bg-brand-soft text-accent",
+                )}
+              >
+                <Icon className="size-5" />
+              </span>
+              <div className="min-w-0 pt-0.5">
+                <DialogTitle className="break-words">{title}</DialogTitle>
+                <DialogDescription>{t("confirm.auditNote")}</DialogDescription>
+              </div>
+            </div>
+            <div className="mt-5 flex flex-col gap-1.5">
+              <label htmlFor={inputId} className="text-[12.5px] font-medium text-muted">
+                {labelBefore}
+                <code className="rounded-[5px] bg-surface-variant px-1.5 py-0.5 text-[12px] text-fg">{confirmText}</code>
+                {labelAfter}
+              </label>
+              <Input
+                id={inputId}
+                autoComplete="off"
+                spellCheck={false}
+                value={typed}
+                onChange={(e) => setTyped(e.target.value)}
+              />
+            </div>
+            {mismatch ? <Alert className="mt-3 mb-0">{t("confirm.mismatch", { text: confirmText })}</Alert> : null}
+            {error ? <Alert className="mt-3 mb-0">{errorText(error)}</Alert> : null}
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setOpen(false)}>
+                {t("common.cancel")}
+              </Button>
+              <Button type="submit" variant={danger ? "danger" : "primary"} disabled={busy}>
+                {busy ? <LoaderCircle aria-hidden="true" className="motion-safe:animate-spin" /> : null}
+                {t("common.confirm")}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

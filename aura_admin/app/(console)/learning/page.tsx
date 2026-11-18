@@ -3,8 +3,19 @@
 import { useEffect, useState } from "react";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { api } from "@/lib/api";
+import { CircleCheck, Download, RefreshCw, Sparkles, Users, PenLine } from "lucide-react";
+
+import { Alert } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card, CardHeader, CardTitle } from "@/components/ui/card";
+import { Metric, MetricGrid } from "@/components/ui/metric";
+import { PageHeader } from "@/components/ui/page-header";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow, TableSkeleton } from "@/components/ui/table";
 import { useI18n } from "@/lib/i18n/context";
+import { api } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 type Recommendation = {
   recommended?: boolean;
@@ -40,6 +51,7 @@ export default function LearningPage() {
   const [approvalId, setApprovalId] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [error, setError] = useState<unknown>(null);
+  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
 
   async function load() {
@@ -52,64 +64,85 @@ export default function LearningPage() {
   }
 
   useEffect(() => {
-    load().catch((err: unknown) => setError(err));
+    load()
+      .catch((err: unknown) => setError(err))
+      .finally(() => setLoaded(true));
   }, []);
 
   const stats = recommendation?.statistics;
 
+  const loading = !loaded;
+
   return (
     <>
-      <h1>{t("nav.learning")}</h1>
-      <p className="sub">{t("learning.sub")}</p>
-      {error ? <div className="banner">{errorText(error)}</div> : null}
+      <PageHeader title={t("nav.learning")}>{t("learning.sub")}</PageHeader>
+      {error ? <Alert>{errorText(error)}</Alert> : null}
 
-      <div className="grid">
-        <div className="card metric">
-          {t("learning.candidates")}
-          <b>{stats?.total_candidates ?? 0}</b>
-        </div>
-        <div className="card metric">
-          {t("learning.accepted")}
-          <b>{stats?.accepted ?? 0}</b>
-        </div>
-        <div className="card metric">
-          {t("learning.distinctUsers")}
-          <b>{stats?.distinct_users ?? 0}</b>
-        </div>
-        <div className="card metric">
-          {t("learning.corrected")}
-          <b>{Math.round((stats?.corrected_fraction ?? 0) * 100)}%</b>
-        </div>
-      </div>
+      <MetricGrid>
+        <Metric index={0} icon={Sparkles} label={t("learning.candidates")} loading={loading} value={stats?.total_candidates ?? 0} />
+        <Metric index={1} icon={CircleCheck} label={t("learning.accepted")} loading={loading} value={stats?.accepted ?? 0} />
+        <Metric index={2} icon={Users} label={t("learning.distinctUsers")} loading={loading} value={stats?.distinct_users ?? 0} />
+        <Metric
+          index={3}
+          icon={PenLine}
+          label={t("learning.corrected")}
+          loading={loading}
+          value={`${Math.round((stats?.corrected_fraction ?? 0) * 100)}%`}
+        />
+      </MetricGrid>
 
-      <div className="card" style={{ marginTop: 16 }}>
-        <h2>
-          {t("learning.recommendation")}{" "}
-          {recommendation?.recommended ? (
-            <span className="pill ok">{t("learning.recommended")}</span>
-          ) : (
-            <span className="pill">{t("learning.notYet")}</span>
-          )}
-        </h2>
-        <p className="muted">
-          {t("learning.summary", {
-            digest: recommendation?.dataset_digest || "—",
-            examples: recommendation?.estimated_examples ?? 0,
-            tokens: recommendation?.estimated_tokens ?? 0,
-          })}
-          {recommendation?.estimated_train_hours_cpu != null
-            ? t("learning.cpuHours", { hours: recommendation.estimated_train_hours_cpu })
-            : ""}
-        </p>
-        <ul>
-          {(recommendation?.reasons ?? []).map((reason) => (
-            <li key={reason}>{reason}</li>
-          ))}
-        </ul>
-        <div className="row" style={{ marginTop: 12 }}>
-          <button
-            className="btn"
-            type="button"
+      <Card className="mt-4 motion-safe:animate-fade-up [animation-delay:280ms]">
+        <CardHeader className="mb-2">
+          <CardTitle>
+            {t("learning.recommendation")}{" "}
+            {recommendation?.recommended ? (
+              <Badge tone="ok" dot pulse>
+                {t("learning.recommended")}
+              </Badge>
+            ) : (
+              <Badge dot>{t("learning.notYet")}</Badge>
+            )}
+          </CardTitle>
+        </CardHeader>
+        {loading ? (
+          <div className="space-y-2">
+            <Skeleton className="w-3/4" />
+            <Skeleton className="w-1/2" />
+          </div>
+        ) : (
+          <>
+            <dl className="flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-muted">
+              <div>
+                <dt className="inline">{t("common.digest")}: </dt>
+                <dd className="inline font-mono text-xs text-fg">{recommendation?.dataset_digest || "—"}</dd>
+              </div>
+              <div>
+                <dt className="inline">{t("learning.examples")}: </dt>
+                <dd className="inline text-fg tabular-nums">{recommendation?.estimated_examples ?? 0}</dd>
+              </div>
+              <div>
+                <dt className="inline">{t("learning.tokens")}: </dt>
+                <dd className="inline text-fg tabular-nums">{recommendation?.estimated_tokens ?? 0}</dd>
+              </div>
+              {recommendation?.estimated_train_hours_cpu != null ? (
+                <div>
+                  <dt className="inline">{t("learning.cpuHoursLabel")} ≈ </dt>
+                  <dd className="inline text-fg tabular-nums">{recommendation.estimated_train_hours_cpu}</dd>
+                </div>
+              ) : null}
+            </dl>
+            {(recommendation?.reasons ?? []).length > 0 ? (
+              <ul className="mt-3 list-disc space-y-1 ps-5 text-[13.5px]">
+                {(recommendation?.reasons ?? []).map((reason) => (
+                  <li key={reason}>{reason}</li>
+                ))}
+              </ul>
+            ) : null}
+          </>
+        )}
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
             disabled={busy}
             onClick={async () => {
               setBusy(true);
@@ -122,8 +155,9 @@ export default function LearningPage() {
               }
             }}
           >
+            <RefreshCw aria-hidden="true" className={cn(busy && "motion-safe:animate-spin")} />
             {t("common.refresh")}
-          </button>
+          </Button>
           <ConfirmDialog
             title={t("learning.requestTitle")}
             confirmText={t("common.requestWord")}
@@ -141,42 +175,57 @@ export default function LearningPage() {
           </ConfirmDialog>
           {recommendation?.dataset_digest ? (
             <a
-              className="btn"
+              className={buttonVariants({ size: "sm" })}
               href={`${process.env.NEXT_PUBLIC_BASE_PATH || ""}/api/v3/admin/learning/datasets/${recommendation.dataset_digest}?format=chatml`}
             >
+              <Download aria-hidden="true" />
               {t("learning.exportChatml")}
             </a>
           ) : null}
         </div>
-        {!recommendation?.dataset_digest ? (
-          <p className="muted">{t("learning.noDataset")}</p>
+        {!loading && !recommendation?.dataset_digest ? (
+          <p className="mt-3 text-[13px] text-muted">{t("learning.noDataset")}</p>
         ) : null}
-        {approvalId ? <p className="muted">{t("learning.pendingApproval", { id: approvalId })}</p> : null}
-      </div>
+        {approvalId ? <p className="mt-2 text-[13px] text-muted">{t("learning.pendingApproval", { id: approvalId })}</p> : null}
+      </Card>
 
-      <div className="card" style={{ marginTop: 16 }}>
-        <h2>{t("learning.jobs")}</h2>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>{t("learning.colJob")}</th>
-              <th>{t("common.status")}</th>
-              <th>{t("common.digest")}</th>
-              <th>{t("common.artefact")}</th>
-            </tr>
-          </thead>
-          <tbody>
+      <Card className="mt-4">
+        <CardHeader>
+          <CardTitle>{t("learning.jobs")}</CardTitle>
+        </CardHeader>
+        <Table flush>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t("learning.colJob")}</TableHead>
+              <TableHead>{t("common.status")}</TableHead>
+              <TableHead>{t("common.digest")}</TableHead>
+              <TableHead>{t("common.artefact")}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {jobs.map((job) => (
-              <tr key={job.id}>
-                <td>{job.id}</td>
-                <td>{job.status}</td>
-                <td>{job.dataset_digest}</td>
-                <td>{job.artefact_uri || job.error || "—"}</td>
-              </tr>
+              <TableRow key={job.id}>
+                <TableCell className="font-medium">{job.id}</TableCell>
+                <TableCell>
+                  <Badge
+                    dot
+                    pulse={job.status === "running"}
+                    tone={job.status === "succeeded" ? "ok" : job.status === "failed" ? "bad" : job.status === "running" ? "warn" : "neutral"}
+                  >
+                    {job.status}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  <code className="text-xs">{job.dataset_digest}</code>
+                </TableCell>
+                <TableCell className="text-muted">{job.artefact_uri || job.error || "—"}</TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
-      </div>
+            {!loaded ? <TableSkeleton cols={4} rows={2} /> : null}
+            {loaded && jobs.length === 0 && !error ? <TableEmpty colSpan={4}>{t("learning.emptyJobs")}</TableEmpty> : null}
+          </TableBody>
+        </Table>
+      </Card>
     </>
   );
 }

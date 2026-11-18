@@ -424,6 +424,10 @@ class ProviderCapabilities:
     #: -- a Claude slot raised to ``sensitive`` for the Engineer would otherwise also receive
     #: every unclassified (hence SENSITIVE) background generation.
     workloads: frozenset[WorkloadClass] = frozenset()
+    #: Readiness must not call this provider to learn its health: it reports the circuit
+    #: breaker instead (``AURA_PROVIDER_<NAME>_HEALTH_PROBE=passive``). For a server that wakes
+    #: on any request and bills while awake.
+    passive_health: bool = False
 
     def __post_init__(self) -> None:
         if self.context_window <= 0:

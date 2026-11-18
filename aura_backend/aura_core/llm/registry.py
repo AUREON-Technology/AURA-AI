@@ -75,6 +75,7 @@ def capabilities_from_config(config: ProviderConfig) -> ProviderCapabilities:
         may_train_on_prompts=config.allow_prompt_training,
         tokens_per_second=config.tokens_per_second,
         workloads=frozenset(WorkloadClass(w) for w in config.workloads),
+        passive_health=config.health_probe == "passive",
     )
 
 

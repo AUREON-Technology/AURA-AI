@@ -182,4 +182,10 @@ ENTRYPOINT ["/app/docker-entrypoint.sh"]
 # This is the command Railway runs. `exec` makes uvicorn PID 1, so the platform's SIGTERM reaches
 # it rather than a shell, and --timeout-graceful-shutdown bounds the drain below railway.json's
 # drainingSeconds (audit F-25; the compose files carry the same pair on the gateway).
-CMD ["sh", "-c", "exec uvicorn aura_service:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${AURA_WORKERS:-4} --proxy-headers --forwarded-allow-ips \"${AURA_FORWARDED_ALLOW_IPS:-*}\" --log-level info --timeout-graceful-shutdown ${AURA_GRACEFUL_SHUTDOWN_S:-150}"]
+# Metrics across workers (Phase R1). Railway runs this CMD with ${AURA_WORKERS:-4} uvicorn workers
+# and no compose file, so nothing set PROMETHEUS_MULTIPROC_DIR: each /metrics scrape was answered
+# by one random worker from its own counters, and every rate computed from them was wrong. The
+# CMD now defaults it to a container-local directory (never a platform volume, which Railway
+# mounts root-owned and this uid could not write), wipes stale *.db files as the entrypoint does,
+# then execs uvicorn. An explicit PROMETHEUS_MULTIPROC_DIR -- the compose files set one -- wins.
+CMD ["sh", "-c", "export PROMETHEUS_MULTIPROC_DIR=\"${PROMETHEUS_MULTIPROC_DIR:-/tmp/aura-prometheus}\" && mkdir -p \"$PROMETHEUS_MULTIPROC_DIR\" && find \"$PROMETHEUS_MULTIPROC_DIR\" -type f -name \"*.db\" -delete && exec uvicorn aura_service:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${AURA_WORKERS:-4} --proxy-headers --forwarded-allow-ips \"${AURA_FORWARDED_ALLOW_IPS:-*}\" --log-level info --timeout-graceful-shutdown ${AURA_GRACEFUL_SHUTDOWN_S:-150}"]

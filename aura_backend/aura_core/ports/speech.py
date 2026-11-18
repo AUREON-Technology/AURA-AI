@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-__all__ = ["SpeechToText", "TextToSpeech"]
+__all__ = ["LanguageAwareSpeechToText", "SpeechToText", "TextToSpeech"]
 
 
 @runtime_checkable
@@ -34,6 +34,29 @@ class SpeechToText(Protocol):
         here", an exception means "recognition failed" -- conflating them would let a broken
         install silently turn every voice note into nothing.
         """
+        ...
+
+
+@runtime_checkable
+class LanguageAwareSpeechToText(SpeechToText, Protocol):
+    """A :class:`SpeechToText` that says which languages it can hear and which one it heard.
+
+    Optional on top of the base port, so an engine that cannot report either still serves
+    ``transcribe``. ``POST /api/v3/voice/transcribe`` uses it to refuse a language the
+    configured model cannot recognise (an English-only Whisper given ``ar`` would otherwise
+    return an English guess) and to tell the client which language a clip was in.
+    """
+
+    @property
+    def multilingual(self) -> bool:
+        """``False`` when the model recognises English only (Whisper's ``*.en`` sizes)."""
+        ...
+
+    async def transcribe_detect(
+        self, audio: bytes, *, language: str | None = None
+    ) -> tuple[str, str | None]:
+        """Like :meth:`transcribe`, plus the language code used: ``language`` when given, else
+        the one the engine detected, or ``None`` when it cannot say."""
         ...
 
 

@@ -99,3 +99,29 @@ def test_the_cmd_passes_forwarded_allow_ips_through_unexpanded(tmp_path, configu
     value = argv[argv.index("--forwarded-allow-ips") + 1]
     assert value == (configured or "*")
     assert "tasks.py" not in argv
+
+
+@pytest.mark.parametrize("configured", [None, "explicit"])
+def test_the_cmd_gives_every_worker_one_metrics_directory(tmp_path, configured) -> None:
+    """Phase R1: Railway runs this CMD with several uvicorn workers and no compose file. Without
+    PROMETHEUS_MULTIPROC_DIR each /metrics scrape is answered by one random worker from its own
+    counters. The CMD must default it, empty stale *.db files from an earlier start, and leave a
+    value the deployment set alone."""
+    import os
+    import subprocess
+
+    target = tmp_path / ("explicit" if configured else "default")
+    script = _cmd_script().replace("/tmp/aura-prometheus", str(tmp_path / "default"), 1)
+    script = script.replace("exec uvicorn", 'exec printf "%s\\n" "$PROMETHEUS_MULTIPROC_DIR"', 1)
+    target.mkdir()
+    (target / "counter_123.db").write_bytes(b"stale")
+    (target / "keep.txt").write_text("not a metrics file", encoding="utf-8")
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+    if configured:
+        env["PROMETHEUS_MULTIPROC_DIR"] = str(target)
+    out = subprocess.run(["sh", "-c", script], cwd=tmp_path, env=env, capture_output=True,
+                         text=True, check=True).stdout.splitlines()
+
+    assert out[0] == str(target)
+    assert not (target / "counter_123.db").exists(), "stale counters would double-count"
+    assert (target / "keep.txt").exists()

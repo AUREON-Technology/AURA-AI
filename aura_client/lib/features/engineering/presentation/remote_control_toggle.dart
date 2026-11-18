@@ -14,6 +14,25 @@ import 'package:aura_client/core/hostd/hostd_error_messages.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
+/// The switch on its own, for the IDE once the daemon is connected (D-10b). The Host panel is
+/// only shown while the daemon is offline, and the desktop app has no daemon page to go to
+/// (it is the IDE and You only), so this is where a paired computer's switch lives.
+class HostdRemoteControlCard extends ConsumerWidget {
+  const HostdRemoteControlCard({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final status = ref.watch(hostdStatusProvider).value;
+    if (status == null || !status.reachable) return const SizedBox.shrink();
+    final palette = AuraPalette.of(context);
+    return Container(
+      padding: const EdgeInsets.all(AuraSpacing.md),
+      decoration: BoxDecoration(border: Border(top: BorderSide(color: palette.border))),
+      child: HostdRemoteControlToggle(enabled: status.remoteControl, compact: true),
+    );
+  }
+}
+
 class HostdRemoteControlToggle extends ConsumerStatefulWidget {
   const HostdRemoteControlToggle({super.key, required this.enabled, this.compact = false});
 

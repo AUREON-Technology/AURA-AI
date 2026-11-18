@@ -250,6 +250,27 @@ export const en = {
 
   // Settings
   "settings.sub": "Read-only effective configuration. Secrets are redacted by the gateway.",
+
+  // Tailwind console: card help text, empty states and palette hints
+  "grafana.dashboard": "Grafana dashboard",
+  "palette.hint": "Type to filter pages, Enter to open.",
+  "palette.navigate": "navigate",
+  "palette.open": "open",
+  "overview.providersHelp": "Circuit state per provider, as the router sees it.",
+  "providers.empty": "No providers reported yet.",
+  "prompts.empty": "No prompt templates registered.",
+  "approvals.empty": "Nothing is waiting for a decision.",
+  "audit.empty": "No audit events match.",
+  "access.empty": "No operators yet.",
+  "knowledge.sourcesHelp": "Only enabled sources are crawled into the next index.",
+  "knowledge.indexesHelp": "The active alias serves retrieval; roll back to any earlier build.",
+  "knowledge.emptySources": "No sources registered.",
+  "knowledge.emptyIndexes": "No index builds yet.",
+  "learning.examples": "Examples",
+  "learning.tokens": "Tokens",
+  "learning.cpuHoursLabel": "CPU hours",
+  "learning.emptyJobs": "No fine-tune jobs yet.",
+  "models.empty": "No model versions registered.",
 } satisfies Record<string, string>;
 
 export type MessageKey = keyof typeof en;

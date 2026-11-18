@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/platform/aura_platform.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
 class DesktopIdeUnavailablePage extends StatelessWidget {
@@ -29,7 +30,7 @@ class DesktopIdeUnavailablePage extends StatelessWidget {
                 title: l10n.desktopIdeUnavailableTitle,
                 message: l10n.desktopIdeUnavailableBody,
                 actionLabel: l10n.desktopIdeUnavailableGoHome,
-                onAction: () => context.go('/today'),
+                onAction: () => context.go(appLandingRoute),
               ),
             ),
           ),

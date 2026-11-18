@@ -75,6 +75,9 @@ void main() {
   final surfaces = <String, Widget>{
     'daemon page': const HostDaemonPage(),
     'IDE Host panel': const Scaffold(body: SingleChildScrollView(child: HostPanel())),
+    // The desktop app is the IDE only, and the Host panel hides once the daemon is connected:
+    // this card is where a paired computer's switch lives (mobile-desktop split).
+    'IDE card once connected': const Scaffold(body: SingleChildScrollView(child: HostdRemoteControlCard())),
   };
 
   for (final surface in surfaces.entries) {

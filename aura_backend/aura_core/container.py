@@ -73,7 +73,7 @@ from .memory.session import EpisodicMemory, build_session_summariser
 from .observability.logging import configure_logging, get_logger
 from .observability.metrics import get_metrics
 from .rag import StrategyFacade, build_strategies
-from .observability.tracing import get_tracer
+from .observability.tracing import Tracer, install_tracer
 from .planning.engine import PlanningEngine
 from .ports.runtime import Closeable
 from .prompts import PIN_SYNC_INTERVAL_S, build_default_registry
@@ -110,9 +110,13 @@ class Container:
 
         configure_logging(level=obs.log_level, fmt=obs.log_format, service=obs.service_name)
         self.metrics = get_metrics(enabled=obs.metrics_enabled)
-        self.tracer = get_tracer(service_name=obs.service_name, enabled=obs.tracing_enabled)
+        # Installed, not fetched: get_tracer() keeps whichever tracer was created first, so a
+        # module that touched it before this point would leave tracing off whatever the setting.
+        self.tracer = Tracer(service_name=obs.service_name, enabled=obs.tracing_enabled)
         if obs.tracing_enabled and obs.otlp_endpoint:
-            self.tracer.configure_exporter(obs.otlp_endpoint)
+            if not self.tracer.configure_exporter(obs.otlp_endpoint):
+                logger.warning("tracing is enabled but the OTLP exporter could not be configured")
+        install_tracer(self.tracer)
 
         # Publish which security bypasses are active, so `aura_insecure_mode != 0` is a one-line
         # alert rule. SEC-05 was invisible partly because nothing reported it.
@@ -343,6 +347,7 @@ class Container:
         self.nlp = NlpEngine()
         # Phase H live-voice info is built after `self.kernel` exists (see below).
         self.live_voice = None
+        self.live_vad_name: str | None = None
 
         learning = settings.learning
         from .learning.knowledge_refresh import KnowledgeRefreshPipeline
@@ -1271,6 +1276,7 @@ class Container:
         return {
             "enabled": True,
             "config": cfg,
+            "vad_factory": self._live_vad_factory(cfg.sample_rate),
             "stt": self.stt_engine,
             "tts": self.tts_engine,
             "nlp": self.nlp,
@@ -1279,6 +1285,33 @@ class Container:
             "cache": self.cache_backend,
             "safety_guards_enabled": self.settings.safety.output_guards_enabled,
         }
+
+    def _live_vad_factory(self, sample_rate: int) -> Any:
+        """A ``() -> VoiceActivityDetector | None`` that gives each live session its own
+        detector, per ``AURA_VOICE_LIVE_VAD``. ``None`` from it means the energy default.
+
+        Silero is tried once, here: if it cannot serve (wrong capture rate, model missing or
+        failing to load) the factory logs why and hands out the energy detector for the life of
+        the process instead of retrying on every connection.
+        """
+        voice = self.settings.voice
+        if voice.live_vad != "silero":
+            self.live_vad_name = "energy"
+            return lambda: None
+        from .adapters.silero_vad import build_silero_vad
+
+        def build() -> Any:
+            return build_silero_vad(
+                sample_rate=sample_rate,
+                threshold=voice.live_vad_threshold,
+                barge_in_threshold=voice.live_vad_barge_in_threshold,
+            )
+
+        if build() is None:
+            self.live_vad_name = "energy"
+            return lambda: None
+        self.live_vad_name = "silero"
+        return build
 
     def _build_goals_port(self) -> Any:
         """The `GoalsPort` (Phase D2): reads the legacy `goals` table's plaintext columns.
@@ -1915,7 +1948,11 @@ class Container:
         """Dependency health, for the readiness probe."""
         providers = await self.router.health()
         index = await self.index_manager.active_identity()
-        healthy = any(p["healthy"] for p in providers.values())
+        # A passive provider (health_probe=passive) was not called, so its "healthy" means only
+        # "not known to be broken". It cannot carry readiness on its own while a provider that
+        # *was* checked is down; it counts only when every provider is passive.
+        probed = [p for p in providers.values() if p.get("probe") != "passive"]
+        healthy = any(p["healthy"] for p in (probed or providers.values()))
 
         checks: dict[str, Any] = {}
         for name, check in self._readiness_checks.items():
@@ -1942,6 +1979,9 @@ class Container:
                 "tts": getattr(self.tts_engine, "name", None) if self.tts_engine else None,
                 "stt": getattr(self.stt_engine, "name", None) if self.stt_engine else None,
                 "live": bool(self.live_voice),
+                # The detector live sessions actually get, after any fallback: "silero" only
+                # when the model loaded, never just because it was asked for.
+                "vad": self.live_vad_name if self.live_voice else None,
             },
             "environment": str(self.settings.environment),
             # Which embedder indexes and queries this deployment's knowledge and memory. The

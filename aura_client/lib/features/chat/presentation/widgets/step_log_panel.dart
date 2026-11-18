@@ -22,19 +22,12 @@ class StepLogPanel extends StatelessWidget {
   /// otherwise (G-14d).
   final bool live;
 
-  /// One row per `step_id`, in the order steps first appeared, each with its latest status --
-  /// older stored turns appended every status frame as a new row (G-14d).
+  /// One row per `step_id`, each with its latest status: turns stored before steps were
+  /// updated in place ([upsertStep]) kept every status frame as its own row (G-14d).
   static List<TurnStep> dedupe(List<TurnStep> steps) {
     final rows = <TurnStep>[];
-    final index = <String, int>{};
     for (final step in steps) {
-      final id = step.stepId;
-      if (id != null && index.containsKey(id)) {
-        rows[index[id]!] = step;
-      } else {
-        if (id != null) index[id] = rows.length;
-        rows.add(step);
-      }
+      upsertStep(rows, step);
     }
     return rows;
   }
@@ -121,8 +114,13 @@ class _StepRow extends StatelessWidget {
     switch (step.status) {
       case 'running' when live:
         return CircularProgressIndicator(strokeWidth: 2, color: palette.brand);
+      // `done` is what the vision step sends on success (ADR-031); plan steps send `succeeded`.
       case 'succeeded':
+      case 'done':
         return Icon(Icons.check_circle, size: 16, color: palette.success);
+      // The vision step when only OCR could read the image (the vision model was asleep).
+      case 'degraded':
+        return Icon(Icons.warning_amber_rounded, size: 16, color: palette.warning);
       case 'failed':
         return Icon(Icons.error, size: 16, color: palette.danger);
       case 'skipped':

@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:aura_client/core/config/backend_url_settings.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
-import 'package:aura_client/core/platform/aura_platform.dart';
 import 'package:aura_client/features/auth/presentation/delete_account_confirmation.dart';
 import 'package:aura_client/features/engineering/presentation/engineer_consent_tile.dart';
 import 'package:aura_client/l10n/l10n.dart';
@@ -83,14 +81,6 @@ class SettingsPage extends ConsumerWidget {
                     ],
                   ),
                 ),
-                if (canRunDesktopIde) ...[
-                  const SizedBox(height: AuraSpacing.xl),
-                  _SectionLabel(l10n.settingsSectionDesktop),
-                  const AuraCard(
-                    padding: EdgeInsets.zero,
-                    child: _DesktopIdeToggleTile(),
-                  ),
-                ],
                 const SizedBox(height: AuraSpacing.xl),
                 _SectionLabel(l10n.settingsSectionYourAura),
                 AuraCard(
@@ -227,69 +217,6 @@ class _RowDivider extends StatelessWidget {
   @override
   Widget build(BuildContext context) =>
       Divider(height: 1, indent: 56, color: AuraPalette.of(context).border);
-}
-
-/// Toggles the `desktop_use_ide` SharedPreferences flag the router checks
-/// (`core/routing/router.dart`) to decide whether a Windows or Linux user lands on
-/// AURA Home (`/today`) or the Desktop IDE (`/ide`) after signing in — never
-/// a forced redirect, per ADR-015. Without this control the IDE built under
-/// `desktop/` was unreachable: nothing else in the app ever wrote that key.
-class _DesktopIdeToggleTile extends StatefulWidget {
-  const _DesktopIdeToggleTile();
-
-  @override
-  State<_DesktopIdeToggleTile> createState() => _DesktopIdeToggleTileState();
-}
-
-class _DesktopIdeToggleTileState extends State<_DesktopIdeToggleTile> {
-  bool _loading = true;
-  bool _useIde = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (!mounted) return;
-    setState(() {
-      _useIde = prefs.getBool('desktop_use_ide') ?? false;
-      _loading = false;
-    });
-  }
-
-  Future<void> _setUseIde(bool value) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('desktop_use_ide', value);
-    if (!mounted) return;
-    setState(() => _useIde = value);
-    if (value) {
-      // Open the IDE now. The preference itself only picks where AURA lands
-      // after sign-in; it no longer traps `/today` (audit F-34), and the IDE
-      // palette's "Leave IDE" command comes back here.
-      GoRouter.of(context).go('/ide');
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AuraListTile(
-      icon: Icons.dashboard_customize_outlined,
-      title: context.l10n.settingsDesktopIdeTitle,
-      subtitle: _useIde
-          ? context.l10n.settingsDesktopIdeOn
-          : context.l10n.settingsDesktopIdeOff,
-      trailing: _loading
-          ? const SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : Switch(value: _useIde, onChanged: _setUseIde),
-    );
-  }
 }
 
 class _AboutCard extends StatelessWidget {

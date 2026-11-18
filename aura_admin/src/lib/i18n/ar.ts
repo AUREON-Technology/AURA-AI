@@ -87,7 +87,7 @@ export const ar: Dictionary = {
     "كونسول المشغّلين محتاج دور Admin، وحسابك دوره أقل. اطلب من SuperAdmin يديك Admin من صفحة الصلاحيات، وبعدين سجّل دخول تاني.",
 
   // Overview
-  "overview.sub": "صحة الـ Gateway، وآخر تحديث، وGrafana.",
+  "overview.sub": "صحة الـ Gateway، وآخر تحديث، و Grafana.",
   "overview.insecure": "الوضع غير الآمن شغّال. في الـ Production لازم يبان aura_insecure_mode = 0.",
   "overview.ready": "جاهز",
   "overview.environment": "البيئة",
@@ -250,4 +250,25 @@ export const ar: Dictionary = {
 
   // Settings
   "settings.sub": "الإعدادات الفعلية للقراءة بس. الـ Gateway بيخفي الـ secrets.",
+
+  // Tailwind console: card help text, empty states and palette hints
+  "grafana.dashboard": "لوحة Grafana",
+  "palette.hint": "اكتب علشان تفلتر الصفحات، و Enter علشان تفتح.",
+  "palette.navigate": "تنقّل",
+  "palette.open": "افتح",
+  "overview.providersHelp": "حالة الـ Circuit لكل مزوّد، زي ما الراوتر شايفها.",
+  "providers.empty": "لسه مفيش مزوّدين متسجّلين.",
+  "prompts.empty": "مفيش قوالب برومبت متسجّلة.",
+  "approvals.empty": "مفيش حاجة مستنية قرار.",
+  "audit.empty": "مفيش أحداث مراجعة بتطابق.",
+  "access.empty": "لسه مفيش مشغّلين.",
+  "knowledge.sourcesHelp": "المصادر المفعّلة بس هي اللي بتدخل الـ index الجاي.",
+  "knowledge.indexesHelp": "الـ alias النشط هو اللي بيخدم البحث؛ تقدر ترجع لأي build قبله.",
+  "knowledge.emptySources": "مفيش مصادر متسجّلة.",
+  "knowledge.emptyIndexes": "لسه مفيش builds للـ index.",
+  "learning.examples": "الأمثلة",
+  "learning.tokens": "التوكنز",
+  "learning.cpuHoursLabel": "ساعات CPU",
+  "learning.emptyJobs": "لسه مفيش شغلانات Fine-tune.",
+  "models.empty": "مفيش نسخ موديلات متسجّلة.",
 };

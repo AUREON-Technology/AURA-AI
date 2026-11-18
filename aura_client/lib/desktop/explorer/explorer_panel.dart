@@ -12,6 +12,7 @@ import 'package:aura_client/desktop/explorer/explorer_tree_tile.dart';
 import 'package:aura_client/desktop/explorer/explorer_service.dart';
 import 'package:aura_client/desktop/host/host_panel.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
+import 'package:aura_client/features/engineering/presentation/remote_control_toggle.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
 class ExplorerPanel extends ConsumerStatefulWidget {
@@ -102,7 +103,11 @@ class _ExplorerPanelState extends ConsumerState<ExplorerPanel> {
         // Host daemon controls -- shown once the toolbar's "Host offline" badge above fires,
         // since that badge itself isn't clickable and the full settings page
         // (`/engineer-daemon`) has no other nav entry in this shell.
-        if (!hostState.isConnected) const HostPanel(),
+        if (!hostState.isConnected)
+          const HostPanel()
+        else
+          // WP8: the paired computer's "Allow control from my phone and the web" switch.
+          const HostdRemoteControlCard(),
       ],
     );
   }
