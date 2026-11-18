@@ -96,8 +96,13 @@ class _StepRow extends StatelessWidget {
     switch (step.status) {
       case 'running':
         return CircularProgressIndicator(strokeWidth: 2, color: palette.brand);
+      // `done` is what the vision step sends on success (ADR-031); plan steps send `succeeded`.
       case 'succeeded':
+      case 'done':
         return Icon(Icons.check_circle, size: 16, color: palette.success);
+      // The vision step when only OCR could read the image (the vision model was asleep).
+      case 'degraded':
+        return Icon(Icons.warning_amber_rounded, size: 16, color: palette.warning);
       case 'failed':
         return Icon(Icons.error, size: 16, color: palette.danger);
       case 'skipped':
