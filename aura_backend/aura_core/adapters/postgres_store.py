@@ -831,15 +831,56 @@ class PostgresMemoryStore:
         except Exception as exc:
             raise _unavailable(f"could not write memory {record.id.value!r}: {exc}") from exc
 
-    async def update(self, record: MemoryRecord) -> None:
-        """Same statement as ``put``.
+    _UPDATE = """
+        UPDATE aura_memories SET
+            content = $3,
+            subject = $4,
+            confidence = $5,
+            embedding_ref = $6,
+            last_accessed_at = GREATEST(last_accessed_at, $7::timestamptz),
+            access_count = GREATEST(access_count, $8::integer),
+            superseded_by = COALESCE($9::text, superseded_by),
+            expires_at = $10,
+            metadata = $11::jsonb
+        WHERE id = $1 AND owner_id = $2
+    """
 
-        The port distinguishes them, but at this layer both are "make the row match this record".
-        Two statements that must stay in step is a defect waiting to happen -- the supersede path
-        writes through ``update`` and the extractor through ``put``, and a column present in one
-        but not the other would silently drop data on whichever path was not exercised in testing.
+    @staticmethod
+    def _update_params(record: MemoryRecord, cipher: FieldCipher | None = None) -> tuple:
+        content = (cipher or FieldCipher.disabled()).encrypt(
+            record.content,
+            context=PostgresMemoryStore.encryption_context(record.id.value, record.owner_id.value),
+        )
+        return (
+            record.id.value,
+            record.owner_id.value,
+            content,
+            record.subject,
+            record.confidence,
+            record.embedding_ref,
+            record.last_accessed_at,
+            record.access_count,
+            record.superseded_by.value if record.superseded_by else None,
+            record.expires_at,
+            json.dumps(dict(record.metadata)),
+        )
+
+    async def update(self, record: MemoryRecord) -> None:
+        """Update the existing row; never insert one (F27).
+
+        This used to be the ``put`` UPSERT. Consolidation writes back records it listed earlier,
+        so a memory the user forgot while it ran was re-inserted. Now a missing row (or one of
+        another owner) is left alone, and the fields a concurrent writer may have moved are
+        merged rather than overwritten: access bookkeeping only moves forward (a recall's
+        reinforcement landing after the snapshot survives) and a supersession is never cleared.
+        ``InMemoryMemoryStore.update`` mirrors this.
         """
-        await self.put(record)
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                await conn.execute(self._UPDATE, *self._update_params(record, self._cipher))
+        except Exception as exc:
+            raise _unavailable(f"could not update memory {record.id.value!r}: {exc}") from exc
 
     async def touch_many(
         self, memory_ids: Sequence[MemoryId], *, owner_id: UserId, at: datetime
@@ -853,6 +894,10 @@ class PostgresMemoryStore:
         read nor re-encrypted; and it is one round trip and one pool connection where the
         per-record UPSERTs took up to ``limit`` of each. ``GREATEST`` keeps a replica with a
         clock behind another's from moving ``last_accessed_at`` backwards.
+
+        An access also restores the effective ``confidence`` to the base kept in the metadata
+        (``MemoryRecord.base_confidence``, F11): decay is measured from the last access, so a
+        memory in use must not carry last period's decayed value forward. It never lowers it.
         """
         wanted = list(dict.fromkeys(mid.value for mid in memory_ids))
         if not wanted:
@@ -864,7 +909,13 @@ class PostgresMemoryStore:
                     """
                     UPDATE aura_memories
                     SET access_count = access_count + 1,
-                        last_accessed_at = GREATEST(last_accessed_at, $3::timestamptz)
+                        last_accessed_at = GREATEST(last_accessed_at, $3::timestamptz),
+                        confidence = LEAST(1.0, GREATEST(
+                            confidence,
+                            CASE WHEN jsonb_typeof(metadata -> 'base_confidence') = 'number'
+                                 THEN (metadata ->> 'base_confidence')::double precision
+                                 ELSE confidence END
+                        ))
                     WHERE owner_id = $1 AND id = ANY($2::text[])
                     """,
                     owner_id.value,
