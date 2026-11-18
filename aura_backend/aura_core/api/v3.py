@@ -100,6 +100,13 @@ def _connector_tokens(request: Any) -> dict[str, Credential]:
     return tokens
 
 
+#: The largest audio ``/voice/transcribe`` accepts. A voice note is short by nature; this is
+#: generous headroom, not a target -- unlike ``knowledge.max_document_bytes`` there is no
+#: per-deployment setting for it yet. The gateway's body cap for the route is derived from it
+#: (``aura_service._apply_http_limits``, INT-112).
+MAX_AUDIO_BYTES = 25 * 1024 * 1024
+
+
 #: How often a quiet stream sends an SSE comment. nginx closes a proxied response after 300 s
 #: with no bytes (``proxy_read_timeout``), and planning plus time-to-first-token on the CPU stack
 #: can be silent for longer than that (audit F-22).
@@ -298,7 +305,10 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     class IngestRequest(BaseModel):
         title: str = Field(min_length=1, max_length=500)
-        content: str = Field(min_length=1)
+        #: INT-112: no more characters than the engine's byte ceiling (a character is at least a
+        #: byte of UTF-8), so text no engine would store is refused before it is hashed or
+        #: reserved against the plan. The engine still checks the exact UTF-8 size.
+        content: str = Field(min_length=1, max_length=settings.knowledge.max_document_bytes)
         document_id: str | None = None
         metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -1321,10 +1331,6 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         )
 
     # -- voice (Phase F2) ----------------------------------------------------------------
-
-    #: A voice note is short by nature; this is generous headroom, not a target -- unlike
-    #: `knowledge.max_document_bytes` there is no per-deployment setting for it yet.
-    MAX_AUDIO_BYTES = 25 * 1024 * 1024
 
     @router.post("/voice/transcribe")
     async def transcribe_audio(

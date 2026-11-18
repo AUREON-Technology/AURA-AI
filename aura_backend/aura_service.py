@@ -244,6 +244,28 @@ _UPLOAD_FRAMING_BYTES = 1024 * 1024
 #: The text part of a chat turn (message, history hints, approval ids) beside its images.
 _CHAT_TEXT_BYTES = 1024 * 1024
 
+#: The cap for every POST/PUT/PATCH body without a route limit of its own.
+_DEFAULT_BODY_BYTES = 5 * 1024 * 1024
+
+
+def document_body_limit(knowledge) -> int:
+    """The body ceiling for ``POST /api/v3/knowledge/documents`` (JSON text, INT-112).
+
+    The engine stores up to ``max_document_bytes`` of UTF-8 text. JSON escaping grows it: a
+    newline, quote or backslash is two bytes on the wire, so twice the document plus the
+    envelope covers any ordinary text. The flat 5MB cap refused every 5-8MB document the engine
+    would have accepted.
+    """
+    return 2 * knowledge.max_document_bytes + _UPLOAD_FRAMING_BYTES
+
+
+def transcribe_body_limit() -> int:
+    """The body ceiling for ``POST /api/v3/voice/transcribe``: the audio the route advertises
+    (``MAX_AUDIO_BYTES``, checked again by the route) plus multipart framing (INT-112)."""
+    from aura_core.api.v3 import MAX_AUDIO_BYTES
+
+    return MAX_AUDIO_BYTES + _UPLOAD_FRAMING_BYTES
+
 
 def chat_body_limit(vision) -> int | None:
     """The body ceiling for ``/api/v3/chat`` and ``/api/v3/chat/stream`` when images are on.
@@ -263,17 +285,28 @@ def chat_body_limit(vision) -> int | None:
 def _apply_http_limits(app, settings) -> None:
     # Document upload has its own ceiling, ``knowledge.max_document_bytes`` (8MB by default); the
     # flat 5MB cap used to refuse every document between the two with a 413 the knowledge
-    # engine would have accepted. nginx's ``client_max_body_size 20m`` stays above both, and
-    # above the chat ceiling with vision's defaults (12MB of images -> ~17MB of body).
+    # engine would have accepted. nginx's ``client_max_body_size 20m`` stays above both, above
+    # the JSON document ceiling (17MB with the defaults) and above the chat ceiling with
+    # vision's defaults (12MB of images -> ~17MB of body). It is *below* the transcribe ceiling
+    # (25MB of audio + framing), so on the VPS stack nginx, not this, refuses 20-25MB audio;
+    # Railway has no nginx and serves the advertised 25MB.
     upload_limit = settings.knowledge.max_document_bytes + _UPLOAD_FRAMING_BYTES
-    route_limits = {"/api/v3/knowledge/documents/upload": upload_limit}
+    # Prefix matches, first match wins: the upload route and every other sub-route of
+    # /knowledge/documents (cag-pin, ...) are listed before the JSON ingest route, so its wider
+    # ceiling applies to that one path only.
+    route_limits = {
+        "/api/v3/knowledge/documents/upload": upload_limit,
+        "/api/v3/knowledge/documents/": _DEFAULT_BODY_BYTES,
+        "/api/v3/knowledge/documents": document_body_limit(settings.knowledge),
+        "/api/v3/voice/transcribe": transcribe_body_limit(),
+    }
     chat_limit = chat_body_limit(settings.vision)
     if chat_limit is not None:
         # A prefix match: covers /api/v3/chat and /api/v3/chat/stream.
         route_limits["/api/v3/chat"] = chat_limit
     app.add_middleware(
         PayloadSizeLimitMiddleware,
-        max_bytes=5 * 1024 * 1024,
+        max_bytes=_DEFAULT_BODY_BYTES,
         route_limits=route_limits,
     )
     # No second, legacy per-IP limiter here (audit FSA-005). `infrastructure.http_limits.
@@ -305,8 +338,9 @@ def _apply_cors(app) -> None:
         allow_methods=["*"],
         allow_headers=["*"],
         # A browser hides response headers from page scripts unless listed here; the web app
-        # reads this one to explain a plan refusal (api/v2/auth.py REFUSAL_HEADER).
-        expose_headers=["X-Aura-Refusal"],
+        # reads X-Aura-Refusal to explain a plan refusal (api/v2/auth.py REFUSAL_HEADER) and
+        # Retry-After to wait out a 429/503 rather than guess (INT-118).
+        expose_headers=["X-Aura-Refusal", "Retry-After"],
     )
 
 
