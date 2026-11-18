@@ -210,7 +210,9 @@ networks:
   # gateway) and mixing egress into it would blur that boundary.
   egress:
     driver: bridge
-  # Cross-compose bridge: prod nginx + ollama share this with aura-dev gateway/console.
+  # Cross-compose bridge: prod nginx + ollama-dev-gate share this with aura-dev gateway/console.
+  # Not Ollama itself (F46): it has no authentication and its API deletes and replaces models, so
+  # the dev stack reaches it only through the gate, which answers as `ollama` here.
   # Fixed subnet for the same reason as `edge`: the dev gateway trusts forwarded headers from
   # nginx's static address here (docker-compose.dev.yml), and only from it.
   aura_edge:
@@ -219,6 +221,11 @@ networks:
     ipam:
       config:
         - subnet: 10.77.11.0/24
+  # ollama <-> ollama-dev-gate only (F46). Internal; prod-only, so the `ollama-upstream` alias
+  # Ollama carries here is unreachable from the dev stack.
+  ollama_gate:
+    driver: bridge
+    internal: true
   # Engineer agent (AURA_SANDBOX_ENABLED, off by default): gateway <-> sandbox-broker only.
   # The gateway cannot reach docker-socket-proxy at all (audit F19): the proxy filters by
   # endpoint, not by request body, so with CONTAINERS and POST on it would accept a create for a
@@ -1106,7 +1113,13 @@ services:
       - ollama_models:/root/.ollama
     # data: reachable by the gateway that calls it. egress: the only service that needs a
     # route to the internet, to pull model weights -- see the `egress` network's comment above.
-    networks: [data, egress, aura_edge]
+    # ollama_gate: the dev stack's way in, through `ollama-dev-gate` (F46) -- never `aura_edge`
+    # directly, where any dev container could pull, replace or delete the model prod serves.
+    networks:
+      data: {}
+      egress: {}
+      ollama_gate:
+        aliases: [ollama-upstream]
     environment:
       OLLAMA_HOST: 0.0.0.0:11434
       # One model resident; a second would evict the first on a 16 GB box and turn every
@@ -1129,6 +1142,33 @@ services:
     # For a GPU host, uncomment and install the NVIDIA container toolkit:
     #   deploy.resources.reservations.devices:
     #     - {driver: nvidia, count: 1, capabilities: [gpu]}
+
+  # The aura-dev stack's only route to this Ollama (F46). The host has RAM for one CPU model, so
+  # dev shares it -- but Ollama has no authentication and the same API that generates also pulls,
+  # creates and deletes models. This answers as `ollama` on `aura_edge` (so dev's
+  # AURA_PROVIDER_LOCAL_BASE_URL is unchanged) and passes only inference and read-only endpoints
+  # to `ollama-upstream`; everything else is a 403. deploy/nginx/ollama-dev-gate.conf has the list.
+  # Same image and digest as `nginx`. No static address: nothing trusts headers from it.
+  ollama-dev-gate:
+    image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+    <<: *restart
+    logging: *logging
+    volumes:
+      - ./nginx/ollama-dev-gate.conf:/etc/nginx/conf.d/default.conf:ro
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+    networks:
+      ollama_gate: {}
+      aura_edge:
+        aliases: [ollama]
+    depends_on:
+      ollama:
+        condition: service_started
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 64M}
 
   # Optional GPU-backed vLLM node for the "large" quality-tier provider (hybrid setup --
   # docs/reports/OLLAMA_VLLM_COMPARISON.md §4 Option B, walkthrough in

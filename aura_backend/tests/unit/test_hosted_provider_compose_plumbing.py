@@ -152,10 +152,13 @@ def test_prod_and_dev_wire_the_slots_identically() -> None:
 def test_bootstrap_creates_every_slot_secret() -> None:
     script = _BOOTSTRAP.read_text(encoding="utf-8")
     for n in _SLOTS:
-        assert re.search(rf"^generate hosted{n}_api_key\b", script, re.M), (
-            f"bootstrap-secrets.sh does not create hosted{n}_api_key; docker compose would refuse "
-            "to start every service that mounts it"
-        )
+        # dev_ backs the same compose secret name in the dev stack (F46; pinned in
+        # test_dev_prod_secret_separation.py), so both files must exist.
+        for prefix in ("", "dev_"):
+            assert re.search(rf"^generate {prefix}hosted{n}_api_key\b", script, re.M), (
+                f"bootstrap-secrets.sh does not create {prefix}hosted{n}_api_key; docker compose "
+                "would refuse to start every service that mounts it"
+            )
 
 
 @pytest.mark.parametrize("n", _SLOTS)

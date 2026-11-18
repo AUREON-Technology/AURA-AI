@@ -2,7 +2,9 @@
 #
 # Prod ingress (nginx in docker-compose.prod.yml) routes dev.aureon-ai.tech to
 # this stack via the shared external network `aura_edge`. Ollama stays on prod
-# to save RAM; dev gateway reaches it at http://ollama:11434/v1 over aura_edge.
+# to save RAM; dev gateway reaches it at http://ollama:11434/v1 over aura_edge,
+# where `ollama` is prod's `ollama-dev-gate`, not Ollama itself (F46): inference
+# and read-only endpoints pass, model administration is refused.
 #
 # Bring up:
 #   docker compose -p aura-dev -f deploy/docker-compose.dev.yml \
@@ -64,9 +66,11 @@ x-celery-beat-healthcheck: &celery_beat_healthcheck
 # HF Space; no network was widened for this.
 #
 # Keys are file-backed like hfspace_api_key: secret_hydration.py reads
-# /run/secrets/hostedN_api_key into AURA_PROVIDER_HOSTEDN_API_KEY. bootstrap-secrets.sh writes a
-# random placeholder so the file exists; overwrite it with the real key before enabling a slot:
-#   printf '%s' "$KEY" > deploy/secrets/hosted1_api_key
+# /run/secrets/hostedN_api_key into AURA_PROVIDER_HOSTEDN_API_KEY. In THIS stack that secret is
+# backed by deploy/secrets/dev_hostedN_api_key, never prod's hostedN_api_key (F46; see the
+# `secrets:` block). bootstrap-secrets.sh writes a random placeholder so the file exists;
+# overwrite it with a dev key (ideally a separate provider project) before enabling a slot:
+#   printf '%s' "$KEY" > deploy/secrets/dev_hosted1_api_key
 #
 # AURA_ALLOW_HOSTED_INFERENCE defaults to "false", not empty: aura_core rejects an empty boolean,
 # and that error would mask the one that explains the opt-in. AURA_LLM_ROUTING_POLICY was never
@@ -186,7 +190,8 @@ networks:
     internal: true
   egress:
     driver: bridge
-  # Shared with prod nginx + ollama (created by prod stack as `aura_edge`).
+  # Shared with prod nginx + ollama-dev-gate (created by prod stack as `aura_edge`). Prod's Ollama
+  # itself is not on it (F46); `ollama` here resolves to the gate.
   aura_edge:
     external: true
     name: aura_edge
@@ -228,9 +233,12 @@ secrets:
     file: ./secrets/dev_jwt_secret
   firebase_credentials:
     file: ./secrets/firebase_credentials.json
-  # See docker-compose.prod.yml's `secrets:` block for what these two are.
+  # See docker-compose.prod.yml's `secrets:` block for what this is. Dev's own Fernet key, never
+  # prod's (F46): with prod's, dev could decrypt any prod GitHub token row it ever got hold of.
+  # Starting from a fresh key orphans GitHub accounts connected in dev before the split -- those
+  # users reconnect. bootstrap-secrets.sh generates it.
   secrets_encryption_key:
-    file: ./secrets/secrets_encryption_key
+    file: ./secrets/dev_secrets_encryption_key
   # Encryption-at-rest key for memories/personal-OS records -- see docker-compose.prod.yml's
   # `secrets:` block. Optional here (AURA_ENVIRONMENT=development runs in plaintext without it)
   # but wired the same way so the dev stack exercises the encrypted path prod runs. Its own file,
@@ -238,16 +246,19 @@ secrets:
   # rotation must not touch prod. bootstrap-secrets.sh generates it.
   data_encryption_keys:
     file: ./secrets/dev_data_encryption_keys
+  # Dev's own (F46). A placeholder from bootstrap-secrets.sh until overwritten -- use a separate
+  # GitHub App for dev (its callback URL is the dev domain anyway), never prod's client secret.
   github_oauth_client_secret:
-    file: ./secrets/github_oauth_client_secret
-  # API keys for the hosted open-weight slots (x-hosted-providers above). Placeholders from
-  # bootstrap-secrets.sh until overwritten; unused unless the slot is enabled.
+    file: ./secrets/dev_github_oauth_client_secret
+  # API keys for the hosted open-weight slots (x-hosted-providers above). Dev's own files, never
+  # prod's (F46): a dev compromise must not spend production's provider quota or leak its keys.
+  # Placeholders from bootstrap-secrets.sh until overwritten; unused unless the slot is enabled.
   hosted1_api_key:
-    file: ./secrets/hosted1_api_key
+    file: ./secrets/dev_hosted1_api_key
   hosted2_api_key:
-    file: ./secrets/hosted2_api_key
+    file: ./secrets/dev_hosted2_api_key
   hosted3_api_key:
-    file: ./secrets/hosted3_api_key
+    file: ./secrets/dev_hosted3_api_key
 
 services:
   console:
