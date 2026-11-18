@@ -849,6 +849,15 @@ void main() {
     expect(body['expires_in'], isA<int>());
   });
 
+  test('POST /pair/start refuses a plain http backend that is not loopback (F53)', () async {
+    for (final url in ['http://a.example', 'ws://10.0.0.5:8000', 'not a url']) {
+      final (status, body) = await client.request('POST', '/pair/start', body: {'backend_url': url});
+      expect(status, 400, reason: url);
+      expect(body['code'], HostdErrorCode.invalidRequestBody, reason: url);
+      expect(body['error'], contains('https'), reason: url);
+    }
+  });
+
   test('GET /pair/status without a prior /pair/start is a clear error, not a hang', () async {
     final (status, body) = await client.request('GET', '/pair/status');
     expect(status, 409);
