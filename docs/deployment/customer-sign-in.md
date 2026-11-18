@@ -122,3 +122,19 @@ Re-running the import before each release is still cheap and keeps Firebase tidy
   fresh token.
 - **Rate limit:** the consumer sign-in limit keys on the address the trusted proxy appended to
   `X-Forwarded-For` (`AURA_TRUSTED_PROXY_COUNT`), not the caller-written leftmost entry.
+
+
+## Customer screens in the app (SaaS P1-F2)
+
+Build flags for the customer builds:
+
+| `--dart-define` | Value |
+|---|---|
+| `APP_BASE_URL` | where the web app is served, for example `https://app.aureon-ai.tech`. Invite links point at `{APP_BASE_URL}/invite?token=…`, and the backend's `AURA_APP_BASE_URL` must be the same. |
+| `TERMS_URL`, `PRIVACY_URL`, `REFUND_URL` | the owner's legal pages, `https://` only. A page that is not set is not linked. |
+
+The web build must serve `index.html` for `/invite`, so an invite link opened in a browser reaches
+the app's router. That is the normal single-page-app fallback on any static host.
+
+Sign-in methods (You → Sign-in methods) adds Google, Apple or a password to an existing account.
+It needs those providers enabled in Firebase, as in the steps above.
