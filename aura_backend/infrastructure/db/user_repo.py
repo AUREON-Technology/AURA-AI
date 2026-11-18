@@ -4,6 +4,9 @@ infrastructure/db/models.py's User.auth_subject doc comment). Factored out
 of api/v2/sync.py so api/v2/insights.py doesn't duplicate it.
 """
 import logging
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Iterator
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,12 +41,38 @@ async def get_or_create_user(db: AsyncSession, user_info: dict) -> User:
     return user
 
 
+class RoleLookupUnavailable(RuntimeError):
+    """The Access-page assignment could not be read -- the database failed -- as opposed to "no
+    role assigned". Raised only inside ``role_lookup_must_succeed``."""
+
+
+_strict_role_lookup: ContextVar[bool] = ContextVar("aura_strict_role_lookup", default=False)
+
+
+@contextmanager
+def role_lookup_must_succeed() -> Iterator[None]:
+    """Within this block ``assigned_role`` raises ``RoleLookupUnavailable`` on a database error
+    instead of reading it as "none assigned".
+
+    For a caller whose *refusal* depends on the assignment: a desktop refresh ends the session of
+    anyone below the console role, and has already spent the refresh token, so an outage read as
+    "no assignment" would demote an operator and sign them out (INT-104). Opt-in, so every other
+    caller (``services.rbac.stamp_role`` at sign-in) keeps the lenient reading. A context
+    variable rather than a parameter because the read sits behind ``stamp_role``."""
+    token = _strict_role_lookup.set(True)
+    try:
+        yield
+    finally:
+        _strict_role_lookup.reset(token)
+
+
 async def assigned_role(subject: str) -> str | None:
     """The role an operator assigned this subject on the Access page, or None.
 
     None also when Postgres is not configured or cannot be reached: an assignment that cannot be
     read is not granted, so an outage can only lower a role to what the env lists and roles.json
-    give, never raise one.
+    give, never raise one. Inside ``role_lookup_must_succeed`` an unreachable database raises
+    ``RoleLookupUnavailable`` instead.
     """
     from .base import get_session_factory, is_configured
 
@@ -56,6 +85,9 @@ async def assigned_role(subject: str) -> str | None:
                     User.auth_subject == subject, User.role_assigned_at.is_not(None)
                 )
             )
-    except Exception:
+    except Exception as exc:
+        if _strict_role_lookup.get():
+            logger.warning("could not read the assigned role", exc_info=True)
+            raise RoleLookupUnavailable("the role assignment could not be read") from exc
         logger.exception("could not read the assigned role; resolving without it")
         return None

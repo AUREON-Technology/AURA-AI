@@ -57,6 +57,16 @@ def configured(monkeypatch):
     monkeypatch.setattr(settings, "google_desktop_client_secret", SecretStr(SERVER_SECRET))
 
 
+@pytest.fixture(autouse=True)
+def _fresh_rate_limit():
+    """The route is throttled per client address (F39) and every TestClient shares one."""
+    from api.v2.auth import _reset_auth_rate_limits
+
+    _reset_auth_rate_limits()
+    yield
+    _reset_auth_rate_limits()
+
+
 def _install(monkeypatch, google: FakeGoogle) -> FakeGoogle:
     monkeypatch.setattr(google_oauth, "_post_form", google)
     return google

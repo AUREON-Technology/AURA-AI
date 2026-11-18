@@ -12,14 +12,16 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
-from infrastructure.db.user_repo import get_or_create_user
+from infrastructure.db.user_repo import RoleLookupUnavailable, get_or_create_user, role_lookup_must_succeed
 from services import desktop_handoff as desktop_handoff_store
 from services import device_pairing
 from services.google_oauth import GoogleExchangeError, exchange_desktop_code, is_loopback_redirect
 from services.jwt_auth import (
     ACCOUNT_DELETED_DETAIL,
+    AUTH_STATE_UNAVAILABLE_DETAIL,
     HOST_AGENT_SCOPE,
     RETRY_KEY_MAX_CHARS,
+    AuthStateUnavailable,
     account_erased_and_not_reinstated,
     issue_desktop_session,
     issue_device_token,
@@ -163,14 +165,24 @@ class RevokeRequest(BaseModel):
     refresh_token: str
 
 
+#: Attestation nonces per client address per minute (F39). Each one is a write to the nonce store
+#: from an unauthenticated caller; a phone needs one per sign-in attempt, so this is generous --
+#: several devices behind one carrier NAT must not starve each other.
+NONCES_PER_MINUTE = 30
+_nonce_hits: dict = {}
+
+
 @router.post("/nonce", response_model=NonceResponse)
-async def issue_nonce():
+async def issue_nonce(request: Request):
     """Issues a single-use, short-lived nonce a client binds into its Play
     Integrity / App Attest attestation request and echoes back via the
     X-Device-Attestation-Nonce header on /token. Unauthenticated by design —
     it's the raw material an attestation call gets bound to, requested
     before the client has a session. Closes the replay hole where a
-    client-only-generated nonce could never be correlated server-side."""
+    client-only-generated nonce could never be correlated server-side.
+    Throttled per client address (F39), since anyone can call it."""
+    _sliding_limit(_nonce_hits, _consumer_client_key(request), NONCES_PER_MINUTE, 60.0,
+                   "Too many sign-in attempts; try again in a minute.")
     nonce = secrets.token_urlsafe(24)
     store_nonce(nonce)
     return {"nonce": nonce}
@@ -214,14 +226,42 @@ async def exchange_token(
     For a subject erased within the last ``DEVICE_ACCESS_TOKEN_TTL`` only a deliberate sign-in
     (``SIGN_IN_HEADER: interactive``) goes ahead, starting a fresh account; a silent re-exchange
     gets 401 ``account_deleted`` and writes nothing (INT-010)."""
-    uid = str(user_info.get("uid") or "")
-    if uid and account_erased_and_not_reinstated(uid):
-        if (request.headers.get(SIGN_IN_HEADER) or "").strip().lower() != "interactive":
-            raise HTTPException(status_code=401, detail=dict(ACCOUNT_DELETED_DETAIL))
-        mark_account_reinstated(uid)
+    _admit_erased_subject(request, user_info, deliberate=False)
     await stamp_role(user_info)
     await _persist_user(user_info, client_language=client_language)
     return issue_token_pair(user_info)
+
+
+def _auth_state_unavailable() -> HTTPException:
+    return HTTPException(status_code=503, detail=dict(AUTH_STATE_UNAVAILABLE_DETAIL))
+
+
+def _admit_erased_subject(request: Request, user_info: dict, *, deliberate: bool) -> None:
+    """The erased-account guard every sign-in exchange runs before it issues anything (INT-010,
+    F37). For a subject erased within ``DEVICE_ACCESS_TOKEN_TTL`` and not signed in to since:
+
+    * a deliberate sign-in goes ahead and records the reinstatement, starting a fresh account --
+      ``SIGN_IN_HEADER: interactive`` on the routes a device also calls silently (``/token``,
+      ``/consumer/token``), or ``deliberate`` on the routes only a person completing a sign-in
+      reaches (``/web/token``, ``/desktop/login``, ``/desktop/firebase-exchange``: their sessions
+      renew through ``/refresh``, which answers ``account_deleted`` itself);
+    * anything else gets 401 ``account_deleted`` and writes nothing.
+
+    Fails closed: when the erasure state cannot be read or the reinstatement cannot be recorded,
+    a retryable 503 and no token."""
+    uid = str(user_info.get("uid") or "")
+    if not uid:
+        return
+    try:
+        if not account_erased_and_not_reinstated(uid):
+            return
+        interactive = (request.headers.get(SIGN_IN_HEADER) or "").strip().lower() == "interactive"
+        if not (deliberate or interactive):
+            raise HTTPException(status_code=401, detail=dict(ACCOUNT_DELETED_DETAIL))
+        mark_account_reinstated(uid)
+    except AuthStateUnavailable:
+        logger.warning("erased-account state unavailable; refusing to issue a session")
+        raise _auth_state_unavailable() from None
 
 
 _web_bearer = HTTPBearer(auto_error=False)
@@ -240,6 +280,7 @@ async def exchange_web_token(
     user_info = await verify_identity_token(request, authorization)
     await stamp_role(user_info)
     _require_operator(user_info, what="console login", where="the console")
+    _admit_erased_subject(request, user_info, deliberate=True)  # only a sign-in button calls this
     await _persist_user(user_info)
     return issue_token_pair(user_info)
 
@@ -255,6 +296,7 @@ _consumer_hits: dict[str, list[float]] = {}
 
 def _reset_consumer_rate_limit() -> None:
     _consumer_hits.clear()
+    _nonce_hits.clear()
 
 
 def _rate_key(address: str) -> str:
@@ -337,6 +379,7 @@ MAX_DESKTOP_DEVICES_PER_USER = 10
 _desktop_hits: dict = {}
 _pair_start_hits: dict = {}
 _pair_approval_hits: dict = {}
+_desktop_exchange_hits: dict = {}
 
 
 def _reset_desktop_rate_limits() -> None:
@@ -345,6 +388,13 @@ def _reset_desktop_rate_limits() -> None:
     _desktop_hits.clear()
     _pair_start_hits.clear()
     _pair_approval_hits.clear()
+    _desktop_exchange_hits.clear()
+
+
+def _reset_auth_rate_limits() -> None:
+    """Every in-process sign-in bucket this module keeps (tests: one TestClient address)."""
+    _reset_consumer_rate_limit()
+    _reset_desktop_rate_limits()
 
 
 def _customers_open(request: Request) -> bool:
@@ -411,6 +461,9 @@ async def exchange_consumer_web_token(
     """
     _consumer_rate_limit(request)
     user_info = await verify_identity_token(request, authorization)
+    # The web app re-exchanges a cached Firebase identity silently, exactly as a phone does on
+    # /token, so the same rule: only an interactive sign-in revives an erased account (F37).
+    _admit_erased_subject(request, user_info, deliberate=False)
     user_info["channel"] = CONSUMER_WEB_CHANNEL
     await stamp_role(user_info)
     await _persist_user(user_info)
@@ -444,6 +497,29 @@ def _require_operator(user_info: dict, *, what: str, where: str) -> None:
     )
 
 
+def _put_back(refresh_token: str, user_info: dict) -> None:
+    """Restore a refresh token this request spent but could not answer for a reason that is not
+    the caller's, so the client can retry with it. Best effort: when the store itself is what
+    failed, the write may fail too, and the 503 still goes out."""
+    try:
+        restore_refresh_token(refresh_token, user_info)
+    except Exception:  # noqa: BLE001
+        logger.warning("could not restore a spent refresh token", exc_info=True)
+
+
+def _reissue(refresh_token: str, user_info: dict) -> dict:
+    """``reissue_for_refreshed_identity``, with a device whose revocation cannot be read answered
+    as a retryable 503 that keeps the token, not a 500 that loses it (INT-104)."""
+    try:
+        issued = reissue_for_refreshed_identity(user_info)
+    except AuthStateUnavailable:
+        _put_back(refresh_token, user_info)
+        raise _auth_state_unavailable() from None
+    if issued is None:
+        raise HTTPException(status_code=401, detail="Device access has been revoked.")
+    return issued
+
+
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh(request: RefreshRequest, http_request: Request):
     user_info = consume_refresh_token(request.refresh_token, retry_key=request.retry_key)
@@ -454,7 +530,18 @@ async def refresh(request: RefreshRequest, http_request: Request):
         raise HTTPException(status_code=401, detail="Refresh token is invalid, expired, or already used.")
     # A desktop app's refresh token is bound to its device (FSA-004): the re-issued pair keeps
     # the device claims, and a revoked device gets nothing even with a valid refresh token.
-    await stamp_role(user_info)
+    try:
+        if user_info.get("device_id") and user_info.get("channel") != CONSUMER_DESKTOP_CHANNEL:
+            # An operator's desktop session ends below the console role, so the Access-page
+            # assignment must actually be read: an outage read as "none assigned" would demote
+            # them and sign them out with the token already spent (INT-104).
+            with role_lookup_must_succeed():
+                await stamp_role(user_info)
+        else:
+            await stamp_role(user_info)
+    except RoleLookupUnavailable:
+        _put_back(request.refresh_token, user_info)
+        raise _auth_state_unavailable() from None
     if user_info.get("device_id") and not is_console_operator(user_info["role"]):
         # F-09: desktop sign-in is for operators -- and, since SaaS P1-E, entitled customers --
         # and a session issued to someone since demoted or downgraded must not outlive it. The
@@ -464,22 +551,16 @@ async def refresh(request: RefreshRequest, http_request: Request):
             try:
                 entitled = await _engineer_entitled(http_request, str(user_info["uid"]))
             except _EntitlementUnavailable:
-                restore_refresh_token(request.refresh_token, user_info)  # retry with the same token
+                _put_back(request.refresh_token, user_info)  # retry with the same token
                 raise
             if entitled:
-                issued = reissue_for_refreshed_identity(user_info)
-                if issued is None:
-                    raise HTTPException(status_code=401, detail="Device access has been revoked.")
-                return issued
+                return _reissue(request.refresh_token, user_info)
             raise HTTPException(status_code=401, detail=_UPGRADE_DETAIL, headers=_PLAN_REQUIRED)
         raise HTTPException(
             status_code=401,
             detail=f"Desktop sign-in now requires at least {CONSOLE_MIN_ROLE}; please sign in again.",
         )
-    issued = reissue_for_refreshed_identity(user_info)
-    if issued is None:
-        raise HTTPException(status_code=401, detail="Device access has been revoked.")
-    return issued
+    return _reissue(request.refresh_token, user_info)
 
 
 @router.post("/revoke")
@@ -498,9 +579,10 @@ async def revoke(request: RevokeRequest):
 
 @router.post("/desktop/pair/start", response_model=PairingStartResponse)
 async def start_desktop_pairing(request: Request, body: PairingStartRequest | None = None):
-    if _customers_open(request):  # the switch off leaves operator-only behaviour untouched
-        _sliding_limit(_pair_start_hits, _consumer_client_key(request), DESKTOP_SIGN_INS_PER_MINUTE, 60.0,
-                       "Too many pairing attempts; try again in a minute.")
+    # Unauthenticated whatever the customer switch says, and each call stores a pending pairing:
+    # throttled per address either way (F39).
+    _sliding_limit(_pair_start_hits, _consumer_client_key(request), DESKTOP_SIGN_INS_PER_MINUTE, 60.0,
+                   "Too many pairing attempts; try again in a minute.")
     return device_pairing.start_pairing(device_name=body.device_name if body else None)
 
 
@@ -619,7 +701,7 @@ async def revoke_desktop_device(
 
 
 @router.post("/desktop/exchange", response_model=DesktopExchangeResponse)
-async def desktop_exchange(body: DesktopExchangeRequest):
+async def desktop_exchange(body: DesktopExchangeRequest, request: Request):
     """Complete the desktop app's Google sign-in: trade its one-time ``code`` for an ID token.
 
     The app cannot do this call itself. Google's token endpoint refuses the exchange for our
@@ -634,7 +716,12 @@ async def desktop_exchange(body: DesktopExchangeRequest):
     holds, the redirect is pinned to the loopback form, and the client id is the server's own.
     It mints no session and returns nothing but the ID token; the operator gate and
     device-bound issuance stay in ``/desktop/login``.
+
+    Throttled per client address before Google is called (F39): each call is an outbound request
+    made on an unauthenticated caller's behalf.
     """
+    _sliding_limit(_desktop_exchange_hits, _consumer_client_key(request), DESKTOP_SIGN_INS_PER_MINUTE,
+                   60.0, "Too many sign-in attempts; try again in a minute.")
     try:
         id_token = await exchange_desktop_code(
             code=body.code,
@@ -687,6 +774,8 @@ async def _finish_desktop_sign_in(request: Request, user_info: dict, device_name
     same device-bound issuance. One path, so the two sign-ins cannot drift apart."""
     await stamp_role(user_info)
     await _desktop_gate(request, user_info, what="desktop sign-in", where="the desktop app")
+    # Both callers are a person completing a browser sign-in; renewal is /refresh (F37).
+    _admit_erased_subject(request, user_info, deliberate=True)
     await _persist_user(user_info)
     if user_info.get("channel") == CONSUMER_DESKTOP_CHANNEL:
         # Each sign-in is a new app device: keep the newest few rather than an unbounded pile of

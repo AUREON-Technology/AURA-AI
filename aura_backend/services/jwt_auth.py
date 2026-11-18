@@ -831,19 +831,24 @@ def mark_account_reinstated(uid: str) -> None:
     now = datetime.now(timezone.utc).timestamp()
     redis_client = get_redis_client()
     if redis_client is not None:
-        redis_client.setex(
-            f"{_REINSTATED_ACCOUNT_PREFIX}{uid}", int(DEVICE_ACCESS_TOKEN_TTL.total_seconds()), str(now)
-        )
+        try:
+            redis_client.setex(
+                f"{_REINSTATED_ACCOUNT_PREFIX}{uid}", int(DEVICE_ACCESS_TOKEN_TTL.total_seconds()), str(now)
+            )
+        except Exception as exc:  # noqa: BLE001 -- the sign-in that called this answers 503
+            raise AuthStateUnavailable("could not record the reinstatement (redis error)") from exc
         return
     _local_reinstated_accounts[uid] = now
 
 
-def _account_reinstated_at(uid: str) -> Optional[float]:
+def _account_reinstated_at(uid: str, *, strict: bool = False) -> Optional[float]:
     redis_client = get_redis_client()
     if redis_client is not None:
         try:
             raw = redis_client.get(f"{_REINSTATED_ACCOUNT_PREFIX}{uid}")
-        except Exception:  # noqa: BLE001 -- treated as "not reinstated": the cautious reading
+        except Exception as exc:  # noqa: BLE001
+            if strict:
+                raise AuthStateUnavailable("reinstated-account check unavailable (redis error)") from exc
             logger.warning("reinstated-account check unavailable (redis error)")
             return None
         if raw is None:
@@ -852,13 +857,34 @@ def _account_reinstated_at(uid: str) -> Optional[float]:
     return _local_reinstated_accounts.get(uid)
 
 
+class AuthStateUnavailable(RuntimeError):
+    """A store behind a session decision (erasure, reinstatement, device revocation) could not be
+    read or written. Not an answer either way: the caller must neither issue nor refuse on it, but
+    answer a retryable 503 (``AUTH_STATE_UNAVAILABLE_DETAIL``)."""
+
+
+#: The ``detail`` of a sign-in or request answered 503 because ``AuthStateUnavailable`` was
+#: raised -- the v3 error envelope, retryable, so a client retries rather than signing out.
+AUTH_STATE_UNAVAILABLE_DETAIL = {
+    "error": "auth_state_unavailable",
+    "message": "Sign-in could not be checked just now; please try again.",
+    "retryable": True,
+}
+
+
 def account_erased_and_not_reinstated(uid: str) -> bool:
     """True while ``uid`` is erased and nobody has deliberately signed in to it since: the state
-    in which a silent ``/token`` from a still-signed-in device must be refused (INT-010)."""
-    erased_at = _account_erased_at(uid)
+    in which a silent re-exchange from a still-signed-in device must be refused (INT-010).
+
+    For token *issuance* only, so it fails closed: when Redis cannot be read it raises
+    ``AuthStateUnavailable`` rather than guessing (a guess of "not erased" would resurrect an
+    erased account; a guess of "not reinstated" would tell someone who signed in again that their
+    account is deleted). Per-request verification reads the erasure leniently instead -- see
+    ``verify_access_token``."""
+    erased_at = _account_erased_at(uid, strict=True)
     if erased_at is None:
         return False
-    reinstated_at = _account_reinstated_at(uid)
+    reinstated_at = _account_reinstated_at(uid, strict=True)
     return reinstated_at is None or reinstated_at < erased_at
 
 
@@ -872,14 +898,18 @@ ACCOUNT_DELETED_DETAIL = {
 }
 
 
-def _account_erased_at(uid: str) -> Optional[float]:
+def _account_erased_at(uid: str, *, strict: bool = False) -> Optional[float]:
     redis_client = get_redis_client()
     if redis_client is not None:
         try:
             raw = redis_client.get(f"{_ERASED_ACCOUNT_PREFIX}{uid}")
-        except Exception:
-            # The same store backs refresh tokens; if it is down, sign-in is down too. Do not
-            # turn every authenticated request into a 500 over this one check.
+        except Exception as exc:
+            if strict:
+                # Issuing a token: fail closed (``account_erased_and_not_reinstated``).
+                raise AuthStateUnavailable("erased-account check unavailable (redis error)") from exc
+            # Per request: fail open, deliberately. The token being checked was issued before
+            # this blip and lives ACCESS_TOKEN_TTL at most; its refresh and every new sign-in
+            # fail closed. Refusing here would turn one Redis blip into a full API outage.
             logger.warning("erased-account check unavailable (redis error)")
             return None
         if raw is None:
@@ -889,9 +919,15 @@ def _account_erased_at(uid: str) -> Optional[float]:
 
 
 def is_device_revoked(device_id: str) -> bool:
+    """Whether ``device_id`` was revoked. Raises ``AuthStateUnavailable`` when Redis cannot say:
+    the device check is the whole revocation mechanism for a daemon token, so it never fails open,
+    but an unanswered question is not a revocation either (INT-104)."""
     redis_client = get_redis_client()
     if redis_client is not None:
-        return redis_client.exists(f"{_REVOKED_DEVICE_PREFIX}{device_id}") > 0
+        try:
+            return redis_client.exists(f"{_REVOKED_DEVICE_PREFIX}{device_id}") > 0
+        except Exception as exc:  # noqa: BLE001
+            raise AuthStateUnavailable("device revocation check unavailable (redis error)") from exc
     return device_id in _local_revoked_devices
 
 
@@ -1023,7 +1059,16 @@ async def verify_access_token(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=dict(ACCOUNT_DELETED_DETAIL))
 
     device_id = payload.get("device_id")
-    if device_id and is_device_revoked(device_id):
+    try:
+        device_revoked = bool(device_id) and is_device_revoked(device_id)
+    except AuthStateUnavailable:
+        # Not 401 (the client would sign out, a daemon would unpair) and not a bare 500: a 503
+        # the gateway passes through, which the host-agent socket answers with 1011, "retry".
+        logger.warning("device revocation unreadable; answering 503")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=dict(AUTH_STATE_UNAVAILABLE_DETAIL),
+        ) from None
+    if device_revoked:
         # A device token has no refresh token to decline to renew (issue_device_token's doc
         # comment) -- this check is the entire revocation mechanism for it, so it must run on
         # every call, not just at issue time.
