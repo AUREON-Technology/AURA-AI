@@ -9,6 +9,7 @@ import 'package:uuid/uuid.dart';
 import '../auth/token_manager.dart';
 import '../config/backend_url_provider.dart';
 import '../security/device_validation_service.dart';
+import '../workspaces/active_workspace.dart';
 import 'aura_api_error.dart';
 
 /// Shared authenticated HTTP client for `/api/v3` JSON routes.
@@ -38,6 +39,7 @@ class AuraApiClient {
     headers.addAll(
       await DeviceValidationService.getAttestationHeaders(backendUrl: _backendUrl),
     );
+    headers.addAll(workspaceHeaders(_ref));
     return headers;
   }
 
@@ -75,6 +77,14 @@ class AuraApiClient {
           return client != null
               ? client.post(uri, headers: headers, body: encoded)
               : http.post(uri, headers: headers, body: encoded);
+        case 'PATCH':
+          return client != null
+              ? client.patch(uri, headers: headers, body: encoded)
+              : http.patch(uri, headers: headers, body: encoded);
+        case 'PUT':
+          return client != null
+              ? client.put(uri, headers: headers, body: encoded)
+              : http.put(uri, headers: headers, body: encoded);
         default:
           throw ArgumentError('Unsupported method $method');
       }
@@ -87,6 +97,7 @@ class AuraApiClient {
         tokens.invalidateAccessToken();
         response = await send();
       }
+      healActiveWorkspace(_ref, statusCode: response.statusCode, body: response.body);
       return response;
     } catch (e) {
       throw AuraApiError.unreachable(e);
