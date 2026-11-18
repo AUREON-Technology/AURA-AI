@@ -80,7 +80,10 @@ class KnowledgeCenter {
               ? client.get(uri, headers: headers)
               : http.get(uri, headers: headers))
           .timeout(operationTimeout < capabilitiesTimeout ? operationTimeout : capabilitiesTimeout);
-      if (response.statusCode != 200) return;
+      if (response.statusCode != 200) {
+        healActiveWorkspace(_ref, statusCode: response.statusCode, body: response.body);
+        return;
+      }
       final decoded = jsonDecode(response.body);
       final knowledge = decoded is Map<String, dynamic> ? decoded['knowledge'] : null;
       final limit = knowledge is Map<String, dynamic> ? knowledge['max_upload_bytes'] : null;
@@ -156,6 +159,8 @@ class KnowledgeCenter {
       tokens.invalidateAccessToken();
       response = await once();
     }
+    // Every request here carries the active team: one we were removed from is dropped (F5).
+    healActiveWorkspace(_ref, statusCode: response.statusCode, body: response.body);
     return response;
   }
 
@@ -186,6 +191,7 @@ class KnowledgeCenter {
       tokens.invalidateAccessToken();
       response = await send();
     }
+    healActiveWorkspace(_ref, statusCode: response.statusCode, body: response.body);
     return response;
   }
 
@@ -383,7 +389,9 @@ class KnowledgeCenter {
         tokens.invalidateAccessToken();
         streamed = await send();
       }
-      return http.Response.fromStream(streamed);
+      final response = await http.Response.fromStream(streamed);
+      healActiveWorkspace(_ref, statusCode: response.statusCode, body: response.body);
+      return response;
     }
 
     try {

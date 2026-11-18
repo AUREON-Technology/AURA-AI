@@ -20,11 +20,20 @@ enum SyncState {
 /// UI state and the periodic trigger. Public shape (`syncEngineProvider`,
 /// `SyncState`, `.synchronize()`) is unchanged so `chat_page.dart` didn't
 /// need to change.
+///
+/// The engine follows the session (F1): signed out it is idle, with no timer; signing in rebuilds
+/// it, which syncs at once and then every minute; signing out rebuilds it again, cancelling the
+/// timer. `signedInSessionProvider` keeps it listened at app scope, so this runs whatever screen
+/// is open -- the desktop shell included, which never showed the chat header that used to be the
+/// only thing building it.
 class SyncEngine extends Notifier<SyncState> {
   Timer? _syncTimer;
 
   @override
   SyncState build() {
+    final signedIn = ref.watch(authProvider.select((auth) => auth.value != null));
+    if (!signedIn) return SyncState.offline;
+
     _syncTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       synchronize();
     });
@@ -32,7 +41,9 @@ class SyncEngine extends Notifier<SyncState> {
       _syncTimer?.cancel();
     });
 
-    Future.microtask(() => synchronize());
+    Future.microtask(() {
+      if (ref.mounted) synchronize();
+    });
     return SyncState.offline;
   }
 
