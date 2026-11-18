@@ -24,6 +24,7 @@ import 'package:aura_client/core/auth/identity_service.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/l10n/l10n.dart';
 import 'email_sign_in_form.dart';
+import 'second_factor_dialog.dart';
 import 'login_page.dart' show identityErrorText;
 
 enum _Phase { choosing, working, done }
@@ -64,7 +65,7 @@ class _DesktopSignInPageState extends ConsumerState<DesktopSignInPage> {
     String? error;
     var done = false;
     try {
-      await signIn();
+      await _withSecondStep(signIn);
       signedIn = true;
       final idToken = await identity.idToken();
       if (idToken == null || idToken.isEmpty) {
@@ -95,6 +96,20 @@ class _DesktopSignInPageState extends ConsumerState<DesktopSignInPage> {
       _phase = done ? _Phase.done : _Phase.choosing;
       _error = error;
     });
+  }
+
+  /// An account with two-step verification (SaaS P1-I) answers the code here, in the browser,
+  /// so the token handed to the desktop app already carries the second step. Cancelling is a
+  /// choice, like closing the provider's window.
+  Future<IdentityUser> _withSecondStep(Future<IdentityUser> Function() signIn) async {
+    try {
+      return await signIn();
+    } on SecondFactorRequired catch (challenge) {
+      if (!mounted) throw const IdentityError(IdentityErrorKind.cancelled, 'page closed');
+      final user = await showSecondFactorDialog(context, challenge);
+      if (user == null) throw const IdentityError(IdentityErrorKind.cancelled, 'second step cancelled');
+      return user;
+    }
   }
 
   Future<void> _signOut(IdentityService identity) async {

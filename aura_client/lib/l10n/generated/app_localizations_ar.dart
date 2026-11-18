@@ -5049,6 +5049,74 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
+  String get twoStepTitle => 'التحقق بخطوتين';
+
+  @override
+  String get twoStepSignInBody => 'اكتب الكود من تطبيق المصادقة.';
+
+  @override
+  String get twoStepCodeLabel => 'الكود (6 أرقام)';
+
+  @override
+  String get twoStepVerify => 'تأكيد';
+
+  @override
+  String get twoStepWrongCode =>
+      'الكود مش مطابق. استخدم أحدث كود من تطبيق المصادقة.';
+
+  @override
+  String get twoStepUnsupported =>
+      'الخطوة التانية لتسجيل الدخول في الحساب ده مش مدعومة في التطبيق. كلّم الدعم يعيدوا ضبطها.';
+
+  @override
+  String get identityReauthRequired =>
+      'عشان أمانك، اخرج وادخل تاني وبعدين جرّب تاني.';
+
+  @override
+  String get identityWrongCode => 'الكود مش مطابق.';
+
+  @override
+  String get twoStepIntro =>
+      'ضيف كود من تطبيق مصادقة (Google Authenticator أو Microsoft Authenticator أو 1Password…) لكل مرة تسجّل فيها دخول.';
+
+  @override
+  String get twoStepVerifyEmailFirst =>
+      'أكّد إيميلك الأول، وبعدين ارجع فعّل الخاصية دي.';
+
+  @override
+  String get twoStepSetUp => 'إعداد';
+
+  @override
+  String get twoStepScanOrEnter =>
+      'ضيف المفتاح ده لتطبيق المصادقة، وبعدين اكتب الكود اللي من 6 أرقام اللي بيظهر.';
+
+  @override
+  String get twoStepOpenApp => 'افتح في تطبيق المصادقة';
+
+  @override
+  String get twoStepCopyKey => 'انسخ المفتاح';
+
+  @override
+  String get twoStepOn => 'مفعّل: تسجيل الدخول بيطلب كود من تطبيق المصادقة.';
+
+  @override
+  String get twoStepTurnOff => 'إيقاف';
+
+  @override
+  String get twoStepTurnOffConfirm =>
+      'تسجيل الدخول مش هيطلب كود تاني. توقف التحقق بخطوتين؟';
+
+  @override
+  String get twoStepEnabled => 'التحقق بخطوتين اتفعّل.';
+
+  @override
+  String get twoStepNoApp =>
+      'مفيش تطبيق مصادقة فتحه. انسخ المفتاح وحطّه في تطبيق المصادقة بنفسك.';
+
+  @override
+  String get twoStepAuthenticatorApp => 'تطبيق المصادقة';
+
+  @override
   String get loginBrowserHandoff =>
       'تكمّل في المتصفح — Google أو Apple أو الإيميل';
 

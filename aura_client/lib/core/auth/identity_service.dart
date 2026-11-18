@@ -44,6 +44,10 @@ enum IdentityErrorKind {
   accountExistsWithDifferentMethod,
   /// The sign-in being linked already belongs to another account (SaaS P1-F2).
   credentialInUse,
+  /// Firebase wants a fresh sign-in before changing a second factor (SaaS P1-I).
+  reauthRequired,
+  /// An authenticator code that did not match (SaaS P1-I).
+  wrongCode,
   unavailable,
 }
 
@@ -80,6 +84,11 @@ IdentityErrorKind identityErrorKindFor(String code) {
     case 'credential-already-in-use':
     case 'provider-already-linked':
       return IdentityErrorKind.credentialInUse;
+    case 'requires-recent-login':
+      return IdentityErrorKind.reauthRequired;
+    case 'invalid-verification-code':
+    case 'invalid-mfa-verification-code':
+      return IdentityErrorKind.wrongCode;
     case 'popup-closed-by-user':
     case 'cancelled-popup-request':
     case 'web-context-canceled':
@@ -89,6 +98,45 @@ IdentityErrorKind identityErrorKindFor(String code) {
     default:
       return IdentityErrorKind.unavailable;
   }
+}
+
+/// A second sign-in step the account has enrolled (SaaS P1-I: authenticator codes only).
+@immutable
+class SecondFactor {
+  const SecondFactor({required this.uid, required this.displayName, this.enrolledAt});
+  final String uid;
+  final String displayName;
+  final DateTime? enrolledAt;
+}
+
+/// An authenticator secret being set up. Shown once on the enroll screen; never stored or logged.
+class TotpEnrollment {
+  const TotpEnrollment({required this.secretKey, required this.otpauthUrl, this.raw});
+
+  /// For typing into an authenticator by hand.
+  final String secretKey;
+
+  /// `otpauth://totp/...`: opens an authenticator app, or renders as a QR code.
+  final String otpauthUrl;
+
+  /// The plugin's `TotpSecret`, which [IdentityService.finishTotpEnrollment] needs back.
+  final Object? raw;
+}
+
+/// Thrown by every sign-in method when the account has a second step. The sign-in finishes
+/// only through [resolve]; until then Firebase issues no ID token, so no backend session exists.
+class SecondFactorRequired implements Exception {
+  const SecondFactorRequired({required this.totp, required this.resolve});
+
+  /// False when the account's only second factor is one phase 1 cannot answer (SMS).
+  final bool totp;
+
+  /// Throws [IdentityError] with [IdentityErrorKind.wrongCode] for a code that does not match;
+  /// the same challenge can then be tried again.
+  final Future<IdentityUser> Function(String code) resolve;
+
+  @override
+  String toString() => 'SecondFactorRequired(totp: $totp)';
 }
 
 /// The one way the app proves who someone is. Every method ends with a Firebase user whose ID
@@ -128,6 +176,12 @@ abstract class IdentityService {
   Future<void> linkGoogle();
   Future<void> linkApple();
   Future<void> linkEmailPassword(String email, String password);
+
+  // -- two-step verification (SaaS P1-I) ---------------------------------------------------
+  Future<List<SecondFactor>> secondFactors();
+  Future<TotpEnrollment> startTotpEnrollment();
+  Future<void> finishTotpEnrollment(TotpEnrollment enrollment, String code);
+  Future<void> removeSecondFactor(String uid);
 }
 
 const _googleWebClientId = '87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com';
@@ -282,6 +336,81 @@ class FirebaseIdentityService implements IdentityService {
         return (await user.linkWithCredential(credential)).user;
       });
 
+  @override
+  Future<List<SecondFactor>> secondFactors() async {
+    final user = _requireUser();
+    final factors = await _firebase(() => user.multiFactor.getEnrolledFactors());
+    return [
+      for (final f in factors)
+        if (f.factorId == 'totp')
+          SecondFactor(
+            uid: f.uid,
+            displayName: f.displayName ?? '',
+            enrolledAt: DateTime.fromMillisecondsSinceEpoch((f.enrollmentTimestamp * 1000).round(), isUtc: true),
+          ),
+    ];
+  }
+
+  @override
+  Future<TotpEnrollment> startTotpEnrollment() async {
+    final user = _requireUser();
+    return _firebase(() async {
+      final session = await user.multiFactor.getSession();
+      final secret = await TotpMultiFactorGenerator.generateSecret(session);
+      final url = await secret.generateQrCodeUrl(accountName: user.email ?? user.uid, issuer: 'AURA');
+      return TotpEnrollment(secretKey: secret.secretKey, otpauthUrl: url, raw: secret);
+    });
+  }
+
+  @override
+  Future<void> finishTotpEnrollment(TotpEnrollment enrollment, String code) async {
+    final user = _requireUser();
+    final secret = enrollment.raw;
+    if (secret is! TotpSecret) throw const IdentityError(IdentityErrorKind.unavailable, 'not a TOTP secret');
+    await _firebase(() async {
+      final assertion = await TotpMultiFactorGenerator.getAssertionForEnrollment(secret, code.trim());
+      await user.multiFactor.enroll(assertion, displayName: 'Authenticator app');
+    });
+  }
+
+  @override
+  Future<void> removeSecondFactor(String uid) async {
+    final user = _requireUser();
+    await _firebase(() => user.multiFactor.unenroll(factorUid: uid));
+  }
+
+  /// A Firebase call outside a sign-in, with its errors in [IdentityError] terms.
+  Future<T> _firebase<T>(Future<T> Function() call) async {
+    try {
+      return await call();
+    } on FirebaseAuthException catch (e) {
+      throw IdentityError(identityErrorKindFor(e.code), e.message ?? e.code);
+    } on IdentityError {
+      rethrow;
+    } on Exception catch (e) {
+      throw IdentityError(IdentityErrorKind.unavailable, e.toString());
+    }
+  }
+
+  /// The second step of a sign-in: an authenticator code when the account has one enrolled.
+  SecondFactorRequired _challenge(FirebaseAuthMultiFactorException e) {
+    final resolver = e.resolver;
+    final hint = resolver.hints.whereType<TotpMultiFactorInfo>().firstOrNull;
+    if (hint == null) {
+      return SecondFactorRequired(
+        totp: false,
+        resolve: (_) async => throw const IdentityError(IdentityErrorKind.unavailable, 'unsupported second factor'),
+      );
+    }
+    return SecondFactorRequired(
+      totp: true,
+      resolve: (code) => _guard(() async {
+        final assertion = await TotpMultiFactorGenerator.getAssertionForSignIn(hint.uid, code.trim());
+        return (await resolver.resolveSignIn(assertion)).user;
+      }),
+    );
+  }
+
   User _requireUser() {
     final user = _auth.currentUser;
     if (user == null) throw const IdentityError(IdentityErrorKind.unavailable, 'not signed in');
@@ -295,6 +424,11 @@ class FirebaseIdentityService implements IdentityService {
       return user;
     } on IdentityError {
       rethrow;
+    } on SecondFactorRequired {
+      rethrow;
+    } on FirebaseAuthMultiFactorException catch (e) {
+      // Every sign-in method meets the second step here (SaaS P1-I).
+      throw _challenge(e);
     } on FirebaseAuthException catch (e) {
       throw IdentityError(identityErrorKindFor(e.code), e.message ?? e.code);
     } on GoogleSignInException catch (e) {

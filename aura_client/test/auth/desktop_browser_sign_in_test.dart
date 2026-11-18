@@ -78,7 +78,9 @@ class _FakeIdentity implements IdentityService {
   _FakeIdentity(this.log, {this.error});
 
   final List<String> log;
-  final IdentityError? error;
+
+  /// An [IdentityError], or a [SecondFactorRequired] for an account with two-step on.
+  final Object? error;
 
   @override
   IdentityUser? current;
@@ -149,16 +151,23 @@ class _RecordingAuth extends AuthNotifier {
   Future<void> signInWithDesktopBrowser() async => calls.add('desktop-browser');
 }
 
+_FakeIdentity _identityFor(List<String> log, Object? error, void Function(_FakeIdentity)? onIdentity) {
+  final identity = _FakeIdentity(log, error: error);
+  onIdentity?.call(identity);
+  return identity;
+}
+
 /// The web page, with the hand-off answered by [handoff] and the return to the desktop app
 /// recorded in [log] instead of leaving the test.
 Future<void> _openPage(
   WidgetTester tester, {
   required List<String> log,
   Map<String, String> query = _validQuery,
-  IdentityError? signInError,
+  Object? signInError,
   http.Response Function(http.Request request)? handoff,
   bool isWeb = true,
   List<http.Request>? requests,
+  void Function(_FakeIdentity identity)? onIdentity,
 }) async {
   final client = MockClient((request) async {
     requests?.add(request);
@@ -170,7 +179,7 @@ Future<void> _openPage(
     ProviderScope(
       overrides: [
         backendUrlProvider.overrideWith(() => _Backend('https://api.example.test')),
-        identityServiceProvider.overrideWithValue(_FakeIdentity(log, error: signInError)),
+        identityServiceProvider.overrideWithValue(_identityFor(log, signInError, onIdentity)),
         desktopHandoffClientProvider.overrideWith(
           (ref) => DesktopHandoffClient(ref, httpClient: client),
         ),
@@ -188,6 +197,14 @@ Future<void> _openPage(
     ),
   );
   await tester.pumpAndSettle();
+}
+
+Future<void> _tapAndPump(WidgetTester tester, Finder target) async {
+  await tester.ensureVisible(target);
+  await tester.tap(target);
+  for (var i = 0; i < 10; i++) {
+    await tester.pump(const Duration(milliseconds: 50));
+  }
 }
 
 Future<void> _press(WidgetTester tester, String label) async {
@@ -305,6 +322,46 @@ void main() {
 
       expect(log, ['google']);
       expect(find.byKey(const Key('desktop-sign-in-error')), findsNothing);
+    });
+
+    testWidgets('an account with two-step asks for the code, then hands the sign-in over (SaaS P1-I)',
+        (tester) async {
+      final log = <String>[];
+      final challenge = SecondFactorRequired(
+        totp: true,
+        resolve: (code) async {
+          log.add('code:$code');
+          if (code != '123456') throw const IdentityError(IdentityErrorKind.wrongCode, 'no');
+          return _ann;
+        },
+      );
+      late _FakeIdentity identity;
+      await _openPage(tester, log: log, signInError: challenge, onIdentity: (i) => identity = i);
+
+      // The page's spinner runs behind the dialog, so frames are pumped, not settled.
+      await _tapAndPump(tester, find.widgetWithText(AuraButton, en.loginGoogle));
+      expect(find.byKey(const Key('two-step-code')), findsOneWidget);
+      identity.current = _ann; // what Firebase holds once the code resolves
+      await tester.enterText(find.byKey(const Key('two-step-code')), '123456');
+      await tester.tap(find.byKey(const Key('two-step-verify')));
+      await tester.pumpAndSettle();
+
+      expect(log, ['google', 'code:123456', 'handoff', 'signOut', 'return $_redirect?code=one-time-code&state=$_state']);
+      expect(find.byKey(const Key('desktop-sign-in-error')), findsNothing);
+    });
+
+    testWidgets('cancelling the two-step code hands nothing over and shows no error', (tester) async {
+      final log = <String>[];
+      final challenge = SecondFactorRequired(totp: true, resolve: (code) async => _ann);
+      await _openPage(tester, log: log, signInError: challenge);
+
+      await _tapAndPump(tester, find.widgetWithText(AuraButton, en.loginGoogle));
+      await tester.tap(find.byKey(const Key('two-step-cancel')));
+      await tester.pumpAndSettle();
+
+      expect(log, ['google']);
+      expect(find.byKey(const Key('desktop-sign-in-error')), findsNothing);
+      expect(find.widgetWithText(AuraButton, en.loginGoogle), findsOneWidget);
     });
 
     testWidgets('email signs in without offering account creation', (tester) async {

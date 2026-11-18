@@ -8424,6 +8424,126 @@ abstract class AppLocalizations {
   /// **'Share a copy of this chat with {name}? Everyone in the team can read it.'**
   String shareConfirm(String name);
 
+  /// Title of the second sign-in step dialog and settings page
+  ///
+  /// In en, this message translates to:
+  /// **'Two-step verification'**
+  String get twoStepTitle;
+
+  /// Shown in the sign-in code dialog
+  ///
+  /// In en, this message translates to:
+  /// **'Enter the code from your authenticator app.'**
+  String get twoStepSignInBody;
+
+  /// Code field label
+  ///
+  /// In en, this message translates to:
+  /// **'6-digit code'**
+  String get twoStepCodeLabel;
+
+  /// Submit the code
+  ///
+  /// In en, this message translates to:
+  /// **'Verify'**
+  String get twoStepVerify;
+
+  /// Wrong authenticator code
+  ///
+  /// In en, this message translates to:
+  /// **'That code didn\'t match. Use the newest code from your authenticator app.'**
+  String get twoStepWrongCode;
+
+  /// Second factor other than an authenticator app
+  ///
+  /// In en, this message translates to:
+  /// **'This account\'s second sign-in step isn\'t supported in this app. Contact support to reset it.'**
+  String get twoStepUnsupported;
+
+  /// Firebase requires a recent sign-in
+  ///
+  /// In en, this message translates to:
+  /// **'For your security, sign out and sign in again, then try once more.'**
+  String get identityReauthRequired;
+
+  /// Wrong authenticator code (generic)
+  ///
+  /// In en, this message translates to:
+  /// **'That code didn\'t match.'**
+  String get identityWrongCode;
+
+  /// Two-step settings page intro
+  ///
+  /// In en, this message translates to:
+  /// **'Add a code from an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password…) to every sign-in.'**
+  String get twoStepIntro;
+
+  /// Firebase needs a verified email for a second factor
+  ///
+  /// In en, this message translates to:
+  /// **'Verify your email address first, then come back to turn this on.'**
+  String get twoStepVerifyEmailFirst;
+
+  /// Start enrolling an authenticator app
+  ///
+  /// In en, this message translates to:
+  /// **'Set up'**
+  String get twoStepSetUp;
+
+  /// Enrollment instructions
+  ///
+  /// In en, this message translates to:
+  /// **'Add this key to your authenticator app, then type the 6-digit code it shows.'**
+  String get twoStepScanOrEnter;
+
+  /// Launch the otpauth link
+  ///
+  /// In en, this message translates to:
+  /// **'Open in authenticator app'**
+  String get twoStepOpenApp;
+
+  /// Copy the secret key
+  ///
+  /// In en, this message translates to:
+  /// **'Copy key'**
+  String get twoStepCopyKey;
+
+  /// Status when enrolled
+  ///
+  /// In en, this message translates to:
+  /// **'On: sign-ins ask for a code from your authenticator app.'**
+  String get twoStepOn;
+
+  /// Remove the second factor
+  ///
+  /// In en, this message translates to:
+  /// **'Turn off'**
+  String get twoStepTurnOff;
+
+  /// Confirm removing the second factor
+  ///
+  /// In en, this message translates to:
+  /// **'Sign-ins will no longer ask for a code. Turn off two-step verification?'**
+  String get twoStepTurnOffConfirm;
+
+  /// Snackbar after enrolling
+  ///
+  /// In en, this message translates to:
+  /// **'Two-step verification is on.'**
+  String get twoStepEnabled;
+
+  /// The otpauth link could not be opened
+  ///
+  /// In en, this message translates to:
+  /// **'No authenticator app opened it. Copy the key into your authenticator app instead.'**
+  String get twoStepNoApp;
+
+  /// An enrolled authenticator-app factor
+  ///
+  /// In en, this message translates to:
+  /// **'Authenticator app'**
+  String get twoStepAuthenticatorApp;
+
   /// Desktop (Linux/Windows) login button: sign in with any Firebase method on the web app, which hands the sign-in back to this app
   ///
   /// In en, this message translates to:

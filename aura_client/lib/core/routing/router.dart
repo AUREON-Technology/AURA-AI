@@ -7,6 +7,7 @@ import '../../features/analytics/presentation/analytics_page.dart';
 import '../../features/auth/presentation/auth_provider.dart';
 import '../../features/auth/presentation/desktop_sign_in_page.dart';
 import '../../features/auth/presentation/linked_accounts_page.dart';
+import '../../features/auth/presentation/two_step_page.dart';
 import '../../features/auth/presentation/login_page.dart';
 import '../../features/auth/presentation/profile_page.dart';
 import '../../features/automations/presentation/automations_page.dart';
@@ -510,7 +511,7 @@ Widget desktopIdeShellBuilder(BuildContext context, GoRouterState state, Widget 
 const _desktopScreens = [
   '/you', '/profile', '/appearance', '/server-environment',
   // Account screens of the customer workspace (SaaS P1-F2).
-  '/workspaces', '/plan', '/sign-in-methods', '/invite', '/team-chats',
+  '/workspaces', '/plan', '/sign-in-methods', '/two-step', '/invite', '/team-chats',
 ];
 
 /// Whether a signed-in build shows this screen. The mobile app has Chat and
@@ -625,6 +626,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(path: '/plan', builder: (context, state) => const PlanPage()),
           GoRoute(path: '/sign-in-methods', builder: (context, state) => const LinkedAccountsPage()),
+          GoRoute(path: '/two-step', builder: (context, state) => const TwoStepPage()),
           GoRoute(path: '/invite', builder: (context, state) => InviteAcceptPage(token: state.uri.queryParameters['token'])),
           GoRoute(path: '/team-chats', builder: (context, state) => const SharedChatsPage()),
           GoRoute(
