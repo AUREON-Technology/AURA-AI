@@ -136,6 +136,8 @@ class _AgentPanelState extends ConsumerState<AgentPanel> {
     final palette = AuraPalette.of(context);
     final conversationId = ref.watch(activeConversationIdProvider);
     final messagesAsync = ref.watch(chatMessagesStreamProvider(conversationId));
+    // G-14a: a confirmation still waiting from before a restart comes back with its card.
+    ref.watch(pendingConfirmationRehydrationProvider(conversationId));
     final workspaceRoot = ref.watch(workspaceNotifierProvider).activeWorkspace?.rootPath;
     final (personaLabel, personaIcon) = personaDisplay(_engineerAgentId);
     final locked = switch (ref.watch(agentsProvider)) {

@@ -13,12 +13,35 @@ import '../../data/turn_meta.dart';
 /// plan-executing turn, and there is no client-visible "which agent answered this" signal to
 /// gate on that would be worth the extra plumbing.
 class StepLogPanel extends StatelessWidget {
-  const StepLogPanel({super.key, required this.steps});
+  const StepLogPanel({super.key, required this.steps, this.live = false});
 
   final List<TurnStep> steps;
 
+  /// Whether the turn is still streaming. Only then can a step be running: in a finished turn a
+  /// step stored as `running` never got its final status, and spinning forever would claim
+  /// otherwise (G-14d).
+  final bool live;
+
+  /// One row per `step_id`, in the order steps first appeared, each with its latest status --
+  /// older stored turns appended every status frame as a new row (G-14d).
+  static List<TurnStep> dedupe(List<TurnStep> steps) {
+    final rows = <TurnStep>[];
+    final index = <String, int>{};
+    for (final step in steps) {
+      final id = step.stepId;
+      if (id != null && index.containsKey(id)) {
+        rows[index[id]!] = step;
+      } else {
+        if (id != null) index[id] = rows.length;
+        rows.add(step);
+      }
+    }
+    return rows;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final steps = dedupe(this.steps);
     if (steps.isEmpty) return const SizedBox.shrink();
     final palette = AuraPalette.of(context);
 
@@ -33,7 +56,7 @@ class StepLogPanel extends StatelessWidget {
         children: [
           for (var i = 0; i < steps.length; i++) ...[
             if (i > 0) const SizedBox(height: AuraSpacing.xs),
-            _StepRow(step: steps[i], palette: palette),
+            _StepRow(step: steps[i], palette: palette, live: live),
           ],
         ],
       ),
@@ -42,10 +65,11 @@ class StepLogPanel extends StatelessWidget {
 }
 
 class _StepRow extends StatelessWidget {
-  const _StepRow({required this.step, required this.palette});
+  const _StepRow({required this.step, required this.palette, required this.live});
 
   final TurnStep step;
   final AuraPalette palette;
+  final bool live;
 
   @override
   Widget build(BuildContext context) {
@@ -95,7 +119,7 @@ class _StepRow extends StatelessWidget {
 
   Widget _statusIcon() {
     switch (step.status) {
-      case 'running':
+      case 'running' when live:
         return CircularProgressIndicator(strokeWidth: 2, color: palette.brand);
       case 'succeeded':
         return Icon(Icons.check_circle, size: 16, color: palette.success);

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -177,7 +178,7 @@ class ChatViewModel extends Notifier<ChatUiState> {
   /// Declines the given pending calls without sending anything to the backend -- their approval
   /// ids are never sent, so they never run, and the held turn expires server-side.
   void rejectTools(List<PendingToolCall> calls) {
-    ref.read(chatRepositoryProvider).rejectPendingCalls(calls);
+    unawaited(ref.read(chatRepositoryProvider).rejectPendingCalls(calls));
   }
 
   void rejectPendingActions() {

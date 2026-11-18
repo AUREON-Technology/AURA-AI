@@ -34,6 +34,7 @@ enum _SseSendOutcome {
   blocked,
   consentRequired,
   quotaExhausted,
+  approvalExpired,
 }
 
 class _SseResult {
@@ -47,8 +48,15 @@ class _SseResult {
 _SseSendOutcome? _engineerRefusal(String? errorKind) => switch (errorKind) {
       'consent_required' => _SseSendOutcome.consentRequired,
       'user_quota_exhausted' => _SseSendOutcome.quotaExhausted,
+      // G-14b: an approval id the server no longer holds (expired after its TTL, already used,
+      // or unknown). Retrying would resend the original message as a brand-new turn.
+      'confirmation_invalid' => _SseSendOutcome.approvalExpired,
       _ => null,
     };
+
+/// How long the server keeps a held turn's approval ids (its confirmation TTL): a held call older
+/// than this cannot be approved any more, so it is not offered again after a restart.
+const kHeldTurnTtl = Duration(hours: 1);
 
 class PendingActions extends Notifier<List<dynamic>> {
   @override
@@ -212,6 +220,9 @@ class ChatRepository {
     String? workspaceRoot,
     // WP4 (D-09): work in the conversation's own git worktree. Remembered like [workspaceRoot].
     bool desktopTaskIsolation = false,
+    // G-14c: the persona to ask and to label the reply with. Null means the active persona; an
+    // approval resend passes the held turn's own, which the user may have switched away from.
+    String? agentId,
   }) async {
     if (_ref.read(streamingMessageIdProvider) != null) {
       debugPrint("[ChatRepository] ignoring send while a stream is already in flight");
@@ -250,7 +261,7 @@ class ChatRepository {
 
     // 2. Save Placeholder Assistant Message
     final assistantMsgId = _uuid.v4();
-    final activeAgentId = _ref.read(activeAgentIdProvider);
+    final String activeAgentId = agentId ?? _ref.read(activeAgentIdProvider);
     await _db.into(_db.messages).insert(
       MessagesCompanion.insert(
         id: assistantMsgId,
@@ -282,7 +293,7 @@ class ChatRepository {
         assistantMsgId: assistantMsgId,
         images: images,
         workspaceRoot: workspaceRoot ?? _lastWorkspaceRoot[conversationId],
-        desktopTaskIsolation: _isolatedConversations.contains(conversationId),
+        desktopTaskIsolation: desktopTaskIsolation || _isolatedConversations.contains(conversationId),
       );
 
       if (sseOutcome.outcome == _SseSendOutcome.interrupted) {
@@ -308,6 +319,8 @@ class ChatRepository {
         );
       } else if (sseOutcome.outcome == _SseSendOutcome.quotaExhausted) {
         await _updateMessageText(assistantMsgId, engineerLimitReachedText(sseOutcome.details));
+      } else if (sseOutcome.outcome == _SseSendOutcome.approvalExpired) {
+        await _updateMessageText(assistantMsgId, kChatApprovalExpiredText);
       } else if (sseOutcome.message != null) {
         await _updateMessageText(
           assistantMsgId,
@@ -380,27 +393,71 @@ class ChatRepository {
     final turnId = approvable.first.turnId!;
     if (approvable.any((c) => c.turnId != turnId)) return false;
 
-    final userContent = await _userMessageForTurn(conversationId, turnId);
-    if (userContent == null) return false;
+    final held = await _heldTurn(conversationId, turnId);
+    if (held == null) return false;
     // Again after the await: `sendChatMessage` drops a send while a stream is in flight, and
     // the entries below must not be removed for a send that never happened.
     if (_ref.read(streamingMessageIdProvider) != null) return false;
 
+    final heldMeta = TurnMeta.decode(held.assistant.turnMetaJson);
     await sendChatMessage(
       conversationId: conversationId,
-      userContent: userContent,
+      userContent: held.userContent,
       approvalIds: approvable.map((c) => c.approvalId!).toList(),
       persistUserMessage: false,
+      // G-14c: the held turn's persona, whatever is active now.
+      agentId: held.assistant.agentId,
+      // Where the held turn ran -- still known after a restart, unlike the in-memory maps.
+      workspaceRoot: heldMeta.workspaceRoot,
+      desktopTaskIsolation: heldMeta.desktopTaskIsolation,
     );
     // The server consumed that whole held turn: the approved calls ran, and anything still
     // needing approval came back under the new turn with fresh ids. The old entries are dead.
     _ref.read(pendingConfirmationProvider.notifier).removeByTurnId(turnId);
+    await _resolveHeldCalls(held.assistant, heldMeta.pendingToolCalls.map((c) => c.approvalId));
     return true;
   }
 
-  /// The user message that produced the assistant bubble of [turnId] (its `turn_id`, or the
-  /// message id standing in for one), or null when that turn is no longer in the conversation.
-  Future<String?> _userMessageForTurn(String conversationId, String turnId) async {
+  /// G-14a: offers again the held calls of [conversationId] that were neither approved nor
+  /// declined and are still inside the server's TTL ([kHeldTurnTtl], from the turn), so an app
+  /// restart does not lose a confirmation the server is still waiting for. Idempotent.
+  Future<void> rehydratePendingConfirmations(String conversationId, {DateTime? now}) async {
+    final cutoff = (now ?? DateTime.now()).subtract(kHeldTurnTtl);
+    final rows = await (_db.select(_db.messages)
+          ..where((m) => m.conversationId.equals(conversationId) & m.role.equals('assistant'))
+          ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.asc)]))
+        .get();
+    final notifier = _ref.read(pendingConfirmationProvider.notifier);
+    final known = _ref.read(pendingConfirmationProvider).map((c) => c.approvalId).toSet();
+    for (final row in rows) {
+      if (!row.createdAt.isAfter(cutoff)) continue;
+      final meta = TurnMeta.decode(row.turnMetaJson);
+      if (meta.confirmationResolved || meta.pendingToolCalls.isEmpty) continue;
+      final turnId = meta.turnId ?? row.id;
+      final fresh = meta.pendingToolCalls
+          .where((c) => c.canConfirm && !known.contains(c.approvalId))
+          .map((c) => c.copyWith(turnId: turnId))
+          .toList();
+      if (fresh.isNotEmpty) notifier.addPending(fresh);
+    }
+  }
+
+  /// Persists that the user answered [approvalIds] of [assistant]'s held calls, so they are not
+  /// offered again after a restart; the turn is resolved once none is left.
+  Future<void> _resolveHeldCalls(Message assistant, Iterable<String?> approvalIds) async {
+    final answered = approvalIds.whereType<String>().toSet();
+    final meta = TurnMeta.decode(assistant.turnMetaJson);
+    final left = meta.pendingToolCalls.where((c) => !answered.contains(c.approvalId)).toList();
+    await _updateMessageTurnMeta(
+      assistant.id,
+      meta.copyWith(pendingToolCalls: left, confirmationResolved: left.isEmpty),
+    );
+  }
+
+  /// The assistant bubble of [turnId] (its `turn_id`, or the message id standing in for one)
+  /// and the user message that produced it, or null when that turn is no longer in the
+  /// conversation.
+  Future<({Message assistant, String userContent})?> _heldTurn(String conversationId, String turnId) async {
     final messages = await (_db.select(_db.messages)
           ..where((m) => m.conversationId.equals(conversationId))
           ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.asc)]))
@@ -408,22 +465,34 @@ class ChatRepository {
     final index = messages.indexWhere((m) =>
         m.role == 'assistant' &&
         (m.id == turnId || TurnMeta.decode(m.turnMetaJson).turnId == turnId));
+    if (index < 0) return null;
     for (var i = index - 1; i >= 0; i--) {
       // The server resumes the stored turn (F-04); its images were already understood then.
-      if (messages[i].role == 'user') return splitImagesNote(messages[i].content).text;
+      if (messages[i].role == 'user') {
+        return (assistant: messages[index], userContent: splitImagesNote(messages[i].content).text);
+      }
     }
     return null;
   }
 
   /// Rejects pending calls locally -- no request is sent. The backend never receives their
-  /// approval ids, so nothing runs and the held turn simply expires server-side.
-  void rejectPendingCalls(List<PendingToolCall> calls) {
+  /// approval ids, so nothing runs and the held turn simply expires server-side. The answer is
+  /// persisted on the held turn, so a restart does not offer the calls again (G-14a).
+  Future<void> rejectPendingCalls(List<PendingToolCall> calls) async {
     final notifier = _ref.read(pendingConfirmationProvider.notifier);
     for (final call in calls) {
       if (call.approvalId != null) {
         notifier.removeByApprovalId(call.approvalId!);
       } else if (call.callId != null) {
         notifier.removeByCallId(call.callId!);
+      }
+    }
+    for (final turnId in calls.map((c) => c.turnId).whereType<String>().toSet()) {
+      final rows = await (_db.select(_db.messages)..where((m) => m.role.equals('assistant'))).get();
+      for (final row in rows) {
+        if (row.id == turnId || TurnMeta.decode(row.turnMetaJson).turnId == turnId) {
+          await _resolveHeldCalls(row, calls.where((c) => c.turnId == turnId).map((c) => c.approvalId));
+        }
       }
     }
   }
@@ -509,7 +578,15 @@ class ChatRepository {
             break;
           case SseEventKind.step:
             if (event.step != null) {
-              steps.add(event.step!);
+              // G-14d: one row per step: a later frame for the same `step_id` is that step's new
+              // status, not another step.
+              final step = event.step!;
+              final existing = step.stepId == null ? -1 : steps.indexWhere((s) => s.stepId == step.stepId);
+              if (existing >= 0) {
+                steps[existing] = step;
+              } else {
+                steps.add(step);
+              }
               meta = meta.copyWith(steps: List.of(steps));
               await _updateMessageTurnMeta(assistantMsgId, meta);
             }
@@ -593,9 +670,17 @@ class ChatRepository {
               await _updateMessageToolCalls(assistantMsgId, toolCalls);
             }
             final done = event.turnMeta ?? const TurnMeta();
+            // G-14d: the turn is over, so nothing it reported as running still is.
+            for (var i = 0; i < steps.length; i++) {
+              if (steps[i].status == 'running') steps[i] = steps[i].withStatus(kStepUnfinished);
+            }
             meta = done.copyWith(
               revised: meta.revised,
               steps: steps,
+              // Client-side: where the turn ran, so approving its held calls after a restart
+              // resumes it in the same folder and worktree (G-14a, WP4).
+              workspaceRoot: workspaceRoot,
+              desktopTaskIsolation: desktopTaskIsolation,
               // The message id doubles as this turn's scoping key for pending confirmations --
               // stable even when the backend's own `turn_id` is absent (an un-upgraded backend).
               turnId: done.turnId ?? assistantMsgId,
@@ -781,6 +866,13 @@ final chatRepositoryProvider = Provider<ChatRepository>((ref) {
   final db = ref.watch(databaseProvider);
   return ChatRepository(db, ref);
 });
+
+/// G-14a: brings back a conversation's unanswered held calls (still inside the server's TTL)
+/// the first time it is shown in this app session. The chat screens watch it for the open
+/// conversation; it runs once per conversation.
+final pendingConfirmationRehydrationProvider = FutureProvider.family<void, String>(
+  (ref, conversationId) => ref.read(chatRepositoryProvider).rehydratePendingConfirmations(conversationId),
+);
 
 // Active Conversation session ID
 class ActiveConversation extends Notifier<String> {

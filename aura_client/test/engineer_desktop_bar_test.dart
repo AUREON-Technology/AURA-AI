@@ -27,11 +27,13 @@ import 'package:aura_client/desktop/state/state_notifiers.dart';
 import 'package:aura_client/features/chat/data/agent_config_repository.dart';
 import 'package:aura_client/features/chat/data/agents_repository.dart';
 import 'package:aura_client/features/chat/data/engineer_remote_folder.dart';
+import 'package:aura_client/features/chat/data/turn_meta.dart';
 import 'package:aura_client/features/chat/presentation/chat_page.dart';
 import 'package:aura_client/features/chat/presentation/widgets/engineer_desktop_bar.dart';
 import 'package:aura_client/features/engineering/presentation/git_init_prompt.dart';
 import 'package:aura_client/l10n/generated/app_localizations.dart';
 import 'package:aura_client/l10n/generated/app_localizations_en.dart';
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -537,5 +539,38 @@ void main() {
       expect(find.text(_l10n.gitInitBannerTitle), findsNothing);
       await unmount(tester, container);
     });
+  });
+
+  // G-14a: the chat screen brings back a confirmation still waiting from before a restart.
+  testWidgets('opening the chat after a restart shows a held confirmation again', (tester) async {
+    await tester.runAsync(() async {
+      await db.into(db.messages).insert(MessagesCompanion.insert(
+            id: 'u1',
+            conversationId: 'default_session',
+            role: 'user',
+            content: 'write main.py',
+            createdAt: DateTime.now().subtract(const Duration(minutes: 5, seconds: 1)),
+          ));
+      await db.into(db.messages).insert(MessagesCompanion.insert(
+            id: 'a1',
+            conversationId: 'default_session',
+            role: 'assistant',
+            content: '',
+            agentId: const Value('engineer'),
+            createdAt: DateTime.now().subtract(const Duration(minutes: 5)),
+            turnMetaJson: Value(const TurnMeta(
+              turnId: 'turn-1',
+              needsConfirmation: true,
+              pendingToolCalls: [
+                PendingToolCall(tool: 'run_command', arguments: {'command': 'pytest'}, approvalId: 'apr.1'),
+              ],
+            ).encode()),
+          ));
+    });
+    final container = await pumpChat(tester, _Backend(_available()), agentId: 'orchestrator');
+
+    expect(find.text(_l10n.chatConfirmRunCommand), findsOneWidget);
+    expect(find.text(_l10n.chatAwaitingConfirmation), findsOneWidget);
+    await unmount(tester, container);
   });
 }

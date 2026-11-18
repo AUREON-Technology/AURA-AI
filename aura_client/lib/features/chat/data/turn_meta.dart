@@ -23,6 +23,13 @@ class TurnMeta {
   // Client-side only: the stream ended before `done` -- the user pressed Stop, the connection
   // dropped, or it went idle -- and [Message.content] holds only the partial answer (F-31).
   final bool interrupted;
+  // Client-side only (G-14a): the user answered this turn's held calls (approved or declined),
+  // so they are not offered again after a restart and the bubble no longer asks to confirm.
+  final bool confirmationResolved;
+  // Client-side only (G-14a, WP4): where on the user's computer the turn ran, and whether in its
+  // own worktree -- so approving its held calls after a restart resumes it in the same place.
+  final String? workspaceRoot;
+  final bool desktopTaskIsolation;
 
   const TurnMeta({
     this.turnId,
@@ -40,6 +47,9 @@ class TurnMeta {
     this.plan = const [],
     this.resolvedAgent,
     this.interrupted = false,
+    this.confirmationResolved = false,
+    this.workspaceRoot,
+    this.desktopTaskIsolation = false,
   });
 
   bool get showLowConfidence => confidence != null && confidence! < 0.45;
@@ -60,6 +70,9 @@ class TurnMeta {
     List<PlanStep>? plan,
     String? resolvedAgent,
     bool? interrupted,
+    bool? confirmationResolved,
+    String? workspaceRoot,
+    bool? desktopTaskIsolation,
   }) {
     return TurnMeta(
       turnId: turnId ?? this.turnId,
@@ -77,6 +90,9 @@ class TurnMeta {
       plan: plan ?? this.plan,
       resolvedAgent: resolvedAgent ?? this.resolvedAgent,
       interrupted: interrupted ?? this.interrupted,
+      confirmationResolved: confirmationResolved ?? this.confirmationResolved,
+      workspaceRoot: workspaceRoot ?? this.workspaceRoot,
+      desktopTaskIsolation: desktopTaskIsolation ?? this.desktopTaskIsolation,
     );
   }
 
@@ -96,6 +112,9 @@ class TurnMeta {
         'plan': plan.map((p) => p.toJson()).toList(),
         'resolved_agent': resolvedAgent,
         'interrupted': interrupted,
+        if (confirmationResolved) 'confirmation_resolved': true,
+        'workspace_root': ?workspaceRoot,
+        if (desktopTaskIsolation) 'desktop_task_isolation': true,
       };
 
   String encode() => jsonEncode(toJson());
@@ -142,6 +161,9 @@ class TurnMeta {
           : const [],
       resolvedAgent: json['resolved_agent']?.toString(),
       interrupted: json['interrupted'] == true,
+      confirmationResolved: json['confirmation_resolved'] == true,
+      workspaceRoot: json['workspace_root']?.toString(),
+      desktopTaskIsolation: json['desktop_task_isolation'] == true,
     );
   }
 
@@ -169,6 +191,9 @@ class TurnMeta {
   }
 }
 
+/// A step the turn ended without reporting a final status for (G-14d): shown without a spinner.
+const kStepUnfinished = 'unfinished';
+
 class TurnStep {
   final String? stepId;
   final String? kind;
@@ -185,6 +210,16 @@ class TurnStep {
     this.detail,
     this.elapsedMs,
   });
+
+  /// The same step with another status.
+  TurnStep withStatus(String status) => TurnStep(
+        stepId: stepId,
+        kind: kind,
+        status: status,
+        label: label,
+        detail: detail,
+        elapsedMs: elapsedMs,
+      );
 
   Map<String, dynamic> toJson() => {
         'step_id': stepId,

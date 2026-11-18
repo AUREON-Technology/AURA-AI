@@ -29,6 +29,11 @@ const kChatFeatureUnavailableText = "This needs a feature that isn't available y
 /// Deliberately without [kChatConnectionErrorPrefix]: retrying is not the remedy.
 const kChatWithheldText = 'This response was withheld by a safety check.';
 
+/// Assistant-row text for an approval the server no longer accepts (`confirmation_invalid`:
+/// expired, already used or unknown; G-14b). No Retry card: retrying would resend the original
+/// message as a new turn. Shown as the localized `chatApprovalExpiredNotice`.
+const kChatApprovalExpiredText = 'This approval expired. Ask again.';
+
 /// Assistant-row text for a request a guard refused before anything was generated.
 const kChatBlockedText = 'AURA did not answer this request: it was stopped by a safety check.';
 
