@@ -494,6 +494,16 @@ class KnowledgeEngine:
                 )
 
     async def delete_document(self, document_id: DocumentId, *, owner_id: UserId | None) -> int:
+        """Delete a document: its derived graph facts, then the tombstone, then its index entries.
+
+        Returns how many chunks left the corpus; ``0`` when there was no such document of
+        ``owner_id``'s. The tombstone comes before the index work and is what makes the delete
+        hold: every retrieval path checks hits against the document store (lexical and dense
+        alike), so a vector point this delete fails to reach -- an index that is down, a replica
+        that has not caught up -- can no longer bring the document back. The index deletes are
+        then cleanup, and never depend on the configured embedder matching the published index
+        (F14): deleting reaches the points by id in every index that may hold them.
+        """
         document = await self._documents.get(document_id)
         if document is None or _owner_value(document.owner_id) != _owner_value(owner_id):
             # Someone else's document is reported exactly like an absent one. Checked here, not
@@ -501,17 +511,37 @@ class KnowledgeEngine:
             # left the vector and lexical indexes, so another user's delete reported 0 chunks
             # removed while silently making the owner's document unretrievable.
             return 0
-        identity = await self._indexes.resolve_for_read()
-        chunks = await self._documents.chunks_for(document_id, document.version)
-        await self._vectors.delete(identity, point_ids=[c.id.value for c in chunks])
-        for chunk in chunks:
-            self._lexical.remove(chunk.id.value)
         if self._graph_pipeline is not None:
             # Before the tombstone and allowed to raise: "delete my data" must include the facts
             # derived from it, and a failure here leaves the document un-tombstoned so a retried
             # delete does the whole job rather than reporting success over orphaned facts.
             await self._graph_pipeline.purge(document_id=document_id.value, owner_id=owner_id)
-        return await self._documents.tombstone(document_id, owner_id=owner_id)
+        chunks = await self._documents.chunks_for(document_id, document.version)
+        removed = await self._documents.tombstone(document_id, owner_id=owner_id)
+        for chunk in chunks:
+            self._lexical.remove(chunk.id.value)
+        await self._remove_points([c.id.value for c in chunks])
+        return removed
+
+    async def _remove_points(self, point_ids: Sequence[str]) -> None:
+        """Best-effort index cleanup after a tombstone. A failure is logged, not raised: the
+        tombstone already hides the document from retrieval, and erasure sweeps the owner's
+        points by filter regardless (:meth:`erase_owner`)."""
+        if not point_ids:
+            return
+        try:
+            identities = await self._indexes.identities_for_removal()
+        except Exception as exc:
+            logger.warning("index cleanup skipped", extra={"error": type(exc).__name__})
+            return
+        for identity in identities:
+            try:
+                await self._vectors.delete(identity, point_ids=list(point_ids))
+            except Exception as exc:
+                logger.warning(
+                    "vector cleanup after delete failed",
+                    extra={"index": identity.physical_name, "error": type(exc).__name__},
+                )
 
     async def erase_owner(self, owner_id: UserId) -> int:
         """Erasure: everything ``owner_id`` ever ingested, gone from every index and the store.
@@ -522,8 +552,8 @@ class KnowledgeEngine:
         chunk text a tombstone keeps. Returns how many document rows were removed.
         """
         async def owned() -> list:
-            # ``list_active(owner)`` also returns global documents on the Postgres store; those are
-            # not the owner's to erase.
+            # Filtered again rather than trusted: global documents are never the owner's to erase,
+            # whatever a store's listing includes.
             found = await self._documents.list_active(owner_id=owner_id, limit=100)
             return [d for d in found if _owner_value(d.owner_id) == _owner_value(owner_id)]
 
@@ -536,6 +566,11 @@ class KnowledgeEngine:
             if {d.id.value for d in active} & {d.id.value for d in await owned()}:
                 # A document that survives its own delete would be returned again forever.
                 raise KnowledgeError(f"could not delete the documents of {owner_id.value!r}")
+        # Every point the owner has, in every index that may hold one, by owner filter -- not
+        # only the active versions' chunks the loop above reached, and allowed to raise: unlike a
+        # single delete, an erasure that leaves vector payloads behind has not erased.
+        for identity in await self._indexes.identities_for_removal():
+            await self._vectors.delete_by_filter(identity, filters={}, owner_id=owner_id)
         return await self._documents.purge_owner(owner_id)
 
     # -- retrieval ---------------------------------------------------------------------
@@ -577,6 +612,8 @@ class KnowledgeEngine:
             else self._empty()
         )
         dense_hits, lexical_hits = await asyncio.gather(dense_task, lexical_task)
+        if dense_hits:
+            dense_hits = await self._drop_inactive_dense(dense_hits)
         if lexical_hits:
             lexical_hits = await self._drop_inactive_lexical(
                 lexical_hits, {chunk_id for chunk_id, _score, _payload in dense_hits}
@@ -765,6 +802,30 @@ class KnowledgeEngine:
                 "lexical shard refreshed from the document store",
                 extra={"added": len(missing), "removed": len(stale)},
             )
+
+    async def _drop_inactive_dense(
+        self, hits: Sequence[tuple[str, float, Mapping[str, Any]]]
+    ) -> list[tuple[str, float, Mapping[str, Any]]]:
+        """Keep only dense hits whose chunk belongs to its document's active version.
+
+        A vector index is not the source of truth (ADR-007): a delete whose vector cleanup
+        failed, an index another embedder built, or a replica that has not caught up can all
+        still hold points for a tombstoned or superseded document. One store read for the whole
+        candidate set decides. If the store cannot answer, the dense hits are dropped rather
+        than trusted -- returning a document its owner deleted is worse than a lexical-only
+        answer (F14).
+        """
+        try:
+            live = {
+                chunk.id.value
+                for chunk in await self._documents.active_chunks([cid for cid, _s, _p in hits])
+            }
+        except Exception as exc:
+            logger.warning(
+                "dense hits dropped: liveness check failed", extra={"error": type(exc).__name__}
+            )
+            return []
+        return [hit for hit in hits if hit[0] in live]
 
     async def _drop_inactive_lexical(
         self, hits: Sequence[tuple[str, float]], live_ids: set[str]
