@@ -43,6 +43,7 @@ function GraceAction({ row, onDone }: { row: Customer; onDone: (graceUntil: stri
     <ConfirmDialog
       title={t("customers.extendTitle", { name })}
       confirmText={t("customers.extendWord")}
+      label={t("customers.extendFor", { name })}
       body={
         <div className="flex flex-col gap-1.5">
           <label htmlFor={daysId} className="text-[12.5px] font-medium text-muted">
@@ -102,14 +103,20 @@ export default function CustomersPage() {
       .finally(() => setLoading(false));
   }
 
-  useEffect(() => {
+  function start() {
+    setError(null);
     fetchMe()
       .then((me) => {
         setAllowed(me.is_super_admin);
         if (me.is_super_admin) load(null);
       })
-      .catch((err: unknown) => setError(err));
-  }, []);
+      .catch((err: unknown) => {
+        setAllowed(null);
+        setError(err);
+      });
+  }
+
+  useEffect(start, []);
 
   function graceExtended(workspaceId: string, graceUntil: string) {
     setRows((current) =>
@@ -186,12 +193,17 @@ export default function CustomersPage() {
                   </TableCell>
                 </TableRow>
               ))}
-              {allowed === null || (loading && rows.length === 0) ? <TableSkeleton cols={7} /> : null}
+              {(allowed === null && !error) || (loading && rows.length === 0) ? <TableSkeleton cols={7} /> : null}
               {allowed && !loading && rows.length === 0 && !error ? (
                 <TableEmpty colSpan={7}>{t("customers.empty")}</TableEmpty>
               ) : null}
             </TableBody>
           </Table>
+          {error && !loading && rows.length === 0 ? (
+            <div className="mt-4 flex justify-center">
+              <Button onClick={() => (allowed ? load(null) : start())}>{t("common.refresh")}</Button>
+            </div>
+          ) : null}
           {next ? (
             <div className="mt-4 flex justify-center">
               <Button disabled={loading} onClick={() => load(next)}>

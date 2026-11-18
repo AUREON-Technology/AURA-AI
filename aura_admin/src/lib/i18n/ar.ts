@@ -282,6 +282,7 @@ export const ar: Dictionary = {
   "customers.graceUntil": "مهلة لحد {date}",
   "customers.extend": "مد المهلة",
   "customers.extendTitle": "مد المهلة لـ {name}",
+  "customers.extendFor": "مد المهلة لـ {name}",
   "customers.extendWord": "مد",
   "customers.days": "أيام المهلة",
   "customers.daysHelp": "بتتضاف على الأبعد فيهم: النهارده أو آخر المهلة الحالية. الاشتراك المنتهي بيرجع له خطته.",

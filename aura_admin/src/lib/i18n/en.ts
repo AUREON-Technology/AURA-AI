@@ -282,6 +282,7 @@ export const en = {
   "customers.graceUntil": "grace until {date}",
   "customers.extend": "Extend grace",
   "customers.extendTitle": "Extend grace for {name}",
+  "customers.extendFor": "Extend grace for {name}",
   "customers.extendWord": "extend",
   "customers.days": "Days of grace",
   "customers.daysHelp": "Added to the later of today and the current grace end. An expired subscription gets its plan back.",

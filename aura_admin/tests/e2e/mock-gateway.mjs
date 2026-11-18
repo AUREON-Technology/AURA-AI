@@ -135,7 +135,10 @@ const state = {
     },
   ],
   customerLists: 0,
+  graceCalls: 0,
 };
+
+const CUSTOMERS_AT_START = JSON.stringify(state.customers);
 
 const SUPER_ADMIN_APPROVAL_KINDS = new Set(["connector_registration", "blueprint_deployment"]);
 
@@ -269,7 +272,14 @@ const server = http.createServer(async (request, response) => {
   }
 
   if (method === "GET" && path === "/__test/customer-lists") {
-    json(response, 200, { calls: state.customerLists });
+    json(response, 200, { calls: state.customerLists, grace_calls: state.graceCalls });
+    return;
+  }
+
+  // Puts the customers back as they started, so customers.spec.ts holds against a reused mock.
+  if (method === "POST" && path === "/__test/reset-customers") {
+    state.customers = JSON.parse(CUSTOMERS_AT_START);
+    json(response, 200, { reset: true });
     return;
   }
 
@@ -469,11 +479,11 @@ const server = http.createServer(async (request, response) => {
     const cap = Number(process.env.MOCK_CUSTOMER_PAGE || 3);
     const limit = Math.max(1, Math.min(Number(url.searchParams.get("limit") || 50), 200, cap));
     const after = url.searchParams.get("after");
-    const rest = state.customers.filter((row) => !after || row.workspace_id > after);
-    const page = rest.slice(0, limit);
+    const page = state.customers.filter((row) => !after || row.workspace_id > after).slice(0, limit);
+    // As BillingService.customers: a full page always names a cursor, even when nothing follows.
     json(response, 200, {
       customers: page,
-      next: page.length === limit && rest.length > limit ? page[page.length - 1].workspace_id : null,
+      next: page.length === limit ? page[page.length - 1].workspace_id : null,
     });
     return;
   }
@@ -481,6 +491,7 @@ const server = http.createServer(async (request, response) => {
   const grace = path.match(/^\/api\/v3\/admin\/customers\/([^/]+)\/extend-grace$/);
   if (method === "POST" && grace) {
     if (!coreGate(response, who, "SuperAdmin")) return;
+    state.graceCalls += 1;
     const body = await readBody(request);
     if (!Number.isInteger(body.days) || body.days < 1 || body.days > 30) {
       auraError(response, 422, "validation_error", "days must be between 1 and 30");
@@ -495,7 +506,8 @@ const server = http.createServer(async (request, response) => {
       auraError(response, 409, "conflict", "this subscription's last payment was refunded");
       return;
     }
-    const base = Math.max(Date.parse(row.grace_until || row.period_end) || 0, Date.parse("2026-11-18T00:00:00Z"));
+    // grace_until, or period_end plus the default 7 grace days, never before "now" (2026-11-18).
+    const base = Math.max(Date.parse(row.grace_until || row.period_end) + (row.grace_until ? 0 : 7 * 86_400_000), Date.parse("2026-11-18T00:00:00Z"));
     row.status = "grace";
     row.grace_until = new Date(base + body.days * 86_400_000).toISOString();
     json(response, 200, { status: "grace", grace_until: row.grace_until });

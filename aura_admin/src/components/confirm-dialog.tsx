@@ -24,6 +24,7 @@ export function ConfirmDialog({
   onConfirm,
   children,
   body,
+  label,
   danger = false,
   disabled = false,
   size = "sm",
@@ -34,6 +35,8 @@ export function ConfirmDialog({
   children: ReactNode;
   /** Extra fields shown above the confirmation word, e.g. a value the action takes. */
   body?: ReactNode;
+  /** Accessible name for the trigger when its visible text repeats on every row. */
+  label?: string;
   danger?: boolean;
   disabled?: boolean;
   size?: "sm" | "md";
@@ -45,6 +48,14 @@ export function ConfirmDialog({
   const [mismatch, setMismatch] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const inputId = useId();
+
+  // A reopened dialog starts clean: no earlier refusal or half-typed word.
+  function close() {
+    setOpen(false);
+    setTyped("");
+    setMismatch(false);
+    setError(null);
+  }
 
   async function run() {
     if (foldConfirm(typed) !== foldConfirm(confirmText)) {
@@ -72,10 +83,16 @@ export function ConfirmDialog({
 
   return (
     <>
-      <Button variant={danger ? "danger" : "default"} size={size} disabled={disabled} onClick={() => setOpen(true)}>
+      <Button
+        variant={danger ? "danger" : "default"}
+        size={size}
+        disabled={disabled}
+        aria-label={label}
+        onClick={() => setOpen(true)}
+      >
         {children}
       </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={(next) => (next ? setOpen(true) : close())}>
         <DialogContent>
           <form
             onSubmit={(event) => {
@@ -116,7 +133,7 @@ export function ConfirmDialog({
             {mismatch ? <Alert className="mt-3 mb-0">{t("confirm.mismatch", { text: confirmText })}</Alert> : null}
             {error ? <Alert className="mt-3 mb-0">{errorText(error)}</Alert> : null}
             <DialogFooter>
-              <Button variant="ghost" onClick={() => setOpen(false)}>
+              <Button variant="ghost" onClick={close}>
                 {t("common.cancel")}
               </Button>
               <Button type="submit" variant={danger ? "danger" : "primary"} disabled={busy}>
