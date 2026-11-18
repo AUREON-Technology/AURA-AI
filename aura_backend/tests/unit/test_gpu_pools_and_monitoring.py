@@ -210,3 +210,34 @@ class TestMonitoring:
             assert not missing, (name, missing)
         names = [r["alert"] for g in rules["groups"] for r in g["rules"]]
         assert len(names) == len(set(names)), "alert names must be unique"
+
+
+BILLING_ALERTS = {
+    "AuraBillingCycleStale": "critical",
+    "AuraBillingCycleErrors": "warning",
+    "AuraBillingNotificationsRejected": "warning",
+    "AuraBillingNotifyErrors": "critical",
+    "AuraStoreApiUnavailable": "warning",
+    "AuraEmailFailing": "warning",
+}
+
+
+def test_billing_alerts_exist_reference_catalogue_metrics_and_respect_the_switch() -> None:
+    """SaaS P1-H, readiness item 5: payment webhook failures, a stopped cycle and failing email
+    alert; with billing off, none can fire."""
+    rules = yaml.safe_load((DEPLOY / "monitoring/alerts/aura.yml").read_text(encoding="utf-8"))
+    by_name = {r["alert"]: r for g in rules["groups"] for r in g["rules"]}
+    catalogue = _catalogue_names()
+    for name, severity in BILLING_ALERTS.items():
+        rule = by_name[name]
+        assert rule["labels"]["severity"] == severity, name
+        assert "for" in rule and rule["annotations"]["summary"] and rule["annotations"]["description"], name
+        assert re.search(r"and on\(\) max\(aura_billing_enabled\) == 1\s*$", rule["expr"]), (
+            f"{name} must stay silent with billing off")
+        missing = _referenced_metrics(rule["expr"]) - catalogue
+        assert not missing, (name, missing)
+    # Billing on but the cycle never ran: the timestamp is 0 and that must fire, so no "> 0 and"
+    # guard of the kind AuraBackupStale has (a backup never configured is its own alert there).
+    assert "> 0" not in by_name["AuraBillingCycleStale"]["expr"].split("time()")[0]
+    names = [r["alert"] for g in rules["groups"] for r in g["rules"]]
+    assert len(names) == len(set(names)), "alert names must be unique"

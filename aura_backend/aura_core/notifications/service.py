@@ -51,6 +51,10 @@ class Notifier:
     settings: Any
     audit: Any
     clock: Any
+    #: The metrics catalogue (``email_sends_total``), or None.
+    metrics: Any = None
+    #: Sends that failed in this process, so a billing cycle can report its own (SaaS P1-H).
+    failures: int = 0
 
     async def invite(self, to: str, workspace_name: str, inviter_email: str | None, role: str, token: str) -> None:
         name = _one_line(workspace_name, 60)
@@ -95,7 +99,10 @@ class Notifier:
                 raise ValueError("not a single valid address")
             await asyncio.wait_for(self.sender.send(EmailMessage(to=to, subject=subject, text=text, tag=tag)),
                                    timeout=SEND_TIMEOUT_S)
+            self._count(tag, "ok")
         except Exception as exc:
+            self.failures += 1
+            self._count(tag, "failed")
             logger.warning("email could not be sent", extra={"tag": tag, "error": type(exc).__name__})
             try:
                 await self.audit.record(AuditEvent(
@@ -104,3 +111,11 @@ class Notifier:
                 ))
             except Exception:
                 logger.warning("could not audit an email failure", exc_info=True)
+
+    def _count(self, tag: str, result: str) -> None:
+        if self.metrics is None:
+            return
+        try:
+            self.metrics.email_sends_total.labels(tag=tag, result=result).inc()
+        except Exception:
+            logger.debug("email metric not recorded", exc_info=True)

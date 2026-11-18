@@ -202,6 +202,34 @@ class Metrics:
         )
 
         # -- event outbox (F-24) -------------------------------------------------------
+        # -- billing and email (SaaS P1-H, readiness item 5) --------------------------------
+        # No label carries a workspace, person, amount or reference.
+        self.billing_notifications_total = self._counter(
+            "billing_notifications_total",
+            "Payment notifications by source (fawry/apple/google) and outcome.",
+            ("source", "result"),
+        )
+        self.email_sends_total = self._counter(
+            "email_sends_total", "Transactional emails by kind and outcome (ok/failed).", ("tag", "result")
+        )
+        # The cycle runs in a cron process nobody scrapes: these are read from its heartbeat in the
+        # shared cache at scrape time (refresh_scrape_gauges), like the outbox gauges below.
+        self.billing_enabled = self._gauge(
+            "billing_enabled", "1 when AURA_BILLING_ENABLED is on.", multiprocess_mode="livemax"
+        )
+        self.billing_cycle_last_run = self._gauge(
+            "billing_cycle_last_run_timestamp_seconds",
+            "Unix time the billing cycle last ran to completion; 0 when it never has.",
+            multiprocess_mode="livemax",
+        )
+        self.billing_cycle_last_errors = self._gauge(
+            "billing_cycle_last_errors", "Payments or renewals the last cycle could not process.",
+            multiprocess_mode="livemax",
+        )
+        self.billing_cycle_last_email_failures = self._gauge(
+            "billing_cycle_last_email_failures", "Emails the last cycle could not send.",
+            multiprocess_mode="livemax",
+        )
         # Read from the outbox at scrape time, not pushed by the drain worker: the worker is a
         # different process (often a different host) from the one Prometheus scrapes.
         self.outbox_pending = self._gauge(
@@ -752,6 +780,12 @@ class Metrics:
     def observe_http(self, method: str, route: str, status: int, seconds: float) -> None:
         self.http_requests_total.labels(method=method, route=route, status=str(status)).inc()
         self.http_request_duration.labels(method=method, route=route).observe(seconds)
+
+    def set_billing(self, *, enabled: bool, last_run: float, errors: int, email_failures: int) -> None:
+        self.billing_enabled.set(1 if enabled else 0)
+        self.billing_cycle_last_run.set(last_run)
+        self.billing_cycle_last_errors.set(errors)
+        self.billing_cycle_last_email_failures.set(email_failures)
 
     def set_outbox(self, *, pending: int, dead_lettered: int, oldest_age_s: float) -> None:
         self.outbox_pending.set(pending)

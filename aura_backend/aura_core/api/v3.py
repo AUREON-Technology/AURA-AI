@@ -2344,6 +2344,7 @@ async def refresh_scrape_gauges(container: Any) -> None:
     container) from the gateway Prometheus scrapes, so a gauge the worker set would not be in
     this process's exposition. The backlog is a fact of the database, so it is read here.
     """
+    await _refresh_billing_gauges(container)
     outbox = getattr(container, "event_outbox", None)
     stats = getattr(outbox, "stats", None)
     if not callable(stats):
@@ -2357,6 +2358,26 @@ async def refresh_scrape_gauges(container: Any) -> None:
         )
     except Exception:
         logger.debug("outbox gauge refresh failed", exc_info=True)
+
+
+async def _refresh_billing_gauges(container: Any) -> None:
+    """The billing cycle's heartbeat, left in the shared cache by the cron process (SaaS P1-H).
+    No heartbeat reads as 0, never as healthy: with billing on, "never ran" must alert."""
+    try:
+        from ..billing.service import BILLING_HEARTBEAT_KEY
+
+        enabled = bool(container.settings.billing.enabled)
+        beat: dict[str, Any] = {}
+        if enabled:
+            raw = await asyncio.wait_for(container.cache_backend.get(BILLING_HEARTBEAT_KEY),
+                                         timeout=SCRAPE_REFRESH_TIMEOUT_S)
+            beat = json.loads(raw) if raw else {}
+        container.metrics.set_billing(
+            enabled=enabled, last_run=float(beat.get("at") or 0), errors=int(beat.get("errors") or 0),
+            email_failures=int(beat.get("email_failures") or 0),
+        )
+    except Exception:
+        logger.debug("billing gauge refresh failed", exc_info=True)
 
 
 def _strip_data_url(value: str) -> str:

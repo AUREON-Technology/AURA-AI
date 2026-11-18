@@ -1465,6 +1465,7 @@ class Container:
             subscriptions=subscriptions, payments=payments, provider=provider, plans=self.plans,
             tenancy=self.tenancy, clock=self.clock, audit=self.audit, settings=billing,
             prices=load_prices(billing.prices_json), locks=locks, contacts=contacts, notifier=self.notifier,
+            heartbeat=self.cache_backend,
         )
 
     def _build_sharing(self) -> Any:
@@ -1495,7 +1496,7 @@ class Container:
 
         sender = SmtpEmailSender(email.smtp_host, email.smtp_port, email.smtp_username, email.smtp_password,
                                  email.from_address, starttls=email.smtp_starttls)
-        return sender, Notifier(sender=sender, settings=email, audit=self.audit, clock=self.clock)
+        return sender, Notifier(sender=sender, settings=email, audit=self.audit, clock=self.clock, metrics=self.metrics)
 
     def _build_store_billing(self) -> Any:
         """App Store and Google Play subscriptions (SaaS P1-D2). Shares D1's subscription store,

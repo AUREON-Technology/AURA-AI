@@ -55,6 +55,50 @@ def register_billing_ops(
         plan: str = Field(min_length=1, max_length=40)
         seats: int = Field(default=1, ge=1, le=10_000)
 
+    import functools
+    import json as _json
+
+    from ..domain.errors import AuraError
+
+    def _count(source: str, result: str) -> None:
+        try:
+            container.metrics.billing_notifications_total.labels(source=source, result=result).inc()
+        except Exception:  # a metric never changes the answer to Fawry or a store
+            pass
+
+    _BY_STATUS = {403: "invalid_signature", 400: "malformed", 413: "too_large", 503: "store_unavailable"}
+
+    def counted(source: str):
+        """Counts each notification's outcome (SaaS P1-H, readiness item 5), from the response
+        the route already gives. The response itself is untouched."""
+
+        def wrap(handler):
+            @functools.wraps(handler)
+            async def run(*args, **kwargs):
+                try:
+                    response = await handler(*args, **kwargs)
+                except BillingUnavailableError:
+                    _count(source, "not_configured")
+                    raise
+                except AuraError:
+                    _count(source, "refused")
+                    raise
+                except Exception:
+                    _count(source, "error")
+                    raise
+                result = _BY_STATUS.get(response.status_code, "other")
+                if response.status_code == 200:
+                    try:
+                        result = str(_json.loads(response.body).get("result") or "ok")[:20]
+                    except Exception:
+                        result = "ok"
+                _count(source, result)
+                return response
+
+            return run
+
+        return wrap
+
     def require_enabled() -> None:
         if not billing.settings.enabled:
             raise BillingUnavailableError("billing is not enabled on this deployment")
@@ -95,6 +139,7 @@ def register_billing_ops(
         return Response(status_code=204)
 
     @router.post("/billing/fawry/notify")
+    @counted("fawry")
     async def fawry_notify(request: Request) -> JSONResponse:
         require_enabled()
         body = await request.body()
@@ -142,6 +187,7 @@ def register_billing_ops(
         return JSONResponse(content={"ok": True, "result": result})
 
     @router.post("/billing/apple/notify")
+    @counted("apple")
     async def apple_notify(request: Request) -> JSONResponse:
         require_enabled()
         if stores.apple is None:
@@ -160,6 +206,7 @@ def register_billing_ops(
         return await _store_answer(lambda: stores.handle_apple(signed))
 
     @router.post("/billing/google/notify")
+    @counted("google")
     async def google_notify(request: Request) -> JSONResponse:
         require_enabled()
         if stores.google_push is None or stores.google_play is None:
