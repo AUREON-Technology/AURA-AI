@@ -43,8 +43,25 @@ The Railway target already meets all four, unless one was changed by hand.
   minute the paired daemon disconnects. The Engineer is also gone from every new turn. Paired
   devices stay listed, and upgrading again works without re-pairing.
 
+## Desktop sign-in with Apple or email (WP12)
+
+The desktop app has two ways to sign in:
+- **Google**, through the app's own loopback flow. This works as before.
+- **Continue in your browser**, which offers Google, Apple and email through the web app's
+  Firebase sign-in. The design is in ADR-011's 2026-11-18 amendment.
+
+The second needs:
+
+| What | Where | Why |
+|---|---|---|
+| The web app served at `APP_BASE_URL` | hosting, for example `https://app.aureon-ai.tech` | The browser opens `{APP_BASE_URL}/desktop-sign-in`, and the web build must serve `index.html` for that path, as it does for `/invite`. |
+| `--dart-define=APP_BASE_URL=…` in the **desktop** builds | `desktop-package.yml`, or a local build | The desktop app shows the button only when it knows where the web app is. |
+| Firebase sign-in providers on, and the web app's domain in Firebase's authorized domains | Firebase console | The same setup as customer web sign-in (`docs/deployment/customer-sign-in.md`). |
+| `AURA_REDIS_URL` | Railway | The one-time code may be issued by one worker and redeemed by another. Without Redis it lives in one worker's memory, and a sign-in that lands on another worker fails with "Sign-in code is invalid, expired, or already used". |
+
+An operator still needs a **Google** identity to be recognised as an operator. An operator's
+address used with Apple or email/password signs in as a customer, or is refused (SEC-08).
+
 ## Not covered
 
-- The desktop app's sign-in is Google (loopback OAuth). Apple and email sign-in on desktop come
-  with the client work in Plan F.
 - Server-side Engineer workspaces for customers (phase 1b).
