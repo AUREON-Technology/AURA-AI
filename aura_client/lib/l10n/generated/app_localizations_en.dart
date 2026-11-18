@@ -3684,6 +3684,11 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String chatPersonaSwitchToUse(String workspace) {
+    return 'Included in $workspace -- tap to switch to it and use the Engineer';
+  }
+
+  @override
   String get chatWithheldNotice =>
       'This response was withheld by a safety check.';
 

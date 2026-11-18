@@ -1023,6 +1023,7 @@
   "chatCapabilityEngineer": "صلاحية المهندس",
   "chatCapabilityAdditional": "صلاحية إضافية",
   "chatPersonaRequires": "محتاج {capability} -- مش متاحة على الحساب ده",
+  "chatPersonaSwitchToUse": "موجود في {workspace} -- دوس عشان تنقل لها وتستخدم الـEngineer",
   "chatWithheldNotice": "الرد ده اتحجب بفحص أمان.",
   "chatBlockedNotice": "AURA مردّش على الطلب ده: فحص أمان وقّفه.",
   "chatFeatureUnavailableNotice": "ده محتاج ميزة لسه مش متاحة. AURA يقدر يرد على الأسئلة العادية دلوقتي. الردود اللي بتستخدم الذاكرة أو المستندات أو الأدوات أو الصور جاية قريب.",

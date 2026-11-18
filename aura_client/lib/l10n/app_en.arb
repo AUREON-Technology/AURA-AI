@@ -4960,6 +4960,11 @@
       }
     }
   },
+  "chatPersonaSwitchToUse": "Included in {workspace} -- tap to switch to it and use the Engineer",
+  "@chatPersonaSwitchToUse": {
+    "description": "Persona picker: subtitle of the Engineer when another of the person's workspaces includes it; tapping switches to that workspace",
+    "placeholders": {"workspace": {"type": "String"}}
+  },
   "chatWithheldNotice": "This response was withheld by a safety check.",
   "@chatWithheldNotice": {
     "description": "Chat: shown in place of an answer a safety check withheld after it streamed"

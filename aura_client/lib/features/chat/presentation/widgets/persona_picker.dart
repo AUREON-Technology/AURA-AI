@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
+import 'package:aura_client/core/workspaces/active_workspace.dart';
 
 import '../../data/agent_config_repository.dart';
 import '../../data/agents_repository.dart';
@@ -101,6 +102,8 @@ class PersonaPickerSheet extends ConsumerWidget {
     final palette = AuraPalette.of(context);
     final agentsAsync = ref.watch(agentsProvider);
     final activeId = ref.watch(activeAgentIdProvider);
+    // The caller's other workspaces whose plan includes the Engineer, when it is locked here.
+    final engineerElsewhere = ref.watch(engineerWorkspacesProvider);
     final maxHeight = MediaQuery.sizeOf(context).height * 0.75;
 
     return SafeArea(
@@ -145,6 +148,28 @@ class PersonaPickerSheet extends ConsumerWidget {
                         // silently answers as the orchestrator instead, which is worse than a
                         // greyed-out tile the user can see the reason for.
                         final locked = !agent.usable;
+                        // Locked here, but part of a team's plan the caller belongs to: a turn
+                        // uses the active workspace, so offer to switch to that team instead of a
+                        // dead end. Switching refetches the list (agentsProvider watches the
+                        // active workspace), and the Engineer is selected in the same tap.
+                        final switchTo = locked && agent.id == 'engineer' && engineerElsewhere.isNotEmpty
+                            ? engineerElsewhere.first
+                            : null;
+                        if (switchTo != null) {
+                          return AuraSelectTile(
+                            key: const Key('persona-engineer-switch'),
+                            icon: Icons.swap_horiz,
+                            title: label,
+                            subtitle: context.l10n.chatPersonaSwitchToUse(switchTo.name),
+                            selected: false,
+                            onTap: () async {
+                              final navigator = Navigator.of(context);
+                              await ref.read(activeWorkspaceProvider.notifier).select(switchTo);
+                              ref.read(activeAgentIdProvider.notifier).setAgent(agent.id);
+                              navigator.pop();
+                            },
+                          );
+                        }
                         final tile = AuraSelectTile(
                           icon: locked ? Icons.lock_outline : icon,
                           title: label,

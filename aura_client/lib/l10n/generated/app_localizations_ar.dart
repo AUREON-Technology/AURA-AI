@@ -3727,6 +3727,11 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
+  String chatPersonaSwitchToUse(String workspace) {
+    return 'موجود في $workspace -- دوس عشان تنقل لها وتستخدم الـEngineer';
+  }
+
+  @override
   String get chatWithheldNotice => 'الرد ده اتحجب بفحص أمان.';
 
   @override

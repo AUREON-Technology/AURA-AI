@@ -6246,6 +6246,12 @@ abstract class AppLocalizations {
   /// **'Requires {capability} -- not available on this account'**
   String chatPersonaRequires(String capability);
 
+  /// Persona picker: subtitle of the Engineer when another of the person's workspaces includes it; tapping switches to that workspace
+  ///
+  /// In en, this message translates to:
+  /// **'Included in {workspace} -- tap to switch to it and use the Engineer'**
+  String chatPersonaSwitchToUse(String workspace);
+
   /// Chat: shown in place of an answer a safety check withheld after it streamed
   ///
   /// In en, this message translates to:
