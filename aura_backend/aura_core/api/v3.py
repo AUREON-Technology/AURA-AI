@@ -29,6 +29,7 @@ from ..domain.errors import (
     AuthenticationError,
     AuthorizationError,
     DependencyUnavailableError,
+    NotFoundError,
     OverloadedError,
     RateLimitedError,
     ValidationError,
@@ -1118,11 +1119,17 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         require_knowledge_write(caller)
         doc_id = DocumentId(document_id)
         stored = await container.documents.get(doc_id)
+        if stored is None or stored.owner_id != caller.knowledge_owner:
+            # INT-111: someone else's, a global or an unknown document is "not found" -- never a
+            # 200 "deleted" for a document that is still there. Checked on the stored owner, not
+            # on "0 chunks removed", which a fully quarantined document of one's own reports.
+            raise NotFoundError(f"document {document_id!r} not found",
+                                details={"document_id": document_id})
         removed = await container.knowledge.delete_document(
             doc_id, owner_id=caller.knowledge_owner
         )
         storage_ws = await storage_workspace(caller)
-        if removed and storage_ws is not None and stored is not None and stored.owner_id == caller.knowledge_owner:
+        if removed and storage_ws is not None:
             # Gives back what settle_storage counted for it (spec 5.3); never below 0.
             await plans.free_storage(storage_ws, len(stored.content.encode("utf-8")))
         if container.cag is not None:
