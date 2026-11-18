@@ -104,7 +104,7 @@ test("an incomplete GDPR forget is reported as incomplete, with what failed (INT
   await page.getByRole("link", { name: "Access" }).click();
   await page.getByPlaceholder("email or auth subject").fill("partial@example.com");
   await page.getByRole("button", { name: "Forget" }).click();
-  await confirm(page, "forget");
+  await confirm(page, "partial@example.com");
   const status = page.getByTestId("forget-status");
   await expect(status).toContainText("incomplete");
   await expect(status).toContainText("documents");

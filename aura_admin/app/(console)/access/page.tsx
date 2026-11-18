@@ -186,15 +186,18 @@ export default function AccessPage() {
               placeholder={t("access.forgetPlaceholder")}
               aria-label={t("access.forgetPlaceholder")}
             />
+            {/* Erasure is irreversible: the operator types the subject being erased, as granting a
+                role asks for the role, so the confirmation names what it confirms (audit F51). */}
             <ConfirmDialog
               danger
               size="md"
-              title={t("access.forgetTitle")}
-              confirmText={t("access.forgetWord")}
+              title={t("access.forgetTitle", { subject: forgetSubject.trim() })}
+              confirmText={forgetSubject.trim()}
+              disabled={!forgetSubject.trim()}
               onConfirm={async () => {
                 setForgetResult(null);
                 const body = await api<ForgetResult>(
-                  `/admin/users/${encodeURIComponent(forgetSubject)}/forget`,
+                  `/admin/users/${encodeURIComponent(forgetSubject.trim())}/forget`,
                   { method: "POST" },
                 );
                 setForgetResult(body);
