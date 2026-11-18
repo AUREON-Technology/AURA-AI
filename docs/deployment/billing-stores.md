@@ -99,10 +99,59 @@ Startup refuses a half Google configuration: a package name without the audience
 credentials. `AURA_STORE_PRODUCTS` may map only to personal plans. A product that is not listed is
 ignored and audited.
 
+## The app (SaaS P1-F2b)
+
+You → Plan, on iOS and Android, for the Owner of a **personal** workspace:
+
+1. The app reads `store_products` from `GET …/billing`: the product ids that
+   `AURA_STORE_PRODUCTS` maps to `pro`, per store. The app has no product id of its own, so
+   changing the product needs only a variable, not a new build.
+2. **Upgrade to Pro · <store price>** asks AURA for a binding token, then opens the store's sheet
+   with it, passed through `in_app_purchase` 3.3.1:
+   - on iOS, StoreKit 2 `appAccountToken`;
+   - on Android, `obfuscatedAccountId`.
+3. When the store confirms, the app finishes the transaction and checks `GET …/billing` every
+   3 s, for one minute, until the subscription's `provider` is that store and it is `active`.
+   If the notification is slower than that, the page says the plan will update in a few minutes;
+   the purchase is not lost.
+4. **Transactions are finished from app start.** A transaction left unfinished, for example
+   because the app was killed mid-purchase, is completed on the next launch even with no page
+   open.
+
+What the app will not do:
+- It sells only personal plans. Teams see "Team plans can't be bought in this app." In line with
+  the stores' anti-steering rules, no iOS or Android screen mentions another way to pay.
+- It offers no store purchase while a Fawry subscription is active, past due or in grace, or while
+  a Fawry reference can still be paid. In that last case `store-token` itself answers 409: paying
+  the reference later would otherwise turn the store subscription into a Fawry one while the store
+  kept charging.
+- A store subscription shows **Manage subscription**, which opens the store's own page. On the web
+  and desktop, a store subscription shows no Fawry buy or cancel. The backend also refuses
+  `billing/cancel` for a store subscription with 409, because only the store can stop its
+  renewals.
+
+Native setup:
+- **Android:** nothing to add by hand. The plugin brings Play Billing Library 9.1.0, whose
+  manifest declares `com.android.vending.BILLING`. This has not yet been checked in a built APK.
+- **iOS:** add **In-App Purchase** under Xcode → Runner → Signing & Capabilities. The deployment
+  target, iOS 15, already allows StoreKit 2. This has not been checked here, because there is no
+  macOS host.
+
+## Test purchase, one per store, before announcing
+
+| Step | App Store (Sandbox) | Google Play (license tester) |
+|---|---|---|
+| Server | `AURA_APPLE_ENVIRONMENT=Sandbox` on a **non-production** deployment | Production settings are fine: a license tester's purchase is free |
+| Tester | A Sandbox Apple ID, signed in under Settings → App Store → Sandbox Account | The tester's Google account on the license-tester list, with the app installed from an internal testing track |
+| Buy | Plan → Upgrade to Pro; approve the sheet | The same |
+| Expect in AURA's audit log | `billing.store_token`, then `billing.store_active` | The same |
+| Expect in the app | Within a minute, **Manage subscription** replaces the button, and the plan reads `pro` | The same |
+| Expire | Sandbox renews every few minutes and stops after a few renewals. Expect `billing.expired` and plan `free` | Cancel in Play. Expect `billing.store_cancel`, then expiry at the period end |
+
 ## What is not built yet
 
-- The app's purchase screens and the "manage subscription" links (Plan F).
 - Promotional offers and offer codes beyond `OFFER_REDEEMED` activating the plan.
 - Price changes, which are configured in the stores.
-- Neither store has been tried against its sandbox from this deployment. Do one sandbox purchase
-  per store end to end before announcing in-app purchase.
+- The Mac App Store build sells nothing in phase 1.
+- Neither store has been tried against its sandbox from this deployment. Do the test purchase above
+  for each store before announcing in-app purchase.

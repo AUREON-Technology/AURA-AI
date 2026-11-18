@@ -184,3 +184,25 @@ async def test_reconcile_applies_a_payment_whose_notification_was_lost(billing, 
     counts = await billing.run_cycle()
     assert counts["reconciled"] == 1
     assert (await container.plans.entitlement(ws))[0].id == "pro"
+
+
+# -- SaaS P1-F2b: what the app needs to sell in the stores --------------------------------
+
+
+async def test_status_names_the_provider(billing, provider, container) -> None:
+    ws, _ = await _paid_pro(billing, provider, container)
+    assert (await billing.status(ws))["subscription"]["provider"] == "fawry"
+
+
+async def test_cancel_refuses_a_store_subscription(billing, container, clock) -> None:
+    from aura_core.domain.billing import Subscription
+    from aura_core.domain.errors import ConflictError
+
+    ws = await _personal(container)
+    now = clock.now()
+    sub = Subscription(workspace_id=ws, plan_id="pro", seats=1, status=SubscriptionStatus.ACTIVE, provider="apple",
+                       period_start=now, period_end=now + timedelta(days=30), updated_at=now)
+    await billing.subscriptions.put(sub)
+    with pytest.raises(ConflictError, match="App Store or Google Play"):
+        await billing.cancel("ann", ws)
+    assert (await billing.subscriptions.get(ws)).status is SubscriptionStatus.ACTIVE

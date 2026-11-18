@@ -19,10 +19,11 @@ Every route answers 503 ``billing_unavailable`` until ``AURA_BILLING_ENABLED`` i
 # function, and FastAPI must resolve their annotations at decoration time (as in v3.py).
 from typing import Any, Callable
 
-from ..domain.billing import BillingUnavailableError
+from ..domain.billing import BillingUnavailableError, PaymentStatus
 from ..domain.errors import (
     AuthenticationError,
     AuthorizationError,
+    ConflictError,
     DependencyUnavailableError,
     RateLimitedError,
     ValidationError,
@@ -54,6 +55,51 @@ def register_billing_ops(
         plan: str = Field(min_length=1, max_length=40)
         seats: int = Field(default=1, ge=1, le=10_000)
 
+    import functools
+    import json as _json
+
+    from ..domain.errors import AuraError
+
+    def _count(source: str, result: str) -> None:
+        try:
+            container.metrics.billing_notifications_total.labels(source=source, result=result).inc()
+        except Exception:  # a metric never changes the answer to Fawry or a store
+            pass
+
+    _BY_STATUS = {403: "invalid_signature", 400: "malformed", 413: "too_large", 503: "store_unavailable"}
+
+    def counted(source: str):
+        """Counts each notification's outcome (SaaS P1-H, readiness item 5), from the response
+        the route already gives. The response itself is untouched."""
+
+        def wrap(handler):
+            @functools.wraps(handler)
+            async def run(*args, **kwargs):
+                try:
+                    response = await handler(*args, **kwargs)
+                except BillingUnavailableError:
+                    _count(source, "not_configured")
+                    raise
+                except AuraError:
+                    _count(source, "refused")
+                    raise
+                except Exception as exc:
+                    # A provider hanging up mid-body is not a crash of ours (review H#5).
+                    _count(source, "client_disconnect" if type(exc).__name__ == "ClientDisconnect" else "error")
+                    raise
+                result = _BY_STATUS.get(response.status_code, "other")
+                if response.status_code == 200:
+                    try:
+                        result = str(_json.loads(response.body).get("result") or "ok")[:20]
+                    except Exception:
+                        result = "ok"
+                _count(source, result)
+                return response
+
+            return run
+
+        return wrap
+
     def require_enabled() -> None:
         if not billing.settings.enabled:
             raise BillingUnavailableError("billing is not enabled on this deployment")
@@ -64,7 +110,14 @@ def register_billing_ops(
         _ws, membership = await container.tenancy.resolve(str(caller.user_id), workspace_id)
         if membership.role not in (WorkspaceRole.OWNER, WorkspaceRole.ADMIN):
             raise AuthorizationError("only the workspace owner or an admin can see billing")
-        return JSONResponse(content=await billing.status(workspace_id))
+        body = await billing.status(workspace_id)
+        # Which store product sells Pro, so the app reads it from AURA_STORE_PRODUCTS rather than
+        # from its build (SaaS P1-F2b). A store with none is left out.
+        body["store_products"] = {
+            store: sorted(pid for pid, plan in (stores.products.get(store) or {}).items() if plan == "pro")
+            for store in ("apple", "google") if any(plan == "pro" for plan in (stores.products.get(store) or {}).values())
+        }
+        return JSONResponse(content=body)
 
     # Not idempotency-keyed: each checkout is a new reference code, and a replay would hand back a
     # stale one.
@@ -87,6 +140,7 @@ def register_billing_ops(
         return Response(status_code=204)
 
     @router.post("/billing/fawry/notify")
+    @counted("fawry")
     async def fawry_notify(request: Request) -> JSONResponse:
         require_enabled()
         body = await request.body()
@@ -108,6 +162,14 @@ def register_billing_ops(
         decision = await limiter.check_limit(key=str(caller.user_id), scope="billing_checkout", limit=CHECKOUTS_PER_MINUTE)
         if not decision.allowed:
             raise RateLimitedError("too many checkout requests", retry_after=decision.retry_after_s)
+        # A Fawry reference that can still be paid would, once paid, turn the store subscription
+        # into a Fawry one while the store kept charging (SaaS P1-F2b review #2).
+        now = billing.clock.now()
+        for payment in await billing.payments.for_workspace(workspace_id, limit=10):
+            waiting = payment.status is PaymentStatus.RECEIVED or (
+                payment.status is PaymentStatus.PENDING and (payment.expires_at is None or payment.expires_at > now))
+            if waiting:
+                raise ConflictError("a payment is waiting for this workspace; try again once it is paid or has expired")
         token = await stores.issue_token(str(caller.user_id), workspace_id)
         if caller.email and billing.contacts is not None:
             await billing.contacts.put(workspace_id, caller.email, billing.clock.now(), set_by=str(caller.user_id))
@@ -126,6 +188,7 @@ def register_billing_ops(
         return JSONResponse(content={"ok": True, "result": result})
 
     @router.post("/billing/apple/notify")
+    @counted("apple")
     async def apple_notify(request: Request) -> JSONResponse:
         require_enabled()
         if stores.apple is None:
@@ -144,6 +207,7 @@ def register_billing_ops(
         return await _store_answer(lambda: stores.handle_apple(signed))
 
     @router.post("/billing/google/notify")
+    @counted("google")
     async def google_notify(request: Request) -> JSONResponse:
         require_enabled()
         if stores.google_push is None or stores.google_play is None:

@@ -20,6 +20,7 @@ Money rules this module keeps (several were review findings, D1#1-#8):
 
 from __future__ import annotations
 
+import json
 import logging
 import secrets
 from dataclasses import dataclass, replace
@@ -42,6 +43,10 @@ __all__ = ["BillingService"]
 
 logger = logging.getLogger("aura.billing")
 RECONCILE_AFTER = timedelta(minutes=10)
+#: Where the cycle leaves its heartbeat for the gateway's scrape gauges (SaaS P1-H).
+BILLING_HEARTBEAT_KEY = "billing:cycle:heartbeat"
+#: Kept a week: long enough that "stale" is read from its age, not from a vanished key.
+HEARTBEAT_TTL_S = 7 * 24 * 3600
 FREE_PLAN = "free"
 
 
@@ -62,6 +67,10 @@ class BillingService:
     #: past-due notices go to the Owner's address stored at checkout. Either unset: no email.
     contacts: Any = None
     notifier: Any = None
+    #: A Cache shared with the gateway (Redis on Railway). After each cycle that ran, a small JSON
+    #: heartbeat goes to ``BILLING_HEARTBEAT_KEY`` for the gateway's scrape gauges (SaaS P1-H):
+    #: the cycle is a cron process nothing scrapes.
+    heartbeat: Any = None
 
     # -- buying ---------------------------------------------------------------------------
 
@@ -104,6 +113,10 @@ class BillingService:
             sub = await self.subscriptions.get(workspace_id)
             if sub is None or sub.status in (SubscriptionStatus.EXPIRED, SubscriptionStatus.CANCELED):
                 raise ConflictError("there is no subscription to cancel")
+            if sub.provider != "fawry":
+                # Only the store can stop its own renewals: marking it canceled here would leave
+                # the person charged while AURA said otherwise (SaaS P1-F2b).
+                raise ConflictError("this subscription is managed in the App Store or Google Play; cancel it there")
             await self.subscriptions.put(replace(sub, status=SubscriptionStatus.CANCELED, updated_at=self.clock.now()))
         finally:
             await lock.release()
@@ -118,6 +131,7 @@ class BillingService:
                 "period_start": sub.period_start.isoformat(), "period_end": sub.period_end.isoformat(),
                 "grace_until": sub.grace_until.isoformat() if sub.grace_until else None,
                 "card_on_file": sub.card_token is not None,
+                "provider": sub.provider,
             },
             "payments": [{
                 "id": p.id, "plan": p.plan_id, "seats": p.seats, "amount_piastres": p.amount_piastres,
@@ -282,42 +296,69 @@ class BillingService:
         cycle_lock = await self.locks.try_lock_cycle()
         if cycle_lock is None:
             return {**counts, "skipped": True}
+        failures_before = getattr(self.notifier, "failures", 0)
         try:
-            now = self.clock.now()
-            lead = timedelta(days=self.settings.renewal_lead_days)
-            for due in await self.subscriptions.due(now + lead):
-                lock = await self.locks.lock_workspace(due.workspace_id)
-                try:
-                    await self._cycle_one(due.workspace_id, counts)
-                finally:
-                    await lock.release()
-            for payment in await self.payments.received():
-                lock = await self.locks.lock_workspace(payment.workspace_id)
-                try:
-                    if await self._settle(payment.id, PaymentStatus.PAID, payment.amount_piastres, None, None) == "applied":
-                        counts["reconciled"] += 1
-                except Exception:
-                    counts["errors"] += 1
-                    logger.warning("received payment could not be applied", exc_info=True, extra={"payment_id": payment.id})
-                finally:
-                    await lock.release()
-            for payment in await self.payments.pending(before=now - RECONCILE_AFTER):
-                try:
-                    answer = await self.provider.status(payment.id)
-                except Exception:
-                    counts["errors"] += 1
-                    logger.warning("payment status could not be read", exc_info=True, extra={"payment_id": payment.id})
-                    continue
-                lock = await self.locks.lock_workspace(payment.workspace_id)
-                try:
-                    outcome = await self._settle(payment.id, answer.status, answer.amount_piastres, answer.provider_ref, None)
-                finally:
-                    await lock.release()
-                if outcome == "applied":
-                    counts["reconciled"] += 1
+            await self._run_cycle(counts)
+        except Exception:
+            # An aborted cycle is still a cycle that ran with an error: the heartbeat says so, so
+            # AuraBillingCycleErrors sees it rather than only a stale cycle hours later (review H#4).
+            counts["errors"] += 1
+            await self._beat(counts, getattr(self.notifier, "failures", 0) - failures_before)
+            raise
         finally:
             await cycle_lock.release()
+        await self._beat(counts, getattr(self.notifier, "failures", 0) - failures_before)
         return counts
+
+    async def _beat(self, counts: dict, email_failures: int) -> None:
+        """Best-effort: a cache outage is logged, never a failed cycle."""
+        if self.heartbeat is None:
+            return
+        beat = {"at": self.clock.now().timestamp(), "errors": counts["errors"], "email_failures": email_failures}
+        try:
+            await self.heartbeat.set(BILLING_HEARTBEAT_KEY, json.dumps(beat).encode(), ttl_s=HEARTBEAT_TTL_S)
+        except Exception:
+            logger.warning("billing heartbeat not written", exc_info=True)
+
+    async def _run_cycle(self, counts: dict) -> None:
+        """The cycle itself. The caller holds the cycle lock."""
+        now = self.clock.now()
+        lead = timedelta(days=self.settings.renewal_lead_days)
+        for due in await self.subscriptions.due(now + lead):
+            lock = await self.locks.lock_workspace(due.workspace_id)
+            try:
+                await self._cycle_one(due.workspace_id, counts)
+            finally:
+                await lock.release()
+        for payment in await self.payments.received():
+            lock = await self.locks.lock_workspace(payment.workspace_id)
+            try:
+                if await self._settle(payment.id, PaymentStatus.PAID, payment.amount_piastres, None, None) == "applied":
+                    counts["reconciled"] += 1
+            except Exception:
+                counts["errors"] += 1
+                logger.warning("received payment could not be applied", exc_info=True, extra={"payment_id": payment.id})
+            finally:
+                await lock.release()
+        for payment in await self.payments.pending(before=now - RECONCILE_AFTER):
+            try:
+                answer = await self.provider.status(payment.id)
+            except Exception:
+                counts["errors"] += 1
+                logger.warning("payment status could not be read", exc_info=True, extra={"payment_id": payment.id})
+                continue
+            lock = await self.locks.lock_workspace(payment.workspace_id)
+            try:
+                outcome = await self._settle(payment.id, answer.status, answer.amount_piastres, answer.provider_ref, None)
+            except Exception:
+                # One payment that cannot be settled must not stop the rest of the cycle (review H#4).
+                counts["errors"] += 1
+                logger.warning("pending payment could not be settled", exc_info=True, extra={"payment_id": payment.id})
+                continue
+            finally:
+                await lock.release()
+            if outcome == "applied":
+                counts["reconciled"] += 1
 
     async def _cycle_one(self, workspace_id: str, counts: dict) -> None:
         """Caller holds the workspace lock. Works on a fresh read, never the ``due`` snapshot."""

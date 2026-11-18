@@ -138,6 +138,25 @@ jobs:
           )
           "
 
+      # Owner decision 2026-11-18 (SaaS P1-G): the sensitive-capable source is one L4, always on.
+      # Asked for on every deploy, so a Space set back to sleep or to another GPU in its settings
+      # returns to the decided state. vars.HF_SPACE_HARDWARE overrides the flavor; it never
+      # sleeps (-1). Pinned by tests/deployment/test_inference_contract.py.
+      - name: Keep the Space on its GPU and awake
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
+          HF_SPACE_HARDWARE: ${{ vars.HF_SPACE_HARDWARE || 'l4x1' }}
+        run: |
+          python -c "
+          import os
+          from huggingface_hub import HfApi
+          runtime = HfApi().request_space_hardware(
+              os.environ['HF_SPACE_ID'], os.environ['HF_SPACE_HARDWARE'], sleep_time=-1,
+          )
+          print('requested hardware:', runtime.requested_hardware, 'sleep_time:', runtime.sleep_time)
+          "
+
       - name: Wait for the Space to build and report ready
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -147,7 +166,7 @@ jobs:
           import os, sys
           from huggingface_hub import HfApi
           api = HfApi()
-          info = api.space_runtime(os.environ['HF_SPACE_ID'])
+          info = api.get_space_runtime(os.environ['HF_SPACE_ID'])
           print('stage:', info.stage)
           sys.exit(0 if info.stage == 'RUNNING' else 1)
           " || echo "::warning::Space did not report RUNNING immediately -- check the Space logs; cold builds can take several minutes."

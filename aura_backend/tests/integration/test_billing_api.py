@@ -116,3 +116,23 @@ def test_the_fawry_secure_key_never_appears_in_settings_output(monkeypatch) -> N
     assert settings.billing.fawry_configured
     for redact in (True, False):
         assert "very-secret-fawry-key" not in _json.dumps(settings.as_dict(redact=redact))
+
+
+def test_billing_status_lists_the_pro_store_products(client, container, enabled) -> None:
+    """SaaS P1-F2b: the app reads which store product sells Pro from the server, not a build."""
+    container.store_billing.products = {"apple": {"aura.pro.monthly": "pro"}, "google": {}}
+    ws = _personal(client, "ann")
+    body = client.get(f"/api/v3/workspaces/{ws}/billing", headers=_as("ann")).json()
+    assert body["store_products"] == {"apple": ["aura.pro.monthly"]}
+
+
+def test_store_token_refused_while_a_fawry_reference_can_be_paid(client, container, enabled) -> None:
+    """SaaS P1-F2b review #2: paying that reference after a store purchase would make the store
+    subscription a Fawry one while the store kept charging, so no store purchase starts."""
+    ws = _personal(client, "ann")
+    assert client.post(f"/api/v3/workspaces/{ws}/billing/store-token", headers=_as("ann")).status_code == 201
+    checkout = client.post(f"/api/v3/workspaces/{ws}/billing/checkout", headers=_as("ann"), json={"plan": "pro", "seats": 1})
+    assert checkout.status_code == 201
+    refused = client.post(f"/api/v3/workspaces/{ws}/billing/store-token", headers=_as("ann"))
+    assert refused.status_code == 409, refused.text
+    assert "payment is waiting" in refused.json()["message"]

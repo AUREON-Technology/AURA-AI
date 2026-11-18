@@ -10,8 +10,10 @@ import '../../../core/network/aura_failure.dart';
 import '../../../core/network/aura_failure_view.dart';
 import '../../../core/workspaces/active_workspace.dart';
 import '../../../l10n/l10n.dart';
+import '../data/store_gateway.dart';
 import '../data/workspace_models.dart';
 import '../data/workspaces_client.dart';
+import 'store_purchase.dart';
 import 'workspace_providers.dart';
 
 /// A macOS build distributed outside the Mac App Store (`--dart-define=DIRECT_DISTRIBUTION=true`).
@@ -19,7 +21,8 @@ const _directDistribution = bool.fromEnvironment('DIRECT_DISTRIBUTION');
 
 /// Whether this build may sell a plan with Fawry: the web, Windows and Linux builds, and a macOS
 /// build only when distributed directly. App-store builds (iOS, Android, Mac App Store) may not
-/// steer to outside payment, so they only show the plan (in-app purchase is F2b; review #4).
+/// steer to outside payment: iOS and Android sell through their store instead (F2b), and the Mac
+/// App Store build sells nothing in phase 1.
 final canCheckoutHereProvider = Provider<bool>((ref) =>
     kIsWeb ||
     defaultTargetPlatform == TargetPlatform.windows ||
@@ -146,12 +149,37 @@ class _BillingSection extends ConsumerWidget {
       children.add(Text(l10n.planOwnerOnly, key: const Key('plan-owner-only')));
     } else if (status == null) {
       children.add(Text(l10n.planBillingOff, key: const Key('plan-billing-off')));
+    } else if (ref.watch(storeGatewayProvider).kind != null) {
+      children.add(_storeArea(context, status!));
     } else if (!ref.watch(canCheckoutHereProvider)) {
-      children.add(Text(l10n.planUpgradeMobile, key: const Key('plan-mobile')));
+      children.add(Text(l10n.planBillingOff, key: const Key('plan-mobile')));
+    } else if (sub != null && sub.fromStore && sub.live) {
+      // Bought in a store: only the store can change or cancel it, and a Fawry purchase on top
+      // would charge twice.
+      children.add(Text(l10n.planStoreElsewhere, key: const Key('plan-store-elsewhere')));
     } else {
       children.add(_Upgrade(workspace: workspace, current: sub));
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children);
+  }
+
+  /// iOS and Android: the store's purchase for a personal workspace, never a mention of another
+  /// way to pay (store anti-steering rules).
+  Widget _storeArea(BuildContext context, BillingStatus status) {
+    final l10n = context.l10n;
+    final sub = status.subscription;
+    if (workspace.isTeam) return Text(l10n.planTeamNotInApp, key: const Key('plan-mobile'));
+    if (sub != null && sub.live && sub.fromStore) {
+      return StoreManage(subscription: sub, storeProducts: status.storeProducts);
+    }
+    // A Fawry reference that can still be paid would, once paid, turn a store subscription into a
+    // Fawry one while the store kept charging (F2b review #2). The backend refuses it too.
+    final now = DateTime.now().toUtc();
+    final payable = status.payments.any((p) => p.status == 'pending' && (p.expiresAt?.isAfter(now) ?? false));
+    if (payable || (sub != null && sub.provider == 'fawry' && const {'active', 'past_due', 'grace'}.contains(sub.status))) {
+      return Text(l10n.planFawryActive, key: const Key('plan-fawry-active'));
+    }
+    return StoreUpgrade(workspace: workspace);
   }
 }
 
