@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:aura_client/core/auth/refresh_token_store.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
+import 'package:aura_client/features/auth/presentation/auth_provider.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -45,6 +46,20 @@ class _PersistentRefreshStore implements RefreshTokenStore, RefreshRetryKeyStore
 
   @override
   Future<void> deleteUnanswered() async => unanswered = null;
+}
+
+/// Signed in with an identity token available for `/token`; records whether the session was ended.
+class _SignedInAuth extends AuthNotifier {
+  int expiries = 0;
+
+  @override
+  Future<UserProfile?> build() async => UserProfile(id: 'u', email: 'u@example.com', displayName: 'U');
+
+  @override
+  Future<String?> getIdToken() async => 'google-id-token';
+
+  @override
+  Future<void> expireSession({bool planRequired = false}) async => expiries++;
 }
 
 void main() {
@@ -563,5 +578,56 @@ void main() {
       expect(requests.single.headers['Authorization'], 'Bearer firebase-mac');
       expect(attestations, 0, reason: 'macOS has no attestation the backend could verify');
     });
+  });
+
+  // Backend B3: with its auth state unreadable, every sign-in route and `/refresh` answer a
+  // retryable 503 `auth_state_unavailable` instead of issuing or failing open (a desktop device
+  // session's spent refresh token is put back). That is "try again later", never a sign-out: the
+  // refresh token stays, the session stays, and the retry carries the same retry_key.
+  test('a 503 auth_state_unavailable keeps the session and retries with the same key', () async {
+    final store = _PersistentRefreshStore('refresh-1');
+    const unavailable = '{"error": "auth_state_unavailable", "retryable": true}';
+    var down = true;
+    final refreshKeys = <String>[];
+    final client = MockClient((request) async {
+      if (request.url.path.endsWith('/auth/refresh')) {
+        refreshKeys.add((jsonDecode(request.body) as Map<String, dynamic>)['retry_key'] as String);
+        if (down) return http.Response(unavailable, 503);
+        return http.Response(
+          jsonEncode({'access_token': 'access-2', 'refresh_token': 'refresh-2', 'expires_in': 900}),
+          200,
+        );
+      }
+      if (request.url.path.endsWith('/auth/token')) return http.Response(unavailable, 503);
+      fail('unexpected ${request.url}');
+    });
+    late _SignedInAuth auth;
+    final container = ProviderContainer(overrides: [
+      authProvider.overrideWith(() => auth = _SignedInAuth()),
+      tokenManagerProvider.overrideWith((ref) => TokenManager(
+            ref,
+            httpClient: client,
+            store: store,
+            attestationHeaders: (_) async => const {'X-Device-Attestation': 'a'},
+          )),
+    ]);
+    addTearDown(container.dispose);
+    await container.read(authProvider.future);
+    final tm = container.read(tokenManagerProvider);
+
+    // A request was just answered 401, so this renewal decides whether the session lives.
+    tm.invalidateAccessToken();
+    expect(await tm.getValidAccessToken(), isNull);
+    expect(auth.expiries, 0, reason: 'a server that cannot answer has not refused the session');
+    expect(store.token, 'refresh-1');
+    expect(store.unanswered?.key, refreshKeys.single, reason: 'kept for the retry, on disk');
+    expect(container.read(authExchangeFailureProvider), isNot(AuthExchangeFailure.deviceAttestationRejected));
+
+    down = false;
+    expect(await tm.getValidAccessToken(), 'access-2');
+    expect(refreshKeys, hasLength(2));
+    expect(refreshKeys[1], refreshKeys[0]);
+    expect(store.token, 'refresh-2');
+    expect(store.unanswered, isNull);
   });
 }
