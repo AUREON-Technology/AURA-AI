@@ -34,8 +34,12 @@ ENV NEXT_BASE_PATH=$NEXT_BASE_PATH
 ENV NEXT_PUBLIC_BASE_PATH=$NEXT_PUBLIC_BASE_PATH
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
-COPY --from=build /app/.next/standalone ./
-COPY --from=build /app/.next/static ./.next/static
-COPY --from=build /app/public ./public
+# The server runs as the image's unprivileged `node` user (uid 1000), not root (audit F52). It
+# owns what it may write at runtime: Next creates .next/cache (image optimisation, fetch cache)
+# under the standalone tree, so that tree is copied in owned by `node`.
+COPY --from=build --chown=node:node /app/.next/standalone ./
+COPY --from=build --chown=node:node /app/.next/static ./.next/static
+COPY --from=build --chown=node:node /app/public ./public
+USER node
 EXPOSE 3000
 CMD ["node", "server.js"]
