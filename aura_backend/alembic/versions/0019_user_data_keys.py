@@ -54,5 +54,27 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # Dropping this table destroys every user's data key, and with it the ability to read any
-    # gcm2 value. Only ever run against a database whose synced rows are still legacy-only.
+    # gcm2 value (audit F34). So it only runs on a table with no keys in it -- an empty database,
+    # as the migration round-trip test walks, or one whose synced rows are still legacy-only.
+    # With keys present it refuses, and Alembic's single transaction rolls back the whole run.
+    op.execute(REFUSE_WHILE_KEYS_EXIST)
     op.execute("DROP TABLE IF EXISTS aura_user_data_keys")
+
+
+#: In SQL rather than Python so it also holds in `alembic downgrade --sql` output. EXECUTE, so a
+#: database where the table is already gone does not fail to plan the count.
+REFUSE_WHILE_KEYS_EXIST = """
+    DO $$
+    DECLARE
+        keys bigint;
+    BEGIN
+        IF to_regclass('aura_user_data_keys') IS NOT NULL THEN
+            EXECUTE 'SELECT count(*) FROM aura_user_data_keys' INTO keys;
+            IF keys > 0 THEN
+                RAISE EXCEPTION 'refusing to downgrade 0019: aura_user_data_keys holds % wrapped data key(s), and dropping them makes every value sealed under them unreadable for good', keys
+                    USING HINT = 'Re-encrypt those values to the legacy format and delete the keys first, or restore a backup taken before 0019.';
+            END IF;
+        END IF;
+    END
+    $$
+"""
