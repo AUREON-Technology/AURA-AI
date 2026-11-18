@@ -97,6 +97,7 @@ dependencies:
   # abbreviation or an offset). Sent as X-Client-Timezone so the backend computes "today" for
   # insights and the daily briefing in the user's day, not UTC's (audit F-17).
   flutter_timezone: ^5.1.1
+  firebase_auth: ^6.7.1
 dev_dependencies:
   flutter_launcher_icons: ^0.13.1
   flutter_test:

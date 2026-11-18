@@ -100,6 +100,76 @@ uses for the browser's non-attested path. This is a real relaxation of the attes
 requirement for one platform, made deliberately and narrowly rather than silently, and confined
 to identity — it grants no bypass of `ToolPolicy`, taint, or the daemon's own containment.
 
+### Customers (SaaS P1-E, 2026-11-17): threat model
+
+Until P1-E the desktop sign-in was for console operators only (audit F-09): it skips device
+attestation, so any Google account could otherwise mint there what a phone gets only after Play
+Integrity or App Attest. The owner decided (2026-11-16) to open the desktop Engineer to paying
+customers. This section is the threat-model change that decision required. It applies only with
+`AURA_ENGINEER_FOR_CUSTOMERS=true`. With the switch off, every route behaves as before.
+
+**Who can now hold a desktop session.** An operator, as before. Otherwise only a person with at
+least one workspace (personal, or a team they belong to) whose plan includes the Engineer, which is
+Pro or Team (`PlanService.engineer_entitled`). That applies at `/desktop/login`, at pairing
+approval, and at every desktop refresh.
+
+**Why the missing attestation stops mattering.** A customer desktop session, and the daemon token
+paired from it, carries `channel=consumer_desktop`. `services.rbac.get_user_role` caps that channel
+at `User` on issue, on every refresh, and in the gateway's per-request resolution. It is the same
+mechanism as the customer browser sign-in (`consumer_web`, Plan B). So an unattested desktop
+session is worth exactly what an unattested browser session is already worth, and never a
+console role, even when the person's address is on an operator list.
+
+**What stays mandatory.** The Engineer's safety on someone's own computer rests on four things:
+- `ToolPolicy` confirmation (ADR-006);
+- taint: a tainted turn is held for confirmation before any side effect on the user's machine,
+  whatever `block_side_effects_when_tainted` says;
+- the daemon's own folder grants and containment;
+- credentials that belong to the person, not the operator.
+
+Startup therefore refuses the switch alongside any of these:
+- `AURA_TOOLS_REQUIRE_CONFIRMATION=false`;
+- `AURA_SANDBOX_ENABLED=true` (server sandbox workspaces for customers are phase 1b);
+- `AURA_GITHUB_ENABLED` without OAuth (one shared operator token);
+- `AURA_MCP_ENABLED` (the operator's MCP servers);
+- `User` in `AURA_ENGINEER_AGENT_ROLES` (a role grant to everyone would skip every plan check).
+
+**Abuse limits.** The new entry points are open beyond operators, so each is limited:
+- desktop sign-ins and pairing starts, per client address: 10 a minute;
+- wrong pairing codes, per person: 5 an hour (correct approvals are not counted);
+- paired daemons, per person: 10;
+- app sign-ins, per person: the newest 10 are kept, and older ones are revoked.
+
+These limits are in-process and per worker, so a deployment with N workers allows N times as
+many. An IPv6 caller is counted per /64. A per-address limit is a burst bound, not a guarantee;
+the per-person limits cannot be forged.
+
+**Revocation on downgrade.** Losing Pro, or leaving the only team that had it, ends the desktop
+Engineer through three independent paths:
+- the next desktop refresh is 401 (access tokens live 15 minutes);
+- the daemon socket re-checks entitlement on its 60-second credential recheck and closes;
+- the next turn carries no `engineer_agent` capability (`admit_turn`, Plan C).
+
+Paired devices are not deleted. Upgrading again works without re-pairing, and the person can
+still revoke devices in Settings. A turn already running when the downgrade lands can keep
+calling the daemon until the socket's next recheck (at most 60 seconds).
+
+A failed plan lookup is not a downgrade. Sign-in and pairing answer 503. A refresh answers 503
+and puts the refresh token back, so the app can retry. A daemon already connected stays until a
+recheck succeeds.
+
+Sign-in, pairing and the daemon socket accept an Engineer plan on *any* of the person's
+workspaces. A turn uses only the *active* workspace's plan. A Team member whose personal
+workspace is Free can therefore pair a daemon, but gets the Engineer only in the team. This
+fails closed, and it is deliberate: the daemon belongs to the person, and the plan belongs to
+the workspace.
+
+**Still not offered to customers:** the server-side sandbox and durable workspaces (ADR-013/014),
+MCP, and a shared GitHub token. Tests: `tests/integration/test_desktop_engineer_customers.py`,
+`tests/integration/test_engineer_for_customers.py`,
+`tests/unit/test_engineer_for_customers_config.py`. Setup:
+`docs/deployment/desktop-engineer-customers.md`.
+
 ## Consequences
 
 - `container.sandbox_runner` is now always non-`None` (`CompositeSandboxRunner`), so

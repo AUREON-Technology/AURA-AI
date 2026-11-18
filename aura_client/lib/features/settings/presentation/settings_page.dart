@@ -6,6 +6,7 @@ import 'package:aura_client/core/config/backend_url_settings.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/features/auth/presentation/delete_account_confirmation.dart';
 import 'package:aura_client/features/engineering/presentation/engineer_consent_tile.dart';
+import 'package:aura_client/features/workspaces/presentation/workspace_tile.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
 /// "You" — grouped as Account, (Desktop,) Your AURA, Engineer, System and
@@ -45,6 +46,16 @@ class SettingsPage extends ConsumerWidget {
                   padding: EdgeInsets.zero,
                   child: Column(
                     children: [
+                      const WorkspaceTile(),
+                      const TeamChatsTile(),
+                      const _RowDivider(),
+                      AuraListTile(
+                        key: const Key('plan-tile'),
+                        icon: Icons.workspace_premium_outlined,
+                        title: l10n.planTitle,
+                        onTap: () => context.push('/plan'),
+                      ),
+                      const _RowDivider(),
                       AuraListTile(
                         icon: Icons.person_outline,
                         title: l10n.settingsProfileTitle,
@@ -75,6 +86,14 @@ class SettingsPage extends ConsumerWidget {
                         title: l10n.devicesTitle,
                         subtitle: l10n.settingsDevicesSubtitle,
                         onTap: () => context.push('/desktop-devices'),
+                      ),
+                      const _RowDivider(),
+                      AuraListTile(
+                        key: const Key('sign-in-methods-tile'),
+                        icon: Icons.key_outlined,
+                        title: l10n.signInMethodsTitle,
+                        subtitle: l10n.signInMethodsSubtitle,
+                        onTap: () => context.push('/sign-in-methods'),
                       ),
                       const _RowDivider(),
                       const DeleteAccountTile(),

@@ -17,6 +17,8 @@ a time behind a flag.
 import asyncio
 import base64
 import binascii
+import hashlib
+from dataclasses import replace
 import json
 import os
 from datetime import datetime, timedelta
@@ -146,7 +148,8 @@ class Principal:
     """
 
     __slots__ = (
-        "user_id", "email", "role", "capabilities", "service_key", "workspace", "client_platform"
+        "user_id", "email", "role", "capabilities", "service_key", "workspace", "client_platform",
+        "email_verified",
     )
 
     def __init__(
@@ -159,6 +162,7 @@ class Principal:
         service_key: Any = None,
         workspace: WorkspaceContext | None = None,
         client_platform: str | None = None,
+        email_verified: bool = False,
     ) -> None:
         self.user_id = user_id
         self.email = email
@@ -171,6 +175,9 @@ class Principal:
         # store by the authenticator. ``None`` is the caller's personal scope. It carries a
         # *workspace* role only -- never a platform role or a capability.
         self.workspace = workspace
+        # Whether the identity provider vouched for ``email`` (SaaS P1-B). Creating or joining a
+        # team requires it; personal use does not.
+        self.email_verified = email_verified
         # WP8: ``"desktop"`` only when the access token was issued to the desktop app (a signed
         # claim the authenticator copies); ``None`` for phone, web and every other caller.
         self.client_platform = client_platform
@@ -386,6 +393,69 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 status_code=403,
                 detail=AuthorizationError("only a workspace owner or admin can change its knowledge").to_dict(),
             )
+
+    plans = getattr(container, "plans", None)
+
+    async def admit_turn(caller: Principal, agent: str | None, turn: Any) -> tuple[Any, Any]:
+        """SaaS P1-C: reserve one message against the workspace's plan. Returns the reservation
+        to give back if the turn fails (None when unmetered) and the turn to run.
+
+        Engineer is decided by the workspace's plan, not the persona name: an Engineer turn on a
+        plan without it is refused, and any other turn loses the ``engineer_agent`` capability,
+        so neither the orchestrator's coding tools nor a delegation to the Engineer can reach it
+        (review C#2). Raises PlanLimitError (402)."""
+        if plans is None:
+            return None, turn
+        workspace_id = await plans.metered_workspace(caller)
+        if workspace_id is None:
+            return None, turn
+        plan, _seats = await plans.entitlement(workspace_id)
+        if plan.engineer and container.settings.security.engineer_for_customers \
+                and "engineer_agent" not in turn.capabilities:
+            # SaaS P1-E: a customer's Engineer comes from their workspace's plan, not a role.
+            turn = replace(turn, capabilities=(*turn.capabilities, "engineer_agent"))
+        if not plan.engineer:
+            if agent == "engineer":
+                await plans.require_engineer(workspace_id)
+            if "engineer_agent" in turn.capabilities:
+                turn = replace(turn, capabilities=tuple(c for c in turn.capabilities if c != "engineer_agent"))
+        return await plans.admit_message(workspace_id), turn
+
+    async def release_turn(reservation: Any) -> None:
+        if reservation is not None:
+            try:
+                await plans.release(reservation)
+            except Exception:
+                logger.warning("could not give back a reserved message", exc_info=True)
+
+    async def storage_workspace(caller: Principal) -> str | None:
+        return None if plans is None else await plans.metered_workspace(caller)
+
+    async def storage_to_reserve(caller: Principal, text: str) -> int:
+        """Bytes an ingest may add: none when this exact content is already stored for this
+        owner (the engine dedupes on the same hash, so a re-upload stores nothing new)."""
+        stripped = text.strip()
+        digest = hashlib.sha256(stripped.encode("utf-8")).hexdigest()
+        if await container.documents.get_by_hash(digest, owner_id=caller.knowledge_owner) is not None:
+            return 0
+        return len(stripped.encode("utf-8"))
+
+    async def settle_storage(workspace_id: str | None, reserved: int, result: Any) -> None:
+        """Correct the reserved estimate to what the store kept: nothing for a duplicate, the
+        stored content's length otherwise -- so a delete later gives back exactly this much."""
+        if workspace_id is None:
+            return
+        kept = 0
+        if result is not None and getattr(result, "created", False) and result.document is not None:
+            kept = len(result.document.content.encode("utf-8"))
+            if result.document.version > 1:
+                # A new version replaces the previous one: only the difference is new storage,
+                # and deleting the document later frees the latest version's size (review C#1).
+                previous = await container.documents.get(result.document.id, version=result.document.version - 1)
+                if previous is not None:
+                    kept -= len(previous.content.encode("utf-8"))
+        if kept != reserved:
+            await plans.meter.add(workspace_id, "storage_bytes", "all", kept - reserved)
 
     # Optional `Idempotency-Key` support (roadmap P1.4; see api/idempotency.py). Set before any
     # route is declared: APIRouter reads `route_class` at decoration time. A route opts in with
@@ -612,7 +682,15 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         """One complete turn. Use ``/chat/stream`` for incremental output."""
         await enforce_rate_limit(request, caller, "chat")
         turn = await to_turn(payload, caller, request)
-        result = await container.kernel.run(turn)
+        reservation, turn = await admit_turn(caller, payload.agent, turn)
+        try:
+            result = await container.kernel.run(turn)
+        except BaseException:
+            await release_turn(reservation)
+            raise
+        if result.telemetry.outcome.value != "success":
+            # A failed turn does not use up the month (spec 5.3).
+            await release_turn(reservation)
         if caller.is_service:
             # Chat turns are not audited for people; a service's are, so one interpretation can be
             # traced from the calling system's correlation id to the turn that produced it.
@@ -745,16 +823,25 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             raise ValidationError("response_schema is supported on POST /api/v3/chat only, not on the stream")
         await enforce_rate_limit(request, caller, "chat")
         turn = await to_turn(payload, caller, request)
+        reservation, turn = await admit_turn(caller, payload.agent, turn)
 
         async def events() -> AsyncIterator[bytes]:
+            completed = False
             try:
                 async for frame in container.kernel.stream(turn):
                     event = frame.get("type", "message")
+                    if event == "done":
+                        completed = True
                     yield f"event: {event}\ndata: {json.dumps(frame)}\n\n".encode()
             except Exception as exc:  # pragma: no cover - defensive
                 logger.exception("stream failed")
                 payload_ = {"type": "error", "error": "internal_error", "message": type(exc).__name__}
                 yield f"event: error\ndata: {json.dumps(payload_)}\n\n".encode()
+            finally:
+                # Counted only once the turn finished (a `done` frame): an error frame, an
+                # exception or a client gone before `done` gives the message back (spec 5.3).
+                if not completed:
+                    await release_turn(reservation)
 
         return StreamingResponse(
             with_keepalive(events(), interval_s=SSE_KEEPALIVE_S),
@@ -846,13 +933,21 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
     ) -> JSONResponse:
         await enforce_rate_limit(request, caller, "ingest")
         require_knowledge_write(caller)
-        result = await container.knowledge.ingest(
-            content=payload.content,
-            title=payload.title,
-            document_id=DocumentId(payload.document_id) if payload.document_id else None,
-            owner_id=caller.knowledge_owner,
-            metadata=payload.metadata,
-        )
+        storage_ws = await storage_workspace(caller)
+        reserved = await storage_to_reserve(caller, payload.content) if storage_ws is not None else 0
+        if storage_ws is not None:
+            await plans.admit_storage(storage_ws, reserved)
+        result = None
+        try:
+            result = await container.knowledge.ingest(
+                content=payload.content,
+                title=payload.title,
+                document_id=DocumentId(payload.document_id) if payload.document_id else None,
+                owner_id=caller.knowledge_owner,
+                metadata=payload.metadata,
+            )
+        finally:
+            await settle_storage(storage_ws, reserved, result)
         if container.cag is not None and result.document is not None:
             await container.cag.on_document_changed(
                 result.document.id, owner_id=caller.knowledge_owner
@@ -900,9 +995,18 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         if extraction.unreadable_pages and container.ocr_engine is not None:
             extraction = await apply_ocr(extraction, container.ocr_engine)
 
-        result = await container.knowledge.ingest(
-            title=title, owner_id=caller.knowledge_owner, segments=extraction.blocks,
-        )
+        storage_ws = await storage_workspace(caller)
+        joined = "\n\n".join(block.text for block in extraction.blocks if block.text)
+        reserved = await storage_to_reserve(caller, joined) if storage_ws is not None else 0
+        if storage_ws is not None:
+            await plans.admit_storage(storage_ws, reserved)
+        result = None
+        try:
+            result = await container.knowledge.ingest(
+                title=title, owner_id=caller.knowledge_owner, segments=extraction.blocks,
+            )
+        finally:
+            await settle_storage(storage_ws, reserved, result)
         if container.cag is not None and result.document is not None:
             await container.cag.on_document_changed(
                 result.document.id, owner_id=caller.knowledge_owner
@@ -958,9 +1062,14 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         await enforce_rate_limit(request, caller, "ingest")
         require_knowledge_write(caller)
         doc_id = DocumentId(document_id)
+        stored = await container.documents.get(doc_id)
         removed = await container.knowledge.delete_document(
             doc_id, owner_id=caller.knowledge_owner
         )
+        storage_ws = await storage_workspace(caller)
+        if removed and storage_ws is not None and stored is not None and stored.owner_id == caller.knowledge_owner:
+            # Gives back what settle_storage counted for it (spec 5.3); never below 0.
+            await plans.free_storage(storage_ws, len(stored.content.encode("utf-8")))
         if container.cag is not None:
             await container.cag.on_document_changed(doc_id, owner_id=caller.knowledge_owner)
         return JSONResponse(content={"deleted": True, "chunks_removed": removed})
@@ -2013,6 +2122,36 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         Depends=Depends,
         JSONResponse=JSONResponse,
     )
+
+    from .billing import register_billing_ops
+
+    register_billing_ops(
+        router,
+        container,
+        principal=principal,
+        require_super_admin=require_super_admin,
+        Depends=Depends,
+        JSONResponse=JSONResponse,
+        Request=Request,
+        Response=Response,
+    )
+
+    from .admin_plans import register_plan_ops
+
+    register_plan_ops(
+        router,
+        container,
+        principal=principal,
+        require_super_admin=require_super_admin,
+        idempotent=idempotent,
+        Depends=Depends,
+        JSONResponse=JSONResponse,
+    )
+
+    from .shared_conversations import register_sharing_ops
+
+    register_sharing_ops(router, container, principal=principal, Depends=Depends,
+                         JSONResponse=JSONResponse, Response=Response)
 
     from .workspaces import register_workspace_ops
 

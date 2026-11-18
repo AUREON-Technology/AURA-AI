@@ -83,6 +83,9 @@ class Membership:
     role: WorkspaceRole
     joined_at: datetime
     invited_by: str | None = None
+    #: The address they joined with (the creator's verified email, or the invited address), so a
+    #: members list shows people (SaaS P1-F2). None for older memberships and personal ones.
+    email: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

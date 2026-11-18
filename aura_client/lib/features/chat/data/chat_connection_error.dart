@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 
+import '../../../core/network/aura_failure.dart';
 import '../../../l10n/generated/app_localizations.dart';
 import '../../../l10n/generated/app_localizations_en.dart';
 
@@ -36,6 +37,19 @@ const kChatApprovalExpiredText = 'This approval expired. Ask again.';
 
 /// Assistant-row text for a request a guard refused before anything was generated.
 const kChatBlockedText = 'AURA did not answer this request: it was stopped by a safety check.';
+
+/// Prefix stored on assistant rows for a turn the workspace's plan refused (HTTP 402
+/// `plan_limit`, SaaS P1-C/F2). The bubble shows the plain sentence and a "See plans" action;
+/// deliberately without [kChatConnectionErrorPrefix]: retrying reaches the same limit.
+const kChatPlanLimitPrefix = 'Plan limit';
+
+bool isChatPlanLimitText(String text) => text.startsWith('$kChatPlanLimitPrefix: ');
+
+/// The row text for a plan-limit refusal, in [AuraFailure]'s words for it.
+String chatPlanLimitText(Object error) {
+  final failure = AuraFailure.from(error);
+  return '$kChatPlanLimitPrefix: ${failure.title}. ${failure.message}';
+}
 
 // The transcript stores refusal rows as text and syncs them, like the constants above, so they
 // are written in the app's one shipped language. The words live in app_en.arb all the same.

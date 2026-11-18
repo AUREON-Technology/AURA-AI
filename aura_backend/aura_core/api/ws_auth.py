@@ -11,6 +11,7 @@ rules an HTTP request is, within one interval.
 
 from __future__ import annotations
 
+import inspect
 import time
 from typing import Any, Awaitable, Callable
 
@@ -55,7 +56,12 @@ class LiveCredential:
             principal = await self._check(self.token)
         except Exception:
             return False
-        if principal.user_id != self.principal.user_id or not accept(principal):
+        if principal.user_id != self.principal.user_id:
+            return False
+        accepted = accept(principal)
+        if inspect.isawaitable(accepted):  # e.g. a plan lookup (SaaS P1-E)
+            accepted = await accepted
+        if not accepted:
             return False
         self.principal = principal
         self._checked_at = self._clock()

@@ -59,6 +59,33 @@ def may_host(principal: Any) -> bool:
     return ENGINEER_AGENT in principal.capabilities
 
 
+def _host_check(container: Any) -> Callable[[Any], Any]:
+    """Who may keep a daemon connected: whoever :func:`may_host` accepts by role, or -- with
+    ``AURA_ENGINEER_FOR_CUSTOMERS`` -- a customer one of whose workspaces' plans includes the
+    Engineer. Re-run on every credential recheck, so a downgrade closes the socket (SaaS P1-E)."""
+
+    admitted = False
+
+    async def check(principal: Any) -> bool:
+        nonlocal admitted
+        if may_host(principal):
+            admitted = True
+            return True
+        plans = getattr(container, "plans", None)
+        if plans is None or not container.settings.security.engineer_for_customers:
+            return False
+        try:
+            admitted = await plans.engineer_entitled(principal.user_id.value)
+        except Exception:
+            # Admission fails closed; a blip at a later recheck keeps a daemon already admitted
+            # until the next recheck answers (Plan E review #1).
+            logger.warning("could not re-check a customer's plan for their daemon", exc_info=True)
+            return admitted
+        return admitted
+
+    return check
+
+
 def register_host_agent(
     router: Any, container: Any, *, authenticator: Callable,
     recheck_s: float | None = None,
@@ -74,6 +101,7 @@ def register_host_agent(
             logger.exception("host agent accept failed")
             return
 
+        host_allowed = _host_check(container)
         registry = getattr(container, "host_agent_registry", None)
         if registry is None:
             await websocket.close(code=_CLOSE_UNAVAILABLE)
@@ -97,7 +125,7 @@ def register_host_agent(
             await websocket.close(code=_CLOSE_SERVER_ERROR)
             return
 
-        if not may_host(principal):
+        if not await host_allowed(principal):
             # A daemon can only ever be usefully paired to an account the server would actually
             # route engineer-agent tool calls to -- refuse it here rather than registering a
             # session nothing will ever call.
@@ -122,7 +150,7 @@ def register_host_agent(
                     )
                 except asyncio.TimeoutError:
                     message = None
-                if not await credential.still_valid(may_host):
+                if not await credential.still_valid(host_allowed):
                     # Expired, device revoked, or the account no longer may host: the same
                     # answer an HTTP request with this token would now get.
                     await websocket.close(code=_CLOSE_UNAUTHORIZED)
@@ -157,7 +185,7 @@ def register_host_agent(
                         # The session is registered under the original user; a token for anyone
                         # else must end it, not quietly extend it (same rule as voice_live.py).
                         break
-                    if not may_host(renewed):
+                    if not await host_allowed(renewed):
                         break
                     credential.renew(str(frame.get("token") or ""), renewed)
                 # Any other frame type is ignored -- forward compatible with a newer daemon that

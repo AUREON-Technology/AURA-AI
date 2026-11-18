@@ -8,6 +8,7 @@ from aura_core.adapters.runtime import InMemoryAuditSink
 from aura_core.adapters.tenancy import InMemoryTenancyStore
 from aura_core.config.settings import TenancySettings
 from aura_core.domain.errors import AuthorizationError, ConflictError, ValidationError
+from aura_core.domain.plans import PlanLimitError
 from aura_core.domain.tenancy import WorkspaceKind, WorkspaceRole
 from aura_core.tenancy import TenancyService
 
@@ -72,7 +73,7 @@ async def test_member_cannot_invite(service) -> None:
 async def test_seat_limit_counts_open_invites(service) -> None:
     ws = await _team_with(service, ("m1", MEMBER))  # 2 of 3 seats taken
     await service.invite("owner", ws.id, "third@example.com", MEMBER)  # 3rd seat held by an open invite
-    with pytest.raises(ConflictError):
+    with pytest.raises(PlanLimitError):
         await service.invite("owner", ws.id, "fourth@example.com", MEMBER)
 
 
@@ -167,3 +168,22 @@ async def test_container_wires_an_in_memory_tenancy_service(container) -> None:
     assert container.tenancy.settings.default_team_seats == container.settings.tenancy.default_team_seats
     ws = await container.tenancy.create_team("owner", "Acme")
     assert (await container.tenancy.resolve("owner", ws.id))[1].role is OWNER
+
+
+async def test_member_email_from_invite_and_owner(service) -> None:
+    """SaaS P1-F2: the members list shows people, not opaque ids."""
+    ws = await service.create_team("owner", "Acme", owner_email="Owner@Example.com")
+    _invite, token = await service.invite("owner", ws.id, "Bea@Example.com", MEMBER)
+    await service.accept("bea", token)
+    emails = {m.user_id: m.email for m in await service.list_members("owner", ws.id)}
+    assert emails == {"owner": "owner@example.com", "bea": "bea@example.com"}
+
+
+
+async def test_member_email_is_the_joiner_s_own_when_known(service) -> None:
+    """Review F2#7: a forwarded invite link shows who actually joined."""
+    ws = await service.create_team("owner", "Acme", owner_email="owner@example.com")
+    _invite, token = await service.invite("owner", ws.id, "bea@example.com", MEMBER)
+    await service.accept("cal", token, email="Cal@Example.com")
+    emails = {m.user_id: m.email for m in await service.list_members("owner", ws.id)}
+    assert emails["cal"] == "cal@example.com"

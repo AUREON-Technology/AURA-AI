@@ -45,6 +45,7 @@ __all__ = [
     "Environment",
     "AuraSettings",
     "TenancySettings",
+    "BillingSettings",
     "LLMSettings",
     "ProviderConfig",
     "KnowledgeSettings",
@@ -1242,6 +1243,10 @@ class SecuritySettings:
     #: not a side effect of upgrading, matching how AURA_SANDBOX_ENABLED/AURA_GITHUB_ENABLED
     #: default off for the same reason.
     engineer_agent_roles: tuple[str, ...] = ()
+    #: SaaS P1-E: the Engineer agent for customers whose workspace plan includes it, on their own
+    #: computer through a paired desktop app (ADR-011, "Customers"). Off by default; startup
+    #: refuses it beside anything a customer must never reach (``AuraSettings.validate``).
+    engineer_for_customers: bool = False
     #: Roles granted the "project_data" capability -- the gate on every agent and tool compiled
     #: from a deployed Project Blueprint (Track AP7): reading the connected organisation's own
     #: system. Empty by default for the same reason as `engineer_agent_roles`: which staff may
@@ -1278,6 +1283,7 @@ class SecuritySettings:
             allow_mock_attestation=_bool_aliased("ALLOW_MOCK_ATTESTATION", False),
             admin_roles=_list("ADMIN_ROLES", ("Admin", "SuperAdmin")),
             engineer_agent_roles=_list("ENGINEER_AGENT_ROLES", ()),
+            engineer_for_customers=_bool("ENGINEER_FOR_CUSTOMERS", False),
             project_data_roles=_list("PROJECT_DATA_ROLES", ()),
             security_headers_enabled=_bool("SECURITY_HEADERS_ENABLED", True),
             content_security_policy=(_env("CONTENT_SECURITY_POLICY", "") or "").strip(),
@@ -1995,10 +2001,131 @@ class TenancySettings:
     """
 
     default_team_seats: int = 5
+    #: ``AURA_PLAN_CATALOGUE``: JSON replacing the built-in placeholder plans
+    #: (``aura_core/domain/plans.py``, SaaS P1-C). Empty keeps the defaults.
+    plan_catalogue_json: str = ""
 
     @classmethod
     def from_env(cls) -> "TenancySettings":
-        return cls(default_team_seats=_int("TEAM_DEFAULT_SEATS", 5, minimum=2, maximum=1000))
+        return cls(
+            default_team_seats=_int("TEAM_DEFAULT_SEATS", 5, minimum=2, maximum=1000),
+            plan_catalogue_json=(_env("PLAN_CATALOGUE", "") or "").strip(),
+        )
+
+
+FAWRY_SANDBOX_URL = "https://atfawry.fawrystaging.com/ECommerceWeb/Fawry/"
+
+
+@dataclass(frozen=True, slots=True)
+class BillingSettings:
+    """Subscriptions paid through Fawry (SaaS P1-D1). Off until the owner turns it on; every
+    billing route answers 503 until then.
+
+    The secure key is **not a field**: it is read from the environment variable named by
+    ``fawry_secure_key_env`` through a property, like provider API keys, so ``as_dict`` (served on
+    ``/admin/status``) can never walk into it."""
+
+    enabled: bool = False
+    fawry_base_url: str = FAWRY_SANDBOX_URL
+    fawry_merchant_code: str = ""
+    fawry_secure_key_env: str = "AURA_FAWRY_SECURE_KEY"
+    #: ``AURA_PLAN_PRICES``: JSON plan -> piastres per month (per seat for team).
+    prices_json: str = ""
+    renewal_lead_days: int = 3
+    grace_days: int = 7
+    reference_expiry_hours: int = 72
+    #: In-app subscriptions (SaaS P1-D2). Each store is off until its fields are set.
+    apple_bundle_id: str = ""
+    #: ``Production`` (also when empty) or ``Sandbox``. Sandbox purchases are free: testing only.
+    apple_environment: str = ""
+    google_package_name: str = ""
+    #: The audience the Pub/Sub push subscription puts in its OIDC token (the notify URL).
+    google_push_audience: str = ""
+    google_push_service_account: str = ""
+    #: Env var holding the Play service-account JSON. Read through a property, never a field.
+    google_play_credentials_env: str = "AURA_GOOGLE_PLAY_CREDENTIALS_JSON"
+    #: ``AURA_STORE_PRODUCTS``: ``{"apple": {productId: plan}, "google": {productId: plan}}``.
+    store_products_json: str = ""
+
+    @property
+    def google_play_credentials(self) -> dict | None:
+        raw = (os.environ.get(self.google_play_credentials_env, "") or "").strip()
+        if not raw:
+            return None
+        try:
+            value = json.loads(raw)
+        except ValueError:
+            return None
+        return value if isinstance(value, dict) else None
+
+    @property
+    def apple_configured(self) -> bool:
+        return bool(self.apple_bundle_id)
+
+    @property
+    def google_configured(self) -> bool:
+        return bool(self.google_package_name and self.google_push_audience and self.google_push_service_account
+                    and self.google_play_credentials)
+
+    @property
+    def fawry_secure_key(self) -> str:
+        return (os.environ.get(self.fawry_secure_key_env, "") or "").strip()
+
+    @property
+    def fawry_configured(self) -> bool:
+        return bool(self.fawry_merchant_code and self.fawry_secure_key)
+
+    @classmethod
+    def from_env(cls) -> "BillingSettings":
+        return cls(
+            enabled=_bool("BILLING_ENABLED", False),
+            fawry_base_url=(_env("FAWRY_BASE_URL", "") or "").strip() or FAWRY_SANDBOX_URL,
+            fawry_merchant_code=(_env("FAWRY_MERCHANT_CODE", "") or "").strip(),
+            prices_json=(_env("PLAN_PRICES", "") or "").strip(),
+            renewal_lead_days=_int("BILLING_RENEWAL_LEAD_DAYS", 3, minimum=1, maximum=14),
+            grace_days=_int("BILLING_GRACE_DAYS", 7, minimum=0, maximum=60),
+            reference_expiry_hours=_int("FAWRY_REFERENCE_EXPIRY_HOURS", 72, minimum=1, maximum=720),
+            apple_bundle_id=(_env("APPLE_BUNDLE_ID", "") or "").strip(),
+            apple_environment=(_env("APPLE_ENVIRONMENT", "") or "").strip(),
+            google_package_name=(_env("GOOGLE_PACKAGE_NAME", "") or "").strip(),
+            google_push_audience=(_env("GOOGLE_PUSH_AUDIENCE", "") or "").strip(),
+            google_push_service_account=(_env("GOOGLE_PUSH_SERVICE_ACCOUNT", "") or "").strip(),
+            store_products_json=(_env("STORE_PRODUCTS", "") or "").strip(),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class EmailSettings:
+    """Customer email over SMTP (SaaS P1-F1): invites, receipts, renewal and past-due notices.
+    Off until configured; any transactional provider's SMTP endpoint works. The password is read
+    from the env var named by ``smtp_password_env`` through a property, never a field."""
+
+    enabled: bool = False
+    #: e.g. ``AURA <billing@aureon-ai.tech>``; the domain needs SPF/DKIM for the provider.
+    from_address: str = ""
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password_env: str = "AURA_SMTP_PASSWORD"
+    smtp_starttls: bool = True
+    #: Where the customer app is served, for links in email (``/invite?token=...``).
+    app_base_url: str = ""
+
+    @property
+    def smtp_password(self) -> str:
+        return (os.environ.get(self.smtp_password_env, "") or "").strip()
+
+    @classmethod
+    def from_env(cls) -> "EmailSettings":
+        return cls(
+            enabled=_bool("EMAIL_ENABLED", False),
+            from_address=(_env("EMAIL_FROM", "") or "").strip(),
+            smtp_host=(_env("SMTP_HOST", "") or "").strip(),
+            smtp_port=_int("SMTP_PORT", 587, minimum=1, maximum=65535),
+            smtp_username=(_env("SMTP_USERNAME", "") or "").strip(),
+            smtp_starttls=_bool("SMTP_STARTTLS", True),
+            app_base_url=(_env("APP_BASE_URL", "") or "").strip(),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -2145,6 +2272,8 @@ class AuraSettings:
     sandbox: SandboxSettings = field(default_factory=SandboxSettings)
     release: ReleaseSettings = field(default_factory=ReleaseSettings)
     tenancy: TenancySettings = field(default_factory=TenancySettings)
+    billing: BillingSettings = field(default_factory=BillingSettings)
+    email: EmailSettings = field(default_factory=EmailSettings)
 
     @classmethod
     def from_env(cls) -> "AuraSettings":
@@ -2182,6 +2311,8 @@ class AuraSettings:
             sandbox=SandboxSettings.from_env(),
             release=ReleaseSettings.from_env(),
             tenancy=TenancySettings.from_env(),
+            billing=BillingSettings.from_env(),
+            email=EmailSettings.from_env(),
         )
 
     # -- validation --------------------------------------------------------------------
@@ -2194,6 +2325,36 @@ class AuraSettings:
         where one of these is violated.
         """
         problems: list[str] = []
+
+        if self.security.engineer_for_customers:
+            # SaaS P1-E: a customer's Engineer runs on their own computer only. Each of these
+            # would hand customers something that belongs to the operator or is not built for them.
+            if self.sandbox.enabled:
+                problems.append("AURA_ENGINEER_FOR_CUSTOMERS needs AURA_SANDBOX_ENABLED=false: the server "
+                                "sandbox is not open to customers yet (phase 1b)")
+            if self.github.enabled and not self.github.oauth_enabled:
+                problems.append("AURA_ENGINEER_FOR_CUSTOMERS needs AURA_GITHUB_OAUTH_ENABLED (or GitHub off): "
+                                "AURA_GITHUB_ENABLED alone shares the operator's token with every customer")
+            if self.mcp.enabled:
+                problems.append("AURA_ENGINEER_FOR_CUSTOMERS needs AURA_MCP_ENABLED=false: MCP servers are "
+                                "the operator's and would be reachable by every customer's Engineer")
+            if "User" in self.security.engineer_agent_roles:
+                problems.append("AURA_ENGINEER_FOR_CUSTOMERS cannot be combined with User in "
+                                "AURA_ENGINEER_AGENT_ROLES: that grant would skip every plan check")
+            if not self.tools.require_confirmation_for_side_effects:
+                problems.append("AURA_ENGINEER_FOR_CUSTOMERS needs AURA_TOOLS_REQUIRE_CONFIRMATION=true: "
+                                "per-call confirmation stays mandatory for customers (ADR-006)")
+
+        if self.email.enabled and not (self.email.smtp_host and self.email.from_address and self.email.app_base_url):
+            problems.append("AURA_EMAIL_ENABLED needs AURA_SMTP_HOST, AURA_EMAIL_FROM and AURA_APP_BASE_URL")
+
+        if self.billing.apple_environment not in ("", "Production", "Sandbox"):
+            problems.append("billing.apple_environment must be Production, Sandbox or empty")
+        if self.billing.google_package_name and not self.billing.google_configured:
+            # SaaS P1-D2: half a Play configuration would 503 every RTDN push, and Pub/Sub would
+            # retry them for a week before dropping them.
+            problems.append("billing.google_package_name needs AURA_GOOGLE_PUSH_AUDIENCE, "
+                            "AURA_GOOGLE_PUSH_SERVICE_ACCOUNT and the Play credentials JSON")
 
         if self.environment.is_production_like:
             # SEC-05: a single debug flag currently turns every endpoint into an
@@ -2210,6 +2371,10 @@ class AuraSettings:
                 )
             if not self.safety.enabled:
                 problems.append("safety.enabled must be true in staging/production")
+            if self.billing.enabled and not self.billing.fawry_configured:
+                # SaaS P1-D1: billing on with no merchant credentials would answer every checkout
+                # with the in-memory fake provider -- payments nobody can actually make.
+                problems.append("billing.enabled needs AURA_FAWRY_MERCHANT_CODE and AURA_FAWRY_SECURE_KEY")
             if not self.security.rate_limit_enabled:
                 problems.append("security.rate_limit_enabled must be true in staging/production")
             if not self.security.audit_enabled:

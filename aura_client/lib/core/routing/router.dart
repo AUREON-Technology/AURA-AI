@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../features/analytics/presentation/analytics_page.dart';
 import '../../features/auth/presentation/auth_provider.dart';
+import '../../features/auth/presentation/linked_accounts_page.dart';
 import '../../features/auth/presentation/login_page.dart';
 import '../../features/auth/presentation/profile_page.dart';
 import '../../features/automations/presentation/automations_page.dart';
@@ -28,6 +29,11 @@ import '../../features/settings/presentation/backend_environment_page.dart';
 import '../../features/settings/presentation/appearance_page.dart';
 import '../../features/settings/presentation/desktop_devices_page.dart';
 import '../../features/settings/presentation/settings_page.dart';
+import '../../features/workspaces/presentation/invite_accept_page.dart';
+import '../../features/workspaces/presentation/pending_invite.dart';
+import '../../features/workspaces/presentation/plan_page.dart';
+import '../../features/workspaces/presentation/shared_chats_page.dart';
+import '../../features/workspaces/presentation/team_settings_page.dart';
 import '../../l10n/l10n.dart';
 import '../../features/voice_live/presentation/live_voice_page.dart';
 import '../design_system/design_system.dart';
@@ -461,6 +467,7 @@ Future<String?> resolveAppRedirect({
   required bool? onboarded,
   required String location,
   bool? desktop,
+  bool hasPendingInvite = false,
 }) async {
   final isDesktop = desktop ?? isDesktopIde;
   final landing = landingRouteFor(desktop: isDesktop);
@@ -469,13 +476,16 @@ Future<String?> resolveAppRedirect({
 
   if (!isLoggedIn && !isLoggingIn) return '/login';
   if (isLoggedIn && isLoggingIn) {
-    return onboarded == false ? '/onboarding' : landing;
+    if (onboarded == false) return '/onboarding';
+    // An invite link opened while signed out picks up where it left off (SaaS P1-F2).
+    return hasPendingInvite ? '/invite' : landing;
   }
   if (isLoggedIn && onboarded == false && !isOnboarding) {
     return '/onboarding';
   }
   if (isLoggedIn && onboarded == true && isOnboarding) {
-    return landing;
+    // Invitees are usually new: the invite waits through onboarding too (F2 review #2).
+    return hasPendingInvite ? '/invite' : landing;
   }
   if (isLoggedIn && !isReachableRoute(location, desktop: isDesktop)) {
     return landing;
@@ -490,7 +500,11 @@ Widget desktopIdeShellBuilder(BuildContext context, GoRouterState state, Widget 
 
 /// Screens the desktop app (Windows, Linux) shows besides the IDE: account and
 /// settings, nothing else.
-const _desktopScreens = ['/you', '/profile', '/appearance', '/server-environment'];
+const _desktopScreens = [
+  '/you', '/profile', '/appearance', '/server-environment',
+  // Account screens of the customer workspace (SaaS P1-F2).
+  '/workspaces', '/plan', '/sign-in-methods', '/invite', '/team-chats',
+];
 
 /// Whether a signed-in build shows this screen. The mobile app has Chat and
 /// Engineer, and no IDE; Today and Life Hub are hidden. The desktop app is
@@ -512,10 +526,17 @@ final routerProvider = Provider<GoRouter>((ref) {
     initialLocation: appLandingRoute,
     refreshListenable: notifier,
     redirect: (context, state) async {
+      final isLoggedIn = ref.read(authProvider).value != null;
+      final inviteToken = state.uri.queryParameters['token'];
+      if (!isLoggedIn && state.matchedLocation == '/invite' && inviteToken != null && inviteToken.isNotEmpty) {
+        // Held in memory only, never in the URL we redirect to or on disk.
+        ref.read(pendingInviteProvider.notifier).hold(inviteToken);
+      }
       return resolveAppRedirect(
-        isLoggedIn: ref.read(authProvider).value != null,
+        isLoggedIn: isLoggedIn,
         onboarded: ref.read(onboardingGateProvider),
         location: state.matchedLocation,
+        hasPendingInvite: ref.read(pendingInviteProvider) != null,
       );
     },
     routes: [
@@ -563,6 +584,18 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: '/you',
             builder: (context, state) => const SettingsPage(),
+          ),
+          GoRoute(path: '/plan', builder: (context, state) => const PlanPage()),
+          GoRoute(path: '/sign-in-methods', builder: (context, state) => const LinkedAccountsPage()),
+          GoRoute(path: '/invite', builder: (context, state) => InviteAcceptPage(token: state.uri.queryParameters['token'])),
+          GoRoute(path: '/team-chats', builder: (context, state) => const SharedChatsPage()),
+          GoRoute(
+            path: '/team-chats/:sid',
+            builder: (context, state) => SharedChatView(sharedId: state.pathParameters['sid']!),
+          ),
+          GoRoute(
+            path: '/workspaces/:id',
+            builder: (context, state) => TeamSettingsPage(workspaceId: state.pathParameters['id']!),
           ),
           GoRoute(
             path: '/profile',

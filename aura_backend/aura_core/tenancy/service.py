@@ -35,6 +35,7 @@ from ..domain.tenancy import (
     new_workspace_id,
     parse_invite_token,
 )
+from ..domain.plans import PlanLimitError
 from ..ports.runtime import AuditEvent
 
 __all__ = ["TenancyService"]
@@ -49,6 +50,25 @@ class TenancyService:
     clock: Any
     audit: Any
     settings: Any
+    #: ``async (workspace_id) -> int``: the team's seats from its plan (``PlanService.seat_limit``,
+    #: SaaS P1-C). Unset (tests, no plans wired): ``settings.default_team_seats``.
+    seat_limit: Any = None
+    #: ``async (workspace_id) -> str``: the plan's id, for the seats refusal's details.
+    plan_of: Any = None
+    #: ``Notifier`` (SaaS P1-F1): emails an invite to the invitee. Unset: the token is only in
+    #: the route's response, as before.
+    notifier: Any = None
+
+    async def _no_free_seats(self, workspace_id: str, used: int, allowed: int) -> PlanLimitError:
+        plan = await self.plan_of(workspace_id) if self.plan_of is not None else ""
+        return PlanLimitError(
+            "this workspace has no free seats", limit="seats", plan=plan, used=used, allowed=allowed,
+        )
+
+    async def _seats(self, workspace_id: str) -> int:
+        if self.seat_limit is not None:
+            return await self.seat_limit(workspace_id)
+        return self.settings.default_team_seats
 
     # -- reading --------------------------------------------------------------------------
 
@@ -103,18 +123,20 @@ class TenancyService:
 
     # -- changing -------------------------------------------------------------------------
 
-    async def create_team(self, user_id: str, name: str) -> Workspace:
+    async def create_team(self, user_id: str, name: str, *, owner_email: str | None = None) -> Workspace:
         now = self.clock.now()
         ws = Workspace(
             id=new_workspace_id(), kind=WorkspaceKind.TEAM, name=clean_workspace_name(name),
             created_by=user_id, created_at=now,
         )
-        await self.store.create_workspace(ws, Membership(ws.id, user_id, WorkspaceRole.OWNER, now))
+        email = _clean_email(owner_email) if owner_email else None
+        await self.store.create_workspace(ws, Membership(ws.id, user_id, WorkspaceRole.OWNER, now, email=email))
         await self._audit("create", user_id, WorkspaceRole.OWNER, ws.id)
         return ws
 
     async def invite(
-        self, actor: str, workspace_id: str, email: str, role: WorkspaceRole
+        self, actor: str, workspace_id: str, email: str, role: WorkspaceRole, *,
+        inviter_email: str | None = None,
     ) -> tuple[Invite, str]:
         _ws, mine = await self._team(actor, workspace_id)
         self._require(mine.role, "invite")
@@ -125,8 +147,10 @@ class TenancyService:
         now = self.clock.now()
         members = await self.store.list_members(workspace_id)
         open_invites = [i for i in await self.store.list_invites(workspace_id) if i.is_open(now)]
-        if len(members) + len(open_invites) >= self.settings.default_team_seats:
-            raise ConflictError("this workspace has no free seats")
+        seats = await self._seats(workspace_id)
+        if len(members) + len(open_invites) >= seats:
+            # A plan limit (402, limit=seats), which the app words (review C#3).
+            raise await self._no_free_seats(workspace_id, len(members) + len(open_invites), seats)
         invite_id, token = new_invite_token()
         invite = Invite(
             invite_id=invite_id, workspace_id=workspace_id, email=address, role=role,
@@ -134,15 +158,24 @@ class TenancyService:
         )
         await self.store.put_invite(invite)
         await self._audit("invite", actor, mine.role, workspace_id, {"invite_id": invite_id, "role": role.value})
+        if self.notifier is not None:
+            await self.notifier.invite(address, _ws.name, inviter_email, role.value, token)  # never raises
         return invite, token
 
-    async def accept(self, user_id: str, token: str) -> Membership:
+    async def accept(self, user_id: str, token: str, *, email: str | None = None) -> Membership:
+        """``email`` is the accepting account's own verified address: the members list shows who
+        actually joined, even when an invite link was forwarded (review F2#7)."""
         invite_id = parse_invite_token(token)
         invite = await self.store.get_invite(invite_id)
         if invite is None or not hmac.compare_digest(invite.digest, invite_digest(token)):
             raise ConflictError("this invite is no longer valid")
+        seats = await self._seats(invite.workspace_id)
+        members = await self.store.list_members(invite.workspace_id)
+        if len(members) >= seats and invite.is_open(self.clock.now()):
+            raise await self._no_free_seats(invite.workspace_id, len(members), seats)
         member = await self.store.accept_invite(
-            invite_id, user_id=user_id, at=self.clock.now(), seat_limit=self.settings.default_team_seats
+            invite_id, user_id=user_id, at=self.clock.now(), seat_limit=seats,
+            email=_clean_email(email) if email else None,
         )
         await self._audit("join", user_id, member.role, member.workspace_id, {"invite_id": invite_id})
         return member

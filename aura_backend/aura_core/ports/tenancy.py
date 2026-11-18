@@ -60,7 +60,7 @@ class TenancyStore(Protocol):
         """Delete the invite; False if there was none."""
 
     async def accept_invite(
-        self, invite_id: str, *, user_id: str, at: datetime, seat_limit: int
+        self, invite_id: str, *, user_id: str, at: datetime, seat_limit: int, email: str | None = None
     ) -> Membership:
         """Atomically mark the invite accepted and add ``user_id`` with the invite's role.
         ``ConflictError`` if the invite is missing or not open at ``at``, the person is already

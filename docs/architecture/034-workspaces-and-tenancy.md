@@ -82,6 +82,96 @@ Ingest, upload, delete and pin/unpin require `manage_knowledge` (Owner or Admin)
 - **Membership changes.** They are conditional on the role the decision was made against, so a
   concurrent ownership transfer can never be overwritten into a team with no Owner.
 
+### 6. Who may create or join a team, and from which sign-in (SaaS P1-B)
+
+- **Verified email.** Creating a team or accepting an invite requires a verified email
+  (`Principal.email_verified`, carried on the access token from the identity provider's
+  `email_verified`). Google and Apple sign-ins arrive verified; an email/password account must
+  verify first.
+- **Customer web sessions.** They come from `/api/v3/auth/consumer/token` and are capped at the
+  `User` platform role (`channel=consumer_web`). Workspace roles never change that.
+- **Setup.** `docs/deployment/customer-sign-in.md` lists the setup steps for the Firebase-backed
+  sign-in methods.
+
+### 7. Plans and metering (SaaS P1-C)
+
+- **One plan per workspace.** It comes from `aura_workspace_entitlements` (migration `0024`); no
+  row means Free. The plan catalogue is data (`domain/plans.py`; `AURA_PLAN_CATALOGUE` replaces
+  it).
+- **Metering.**
+  - `aura_usage_counters` checks the limit and increments in one upsert, so no two requests on any
+    worker can both take the last unit.
+  - The gateway reserves a message before a turn and gives it back if the turn fails. It reserves
+    storage before an ingest and settles to what the store kept.
+  - Team seats come from the plan (`PlanService.seat_limit`).
+- **Refusals.** HTTP 402 `plan_limit`. Operators and service keys are unmetered. Operations guide:
+  `docs/deployment/plans-and-limits.md`.
+
+### 8. Subscriptions and billing (SaaS P1-D1)
+
+- **Ownership.** AURA owns each workspace's subscription (`aura_subscriptions`, migration `0025`).
+  Fawry only collects payments (`aura_payments`).
+- **Notifications.** A payment leaves `pending` exactly once (a conditional UPDATE), so a duplicate
+  or out-of-order provider notification is a no-op.
+- **What changes the plan.** A paid payment activates or extends the subscription and sets the
+  plan with `source="subscription"`. A wrong amount activates nothing.
+- **The hourly cycle.** It renews, moves unpaid subscriptions past due → grace (full access) →
+  expired (Free), and reconciles pending payments with Fawry.
+- **Secrets.** The Fawry secure key is read from the environment through a property, never a
+  settings field. Operations guide: `docs/deployment/billing-fawry.md`.
+- **Money is never charged twice, lost or undone by a race** (the D1 review). A payment is recorded
+  before Fawry is asked, so a card charge that times out is reconciled rather than re-charged.
+  Settling and the cycle run under a per-workspace Postgres advisory lock and re-read the
+  subscription inside it; one cycle runs at a time. A payment goes `pending → received → paid`,
+  and `last_payment_id` makes re-applying it a no-op, so a crash between the two is re-driven.
+
+### 9. In-app subscriptions (SaaS P1-D2)
+
+- **Binding.** A store purchase reaches a workspace only through a token AURA issued to that
+  workspace's Owner before the purchase (`aura_store_bindings`, migration `0026`). The app passes
+  it as Apple's `appAccountToken` or Google's `obfuscatedExternalAccountId`. Only personal
+  workspaces can buy in the apps; Team is sold on the web.
+- **Trust.** Apple's notifications are trusted only under the pinned Apple Root CA - G3. A Google
+  push must carry Google's OIDC token for our audience and push service account, and it only names
+  a purchase: the state comes from the Play Developer API.
+- **Same record.** A store event updates the same `aura_subscriptions` row as a Fawry payment,
+  with `provider` set to `apple` or `google`. The cycle renews nothing for those (the store
+  renews), but still expires one whose store fell silent past period + grace.
+- **Once, forwards only.** An event id is recorded after it is applied, under the workspace lock,
+  so a replay is a no-op and a crash is retried. The period end is the `max` of expiries, and an
+  Apple event about a transaction that ended before the current period is stale. Refund or revoke
+  means Free at once.
+- **One provider at a time.** A store activation over a live Fawry subscription is applied and
+  audited as `billing.provider_switch`; non-activating events from a store that does not own the
+  subscription are ignored. A Fawry payment makes the subscription Fawry's again. Operations
+  guide: `docs/deployment/billing-stores.md`.
+
+### 10. Shared chats, account deletion and operator tooling (SaaS P1-F1)
+
+- **Shared chats.** A member copies one of their own chats into a team workspace
+  (`aura_shared_conversations`, migration `0028`), and every member can read it. The copy comes
+  from the app, because the server's episodic memory is a short rolling window, not the
+  conversation.
+  - Sharing the same chat again replaces the copy.
+  - The sharer, the Owner or an Admin can unshare it, which deletes the copy.
+  - The member's own chat rows never become team-readable.
+  - A former member loses access, but the share stays with the team.
+- **Account deletion** answers 409 `owns_team_workspaces`, naming each team, while the person
+  owns any team. A team cannot lose its only Owner this way. Transfer or delete it first.
+- **Customer email.** An `EmailSender` port (SMTP, any provider) and a `Notifier` send:
+  - the invite link to the invitee;
+  - a receipt for each Fawry payment;
+  - the Fawry reference code for each reference-code renewal;
+  - one past-due notice when a Fawry subscription falls behind.
+
+  Billing email goes to the Owner's verified address, stored at checkout
+  (`aura_billing_contacts`, migration `0027`). A failed email never fails the invite or payment
+  behind it. Setup: `docs/deployment/email.md`.
+- **Operator tooling.** `GET /admin/customers` (SuperAdmin, read-only) lists every subscribed
+  workspace. `POST /admin/customers/{id}/extend-grace` is the operator's one write, and it is
+  audited. It applies only to a Fawry subscription that is behind or expired, because a store
+  owns its own subscriptions.
+
 ## Consequences
 
 - Tables `aura_workspaces`, `aura_workspace_members` and `aura_workspace_invites` arrive with Alembic

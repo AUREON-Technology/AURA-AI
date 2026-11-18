@@ -411,6 +411,13 @@ def _refresh_store_take(
     return user_info
 
 
+def restore_refresh_token(token: str, user_info: dict) -> None:
+    """Put back a refresh token ``consume_refresh_token`` just spent, when the request then could
+    not be answered for a reason that is not the caller's (a plan lookup failed): the client may
+    retry with the same token. ``user_info`` is what consumption returned, family included."""
+    _refresh_store_set(token, user_info, REFRESH_TOKEN_TTL)
+
+
 def _refresh_store_delete(token: str, *, tombstone: bool = False) -> bool:
     """Drop one refresh token and its index entries. True when it existed.
 
@@ -505,6 +512,13 @@ def create_access_token(
         "iat": now,
         "exp": now + ttl,
     }
+    # Server-set from the verified identity token (services.security.verify_identity_token):
+    # team actions require a verified address (SaaS P1-B, spec 5.1).
+    payload["email_verified"] = user_info.get("email_verified") is True
+    if user_info.get("channel"):
+        # Server-set, never client-set: rbac.get_user_role caps a consumer_web identity at User
+        # on every request, so this claim must survive into the access token (SaaS P1-B).
+        payload["channel"] = user_info["channel"]
     if extra_claims:
         payload.update(extra_claims)
     # After extra_claims so a caller can never mint a token bound to another deployment (F-03).
@@ -1031,6 +1045,8 @@ async def verify_access_token(
         "picture": payload.get("picture"),
         "role": payload.get("role"),
         "device_id": device_id,
+        "channel": payload.get("channel"),
+        "email_verified": payload.get("email_verified") is True,
         # Set only on the desktop app's own tokens (issue_desktop_session/issue_device_token).
         # The gateway reads it to tell a desktop turn from a phone or web one (WP8).
         "platform": payload.get("platform"),

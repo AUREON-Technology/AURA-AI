@@ -278,6 +278,40 @@ except Exception as init_err:
     logger.error(f"Error during Firebase Admin SDK initialization: {init_err}")
 
 
+async def _subject_has_account(subject: str) -> bool:
+    from infrastructure.db.base import get_session_factory, is_configured
+    from infrastructure.db.models import User
+    from sqlalchemy import select
+
+    if not subject or not is_configured():
+        return False
+    async with get_session_factory()() as db:
+        return (await db.scalar(select(User.id).where(User.auth_subject == subject))) is not None
+
+
+async def canonical_subject(decoded_token: dict, *, exists=_subject_has_account) -> str:
+    """The subject a verified Firebase token signs in as (SaaS P1-B, review B#4).
+
+    Firebase's uid, except when that uid has no account yet and the token's Google identity is an
+    existing subject: then that Google ``sub`` -- the subject every pre-Firebase sign-in stored the
+    person's data under (``scripts/import_users_to_firebase.py`` covers those who existed at import
+    time; this covers old app versions and anyone created after). A uid that already has an account
+    is never moved, and any lookup failure keeps the uid.
+    """
+    uid = str(decoded_token.get("uid") or "")
+    identities = (decoded_token.get("firebase") or {}).get("identities") or {}
+    google = [str(g) for g in identities.get("google.com") or [] if g]
+    if not uid or not google or google[0] == uid:
+        return uid
+    try:
+        if await exists(uid) or not await exists(google[0]):
+            return uid
+    except Exception:
+        logger.warning("could not resolve the canonical subject; using the Firebase uid", exc_info=True)
+        return uid
+    return google[0]
+
+
 async def verify_identity_token(
     request: Request,
     authorization: Optional[HTTPAuthorizationCredentials] = Security(security_scheme),
@@ -346,7 +380,7 @@ async def verify_identity_token(
             )
             logger.debug(f"Firebase ID token verified successfully for: {decoded_token.get('email')}")
             return {
-                "uid": decoded_token.get("uid"),
+                "uid": await canonical_subject(decoded_token),
                 "email": decoded_token.get("email"),
                 "name": decoded_token.get("name"),
                 "picture": decoded_token.get("picture"),
