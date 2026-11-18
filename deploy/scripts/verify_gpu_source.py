@@ -21,13 +21,15 @@ It writes `docs/reports/readiness-gpu-<UTC>.txt`; commit that file. Exit code = 
 (at most 125). A check whose credential was not given is SKIP. SKIP is not a pass: the report
 then says NOT PROVEN.
 
-It spends little. It ingests one small document and deletes it again, sends one document turn,
+It spends little. It ingests one small document and deletes it again (a failed delete fails check 6),
+sends one document turn,
 and sends AURA_VERIFY_CONCURRENCY short turns. It never prints a token or the Space key.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import os
 import random
 import ssl
@@ -42,6 +44,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPORT_DIR_USED = ""
+
+
+def percentile_95(values: list[float]) -> float:
+    """Nearest rank: the smallest value at or above 95 % of the sample."""
+    ordered = sorted(values)
+    return ordered[max(0, math.ceil(0.95 * len(ordered)) - 1)]
 _TIMEOUT_S = 180.0
 
 
@@ -181,6 +189,7 @@ class Verifier:
         })
         assert status == 200 and isinstance(body, dict) and body.get("document_id"), f"ingest: HTTP {status} {body}"
         document = body["document_id"]
+        outcome: list[str] = []
         try:
             status, answer, took = _request("POST", f"{self.gateway}/api/v3/chat", token=self.token, body={
                 "message": "What is the AURA readiness verification code in my documents? Answer with the number.",
@@ -192,17 +201,22 @@ class Verifier:
             assert provider == self.provider, (
                 f"answered by {provider!r}, expected {self.provider!r}: a document turn must stay on the GPU source")
             assert code in str(answer.get("message", "")), f"the answer lacks the code: {str(answer.get('message'))[:200]}"
-            return f"answered by {provider} in {took:.1f}s with the document's code"
+            outcome.append(f"answered by {provider} in {took:.1f}s with the document's code")
         finally:
-            _request("DELETE", f"{self.gateway}/api/v3/knowledge/documents/{document}", token=self.token)
+            # A test document must not stay in a real person's knowledge base (review G#2). A failed
+            # cleanup fails the check, after any failure of the check's own.
+            try:
+                status, _, _ = _request("DELETE", f"{self.gateway}/api/v3/knowledge/documents/{document}", token=self.token)
+            except Exception as exc:  # the check's own error, if any, stays the one reported
+                status = f"{type(exc).__name__}"
+            if status != 200:
+                outcome.append(f"left behind: {document} (DELETE answered {status}); delete it by hand")
+        assert not any(line.startswith("left behind") for line in outcome), "\n".join(outcome)
+        return "\n".join(outcome)
 
     def c7_capacity(self) -> str:
         if not self.token:
             raise _Skipped("AURA_VERIFY_TOKEN not given")
-        if len(self.tokens) == 1:
-            # One account: the chat limit is 10 a minute, and check 6 used one. Start from a clear
-            # window so the limit is not what this measures.
-            time.sleep(61)
         n = self.concurrency
 
         def turn(i: int) -> tuple[int, float, object]:
@@ -217,11 +231,14 @@ class Verifier:
             results = list(pool.map(turn, range(n)))
         failed = [s for s, _, _ in results if s != 200]
         times = sorted(t for _, t, _ in results)
-        p95 = times[max(0, int(round(0.95 * len(times))) - 1)]
+        p95 = percentile_95(times)
         providers = sorted({str(p) for _, _, p in results})
         summary = (f"{n} concurrent: p50={statistics.median(times):.1f}s p95={p95:.1f}s max={times[-1]:.1f}s "
                    f"providers={providers}")
-        assert not failed, f"{len(failed)} of {n} failed ({sorted(set(failed))}); {summary}"
+        limited = failed.count(429)
+        hint = (f"; {limited} were rate-limited (429): the gateway's per-user limit, not the GPU -- "
+                "pass more users' tokens in AURA_VERIFY_EXTRA_TOKENS") if limited else ""
+        assert not failed, f"{len(failed)} of {n} failed ({sorted(set(failed))}){hint}; {summary}"
         assert p95 <= self.p95_limit, f"p95 {p95:.1f}s exceeds {self.p95_limit:.0f}s; {summary}"
         return summary
 

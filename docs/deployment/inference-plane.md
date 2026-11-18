@@ -279,10 +279,23 @@ this table.
    **NOT PROVEN**. Spec §6.1 items 2, 3, 6 and 9 are proven only by a committed report with no FAIL
    and no SKIP.
 
-   With a single token, check 7 first waits 61 s, so that the 10-a-minute chat limit is not what it
-   measures. Several users' tokens spread the load instead.
+   The default limit is about 60 chats a minute per user (`RATE_LIMIT_USER_PER_MIN=60`, at 10
+   units a turn), so a single token is enough for 10 turns. If check 7 reports `rate-limited`, the
+   deployment's limit is lower. Pass more users' tokens in that case; the GPU is not at fault.
 
-**Rollback:** set the hardware back in the Space settings, or set `HF_SPACE_HARDWARE`. If the
-Space must sleep again, set `AURA_PROVIDER_HFSPACE_HEALTH_PROBE=passive` on Railway first. Without
-that, readiness polling keeps the Space awake.
+   A test document that cannot be deleted fails check 6 and names the id, to delete by hand.
+
+**When the workflow switches the GPU.** The deploy job runs on every push to `main` that touches
+`deploy/spaces/inference-vllm/`, including its README. If `HF_TOKEN` and `HF_SPACE_ID` are set,
+each such push requests the L4 and never-sleep, whatever the Space settings say. Do steps 1 and 2
+before the first such push, so the L4 starts with persistent storage. The merge of PR #246 was
+the first such push. It ran with CI runners unavailable, so check the Space's hardware rather
+than assuming it switched.
+
+**Rollback:** the workflow re-applies its hardware on the next deploy, so a change in the Space
+settings alone does not last.
+- **To another GPU:** set the repository variable `HF_SPACE_HARDWARE`.
+- **To a Space that sleeps:** `sleep_time=-1` is fixed in the workflow, so change that step (or
+  disable it) in the same PR. Set `AURA_PROVIDER_HFSPACE_HEALTH_PROBE=passive` on Railway first;
+  otherwise readiness polling keeps the Space awake.
 
