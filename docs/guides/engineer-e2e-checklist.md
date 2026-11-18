@@ -247,8 +247,12 @@ With the Pro customer signed in on the desktop, paired, and a phone session open
    - **Expected, within about 1 minute:** the daemon disconnects. It shows *Re-pair required* or
      not connected.
 4. Keep the app open.
-   - **Expected, within about 15 minutes:** the session stops refreshing and the app signs out
-     with *The desktop Engineer needs a Pro or Team plan. Upgrade, then sign in again.*
+   - **Expected, within about 15 minutes:** the session stops refreshing and the app returns to
+     the sign-in page.
+   - **Known gap:** the server marks this refusal `plan_required`, but the app's background
+     refresh does not read the marker yet. The app may show a generic "session ended" instead of
+     the plan reason. Record what it shows. Signing in again then shows *The desktop app needs a
+     Pro or Team plan*.
 5. From the phone, open the Engineer tab.
    - **Expected:** the folder picker is refused, and the Engineer is greyed out.
 6. Set the workspace back to `pro`, sign in on the desktop again, and confirm the daemon
@@ -279,8 +283,8 @@ Signed in as the **Free customer**, with no Team membership:
 
 | Where | Expected |
 |---|---|
-| Desktop sign-in, every method | *The desktop Engineer needs a Pro or Team plan. Upgrade, then sign in again.* No session |
-| Approving a pairing code from the phone | The same message. The code is not spent |
+| Desktop sign-in, every method | *The desktop app needs a Pro or Team plan*, with *Upgrade your plan, then sign in again.* (Arabic when the app is in Arabic). Not a bare "refused", and no mention of Google for Apple or email. No session |
+| Approving a pairing code from the phone | Refused, and the server's reason names Pro or Team. The code is not spent |
 | Phone: Engineer persona | Greyed out |
 | Phone: folder picker (`/api/v3/host/folders`) | Refused |
 | An Engineer message from the phone or web | Refused with the plan message and **See plans**, before anything is sent to Anthropic: no new `llm.third_party_generation` audit row |
