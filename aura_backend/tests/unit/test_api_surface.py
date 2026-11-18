@@ -143,13 +143,12 @@ class TestKnowledgeRoutes:
         assert deleted.status_code == 200
         assert deleted.json()["deleted"] is True
 
-    def test_deleting_an_unknown_document_reports_zero_rather_than_404(
-        self, user_client
-    ) -> None:
-        """The end state the caller wanted is reached either way."""
+    def test_deleting_an_unknown_document_is_404(self, user_client) -> None:
+        """INT-111: an unknown document answers exactly as someone else's does -- 404, never a
+        200 "deleted" -- so the answer reveals nothing about documents the caller cannot see."""
         response = user_client.delete("/api/v3/knowledge/documents/never-existed")
-        assert response.status_code == 200
-        assert response.json()["chunks_removed"] == 0
+        assert response.status_code == 404
+        assert response.json()["error"] == "not_found"
 
     def test_search_over_an_empty_corpus_returns_an_empty_list(self, user_client) -> None:
         response = user_client.post("/api/v3/knowledge/search", json={"query": "anything"})

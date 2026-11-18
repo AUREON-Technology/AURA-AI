@@ -10,7 +10,9 @@ duration runs to the last body byte, so for ``/api/v3/chat/stream`` it is the wh
 
 The ``route`` label is the matched route template (``/api/v3/sessions/{session_id}``), read
 from ``scope["route"]`` after routing. A path that matched nothing is ``unmatched`` -- labelling
-it with the raw path would let any scanner mint one series per URL it tries.
+it with the raw path would let any scanner mint one series per URL it tries. The ``method`` label
+is allow-listed for the same reason (F43): any RFC 9110 token parses as a method, so anything
+outside the standard verbs is ``OTHER``.
 
 The same middleware opens the request's trace span (Phase R2), so every span the kernel and
 router record nests under it. The span carries the method, the route template and the status
@@ -26,12 +28,21 @@ from typing import Any
 
 from ..observability.tracing import span
 
-__all__ = ["HttpMetricsMiddleware", "route_label"]
+__all__ = ["HttpMetricsMiddleware", "method_label", "route_label"]
 
 #: Paths never traced: liveness/readiness probes and the metrics scrape.
 UNTRACED_PREFIXES = ("/health", "/metrics")
 
 UNMATCHED = "unmatched"
+
+#: The only method labels a metric or span carries; every other token is :data:`OTHER_METHOD`.
+KNOWN_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
+OTHER_METHOD = "OTHER"
+
+
+def method_label(scope: dict[str, Any]) -> str:
+    method = scope.get("method")
+    return method if isinstance(method, str) and method in KNOWN_METHODS else OTHER_METHOD
 
 
 def route_label(scope: dict[str, Any]) -> str:
@@ -58,7 +69,7 @@ class HttpMetricsMiddleware:
                 status = int(message.get("status", 500))
             await send(message)
 
-        method = scope.get("method", "GET")
+        method = method_label(scope)
         try:
             if str(scope.get("path", "")).startswith(UNTRACED_PREFIXES):
                 await self.app(scope, receive, send_wrapper)
@@ -78,7 +89,7 @@ class HttpMetricsMiddleware:
             # a request that leaves no trace is how an error rate becomes invisible.
             try:
                 self._metrics.observe_http(
-                    scope.get("method", "GET"), route_label(scope), status,
+                    method, route_label(scope), status,
                     time.perf_counter() - started,
                 )
             except Exception:  # pragma: no cover - instrumentation must never fail a request
