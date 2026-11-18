@@ -221,6 +221,22 @@ server {
         add_header X-Aura-Console-Headers "" always;
     }
 
+    # Voice uploads: the gateway takes audio up to MAX_AUDIO_BYTES (25 MiB, aura_core/api/v3.py)
+    # plus the multipart envelope, above the 20m server cap. Only this route is widened, and it
+    # otherwise proxies exactly like the location it shadows. Pinned by
+    # tests/unit/test_nginx_voice_upload_size.py.
+    location = /api/v3/voice/transcribe {
+        client_max_body_size 27m;
+
+        proxy_pass http://127.0.0.1:__GATEWAY_PORT__;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     location / {
 
         proxy_pass http://127.0.0.1:__GATEWAY_PORT__;
