@@ -123,13 +123,14 @@ class TenancyService:
 
     # -- changing -------------------------------------------------------------------------
 
-    async def create_team(self, user_id: str, name: str) -> Workspace:
+    async def create_team(self, user_id: str, name: str, *, owner_email: str | None = None) -> Workspace:
         now = self.clock.now()
         ws = Workspace(
             id=new_workspace_id(), kind=WorkspaceKind.TEAM, name=clean_workspace_name(name),
             created_by=user_id, created_at=now,
         )
-        await self.store.create_workspace(ws, Membership(ws.id, user_id, WorkspaceRole.OWNER, now))
+        email = _clean_email(owner_email) if owner_email else None
+        await self.store.create_workspace(ws, Membership(ws.id, user_id, WorkspaceRole.OWNER, now, email=email))
         await self._audit("create", user_id, WorkspaceRole.OWNER, ws.id)
         return ws
 

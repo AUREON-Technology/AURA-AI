@@ -168,3 +168,12 @@ async def test_container_wires_an_in_memory_tenancy_service(container) -> None:
     assert container.tenancy.settings.default_team_seats == container.settings.tenancy.default_team_seats
     ws = await container.tenancy.create_team("owner", "Acme")
     assert (await container.tenancy.resolve("owner", ws.id))[1].role is OWNER
+
+
+async def test_member_email_from_invite_and_owner(service) -> None:
+    """SaaS P1-F2: the members list shows people, not opaque ids."""
+    ws = await service.create_team("owner", "Acme", owner_email="Owner@Example.com")
+    _invite, token = await service.invite("owner", ws.id, "Bea@Example.com", MEMBER)
+    await service.accept("bea", token)
+    emails = {m.user_id: m.email for m in await service.list_members("owner", ws.id)}
+    assert emails == {"owner": "owner@example.com", "bea": "bea@example.com"}

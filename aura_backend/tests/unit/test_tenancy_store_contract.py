@@ -237,3 +237,15 @@ async def test_erasing_the_creator_keeps_a_transferred_team() -> None:
         assert {m.user_id: m.role for m in await pg.list_members(ws.id)} == {"u2": OWNER}
         assert await pg.personal_workspace("u1") is None
         assert await pg.get_workspace(personal.id) is None
+
+
+async def test_member_email_roundtrips(store) -> None:
+    """SaaS P1-F2: a creator's email on creation, an invitee's from the invite on acceptance."""
+    ws = Workspace(id=new_workspace_id(), kind=WorkspaceKind.TEAM, name="T", created_by="u1", created_at=T0)
+    await store.create_workspace(ws, Membership(ws.id, "u1", OWNER, T0, email="u1@example.com"))
+    invite = await _invite(store, ws)
+    await store.accept_invite(invite.invite_id, user_id="u2", at=T0 + timedelta(hours=1), seat_limit=5)
+    emails = {m.user_id: m.email for m in await store.list_members(ws.id)}
+    assert emails == {"u1": "u1@example.com", "u2": "new@example.com"}
+    [(_ws, mine)] = [(w, m) for w, m in await store.memberships_of("u2") if w.id == ws.id]
+    assert mine.email == "new@example.com"

@@ -30,7 +30,7 @@ def _workspace(ws: Workspace, role: WorkspaceRole) -> dict[str, Any]:
 
 
 def _member(m: Membership) -> dict[str, Any]:
-    return {"user_id": m.user_id, "role": m.role.value, "joined_at": m.joined_at.isoformat()}
+    return {"user_id": m.user_id, "role": m.role.value, "email": m.email, "joined_at": m.joined_at.isoformat()}
 
 
 def _invite(i: Invite) -> dict[str, Any]:
@@ -110,7 +110,7 @@ def register_workspace_ops(
     @router.post("/workspaces", dependencies=idempotent)
     async def create_workspace(payload: CreateRequest, caller=Depends(principal)) -> JSONResponse:
         require_verified_email(caller)
-        ws = await tenancy.create_team(person(caller), payload.name)
+        ws = await tenancy.create_team(person(caller), payload.name, owner_email=getattr(caller, "email", None) or None)
         return JSONResponse(status_code=201, content=_workspace(ws, WorkspaceRole.OWNER))
 
     @router.delete("/workspaces/{workspace_id}", dependencies=idempotent)

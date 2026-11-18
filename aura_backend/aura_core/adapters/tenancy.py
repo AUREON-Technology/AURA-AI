@@ -133,7 +133,8 @@ class InMemoryTenancyStore:
             seats = sum(1 for (ws_id, _) in self._members if ws_id == invite.workspace_id)
             if seats >= seat_limit:
                 raise ConflictError("this workspace has no free seats")
-            member = Membership(invite.workspace_id, user_id, invite.role, at, invited_by=invite.created_by)
+            member = Membership(invite.workspace_id, user_id, invite.role, at, invited_by=invite.created_by,
+                                email=invite.email)
             self._members[(invite.workspace_id, user_id)] = member
             self._invites[invite_id] = replace(invite, accepted_at=at, accepted_by=user_id)
             return member
