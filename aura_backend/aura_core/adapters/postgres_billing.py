@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from ..domain.billing import Payment, PaymentStatus, StoreBinding, Subscription, SubscriptionStatus
+from ..domain.errors import DependencyUnavailableError
 from .postgres_store import PostgresPool
 
 __all__ = ["PostgresBillingLocks", "PostgresSubscriptionStore", "PostgresPaymentStore", "PostgresStoreBindingStore", "PostgresStoreEventLog"]
@@ -237,19 +238,35 @@ class _AdvisoryLock:
 
 class PostgresBillingLocks:
     """Session advisory locks, held on a dedicated pooled connection, so they serialise billing
-    work across every gateway worker and the cron process alike (review D1#2/#6)."""
+    work across every gateway worker and the cron process alike (review D1#2/#6).
 
-    def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
+    A workspace's lock is waited for at most ``lock_timeout_s`` (F38): an unbounded wait held a
+    pooled connection per waiter, so a stuck holder -- or a burst of requests for one workspace --
+    could drain the pool. The wait ends in a retryable 503 (Fawry and the stores redeliver; the
+    cycle counts it and moves on). The holder's own work includes a provider call (20 s timeout),
+    so the default leaves it room."""
+
+    def __init__(self, url: str, *, pool: PostgresPool | None = None, lock_timeout_s: float = 30.0) -> None:
         self._pool = pool or PostgresPool(url)
+        self._lock_timeout_ms = str(max(1, int(lock_timeout_s * 1000)))
 
     async def lock_workspace(self, workspace_id: str) -> _AdvisoryLock:
         pool = await self._pool._get_pool()
         conn = await pool.acquire()
         key = f"aura-billing:workspace:{workspace_id}"
         try:
-            await conn.execute("SELECT pg_advisory_lock(hashtextextended($1, 0))", key)
-        except BaseException:
+            # ``lock_timeout`` bounds the advisory-lock wait; set LOCAL, so the pooled connection
+            # goes back without it. The session-level lock outlives the transaction by design.
+            async with conn.transaction():
+                await conn.execute("SELECT set_config('lock_timeout', $1, true)", self._lock_timeout_ms)
+                await conn.execute("SELECT pg_advisory_lock(hashtextextended($1, 0))", key)
+        except BaseException as exc:
             await pool.release(conn)
+            if getattr(exc, "sqlstate", None) == "55P03":  # lock_not_available
+                raise DependencyUnavailableError(
+                    "billing for this workspace is busy; try again", dependency="postgres",
+                    details={"reason": "lock_timeout", "retry_after": 5},
+                ) from exc
             raise
         return _AdvisoryLock(pool, conn, key)
 
