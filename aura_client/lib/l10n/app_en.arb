@@ -1195,5 +1195,438 @@
   "verifyEmailDone": "I've verified",
   "@verifyEmailDone": {
     "description": "Re-checks the account after the user clicked the verification link"
+  },
+  "workspaceTileTitle": "Workspace",
+  "@workspaceTileTitle": {
+    "description": "Settings row opening the workspace switcher"
+  },
+  "workspacePersonal": "Personal",
+  "@workspacePersonal": {
+    "description": "Name shown for the person's own workspace"
+  },
+  "workspaceSwitcherTitle": "Switch workspace",
+  "@workspaceSwitcherTitle": {
+    "description": "Title of the workspace switcher sheet"
+  },
+  "workspaceCreateTeam": "Create a team",
+  "@workspaceCreateTeam": {
+    "description": "Action that creates a team workspace"
+  },
+  "workspaceTeamSettings": "Team settings",
+  "@workspaceTeamSettings": {
+    "description": "Opens the active team's settings"
+  },
+  "workspaceRoleOwner": "Owner",
+  "@workspaceRoleOwner": {
+    "description": "Workspace role"
+  },
+  "workspaceRoleAdmin": "Admin",
+  "@workspaceRoleAdmin": {
+    "description": "Workspace role"
+  },
+  "workspaceRoleMember": "Member",
+  "@workspaceRoleMember": {
+    "description": "Workspace role"
+  },
+  "teamNameLabel": "Team name",
+  "@teamNameLabel": {
+    "description": "Field label when creating a team"
+  },
+  "teamCreateAction": "Create",
+  "@teamCreateAction": {
+    "description": "Confirms creating a team"
+  },
+  "teamMembersSection": "Members",
+  "@teamMembersSection": {
+    "description": "Section header for team members"
+  },
+  "teamInvitesSection": "Pending invites",
+  "@teamInvitesSection": {
+    "description": "Section header for open invites"
+  },
+  "teamYou": "You",
+  "@teamYou": {
+    "description": "Marks the signed-in person in the members list"
+  },
+  "teamInviteAction": "Invite",
+  "@teamInviteAction": {
+    "description": "Opens the invite dialog"
+  },
+  "teamInviteEmailLabel": "Email address",
+  "@teamInviteEmailLabel": {
+    "description": "Invite dialog field"
+  },
+  "teamInviteSentTitle": "Invite created",
+  "@teamInviteSentTitle": {
+    "description": "Dialog title after inviting someone"
+  },
+  "teamInviteSentBody": "Send this link to {email}. It works once and expires in a few days. If email is set up for AURA, we sent it too.",
+  "@teamInviteSentBody": {
+    "description": "Explains the invite link",
+    "placeholders": {
+      "email": {
+        "type": "String"
+      }
+    }
+  },
+  "teamCopyLink": "Copy link",
+  "@teamCopyLink": {
+    "description": "Copies the invite link"
+  },
+  "teamLinkCopied": "Link copied",
+  "@teamLinkCopied": {
+    "description": "Snackbar after copying"
+  },
+  "teamMakeAdmin": "Make admin",
+  "@teamMakeAdmin": {
+    "description": "Member action"
+  },
+  "teamMakeMember": "Make member",
+  "@teamMakeMember": {
+    "description": "Member action"
+  },
+  "teamMakeOwner": "Make owner",
+  "@teamMakeOwner": {
+    "description": "Member action: transfer ownership"
+  },
+  "teamRemove": "Remove from team",
+  "@teamRemove": {
+    "description": "Member action"
+  },
+  "teamRevokeInvite": "Revoke",
+  "@teamRevokeInvite": {
+    "description": "Cancels a pending invite"
+  },
+  "teamMakeOwnerConfirm": "Make {who} the owner? You'll become an admin, and only they can manage billing or delete the team.",
+  "@teamMakeOwnerConfirm": {
+    "description": "Confirms ownership transfer",
+    "placeholders": {
+      "who": {
+        "type": "String"
+      }
+    }
+  },
+  "teamRemoveConfirm": "Remove {who} from the team?",
+  "@teamRemoveConfirm": {
+    "description": "Confirms removing a member",
+    "placeholders": {
+      "who": {
+        "type": "String"
+      }
+    }
+  },
+  "teamLeave": "Leave team",
+  "@teamLeave": {
+    "description": "Leaves the team"
+  },
+  "teamLeaveConfirm": "Leave {name}? You'll lose access to its shared documents and chats.",
+  "@teamLeaveConfirm": {
+    "description": "Confirms leaving",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "teamDelete": "Delete team",
+  "@teamDelete": {
+    "description": "Deletes the team"
+  },
+  "teamDeleteConfirm": "Delete {name} for everyone? Its shared documents and chats are removed. This can't be undone.",
+  "@teamDeleteConfirm": {
+    "description": "Confirms deleting a team",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "teamReadOnlyNote": "Only the owner and admins can invite or change members.",
+  "@teamReadOnlyNote": {
+    "description": "Shown to members in team settings"
+  },
+  "planTitle": "Plan and usage",
+  "@planTitle": {
+    "description": "Plan page title"
+  },
+  "planCurrent": "Plan: {plan}",
+  "@planCurrent": {
+    "description": "Current plan line",
+    "placeholders": {
+      "plan": {
+        "type": "String"
+      }
+    }
+  },
+  "planMessages": "Messages this month: {used} of {allowed}",
+  "@planMessages": {
+    "description": "Usage line",
+    "placeholders": {
+      "used": {
+        "type": "String"
+      },
+      "allowed": {
+        "type": "String"
+      }
+    }
+  },
+  "planResets": "Resets on {date}",
+  "@planResets": {
+    "description": "When the monthly count resets",
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "planStorage": "Knowledge storage: {used} of {allowed}",
+  "@planStorage": {
+    "description": "Storage usage",
+    "placeholders": {
+      "used": {
+        "type": "String"
+      },
+      "allowed": {
+        "type": "String"
+      }
+    }
+  },
+  "planEngineerIncluded": "Engineer agent included",
+  "@planEngineerIncluded": {
+    "description": "Plan feature"
+  },
+  "planEngineerNotIncluded": "Engineer agent: Pro and Team plans",
+  "@planEngineerNotIncluded": {
+    "description": "Plan feature not included"
+  },
+  "planSeats": "Seats: {seats}",
+  "@planSeats": {
+    "description": "Team seats",
+    "placeholders": {
+      "seats": {
+        "type": "String"
+      }
+    }
+  },
+  "planSubscriptionStatus": "Subscription: {status}",
+  "@planSubscriptionStatus": {
+    "description": "Subscription status",
+    "placeholders": {
+      "status": {
+        "type": "String"
+      }
+    }
+  },
+  "planPaidThrough": "Paid through {date}",
+  "@planPaidThrough": {
+    "description": "End of the paid period",
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "planGraceUntil": "Full access until {date}, then the Free plan",
+  "@planGraceUntil": {
+    "description": "Grace end",
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "planPaymentsSection": "Payments",
+  "@planPaymentsSection": {
+    "description": "Section of receipts"
+  },
+  "planUpgradeSection": "Upgrade",
+  "@planUpgradeSection": {
+    "description": "Section header"
+  },
+  "planUpgradePro": "Get Pro",
+  "@planUpgradePro": {
+    "description": "Starts a Pro checkout"
+  },
+  "planUpgradeTeam": "Get Team",
+  "@planUpgradeTeam": {
+    "description": "Starts a Team checkout"
+  },
+  "planSeatsLabel": "Seats",
+  "@planSeatsLabel": {
+    "description": "Seat count field"
+  },
+  "planUpgradeMobile": "Upgrades are on the web for now.",
+  "@planUpgradeMobile": {
+    "description": "Shown on iOS and Android instead of a purchase"
+  },
+  "planOwnerOnly": "Only the workspace owner can change the plan.",
+  "@planOwnerOnly": {
+    "description": "Shown to non-owners"
+  },
+  "planBillingOff": "Upgrades are not available yet.",
+  "@planBillingOff": {
+    "description": "Billing is off on this server"
+  },
+  "planCancel": "Cancel subscription",
+  "@planCancel": {
+    "description": "Cancels at period end"
+  },
+  "planCancelConfirm": "Cancel the subscription? You keep your plan until the end of what you paid for.",
+  "@planCancelConfirm": {
+    "description": "Confirms cancelling"
+  },
+  "checkoutTitle": "Pay with Fawry",
+  "@checkoutTitle": {
+    "description": "Checkout result title"
+  },
+  "checkoutReference": "Reference number: {reference}",
+  "@checkoutReference": {
+    "description": "Fawry reference",
+    "placeholders": {
+      "reference": {
+        "type": "String"
+      }
+    }
+  },
+  "checkoutAmount": "Amount: {amount}",
+  "@checkoutAmount": {
+    "description": "Amount to pay",
+    "placeholders": {
+      "amount": {
+        "type": "String"
+      }
+    }
+  },
+  "checkoutExpires": "Pay before {date}",
+  "@checkoutExpires": {
+    "description": "Reference expiry",
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "checkoutHowTo": "Pay at any Fawry outlet, from your mobile wallet, or in the myFawry app using this reference number. Your plan starts as soon as the payment arrives.",
+  "@checkoutHowTo": {
+    "description": "How to pay"
+  },
+  "seePlans": "See plans",
+  "@seePlans": {
+    "description": "Action on a plan-limit message"
+  },
+  "inviteAcceptTitle": "Join a team",
+  "@inviteAcceptTitle": {
+    "description": "Invite accept page title"
+  },
+  "inviteAcceptBody": "You've been invited to join a team on AURA.",
+  "@inviteAcceptBody": {
+    "description": "Invite accept explanation"
+  },
+  "inviteAcceptAction": "Join",
+  "@inviteAcceptAction": {
+    "description": "Accepts the invite"
+  },
+  "inviteAccepted": "You joined {name}",
+  "@inviteAccepted": {
+    "description": "Snackbar after joining",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "inviteInvalid": "This invite is no longer valid. Ask for a new one.",
+  "@inviteInvalid": {
+    "description": "Expired or used invite"
+  },
+  "inviteNeedsVerifiedEmail": "Verify your email address first, then open the link again.",
+  "@inviteNeedsVerifiedEmail": {
+    "description": "Unverified account"
+  },
+  "shareWithTeam": "Share with team",
+  "@shareWithTeam": {
+    "description": "Chat menu action"
+  },
+  "sharedWithTeam": "Shared with {name}",
+  "@sharedWithTeam": {
+    "description": "Snackbar after sharing",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "teamChatsTitle": "Team chats",
+  "@teamChatsTitle": {
+    "description": "Shared chats page title"
+  },
+  "teamChatsEmpty": "No chats have been shared with this team yet.",
+  "@teamChatsEmpty": {
+    "description": "Empty state"
+  },
+  "teamChatsSharedBy": "Shared by {who}",
+  "@teamChatsSharedBy": {
+    "description": "Who shared it",
+    "placeholders": {
+      "who": {
+        "type": "String"
+      }
+    }
+  },
+  "teamChatsUnshare": "Unshare",
+  "@teamChatsUnshare": {
+    "description": "Removes a shared chat"
+  },
+  "teamChatsTooMany": "You've shared the most chats allowed. Unshare one first.",
+  "@teamChatsTooMany": {
+    "description": "Share limit reached"
+  },
+  "signInMethodsTitle": "Sign-in methods",
+  "@signInMethodsTitle": {
+    "description": "Linked accounts page title"
+  },
+  "signInMethodsSubtitle": "Google, Apple, email",
+  "@signInMethodsSubtitle": {
+    "description": "Settings row subtitle"
+  },
+  "signInMethodLinked": "Connected",
+  "@signInMethodLinked": {
+    "description": "A linked sign-in method"
+  },
+  "signInMethodLink": "Connect",
+  "@signInMethodLink": {
+    "description": "Links a sign-in method"
+  },
+  "signInMethodInUse": "That sign-in already belongs to another AURA account.",
+  "@signInMethodInUse": {
+    "description": "Credential already in use"
+  },
+  "signInMethodLinkedDone": "Sign-in method connected",
+  "@signInMethodLinkedDone": {
+    "description": "Snackbar after linking"
+  },
+  "legalAgreePrefix": "By continuing you agree to the",
+  "@legalAgreePrefix": {
+    "description": "Before legal links at sign-up"
+  },
+  "legalTerms": "Terms of Service",
+  "@legalTerms": {
+    "description": "Link"
+  },
+  "legalPrivacy": "Privacy Policy",
+  "@legalPrivacy": {
+    "description": "Link"
+  },
+  "legalRefund": "Refund Policy",
+  "@legalRefund": {
+    "description": "Link"
+  },
+  "deleteBlockedTitle": "You own a team",
+  "@deleteBlockedTitle": {
+    "description": "Account deletion refused"
+  },
+  "deleteBlockedBody": "Before deleting your account, make someone else the owner of these teams, or delete them:",
+  "@deleteBlockedBody": {
+    "description": "Explains the refusal"
   }
 }

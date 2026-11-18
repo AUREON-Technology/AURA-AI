@@ -903,4 +903,299 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get verifyEmailDone => 'I\'ve verified';
+
+  @override
+  String get workspaceTileTitle => 'Workspace';
+
+  @override
+  String get workspacePersonal => 'Personal';
+
+  @override
+  String get workspaceSwitcherTitle => 'Switch workspace';
+
+  @override
+  String get workspaceCreateTeam => 'Create a team';
+
+  @override
+  String get workspaceTeamSettings => 'Team settings';
+
+  @override
+  String get workspaceRoleOwner => 'Owner';
+
+  @override
+  String get workspaceRoleAdmin => 'Admin';
+
+  @override
+  String get workspaceRoleMember => 'Member';
+
+  @override
+  String get teamNameLabel => 'Team name';
+
+  @override
+  String get teamCreateAction => 'Create';
+
+  @override
+  String get teamMembersSection => 'Members';
+
+  @override
+  String get teamInvitesSection => 'Pending invites';
+
+  @override
+  String get teamYou => 'You';
+
+  @override
+  String get teamInviteAction => 'Invite';
+
+  @override
+  String get teamInviteEmailLabel => 'Email address';
+
+  @override
+  String get teamInviteSentTitle => 'Invite created';
+
+  @override
+  String teamInviteSentBody(String email) {
+    return 'Send this link to $email. It works once and expires in a few days. If email is set up for AURA, we sent it too.';
+  }
+
+  @override
+  String get teamCopyLink => 'Copy link';
+
+  @override
+  String get teamLinkCopied => 'Link copied';
+
+  @override
+  String get teamMakeAdmin => 'Make admin';
+
+  @override
+  String get teamMakeMember => 'Make member';
+
+  @override
+  String get teamMakeOwner => 'Make owner';
+
+  @override
+  String get teamRemove => 'Remove from team';
+
+  @override
+  String get teamRevokeInvite => 'Revoke';
+
+  @override
+  String teamMakeOwnerConfirm(String who) {
+    return 'Make $who the owner? You\'ll become an admin, and only they can manage billing or delete the team.';
+  }
+
+  @override
+  String teamRemoveConfirm(String who) {
+    return 'Remove $who from the team?';
+  }
+
+  @override
+  String get teamLeave => 'Leave team';
+
+  @override
+  String teamLeaveConfirm(String name) {
+    return 'Leave $name? You\'ll lose access to its shared documents and chats.';
+  }
+
+  @override
+  String get teamDelete => 'Delete team';
+
+  @override
+  String teamDeleteConfirm(String name) {
+    return 'Delete $name for everyone? Its shared documents and chats are removed. This can\'t be undone.';
+  }
+
+  @override
+  String get teamReadOnlyNote =>
+      'Only the owner and admins can invite or change members.';
+
+  @override
+  String get planTitle => 'Plan and usage';
+
+  @override
+  String planCurrent(String plan) {
+    return 'Plan: $plan';
+  }
+
+  @override
+  String planMessages(String used, String allowed) {
+    return 'Messages this month: $used of $allowed';
+  }
+
+  @override
+  String planResets(String date) {
+    return 'Resets on $date';
+  }
+
+  @override
+  String planStorage(String used, String allowed) {
+    return 'Knowledge storage: $used of $allowed';
+  }
+
+  @override
+  String get planEngineerIncluded => 'Engineer agent included';
+
+  @override
+  String get planEngineerNotIncluded => 'Engineer agent: Pro and Team plans';
+
+  @override
+  String planSeats(String seats) {
+    return 'Seats: $seats';
+  }
+
+  @override
+  String planSubscriptionStatus(String status) {
+    return 'Subscription: $status';
+  }
+
+  @override
+  String planPaidThrough(String date) {
+    return 'Paid through $date';
+  }
+
+  @override
+  String planGraceUntil(String date) {
+    return 'Full access until $date, then the Free plan';
+  }
+
+  @override
+  String get planPaymentsSection => 'Payments';
+
+  @override
+  String get planUpgradeSection => 'Upgrade';
+
+  @override
+  String get planUpgradePro => 'Get Pro';
+
+  @override
+  String get planUpgradeTeam => 'Get Team';
+
+  @override
+  String get planSeatsLabel => 'Seats';
+
+  @override
+  String get planUpgradeMobile => 'Upgrades are on the web for now.';
+
+  @override
+  String get planOwnerOnly => 'Only the workspace owner can change the plan.';
+
+  @override
+  String get planBillingOff => 'Upgrades are not available yet.';
+
+  @override
+  String get planCancel => 'Cancel subscription';
+
+  @override
+  String get planCancelConfirm =>
+      'Cancel the subscription? You keep your plan until the end of what you paid for.';
+
+  @override
+  String get checkoutTitle => 'Pay with Fawry';
+
+  @override
+  String checkoutReference(String reference) {
+    return 'Reference number: $reference';
+  }
+
+  @override
+  String checkoutAmount(String amount) {
+    return 'Amount: $amount';
+  }
+
+  @override
+  String checkoutExpires(String date) {
+    return 'Pay before $date';
+  }
+
+  @override
+  String get checkoutHowTo =>
+      'Pay at any Fawry outlet, from your mobile wallet, or in the myFawry app using this reference number. Your plan starts as soon as the payment arrives.';
+
+  @override
+  String get seePlans => 'See plans';
+
+  @override
+  String get inviteAcceptTitle => 'Join a team';
+
+  @override
+  String get inviteAcceptBody => 'You\'ve been invited to join a team on AURA.';
+
+  @override
+  String get inviteAcceptAction => 'Join';
+
+  @override
+  String inviteAccepted(String name) {
+    return 'You joined $name';
+  }
+
+  @override
+  String get inviteInvalid =>
+      'This invite is no longer valid. Ask for a new one.';
+
+  @override
+  String get inviteNeedsVerifiedEmail =>
+      'Verify your email address first, then open the link again.';
+
+  @override
+  String get shareWithTeam => 'Share with team';
+
+  @override
+  String sharedWithTeam(String name) {
+    return 'Shared with $name';
+  }
+
+  @override
+  String get teamChatsTitle => 'Team chats';
+
+  @override
+  String get teamChatsEmpty => 'No chats have been shared with this team yet.';
+
+  @override
+  String teamChatsSharedBy(String who) {
+    return 'Shared by $who';
+  }
+
+  @override
+  String get teamChatsUnshare => 'Unshare';
+
+  @override
+  String get teamChatsTooMany =>
+      'You\'ve shared the most chats allowed. Unshare one first.';
+
+  @override
+  String get signInMethodsTitle => 'Sign-in methods';
+
+  @override
+  String get signInMethodsSubtitle => 'Google, Apple, email';
+
+  @override
+  String get signInMethodLinked => 'Connected';
+
+  @override
+  String get signInMethodLink => 'Connect';
+
+  @override
+  String get signInMethodInUse =>
+      'That sign-in already belongs to another AURA account.';
+
+  @override
+  String get signInMethodLinkedDone => 'Sign-in method connected';
+
+  @override
+  String get legalAgreePrefix => 'By continuing you agree to the';
+
+  @override
+  String get legalTerms => 'Terms of Service';
+
+  @override
+  String get legalPrivacy => 'Privacy Policy';
+
+  @override
+  String get legalRefund => 'Refund Policy';
+
+  @override
+  String get deleteBlockedTitle => 'You own a team';
+
+  @override
+  String get deleteBlockedBody =>
+      'Before deleting your account, make someone else the owner of these teams, or delete them:';
 }

@@ -1719,6 +1719,504 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'I\'ve verified'**
   String get verifyEmailDone;
+
+  /// Settings row opening the workspace switcher
+  ///
+  /// In en, this message translates to:
+  /// **'Workspace'**
+  String get workspaceTileTitle;
+
+  /// Name shown for the person's own workspace
+  ///
+  /// In en, this message translates to:
+  /// **'Personal'**
+  String get workspacePersonal;
+
+  /// Title of the workspace switcher sheet
+  ///
+  /// In en, this message translates to:
+  /// **'Switch workspace'**
+  String get workspaceSwitcherTitle;
+
+  /// Action that creates a team workspace
+  ///
+  /// In en, this message translates to:
+  /// **'Create a team'**
+  String get workspaceCreateTeam;
+
+  /// Opens the active team's settings
+  ///
+  /// In en, this message translates to:
+  /// **'Team settings'**
+  String get workspaceTeamSettings;
+
+  /// Workspace role
+  ///
+  /// In en, this message translates to:
+  /// **'Owner'**
+  String get workspaceRoleOwner;
+
+  /// Workspace role
+  ///
+  /// In en, this message translates to:
+  /// **'Admin'**
+  String get workspaceRoleAdmin;
+
+  /// Workspace role
+  ///
+  /// In en, this message translates to:
+  /// **'Member'**
+  String get workspaceRoleMember;
+
+  /// Field label when creating a team
+  ///
+  /// In en, this message translates to:
+  /// **'Team name'**
+  String get teamNameLabel;
+
+  /// Confirms creating a team
+  ///
+  /// In en, this message translates to:
+  /// **'Create'**
+  String get teamCreateAction;
+
+  /// Section header for team members
+  ///
+  /// In en, this message translates to:
+  /// **'Members'**
+  String get teamMembersSection;
+
+  /// Section header for open invites
+  ///
+  /// In en, this message translates to:
+  /// **'Pending invites'**
+  String get teamInvitesSection;
+
+  /// Marks the signed-in person in the members list
+  ///
+  /// In en, this message translates to:
+  /// **'You'**
+  String get teamYou;
+
+  /// Opens the invite dialog
+  ///
+  /// In en, this message translates to:
+  /// **'Invite'**
+  String get teamInviteAction;
+
+  /// Invite dialog field
+  ///
+  /// In en, this message translates to:
+  /// **'Email address'**
+  String get teamInviteEmailLabel;
+
+  /// Dialog title after inviting someone
+  ///
+  /// In en, this message translates to:
+  /// **'Invite created'**
+  String get teamInviteSentTitle;
+
+  /// Explains the invite link
+  ///
+  /// In en, this message translates to:
+  /// **'Send this link to {email}. It works once and expires in a few days. If email is set up for AURA, we sent it too.'**
+  String teamInviteSentBody(String email);
+
+  /// Copies the invite link
+  ///
+  /// In en, this message translates to:
+  /// **'Copy link'**
+  String get teamCopyLink;
+
+  /// Snackbar after copying
+  ///
+  /// In en, this message translates to:
+  /// **'Link copied'**
+  String get teamLinkCopied;
+
+  /// Member action
+  ///
+  /// In en, this message translates to:
+  /// **'Make admin'**
+  String get teamMakeAdmin;
+
+  /// Member action
+  ///
+  /// In en, this message translates to:
+  /// **'Make member'**
+  String get teamMakeMember;
+
+  /// Member action: transfer ownership
+  ///
+  /// In en, this message translates to:
+  /// **'Make owner'**
+  String get teamMakeOwner;
+
+  /// Member action
+  ///
+  /// In en, this message translates to:
+  /// **'Remove from team'**
+  String get teamRemove;
+
+  /// Cancels a pending invite
+  ///
+  /// In en, this message translates to:
+  /// **'Revoke'**
+  String get teamRevokeInvite;
+
+  /// Confirms ownership transfer
+  ///
+  /// In en, this message translates to:
+  /// **'Make {who} the owner? You\'ll become an admin, and only they can manage billing or delete the team.'**
+  String teamMakeOwnerConfirm(String who);
+
+  /// Confirms removing a member
+  ///
+  /// In en, this message translates to:
+  /// **'Remove {who} from the team?'**
+  String teamRemoveConfirm(String who);
+
+  /// Leaves the team
+  ///
+  /// In en, this message translates to:
+  /// **'Leave team'**
+  String get teamLeave;
+
+  /// Confirms leaving
+  ///
+  /// In en, this message translates to:
+  /// **'Leave {name}? You\'ll lose access to its shared documents and chats.'**
+  String teamLeaveConfirm(String name);
+
+  /// Deletes the team
+  ///
+  /// In en, this message translates to:
+  /// **'Delete team'**
+  String get teamDelete;
+
+  /// Confirms deleting a team
+  ///
+  /// In en, this message translates to:
+  /// **'Delete {name} for everyone? Its shared documents and chats are removed. This can\'t be undone.'**
+  String teamDeleteConfirm(String name);
+
+  /// Shown to members in team settings
+  ///
+  /// In en, this message translates to:
+  /// **'Only the owner and admins can invite or change members.'**
+  String get teamReadOnlyNote;
+
+  /// Plan page title
+  ///
+  /// In en, this message translates to:
+  /// **'Plan and usage'**
+  String get planTitle;
+
+  /// Current plan line
+  ///
+  /// In en, this message translates to:
+  /// **'Plan: {plan}'**
+  String planCurrent(String plan);
+
+  /// Usage line
+  ///
+  /// In en, this message translates to:
+  /// **'Messages this month: {used} of {allowed}'**
+  String planMessages(String used, String allowed);
+
+  /// When the monthly count resets
+  ///
+  /// In en, this message translates to:
+  /// **'Resets on {date}'**
+  String planResets(String date);
+
+  /// Storage usage
+  ///
+  /// In en, this message translates to:
+  /// **'Knowledge storage: {used} of {allowed}'**
+  String planStorage(String used, String allowed);
+
+  /// Plan feature
+  ///
+  /// In en, this message translates to:
+  /// **'Engineer agent included'**
+  String get planEngineerIncluded;
+
+  /// Plan feature not included
+  ///
+  /// In en, this message translates to:
+  /// **'Engineer agent: Pro and Team plans'**
+  String get planEngineerNotIncluded;
+
+  /// Team seats
+  ///
+  /// In en, this message translates to:
+  /// **'Seats: {seats}'**
+  String planSeats(String seats);
+
+  /// Subscription status
+  ///
+  /// In en, this message translates to:
+  /// **'Subscription: {status}'**
+  String planSubscriptionStatus(String status);
+
+  /// End of the paid period
+  ///
+  /// In en, this message translates to:
+  /// **'Paid through {date}'**
+  String planPaidThrough(String date);
+
+  /// Grace end
+  ///
+  /// In en, this message translates to:
+  /// **'Full access until {date}, then the Free plan'**
+  String planGraceUntil(String date);
+
+  /// Section of receipts
+  ///
+  /// In en, this message translates to:
+  /// **'Payments'**
+  String get planPaymentsSection;
+
+  /// Section header
+  ///
+  /// In en, this message translates to:
+  /// **'Upgrade'**
+  String get planUpgradeSection;
+
+  /// Starts a Pro checkout
+  ///
+  /// In en, this message translates to:
+  /// **'Get Pro'**
+  String get planUpgradePro;
+
+  /// Starts a Team checkout
+  ///
+  /// In en, this message translates to:
+  /// **'Get Team'**
+  String get planUpgradeTeam;
+
+  /// Seat count field
+  ///
+  /// In en, this message translates to:
+  /// **'Seats'**
+  String get planSeatsLabel;
+
+  /// Shown on iOS and Android instead of a purchase
+  ///
+  /// In en, this message translates to:
+  /// **'Upgrades are on the web for now.'**
+  String get planUpgradeMobile;
+
+  /// Shown to non-owners
+  ///
+  /// In en, this message translates to:
+  /// **'Only the workspace owner can change the plan.'**
+  String get planOwnerOnly;
+
+  /// Billing is off on this server
+  ///
+  /// In en, this message translates to:
+  /// **'Upgrades are not available yet.'**
+  String get planBillingOff;
+
+  /// Cancels at period end
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel subscription'**
+  String get planCancel;
+
+  /// Confirms cancelling
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel the subscription? You keep your plan until the end of what you paid for.'**
+  String get planCancelConfirm;
+
+  /// Checkout result title
+  ///
+  /// In en, this message translates to:
+  /// **'Pay with Fawry'**
+  String get checkoutTitle;
+
+  /// Fawry reference
+  ///
+  /// In en, this message translates to:
+  /// **'Reference number: {reference}'**
+  String checkoutReference(String reference);
+
+  /// Amount to pay
+  ///
+  /// In en, this message translates to:
+  /// **'Amount: {amount}'**
+  String checkoutAmount(String amount);
+
+  /// Reference expiry
+  ///
+  /// In en, this message translates to:
+  /// **'Pay before {date}'**
+  String checkoutExpires(String date);
+
+  /// How to pay
+  ///
+  /// In en, this message translates to:
+  /// **'Pay at any Fawry outlet, from your mobile wallet, or in the myFawry app using this reference number. Your plan starts as soon as the payment arrives.'**
+  String get checkoutHowTo;
+
+  /// Action on a plan-limit message
+  ///
+  /// In en, this message translates to:
+  /// **'See plans'**
+  String get seePlans;
+
+  /// Invite accept page title
+  ///
+  /// In en, this message translates to:
+  /// **'Join a team'**
+  String get inviteAcceptTitle;
+
+  /// Invite accept explanation
+  ///
+  /// In en, this message translates to:
+  /// **'You\'ve been invited to join a team on AURA.'**
+  String get inviteAcceptBody;
+
+  /// Accepts the invite
+  ///
+  /// In en, this message translates to:
+  /// **'Join'**
+  String get inviteAcceptAction;
+
+  /// Snackbar after joining
+  ///
+  /// In en, this message translates to:
+  /// **'You joined {name}'**
+  String inviteAccepted(String name);
+
+  /// Expired or used invite
+  ///
+  /// In en, this message translates to:
+  /// **'This invite is no longer valid. Ask for a new one.'**
+  String get inviteInvalid;
+
+  /// Unverified account
+  ///
+  /// In en, this message translates to:
+  /// **'Verify your email address first, then open the link again.'**
+  String get inviteNeedsVerifiedEmail;
+
+  /// Chat menu action
+  ///
+  /// In en, this message translates to:
+  /// **'Share with team'**
+  String get shareWithTeam;
+
+  /// Snackbar after sharing
+  ///
+  /// In en, this message translates to:
+  /// **'Shared with {name}'**
+  String sharedWithTeam(String name);
+
+  /// Shared chats page title
+  ///
+  /// In en, this message translates to:
+  /// **'Team chats'**
+  String get teamChatsTitle;
+
+  /// Empty state
+  ///
+  /// In en, this message translates to:
+  /// **'No chats have been shared with this team yet.'**
+  String get teamChatsEmpty;
+
+  /// Who shared it
+  ///
+  /// In en, this message translates to:
+  /// **'Shared by {who}'**
+  String teamChatsSharedBy(String who);
+
+  /// Removes a shared chat
+  ///
+  /// In en, this message translates to:
+  /// **'Unshare'**
+  String get teamChatsUnshare;
+
+  /// Share limit reached
+  ///
+  /// In en, this message translates to:
+  /// **'You\'ve shared the most chats allowed. Unshare one first.'**
+  String get teamChatsTooMany;
+
+  /// Linked accounts page title
+  ///
+  /// In en, this message translates to:
+  /// **'Sign-in methods'**
+  String get signInMethodsTitle;
+
+  /// Settings row subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'Google, Apple, email'**
+  String get signInMethodsSubtitle;
+
+  /// A linked sign-in method
+  ///
+  /// In en, this message translates to:
+  /// **'Connected'**
+  String get signInMethodLinked;
+
+  /// Links a sign-in method
+  ///
+  /// In en, this message translates to:
+  /// **'Connect'**
+  String get signInMethodLink;
+
+  /// Credential already in use
+  ///
+  /// In en, this message translates to:
+  /// **'That sign-in already belongs to another AURA account.'**
+  String get signInMethodInUse;
+
+  /// Snackbar after linking
+  ///
+  /// In en, this message translates to:
+  /// **'Sign-in method connected'**
+  String get signInMethodLinkedDone;
+
+  /// Before legal links at sign-up
+  ///
+  /// In en, this message translates to:
+  /// **'By continuing you agree to the'**
+  String get legalAgreePrefix;
+
+  /// Link
+  ///
+  /// In en, this message translates to:
+  /// **'Terms of Service'**
+  String get legalTerms;
+
+  /// Link
+  ///
+  /// In en, this message translates to:
+  /// **'Privacy Policy'**
+  String get legalPrivacy;
+
+  /// Link
+  ///
+  /// In en, this message translates to:
+  /// **'Refund Policy'**
+  String get legalRefund;
+
+  /// Account deletion refused
+  ///
+  /// In en, this message translates to:
+  /// **'You own a team'**
+  String get deleteBlockedTitle;
+
+  /// Explains the refusal
+  ///
+  /// In en, this message translates to:
+  /// **'Before deleting your account, make someone else the owner of these teams, or delete them:'**
+  String get deleteBlockedBody;
 }
 
 class _AppLocalizationsDelegate

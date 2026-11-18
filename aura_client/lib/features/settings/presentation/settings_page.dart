@@ -7,6 +7,7 @@ import 'package:aura_client/core/config/backend_url_settings.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/platform/aura_platform.dart';
 import 'package:aura_client/features/auth/presentation/delete_account_confirmation.dart';
+import 'package:aura_client/features/workspaces/presentation/workspace_tile.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
 /// "You" — grouped as Account, (Desktop,) Your AURA, Engineer, System and
@@ -44,6 +45,8 @@ class SettingsPage extends ConsumerWidget {
                 padding: EdgeInsets.zero,
                 child: Column(
                   children: [
+                    const WorkspaceTile(),
+                    const _RowDivider(),
                     AuraListTile(
                       icon: Icons.person_outline,
                       title: l10n.settingsProfileTitle,
