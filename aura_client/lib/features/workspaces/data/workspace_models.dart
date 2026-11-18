@@ -92,8 +92,12 @@ class PlanUsage {
 
 @immutable
 class SubscriptionView {
-  const SubscriptionView({required this.plan, required this.seats, required this.status, this.periodEnd, this.graceUntil});
+  const SubscriptionView({required this.plan, required this.seats, required this.status, this.periodEnd, this.graceUntil,
+      this.provider = 'fawry'});
   final String plan;
+
+  /// Who bills it: `fawry`, `apple` or `google`. Only the store can cancel its own.
+  final String provider;
   final int seats;
 
   /// `active`, `past_due`, `grace`, `canceled`, `expired` or `pending`.
@@ -107,7 +111,12 @@ class SubscriptionView {
         status: '${json['status']}',
         periodEnd: _time(json['period_end']),
         graceUntil: _time(json['grace_until']),
+        provider: json['provider'] is String ? json['provider'] as String : 'fawry',
       );
+
+  /// Still billing or still giving access: a new purchase would charge twice.
+  bool get live => const {'active', 'past_due', 'grace', 'canceled'}.contains(status);
+  bool get fromStore => provider == 'apple' || provider == 'google';
 }
 
 @immutable
@@ -145,9 +154,12 @@ class PaymentView {
 
 @immutable
 class BillingStatus {
-  const BillingStatus({this.subscription, this.payments = const []});
+  const BillingStatus({this.subscription, this.payments = const [], this.storeProducts = const {}});
   final SubscriptionView? subscription;
   final List<PaymentView> payments;
+
+  /// The store products that sell Pro, by store (`apple`, `google`), from `AURA_STORE_PRODUCTS`.
+  final Map<String, List<String>> storeProducts;
 
   factory BillingStatus.fromJson(Map<String, dynamic> json) => BillingStatus(
         subscription: json['subscription'] is Map<String, dynamic>
@@ -157,6 +169,11 @@ class BillingStatus {
           for (final p in (json['payments'] as List<dynamic>? ?? const []))
             if (p is Map<String, dynamic>) PaymentView.fromJson(p),
         ],
+        storeProducts: {
+          if (json['store_products'] is Map<String, dynamic>)
+            for (final entry in (json['store_products'] as Map<String, dynamic>).entries)
+              if (entry.value is List) entry.key: [for (final id in entry.value as List) if (id is String) id],
+        },
       );
 }
 

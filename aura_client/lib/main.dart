@@ -13,6 +13,7 @@ import 'core/platform/document_language.dart';
 import 'core/theme/theme_mode_controller.dart';
 import 'core/routing/router.dart';
 import 'core/security/encryption_service.dart';
+import 'features/workspaces/presentation/store_purchase.dart';
 import 'l10n/l10n.dart';
 
 void main() async {
@@ -33,6 +34,9 @@ void main() async {
   }
 
   final container = ProviderContainer();
+  // From app start, so a store transaction left unfinished (the app was killed mid-purchase) is
+  // finished on the next launch (SaaS P1-F2b). A no-op where there is no store.
+  container.read(storePurchaseListenerProvider);
 
   runApp(
     UncontrolledProviderScope(

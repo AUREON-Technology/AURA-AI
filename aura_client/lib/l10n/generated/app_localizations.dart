@@ -8106,11 +8106,59 @@ abstract class AppLocalizations {
   /// **'Seats'**
   String get planSeatsLabel;
 
-  /// Shown on iOS and Android instead of a purchase
+  /// Shown on iOS and Android for a team workspace: no store purchase and no mention of another way to pay
   ///
   /// In en, this message translates to:
-  /// **'Upgrades are on the web for now.'**
-  String get planUpgradeMobile;
+  /// **'Team plans can\'t be bought in this app.'**
+  String get planTeamNotInApp;
+
+  /// In-app purchase button with the store's localized price
+  ///
+  /// In en, this message translates to:
+  /// **'Upgrade to Pro · {price}'**
+  String planStoreBuy(String price);
+
+  /// After the store confirms, while AURA waits for the store's notification
+  ///
+  /// In en, this message translates to:
+  /// **'Purchase received. Activating your plan…'**
+  String get planStoreWaiting;
+
+  /// The store's notification has not reached AURA yet, or the purchase awaits approval
+  ///
+  /// In en, this message translates to:
+  /// **'Purchase received. Your plan will update in a few minutes.'**
+  String get planStorePending;
+
+  /// Opens the App Store's or Google Play's own subscription management
+  ///
+  /// In en, this message translates to:
+  /// **'Manage subscription'**
+  String get planStoreManage;
+
+  /// A store subscription bought on the other mobile platform
+  ///
+  /// In en, this message translates to:
+  /// **'Your subscription is managed in your other device\'s app store.'**
+  String get planStoreOtherDevice;
+
+  /// On the web or desktop, for a subscription bought in a store
+  ///
+  /// In en, this message translates to:
+  /// **'This subscription is managed in the App Store or Google Play.'**
+  String get planStoreElsewhere;
+
+  /// On iOS and Android while a Fawry subscription is live: no second purchase
+  ///
+  /// In en, this message translates to:
+  /// **'You already have a subscription.'**
+  String get planFawryActive;
+
+  /// The store reported an error
+  ///
+  /// In en, this message translates to:
+  /// **'The purchase didn\'t go through.'**
+  String get planStoreFailed;
 
   /// Shown to non-owners
   ///

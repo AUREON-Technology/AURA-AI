@@ -104,6 +104,10 @@ class BillingService:
             sub = await self.subscriptions.get(workspace_id)
             if sub is None or sub.status in (SubscriptionStatus.EXPIRED, SubscriptionStatus.CANCELED):
                 raise ConflictError("there is no subscription to cancel")
+            if sub.provider != "fawry":
+                # Only the store can stop its own renewals: marking it canceled here would leave
+                # the person charged while AURA said otherwise (SaaS P1-F2b).
+                raise ConflictError("this subscription is managed in the App Store or Google Play; cancel it there")
             await self.subscriptions.put(replace(sub, status=SubscriptionStatus.CANCELED, updated_at=self.clock.now()))
         finally:
             await lock.release()
@@ -118,6 +122,7 @@ class BillingService:
                 "period_start": sub.period_start.isoformat(), "period_end": sub.period_end.isoformat(),
                 "grace_until": sub.grace_until.isoformat() if sub.grace_until else None,
                 "card_on_file": sub.card_token is not None,
+                "provider": sub.provider,
             },
             "payments": [{
                 "id": p.id, "plan": p.plan_id, "seats": p.seats, "amount_piastres": p.amount_piastres,

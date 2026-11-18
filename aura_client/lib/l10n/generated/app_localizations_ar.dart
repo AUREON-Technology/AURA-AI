@@ -4857,7 +4857,35 @@ class AppLocalizationsAr extends AppLocalizations {
   String get planSeatsLabel => 'عدد المقاعد';
 
   @override
-  String get planUpgradeMobile => 'الترقية من الويب دلوقتي.';
+  String get planTeamNotInApp => 'باقات الفرق مش متاحة للشرا من التطبيق ده.';
+
+  @override
+  String planStoreBuy(String price) {
+    return 'رقّي لـ Pro · $price';
+  }
+
+  @override
+  String get planStoreWaiting => 'الدفع وصل. بنفعّل باقتك…';
+
+  @override
+  String get planStorePending => 'الدفع وصل. باقتك هتتحدّث خلال دقايق.';
+
+  @override
+  String get planStoreManage => 'إدارة الاشتراك';
+
+  @override
+  String get planStoreOtherDevice =>
+      'اشتراكك بيتدار من متجر التطبيقات على جهازك التاني.';
+
+  @override
+  String get planStoreElsewhere =>
+      'الاشتراك ده بيتدار من App Store أو Google Play.';
+
+  @override
+  String get planFawryActive => 'عندك اشتراك بالفعل.';
+
+  @override
+  String get planStoreFailed => 'عملية الشرا ما تمّتش.';
 
   @override
   String get planOwnerOnly => 'مالك مساحة الشغل بس يقدر يغيّر الباقة.';

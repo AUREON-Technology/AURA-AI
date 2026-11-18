@@ -4827,7 +4827,36 @@ class AppLocalizationsEn extends AppLocalizations {
   String get planSeatsLabel => 'Seats';
 
   @override
-  String get planUpgradeMobile => 'Upgrades are on the web for now.';
+  String get planTeamNotInApp => 'Team plans can\'t be bought in this app.';
+
+  @override
+  String planStoreBuy(String price) {
+    return 'Upgrade to Pro · $price';
+  }
+
+  @override
+  String get planStoreWaiting => 'Purchase received. Activating your plan…';
+
+  @override
+  String get planStorePending =>
+      'Purchase received. Your plan will update in a few minutes.';
+
+  @override
+  String get planStoreManage => 'Manage subscription';
+
+  @override
+  String get planStoreOtherDevice =>
+      'Your subscription is managed in your other device\'s app store.';
+
+  @override
+  String get planStoreElsewhere =>
+      'This subscription is managed in the App Store or Google Play.';
+
+  @override
+  String get planFawryActive => 'You already have a subscription.';
+
+  @override
+  String get planStoreFailed => 'The purchase didn\'t go through.';
 
   @override
   String get planOwnerOnly => 'Only the workspace owner can change the plan.';

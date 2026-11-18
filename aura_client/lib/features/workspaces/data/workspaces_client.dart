@@ -83,6 +83,11 @@ class WorkspacesClient {
 
   Future<void> cancel(String id) => _call('POST', '${_ws(id)}/billing/cancel');
 
+  /// The binding token to hand to StoreKit / Play Billing before an in-app purchase (SaaS P1-D2):
+  /// it is how the store's notification finds this workspace.
+  Future<String> storeToken(String id) async =>
+      '${(await _call('POST', '${_ws(id)}/billing/store-token'))['token']}';
+
   // -- shared team chats --------------------------------------------------------------------
 
   Future<List<SharedChatSummary>> shared(String id) async =>

@@ -116,3 +116,11 @@ def test_the_fawry_secure_key_never_appears_in_settings_output(monkeypatch) -> N
     assert settings.billing.fawry_configured
     for redact in (True, False):
         assert "very-secret-fawry-key" not in _json.dumps(settings.as_dict(redact=redact))
+
+
+def test_billing_status_lists_the_pro_store_products(client, container, enabled) -> None:
+    """SaaS P1-F2b: the app reads which store product sells Pro from the server, not a build."""
+    container.store_billing.products = {"apple": {"aura.pro.monthly": "pro"}, "google": {}}
+    ws = _personal(client, "ann")
+    body = client.get(f"/api/v3/workspaces/{ws}/billing", headers=_as("ann")).json()
+    assert body["store_products"] == {"apple": ["aura.pro.monthly"]}

@@ -64,7 +64,14 @@ def register_billing_ops(
         _ws, membership = await container.tenancy.resolve(str(caller.user_id), workspace_id)
         if membership.role not in (WorkspaceRole.OWNER, WorkspaceRole.ADMIN):
             raise AuthorizationError("only the workspace owner or an admin can see billing")
-        return JSONResponse(content=await billing.status(workspace_id))
+        body = await billing.status(workspace_id)
+        # Which store product sells Pro, so the app reads it from AURA_STORE_PRODUCTS rather than
+        # from its build (SaaS P1-F2b). A store with none is left out.
+        body["store_products"] = {
+            store: sorted(pid for pid, plan in (stores.products.get(store) or {}).items() if plan == "pro")
+            for store in ("apple", "google") if any(plan == "pro" for plan in (stores.products.get(store) or {}).values())
+        }
+        return JSONResponse(content=body)
 
     # Not idempotency-keyed: each checkout is a new reference code, and a replay would hand back a
     # stale one.

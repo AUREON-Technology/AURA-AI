@@ -6470,9 +6470,46 @@
   "@planSeatsLabel": {
     "description": "Seat count field"
   },
-  "planUpgradeMobile": "Upgrades are on the web for now.",
-  "@planUpgradeMobile": {
-    "description": "Shown on iOS and Android instead of a purchase"
+  "planTeamNotInApp": "Team plans can't be bought in this app.",
+  "@planTeamNotInApp": {
+    "description": "Shown on iOS and Android for a team workspace: no store purchase and no mention of another way to pay"
+  },
+  "planStoreBuy": "Upgrade to Pro · {price}",
+  "@planStoreBuy": {
+    "description": "In-app purchase button with the store's localized price",
+    "placeholders": {
+      "price": {
+        "type": "String"
+      }
+    }
+  },
+  "planStoreWaiting": "Purchase received. Activating your plan…",
+  "@planStoreWaiting": {
+    "description": "After the store confirms, while AURA waits for the store's notification"
+  },
+  "planStorePending": "Purchase received. Your plan will update in a few minutes.",
+  "@planStorePending": {
+    "description": "The store's notification has not reached AURA yet, or the purchase awaits approval"
+  },
+  "planStoreManage": "Manage subscription",
+  "@planStoreManage": {
+    "description": "Opens the App Store's or Google Play's own subscription management"
+  },
+  "planStoreOtherDevice": "Your subscription is managed in your other device's app store.",
+  "@planStoreOtherDevice": {
+    "description": "A store subscription bought on the other mobile platform"
+  },
+  "planStoreElsewhere": "This subscription is managed in the App Store or Google Play.",
+  "@planStoreElsewhere": {
+    "description": "On the web or desktop, for a subscription bought in a store"
+  },
+  "planFawryActive": "You already have a subscription.",
+  "@planFawryActive": {
+    "description": "On iOS and Android while a Fawry subscription is live: no second purchase"
+  },
+  "planStoreFailed": "The purchase didn't go through.",
+  "@planStoreFailed": {
+    "description": "The store reported an error"
   },
   "planOwnerOnly": "Only the workspace owner can change the plan.",
   "@planOwnerOnly": {

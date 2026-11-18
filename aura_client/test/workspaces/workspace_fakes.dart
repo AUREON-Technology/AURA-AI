@@ -1,9 +1,12 @@
 // Shared fakes for the workspace screens' tests (SaaS P1-F2).
 
+import 'dart:async';
+
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/network/aura_api_error.dart';
 import 'package:aura_client/core/workspaces/active_workspace.dart';
 import 'package:aura_client/features/auth/presentation/auth_provider.dart';
+import 'package:aura_client/features/workspaces/data/store_gateway.dart';
 import 'package:aura_client/features/workspaces/data/workspace_models.dart';
 import 'package:aura_client/features/workspaces/data/workspaces_client.dart';
 import 'package:aura_client/l10n/l10n.dart';
@@ -90,6 +93,8 @@ class FakeWorkspaces extends WorkspacesClient {
   @override
   Future<void> cancel(String id) => _answer('cancel:$id', null);
   @override
+  Future<String> storeToken(String id) => _answer('store-token:$id', 'tok-1');
+  @override
   Future<WorkspaceSummary?> accept(String token) => _answer('accept', team(role: 'member'));
   @override
   Future<List<SharedChatSummary>> shared(String id) async => sharedList;
@@ -106,9 +111,39 @@ class FakeWorkspaces extends WorkspacesClient {
 
 late FakeWorkspaces fake;
 
+/// A store whose purchase sheet the test answers by calling [emit].
+class FakeStore implements StoreGateway {
+  FakeStore({this.kind = StoreKind.apple, this.price = 'EGP 149.99', this.known = true});
+
+  @override
+  final StoreKind? kind;
+  final String price;
+  final bool known;
+  final calls = <String>[];
+  final completed = <String>[];
+  final _updates = StreamController<List<StoreUpdate>>.broadcast();
+
+  void emit(StoreUpdateKind status, {String product = 'aura.pro.monthly', bool needsCompletion = true}) =>
+      _updates.add([StoreUpdate(kind: status, productId: product, needsCompletion: needsCompletion)]);
+
+  @override
+  Future<bool> available() async => true;
+  @override
+  Future<StoreProduct?> product(String id) async => known ? StoreProduct(id: id, price: price) : null;
+  @override
+  Future<void> buy(StoreProduct product, String bindingToken) async => calls.add('buy:${product.id}:$bindingToken');
+  @override
+  Stream<List<StoreUpdate>> get updates => _updates.stream;
+  @override
+  Future<void> complete(StoreUpdate update) async => completed.add(update.productId);
+  @override
+  Future<void> manage(String productId) async => calls.add('manage:$productId');
+}
+
 /// Pumps [child] at '/' inside a router that also knows [routes].
 Future<void> pumpScreen(WidgetTester tester, Widget child, {String uid = 'own', WorkspaceSummary? active,
-    List<GoRoute> routes = const [], List<Override> overrides = const [], void Function(FakeWorkspaces)? setup}) async {
+    List<GoRoute> routes = const [], List<Override> overrides = const [], void Function(FakeWorkspaces)? setup,
+    StoreGateway store = const NoStoreGateway()}) async {
   final router = GoRouter(routes: [
     GoRoute(path: '/', builder: (_, _) => child),
     ...routes,
@@ -122,6 +157,8 @@ Future<void> pumpScreen(WidgetTester tester, Widget child, {String uid = 'own', 
         return fake;
       }),
       authProvider.overrideWith(() => FakeAuth(uid)),
+      // Tests run as Android by default: no real store unless a test passes one.
+      storeGatewayProvider.overrideWithValue(store),
       if (active != null) activeWorkspaceProvider.overrideWith(() => _FixedActive(active)),
       ...overrides,
     ],
