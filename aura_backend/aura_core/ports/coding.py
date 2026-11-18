@@ -8,15 +8,18 @@ here.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, AsyncIterator, Mapping, Protocol, Sequence, runtime_checkable
 
 from ..domain.agent_runs import AgentRun, AgentStep
-from ..domain.engineering import AgentWorkspace, EngineerRun
+from ..domain.engineering import AgentWorkspace, EngineerConsent, EngineerRun
 from ..domain.identifiers import AgentRunId, UserId, WorkspaceId
 
 __all__ = [
+    "TOOL_CALL_CONFIRMED",
+    "EngineerConsentStore",
     "McpToolDescriptor",
     "McpClient",
     "RepoFile",
@@ -112,9 +115,14 @@ class CodeHostClient(Protocol):
     async def create_branch(self, repo: str, *, branch: str, from_ref: str) -> str:
         ...
 
+    async def default_branch(self, repo: str) -> str:
+        """The repository's default branch, which ``github_commit_files`` refuses (D-07)."""
+        ...
+
     async def commit_files(
         self, repo: str, *, branch: str, message: str, files: Mapping[str, str]
     ) -> str:
+        """Every file in one commit on ``branch``, fast-forward only."""
         ...
 
     async def create_draft_pull_request(
@@ -335,6 +343,38 @@ class StreamingSandboxRunner(Protocol):
     def run_streaming(
         self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float
     ) -> AsyncIterator[SandboxOutputEvent]:
+        ...
+
+
+#: Whether the tool call now executing was approved by the person in the backend's confirmation
+#: flow (WP8, D-10c). Set by ``ToolRegistry`` around each call; read by the desktop runner, which
+#: tells the daemon. For a remote turn the daemon runs a write or command only when this is true:
+#: the person approved it on their phone, since nobody is at the desk to answer a local prompt.
+TOOL_CALL_CONFIRMED: ContextVar[bool] = ContextVar("aura_tool_call_confirmed", default=False)
+
+
+@runtime_checkable
+class EngineerConsentStore(Protocol):
+    """Who agreed to the Engineer's Anthropic notice, and when (module readiness D-03, WP1).
+
+    Owner-scoped by construction: every method takes the ``user_id`` it acts on. Read on every
+    Engineer turn, so an adapter answers from one indexed row.
+    """
+
+    async def get(self, user_id: UserId) -> EngineerConsent | None:
+        """The person's latest answer, withdrawn or not; ``None`` if they never answered."""
+        ...
+
+    async def accept(self, user_id: UserId, notice_version: str, *, at: datetime) -> EngineerConsent:
+        """Record agreement to ``notice_version``, replacing any earlier answer."""
+        ...
+
+    async def withdraw(self, user_id: UserId, *, at: datetime) -> EngineerConsent | None:
+        """Mark the answer withdrawn (kept on record). ``None`` if there was none."""
+        ...
+
+    async def delete_for_owner(self, user_id: UserId) -> int:
+        """Erase the row entirely (account erasure). Returns rows removed."""
         ...
 
 

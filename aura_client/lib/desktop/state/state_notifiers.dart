@@ -9,7 +9,7 @@ import 'dart:convert';
 import 'package:collection/collection.dart';
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:drift/drift.dart';
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, defaultTargetPlatform;
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:xterm/xterm.dart' as xterm;
 import 'package:aura_client/core/database/database.dart';
@@ -19,6 +19,7 @@ import 'package:aura_client/core/hostd/hostd_providers.dart' hide HostdRoot;
 import 'package:aura_client/core/hostd/hostd_terminal_client.dart';
 import 'package:aura_client/core/security/encryption_service.dart';
 import 'package:aura_client/desktop/editor/editor_abstraction.dart';
+import 'package:aura_client/desktop/shell/ide_platform_commands.dart';
 import 'package:aura_client/desktop/state/desktop_application_state.dart';
 import 'package:aura_client/desktop/state/git_notifier.dart';
 import 'package:aura_client/desktop/events/ide_event_bus.dart';
@@ -528,7 +529,7 @@ class TerminalNotifier extends StateNotifier<TerminalState> {
     if (existing != null) return existing;
     final terminal = xterm.Terminal(
       maxLines: 10000,
-      platform: xterm.TerminalTargetPlatform.windows,
+      platform: ideTerminalTargetPlatform(defaultTargetPlatform),
     );
     terminal.onOutput = (data) => sendInput(sessionId, Uint8List.fromList(utf8.encode(data)));
     // xterm invokes this synchronously from RenderTerminal.performLayout, so calling

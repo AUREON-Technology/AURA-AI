@@ -8,20 +8,18 @@
 library;
 
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:http/http.dart' as http;
 
-import 'package:aura_client/core/auth/token_manager.dart';
 import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
-import 'package:aura_client/core/hostd/hostd_error_codes.dart';
 import 'package:aura_client/core/hostd/hostd_error_messages.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart';
 import 'package:aura_client/core/hostd/hostd_supervisor.dart';
+import 'package:aura_client/features/engineering/presentation/hostd_pairing_flow.dart';
+import 'package:aura_client/features/engineering/presentation/remote_control_toggle.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
 class HostPanel extends ConsumerStatefulWidget {
@@ -198,6 +196,11 @@ class _HostPanelState extends ConsumerState<HostPanel> {
               ),
           ],
         ),
+        // WP8 (D-10b): the remote-control switch lives on the computer, never on the phone.
+        if (isRunning) ...[
+          const SizedBox(height: AuraSpacing.md),
+          HostdRemoteControlToggle(enabled: status.remoteControl, compact: true),
+        ],
         if (isRunning && isPaired && status.roots.isNotEmpty) ...[
           const SizedBox(height: AuraSpacing.md),
           _buildRootsList(context, palette, status.roots),
@@ -288,98 +291,9 @@ class _HostPanelState extends ConsumerState<HostPanel> {
   }
 
   Future<void> _pairDevice(BuildContext context, WidgetRef ref) async {
-    final client = ref.read(hostdControlClientProvider);
     setState(() => _pairing = true);
     try {
-      final backendUrl = ref.read(backendUrlProvider);
-      final start = await client.startPairing(backendUrl: backendUrl);
-      final userCode = start['user_code'] as String;
-      final intervalS = (start['interval'] as num).toInt();
-      final expiresIn = (start['expires_in'] as num).toInt();
-      if (!context.mounted) return;
-
-      unawaited(showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) => AuraDialog(
-          title: dialogContext.l10n.hostPairDialogTitle,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(dialogContext.l10n.hostPairApproving),
-              const SizedBox(height: AuraSpacing.md),
-              SelectableText(
-                userCode,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontFamily: 'Courier', fontSize: 22, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: AuraSpacing.lg),
-              const Center(child: CircularProgressIndicator()),
-              const SizedBox(height: AuraSpacing.sm),
-              Text(dialogContext.l10n.hostPairWaiting, textAlign: TextAlign.center),
-            ],
-          ),
-        ),
-      ));
-
-      // Self-approve: this desktop app is already signed in, and the daemon it's pairing runs on
-      // this same machine, so it can approve its own pairing request -- see
-      // host_daemon_page.dart's identical comment for why this is safe and why it's needed at
-      // all (no separate pairing-approval UI exists anywhere yet).
-      final accessToken = await ref.read(tokenManagerProvider).getValidAccessToken();
-      if (accessToken == null) {
-        throw StateError(currentL10n.hostPairSignInFirst);
-      }
-      final approveResponse = await http.post(
-        Uri.parse('$backendUrl/api/v3/auth/desktop/pair/approve'),
-        headers: {
-          'Authorization': 'Bearer $accessToken',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({'user_code': userCode}),
-      );
-      if (approveResponse.statusCode != 200) {
-        throw StateError('Approval rejected: HTTP ${approveResponse.statusCode} ${approveResponse.body}');
-      }
-
-      final deadline = DateTime.now().add(Duration(seconds: expiresIn));
-      String? outcome;
-      String? failureReason;
-      while (mounted && DateTime.now().isBefore(deadline)) {
-        await Future<void>.delayed(Duration(seconds: intervalS > 0 ? intervalS : 2));
-        final status = await client.pairingStatus();
-        final statusValue = status['status'] as String?;
-        if (statusValue == 'approved') {
-          outcome = 'approved';
-          break;
-        }
-        if (statusValue != 'pending') {
-          outcome = 'failed';
-          // A newer daemon sends a `code` next to the English `reason` (hostd_error_codes.dart).
-          final rawReason = status['reason'] as String? ?? statusValue;
-          failureReason = rawReason == null ? null : hostdCodeMessage(status['code'] as String?, rawReason);
-          break;
-        }
-      }
-
-      if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
-      if (outcome == 'approved') {
-        ref.invalidate(hostdStatusProvider);
-        if (context.mounted) AuraSnackbar.show(context, message: context.l10n.hostPaired, kind: AuraSnackbarKind.success);
-      } else if (context.mounted) {
-        AuraSnackbar.show(
-          context,
-          message: outcome == 'failed'
-              ? context.l10n.hostPairingFailed(failureReason.toString())
-              : context.l10n.hostPairingExpired,
-          kind: AuraSnackbarKind.error,
-        );
-      }
-    } catch (error) {
-      if (context.mounted) {
-        AuraSnackbar.show(context, message: context.l10n.hostCouldNotStartPairing(describeHostdError(error)), kind: AuraSnackbarKind.error);
-      }
+      await pairHostDaemon(context, ref);
     } finally {
       if (mounted) setState(() => _pairing = false);
     }

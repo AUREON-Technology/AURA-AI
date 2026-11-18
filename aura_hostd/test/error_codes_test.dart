@@ -43,6 +43,17 @@ void main() {
       ('npm install', false, true, CommandDecision.needsApproval,
           HostdErrorCode.commandNeedsApproval),
       ('npm install', false, false, CommandDecision.deny, HostdErrorCode.commandNotAllowlisted),
+      // G-07 (D-07): any agent git push, in every tier; refused with the same code without a queue.
+      ('git push origin main', true, true, CommandDecision.needsApproval,
+          HostdErrorCode.gitPushNeedsApproval),
+      ('git -C sub push', true, false, CommandDecision.deny, HostdErrorCode.gitPushNeedsApproval),
+      ('git push', false, true, CommandDecision.needsApproval, HostdErrorCode.gitPushNeedsApproval),
+      ('git push', false, false, CommandDecision.deny, HostdErrorCode.gitPushNeedsApproval),
+      // G-06 (D-06): a trusted folder's argument outside it.
+      ('cat ~/.ssh/id_rsa', true, true, CommandDecision.needsApproval,
+          HostdErrorCode.pathOutsideTrustedFolder),
+      ('echo x > ~/.bashrc', true, false, CommandDecision.deny,
+          HostdErrorCode.pathOutsideTrustedFolder),
     ];
     for (final (command, trusted, queue, decision, code) in cases) {
       test('"$command" (trusted: $trusted, queue: $queue) -> $code', () {
@@ -52,6 +63,33 @@ void main() {
         expect(verdict.reason, isNotEmpty, reason: 'the English text stays for older apps');
       });
     }
+
+    test('remote command verdicts carry codes (WP8)', () {
+      final ask = evaluateRemoteCommand('npm test');
+      expect(ask.decision, CommandDecision.needsApproval);
+      expect(ask.code, HostdErrorCode.remoteCommandNeedsConfirmation);
+      expect(ask.reason, isNotEmpty);
+      expect(evaluateRemoteCommand('rm -rf /').code, HostdErrorCode.commandHardDenied);
+      expect(evaluateRemoteCommand('rm -r ../sibling').code,
+          HostdErrorCode.destructivePathOutsideWorkspace);
+    });
+
+    test('the widened .git protection carries codes (G-17)', () {
+      const cases = {
+        '/work/repo/sub/.git': HostdErrorCode.protectedGitDirFile,
+        '/work/repo/.aura-workspaces/k/.git': HostdErrorCode.protectedGitDirFile,
+        '/work/repo/.git/modules/sub/hooks/post-checkout': HostdErrorCode.protectedGitHooks,
+        '/work/repo/.GIT/hooks/pre-commit': HostdErrorCode.protectedGitHooks,
+        '/work/repo/.git/modules/sub/config': HostdErrorCode.protectedGitConfig,
+        '/work/repo/.git/config.worktree': HostdErrorCode.protectedGitConfig,
+        '/work/repo/.git/worktrees/w1/config.worktree': HostdErrorCode.protectedGitConfig,
+      };
+      for (final MapEntry(key: path, value: code) in cases.entries) {
+        final refusal = protectedGitWriteRefusal(path);
+        expect(refusal?.code, code, reason: path);
+        expect(protectedGitWriteReason(path), refusal?.reason, reason: path);
+      }
+    });
 
     test('write verdicts carry codes', () {
       expect(evaluateWrite(workspaceTrusted: true).code, HostdErrorCode.workspaceTrusted);

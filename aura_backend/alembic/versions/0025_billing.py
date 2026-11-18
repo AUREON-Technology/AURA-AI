@@ -1,7 +1,7 @@
 """subscriptions and payments (SaaS phase 1, plan D1)
 
-Revision ID: 0024
-Revises: 0023
+Revision ID: 0025
+Revises: 0024
 Create Date: 2026-11-17
 
 Read and written by ``aura_core/adapters/postgres_billing.py``, which issues no DDL of its own.
@@ -19,8 +19,8 @@ from typing import Sequence, Union
 
 from alembic import op
 
-revision: str = "0024"
-down_revision: Union[str, None] = "0023"
+revision: str = "0025"
+down_revision: Union[str, None] = "0024"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

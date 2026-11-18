@@ -156,6 +156,9 @@ def build_delegation_tools(
             # whose CRUD tools would run unconfirmed on clean input still needs confirmation
             # here -- which this tool then refuses below rather than silently dropping.
             inherited_taint=context.tainted,
+            # WP8: a delegated sub-turn acts for the same device as its parent, so a phone cannot
+            # reach the desktop unheld by going through the orchestrator.
+            origin=(context.metadata or {}).get("origin"),
             # The same person's delegated-connector tokens (AP10): a sub-turn reads as its caller.
             connector_tokens={key.removeprefix(CONNECTOR_TOKEN_PREFIX): token
                               for key, token in context.credentials.items()

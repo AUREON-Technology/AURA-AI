@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -103,7 +104,8 @@ class ChatViewModel extends Notifier<ChatUiState> {
   }
 
   /// Auto-sends the Home capture-bar query once. Returns false if already consumed.
-  Future<bool> consumeInitialQuery(String query) async {
+  /// [workspaceRoot] as for [sendMessage].
+  Future<bool> consumeInitialQuery(String query, {String? workspaceRoot, bool desktopTaskIsolation = false}) async {
     if (!state.canConsumeInitialQuery(query)) return false;
     state = state.copyWith(consumedInitialQuery: true, sendInFlight: true);
     try {
@@ -114,6 +116,8 @@ class ChatViewModel extends Notifier<ChatUiState> {
             useRag: state.useRag,
             useMemory: state.useMemory,
             useTools: state.useTools,
+            workspaceRoot: workspaceRoot,
+            desktopTaskIsolation: desktopTaskIsolation,
           );
       return true;
     } finally {
@@ -125,9 +129,14 @@ class ChatViewModel extends Notifier<ChatUiState> {
   /// (`pendingChatImagesProvider`) go with this message and are cleared once it is sent; with
   /// images and no text, the question defaults to [kDefaultImageQuestion].
   ///
-  /// [workspaceRoot] is the Desktop IDE's active workspace root (FSA-006): the backend forwards
-  /// it to the paired daemon as the `cwd` of every command. Null from any surface without one.
-  Future<bool> sendMessage(String text, {String? workspaceRoot}) async {
+  /// [workspaceRoot] is the folder on the user's computer the turn works in: the Desktop IDE's
+  /// active workspace root (FSA-006), or the folder a phone or web Engineer chat picked in its
+  /// desktop bar (WP8). The backend forwards it to the paired daemon as the `cwd` of every
+  /// command. Null from any surface without one.
+  ///
+  /// [desktopTaskIsolation] asks the daemon to do the turn's work in the conversation's own git
+  /// worktree (WP4, D-09) -- every Engineer turn on the user's computer does.
+  Future<bool> sendMessage(String text, {String? workspaceRoot, bool desktopTaskIsolation = false}) async {
     final isStreaming = ref.read(streamingMessageIdProvider) != null;
     final images = ref.read(pendingChatImagesProvider);
     if (!state.canSend(text, isStreaming: isStreaming, hasImages: images.isNotEmpty)) {
@@ -147,6 +156,7 @@ class ChatViewModel extends Notifier<ChatUiState> {
             useTools: state.useTools,
             images: images,
             workspaceRoot: workspaceRoot,
+            desktopTaskIsolation: desktopTaskIsolation,
           );
       return true;
     } finally {
@@ -168,7 +178,7 @@ class ChatViewModel extends Notifier<ChatUiState> {
   /// Declines the given pending calls without sending anything to the backend -- their approval
   /// ids are never sent, so they never run, and the held turn expires server-side.
   void rejectTools(List<PendingToolCall> calls) {
-    ref.read(chatRepositoryProvider).rejectPendingCalls(calls);
+    unawaited(ref.read(chatRepositoryProvider).rejectPendingCalls(calls));
   }
 
   void rejectPendingActions() {

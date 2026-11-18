@@ -133,6 +133,13 @@ class ToolPolicy:
                 return ToolPolicyDecision.confirm(
                     "side_effect_on_user_machine_in_tainted_context", **audit
                 )
+            if host_routed and (context.metadata or {}).get("origin") == "remote":
+                # WP8 (D-10b/D-10c): a turn from a phone or the web may change the person's own
+                # computer only one approved call at a time, approved on that device. Anyone
+                # holding a stolen session must still get each change past the person.
+                return ToolPolicyDecision.confirm(
+                    "side_effect_on_user_machine_from_remote_device", **audit
+                )
             return ToolPolicyDecision.allow("workspace_local_side_effect", **audit)
 
         if context.tainted and spec.side_effecting and self._block_when_tainted:

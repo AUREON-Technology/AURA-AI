@@ -27,7 +27,7 @@ from typing import Sequence
 
 from ..config.settings import LLMSettings, ProviderConfig
 from ..domain.errors import ConfigurationError
-from ..domain.llm import Modality, ModelPool, ProviderCapabilities
+from ..domain.llm import Modality, ModelPool, ProviderCapabilities, WorkloadClass
 from ..ports.llm import LLMProvider
 from .admission import PoolLimits
 from .quota import QuotaLimits
@@ -74,6 +74,7 @@ def capabilities_from_config(config: ProviderConfig) -> ProviderCapabilities:
         third_party=config.third_party,
         may_train_on_prompts=config.allow_prompt_training,
         tokens_per_second=config.tokens_per_second,
+        workloads=frozenset(WorkloadClass(w) for w in config.workloads),
         passive_health=config.health_probe == "passive",
     )
 
@@ -87,7 +88,8 @@ def quota_limits_from_settings(settings: LLMSettings) -> dict[str, QuotaLimits]:
     limits: dict[str, QuotaLimits] = {}
     for config in settings.enabled_providers:
         declared = QuotaLimits(
-            rpm=config.rpm, rpd=config.rpd, tpm=config.tpm, tpd=config.tpd
+            rpm=config.rpm, rpd=config.rpd, tpm=config.tpm, tpd=config.tpd,
+            user_tpd=config.user_tpd,
         )
         if declared.declared:
             limits[config.name] = declared

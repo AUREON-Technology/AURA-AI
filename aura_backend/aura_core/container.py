@@ -171,6 +171,8 @@ class Container:
         self.legacy_personal_os_store = self._build_legacy_personal_os_store()
         self.personal_os_store = self._build_personal_os_store()
         self.engineer_runs = self._build_engineer_run_store()
+        # Module readiness D-03 (WP1): who agreed to the Engineer sending code to Anthropic.
+        self.engineer_consent = self._build_engineer_consent_store()
         # GAP-024: the same store, under the name of the port it now fully implements
         # (`AgentRunStore` extends `EngineerRunStore`) -- one adapter, one pool, both ledgers.
         self.agent_runs = self.engineer_runs
@@ -611,6 +613,7 @@ class Container:
                 executor=self.executor,
                 agentic_executor=self.agentic_executor,
                 engineer_runs=self.engineer_runs,
+                engineer_consent=self.engineer_consent,
                 episodic=self.episodic,
                 cache=self.llm_cache,
                 session_marks=self.cache_backend,
@@ -1041,6 +1044,22 @@ class Container:
         if backend != "memory":
             raise ConfigurationError(f"unknown memory backend {backend!r}")
         return InMemoryEngineerRunStore()
+
+    def _build_engineer_consent_store(self) -> Any:
+        """Consent to the Engineer's Anthropic notice (D-03). Postgres with the other per-user
+        stores, so an answer reaches every gateway worker and survives a restart."""
+        backend = self.settings.infrastructure.memory_backend
+        if backend == "postgres":
+            from .adapters.postgres_engineer_consent import PostgresEngineerConsentStore
+
+            return PostgresEngineerConsentStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        if backend != "memory":
+            raise ConfigurationError(f"unknown memory backend {backend!r}")
+        from .adapters.engineer_consent import InMemoryEngineerConsentStore
+
+        return InMemoryEngineerConsentStore()
 
     async def _github_token_resolver(self, user_id: Any) -> str | None:
         """The caller's forge token, for host-side git only.

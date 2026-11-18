@@ -30,6 +30,9 @@ class _Recorder:
         self.requests.append((request.method, request.url.raw_path.decode()))
         body = {"object": {"sha": "a" * 40}, "sha": None, "content": "", "encoding": "none",
                 "tree": [], "number": 1, "html_url": "https://github.com/acme/app/pull/1"}
+        if "/git/commits" in request.url.raw_path.decode():
+            # A commit object, as GitHub returns it: commit_files reads its tree's sha (WP5).
+            body = {"sha": "c" * 40, "tree": {"sha": "t" * 40}}
         return httpx.Response(200, json=body)
 
     def paths(self) -> list[str]:
@@ -136,3 +139,4 @@ class TestTraversalOutOfTheAllowlistedRepo:
         assert _only_allowed_repo_touched(recorder)
         assert f"/repos/{ALLOWED}/contents/src/pkg/module.py?ref=feature%2Flogin" in recorder.paths()
         assert f"/repos/{ALLOWED}/git/ref/heads/release/1.2" in recorder.paths()
+        assert ("PATCH", f"/repos/{ALLOWED}/git/refs/heads/fix/x") in recorder.requests

@@ -10,8 +10,10 @@ import 'package:aura_hostd/src/approval_queue.dart';
 import 'package:aura_hostd/src/config.dart';
 import 'package:aura_hostd/src/control_server.dart';
 import 'package:aura_hostd/src/error_codes.dart';
+import 'package:aura_hostd/src/git_service.dart';
 import 'package:aura_hostd/src/isolated_task_registry.dart';
 import 'package:aura_hostd/src/debug_session_manager.dart';
+import 'package:aura_hostd/src/task_handler.dart';
 import 'package:aura_hostd/src/terminal_session_manager.dart';
 import 'package:aura_hostd/src/workspace_store.dart';
 import 'package:test/test.dart';
@@ -217,6 +219,290 @@ void main() {
     }
     final (ok, _) = await client.request('GET', '/roots');
     expect(ok, 200, reason: 'a loopback Host still works');
+  });
+
+  group('POST /git/init (WP4, D-13)', () {
+    Future<ProcessResult> git(String cwd, List<String> args) =>
+        Process.run('git', args, workingDirectory: cwd);
+
+    /// A second control server over the same stores, whose git sees only [globalConfig] as the
+    /// person's own git configuration -- how a test controls the identity git would use.
+    Future<_ControlClient> serverWithGitConfig(String globalConfig) async {
+      final dir = Directory.systemTemp.createTempSync('aura_hostd_git_init_cfg_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final file = File('${dir.path}/gitconfig')..writeAsStringSync(globalConfig);
+      final gitServer = ControlServer(
+        workspaceStore: workspaceStore,
+        configStore: configStore,
+        onPaired: (_) {},
+        terminalSessions: TerminalSessionManager(workspaceStore),
+        debugSessions: DebugSessionManager(workspaceStore),
+        approvalQueue: approvalQueue,
+        isolatedTasks: IsolatedTaskRegistry(workspaceStore.live),
+        gitService: GitService(environment: {
+          'GIT_CONFIG_GLOBAL': file.path,
+          'GIT_CONFIG_NOSYSTEM': '1',
+          'HOME': dir.path,
+        }),
+        logger: (_) {},
+      );
+      await gitServer.start(dir);
+      addTearDown(gitServer.stop);
+      final controlFile =
+          jsonDecode(File('${dir.path}/control.json').readAsStringSync()) as Map<String, dynamic>;
+      final gitClient = _ControlClient(controlFile['port'] as int, controlFile['token'] as String);
+      addTearDown(gitClient.close);
+      return gitClient;
+    }
+
+    Future<String> authorOf(String cwd) async =>
+        ((await git(cwd, ['log', '-1', '--format=%an <%ae>'])).stdout as String).trim();
+
+    test('makes a granted folder a repository with one commit, after which isolation works',
+        () async {
+      final (status, body) = await client.request('POST', '/git/init', body: {'root': workspaceRoot});
+      expect(status, 200, reason: '$body');
+      expect(body['ok'], isTrue);
+      final head = ((await git(workspaceRoot, ['rev-parse', 'HEAD'])).stdout as String).trim();
+      expect(body['commit'], head);
+      expect(((await git(workspaceRoot, ['log', '-1', '--format=%s'])).stdout as String).trim(),
+          "Initial commit (made by AURA before the Engineer's first change)");
+      expect((await git(workspaceRoot, ['ls-files'])).stdout, contains('hello.txt'));
+
+      final agent = TaskHandler.live(
+        workspaceStore,
+        approvalQueue: approvalQueue,
+        isolatedTasks: IsolatedTaskRegistry(workspaceStore.live),
+      );
+      final created = await agent.createTask({'isolate': true, 'task_key': 'chat-1', 'cwd': workspaceRoot});
+      expect(created['isolated'], isTrue);
+      expect((await agent.listRoots(const {}))['roots'], [
+        {'path': workspaceRoot, 'trusted': false, 'is_git': true},
+      ]);
+    });
+
+    test('commits even an empty folder, so isolation has a commit to start from', () async {
+      File('$workspaceRoot/hello.txt').deleteSync();
+      Directory('$workspaceRoot/subdir').deleteSync();
+      final (status, body) = await client.request('POST', '/git/init', body: {'root': workspaceRoot});
+      expect(status, 200, reason: '$body');
+      expect(((await git(workspaceRoot, ['rev-list', '--count', 'HEAD'])).stdout as String).trim(), '1');
+    });
+
+    test('a repository with no commit yet gets its first commit, not a 409', () async {
+      await git(workspaceRoot, ['init', '-q']);
+      final (status, body) = await client.request('POST', '/git/init', body: {'root': workspaceRoot});
+      expect(status, 200, reason: '$body');
+      expect(((await git(workspaceRoot, ['rev-parse', 'HEAD'])).stdout as String).trim(), body['commit']);
+    });
+
+    test('a folder that already is a repository is refused with 409 already_a_git_repo', () async {
+      await client.request('POST', '/git/init', body: {'root': workspaceRoot});
+      final (status, body) = await client.request('POST', '/git/init', body: {'root': workspaceRoot});
+      expect(status, 409);
+      expect(body['code'], HostdErrorCode.alreadyAGitRepo);
+      expect(body['error'], isNotEmpty);
+      expect(((await git(workspaceRoot, ['rev-list', '--count', 'HEAD'])).stdout as String).trim(), '1');
+    });
+
+    test('a folder that is not a granted root is refused with 404 root_not_granted', () async {
+      final other = Directory.systemTemp.createTempSync('aura_hostd_git_init_other_');
+      addTearDown(() => other.deleteSync(recursive: true));
+      for (final path in [other.path, '$workspaceRoot/subdir', 'relative/path', '${other.path}/missing']) {
+        final (status, body) = await client.request('POST', '/git/init', body: {'root': path});
+        expect(status, 404, reason: path);
+        expect(body['code'], HostdErrorCode.rootNotGranted, reason: path);
+      }
+      expect(Directory('${other.path}/.git').existsSync(), isFalse);
+      expect(Directory('$workspaceRoot/subdir/.git').existsSync(), isFalse);
+    });
+
+    test('a missing or non-string root is refused with 400 missing_parameter', () async {
+      for (final body in <Map<String, Object?>>[{}, {'root': 1}, {'path': workspaceRoot}]) {
+        final (status, response) = await client.request('POST', '/git/init', body: body);
+        expect(status, 400, reason: '$body');
+        expect(response['code'], HostdErrorCode.missingParameter, reason: '$body');
+      }
+      expect(Directory('$workspaceRoot/.git').existsSync(), isFalse);
+    });
+
+    test('needs the token and a loopback Host like every other route', () async {
+      final (missing, _) = await client.request('POST', '/git/init',
+          body: {'root': workspaceRoot}, withToken: false);
+      expect(missing, 401);
+      final http = HttpClient();
+      addTearDown(() => http.close(force: true));
+      final request = await http.openUrl('POST', Uri.parse('http://127.0.0.1:${client.port}/git/init'));
+      request.headers.host = 'attacker.example';
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ${client.token}');
+      request.write(jsonEncode({'root': workspaceRoot}));
+      final response = await request.close();
+      await response.drain<void>();
+      expect(response.statusCode, 403);
+      expect(Directory('$workspaceRoot/.git').existsSync(), isFalse);
+    });
+
+    test("commits with the person's own git identity when they have one", () async {
+      final gitClient = await serverWithGitConfig(
+          '[user]\n\tname = Person Example\n\temail = person@example.com\n');
+      final (status, body) = await gitClient.request('POST', '/git/init', body: {'root': workspaceRoot});
+      expect(status, 200, reason: '$body');
+      expect(await authorOf(workspaceRoot), 'Person Example <person@example.com>');
+    });
+
+    test('falls back to AURA <aura@localhost> only when git has no identity to use', () async {
+      // useConfigOnly stops git guessing one from the account and host name, as on a machine
+      // where nobody ever ran `git config --global user.name`.
+      final gitClient = await serverWithGitConfig('[user]\n\tuseConfigOnly = true\n');
+      final (status, body) = await gitClient.request('POST', '/git/init', body: {'root': workspaceRoot});
+      expect(status, 200, reason: '$body');
+      expect(await authorOf(workspaceRoot), 'AURA <aura@localhost>');
+      final config = await git(workspaceRoot, ['config', '--local', '--get', 'user.name']);
+      expect(config.exitCode, isNot(0), reason: 'the fallback identity is not written to the repo');
+    });
+
+    test('a git failure is a 500 git_init_failed carrying git\'s own message as detail', () async {
+      final gitClient = await serverWithGitConfig('this is not [valid git config\n');
+      final (status, body) = await gitClient.request('POST', '/git/init', body: {'root': workspaceRoot});
+      expect(status, 500);
+      expect(body['code'], HostdErrorCode.gitInitFailed);
+      expect(body['error'], isNotEmpty);
+      expect(body['detail'], contains('config'));
+    });
+  });
+
+  group('remote control opt-in (WP8, D-10b)', () {
+    test('GET /status reports remote_control only to a caller holding the token', () async {
+      final (_, anonymous) = await client.request('GET', '/status', withToken: false);
+      expect(anonymous.containsKey('remote_control'), isFalse);
+
+      final (_, before) = await client.request('GET', '/status');
+      expect(before['remote_control'], isFalse, reason: 'off by default');
+
+      configStore.save(configStore.load().copyWith(remoteControl: true));
+      final (_, after) = await client.request('GET', '/status');
+      expect(after['remote_control'], isTrue);
+      final (_, stillAnonymous) = await client.request('GET', '/status', withToken: false);
+      expect(stillAnonymous.containsKey('remote_control'), isFalse);
+    });
+
+    test('POST /remote_control turns it on and off, persisted to config.json', () async {
+      configStore.save(DaemonConfig(backendUrl: 'https://a.example', authToken: 'tok'));
+
+      final (on, onBody) = await client.request('POST', '/remote_control', body: {'enabled': true});
+      expect(on, 200);
+      expect(onBody, {'remote_control': true});
+      expect(ConfigStore.forConfigDir(configDir).load().remoteControl, isTrue);
+      final raw = jsonDecode(File('${configDir.path}/config.json').readAsStringSync()) as Map;
+      expect(raw['remote_control'], isTrue);
+      expect(raw['auth_token'], 'tok', reason: 'the rest of config.json is left as it was');
+      expect(raw['backend_url'], 'https://a.example');
+
+      final (off, offBody) =
+          await client.request('POST', '/remote_control', body: {'enabled': false});
+      expect(off, 200);
+      expect(offBody, {'remote_control': false});
+      expect(ConfigStore.forConfigDir(configDir).load().remoteControl, isFalse);
+    });
+
+    test('POST /remote_control keeps config.json readable by the owner only', () async {
+      await client.request('POST', '/remote_control', body: {'enabled': true});
+      final mode = File('${configDir.path}/config.json').statSync().mode & 0x1FF;
+      expect(mode, 0x180, reason: 'expected 0600, got ${mode.toRadixString(8)}');
+    }, testOn: '!windows');
+
+    test('POST /remote_control rejects a missing or non-bool enabled with 400 and changes nothing',
+        () async {
+      configStore.save(configStore.load().copyWith(remoteControl: true));
+      for (final body in <Map<String, Object?>>[
+        {},
+        {'enabled': 'false'},
+        {'enabled': 0},
+        {'enabled': null},
+        {'on': false},
+      ]) {
+        final (status, response) = await client.request('POST', '/remote_control', body: body);
+        expect(status, 400, reason: '$body');
+        expect(response['error'], isNotEmpty, reason: '$body');
+        expect(response['code'], HostdErrorCode.missingParameter, reason: '$body');
+      }
+      expect(configStore.load().remoteControl, isTrue);
+    });
+
+    test('POST /remote_control rejects a body that is not JSON with 400', () async {
+      final http = HttpClient();
+      addTearDown(() => http.close(force: true));
+      final request = await http.openUrl('POST', Uri.parse('http://127.0.0.1:${client.port}/remote_control'));
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ${client.token}');
+      request.write('{"enabled": tru');
+      final response = await request.close();
+      final body = jsonDecode(await utf8.decoder.bind(response).join()) as Map<String, dynamic>;
+      expect(response.statusCode, 400);
+      expect(body['code'], HostdErrorCode.invalidRequestBody);
+      expect(body['error'], 'the body must be JSON: {"enabled": true|false}');
+      expect(configStore.load().remoteControl, isFalse);
+    });
+
+    test('POST /remote_control refuses a missing or wrong token and changes nothing', () async {
+      final (missing, _) = await client.request(
+        'POST',
+        '/remote_control',
+        body: {'enabled': true},
+        withToken: false,
+      );
+      expect(missing, 401);
+      final wrongToken = _ControlClient(client.port, 'not-the-real-token');
+      addTearDown(wrongToken.close);
+      final (wrong, _) = await wrongToken.request('POST', '/remote_control', body: {'enabled': true});
+      expect(wrong, 401);
+      expect(configStore.load().remoteControl, isFalse);
+    });
+
+    test('POST /remote_control refuses a non-loopback Host, token or not (INT-037)', () async {
+      final http = HttpClient();
+      addTearDown(() => http.close(force: true));
+      final request = await http.openUrl('POST', Uri.parse('http://127.0.0.1:${client.port}/remote_control'));
+      request.headers.host = 'attacker.example';
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ${client.token}');
+      request.headers.contentType = ContentType.json;
+      request.write(jsonEncode({'enabled': true}));
+      final response = await request.close();
+      await response.drain<void>();
+      expect(response.statusCode, 403);
+      expect(configStore.load().remoteControl, isFalse);
+    });
+
+    test('turning it off through this route refuses the next call of a connected remote task',
+        () async {
+      final agent = TaskHandler.live(
+        workspaceStore,
+        approvalQueue: approvalQueue,
+        isolatedTasks: IsolatedTaskRegistry(workspaceStore.live),
+        remoteControlEnabled: configStore.remoteControlEnabled,
+      );
+      await client.request('POST', '/remote_control', body: {'enabled': true});
+      final created = await agent.createTask({'origin': 'remote', 'cwd': workspaceRoot});
+      await agent.writeFile({
+        'task_id': created['task_id'],
+        'path': 'one.txt',
+        'content': '1',
+        'confirmed': true,
+      });
+      expect(File('$workspaceRoot/one.txt').readAsStringSync(), '1');
+
+      await client.request('POST', '/remote_control', body: {'enabled': false});
+      await expectLater(
+        agent.writeFile({
+          'task_id': created['task_id'],
+          'path': 'two.txt',
+          'content': '2',
+          'confirmed': true,
+        }),
+        throwsA(isA<RpcError>().having(
+            (e) => e.message, 'message', startsWith('remote_control_disabled: '))),
+      );
+      expect(File('$workspaceRoot/two.txt').existsSync(), isFalse);
+    });
   });
 
   test('constantTimeEquals matches == on equal, different and differently-sized strings', () {
@@ -560,6 +846,10 @@ void main() {
       isolatedTasks: IsolatedTaskRegistry(WorkspaceStore.forConfigDir(pairingConfigDir).load()),
       logger: (_) {},
     );
+    // Remote control was turned on on this computer before the re-pair (WP8): a new token must not
+    // silently switch it off, nor on.
+    ConfigStore.forConfigDir(pairingConfigDir)
+        .save(DaemonConfig(backendUrl: fakeBackend.backendUrl, authToken: null, remoteControl: true));
     await pairingServer.start(pairingConfigDir);
     final controlFile =
         jsonDecode(File('${pairingConfigDir.path}/control.json').readAsStringSync()) as Map<String, dynamic>;
@@ -585,8 +875,86 @@ void main() {
     expect(secondPollBody['device_id'], 'dev-1');
     expect(paired, 'tok-abc');
     expect(ConfigStore.forConfigDir(pairingConfigDir).load().authToken, 'tok-abc');
+    expect(ConfigStore.forConfigDir(pairingConfigDir).load().remoteControl, isTrue);
 
     await pairingServer.stop();
+  });
+
+  group('folder changes reach the connected agent without a restart (G-05, SEC-08)', () {
+    // The agent's TaskHandler is wired the way `backend_connection.dart` wires it -- on
+    // `WorkspaceStore.live`, the instance these routes update on save -- and created before any
+    // change is made. (`daemon_wiring_test.dart` drives the same over a real socket.)
+    late TaskHandler agent;
+    late Directory laterDir;
+
+    setUp(() {
+      agent = TaskHandler.live(
+        workspaceStore,
+        approvalQueue: approvalQueue,
+        isolatedTasks: IsolatedTaskRegistry(workspaceStore.live),
+      );
+      laterDir = Directory.systemTemp.createTempSync('aura_hostd_control_test_later_');
+    });
+
+    tearDown(() {
+      if (laterDir.existsSync()) laterDir.deleteSync(recursive: true);
+    });
+
+    test('revoke refuses the next write_file of a task bound before it', () async {
+      await client.request('POST', '/roots', body: {'action': 'trust', 'path': workspaceRoot});
+      final created = await agent.createTask({'cwd': workspaceRoot});
+      await agent.writeFile({'task_id': created['task_id'], 'path': 'one.txt', 'content': '1'});
+
+      final (status, _) =
+          await client.request('POST', '/roots', body: {'action': 'revoke', 'path': workspaceRoot});
+      expect(status, 200);
+
+      await expectLater(
+        agent.writeFile({'task_id': created['task_id'], 'path': 'two.txt', 'content': '2'}),
+        throwsA(isA<RpcError>()),
+      );
+      await expectLater(
+        agent.writeFile({'path': '$workspaceRoot/three.txt', 'content': '3'}),
+        throwsA(isA<RpcError>()),
+      );
+      expect(File('$workspaceRoot/two.txt').existsSync(), isFalse);
+      expect(File('$workspaceRoot/three.txt').existsSync(), isFalse);
+    });
+
+    test('untrust sends a command that ran automatically to approval', () async {
+      await client.request('POST', '/roots', body: {'action': 'trust', 'path': workspaceRoot});
+      final created = await agent.createTask({'cwd': workspaceRoot});
+      final first = await agent.run({
+        'task_id': created['task_id'],
+        'command': ['sh', '-c', 'mkdir auto'],
+        'timeout_s': 5.0,
+      });
+      expect(first['exit_code'], 0);
+
+      await client.request('POST', '/roots', body: {'action': 'untrust', 'path': workspaceRoot});
+      final second = agent.run({
+        'task_id': created['task_id'],
+        'command': ['sh', '-c', 'mkdir asked'],
+        'timeout_s': 5.0,
+      });
+      expect(approvalQueue.list(), hasLength(1));
+      approvalQueue.respond(approvalQueue.list().single.id, false);
+      await expectLater(second, throwsA(isA<RpcError>()));
+      expect(Directory('$workspaceRoot/asked').existsSync(), isFalse);
+    }, testOn: '!windows');
+
+    test('a folder granted after the agent connected is usable', () async {
+      final (status, body) = await client.request(
+        'POST',
+        '/roots',
+        body: {'action': 'grant', 'path': laterDir.path, 'trusted': true},
+      );
+      expect(status, 200);
+      final canonical = body['root']['path'] as String;
+      final created = await agent.createTask({'cwd': canonical});
+      await agent.writeFile({'task_id': created['task_id'], 'path': 'new.txt', 'content': 'hi'});
+      expect(File('$canonical/new.txt').readAsStringSync(), 'hi');
+    });
   });
 
   test(
@@ -655,9 +1023,25 @@ void main() {
       expect(body['code'], HostdErrorCode.rootNotGranted);
     });
 
+    test('POST /diagnostics/run refuses an untrusted folder (G-17, SEC-10)', () async {
+      // A linter loads the repository's own config and plugins (`eslint.config.js`, a ruff or
+      // pyflakes plugin): repo-supplied code, which an untrusted folder never runs unasked.
+      File('${workspaceDir.path}/pubspec.yaml').writeAsStringSync('name: fixture\n');
+      final (status, body) = await client.request(
+        'POST',
+        '/diagnostics/run',
+        body: {'root': workspaceRoot, 'tool': 'dart_analyze'},
+      );
+      expect(status, 403);
+      expect(body['error'], contains('trusted'));
+      expect(body['code'], HostdErrorCode.diagnosticsUntrusted);
+    });
+
     test('POST /diagnostics/run reports a real tool run', () async {
       // dart_analyze is guaranteed available in this test environment (the Dart SDK running
       // these tests), so this exercises the real Process.run path end to end, not a fake.
+      // Diagnostics run only in a trusted folder (G-17).
+      await client.request('POST', '/roots', body: {'action': 'trust', 'path': workspaceRoot});
       File('${workspaceDir.path}/pubspec.yaml')
           .writeAsStringSync('name: fixture\nenvironment:\n  sdk: ^3.0.0\n');
       final (status, body) = await client.request(
@@ -672,6 +1056,7 @@ void main() {
     });
 
     test('POST /diagnostics/run reports coherently whether or not the tool is installed', () async {
+      await client.request('POST', '/roots', body: {'action': 'trust', 'path': workspaceRoot});
       final (status, body) = await client.request(
         'POST',
         '/diagnostics/run',

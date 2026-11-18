@@ -91,7 +91,7 @@ class _CommandPaletteDialogState extends ConsumerState<_CommandPaletteDialog> {
     });
   }
 
-  /// On Windows the app is the IDE and You, so Copilot and Engineer are not
+  /// On the desktop app (Windows, Linux) it is the IDE and You, so Copilot and Engineer are not
   /// offered there. "Open Desktop IDE" is the way back to the IDE from You.
   List<_Destination> get _allDestinations => [
         ..._destinations(context.l10n).where((d) => !canRunDesktopIde || d.route == '/you'),

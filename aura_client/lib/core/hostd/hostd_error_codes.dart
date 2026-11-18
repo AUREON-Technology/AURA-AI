@@ -51,6 +51,23 @@ String hostdCodeMessage(String? code, String fallback, {String? detail, AppLocal
     'terminal_start_failed' => t.hostdCodeTerminalStartFailed(quoted),
     'debug_start_failed' => t.hostdCodeDebugStartFailed(quoted),
     'debug_unreachable' => t.hostdCodeDebugUnreachable(quoted),
+    // Trust-tier, remote-control and isolation refusals (WP3, WP8; D-06, D-10b, D-10c).
+    'git_push_needs_approval' => t.hostdCodeGitPushNeedsApproval,
+    'path_outside_trusted_folder' => t.hostdCodePathOutsideTrustedFolder,
+    'remote_command_needs_confirmation' => t.hostdCodeRemoteCommandNeedsConfirmation,
+    'protected_git_dir_file' => t.hostdCodeProtectedGitDirFile,
+    'remote_control_disabled' => t.hostdCodeRemoteControlDisabled,
+    'remote_confirmation_required' => t.hostdCodeRemoteConfirmationRequired,
+    'invalid_task_key' => t.hostdCodeInvalidTaskKey,
+    'isolated_task_unresolved' => t.hostdCodeIsolatedTaskUnresolved,
+    'invalid_origin' => t.hostdCodeInvalidOrigin,
+    'diagnostics_untrusted' => t.hostdCodeDiagnosticsUntrusted,
+    'invalid_request_body' => t.hostdCodeInvalidRequestBody,
+    // Isolation needs git (WP4, D-13) and the bounded approval queue (WP9).
+    'isolation_needs_git' => t.hostdCodeIsolationNeedsGit,
+    'already_a_git_repo' => t.hostdCodeAlreadyAGitRepo,
+    'git_init_failed' => t.hostdCodeGitInitFailed(quoted),
+    'approval_queue_full' => t.hostdCodeApprovalQueueFull,
     _ => fallback,
   };
 }

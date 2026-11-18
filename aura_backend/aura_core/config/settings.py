@@ -26,7 +26,7 @@ from typing import ClassVar, Any, Mapping, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 from ..domain.errors import ConfigurationError
-from ..domain.llm import DataClassification, Modality, ModelPool, RoutingPolicy
+from ..domain.llm import DataClassification, Modality, ModelPool, RoutingPolicy, WorkloadClass
 from .external_inference import (
     CLAUDE_PROVIDER_KIND,
     is_claude_model,
@@ -303,6 +303,9 @@ class ProviderConfig:
     languages: tuple[str, ...] = ()
     model_revision: str = ""
     capacity_group: str = ""
+    # AURA_PROVIDER_<NAME>_WORKLOADS (module readiness WP6a): the workload classes this provider
+    # may serve, e.g. ``engineer``. Empty = all, as every provider configured before it.
+    workloads: tuple[str, ...] = ()
     # Admission (roadmap P2.4) -- AURA_PROVIDER_<NAME>_{MAX_QUEUE,QUEUE_TIMEOUT_S}. None = inherit
     # AURA_LLM_ADMISSION_MAX_QUEUE / AURA_LLM_ADMISSION_QUEUE_TIMEOUT_S. The concurrency cap is
     # the existing max_concurrency.
@@ -316,6 +319,9 @@ class ProviderConfig:
     rpd: int = 0
     tpm: int = 0
     tpd: int = 0
+    # AURA_PROVIDER_<NAME>_USER_TPD (module readiness WP2, D-05): tokens one user may spend on
+    # this provider per UTC day. 0 = no per-user cap.
+    user_tpd: int = 0
     #: The liveness probe's path under base_url. ``/models`` is universal for OpenAI-compatible
     #: servers; override it for a hosted API that does not serve it at the chat base URL.
     health_path: str = "/models"
@@ -418,6 +424,13 @@ class ProviderConfig:
             raise ConfigurationError(
                 f"provider {self.name!r} declares unknown pool(s) {unknown}",
                 details={"supported": sorted(known_pools)},
+            )
+        known_workloads = {w.value for w in WorkloadClass}
+        bad_workloads = [w for w in self.workloads if w not in known_workloads]
+        if bad_workloads:
+            raise ConfigurationError(
+                f"provider {self.name!r} declares unknown workload(s) {bad_workloads}",
+                details={"supported": sorted(known_workloads)},
             )
         known_mods = {m.value for m in Modality}
         bad_mods = [m for m in self.modalities if m not in known_mods]
@@ -610,6 +623,15 @@ class ProviderConfig:
                 "Engineer workspaces): AURA_PROVIDER_<NAME>_MAX_DATA_CLASSIFICATION=sensitive",
                 extra=details,
             )
+            if not self.workloads:
+                # Module readiness G-26: a ceiling without a fence makes this slot eligible for
+                # every unhinted generation, which counts as SENSITIVE. D-02 sent the Engineer's
+                # code to Anthropic, not everything else.
+                logger.warning(
+                    "Claude provider at the sensitive ceiling serves every workload: set "
+                    "AURA_PROVIDER_<NAME>_WORKLOADS (e.g. engineer) to fence it",
+                    extra=details,
+                )
 
     def _gate_hosted_open_weight(self, host: str, matched: str) -> None:
         """ADR-030: a hosted open-weight API is allowed only on purpose, and only for open weights.
@@ -726,6 +748,7 @@ class ProviderConfig:
             languages=tuple(v.lower() for v in _list(f"{p}_LANGUAGES")),
             model_revision=_env(f"{p}_MODEL_REVISION", "") or "",
             capacity_group=_env(f"{p}_CAPACITY_GROUP", "") or "",
+            workloads=tuple(v.lower() for v in _list(f"{p}_WORKLOADS")),
             max_queue=(
                 _int(f"{p}_MAX_QUEUE", -1, minimum=-1) if _env(f"{p}_MAX_QUEUE") else None
             ),
@@ -738,6 +761,7 @@ class ProviderConfig:
             rpd=_int(f"{p}_RPD", 0, minimum=0),
             tpm=_int(f"{p}_TPM", 0, minimum=0),
             tpd=_int(f"{p}_TPD", 0, minimum=0),
+            user_tpd=_int(f"{p}_USER_TPD", 0, minimum=0),
             health_path=_env(f"{p}_HEALTH_PATH", "/models") or "/models",
             health_probe=(_env(f"{p}_HEALTH_PROBE", "active") or "active").strip().lower(),
             max_data_classification=(_env(f"{p}_MAX_DATA_CLASSIFICATION", "") or "").lower(),

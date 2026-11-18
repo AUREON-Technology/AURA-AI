@@ -1,7 +1,7 @@
 """chats shared with a team (SaaS phase 1, plan F1)
 
-Revision ID: 0027
-Revises: 0026
+Revision ID: 0028
+Revises: 0027
 Create Date: 2026-11-18
 
 ``aura_shared_conversations``: a copy of a member's chat, readable by every member of the team
@@ -12,8 +12,8 @@ from typing import Sequence, Union
 
 from alembic import op
 
-revision: str = "0027"
-down_revision: Union[str, None] = "0026"
+revision: str = "0028"
+down_revision: Union[str, None] = "0027"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -27,6 +27,7 @@ class _ActionsSseClient extends SseAgentClient {
     double temperature = 0.3,
     List<ChatImageAttachment> images = const [],
     String? workspaceRoot,
+    bool desktopTaskIsolation = false,
   }) async* {
     yield SseChatEvent.fromWire('token', {'text': 'I can add that.'});
     yield SseChatEvent.fromWire('actions', {
@@ -58,6 +59,7 @@ class _Status500SseClient extends SseAgentClient {
     double temperature = 0.3,
     List<ChatImageAttachment> images = const [],
     String? workspaceRoot,
+    bool desktopTaskIsolation = false,
   }) async* {
     throw Exception('SSE chat request failed with status 500: internal error');
   }

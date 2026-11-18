@@ -52,7 +52,7 @@ Future<void> main(List<String> args) async {
       }
       if (args[1] == 'set-token') {
         _requireArgs(args, 3, 'auth set-token <token> [--backend-url <url>]');
-        configStore.save(DaemonConfig(backendUrl: backendUrl, authToken: args[2]));
+        configStore.saveCredentials(backendUrl: backendUrl, authToken: args[2]);
         stdout.writeln('Saved auth token for $backendUrl');
       } else if (args[1] == 'pair') {
         await _pair(configStore, backendUrl);
@@ -144,7 +144,7 @@ Future<void> _pair(ConfigStore configStore, String backendUrl) async {
         stdout.writeln('Waiting for approval...');
       },
     );
-    configStore.save(DaemonConfig(backendUrl: backendUrl, authToken: result.accessToken));
+    configStore.saveCredentials(backendUrl: backendUrl, authToken: result.accessToken);
     stdout.writeln('Paired. Device ID: ${result.deviceId}');
   } on PairingFailedError catch (error) {
     stderr.writeln('Pairing failed: ${error.message}');

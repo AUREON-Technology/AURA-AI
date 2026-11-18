@@ -1,7 +1,7 @@
 """workspace members carry the email they joined with (SaaS phase 1, plan F2)
 
-Revision ID: 0028
-Revises: 0027
+Revision ID: 0029
+Revises: 0028
 Create Date: 2026-11-18
 
 So a team's members list shows people rather than opaque subjects: the creator's verified email
@@ -12,8 +12,8 @@ from typing import Sequence, Union
 
 from alembic import op
 
-revision: str = "0028"
-down_revision: Union[str, None] = "0027"
+revision: str = "0029"
+down_revision: Union[str, None] = "0028"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

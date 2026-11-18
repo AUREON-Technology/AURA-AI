@@ -16,6 +16,7 @@ import 'package:aura_client/desktop/state/state_notifiers.dart';
 import 'package:aura_client/desktop/update/desktop_update.dart';
 import 'package:aura_client/desktop/update/desktop_update_providers.dart';
 import 'package:aura_client/features/chat/presentation/widgets/sandbox_diff_view.dart';
+import 'package:aura_client/features/engineering/presentation/hostd_pairing_flow.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
 class StatusBar extends ConsumerWidget {
@@ -41,6 +42,7 @@ class StatusBar extends ConsumerWidget {
     // connect, so "Reconnecting..." would be a permanent lie. See
     // HostdStatusSnapshot.pairedToDifferentServer.
     final otherServer = status?.pairedToDifferentServer(ref.watch(backendUrlProvider)) ?? false;
+    final needsRepair = (status?.needsRepair ?? false) || (reachable && otherServer);
     final pendingApprovals = ref.watch(approvalNotifierProvider).pendingApprovals;
     final update = ref.watch(desktopUpdateProvider).value;
 
@@ -82,28 +84,48 @@ class StatusBar extends ConsumerWidget {
           // backend redeploy -- during which every tool call still fails with "no desktop app is
           // connected" even though this used to show a flat "Host Connected". Surfacing that gap
           // as "Reconnecting..." instead of silently claiming a live connection that isn't.
-          _StatusItem(
-            icon: !reachable
-                ? Icons.cloud_off
-                : (authenticated && backendConnected != true ? Icons.cloud_sync : Icons.cloud_done),
-            text: !reachable
-                ? context.l10n.ideStatusHostNotRunning
-                : !authenticated
-                    ? context.l10n.ideStatusHostNotPaired
-                    : otherServer
-                    ? context.l10n.ideStatusHostOtherServer
-                    : switch (backendConnected) {
-                        true => context.l10n.ideStatusHostConnected,
-                        false => context.l10n.ideStatusReconnecting,
-                        null => context.l10n.ideStatusHostUnknown,
-                      },
-            color: !reachable
-                ? palette.danger
-                : !authenticated
-                    ? palette.warning
-                    : (backendConnected == true ? palette.success : palette.warning),
-            density: ideDensity,
-          ),
+          // G-12: a daemon the server no longer accepts (4401, credentials rejected) or one
+          // paired to another server needs pairing again, and the Host panel offering that is
+          // hidden once the daemon is authenticated -- so this item is the way in.
+          if (needsRepair)
+            Tooltip(
+              message: context.l10n.ideStatusRepairTooltip,
+              child: InkWell(
+                key: const ValueKey('status-bar-repair'),
+                onTap: () => pairHostDaemon(context, ref),
+                child: _StatusItem(
+                  icon: Icons.link_off,
+                  text: (status?.needsRepair ?? false)
+                      ? context.l10n.hostStatusRepairRequired
+                      : context.l10n.ideStatusHostOtherServer,
+                  color: palette.danger,
+                  density: ideDensity,
+                ),
+              ),
+            )
+          else
+            _StatusItem(
+              icon: !reachable
+                  ? Icons.cloud_off
+                  : (authenticated && backendConnected != true ? Icons.cloud_sync : Icons.cloud_done),
+              text: !reachable
+                  ? context.l10n.ideStatusHostNotRunning
+                  : !authenticated
+                      ? context.l10n.ideStatusHostNotPaired
+                      : otherServer
+                      ? context.l10n.ideStatusHostOtherServer
+                      : switch (backendConnected) {
+                          true => context.l10n.ideStatusHostConnected,
+                          false => context.l10n.ideStatusReconnecting,
+                          null => context.l10n.ideStatusHostUnknown,
+                        },
+              color: !reachable
+                  ? palette.danger
+                  : !authenticated
+                      ? palette.warning
+                      : (backendConnected == true ? palette.success : palette.warning),
+              density: ideDensity,
+            ),
           // D5: pending interactive-approval count -- tap to review/approve/reject.
           if (pendingApprovals.isNotEmpty)
             InkWell(

@@ -166,40 +166,80 @@ class GitHubClient:
         )
         return f"Created branch {branch!r} on {repo} from {from_ref!r} ({sha[:7]})"
 
+    async def default_branch(self, repo: str) -> str:
+        """The repository's own default branch, as GitHub reports it (WP5, D-07)."""
+        self._assert_repo_allowed(repo)
+        data = await self._request("GET", f"/repos/{repo}")
+        branch = data.get("default_branch") if isinstance(data, Mapping) else None
+        if not isinstance(branch, str) or not branch:
+            raise GitHubApiError(f"GitHub did not report a default branch for {repo}")
+        return branch
+
     async def commit_files(
         self, repo: str, *, branch: str, message: str, files: Mapping[str, str]
     ) -> str:
-        """One commit touching one or more files, via the low-level contents API per file.
+        """One commit touching every file in ``files``, fast-forwarded onto ``branch``.
 
-        Simpler and safer than building a tree/commit graph by hand for a first cut: each file is
-        an independent PUT against ``contents/{path}``, so a partial failure leaves earlier files
-        committed rather than corrupting a single hand-built commit.
+        Built through the Git Data API (module readiness WP5, FR-07): one tree on top of the
+        branch head's tree, one commit whose parent is that head, then a ref update with
+        ``force: false``. The per-file contents API this replaced made one commit per file, and
+        a failure halfway left half a change on the branch. Now nothing is visible until the
+        last request, and a branch that moved meanwhile is refused (422), never overwritten.
         """
         self._assert_repo_allowed(repo)
-        # Every path is validated before the first write, so one bad path cannot leave a
-        # partial commit behind.
-        safe_paths = {path: _path_segments(path, what="path") for path in files}
-        committed = []
-        for path, content in files.items():
-            existing_sha = None
-            try:
-                existing = await self._request(
-                    "GET",
-                    f"/repos/{repo}/contents/{safe_paths[path]}?ref={_query_value(branch)}",
-                )
-                existing_sha = existing.get("sha") if isinstance(existing, Mapping) else None
-            except GitHubApiError:
-                pass  # file does not exist yet on this branch
-            payload: dict[str, Any] = {
-                "message": message,
-                "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
-                "branch": branch,
+        # Every path is validated before the first request, so one bad path cannot leave a
+        # partial change behind. The tree takes the plain repository path; only URLs take the
+        # percent-encoded form.
+        for path in files:
+            _path_segments(path, what="path")
+        tree_paths = {path: path.lstrip("/") for path in files}
+        branch_path = _path_segments(branch, what="branch")
+
+        head = await self._request("GET", f"/repos/{repo}/git/ref/heads/{branch_path}")
+        parent_sha = head["object"]["sha"]
+        parent = await self._request("GET", f"/repos/{repo}/git/commits/{parent_sha}")
+        base_tree = parent["tree"]["sha"]
+        modes = await self._file_modes(repo, base_tree)
+
+        entries = [
+            {
+                "path": tree_paths[path],
+                # An existing file keeps its mode, so an executable script stays executable;
+                # anything new (or unknown in a truncated tree) is an ordinary file.
+                "mode": modes.get(tree_paths[path], "100644"),
+                "type": "blob",
+                "content": content,
             }
-            if existing_sha:
-                payload["sha"] = existing_sha
-            await self._request("PUT", f"/repos/{repo}/contents/{safe_paths[path]}", json=payload)
-            committed.append(path)
-        return f"Committed {len(committed)} file(s) to {repo}@{branch}: {', '.join(committed)}"
+            for path, content in files.items()
+        ]
+        tree = await self._request(
+            "POST", f"/repos/{repo}/git/trees", json={"base_tree": base_tree, "tree": entries}
+        )
+        commit = await self._request(
+            "POST", f"/repos/{repo}/git/commits",
+            json={"message": message, "tree": tree["sha"], "parents": [parent_sha]},
+        )
+        await self._request(
+            "PATCH", f"/repos/{repo}/git/refs/heads/{branch_path}",
+            json={"sha": commit["sha"], "force": False},
+        )
+        return (
+            f"Committed {len(entries)} file(s) to {repo}@{branch} as {commit['sha'][:7]}: "
+            f"{', '.join(files)}"
+        )
+
+    async def _file_modes(self, repo: str, tree_sha: str) -> dict[str, str]:
+        """Path -> git file mode for every blob in ``tree_sha`` (empty when unknowable)."""
+        data = await self._request("GET", f"/repos/{repo}/git/trees/{tree_sha}?recursive=1")
+        tree = data.get("tree") if isinstance(data, Mapping) else None
+        if not isinstance(tree, list):
+            return {}
+        return {
+            entry["path"]: entry["mode"]
+            for entry in tree
+            if isinstance(entry, Mapping) and entry.get("type") == "blob"
+            and isinstance(entry.get("path"), str) and isinstance(entry.get("mode"), str)
+        }
 
     async def create_draft_pull_request(
         self, repo: str, *, branch: str, base: str, title: str, body: str

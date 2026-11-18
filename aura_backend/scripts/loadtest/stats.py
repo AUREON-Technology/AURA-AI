@@ -53,6 +53,8 @@ ERROR_KIND_STATUS: Mapping[str, int] = {
     "capability_unavailable": 503,
     "overloaded": 503,
     "user_concurrency_limit": 429,
+    "consent_required": 403,
+    "user_quota_exhausted": 429,
     "embedding_error": 502,
     "vector_store_error": 502,
     "memory_store_error": 502,

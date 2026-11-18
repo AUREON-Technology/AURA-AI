@@ -1,7 +1,7 @@
 """in-app purchase bindings and the store event replay log (SaaS phase 1, plan D2)
 
-Revision ID: 0025
-Revises: 0024
+Revision ID: 0026
+Revises: 0025
 Create Date: 2026-11-17
 
 * ``aura_store_bindings``: a token AURA issues before an in-app purchase; the app hands it to the
@@ -16,8 +16,8 @@ from typing import Sequence, Union
 
 from alembic import op
 
-revision: str = "0025"
-down_revision: Union[str, None] = "0024"
+revision: str = "0026"
+down_revision: Union[str, None] = "0025"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

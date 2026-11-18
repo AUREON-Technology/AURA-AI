@@ -1,6 +1,6 @@
 """Postgres :class:`~aura_core.ports.sharing.SharedConversationStore` (SaaS P1-F1).
 
-Table owned by Alembic revision 0027; no DDL here.
+Table owned by Alembic revision 0028; no DDL here.
 """
 
 from __future__ import annotations

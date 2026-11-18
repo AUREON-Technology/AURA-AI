@@ -144,6 +144,7 @@ Map<String, dynamic> chatStreamBody({
   double temperature = 0.3,
   List<ChatImageAttachment> images = const [],
   String? workspaceRoot,
+  bool desktopTaskIsolation = false,
 }) {
   return {
     "message": message,
@@ -157,6 +158,9 @@ Map<String, dynamic> chatStreamBody({
     "temperature": temperature,
     if (images.isNotEmpty) "images": [for (final image in images) image.toWire()],
     "workspace_root": ?workspaceRoot,
+    // WP4 (D-09): an Engineer turn on the user's computer works in its own git worktree, keyed
+    // by `session_id` (branch `aura/task-…`), never in the live checkout. Omitted when false.
+    if (desktopTaskIsolation) "desktop_task_isolation": true,
   };
 }
 
@@ -202,6 +206,8 @@ class SseAgentClient {
     // FSA-006: the Desktop IDE's active workspace root, so the daemon runs commands there and
     // not in whichever root was granted first. Null from every surface without one.
     String? workspaceRoot,
+    // WP4: ask the daemon to isolate this turn's work in its own git worktree.
+    bool desktopTaskIsolation = false,
   }) {
     final ownsClient = _httpClient == null;
     final client = _httpClient ?? http.Client();
@@ -224,6 +230,7 @@ class SseAgentClient {
           temperature: temperature,
           images: images,
           workspaceRoot: workspaceRoot,
+          desktopTaskIsolation: desktopTaskIsolation,
         ).listen(controller.add, onError: controller.addError, onDone: controller.close);
       },
       onPause: () => inner?.pause(),
@@ -256,6 +263,7 @@ class SseAgentClient {
     required double temperature,
     required List<ChatImageAttachment> images,
     required String? workspaceRoot,
+    required bool desktopTaskIsolation,
   }) async* {
     final cid = correlationId ?? _uuid.v4();
     try {
@@ -285,6 +293,7 @@ class SseAgentClient {
         temperature: temperature,
         images: images,
         workspaceRoot: workspaceRoot,
+        desktopTaskIsolation: desktopTaskIsolation,
       ));
 
       var response = await client.send(request).timeout(kLlmConnectTimeout);

@@ -37,6 +37,7 @@ class _ErrorFrameSseClient extends SseAgentClient {
     double temperature = 0.3,
     List<ChatImageAttachment> images = const [],
     String? workspaceRoot,
+    bool desktopTaskIsolation = false,
   }) async* {
     yield SseChatEvent.fromWire('error', {
       'type': 'error',

@@ -12,6 +12,7 @@ import 'package:aura_hostd/src/backend_connection.dart';
 import 'package:aura_hostd/src/config.dart';
 import 'package:aura_hostd/src/control_server.dart';
 import 'package:aura_hostd/src/debug_session_manager.dart';
+import 'package:aura_hostd/src/error_codes.dart';
 import 'package:aura_hostd/src/isolated_task_registry.dart';
 import 'package:aura_hostd/src/rpc_client.dart';
 import 'package:aura_hostd/src/terminal_session_manager.dart';
@@ -308,6 +309,112 @@ void main() {
       configStore.save(DaemonConfig(backendUrl: fakeBackend.url, authToken: 'tok-3'));
       final second = await connect();
       expect(second.authToken, 'tok-3');
+    });
+  });
+
+  group('WP8: remote control is decided on this computer, over the real socket', () {
+    test('a remote task is refused until the desktop turns remote control on', () async {
+      final conn = await connect();
+      final refused = await conn.call('create_task', {'origin': 'remote', 'cwd': rootA});
+      expect(refused['type'], 'error');
+      expect(refused['message'], startsWith('remote_control_disabled: '));
+      expect(refused['code'], HostdErrorCode.remoteControlDisabled);
+
+      final (status, _) = await control.request('POST', '/remote_control', body: {'enabled': true});
+      expect(status, 200);
+      final created = await conn.call('create_task', {'origin': 'remote', 'cwd': rootA});
+      expect(created['type'], 'result');
+    });
+
+    test('a remote task in a trusted folder needs confirmation, never the desktop queue, and '
+        'stops at the next call once remote control is turned off', () async {
+      final conn = await connect();
+      await control.request('POST', '/remote_control', body: {'enabled': true});
+      final created = await conn.call('create_task', {'origin': 'remote', 'cwd': rootA});
+      final taskId = (created['result'] as Map)['task_id'];
+
+      final unconfirmed = await conn.call('run', {
+        'command': ['sh', '-c', 'mkdir unconfirmed'],
+        'task_id': taskId,
+        'timeout_s': 5,
+      });
+      expect(unconfirmed['type'], 'error');
+      expect(unconfirmed['message'], startsWith('confirmation_required: '));
+      expect(unconfirmed['code'], HostdErrorCode.remoteConfirmationRequired);
+      expect(approvals.list(), isEmpty);
+      expect(Directory(p.join(rootA, 'unconfirmed')).existsSync(), isFalse);
+
+      final confirmed = await conn.call('run', {
+        'command': ['sh', '-c', 'mkdir confirmed'],
+        'task_id': taskId,
+        'timeout_s': 5,
+        'confirmed': true,
+      });
+      expect(confirmed['type'], 'result');
+      expect(Directory(p.join(rootA, 'confirmed')).existsSync(), isTrue);
+
+      await control.request('POST', '/remote_control', body: {'enabled': false});
+      final after = await conn.call('write_file', {
+        'path': 'after.txt',
+        'content': 'x',
+        'task_id': taskId,
+        'confirmed': true,
+      });
+      expect(after['type'], 'error');
+      expect(after['message'], startsWith('remote_control_disabled: '));
+      expect(File(p.join(rootA, 'after.txt')).existsSync(), isFalse);
+    });
+
+    test('list_roots answers with the live folders and flag, with no task', () async {
+      final conn = await connect();
+      final before = await conn.call('list_roots', {});
+      expect(before['type'], 'result');
+      expect(before['result'], {
+        'roots': [
+          {'path': rootA, 'trusted': true, 'is_git': false},
+        ],
+        'remote_control': false,
+      });
+
+      await control.request('POST', '/roots', body: {'action': 'grant', 'path': rootB});
+      await control.request('POST', '/remote_control', body: {'enabled': true});
+      final after = await conn.call('list_roots', {});
+      expect(after['result'], {
+        'roots': [
+          {'path': rootA, 'trusted': true, 'is_git': false},
+          {'path': rootB, 'trusted': false, 'is_git': false},
+        ],
+        'remote_control': true,
+      });
+    });
+  });
+
+  group('WP4 (D-13): isolation needs git, over the real socket', () {
+    test('an isolated task in a folder that is not a repository is refused with its code, and '
+        'init_git from the phone makes it work', () async {
+      final conn = await connect();
+      final refused = await conn.call('create_task', {'isolate': true, 'task_key': 'chat-1', 'cwd': rootA});
+      expect(refused['type'], 'error');
+      expect(refused['code'], 'isolation_needs_git');
+      expect((await conn.call('list_roots', {}))['result']['roots'][0]['is_git'], isFalse);
+
+      final off = await conn.call('init_git', {'path': rootA, 'confirmed': true});
+      expect(off['type'], 'error');
+      expect(off['code'], 'remote_control_disabled');
+      expect(Directory(p.join(rootA, '.git')).existsSync(), isFalse);
+
+      await control.request('POST', '/remote_control', body: {'enabled': true});
+      final init = await conn.call('init_git', {'path': rootA, 'confirmed': true});
+      expect(init['type'], 'result', reason: '$init');
+      expect(init['result']['ok'], isTrue);
+      expect(init['result']['commit'], isA<String>());
+      expect((await conn.call('list_roots', {}))['result']['roots'][0]['is_git'], isTrue);
+
+      final again = await conn.call('init_git', {'path': rootA, 'confirmed': true});
+      expect(again['code'], 'already_a_git_repo');
+
+      final created = await conn.call('create_task', {'isolate': true, 'task_key': 'chat-1', 'cwd': rootA});
+      expect(created['type'], 'result', reason: '$created');
     });
   });
 

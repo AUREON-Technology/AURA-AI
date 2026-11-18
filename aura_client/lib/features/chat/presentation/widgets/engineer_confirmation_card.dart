@@ -381,6 +381,7 @@ class _RunCommandSummary extends StatelessWidget {
     final command = call.arguments['command']?.toString() ?? '';
     return _SummaryShell(
       icon: Icons.terminal,
+      // Not "in sandbox": a host-routed command runs on the user's own computer (WP8).
       title: context.l10n.chatConfirmRunCommand,
       children: [SandboxTerminalView(body: command)],
     );

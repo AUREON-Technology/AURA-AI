@@ -31,6 +31,8 @@ logger = get_logger("api.v3.host_agent")
 
 # WebSocket close codes (application-defined 4xxx) -- same numbering convention as voice_live.py.
 _CLOSE_UNAUTHORIZED = 4401
+#: RFC 6455 "internal error": the daemon retries with backoff rather than giving up (WP9).
+_CLOSE_SERVER_ERROR = 1011
 _CLOSE_UNAVAILABLE = 4503
 _CLOSE_BAD_REQUEST = 4400
 
@@ -110,9 +112,17 @@ def register_host_agent(
         except AuthenticationError:
             await websocket.close(code=_CLOSE_UNAUTHORIZED)
             return
-        except Exception:
+        except Exception as exc:
+            # G-12 (WP9): 4401 makes the daemon stop and ask to be paired again, so it is only
+            # for a rejected credential -- including the 401/403 HTTPException the JWT layer
+            # raises for an expired or revoked token. Anything else is this server failing, and
+            # unpairing someone's computer over a database blip would be wrong: 1011 makes the
+            # daemon reconnect with backoff instead.
+            if getattr(exc, "status_code", None) in (401, 403):
+                await websocket.close(code=_CLOSE_UNAUTHORIZED)
+                return
             logger.exception("host agent auth failed")
-            await websocket.close(code=_CLOSE_UNAUTHORIZED)
+            await websocket.close(code=_CLOSE_SERVER_ERROR)
             return
 
         if not await host_allowed(principal):

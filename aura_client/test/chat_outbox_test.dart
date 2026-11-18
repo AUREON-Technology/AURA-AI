@@ -30,6 +30,7 @@ class _FailingSseClient extends SseAgentClient {
     double temperature = 0.3,
     List<ChatImageAttachment> images = const [],
     String? workspaceRoot,
+    bool desktopTaskIsolation = false,
   }) async* {
     throw http.ClientException(
       'Connection refused',

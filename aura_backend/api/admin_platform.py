@@ -320,6 +320,10 @@ async def _erase_core(
     if sharing is not None:
         # Copies they shared into teams are theirs to take back (review F1#7).
         await step("shared_chats", lambda: sharing.store.delete_by_sharer(owner))
+    consent_store = getattr(container, "engineer_consent", None)
+    if consent_store is not None:
+        # D-03: the record of agreeing to send code to Anthropic is personal data too.
+        await step("engineer_consent", lambda: consent_store.delete_for_owner(owner_id))
     await step("audit_events_pseudonymised", audit_actor)
     return counts, failed
 

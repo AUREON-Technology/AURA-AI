@@ -1,6 +1,6 @@
 /// Desktop IDE shell layout.
 ///
-/// Main layout for the Windows IDE: ActivityBar | PrimarySidebar | MainWorkspace | SecondarySidebar
+/// Main layout for the Desktop IDE (Windows and Linux): ActivityBar | PrimarySidebar | MainWorkspace | SecondarySidebar
 library;
 
 import 'dart:async';

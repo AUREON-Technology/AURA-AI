@@ -24,6 +24,10 @@ class AgentInfo {
   // is this persona's actual tool grant.
   final List<String>? allowedTools;
   final String riskCeiling;
+  // True on the `engineer` row while this caller has no current Anthropic consent (D-03). The
+  // send gate asks `/api/v3/engineering/consent` itself, which also says which notice version
+  // the server requires; this is the same fact for anything that only has the agent list.
+  final bool consentRequired;
 
   const AgentInfo({
     required this.id,
@@ -33,6 +37,7 @@ class AgentInfo {
     this.requiredCapabilities = const {},
     this.allowedTools,
     this.riskCeiling = '',
+    this.consentRequired = false,
   });
 
   factory AgentInfo.fromJson(Map<String, dynamic> json) {
@@ -50,6 +55,8 @@ class AgentInfo {
           : const {},
       allowedTools: rawAllowed is List ? rawAllowed.map((t) => t.toString()).toList() : null,
       riskCeiling: json['risk_ceiling'] as String? ?? '',
+      // Absent on a backend without consent (and on every persona but Engineer).
+      consentRequired: json['consent_required'] as bool? ?? false,
     );
   }
 }
@@ -71,6 +78,18 @@ Map<String, (String, IconData)> _knownPersonas(AppLocalizations l10n) => {
     };
 
 /// Labels are read in the language on screen ([currentL10n]) when called, i.e. at build time.
+/// Invalidates [ref]'s provider when the app resumes. No-op where no binding exists yet (a plain
+/// unit test reading the provider), since there is no app lifecycle to follow there.
+void _refetchOnResume(Ref ref) {
+  final AppLifecycleListener listener;
+  try {
+    listener = AppLifecycleListener(onResume: ref.invalidateSelf);
+  } on Object {
+    return;
+  }
+  ref.onDispose(listener.dispose);
+}
+
 (String label, IconData icon) personaDisplay(String agentId) {
   final known = _knownPersonas(currentL10n)[agentId];
   if (known != null) return known;
@@ -89,7 +108,12 @@ Map<String, (String, IconData)> _knownPersonas(AppLocalizations l10n) => {
 ///
 /// Through [AuraApiClient] (INT-024): attestation headers, one retry on 401, and a deadline --
 /// a bare `http.get` had none of the three, so an expired token showed as "failed to load".
+///
+/// G-15: refetched when the app comes back to the foreground, so a capability granted (or
+/// revoked) while it was in the background shows without a restart; the persona picker's error
+/// view also offers Retry.
 final agentsProvider = FutureProvider<List<AgentInfo>>((ref) async {
+  _refetchOnResume(ref);
   final decoded = await ref.read(auraApiClientProvider).json(
         method: 'GET',
         path: '/api/v3/agents',

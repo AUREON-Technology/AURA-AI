@@ -296,16 +296,16 @@ abstract class AppLocalizations {
   /// **'Talk to it. It remembers, searches your documents, and proposes actions — you confirm the writes.'**
   String get onboardingCopilotBody;
 
-  /// Onboarding page 2 title: where requests are processed
+  /// Onboarding page 2 title: where requests are processed. Must not claim that everything stays with AURA: Engineer turns go to Anthropic after consent (D-02, D-03)
   ///
   /// In en, this message translates to:
-  /// **'Your private data stays with AURA'**
+  /// **'Where your requests are processed'**
   String get onboardingPrivacyTitle;
 
-  /// Onboarding page 2 body. Must match the backend's data-classification routing (ADR-030): sensitive content stays on self-hosted models; hosted providers are opt-in and see only internal-classified requests
+  /// Onboarding page 2 body. Must match the backend's routing: sensitive content stays on self-hosted models (ADR-030), except Engineer turns, which go to Claude (Anthropic) only after the user's in-app consent (ADR-033 amendment, D-02/D-03); hosted open-weight providers are opt-in and see only internal-classified requests
   ///
   /// In en, this message translates to:
-  /// **'Nothing is processed on this phone. Your documents, memories and files are only read by AI models AURA runs itself. Other messages may be answered by an approved hosted AI provider, if the server’s operator allows it.'**
+  /// **'Nothing is processed on this phone. Your documents, memories and files are only read by AI models AURA runs itself. The exception is the Engineer: once you agree in the app, the messages you send it, the files it opens and the output of the commands it runs go to Claude, an AI model run by Anthropic. Other messages may be answered by an approved hosted AI provider, if the server’s operator allows it.'**
   String get onboardingPrivacyBody;
 
   /// Onboarding page 3 title: the four main tabs
@@ -620,10 +620,10 @@ abstract class AppLocalizations {
   /// **'Where AURA runs'**
   String get settingsAboutTitle;
 
-  /// About card body
+  /// About card body ("Where AURA runs"). Same routing facts as onboardingPrivacyBody: Engineer turns go to Anthropic only after consent
   ///
   /// In en, this message translates to:
-  /// **'Requests are processed on AURA’s servers, never on this device. Your documents, memories, files and tool results are only read by AI models AURA runs itself. If the server’s operator turns it on, your other messages may be answered by an approved hosted AI provider.'**
+  /// **'Requests are handled by AURA’s servers, never on this device. Your documents, memories, files and tool results are only read by AI models AURA runs itself. The exception is the Engineer: once you agree in the app, what it reads and runs goes to Claude, an AI model run by Anthropic. If the server’s operator turns it on, your other messages may be answered by an approved hosted AI provider.'**
   String get settingsAboutBody;
 
   /// Theme mode option
@@ -1550,10 +1550,10 @@ abstract class AppLocalizations {
   /// **'This request was handled by {resolved}, not {requested} -- your account may not have access to {requested}.'**
   String chatPersonaFallback(String resolved, String requested);
 
-  /// Hint when a turn waits on a tool confirmation
+  /// Hint when a turn waits on a tool confirmation; the confirmation card is shown below it
   ///
   /// In en, this message translates to:
-  /// **'Confirm the action above to continue.'**
+  /// **'Confirm the action below to continue.'**
   String get chatAwaitingConfirmation;
 
   /// Persona picker sheet title
@@ -2924,10 +2924,10 @@ abstract class AppLocalizations {
   /// **'Agent Review'**
   String get controlCenterTitle;
 
-  /// Agent Review panel: empty state
+  /// Control Center: no isolated Engineer tasks yet. True since WP4: every Engineer turn on the computer asks for its own worktree (D-09)
   ///
   /// In en, this message translates to:
-  /// **'No isolated agent tasks right now. Starting a new chat task creates one automatically.'**
+  /// **'No Engineer tasks to review yet. Each Engineer chat works in its own copy of the folder, on a branch named aura/task-…, and shows up here for you to review and merge.'**
   String get controlCenterEmpty;
 
   /// Agent Review panel: diff stat of a task with no changes
@@ -3440,16 +3440,16 @@ abstract class AppLocalizations {
   /// **'No folders granted yet -- the agent can\'t read or write anything on this machine until you add one.'**
   String get engineeringNoRoots;
 
-  /// Engineer daemon page: subtitle of a trusted granted folder
+  /// Engineer daemon page: what a trusted granted folder allows. Must not promise confinement (D-06, UX-04)
   ///
   /// In en, this message translates to:
-  /// **'Trusted -- commands run without per-call confirmation (still confined to this folder)'**
+  /// **'Trusted -- the agent\'s commands run without asking, as you, and can reach anything your account can. Paths outside this folder and any git push ask first.'**
   String get engineeringRootTrusted;
 
-  /// Engineer daemon page: subtitle of an untrusted granted folder
+  /// Engineer daemon page: what an untrusted granted folder allows; other commands are queued for approval, not dropped
   ///
   /// In en, this message translates to:
-  /// **'Untrusted -- only a read-only inspection allowlist runs'**
+  /// **'Untrusted -- read-only commands run; anything else asks you first'**
   String get engineeringRootUntrusted;
 
   /// Engineer daemon page: tooltip to browse a granted folder
@@ -4898,11 +4898,11 @@ abstract class AppLocalizations {
   /// **'Path copied'**
   String get explorerPathCopied;
 
-  /// Explorer: snackbar on non-Windows platforms
+  /// Explorer: snackbar where neither Explorer (Windows) nor xdg-open (Linux) can reveal a file
   ///
   /// In en, this message translates to:
-  /// **'Reveal in filesystem is only supported on Windows for now'**
-  String get explorerRevealWindowsOnly;
+  /// **'Reveal in filesystem is not supported on this platform'**
+  String get explorerRevealUnsupported;
 
   /// Explorer: error snackbar
   ///
@@ -6038,10 +6038,10 @@ abstract class AppLocalizations {
   /// **'Edit file'**
   String get chatConfirmEditFileUnnamed;
 
-  /// Chat: confirmation card heading for running a shell command in the sandbox
+  /// Chat: confirmation card heading for run_command. Not "in sandbox": a host-routed command runs on the user's own computer (WP8)
   ///
   /// In en, this message translates to:
-  /// **'Run command in sandbox'**
+  /// **'Run a command'**
   String get chatConfirmRunCommand;
 
   /// Chat: confirmation card heading for committing the sandbox's changes
@@ -7253,6 +7253,420 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Could not dismiss this insight. Try again shortly.'**
   String get homeInsightDismissFailed;
+
+  /// Engineer consent notice, version 2026-11-17 (kEngineerConsentNoticeVersion). Owner-reviewed wording: change it only together with that constant and the backend's CURRENT_NOTICE_VERSION. Title. The Arabic text of this notice (app_ar.arb) is a draft that awaits the owner's review (O-03) before it is relied on as the notice an Arabic-speaking user agreed to.
+  ///
+  /// In en, this message translates to:
+  /// **'The Engineer uses Claude, by Anthropic'**
+  String get engineerConsentTitle;
+
+  /// Engineer consent notice, version 2026-11-17 (kEngineerConsentNoticeVersion). Owner-reviewed wording: change it only together with that constant and the backend's CURRENT_NOTICE_VERSION. Paragraph 1. The Arabic text of this notice (app_ar.arb) is a draft that awaits the owner's review (O-03) before it is relied on as the notice an Arabic-speaking user agreed to.
+  ///
+  /// In en, this message translates to:
+  /// **'To work on your code, the Engineer sends what it reads and runs to Claude, an AI model run by Anthropic, a company outside AURA.'**
+  String get engineerConsentBodyWhat;
+
+  /// Engineer consent notice, version 2026-11-17 (kEngineerConsentNoticeVersion). Owner-reviewed wording: change it only together with that constant and the backend's CURRENT_NOTICE_VERSION. Paragraph 2. The Arabic text of this notice (app_ar.arb) is a draft that awaits the owner's review (O-03) before it is relied on as the notice an Arabic-speaking user agreed to.
+  ///
+  /// In en, this message translates to:
+  /// **'That includes the messages you send the Engineer, the contents of files it opens in folders you granted or repositories you connected, and the output of commands it runs — which can include anything those commands print.'**
+  String get engineerConsentBodyIncludes;
+
+  /// Engineer consent notice, version 2026-11-17 (kEngineerConsentNoticeVersion). Owner-reviewed wording: change it only together with that constant and the backend's CURRENT_NOTICE_VERSION. Paragraph 3. The Arabic text of this notice (app_ar.arb) is a draft that awaits the owner's review (O-03) before it is relied on as the notice an Arabic-speaking user agreed to.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing is sent until you agree. You can withdraw in Settings → Engineer at any time; the Engineer then stops until you agree again. Other AURA features are not affected.'**
+  String get engineerConsentBodyChoice;
+
+  /// Consent sheet: accept the notice and send
+  ///
+  /// In en, this message translates to:
+  /// **'Agree and continue'**
+  String get engineerConsentAgree;
+
+  /// Consent sheet: decline for now; nothing is sent
+  ///
+  /// In en, this message translates to:
+  /// **'Not now'**
+  String get engineerConsentNotNow;
+
+  /// Consent sheet: the accept request failed; the message was not sent
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t save your answer. {reason}'**
+  String engineerConsentSaveFailed(String reason);
+
+  /// Shown instead of the notice when the server's current notice version is not the one this app carries
+  ///
+  /// In en, this message translates to:
+  /// **'Update AURA to use the Engineer'**
+  String get engineerConsentUpdateTitle;
+
+  /// Body for engineerConsentUpdateTitle
+  ///
+  /// In en, this message translates to:
+  /// **'The notice about what the Engineer sends to Anthropic has changed, and this version of the app can’t show the new one. Update the app to read it and continue.'**
+  String get engineerConsentUpdateBody;
+
+  /// Dismisses the update-the-app notice
+  ///
+  /// In en, this message translates to:
+  /// **'OK'**
+  String get engineerConsentUpdateOk;
+
+  /// Transcript row for a turn the server refused with consent_required. No Retry: agreeing in the sheet resends it
+  ///
+  /// In en, this message translates to:
+  /// **'The Engineer didn’t run this: it needs your agreement before it sends anything to Anthropic. Nothing was sent to Anthropic.'**
+  String get engineerConsentNeededNotice;
+
+  /// Transcript row for a turn refused with user_quota_exhausted; time is the reset moment in the device's local time
+  ///
+  /// In en, this message translates to:
+  /// **'You’ve reached today’s Engineer limit. It resets at {time}.'**
+  String engineerLimitReached(String time);
+
+  /// Same as engineerLimitReached when the server did not say when the limit resets
+  ///
+  /// In en, this message translates to:
+  /// **'You’ve reached today’s Engineer limit. Try again after it resets.'**
+  String get engineerLimitReachedNoTime;
+
+  /// Settings → Engineer: consent row title while loading or on error
+  ///
+  /// In en, this message translates to:
+  /// **'Sharing code with Anthropic'**
+  String get engineerConsentStatusTitle;
+
+  /// Settings → Engineer: consent is current
+  ///
+  /// In en, this message translates to:
+  /// **'Sharing code with Anthropic: on since {date}'**
+  String engineerConsentStatusOn(String date);
+
+  /// Settings → Engineer: consent is on but the server sent no date
+  ///
+  /// In en, this message translates to:
+  /// **'Sharing code with Anthropic: on'**
+  String get engineerConsentStatusOnNoDate;
+
+  /// Settings → Engineer: no current consent
+  ///
+  /// In en, this message translates to:
+  /// **'Sharing code with Anthropic: off'**
+  String get engineerConsentStatusOff;
+
+  /// Subtitle when consent is on
+  ///
+  /// In en, this message translates to:
+  /// **'The Engineer sends what it reads and runs to Claude'**
+  String get engineerConsentStatusOnSubtitle;
+
+  /// Subtitle when consent is off
+  ///
+  /// In en, this message translates to:
+  /// **'The Engineer asks before it sends anything'**
+  String get engineerConsentStatusOffSubtitle;
+
+  /// Subtitle while the consent status loads
+  ///
+  /// In en, this message translates to:
+  /// **'Checking…'**
+  String get engineerConsentStatusLoading;
+
+  /// Subtitle when the consent status failed to load
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t check. Tap to try again.'**
+  String get engineerConsentStatusError;
+
+  /// Settings → Engineer: withdraw consent button
+  ///
+  /// In en, this message translates to:
+  /// **'Withdraw'**
+  String get engineerConsentWithdraw;
+
+  /// Withdraw confirmation dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'Stop sharing code with Anthropic?'**
+  String get engineerConsentWithdrawTitle;
+
+  /// Withdraw confirmation dialog body
+  ///
+  /// In en, this message translates to:
+  /// **'The Engineer stops until you agree again. Other AURA features are not affected.'**
+  String get engineerConsentWithdrawBody;
+
+  /// Snackbar after a successful withdraw
+  ///
+  /// In en, this message translates to:
+  /// **'Withdrawn. The Engineer will ask before it sends anything again.'**
+  String get engineerConsentWithdrawn;
+
+  /// Snackbar when withdraw failed
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t withdraw. {reason}'**
+  String engineerConsentWithdrawFailed(String reason);
+
+  /// Shown at /ide on a platform without the Desktop IDE (macOS, mobile, web)
+  ///
+  /// In en, this message translates to:
+  /// **'The desktop IDE isn\'t available on this platform yet'**
+  String get desktopIdeUnavailableTitle;
+
+  /// Explains where the Desktop IDE runs
+  ///
+  /// In en, this message translates to:
+  /// **'It runs in AURA on Windows and Linux. Everything else in AURA works here as usual.'**
+  String get desktopIdeUnavailableBody;
+
+  /// Button from the desktop-IDE-unavailable page back to Home
+  ///
+  /// In en, this message translates to:
+  /// **'Go to Home'**
+  String get desktopIdeUnavailableGoHome;
+
+  /// Desktop toggle (WP8, D-10b) that lets phone and web Engineer turns use this computer
+  ///
+  /// In en, this message translates to:
+  /// **'Allow control from my phone and the web'**
+  String get hostdRemoteControlTitle;
+
+  /// One-line explanation under the remote-control toggle
+  ///
+  /// In en, this message translates to:
+  /// **'When on, the Engineer can work on this computer\'s granted folders from your phone or the web. Every change and command is approved on that device first. Turn it off here any time.'**
+  String get hostdRemoteControlExplanation;
+
+  /// Confirmation dialog title before remote control is turned on
+  ///
+  /// In en, this message translates to:
+  /// **'Allow control from your phone and the web?'**
+  String get hostdRemoteControlConfirmTitle;
+
+  /// Confirmation dialog body before remote control is turned on
+  ///
+  /// In en, this message translates to:
+  /// **'Anyone signed in to your AURA account on a phone or in a browser will be able to ask the Engineer to read, change and run commands in this computer\'s granted folders. Each change and command still waits for approval on that device. You can turn this off here at any time.'**
+  String get hostdRemoteControlConfirmBody;
+
+  /// Confirm button that turns remote control on
+  ///
+  /// In en, this message translates to:
+  /// **'Allow'**
+  String get hostdRemoteControlConfirmAllow;
+
+  /// Snackbar when the daemon refused or could not be reached
+  ///
+  /// In en, this message translates to:
+  /// **'Could not change remote control: {error}'**
+  String hostdRemoteControlFailed(String error);
+
+  /// Engineer chat desktop bar: no paired daemon is online
+  ///
+  /// In en, this message translates to:
+  /// **'Your computer isn\'t connected'**
+  String get engineerDesktopNotConnected;
+
+  /// Engineer chat desktop bar: the daemon is online but remote control is off
+  ///
+  /// In en, this message translates to:
+  /// **'Remote control is off on your computer — turn it on in AURA on the computer'**
+  String get engineerDesktopRemoteOff;
+
+  /// Engineer chat desktop bar: remote control is on but no folder is granted
+  ///
+  /// In en, this message translates to:
+  /// **'Your computer hasn\'t shared any folders yet — add one in AURA on the computer'**
+  String get engineerDesktopNoFolders;
+
+  /// Label of the folder picker in the Engineer chat desktop bar
+  ///
+  /// In en, this message translates to:
+  /// **'Folder on your computer'**
+  String get engineerDesktopFolderLabel;
+
+  /// Engineer chat desktop bar: GET /api/v3/host/folders failed
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t check your computer'**
+  String get engineerDesktopCheckFailed;
+
+  /// Tooltip of the desktop bar's refresh button
+  ///
+  /// In en, this message translates to:
+  /// **'Check again'**
+  String get engineerDesktopRefresh;
+
+  /// aura_hostd error code git_push_needs_approval (hostd_error_codes.dart)
+  ///
+  /// In en, this message translates to:
+  /// **'Any git push by the agent waits for your approval.'**
+  String get hostdCodeGitPushNeedsApproval;
+
+  /// aura_hostd error code path_outside_trusted_folder (hostd_error_codes.dart)
+  ///
+  /// In en, this message translates to:
+  /// **'This command reaches outside this trusted folder, so it waits for your approval.'**
+  String get hostdCodePathOutsideTrustedFolder;
+
+  /// aura_hostd error code remote_command_needs_confirmation (hostd_error_codes.dart)
+  ///
+  /// In en, this message translates to:
+  /// **'Commands sent from your phone or the web wait for your approval there first.'**
+  String get hostdCodeRemoteCommandNeedsConfirmation;
+
+  /// aura_hostd error code protected_git_dir_file (hostd_error_codes.dart)
+  ///
+  /// In en, this message translates to:
+  /// **'Writing a .git file that points Git somewhere else is always refused.'**
+  String get hostdCodeProtectedGitDirFile;
+
+  /// aura_hostd error code remote_control_disabled (hostd_error_codes.dart)
+  ///
+  /// In en, this message translates to:
+  /// **'Remote control is off on this computer. Turn on \"Allow control from my phone and the web\" on the computer.'**
+  String get hostdCodeRemoteControlDisabled;
+
+  /// aura_hostd error code remote_confirmation_required (hostd_error_codes.dart)
+  ///
+  /// In en, this message translates to:
+  /// **'Changes from your phone or the web must be approved there first.'**
+  String get hostdCodeRemoteConfirmationRequired;
+
+  /// aura_hostd error code invalid_task_key (hostd_error_codes.dart)
+  ///
+  /// In en, this message translates to:
+  /// **'The Host Daemon didn\'t recognize this task. Update the app and try again.'**
+  String get hostdCodeInvalidTaskKey;
+
+  /// aura_hostd error code isolated_task_unresolved (hostd_error_codes.dart)
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t set up an isolated copy of the folder for this task.'**
+  String get hostdCodeIsolatedTaskUnresolved;
+
+  /// aura_hostd error code invalid_origin (hostd_error_codes.dart)
+  ///
+  /// In en, this message translates to:
+  /// **'The Host Daemon couldn\'t tell where this request came from, so it refused it. Update the app and try again.'**
+  String get hostdCodeInvalidOrigin;
+
+  /// aura_hostd error code diagnostics_untrusted (hostd_error_codes.dart)
+  ///
+  /// In en, this message translates to:
+  /// **'Problems runs only in trusted folders. Trust this folder to check it.'**
+  String get hostdCodeDiagnosticsUntrusted;
+
+  /// aura_hostd error code invalid_request_body (hostd_error_codes.dart)
+  ///
+  /// In en, this message translates to:
+  /// **'The request to the Host Daemon wasn\'t in the form it expects. Update the app and try again.'**
+  String get hostdCodeInvalidRequestBody;
+
+  /// Engineer panel banner (D-13): the bound folder is not a git repository
+  ///
+  /// In en, this message translates to:
+  /// **'This folder isn\'t a git repository'**
+  String get gitInitBannerTitle;
+
+  /// Engineer panel banner body: why isolation needs git (D-09, D-13)
+  ///
+  /// In en, this message translates to:
+  /// **'The Engineer works in its own copy of the folder so every change can be reviewed and undone, and that needs git. Initialize git here to let it start.'**
+  String get gitInitBannerBody;
+
+  /// Button that makes the folder a git repository (D-13)
+  ///
+  /// In en, this message translates to:
+  /// **'Initialize git here'**
+  String get gitInitButton;
+
+  /// Compact button in the phone/web desktop bar (D-13)
+  ///
+  /// In en, this message translates to:
+  /// **'Initialize git'**
+  String get gitInitButtonShort;
+
+  /// Confirmation dialog title before git init (D-13)
+  ///
+  /// In en, this message translates to:
+  /// **'Initialize git in this folder?'**
+  String get gitInitConfirmTitle;
+
+  /// Confirmation dialog body before git init: what it does and what it commits (D-13)
+  ///
+  /// In en, this message translates to:
+  /// **'This runs git init in {path} and commits the folder\'s current files as a first commit, on this computer only. Files your .gitignore lists are left out; everything else — including files like .env — goes into that local commit, so add a .gitignore first if you need one.'**
+  String gitInitConfirmBody(String path);
+
+  /// Confirm button of the git-init dialog
+  ///
+  /// In en, this message translates to:
+  /// **'Initialize'**
+  String get gitInitConfirmAction;
+
+  /// Snackbar after a successful git init
+  ///
+  /// In en, this message translates to:
+  /// **'Git is ready in this folder.'**
+  String get gitInitDone;
+
+  /// Snackbar when git init failed or was refused
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t initialize git: {error}'**
+  String gitInitFailed(String error);
+
+  /// Phone/web desktop bar: the chosen folder is not a git repository (D-13)
+  ///
+  /// In en, this message translates to:
+  /// **'This folder isn\'t a git repository yet — the Engineer needs one to work on its own copy.'**
+  String get engineerDesktopNotGit;
+
+  /// aura_hostd error code isolation_needs_git (hostd_error_codes.dart)
+  ///
+  /// In en, this message translates to:
+  /// **'This folder isn\'t a git repository, so the Engineer can\'t work on its own copy of it — use Initialize git here first.'**
+  String get hostdCodeIsolationNeedsGit;
+
+  /// aura_hostd error code already_a_git_repo (hostd_error_codes.dart)
+  ///
+  /// In en, this message translates to:
+  /// **'This folder is already a git repository.'**
+  String get hostdCodeAlreadyAGitRepo;
+
+  /// aura_hostd error code git_init_failed; detail is git's own output
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t initialize git here: {detail}'**
+  String hostdCodeGitInitFailed(String detail);
+
+  /// aura_hostd error code approval_queue_full (hostd_error_codes.dart)
+  ///
+  /// In en, this message translates to:
+  /// **'Too many changes are waiting for your approval; answer some first.'**
+  String get hostdCodeApprovalQueueFull;
+
+  /// Transcript row when an approval came back confirmation_invalid (expired, used or unknown); no Retry
+  ///
+  /// In en, this message translates to:
+  /// **'This approval expired. Ask again.'**
+  String get chatApprovalExpiredNotice;
+
+  /// Status bar: tooltip of the daemon item when it must be paired again (G-12)
+  ///
+  /// In en, this message translates to:
+  /// **'The server no longer accepts this computer. Click to pair it again.'**
+  String get ideStatusRepairTooltip;
+
+  /// Explorer: snackbar on non-Windows platforms
+  ///
+  /// In en, this message translates to:
+  /// **'Reveal in filesystem is only supported on Windows for now'**
+  String get explorerRevealWindowsOnly;
 
   /// Sign in with Apple button on the login page
   ///
