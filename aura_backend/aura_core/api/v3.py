@@ -2225,6 +2225,8 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         container,
         authenticator=person_authenticator,
         rate_limiter=rate_limiter,
+        admit_turn=admit_turn,
+        release_turn=release_turn,
     )
 
     from .host_agent import register_host_agent

@@ -11,10 +11,16 @@ import asyncio
 import json
 from typing import Any, Callable, Mapping
 
-from ..domain.errors import AuthenticationError
+from ..domain.errors import (
+    AuraError,
+    AuthenticationError,
+    DependencyUnavailableError,
+    RateLimitedError,
+)
 from ..domain.identifiers import SessionId
 from ..observability.logging import get_logger
 from ..voice import LiveVoiceConfig, LiveVoiceSession, PcmFrameError
+from ..voice.session import TurnRefused
 from . import ws_auth
 from .ws_auth import LiveCredential
 
@@ -99,7 +105,11 @@ def register_voice_live(
     authenticator: Callable,
     rate_limiter: Any,
     recheck_s: float | None = None,
+    admit_turn: Callable | None = None,
+    release_turn: Callable | None = None,
 ) -> None:
+    """``admit_turn(caller, agent, turn)`` and ``release_turn(reservation)`` are the v3 router's
+    own plan hooks, so a spoken turn is metered exactly like a typed one (F7)."""
     from fastapi import WebSocket
     from starlette.websockets import WebSocketDisconnect
 
@@ -162,6 +172,33 @@ def register_voice_live(
             language = str(start.get("language") or "en")
             voice_name = start.get("voice")
             cfg: LiveVoiceConfig = live["config"]
+
+            async def admit(turn: Any) -> tuple[Any, Any]:
+                # F7 / INT-114: every committed turn -- an utterance or a confirmation -- is
+                # rate-limited and reserved against the plan before it runs, like POST /chat.
+                # ``principal`` is read at call time, so a reauth's renewed one is used.
+                if rate_limiter is not None:
+                    decision = await rate_limiter.check_all(
+                        user_key=principal.user_id.value,
+                        ip_key=_ws_client_ip(websocket),
+                        route_class="voice_live",
+                    )
+                    if not decision.allowed:
+                        raise TurnRefused(RateLimitedError(
+                            "rate limit exceeded", retry_after=decision.retry_after_s
+                        ).to_dict())
+                if admit_turn is None:
+                    return None, turn
+                try:
+                    return await admit_turn(principal, turn.agent, turn)
+                except AuraError as exc:  # PlanLimitError (402) and friends: same body as HTTP
+                    raise TurnRefused(exc.to_dict()) from exc
+                except Exception as exc:
+                    logger.warning("voice live: could not admit a turn", exc_info=True)
+                    raise TurnRefused(DependencyUnavailableError(
+                        "could not check your plan just now", dependency="plans"
+                    ).to_dict()) from exc
+
             session = LiveVoiceSession(
                 stt=live["stt"],
                 tts=live["tts"],
@@ -175,6 +212,12 @@ def register_voice_live(
                 capabilities=_granted(container, principal),
                 safety_guards_enabled=bool(live.get("safety_guards_enabled", True)),
                 vad=(live.get("vad_factory") or (lambda: None))(),
+                # The scope to_turn gives a typed turn (ADR-034, WP8).
+                knowledge_owner=principal.knowledge_owner,
+                use_memory=principal.knowledge_owner == principal.user_id,
+                origin=principal.origin,
+                admit=admit,
+                release=release_turn,
             )
             lang_err = session.check_language()
             if lang_err:
@@ -241,17 +284,8 @@ def register_voice_live(
                     approval_ids = (
                         [str(i) for i in raw_ids][:32] if isinstance(raw_ids, list) else None
                     )
-                    if rate_limiter is not None:
-                        decision = await rate_limiter.check_all(
-                            user_key=principal.user_id.value,
-                            ip_key=_ws_client_ip(websocket),
-                            route_class="voice_live",
-                        )
-                        if not decision.allowed:
-                            await websocket.send_json(
-                                {"type": "error", "error": "rate_limited", "message": "budget"}
-                            )
-                            continue
+                    # Rate limit and plan are checked by the session's ``admit`` hook, as for
+                    # every turn; a refused confirmation keeps the calls held.
                     await session.confirm(approval_ids)
                 elif ftype == "reject":
                     await session.reject()
