@@ -34,11 +34,13 @@ class DaemonConfig {
       );
 
   /// The `wss://.../api/v3/host/agent` URL derived from [backendUrl], which is stored as the
-  /// plain `https://host[:port]` base the same way every other AURA client config does.
+  /// plain `https://host[:port]` base the same way every other AURA client config does. Throws
+  /// [InvalidBackendUrlError] for a URL [requireSecureBackendUrl] refuses (F53): the first frame
+  /// on this socket is the device token.
   String get hostAgentWsUrl {
-    final uri = Uri.parse(backendUrl);
-    final scheme = uri.scheme == 'https' ? 'wss' : 'ws';
-    return uri.replace(scheme: scheme, path: '/api/v3/host/agent').toString();
+    final uri = Uri.parse(requireSecureBackendUrl(backendUrl));
+    final secure = uri.scheme.toLowerCase() == 'https' || uri.scheme.toLowerCase() == 'wss';
+    return uri.replace(scheme: secure ? 'wss' : 'ws', path: '/api/v3/host/agent').toString();
   }
 
   Map<String, Object?> toJson() =>
@@ -51,6 +53,46 @@ class DaemonConfig {
         // leaves this computer refusing remote turns.
         remoteControl: json['remote_control'] == true,
       );
+}
+
+/// A backend URL this daemon will not talk to: see [requireSecureBackendUrl].
+class InvalidBackendUrlError implements Exception {
+  InvalidBackendUrlError(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+/// [raw], unchanged, if this daemon may send its credentials there; otherwise throws
+/// [InvalidBackendUrlError] (F53).
+///
+/// Pairing receives the device token over this URL and every WebSocket connection sends it as
+/// its first frame, so it may only travel encrypted: `https` (or `wss`) to any host. Plain `http`
+/// (or `ws`) is accepted only for a loopback host -- `localhost`, `127.0.0.0/8` or `::1` -- where
+/// the bytes never leave this machine (a backend under development). Every place a backend URL
+/// enters -- `--backend-url`, the control server's `/pair/start`, the pairing client, and the
+/// WebSocket connection itself -- calls this, so a URL in a hand-edited `config.json` is refused
+/// at the point it would be used.
+String requireSecureBackendUrl(String raw) {
+  final uri = Uri.tryParse(raw.trim());
+  final scheme = uri?.scheme.toLowerCase() ?? '';
+  final host = uri?.host ?? '';
+  if (uri != null && host.isNotEmpty) {
+    if (scheme == 'https' || scheme == 'wss') return raw;
+    if ((scheme == 'http' || scheme == 'ws') && _isLoopbackHost(host)) return raw;
+  }
+  throw InvalidBackendUrlError(
+    'backend URL "$raw" refused: use https:// or wss:// (plain http:// or ws:// is allowed only '
+    'for localhost, 127.0.0.1 or ::1) -- the device token is sent over this connection',
+  );
+}
+
+bool _isLoopbackHost(String host) {
+  if (host.toLowerCase() == 'localhost') return true;
+  final address = InternetAddress.tryParse(host);
+  return address != null && address.isLoopback;
 }
 
 class ConfigStore {

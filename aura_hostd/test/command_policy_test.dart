@@ -134,6 +134,15 @@ void main() {
       'git diff --ext-diff',
       'git show --textconv HEAD',
       'git diff --no-index a /etc/passwd',
+      // F44: git accepts an unambiguous abbreviation of a long option.
+      'git log --outp=/tmp/x',
+      'git diff --outpu /tmp/x',
+      'git diff --ext-d',
+      'git diff --ext',
+      'git show --textc HEAD',
+      'git blame --textco a.txt',
+      'git diff --no-ind a b',
+      'git diff --no- a b',
       'git branch evil',
       'git branch -D main',
       'git remote add origin https://example.com/x.git',
@@ -160,6 +169,11 @@ void main() {
         'git remote -v',
         'git diff HEAD~1',
         'git log main..feature',
+        // F44: full flags that merely share a prefix with a banned one stay allowed.
+        'git diff --text',
+        'git diff --no-ext-diff',
+        'git diff --output-indicator-new=+',
+        'git diff --exit-code',
         'cat src/main.dart',
         'grep -rn TODO lib',
         'npm ls',
@@ -471,5 +485,109 @@ void main() {
             reason: command);
       }
     });
+  });
+
+  // F16: the untrusted tier used to judge each argument by its spelling only, so a symlink inside
+  // the folder that points out of it -- planted by the repository itself -- was read without a
+  // human ever being asked.
+  group('evaluateCommand: untrusted workspace sees through symlinks (F16)', () {
+    late Directory tempDir;
+    late String root;
+    late Directory outside;
+
+    setUp(() {
+      tempDir = Directory.systemTemp.createTempSync('aura_hostd_policy_untrusted_links_');
+      root = (Directory(p.join(tempDir.path, 'ws'))..createSync()).resolveSymbolicLinksSync();
+      Directory(p.join(root, 'src')).createSync();
+      File(p.join(root, 'src', 'main.dart')).writeAsStringSync('// TODO');
+      Directory(p.join(root, 'docs')).createSync();
+      File(p.join(root, 'docs', 'guide.md')).writeAsStringSync('guide');
+      outside = Directory(p.join(tempDir.path, 'outside'))..createSync();
+      File(p.join(outside.path, 'id_rsa')).writeAsStringSync('secret');
+    });
+
+    tearDown(() => tempDir.deleteSync(recursive: true));
+
+    CommandVerdict evaluate(String command, {String? cwd}) => evaluateCommand(
+          command,
+          workspaceTrusted: false,
+          workspaceRoot: root,
+          cwd: cwd ?? root,
+        );
+
+    test('in-folder inspection with no outward link still runs without asking', () {
+      for (final command in [
+        'cat src/main.dart',
+        'cat docs/*',
+        'grep -R TODO .',
+        'grep -rn TODO src',
+        'grep -r TODO',
+        'ls -R',
+        'git log origin/main',
+      ]) {
+        final result = evaluate(command);
+        expect(result.isAllowed, isTrue, reason: '$command: ${result.reason}');
+      }
+    });
+
+    test('reading a file through a symlink that leaves the folder needs approval', () {
+      Link(p.join(root, 'docs', 'ref.txt')).createSync(p.join(outside.path, 'id_rsa'));
+      expect(evaluate('cat docs/ref.txt').decision, CommandDecision.needsApproval);
+      expect(evaluate('head ref.txt', cwd: p.join(root, 'docs')).decision,
+          CommandDecision.needsApproval);
+      expect(evaluate(r'cat docs/re\f.txt').decision, CommandDecision.needsApproval,
+          reason: 'a backslash escape is removed by the shell before the path is opened');
+    }, testOn: '!windows');
+
+    test('a recursive read over a folder holding an outward link needs approval', () {
+      Link(p.join(root, 'src', 'keys')).createSync(outside.path);
+      for (final command in [
+        'grep -R x .',
+        'grep -r x',
+        'grep -Rn x src',
+        'grep --dereference-recursive x src',
+        'grep -e x -R',
+        'grep -R -e x --exclude-dir docs',
+        'ls -RL',
+      ]) {
+        expect(evaluate(command).decision, CommandDecision.needsApproval, reason: command);
+      }
+      // A recursive read of a sibling folder the link is not in is unaffected.
+      expect(evaluate('grep -R guide docs').isAllowed, isTrue);
+    }, testOn: '!windows');
+
+    test('an outward link reached through an inward one is still found', () {
+      Directory(p.join(root, 'vendor')).createSync();
+      Link(p.join(root, 'vendor', 'keys')).createSync(outside.path);
+      Link(p.join(root, 'docs', 'vendor')).createSync(p.join(root, 'vendor'));
+      expect(evaluate('grep -R x docs').decision, CommandDecision.needsApproval);
+    }, testOn: '!windows');
+
+    test('a glob that can expand to an outward link needs approval', () {
+      Link(p.join(root, 'docs', 'ref.txt')).createSync(p.join(outside.path, 'id_rsa'));
+      expect(evaluate('cat docs/*').decision, CommandDecision.needsApproval);
+      expect(evaluate('wc -l docs/*.txt').decision, CommandDecision.needsApproval);
+      expect(evaluate('head *', cwd: p.join(root, 'docs')).decision, CommandDecision.needsApproval);
+      expect(evaluate('cat */ref.txt').decision, CommandDecision.needsApproval);
+      // The glob's own folder holds no outward link.
+      expect(evaluate('cat src/*').isAllowed, isTrue);
+      // A quoted or escaped glob is a literal the shell does not expand.
+      expect(evaluate("grep -n 'a*' src/main.dart").isAllowed, isTrue);
+      expect(evaluate(r'grep -n a\* src/main.dart').isAllowed, isTrue);
+    }, testOn: '!windows');
+
+    test('a glob over a folder holding an option-like name needs approval', () {
+      // `grep x *` would run as `grep x -R docs src`, recursive after all.
+      File(p.join(root, '-R')).writeAsStringSync('');
+      expect(evaluate('grep x *').decision, CommandDecision.needsApproval);
+      expect(evaluate('cat src/*').isAllowed, isTrue);
+    });
+
+    test('a symlink that stays inside the folder still runs without asking', () {
+      Link(p.join(root, 'docs', 'main.dart')).createSync(p.join(root, 'src', 'main.dart'));
+      expect(evaluate('cat docs/main.dart').isAllowed, isTrue);
+      expect(evaluate('grep -R TODO .').isAllowed, isTrue);
+      expect(evaluate('cat docs/*').isAllowed, isTrue);
+    }, testOn: '!windows');
   });
 }

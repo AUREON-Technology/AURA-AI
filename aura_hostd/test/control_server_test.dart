@@ -765,6 +765,37 @@ void main() {
     expect(paths, isNot(contains('hello.txt')));
   });
 
+  test('a Git panel commit runs the repository\'s hooks only once the folder is trusted (F45)',
+      () async {
+    await initGitRepo();
+    final marker = File('${configDir.path}/pre-commit-ran');
+    final hook = File('${workspaceDir.path}/.git/hooks/pre-commit')
+      ..parent.createSync(recursive: true)
+      ..writeAsStringSync('#!/bin/sh\ntouch "${marker.path}"\n');
+    Process.runSync('chmod', ['+x', hook.path]);
+
+    Future<void> commit(String content) async {
+      File('${workspaceDir.path}/hello.txt').writeAsStringSync(content);
+      await client.request('POST', '/git/stage', body: {
+        'root': workspaceRoot,
+        'paths': ['hello.txt'],
+      });
+      final (status, _) = await client.request(
+        'POST',
+        '/git/commit',
+        body: {'root': workspaceRoot, 'message': content},
+      );
+      expect(status, 200);
+    }
+
+    await commit('untrusted change');
+    expect(marker.existsSync(), isFalse, reason: 'an untrusted folder runs no repository hook');
+
+    await client.request('POST', '/roots', body: {'action': 'trust', 'path': workspaceRoot});
+    await commit('trusted change');
+    expect(marker.existsSync(), isTrue, reason: 'a trusted folder keeps the person\'s own hooks');
+  }, testOn: '!windows');
+
   test('POST /git/commit with nothing staged responds 409 with reason nothing_staged', () async {
     await initGitRepo();
     final (status, body) = await client.request(
@@ -816,6 +847,15 @@ void main() {
     expect(status, 200);
     expect(body['user_code'], 'AB3D-9XYZ');
     expect(body['expires_in'], isA<int>());
+  });
+
+  test('POST /pair/start refuses a plain http backend that is not loopback (F53)', () async {
+    for (final url in ['http://a.example', 'ws://10.0.0.5:8000', 'not a url']) {
+      final (status, body) = await client.request('POST', '/pair/start', body: {'backend_url': url});
+      expect(status, 400, reason: url);
+      expect(body['code'], HostdErrorCode.invalidRequestBody, reason: url);
+      expect(body['error'], contains('https'), reason: url);
+    }
   });
 
   test('GET /pair/status without a prior /pair/start is a clear error, not a hang', () async {

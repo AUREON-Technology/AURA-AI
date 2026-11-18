@@ -178,4 +178,16 @@ void main() {
       expect(await pollPairingOnce(server.backendUrl, session), isA<PairingGone>());
     });
   });
+
+  // F53: the token is handed back over this connection, so plain http only to this machine.
+  test('refuses a plain http backend that is not loopback, before sending anything', () async {
+    final session = PairingSession(pairingId: 'pid', userCode: 'X', expiresIn: 60, intervalS: 0);
+    for (final url in ['http://a.example', 'http://10.0.0.5:8000', 'ftp://a.example']) {
+      await expectLater(startPairing(url), throwsA(isA<PairingFailedError>()), reason: url);
+      await expectLater(pollPairingOnce(url, session), throwsA(isA<PairingFailedError>()),
+          reason: url);
+      await expectLater(pairWithCode(url, onCode: (_) {}), throwsA(isA<PairingFailedError>()),
+          reason: url);
+    }
+  });
 }
