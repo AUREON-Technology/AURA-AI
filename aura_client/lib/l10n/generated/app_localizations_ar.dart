@@ -4599,4 +4599,421 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get ideStatusRepairTooltip =>
       'السيرفر مبقاش بيقبل الكمبيوتر ده. دوس علشان تعمل Pair تاني.';
+
+  @override
+  String get explorerRevealWindowsOnly =>
+      'الإظهار في نظام الملفات شغال على ويندوز بس دلوقتي';
+
+  @override
+  String get loginApple => 'تسجيل الدخول بـ Apple';
+
+  @override
+  String get loginEmail => 'تسجيل الدخول بالإيميل';
+
+  @override
+  String get emailFieldLabel => 'الإيميل';
+
+  @override
+  String get passwordFieldLabel => 'الباسورد';
+
+  @override
+  String get confirmPasswordFieldLabel => 'أكّد الباسورد';
+
+  @override
+  String get nameFieldLabel => 'الاسم';
+
+  @override
+  String get emailSignInAction => 'دخول';
+
+  @override
+  String get emailCreateAccountAction => 'اعمل حساب';
+
+  @override
+  String get emailForgotPassword => 'نسيت الباسورد؟';
+
+  @override
+  String get emailSwitchToRegister => 'جديد على AURA؟ اعمل حساب';
+
+  @override
+  String get emailSwitchToSignIn => 'عندك حساب؟ سجّل دخول';
+
+  @override
+  String get emailSendReset => 'ابعت لينك التغيير';
+
+  @override
+  String get emailResetSent =>
+      'لو فيه حساب بالإيميل ده، بعتنالك لينك تغيّر بيه الباسورد.';
+
+  @override
+  String get emailInvalid => 'اكتب إيميل صحيح.';
+
+  @override
+  String get passwordTooShort => 'استخدم 8 حروف على الأقل.';
+
+  @override
+  String get passwordsDontMatch => 'الباسوردين مش زي بعض.';
+
+  @override
+  String get verifyEmailBanner =>
+      'شوف الإيميل بتاعك وأكّد عنوانك. هتحتاجه عشان تعمل تيم أو تنضم لتيم.';
+
+  @override
+  String get verifyEmailResend => 'ابعت تاني';
+
+  @override
+  String get identityWrongCredentials =>
+      'الإيميل والباسورد دول مش متطابقين مع أي حساب.';
+
+  @override
+  String get identityEmailInUse =>
+      'فيه حساب بالإيميل ده بالفعل. سجّل دخول بدل كده.';
+
+  @override
+  String get identityWeakPassword => 'اختار باسورد أقوى.';
+
+  @override
+  String get identityInvalidEmail => 'الإيميل ده مش صحيح.';
+
+  @override
+  String get identityNetwork =>
+      'مش قادرين نوصل لخدمة تسجيل الدخول. اتأكد من النت.';
+
+  @override
+  String get identityDifferentMethod =>
+      'الإيميل ده مستخدم بطريقة دخول تانية. سجّل دخول بيها.';
+
+  @override
+  String get identityUnavailable => 'طريقة الدخول دي مش متاحة دلوقتي.';
+
+  @override
+  String get verifyEmailDone => 'أكّدت خلاص';
+
+  @override
+  String get workspaceTileTitle => 'مساحة الشغل';
+
+  @override
+  String get workspacePersonal => 'شخصي';
+
+  @override
+  String get workspaceSwitcherTitle => 'غيّر مساحة الشغل';
+
+  @override
+  String get workspaceCreateTeam => 'اعمل تيم';
+
+  @override
+  String get workspaceTeamSettings => 'إعدادات التيم';
+
+  @override
+  String get workspaceRoleOwner => 'المالك';
+
+  @override
+  String get workspaceRoleAdmin => 'أدمن';
+
+  @override
+  String get workspaceRoleMember => 'عضو';
+
+  @override
+  String get teamNameLabel => 'اسم التيم';
+
+  @override
+  String get teamCreateAction => 'اعمل';
+
+  @override
+  String get teamMembersSection => 'الأعضاء';
+
+  @override
+  String get teamInvitesSection => 'دعوات مستنية';
+
+  @override
+  String get teamYou => 'إنت';
+
+  @override
+  String get teamInviteAction => 'ادعي';
+
+  @override
+  String get teamInviteEmailLabel => 'الإيميل';
+
+  @override
+  String get teamInviteSentTitle => 'الدعوة اتعملت';
+
+  @override
+  String teamInviteSentBody(String email) {
+    return 'ابعت اللينك ده لـ $email. بيشتغل مرة واحدة وبينتهي بعد كام يوم. لو الإيميل متظبط في AURA، بعتناه كمان.';
+  }
+
+  @override
+  String get teamCopyLink => 'انسخ اللينك';
+
+  @override
+  String get teamLinkCopied => 'اللينك اتنسخ';
+
+  @override
+  String get teamMakeAdmin => 'خليه أدمن';
+
+  @override
+  String get teamMakeMember => 'خليه عضو';
+
+  @override
+  String get teamMakeOwner => 'خليه المالك';
+
+  @override
+  String get teamRemove => 'شيله من التيم';
+
+  @override
+  String get teamRevokeInvite => 'الغي';
+
+  @override
+  String teamMakeOwnerConfirm(String who) {
+    return 'تخلّي $who المالك؟ إنت هتبقى أدمن، وهو بس اللي يقدر يدير الدفع أو يمسح التيم.';
+  }
+
+  @override
+  String teamRemoveConfirm(String who) {
+    return 'تشيل $who من التيم؟';
+  }
+
+  @override
+  String get teamLeave => 'اخرج من التيم';
+
+  @override
+  String teamLeaveConfirm(String name) {
+    return 'تخرج من $name؟ مش هتقدر توصل لمستنداته ومحادثاته المشتركة.';
+  }
+
+  @override
+  String get teamDelete => 'امسح التيم';
+
+  @override
+  String teamDeleteConfirm(String name) {
+    return 'تمسح $name عند الكل؟ مستنداته ومحادثاته المشتركة هتتمسح. مفيش رجوع في الخطوة دي.';
+  }
+
+  @override
+  String get teamReadOnlyNote =>
+      'المالك والأدمن بس يقدروا يدعوا أو يغيّروا الأعضاء.';
+
+  @override
+  String get planTitle => 'الباقة والاستخدام';
+
+  @override
+  String planCurrent(String plan) {
+    return 'الباقة: $plan';
+  }
+
+  @override
+  String planMessages(String used, String allowed) {
+    return 'رسايل الشهر ده: $used من $allowed';
+  }
+
+  @override
+  String planResets(String date) {
+    return 'بيتصفّر يوم $date';
+  }
+
+  @override
+  String planStorage(String used, String allowed) {
+    return 'مساحة المعرفة: $used من $allowed';
+  }
+
+  @override
+  String get planEngineerIncluded => 'وكيل الـ Engineer موجود';
+
+  @override
+  String get planEngineerNotIncluded => 'وكيل الـ Engineer: في باقات Pro وTeam';
+
+  @override
+  String planSeats(String seats) {
+    return 'المقاعد: $seats';
+  }
+
+  @override
+  String planSubscriptionStatus(String status) {
+    return 'الاشتراك: $status';
+  }
+
+  @override
+  String planPaidThrough(String date) {
+    return 'مدفوع لحد $date';
+  }
+
+  @override
+  String planGraceUntil(String date) {
+    return 'وصول كامل لحد $date، بعدها الباقة المجانية';
+  }
+
+  @override
+  String get planPaymentsSection => 'المدفوعات';
+
+  @override
+  String get planUpgradeSection => 'الترقية';
+
+  @override
+  String get planUpgradePro => 'اشترك في Pro';
+
+  @override
+  String get planUpgradeTeam => 'اشترك في Team';
+
+  @override
+  String get planSeatsLabel => 'عدد المقاعد';
+
+  @override
+  String get planTeamNotInApp => 'باقات الفرق مش متاحة للشرا من التطبيق ده.';
+
+  @override
+  String planStoreBuy(String price) {
+    return 'رقّي لـ Pro · $price';
+  }
+
+  @override
+  String get planStoreWaiting => 'الدفع وصل. بنفعّل باقتك…';
+
+  @override
+  String get planStorePending => 'الدفع وصل. باقتك هتتحدّث خلال دقايق.';
+
+  @override
+  String get planStoreManage => 'إدارة الاشتراك';
+
+  @override
+  String get planStoreOtherDevice =>
+      'اشتراكك بيتدار من متجر التطبيقات على جهازك التاني.';
+
+  @override
+  String get planStoreElsewhere =>
+      'الاشتراك ده بيتدار من App Store أو Google Play.';
+
+  @override
+  String get planFawryActive => 'عندك اشتراك بالفعل.';
+
+  @override
+  String get planStoreFailed => 'عملية الشرا ما تمّتش.';
+
+  @override
+  String get planOwnerOnly => 'مالك مساحة الشغل بس يقدر يغيّر الباقة.';
+
+  @override
+  String get planBillingOff => 'الترقية لسه مش متاحة.';
+
+  @override
+  String get planCancel => 'الغي الاشتراك';
+
+  @override
+  String get planCancelConfirm =>
+      'تلغي الاشتراك؟ باقتك هتفضل لحد آخر المدة اللي دفعتها.';
+
+  @override
+  String get checkoutTitle => 'ادفع بفوري';
+
+  @override
+  String checkoutReference(String reference) {
+    return 'الرقم المرجعي: $reference';
+  }
+
+  @override
+  String checkoutAmount(String amount) {
+    return 'المبلغ: $amount';
+  }
+
+  @override
+  String checkoutExpires(String date) {
+    return 'ادفع قبل $date';
+  }
+
+  @override
+  String get checkoutHowTo =>
+      'ادفع من أي منفذ فوري، أو من محفظة الموبايل، أو من تطبيق myFawry بالرقم المرجعي ده. باقتك هتبدأ أول ما الفلوس توصل.';
+
+  @override
+  String get seePlans => 'شوف الباقات';
+
+  @override
+  String get inviteAcceptTitle => 'انضم لتيم';
+
+  @override
+  String get inviteAcceptBody => 'اتعزمت تنضم لتيم على AURA.';
+
+  @override
+  String get inviteAcceptAction => 'انضم';
+
+  @override
+  String inviteAccepted(String name) {
+    return 'انضميت لـ $name';
+  }
+
+  @override
+  String get inviteInvalid => 'الدعوة دي مبقتش صالحة. اطلب واحدة جديدة.';
+
+  @override
+  String get inviteNeedsVerifiedEmail =>
+      'أكّد الإيميل بتاعك الأول، وبعدين افتح اللينك تاني.';
+
+  @override
+  String get shareWithTeam => 'شارك مع التيم';
+
+  @override
+  String sharedWithTeam(String name) {
+    return 'اتشاركت مع $name';
+  }
+
+  @override
+  String get teamChatsTitle => 'محادثات التيم';
+
+  @override
+  String get teamChatsEmpty => 'لسه محدش شارك محادثات مع التيم ده.';
+
+  @override
+  String teamChatsSharedBy(String who) {
+    return 'شاركها $who';
+  }
+
+  @override
+  String get teamChatsUnshare => 'الغي المشاركة';
+
+  @override
+  String get teamChatsTooMany =>
+      'شاركت أقصى عدد محادثات مسموح. الغي مشاركة واحدة الأول.';
+
+  @override
+  String get signInMethodsTitle => 'طرق الدخول';
+
+  @override
+  String get signInMethodsSubtitle => 'Google وApple والإيميل';
+
+  @override
+  String get signInMethodLinked => 'متوصّل';
+
+  @override
+  String get signInMethodLink => 'وصّل';
+
+  @override
+  String get signInMethodInUse => 'طريقة الدخول دي تبع حساب AURA تاني.';
+
+  @override
+  String get signInMethodLinkedDone => 'طريقة الدخول اتوصّلت';
+
+  @override
+  String get legalAgreePrefix => 'لما تكمّل تبقى موافق على';
+
+  @override
+  String get legalTerms => 'شروط الخدمة';
+
+  @override
+  String get legalPrivacy => 'سياسة الخصوصية';
+
+  @override
+  String get legalRefund => 'سياسة الاسترداد';
+
+  @override
+  String get deleteBlockedTitle => 'إنت مالك تيم';
+
+  @override
+  String get deleteBlockedBody =>
+      'قبل ما تمسح حسابك، خلّي حد تاني مالك التيمات دي، أو امسحها:';
+
+  @override
+  String get shareNothing => 'المحادثة دي لسه مفيهاش حاجة تتشارك.';
+
+  @override
+  String shareConfirm(String name) {
+    return 'تشارك نسخة من المحادثة دي مع $name؟ كل اللي في التيم هيقدروا يقروها.';
+  }
 }

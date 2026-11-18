@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:aura_client/core/workspaces/active_workspace.dart';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -100,6 +101,8 @@ class KnowledgeCenter {
         backendUrl: _ref.read(backendUrlProvider),
       ),
     );
+    // In a team, documents belong to the team's corpus (ADR-034).
+    headers.addAll(await workspaceHeaders(_ref));
     return headers;
   }
 
@@ -363,6 +366,7 @@ class KnowledgeCenter {
         ..fields['title'] = title
         ..files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
       if (token != null) request.headers['Authorization'] = 'Bearer $token';
+      request.headers.addAll(await workspaceHeaders(_ref));
       request.headers[idempotencyKeyHeader] = key;
       request.headers.addAll(
         await DeviceValidationService.getAttestationHeaders(

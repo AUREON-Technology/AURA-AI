@@ -24,6 +24,18 @@ class AccountDeletionResult {
       );
 }
 
+/// The server refused to delete the account because the person owns teams (SaaS P1-F1/F2):
+/// each must be handed over or deleted first. Nothing was erased.
+class AccountDeletionBlocked implements Exception {
+  const AccountDeletionBlocked(this.workspaces);
+
+  /// `(id, name)` of each team the person owns.
+  final List<({String id, String name})> workspaces;
+
+  @override
+  String toString() => 'AccountDeletionBlocked(${workspaces.length} teams)';
+}
+
 /// Thin client for the signed-in user's own account. Today that is one call: deleting it, which
 /// both app stores require an app that creates accounts to offer in-app (Apple 5.1.1(v), Google
 /// Play's account deletion policy). Same JWT + attestation header pattern as every other
@@ -54,6 +66,15 @@ class AccountClient {
             http.post(uri, headers: headers, body: body))
         // Erasure walks every store; give it longer than an ordinary write.
         .timeout(const Duration(seconds: 60));
+    if (response.statusCode == 409) {
+      final body = jsonDecode(response.body);
+      if (body is Map<String, dynamic> && body['error'] == 'owns_team_workspaces') {
+        throw AccountDeletionBlocked([
+          for (final w in (body['workspaces'] as List<dynamic>? ?? const []))
+            if (w is Map<String, dynamic>) (id: '${w['id']}', name: '${w['name']}'),
+        ]);
+      }
+    }
     if (response.statusCode != 200) {
       throw http.ClientException('account delete: HTTP ${response.statusCode}', uri);
     }

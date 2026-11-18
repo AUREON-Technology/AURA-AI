@@ -7,6 +7,7 @@ import 'package:aura_client/core/security/device_validation_service.dart';
 import 'package:aura_client/core/theme/theme.dart';
 import 'auth_provider.dart';
 import 'sign_out_confirmation.dart';
+import 'verify_email_banner.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
 import 'package:aura_client/l10n/l10n.dart';
@@ -85,6 +86,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                 children: [
                   _buildProfileHeader(profile, avatarUrl),
                   const SizedBox(height: 24),
+                  const VerifyEmailBanner(),
                   _buildDeviceValidationCard(),
                   const SizedBox(height: 24),
                   _buildSignOutCard(),

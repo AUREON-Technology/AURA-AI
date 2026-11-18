@@ -187,6 +187,14 @@ class Container:
         self.idempotency = self._build_idempotency_store()
         self.service_keys = self._build_service_keys()
         self.tenancy = self._build_tenancy()
+        self.plans = self._build_plans()
+        self.tenancy.seat_limit = self.plans.seat_limit
+        self.tenancy.plan_of = self.plans.plan_id
+        self.sharing = self._build_sharing()
+        self.email, self.notifier = self._build_email()
+        self.tenancy.notifier = self.notifier
+        self.billing = self._build_billing()
+        self.store_billing = self._build_store_billing()
 
         self.providers = build_providers(
             settings.llm, model_allowlist=settings.security.model_allowlist
@@ -1384,6 +1392,145 @@ class Container:
 
             store = InMemoryTenancyStore()
         return TenancyService(store=store, clock=self.clock, audit=self.audit, settings=self.settings.tenancy)
+
+    def _build_plans(self) -> Any:
+        """Plans, entitlements and usage metering (SaaS P1-C). Postgres-backed with the other
+        stores, so every gateway worker shares one count; in-memory otherwise."""
+        from .domain.plans import load_catalogue
+        from .plans import PlanService
+
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_plans import PostgresEntitlementStore, PostgresUsageMeter
+
+            url = self.settings.infrastructure.database_url
+            entitlements: Any = PostgresEntitlementStore(url, pool=self._postgres_pool())
+            meter: Any = PostgresUsageMeter(url, pool=self._postgres_pool())
+        else:
+            from .adapters.plans import InMemoryEntitlementStore, InMemoryUsageMeter
+
+            entitlements, meter = InMemoryEntitlementStore(), InMemoryUsageMeter()
+        return PlanService(
+            entitlements=entitlements, meter=meter, tenancy=self.tenancy, clock=self.clock,
+            audit=self.audit, catalogue=load_catalogue(self.settings.tenancy.plan_catalogue_json),
+        )
+
+    def _build_billing(self) -> Any:
+        """Subscriptions and Fawry payments (SaaS P1-D1). Fawry only when merchant credentials are
+        set; otherwise the in-memory fake (local runs and tests -- production refuses to start
+        with billing enabled and no credentials, ``AuraSettings.validate``)."""
+        from .billing import BillingService
+        from .domain.billing import load_prices
+
+        billing = self.settings.billing
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_billing import (
+                PostgresBillingContactStore,
+                PostgresBillingLocks,
+                PostgresPaymentStore,
+                PostgresSubscriptionStore,
+            )
+
+            url = self.settings.infrastructure.database_url
+            subscriptions: Any = PostgresSubscriptionStore(url, pool=self._postgres_pool())
+            payments: Any = PostgresPaymentStore(url, pool=self._postgres_pool())
+            # Advisory locks: one settle per workspace and one cycle at a time across every
+            # gateway worker and the cron process (review D1#2/#6).
+            locks: Any = PostgresBillingLocks(url, pool=self._postgres_pool())
+            contacts: Any = PostgresBillingContactStore(url, pool=self._postgres_pool())
+        else:
+            from .adapters.billing import (
+                InMemoryBillingContactStore,
+                InMemoryBillingLocks,
+                InMemoryPaymentStore,
+                InMemorySubscriptionStore,
+            )
+
+            subscriptions, payments, locks = InMemorySubscriptionStore(), InMemoryPaymentStore(), InMemoryBillingLocks()
+            contacts = InMemoryBillingContactStore()
+        if billing.fawry_configured:
+            from .adapters.fawry import FawryPaymentProvider
+
+            provider: Any = FawryPaymentProvider(billing.fawry_base_url, billing.fawry_merchant_code, billing.fawry_secure_key)
+        else:
+            from .adapters.billing import FakePaymentProvider
+            from .config.settings import Environment
+            from .domain.errors import ConfigurationError
+
+            if billing.enabled and self.settings.environment is not Environment.LOCAL:
+                # The fake settles anything signed with its own key: never a payment path outside a
+                # developer's machine (review D1, minor).
+                raise ConfigurationError("billing is enabled with no Fawry credentials outside a local run")
+            provider = FakePaymentProvider()
+        return BillingService(
+            subscriptions=subscriptions, payments=payments, provider=provider, plans=self.plans,
+            tenancy=self.tenancy, clock=self.clock, audit=self.audit, settings=billing,
+            prices=load_prices(billing.prices_json), locks=locks, contacts=contacts, notifier=self.notifier,
+        )
+
+    def _build_sharing(self) -> Any:
+        """Chats shared with a team (SaaS P1-F1)."""
+        from .sharing import SharingService
+
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_sharing import PostgresSharedConversationStore
+
+            store: Any = PostgresSharedConversationStore(self.settings.infrastructure.database_url,
+                                                         pool=self._postgres_pool())
+        else:
+            from .adapters.sharing import InMemorySharedConversationStore
+
+            store = InMemorySharedConversationStore()
+        return SharingService(store=store, tenancy=self.tenancy, clock=self.clock, audit=self.audit)
+
+    def _build_email(self) -> tuple[Any, Any]:
+        """Customer email (SaaS P1-F1). With email off, a sender that only logs, and no
+        notifier at all -- nothing tries to send."""
+        email = self.settings.email
+        if not email.enabled:
+            from .adapters.email import LogEmailSender
+
+            return LogEmailSender(), None
+        from .adapters.email import SmtpEmailSender
+        from .notifications import Notifier
+
+        sender = SmtpEmailSender(email.smtp_host, email.smtp_port, email.smtp_username, email.smtp_password,
+                                 email.from_address, starttls=email.smtp_starttls)
+        return sender, Notifier(sender=sender, settings=email, audit=self.audit, clock=self.clock)
+
+    def _build_store_billing(self) -> Any:
+        """App Store and Google Play subscriptions (SaaS P1-D2). Shares D1's subscription store,
+        locks and audit; each store is wired only when its settings are complete."""
+        from .billing import StoreBillingService
+        from .domain.billing import load_store_products
+
+        billing = self.settings.billing
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_billing import PostgresStoreBindingStore, PostgresStoreEventLog
+
+            url = self.settings.infrastructure.database_url
+            bindings: Any = PostgresStoreBindingStore(url, pool=self._postgres_pool())
+            events: Any = PostgresStoreEventLog(url, pool=self._postgres_pool())
+        else:
+            from .adapters.billing import InMemoryStoreBindingStore, InMemoryStoreEventLog
+
+            bindings, events = InMemoryStoreBindingStore(), InMemoryStoreEventLog()
+        apple = google_push = google_play = None
+        if billing.apple_configured:
+            from .adapters.apple_store import AppleNotificationVerifier
+
+            # Production unless Sandbox is asked for: Sandbox purchases are free (D2 review #5).
+            apple = AppleNotificationVerifier(billing.apple_bundle_id, environment=billing.apple_environment or "Production")
+        if billing.google_configured:
+            from .adapters.google_play import GooglePlayClient, GooglePushVerifier
+
+            google_push = GooglePushVerifier(billing.google_push_audience, billing.google_push_service_account)
+            google_play = GooglePlayClient(billing.google_package_name, billing.google_play_credentials)
+        return StoreBillingService(
+            bindings=bindings, events=events, subscriptions=self.billing.subscriptions, plans=self.plans,
+            tenancy=self.tenancy, clock=self.clock, audit=self.audit, locks=self.billing.locks,
+            settings=billing, products=load_store_products(billing.store_products_json, self.plans.catalogue),
+            apple=apple, google_push=google_push, google_play=google_play,
+        )
 
     def _build_prompt_pins(self) -> Any:
         """Prompt-version pins (INT-004). Postgres-backed with the other stores, so a pin reaches

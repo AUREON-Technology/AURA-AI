@@ -14,11 +14,11 @@ short_description: Real vLLM GPU failover endpoint for the AURA gateway
 An OpenAI-compatible `/v1/chat/completions` endpoint backed by a real vLLM server, running on a
 paid GPU-tier Hugging Face Space.
 
-This is **not** a demo Space and there is no UI. It is a **failover** dependency for another
-application: the AURA gateway's primary provider is Ollama on a Contabo VPS it controls, and
-this node is only reached automatically when that primary is unhealthy (see
-`docs/guides/split-inference-deployment.md` §8 in the AURA-AI repo). It will refuse to start
-without an API key.
+This is **not** a demo Space and there is no UI. Since 2026-11-18 it is the AURA gateway's
+**always-on, sensitive-capable** model source, on one NVIDIA L4 that never sleeps. It answers
+every memory, document, tool, Engineer and image turn. See `docs/deployment/inference-plane.md`
+§9 in the AURA-AI repo; the deploy workflow enforces the hardware and the sleep setting. It will
+refuse to start without an API key.
 
 ## Requires a paid GPU hardware tier
 

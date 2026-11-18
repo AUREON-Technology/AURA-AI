@@ -35,6 +35,7 @@ enum _SseSendOutcome {
   consentRequired,
   quotaExhausted,
   approvalExpired,
+  planLimit,
 }
 
 class _SseResult {
@@ -302,6 +303,8 @@ class ChatRepository {
         await _updateMessageText(assistantMsgId, kChatWithheldText);
       } else if (sseOutcome.outcome == _SseSendOutcome.blocked) {
         await _updateMessageText(assistantMsgId, kChatBlockedText);
+      } else if (sseOutcome.outcome == _SseSendOutcome.planLimit) {
+        await _updateMessageText(assistantMsgId, sseOutcome.message!);
       } else if (sseOutcome.outcome == _SseSendOutcome.unavailable) {
         // Deliberately without `kChatConnectionErrorPrefix`: that prefix is what puts a Retry
         // card on the row, and retrying this turn reaches the same refusal.
@@ -721,6 +724,10 @@ class ChatRepository {
       }
       if (displayText.isNotEmpty || _stoppedMessageId == assistantMsgId) {
         return keepPartial("stream_failed", error: e.message);
+      }
+      if (e.statusCode == 402 && e.error == 'plan_limit') {
+        // Refused before generating: not a connection problem, and retrying cannot help.
+        return _SseResult(_SseSendOutcome.planLimit, chatPlanLimitText(e));
       }
       await _logTelemetry(
         eventType: "failover",

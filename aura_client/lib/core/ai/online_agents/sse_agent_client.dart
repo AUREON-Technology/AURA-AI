@@ -1,3 +1,4 @@
+import 'package:aura_client/core/workspaces/active_workspace.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -275,6 +276,8 @@ class SseAgentClient {
         req.headers.addAll(
           await DeviceValidationService.getAttestationHeaders(backendUrl: _backendUrl),
         );
+        // A team turn retrieves the team's corpus and is metered to the team (ADR-034).
+        req.headers.addAll(await workspaceHeaders(_ref));
       }
 
       await applyAuth(request);

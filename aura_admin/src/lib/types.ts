@@ -118,3 +118,19 @@ export type ForgetResult = {
   /** What erasure does not reach yet, reported with every result. */
   not_erased?: string[];
 };
+
+/** One row of GET /admin/customers (aura_core/billing/service.py BillingService.customers). */
+export type Customer = {
+  workspace_id: string;
+  workspace_name: string | null;
+  kind: string | null;
+  plan: string;
+  seats: number;
+  status: string;
+  provider: string;
+  period_end: string;
+  grace_until: string | null;
+  last_payment: { status: string; amount_piastres: number; at: string } | null;
+};
+
+export type CustomersPage = { customers: Customer[]; next: string | null };

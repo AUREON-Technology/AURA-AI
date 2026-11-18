@@ -80,9 +80,17 @@ class TokenManager {
     http.Client? httpClient,
     RefreshTokenStore? store,
     TokenExchangeAttestation? attestationHeaders,
+    bool? isWeb,
   })  : _http = httpClient,
         _store = store ?? const SecureRefreshTokenStore(),
-        _attestationHeaders = attestationHeaders ?? _freshAttestationHeaders;
+        _attestationHeaders = attestationHeaders ?? _freshAttestationHeaders,
+        _isWeb = isWeb ?? kIsWeb;
+
+  /// A browser has no device attestation, so it signs in through the customer route, whose
+  /// sessions the backend caps at the `User` role (SaaS P1-B). Phones keep the attested route.
+  final bool _isWeb;
+
+  static String exchangePathFor({required bool isWeb}) => isWeb ? '/consumer/token' : '/token';
 
   /// Bumped whenever the session this manager holds is replaced or ended ([clear],
   /// [startSession]). A refresh or exchange still in flight from before compares it when its
@@ -387,10 +395,11 @@ class TokenManager {
 
       final headers = {"Authorization": "Bearer $idToken"};
       if (interactive) headers[signInHeader] = 'interactive';
-      // Fresh every time: the server consumes the attestation's nonce here (INT-011).
-      headers.addAll(await _attestationHeaders(_backendUrl));
+      // Fresh every time: the server consumes the attestation's nonce here (INT-011). A browser
+      // has none, and uses the customer route instead (SaaS P1-B).
+      if (!_isWeb) headers.addAll(await _attestationHeaders(_backendUrl));
 
-      final response = await _post("$_authUrl/token", headers: headers);
+      final response = await _post("$_authUrl${exchangePathFor(isWeb: _isWeb)}", headers: headers);
       if (generation != _generation) {
         // Signed out while this was in flight (INT-027).
         if (response.statusCode == 200) await _revokeIssued(response.body);

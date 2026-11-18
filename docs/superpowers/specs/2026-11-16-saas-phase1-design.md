@@ -140,9 +140,10 @@ and "AURA for your system" (Track AP) need SSO-grade security in place first.
 - **Owner-only two-factor:** optional TOTP, through Firebase multi-factor, for workspace Owners and
   Admins. It is not required at launch.
 - **One account per email (builder's call, recorded here):**
-  - Firebase is set to *one account per email address*. Signing in with a second provider for the
-    same verified email links it to the existing account, so it keeps the same `sub` and the same
-    data.
+  - Firebase is set to *one account per email address*. A second provider for the same address
+    is refused until it is linked from the signed-in account (amended 2026-11-17 after review:
+    Firebase does not merge on its own; linking UI is Plan F). Existing subjects are kept by the
+    import script and `canonical_subject`, so nobody's data moves.
   - Apple "Hide My Email" relay addresses are treated as that account's email.
   - An invite is proven by its single-use emailed token, not by matching the signed-in email.
     Opening the link proves the mailbox, and accepting requires being signed in. So a relay-address
@@ -344,7 +345,9 @@ Each item needs its named evidence, not just a merged PR.
    - a document/RAG turn served end to end on production.
 10. **Desktop Engineer opened safely.** Evidence: the ADR-011 threat-model amendment merged; tests
     showing a Free or downgraded workspace cannot pair or refresh a desktop session; tests showing
-    a customer desktop session never reaches a console route.
+    a customer desktop session never reaches a console route. (Built in Plan E: ADR-011
+    "Customers"; `tests/integration/test_desktop_engineer_customers.py`. The amendment is merged
+    once that PR merges.)
 
 ### 6.2 Can follow launch
 

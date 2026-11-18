@@ -1,5 +1,6 @@
 import {
   Boxes,
+  CreditCard,
   LayoutDashboard,
   Library,
   MessageSquareText,
@@ -42,6 +43,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/approvals", label: "nav.approvals", icon: ShieldCheck },
       { href: "/audit", label: "nav.audit", icon: ScrollText },
       { href: "/access", label: "nav.access", icon: Users },
+      { href: "/customers", label: "nav.customers", icon: CreditCard },
       { href: "/settings", label: "nav.settings", icon: Settings },
     ],
   },

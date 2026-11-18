@@ -17,7 +17,7 @@ Four independent apps in one repo:
   `https://console.aureon-ai.tech/`, served from the root (the image's default base path; old
   `/console/...` links 308 to the same page without the prefix). The VPS stacks still serve it
   under `/console` via nginx, because the compose files pass that base path explicitly. Plan and
-  decisions: `docs/plans/console-subdomain-plan.md`. (10 pages; `npm run
+  decisions: `docs/plans/console-subdomain-plan.md`. (11 pages; `npm run
   dev|build|lint`, `npm run test:e2e` for Playwright against a mock gateway; `lint` is ESLint
   with Next's rule sets, warnings fail it, and Admin CI runs it from PR #226 on -- no run with that step had executed when this was written). Built, but not
   reachable on any live target as of 2026-11-07. Admin CI ran for the first time on 2026-11-07
