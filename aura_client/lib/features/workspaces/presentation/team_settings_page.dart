@@ -72,7 +72,25 @@ class _TeamBody extends ConsumerWidget {
       }
     }
 
-    void leavePage() => context.canPop() ? context.pop() : context.go('/you');
+    /// Leaving or deleting the team ends this page. The list refresh that follows drops the team,
+    /// and a rebuild from it would replace this page with an error before the navigation away
+    /// ran (F23). So the router and the container are taken while this page is still mounted,
+    /// the page is left first, and only then is the list refreshed.
+    Future<void> endMembership(Future<void> Function() action) async {
+      final router = GoRouter.of(context);
+      final container = ProviderScope.containerOf(context, listen: false);
+      try {
+        await action();
+      } catch (error) {
+        if (context.mounted) showFailure(context, error);
+        return;
+      }
+      await container.read(activeWorkspaceProvider.notifier).clear();
+      router.canPop() ? router.pop() : router.go('/you');
+      container.invalidate(workspacesListProvider);
+      container.invalidate(membersProvider(id));
+      container.invalidate(invitesProvider(id));
+    }
 
     return ListView(
       padding: const EdgeInsets.all(AuraSpacing.lg),
@@ -135,9 +153,7 @@ class _TeamBody extends ConsumerWidget {
                   action: l10n.teamDelete, destructive: true)) {
                 return;
               }
-              if (!await run(() => client.deleteTeam(workspace.id))) return;
-              await ref.read(activeWorkspaceProvider.notifier).clear();
-              if (context.mounted) leavePage();
+              await endMembership(() => client.deleteTeam(workspace.id));
             },
           )
         else if (me != null)
@@ -150,9 +166,7 @@ class _TeamBody extends ConsumerWidget {
                   action: l10n.teamLeave, destructive: true)) {
                 return;
               }
-              if (!await run(() => client.remove(workspace.id, me))) return;
-              await ref.read(activeWorkspaceProvider.notifier).clear();
-              if (context.mounted) leavePage();
+              await endMembership(() => client.remove(workspace.id, me));
             },
           ),
       ],

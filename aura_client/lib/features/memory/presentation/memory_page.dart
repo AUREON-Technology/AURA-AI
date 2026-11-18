@@ -4,8 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
+import 'package:aura_client/features/chat/data/memory_repository.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
+import 'memory_save_feedback.dart';
 import 'memory_view_model.dart';
 
 class MemoryPage extends ConsumerWidget {
@@ -13,6 +15,14 @@ class MemoryPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // A queued save the server later refused in the background (F22).
+    ref.listen(memorySaveRefusalsProvider, (_, next) {
+      if (next.isEmpty) return;
+      for (final fact in ref.read(memorySaveRefusalsProvider.notifier).take()) {
+        AuraSnackbar.show(context,
+            message: context.l10n.memorySaveRefused(fact), kind: AuraSnackbarKind.error);
+      }
+    });
     final state = ref.watch(memoryViewModelProvider);
     final palette = AuraPalette.of(context);
 
@@ -162,12 +172,14 @@ class MemoryPage extends ConsumerWidget {
       onConfirm: () async {
         final text = content.text.trim();
         if (text.isEmpty) return;
-        await ref.read(memoryViewModelProvider.notifier).add(
+        final outcome = await ref.read(memoryViewModelProvider.notifier).add(
               content: text,
               kind: kind,
               subject: subject.text.trim().isEmpty ? null : subject.text.trim(),
             );
-        if (context.mounted) Navigator.of(context).pop();
+        if (!context.mounted) return;
+        Navigator.of(context).pop();
+        showMemorySaveOutcome(context, outcome, text);
       },
       child: StatefulBuilder(
         builder: (context, setState) {

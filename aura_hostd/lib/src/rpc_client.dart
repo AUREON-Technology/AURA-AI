@@ -17,6 +17,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'config.dart' show InvalidBackendUrlError, requireSecureBackendUrl;
 import 'containment.dart';
 import 'isolated_task_registry.dart';
 import 'task_handler.dart';
@@ -106,6 +107,14 @@ class HostAgentClient {
   }
 
   Future<void> _runLoop() async {
+    // F53: the first frame is the device token. A plain ws:// URL to another host would send it
+    // in clear on every reconnect, so such a client never connects at all.
+    try {
+      requireSecureBackendUrl(wsUrl);
+    } on InvalidBackendUrlError catch (error) {
+      logger('not connecting: ${error.message}');
+      return;
+    }
     var backoff = minBackoff;
     while (!_stopRequested) {
       try {

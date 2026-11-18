@@ -212,10 +212,29 @@ server {
         proxy_set_header X-Forwarded-For   $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
 
-        add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
-        add_header X-Content-Type-Options "nosniff" always;
-        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://accounts.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://accounts.google.com; frame-src 'self' https://accounts.google.com; frame-ancestors 'self'" always;
+        # The console sends its own HSTS, nosniff, Referrer-Policy, Permissions-Policy,
+        # X-Frame-Options and per-request nonce CSP (aura_admin middleware). Restating them here
+        # put two CSPs on every response, and browsers enforce both. This empty add_header sends
+        # nothing; it is here because any add_header in a location stops the server-level set
+        # (X-Frame-Options DENY, CSP default-src 'none') from being inherited into it.
+        # tests/unit/test_nginx_console_headers.py pins this.
+        add_header X-Aura-Console-Headers "" always;
+    }
+
+    # Voice uploads: the gateway takes audio up to MAX_AUDIO_BYTES (25 MiB, aura_core/api/v3.py)
+    # plus the multipart envelope, above the 20m server cap. Only this route is widened, and it
+    # otherwise proxies exactly like the location it shadows. Pinned by
+    # tests/unit/test_nginx_voice_upload_size.py.
+    location = /api/v3/voice/transcribe {
+        client_max_body_size 27m;
+
+        proxy_pass http://127.0.0.1:__GATEWAY_PORT__;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 
     location / {

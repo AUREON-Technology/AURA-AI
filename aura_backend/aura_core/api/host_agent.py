@@ -150,10 +150,21 @@ def register_host_agent(
                     )
                 except asyncio.TimeoutError:
                     message = None
-                if not await credential.still_valid(host_allowed):
+                outcome = await credential.recheck(host_allowed)
+                if outcome is ws_auth.Recheck.REVOKED:
                     # Expired, device revoked, or the account no longer may host: the same
                     # answer an HTTP request with this token would now get.
                     await websocket.close(code=_CLOSE_UNAUTHORIZED)
+                    break
+                if outcome is ws_auth.Recheck.UNAVAILABLE:
+                    # The check could not run (database or Redis blip). 4401 would make the
+                    # daemon unpair for good; 1011 makes it reconnect with backoff, and the
+                    # reconnect's first authentication decides -- as at connect (INT-104).
+                    logger.warning(
+                        "host agent credential recheck unavailable; closing for retry",
+                        extra={"user_id": principal.user_id.value},
+                    )
+                    await websocket.close(code=_CLOSE_SERVER_ERROR)
                     break
                 if message is None:
                     continue

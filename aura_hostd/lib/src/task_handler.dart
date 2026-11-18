@@ -927,7 +927,7 @@ String _effectiveShellCommand(List<String> argv) {
 /// backend sends has its command string rewritten; a bare `["git", <verb>, ...]` argv gets the same
 /// options inserted as separate arguments. Anything else is returned unchanged.
 List<String> _hardenUntrustedGit(List<String> commandArgv, String commandForPolicy) {
-  final hooks = _emptyHooksDir();
+  final hooks = sharedEmptyHooksDir();
   if (commandArgv.length == 3 && commandArgv[2] == commandForPolicy) {
     final hardened = hardenUntrustedGitCommand(commandForPolicy, emptyHooksDir: hooks);
     return hardened == commandForPolicy ? commandArgv : [commandArgv[0], commandArgv[1], hardened];
@@ -944,12 +944,6 @@ List<String> _hardenUntrustedGit(List<String> commandArgv, String commandForPoli
   return commandArgv;
 }
 
-String? _emptyHooksDirCache;
-
-/// An empty directory, created once per daemon run, for `core.hooksPath` (G-17): pointing git at
-/// it means no hook the repository installed can run.
-String _emptyHooksDir() => _emptyHooksDirCache ??=
-    Directory.systemTemp.createTempSync('aura_hostd_no_hooks_').resolveSymbolicLinksSync();
 
 /// Make a missing executable name itself, whatever `stdbuf` said.
 ///

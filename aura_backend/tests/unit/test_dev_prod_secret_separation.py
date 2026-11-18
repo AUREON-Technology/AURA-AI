@@ -28,6 +28,18 @@ _DEV_BRING_UP = _DEPLOY / "scripts" / "vps-dev-bring-up.sh"
 _STACK_KEYS = {
     "jwt_secret": ("dev_jwt_secret", "generate", "jwt_secret"),
     "data_encryption_keys": ("dev_data_encryption_keys", "generate_fernet_key", "data_encryption_keys"),
+    # F46: with prod's Fernet key dev could decrypt every prod GitHub token row it ever saw; with
+    # prod's OAuth client secret or hosted-provider keys, a dev compromise spends prod's quota
+    # and impersonates prod's GitHub App.
+    "secrets_encryption_key": (
+        "dev_secrets_encryption_key", "generate_fernet_key", "secrets_encryption_key",
+    ),
+    "github_oauth_client_secret": (
+        "dev_github_oauth_client_secret", "generate", "github_oauth_client_secret",
+    ),
+    "hosted1_api_key": ("dev_hosted1_api_key", "generate", "hosted1_api_key"),
+    "hosted2_api_key": ("dev_hosted2_api_key", "generate", "hosted2_api_key"),
+    "hosted3_api_key": ("dev_hosted3_api_key", "generate", "hosted3_api_key"),
 }
 
 
@@ -102,3 +114,54 @@ def test_dev_bring_up_ensures_the_dev_key_files_exist() -> None:
     first_up = script.find("up -d")
     assert bootstrap != -1, "vps-dev-bring-up.sh does not run bootstrap-secrets.sh"
     assert bootstrap < first_up, "bootstrap-secrets.sh must run before the first dev `up`"
+
+
+def _networks(service: dict) -> set[str]:
+    networks = service.get("networks") or []
+    return set(networks if isinstance(networks, list) else networks)
+
+
+class TestDevReachesProdOllamaOnlyThroughTheGate:
+    """F46. Ollama has no authentication, and its API pulls, creates and deletes models. While
+    prod's Ollama sat on the cross-stack `aura_edge` network, a compromised dev container could
+    replace or delete the model production serves. Dev still shares the one CPU Ollama (the host
+    has RAM for one), but only through `ollama-dev-gate`, which passes inference and read-only
+    endpoints and refuses model administration."""
+
+    def _prod(self) -> dict:
+        return yaml.safe_load(_PROD.read_text(encoding="utf-8"))
+
+    def test_prod_ollama_is_not_on_the_shared_network(self) -> None:
+        assert "aura_edge" not in _networks(self._prod()["services"]["ollama"])
+
+    def test_only_the_gate_shares_a_network_with_ollama_and_aura_edge(self) -> None:
+        services = self._prod()["services"]
+        ollama = _networks(services["ollama"])
+        bridges = {
+            name for name, svc in services.items()
+            if name != "ollama" and _networks(svc) & ollama and "aura_edge" in _networks(svc)
+        }
+        assert bridges == {"ollama-dev-gate"}, bridges
+
+    def test_the_gate_answers_as_ollama_on_aura_edge_and_reaches_the_upstream_alias(self) -> None:
+        """Dev's AURA_PROVIDER_LOCAL_BASE_URL stays http://ollama:11434/v1 unchanged."""
+        prod = self._prod()
+        gate = prod["services"]["ollama-dev-gate"]
+        assert "ollama" in gate["networks"]["aura_edge"]["aliases"]
+        assert prod["networks"]["ollama_gate"]["internal"] is True
+        assert "ollama-upstream" in prod["services"]["ollama"]["networks"]["ollama_gate"]["aliases"]
+        assert any(v.endswith(":ro") and "ollama-dev-gate.conf" in v for v in gate["volumes"])
+
+    def test_the_gate_refuses_model_administration(self) -> None:
+        conf = (_DEPLOY / "nginx" / "ollama-dev-gate.conf").read_text(encoding="utf-8")
+        routed = set(re.findall(r"location\s+(?:=|\^~)\s+(\S+)", conf))
+        for admin in ("/api/pull", "/api/push", "/api/create", "/api/copy", "/api/delete", "/api/blobs/"):
+            assert admin not in routed, f"{admin} is passed through to prod Ollama"
+        assert re.search(r"location\s+/\s*\{\s*return 403;", conf), "the default must refuse"
+        assert "ollama-upstream" in conf
+        # Never under conf.d/: prod nginx loads that directory.
+        assert not (_DEPLOY / "nginx" / "conf.d" / "ollama-dev-gate.conf").exists()
+
+    def test_dev_still_names_ollama_as_its_local_provider(self) -> None:
+        env = _gateway(_DEV, "dev-gateway")["environment"]
+        assert env["AURA_PROVIDER_LOCAL_BASE_URL"].endswith("http://ollama:11434/v1}")

@@ -196,6 +196,9 @@ class EncodingGuard(Guard):
         "\u206a-\u206f"  # deprecated formatting controls
         "\ufeff"          # zero-width no-break space / BOM
         "\u00ad"          # soft hyphen
+        # Unicode tag block (F35): invisible, survives NFKC, and spells ASCII one code point per
+        # letter ("ASCII smuggling"), so a whole instruction can hide in text that looks clean.
+        "\U000e0000-\U000e007f"
         "]"
     )
     _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")

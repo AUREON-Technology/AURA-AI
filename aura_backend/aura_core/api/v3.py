@@ -29,6 +29,7 @@ from ..domain.errors import (
     AuthenticationError,
     AuthorizationError,
     DependencyUnavailableError,
+    NotFoundError,
     OverloadedError,
     RateLimitedError,
     ValidationError,
@@ -98,6 +99,13 @@ def _connector_tokens(request: Any) -> dict[str, Credential]:
             if len(tokens) > _MAX_CONNECTOR_TOKENS:
                 raise ValidationError("too many connector tokens", details={"limit": _MAX_CONNECTOR_TOKENS})
     return tokens
+
+
+#: The largest audio ``/voice/transcribe`` accepts. A voice note is short by nature; this is
+#: generous headroom, not a target -- unlike ``knowledge.max_document_bytes`` there is no
+#: per-deployment setting for it yet. The gateway's body cap for the route is derived from it
+#: (``aura_service._apply_http_limits``, INT-112).
+MAX_AUDIO_BYTES = 25 * 1024 * 1024
 
 
 #: How often a quiet stream sends an SSE comment. nginx closes a proxied response after 300 s
@@ -298,7 +306,10 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     class IngestRequest(BaseModel):
         title: str = Field(min_length=1, max_length=500)
-        content: str = Field(min_length=1)
+        #: INT-112: no more characters than the engine's byte ceiling (a character is at least a
+        #: byte of UTF-8), so text no engine would store is refused before it is hashed or
+        #: reserved against the plan. The engine still checks the exact UTF-8 size.
+        content: str = Field(min_length=1, max_length=settings.knowledge.max_document_bytes)
         document_id: str | None = None
         metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -606,15 +617,27 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         if len({e.id for e in caller_context}) != len(caller_context):
             raise ValidationError("context ids must be unique within a turn")
         images = await normalize_images(payload.images, caller) if payload.images else ()
+        # F43: both are client-supplied; an identifier that fails its own validation is a bad
+        # request (422), not a server error.
+        try:
+            session_id = SessionId(payload.session_id) if payload.session_id else None
+        except ValueError as exc:
+            raise ValidationError("session_id is not a valid identifier",
+                                  details={"field": "session_id"}) from exc
+        try:
+            correlation_id = CorrelationId(
+                request.headers.get("x-correlation-id") or CorrelationId.new().value
+            )
+        except ValueError as exc:
+            raise ValidationError("X-Correlation-Id is not a valid identifier",
+                                  details={"field": "x-correlation-id"}) from exc
         return TurnRequest(
             message=message,
             user_id=caller.user_id,
             knowledge_owner=caller.knowledge_owner,
-            session_id=SessionId(payload.session_id) if payload.session_id else None,
+            session_id=session_id,
             agent=payload.agent,
-            correlation_id=CorrelationId(
-                request.headers.get("x-correlation-id") or CorrelationId.new().value
-            ),
+            correlation_id=correlation_id,
             use_knowledge=payload.use_knowledge,
             # Spec §5.2 / ADR-034: a team turn draws on the team's corpus, never on the person's
             # private memory, which a teammate reading the answer must not see.
@@ -714,7 +737,9 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             await release_turn(reservation)
             raise
         if result.telemetry.outcome.value != "success":
-            # A failed turn does not use up the month (spec 5.3).
+            # A failed turn does not use up the month: the same rule as /chat/stream, where a
+            # message counts once its first token is sent -- a failed turn sends this caller
+            # no answer text at all (F6).
             await release_turn(reservation)
         if caller.is_service:
             # Chat turns are not audited for people; a service's are, so one interpretation can be
@@ -851,21 +876,23 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         reservation, turn = await admit_turn(caller, payload.agent, turn)
 
         async def events() -> AsyncIterator[bytes]:
-            completed = False
+            counted = False
             try:
                 async for frame in container.kernel.stream(turn):
                     event = frame.get("type", "message")
-                    if event == "done":
-                        completed = True
+                    if event in ("token", "done"):
+                        counted = True
                     yield f"event: {event}\ndata: {json.dumps(frame)}\n\n".encode()
             except Exception as exc:  # pragma: no cover - defensive
                 logger.exception("stream failed")
                 payload_ = {"type": "error", "error": "internal_error", "message": type(exc).__name__}
                 yield f"event: error\ndata: {json.dumps(payload_)}\n\n".encode()
             finally:
-                # Counted only once the turn finished (a `done` frame): an error frame, an
-                # exception or a client gone before `done` gives the message back (spec 5.3).
-                if not completed:
+                # The message counts once the first token frame is sent (or the turn reaches
+                # `done` without one): the person has had an answer, so a failure or a client
+                # gone after that point keeps it counted (F6). Only a turn that fails, errors or
+                # loses its client before any token gives the message back.
+                if not counted:
                     await release_turn(reservation)
 
         return StreamingResponse(
@@ -1014,9 +1041,13 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 details={"limit_bytes": settings.knowledge.max_document_bytes},
             )
 
-        from ..knowledge.documents import apply_ocr, extract_pdf, image_extraction_available
+        from ..knowledge.documents import apply_ocr, extract_pdf_async, image_extraction_available
 
-        extraction = extract_pdf(data, title=title, keep_images=image_extraction_available())
+        # In a worker thread (F40): parsing a long PDF held this worker's event loop. A PDF over
+        # the page cap raises DocumentTooLargeError, which answers 413 naming the limit.
+        extraction = await extract_pdf_async(
+            data, title=title, keep_images=image_extraction_available()
+        )
         if extraction.unreadable_pages and container.ocr_engine is not None:
             extraction = await apply_ocr(extraction, container.ocr_engine)
 
@@ -1088,11 +1119,17 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         require_knowledge_write(caller)
         doc_id = DocumentId(document_id)
         stored = await container.documents.get(doc_id)
+        if stored is None or stored.owner_id != caller.knowledge_owner:
+            # INT-111: someone else's, a global or an unknown document is "not found" -- never a
+            # 200 "deleted" for a document that is still there. Checked on the stored owner, not
+            # on "0 chunks removed", which a fully quarantined document of one's own reports.
+            raise NotFoundError(f"document {document_id!r} not found",
+                                details={"document_id": document_id})
         removed = await container.knowledge.delete_document(
             doc_id, owner_id=caller.knowledge_owner
         )
         storage_ws = await storage_workspace(caller)
-        if removed and storage_ws is not None and stored is not None and stored.owner_id == caller.knowledge_owner:
+        if removed and storage_ws is not None:
             # Gives back what settle_storage counted for it (spec 5.3); never below 0.
             await plans.free_storage(storage_ws, len(stored.content.encode("utf-8")))
         if container.cag is not None:
@@ -1305,10 +1342,6 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         )
 
     # -- voice (Phase F2) ----------------------------------------------------------------
-
-    #: A voice note is short by nature; this is generous headroom, not a target -- unlike
-    #: `knowledge.max_document_bytes` there is no per-deployment setting for it yet.
-    MAX_AUDIO_BYTES = 25 * 1024 * 1024
 
     @router.post("/voice/transcribe")
     async def transcribe_audio(
@@ -2221,6 +2254,8 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         container,
         authenticator=person_authenticator,
         rate_limiter=rate_limiter,
+        admit_turn=admit_turn,
+        release_turn=release_turn,
     )
 
     from .host_agent import register_host_agent

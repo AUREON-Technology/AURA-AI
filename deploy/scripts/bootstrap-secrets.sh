@@ -90,6 +90,17 @@ generate_fernet_key data_encryption_keys
 # prod key for that window, which is the exposure this split exists to end.
 generate dev_jwt_secret 64
 generate_fernet_key dev_data_encryption_keys
+# The rest of dev's secrets are its own files too (F46), so nothing a dev container holds is a
+# credential of prod's. secrets_encryption_key: with prod's, dev could decrypt prod's stored
+# GitHub tokens; a fresh dev key orphans GitHub accounts connected in dev before the split (they
+# reconnect). The OAuth client secret and the hosted-provider keys are placeholders exactly like
+# prod's: overwrite each with a dev credential (a separate GitHub App, a separate provider
+# project), never by copying the prod file.
+generate_fernet_key dev_secrets_encryption_key
+generate dev_github_oauth_client_secret 40
+generate dev_hosted1_api_key 48
+generate dev_hosted2_api_key 48
+generate dev_hosted3_api_key 48
 # Placeholder only -- unlike the secrets above, this one cannot be generated. Overwrite it with
 # the real client secret from the GitHub App's settings page before setting
 # AURA_GITHUB_OAUTH_ENABLED=true: printf '%s' "$CLIENT_SECRET" > "$DIR/github_oauth_client_secret"

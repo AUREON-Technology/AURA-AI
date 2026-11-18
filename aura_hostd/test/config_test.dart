@@ -78,4 +78,60 @@ void main() {
       expect(mode, 0x180, reason: 'expected 0600, got ${mode.toRadixString(8)}');
     }, testOn: '!windows');
   });
+
+  // F53: the device token travels on the connection to this URL, so plain http/ws is only ever
+  // allowed to this machine itself.
+  group('backend URL (F53)', () {
+    test('https and wss are accepted for any host', () {
+      for (final url in ['https://a.example', 'https://a.example:8443/', 'wss://a.example']) {
+        expect(requireSecureBackendUrl(url), url, reason: url);
+      }
+    });
+
+    test('http and ws are accepted only for a loopback host', () {
+      for (final url in [
+        'http://localhost:8000',
+        'http://LOCALHOST',
+        'http://127.0.0.1:8000',
+        'http://127.4.5.6',
+        'http://[::1]:8000',
+        'ws://localhost:8000',
+      ]) {
+        expect(requireSecureBackendUrl(url), url, reason: url);
+      }
+    });
+
+    test('anything else is refused with a clear reason', () {
+      for (final url in [
+        'http://a.example',
+        'ws://a.example',
+        'http://10.0.0.5:8000',
+        'http://192.168.1.2',
+        'http://localhost.attacker.example',
+        'http://127.0.0.1.attacker.example',
+        'ftp://a.example',
+        'a.example',
+        'https://',
+        '',
+      ]) {
+        expect(
+          () => requireSecureBackendUrl(url),
+          throwsA(isA<InvalidBackendUrlError>()
+              .having((e) => e.message, 'message', contains('https'))),
+          reason: url,
+        );
+      }
+    });
+
+    test('the WebSocket URL keeps TLS and refuses a plain remote one', () {
+      expect(DaemonConfig(backendUrl: 'https://a.example', authToken: 't').hostAgentWsUrl,
+          'wss://a.example/api/v3/host/agent');
+      expect(DaemonConfig(backendUrl: 'wss://a.example', authToken: 't').hostAgentWsUrl,
+          'wss://a.example/api/v3/host/agent');
+      expect(DaemonConfig(backendUrl: 'http://127.0.0.1:8000', authToken: 't').hostAgentWsUrl,
+          'ws://127.0.0.1:8000/api/v3/host/agent');
+      expect(() => DaemonConfig(backendUrl: 'http://a.example', authToken: 't').hostAgentWsUrl,
+          throwsA(isA<InvalidBackendUrlError>()));
+    });
+  });
 }

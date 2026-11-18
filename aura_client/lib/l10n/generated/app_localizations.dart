@@ -98,6 +98,36 @@ abstract class AppLocalizations {
     Locale('en'),
   ];
 
+  /// C1 (F2): body of a failed or empty reply that is not the conversation's latest turn, shown instead of a Retry button
+  ///
+  /// In en, this message translates to:
+  /// **'Later messages followed this one, so it can\'t be retried here. Send it again if you still need an answer.'**
+  String get chatRetryOnlyLatestTurn;
+
+  /// C1 (F25): tooltip of the attach-image button while the server's image support could not be checked
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t check whether images can be attached. Tap to try again.'**
+  String get chatImageCapabilityCheckFailed;
+
+  /// C1 (F22): a memory was saved locally and queued because the server could not be reached
+  ///
+  /// In en, this message translates to:
+  /// **'Saved on this device. AURA will remember it once it can reach the server.'**
+  String get memorySaveQueued;
+
+  /// C1 (F22): the server refused a saved memory (a 4xx), so it will not be retried
+  ///
+  /// In en, this message translates to:
+  /// **'The server didn\'t accept this memory: {fact}'**
+  String memorySaveRefused(String fact);
+
+  /// C1 (INT-113): added to the share confirmation when the chat is too long for the server's limits: how many older messages will not be shared
+  ///
+  /// In en, this message translates to:
+  /// **'Only the latest {count} messages fit in a shared chat, so the {omitted} older ones won\'t be included.'**
+  String shareTruncatedOlder(int count, int omitted);
+
   /// Today screen header, shown before noon
   ///
   /// In en, this message translates to:
@@ -6750,6 +6780,12 @@ abstract class AppLocalizations {
   /// **'Live voice is available on Android and iOS only'**
   String get voiceLiveUnsupported;
 
+  /// Live voice: the playback engine could not start (INT-102); replies arrive as text only.
+  ///
+  /// In en, this message translates to:
+  /// **'Audio playback is unavailable on this device. Replies are shown as text only.'**
+  String get voiceLiveAudioUnavailable;
+
   /// Home: screen-reader label of the capture bar
   ///
   /// In en, this message translates to:
@@ -8147,6 +8183,66 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Seats'**
   String get planSeatsLabel;
+
+  /// Name of the Free plan (server slug `free`)
+  ///
+  /// In en, this message translates to:
+  /// **'Free'**
+  String get planNameFree;
+
+  /// Name of the Pro plan (server slug `pro`)
+  ///
+  /// In en, this message translates to:
+  /// **'Pro'**
+  String get planNamePro;
+
+  /// Name of the Team plan (server slug `team`)
+  ///
+  /// In en, this message translates to:
+  /// **'Team'**
+  String get planNameTeam;
+
+  /// Seat count field: the text is not a whole number of at least 1
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a whole number of seats, 1 or more.'**
+  String get planSeatsInvalid;
+
+  /// Subscription status `pending`
+  ///
+  /// In en, this message translates to:
+  /// **'Awaiting payment'**
+  String get subscriptionStatusPending;
+
+  /// Subscription status `active`
+  ///
+  /// In en, this message translates to:
+  /// **'Active'**
+  String get subscriptionStatusActive;
+
+  /// Subscription status `past_due`
+  ///
+  /// In en, this message translates to:
+  /// **'Payment overdue'**
+  String get subscriptionStatusPastDue;
+
+  /// Subscription status `grace`
+  ///
+  /// In en, this message translates to:
+  /// **'In grace period'**
+  String get subscriptionStatusGrace;
+
+  /// Subscription status `canceled`
+  ///
+  /// In en, this message translates to:
+  /// **'Canceled'**
+  String get subscriptionStatusCanceled;
+
+  /// Subscription status `expired`
+  ///
+  /// In en, this message translates to:
+  /// **'Expired'**
+  String get subscriptionStatusExpired;
 
   /// Shown on iOS and Android for a team workspace: no store purchase and no mention of another way to pay
   ///

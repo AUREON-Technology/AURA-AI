@@ -105,6 +105,93 @@ async def test_stream_counts_once_and_releases_on_error(client, container, monke
     assert await _used(container, "cat") == 1
 
 
+async def test_stream_error_after_a_token_still_counts(client, container, monkeypatch) -> None:
+    """F6: the message counts once the first token frame is sent, even if the turn fails after."""
+    async def token_then_error(turn):
+        yield {"type": "token", "text": "part of an answer"}
+        yield {"type": "error", "error": "provider_unavailable", "message": "provider down"}
+
+    monkeypatch.setattr(container.kernel, "stream", token_then_error)
+    with client.stream("POST", "/api/v3/chat/stream", headers=_as("cy"), json={"message": "hi", "use_tools": False}) as r:
+        "".join(r.iter_text())
+    assert await _used(container, "cy") == 1
+
+
+def _drive_stream_then_disconnect(client, headers: dict, *, leave_after: bytes = b"event: token") -> list[bytes]:
+    """Drive ``/chat/stream`` over raw ASGI on the test client's own loop: read until a frame
+    containing ``leave_after`` (the first token by default), then report the client gone (``http.disconnect``) -- what a browser closing the
+    tab after reading the answer looks like. The test client itself buffers a whole response, so
+    it cannot stop part-way."""
+    import asyncio
+    import json
+
+    body = json.dumps({"message": "hi", "use_tools": False}).encode()
+    chunks: list[bytes] = []
+
+    async def drive() -> None:
+        seen = asyncio.Event()
+        sent_request = False
+
+        async def receive():
+            nonlocal sent_request
+            if not sent_request:
+                sent_request = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            await seen.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            if message["type"] == "http.response.body":
+                chunks.append(message.get("body", b""))
+                if leave_after in message.get("body", b""):
+                    seen.set()
+
+        scope = {
+            "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "POST",
+            "scheme": "http", "path": "/api/v3/chat/stream", "raw_path": b"/api/v3/chat/stream",
+            "query_string": b"", "root_path": "", "client": ("testclient", 50000),
+            "server": ("testserver", 80), "state": {},
+            "headers": [(b"host", b"testserver"), (b"content-type", b"application/json"),
+                        (b"content-length", str(len(body)).encode())]
+            + [(k.encode(), v.encode()) for k, v in headers.items()],
+        }
+        await client.app(scope, receive, send)
+        # The producer task is cancelled, not awaited; let its `finally` run.
+        for _ in range(20):
+            await asyncio.sleep(0.01)
+
+    client.portal.call(drive)
+    return chunks
+
+
+async def test_stream_counts_when_the_client_leaves_after_the_answer(client, container, monkeypatch) -> None:
+    """F6: reading every token and disconnecting before `done` does not give the message back."""
+    import asyncio
+
+    async def answer_then_hang(turn):
+        yield {"type": "token", "text": "the whole answer"}
+        await asyncio.Event().wait()   # `done` never comes: the client leaves first
+
+    monkeypatch.setattr(container.kernel, "stream", answer_then_hang)
+    chunks = _drive_stream_then_disconnect(client, _as("cole"))
+    assert any(b"event: token" in c for c in chunks)
+    assert not any(b"event: done" in c for c in chunks)
+    assert await _used(container, "cole") == 1
+
+
+async def test_stream_released_when_the_client_leaves_before_any_token(client, container, monkeypatch) -> None:
+    """F6: a client gone before anything was produced is not charged."""
+    import asyncio
+
+    async def citations_then_hang(turn):
+        yield {"type": "citations", "citations": []}
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(container.kernel, "stream", citations_then_hang)
+    _drive_stream_then_disconnect(client, _as("cass"), leave_after=b"event: citations")
+    assert await _used(container, "cass") == 0
+
+
 async def test_team_usage_pooled_across_members(client, container, small_plans) -> None:
     team = await container.tenancy.create_team("dan", "Dan Co")
     _invite, token = await container.tenancy.invite("dan", team.id, "eve@example.com", WorkspaceRole.MEMBER)

@@ -264,6 +264,13 @@ class _RecordingConn:
         if sql.lstrip().upper().startswith("INSERT"):
             row = dict(zip(self.columns, args))
             self.rows[row["id"]] = row
+        elif sql.lstrip().startswith("UPDATE aura_memories SET"):
+            # ``PostgresMemoryStore._UPDATE``: $1 id, $2 owner, $3 content. Update-where-exists.
+            row = self.rows.get(args[0])
+            if row is not None and row["owner_id"] == args[1]:
+                row["content"] = args[2]
+                return "UPDATE 1"
+            return "UPDATE 0"
         return "INSERT 0 1"
 
     async def fetchrow(self, sql: str, *args):

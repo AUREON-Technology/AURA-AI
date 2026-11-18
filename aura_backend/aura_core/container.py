@@ -194,6 +194,8 @@ class Container:
         self.email, self.notifier = self._build_email()
         self.tenancy.notifier = self.notifier
         self.billing = self._build_billing()
+        # F41: an owner transfer forgets the old owner's saved card before ownership moves.
+        self.tenancy.owner_changing = self.billing.forget_card
         self.store_billing = self._build_store_billing()
 
         self.providers = build_providers(
@@ -318,6 +320,8 @@ class Container:
             metrics=self.metrics,
             event_bus=self.events,
         )
+        # F10: deleting a team erases its ``workspace:<id>`` corpus before the row goes.
+        self.tenancy.erase_knowledge = self.knowledge.erase_owner
         cag_settings = settings.cag
         self.cag = (
             CagEngine(

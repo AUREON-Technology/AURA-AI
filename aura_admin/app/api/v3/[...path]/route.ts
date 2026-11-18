@@ -66,10 +66,22 @@ async function proxy(request: Request, path: string[]) {
   if (upstream.status === 401 && refresh) {
     // Concurrent 401s carrying the same single-use refresh token share one refresh (F-35); each
     // of them then sets the new cookies below, whichever response the browser applies last.
-    rotated = await singleFlightRefresh(refresh, refreshAtGateway);
-    if (rotated) {
+    const outcome = await singleFlightRefresh(refresh, refreshAtGateway);
+    if (outcome.ok) {
+      rotated = outcome.tokens;
       headers.set("authorization", `Bearer ${rotated.access_token}`);
       upstream = await fetch(target, { ...init, headers });
+    } else if (outcome.reason === "unavailable") {
+      // The gateway could not answer the refresh (INT-104). Passing the 401 on would make
+      // api.ts send the operator to /login over an outage; the refresh cookie is still good.
+      return NextResponse.json(
+        {
+          error: "dependency_unavailable",
+          message: "The gateway could not renew your session just now. You are still signed in; try again shortly.",
+          retryable: true,
+        },
+        { status: 503, headers: { "retry-after": "5" } },
+      );
     }
   }
 

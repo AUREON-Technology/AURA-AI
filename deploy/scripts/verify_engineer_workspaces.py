@@ -80,15 +80,17 @@ async def _sh(runner, handle, command: str, *, timeout_s: float = 60.0):
 # -- the checks ---------------------------------------------------------------------------------
 
 
-@check(0, "docker exec is refused by the socket proxy")
+@check(0, "docker exec is refused (sandbox broker and socket proxy)")
 async def check_exec_is_refused(runner, manager, ws) -> str:
     """Not one of the original ten, and the most important one to run first: it is the reason
     commands are dispatched as their own container. If the proxy ever started allowing exec, the
-    adapter would still work and nobody would notice the allowlist had widened."""
+    adapter would still work and nobody would notice the allowlist had widened.
+
+    Listed by the workspace label: the sandbox broker (F19) refuses an unfiltered listing."""
     import docker
 
     client = runner._get_client()
-    containers = client.containers.list(all=True)
+    containers = client.containers.list(all=True, filters={"label": "aura.workspace"})
     if not containers:
         raise _Skipped("no container to attempt exec against")
     try:
@@ -102,6 +104,32 @@ async def check_exec_is_refused(runner, manager, ws) -> str:
     raise AssertionError(
         "docker exec SUCCEEDED. The socket proxy is allowing exec, which means a compromised "
         "gateway can also exec into postgres and ollama. Check EXEC in the compose file."
+    )
+
+
+@check(11, "the sandbox broker refuses a privileged container with a host bind")
+async def check_broker_refuses_escape(runner, manager, ws) -> str:
+    """F19: docker-socket-proxy filters endpoints, not bodies. The broker in front of it is what
+    refuses a container that would own the host; this proves it is really in the path."""
+    import docker
+
+    client = runner._get_client()
+    try:
+        container = client.containers.create(
+            runner._image, ["true"], privileged=True, user="10001:10001",
+            volumes={"/": {"bind": "/workspace", "mode": "ro"}},
+            labels={"aura.sandbox.oneshot": "verify-broker"},
+        )
+    except docker.errors.APIError as exc:
+        _require(
+            "sandbox-broker" in str(exc),
+            f"the create failed, but not with the broker's refusal: {exc}",
+        )
+        return "the broker returned 403 for Privileged + a / bind"
+    container.remove(force=True)
+    raise AssertionError(
+        "a privileged container with / bind-mounted was CREATED. The gateway is not behind "
+        "the sandbox broker -- check DOCKER_HOST and the sandbox_ctl/sandbox_docker networks."
     )
 
 
@@ -324,7 +352,7 @@ async def main() -> int:
     if runner is None:
         print(f"{_RED}The Docker sandbox runner was not built.{_RESET}")
         print("  AURA_SANDBOX_ENABLED must be true AND a daemon must be reachable through")
-        print("  docker-socket-proxy. Nothing below can run. See deploy/.env.example.")
+        print("  sandbox-broker and docker-socket-proxy. Nothing below can run. See deploy/.env.example.")
         return 125
     if manager is None:
         print(f"{_RED}No workspace manager: durable workspaces are not wired.{_RESET}")
@@ -340,6 +368,7 @@ async def main() -> int:
 
     try:
         failures += not await check_exec_is_refused(runner, manager, ws)
+        failures += not await check_broker_refuses_escape(runner, manager, ws)
         failures += not await check_bind_mount(runner, manager, ws)
         failures += not await check_real_clone(runner, manager, ws, host_git)
         failures += not await check_no_credential(runner, manager, ws)

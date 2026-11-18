@@ -56,7 +56,7 @@ class InMemoryPaymentStore:
 
     async def pending(self, *, before: datetime | None) -> list[Payment]:
         rows = [p for p in self._rows.values() if p.status is PaymentStatus.PENDING
-                and (before is None or p.created_at < before)]
+                and p.workspace_id is not None and (before is None or p.created_at < before)]
         return sorted(rows, key=lambda p: (p.created_at, p.id))
 
     async def for_workspace(self, workspace_id: str, *, limit: int) -> list[Payment]:
@@ -74,7 +74,8 @@ class InMemoryPaymentStore:
             return updated
 
     async def received(self) -> list[Payment]:
-        return sorted((p for p in self._rows.values() if p.status is PaymentStatus.RECEIVED), key=lambda p: p.created_at)
+        return sorted((p for p in self._rows.values() if p.status is PaymentStatus.RECEIVED
+                       and p.workspace_id is not None), key=lambda p: p.created_at)
 
 
 class FakePaymentProvider:

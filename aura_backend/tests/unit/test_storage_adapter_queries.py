@@ -697,29 +697,44 @@ class TestIterAllChunksExcludesInactiveVersions:
         assert "JOIN aura_documents" in cursor_calls[0][1]
 
 
-class TestMemoryPutAndUpdateShareOneStatement:
-    async def test_update_writes_the_same_statement_as_put(self) -> None:
-        """Two statements that must stay in step is a defect waiting to happen: a column present in
-        one but not the other silently drops data on whichever path testing missed."""
+class TestMemoryUpdateNeverInserts:
+    """F27: ``update`` was the ``put`` UPSERT, so consolidation writing back a record it had
+    listed re-inserted a memory the user forgot while it ran. It is now an update-where-exists
+    that cannot revert a concurrent access or supersession."""
+
+    def _record(self):
         from aura_core.domain.identifiers import MemoryId
         from aura_core.domain.memory import MemoryKind, MemoryRecord, Provenance
 
-        record = MemoryRecord(
+        return MemoryRecord(
             id=MemoryId("m1"),
             kind=MemoryKind.SEMANTIC,
             owner_id=UserId("u1"),
             content="fact",
             provenance=Provenance(source="test"),
         )
+
+    async def test_update_is_an_owner_scoped_update_not_an_upsert(self) -> None:
         conn = FakePgConn()
         store = PostgresMemoryStore("postgresql://u:p@h/db")
         store._pool = FakePgPool(conn)
 
-        await store.put(record)
-        await store.update(record)
+        await store.update(self._record())
         statements = [c[1] for c in conn.calls if c[0] == "execute"]
-        assert len(statements) == 2
-        assert statements[0] == statements[1]
+        assert len(statements) == 1
+        sql = " ".join(statements[0].split())
+        assert sql.startswith("UPDATE aura_memories SET")
+        assert "INSERT" not in sql.upper()
+        assert "WHERE id = $1 AND owner_id = $2" in sql
+        assert "GREATEST(access_count" in sql and "GREATEST(last_accessed_at" in sql
+        assert "COALESCE($9::text, superseded_by)" in sql
+
+    def test_the_update_params_match_its_placeholders(self) -> None:
+        import re
+
+        placeholders = {int(n) for n in re.findall(r"\$(\d+)", PostgresMemoryStore._UPDATE)}
+        assert placeholders == set(range(1, max(placeholders) + 1))
+        assert len(PostgresMemoryStore._update_params(self._record())) == max(placeholders)
 
 
 class TestMemoryCount:

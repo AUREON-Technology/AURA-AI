@@ -32,6 +32,45 @@ class MemoryItem {
   });
 }
 
+/// What became of a [MemoryRepository.saveMemory] (F22).
+enum MemorySaveOutcome {
+  /// The server's memory store has it: the assistant will recall it.
+  saved,
+
+  /// Kept on this device and queued: it is sent on the next memory sync, until the server
+  /// takes or refuses it.
+  queued,
+
+  /// The server refused it (a 4xx it will always give): not kept, not retried.
+  refused,
+}
+
+/// `SyncMetadata` key prefix of a memory save the server has not confirmed yet; the rest of the
+/// key is the local memory id, the value its `kind` and `subject`. The fact itself is the local
+/// `UserMemories` row. `wipeUserData` clears both, so a queued save never crosses accounts.
+const kPendingMemorySavePrefix = 'pending_memory_save:';
+
+/// Facts the server refused when a queued save was sent in the background, for the memory
+/// screens to tell the user; [MemorySaveRefusals.take] empties it once shown.
+class MemorySaveRefusals extends Notifier<List<String>> {
+  @override
+  List<String> build() => const [];
+
+  void add(Iterable<String> facts) {
+    if (facts.isEmpty) return;
+    state = [...state, ...facts];
+  }
+
+  List<String> take() {
+    final taken = state;
+    state = const [];
+    return taken;
+  }
+}
+
+final memorySaveRefusalsProvider =
+    NotifierProvider<MemorySaveRefusals, List<String>>(MemorySaveRefusals.new);
+
 class MemoryRepository {
   final AppDatabase _db;
   final Ref _ref;
@@ -56,10 +95,12 @@ class MemoryRepository {
   Future<http.Response> _send(
     Future<http.Response> Function(Map<String, String> headers) send, {
     bool write = false,
+    String? idempotencyKey,
   }) async {
     final tokens = _ref.read(tokenManagerProvider);
-    // One key per logical write, shared by the 401 re-send below (audit FSA-046).
-    final idempotencyKey = write ? newIdempotencyKey() : null;
+    // One key per logical write, shared by the 401 re-send below (audit FSA-046); a queued write
+    // brings its own stable one.
+    idempotencyKey ??= write ? newIdempotencyKey() : null;
     Future<http.Response> once() async {
       final token = await tokens.getValidAccessToken();
       final headers = await _headers(token, jsonBody: true);
@@ -130,6 +171,8 @@ class MemoryRepository {
   }) async {
     try {
       await _remoteDeletes.flush();
+      // Saves made offline, before the list is fetched: the server's answer then includes them.
+      await flushPendingSaves();
       final forgotten = await _remoteDeletes.pendingIds(RemoteDeleteKind.memory);
       final uri = Uri.parse(_backendUrl).replace(queryParameters: {
         "limit": limit.toString(),
@@ -196,6 +239,8 @@ class MemoryRepository {
   /// than imply it is done everywhere (audit F-33).
   Future<bool> deleteMemory(String memoryId) async {
     await (_db.delete(_db.userMemories)..where((m) => m.id.equals(memoryId))).go();
+    // A save still queued for it must not bring it back (F22).
+    await _dropPendingSave(memoryId);
     await _db.enqueueOutbox(table: 'memories', recordId: memoryId, operation: 'delete');
     return _remoteDeletes.request(RemoteDeleteKind.memory, memoryId);
   }
@@ -207,7 +252,13 @@ class MemoryRepository {
   /// holds. That id can be an existing memory's: the server folds a restated
   /// fact into the one it already has. The encrypted sync copy is queued
   /// under the final id.
-  Future<void> saveMemory(
+  ///
+  /// A save the server could not be reached for is kept in a durable queue
+  /// and sent again by [flushPendingSaves] on every memory sync, under one
+  /// stable idempotency key, so the server stores it once however often it
+  /// is repeated (F22 / INT-109). It used to be only logged: the memory
+  /// stayed on this device and the assistant never learned it.
+  Future<MemorySaveOutcome> saveMemory(
     String fact, {
     String kind = 'semantic',
     String? subject,
@@ -217,17 +268,110 @@ class MemoryRepository {
     // ("id must be a UUID"), leaving the row in the outbox forever (F-13).
     // Random rather than derived from the text: two users saving the same
     // sentence must not collide on one global primary key.
-    var id = _uuid.v4();
-    await _db.into(_db.userMemories).insertOnConflictUpdate(
-      UserMemoriesCompanion.insert(
-        id: id,
-        fact: fact,
-        createdAt: DateTime.now(),
-        isSynced: const Value(false),
-        updatedAt: Value(DateTime.now()),
-      ),
-    );
+    final localId = _uuid.v4();
+    await _db.transaction(() async {
+      await _db.into(_db.userMemories).insertOnConflictUpdate(
+        UserMemoriesCompanion.insert(
+          id: localId,
+          fact: fact,
+          createdAt: DateTime.now(),
+          isSynced: const Value(false),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+      await _db.into(_db.syncMetadata).insertOnConflictUpdate(
+        SyncMetadataCompanion.insert(
+          key: '$kPendingMemorySavePrefix$localId',
+          value: jsonEncode({'kind': kind, 'subject': ?subject}),
+        ),
+      );
+    });
 
+    final result = await _attemptSave(localId, fact, kind: kind, subject: subject);
+    if (result.outcome != MemorySaveOutcome.refused) {
+      await _db.enqueueOutbox(
+        table: 'memories',
+        recordId: result.id,
+        operation: 'upsert',
+        payload: SyncPayloads.userMemory(fact),
+      );
+    }
+    return result.outcome;
+  }
+
+  /// Local ids of memory saves the server has not confirmed yet.
+  Future<Set<String>> pendingSaveIds() async {
+    final rows = await (_db.select(_db.syncMetadata)
+          ..where((t) => t.key.like('$kPendingMemorySavePrefix%')))
+        .get();
+    return rows.map((r) => r.key.substring(kPendingMemorySavePrefix.length)).toSet();
+  }
+
+  /// Sends every queued memory save again (F22). Returns the facts the
+  /// server refused, which are dropped rather than retried and also added
+  /// to [memorySaveRefusalsProvider] for the memory screens to report.
+  Future<List<String>> flushPendingSaves() async {
+    final refused = <String>[];
+    final rows = await (_db.select(_db.syncMetadata)
+          ..where((t) => t.key.like('$kPendingMemorySavePrefix%')))
+        .get();
+    for (final row in rows) {
+      final localId = row.key.substring(kPendingMemorySavePrefix.length);
+      if (_savesInFlight.contains(localId)) continue;
+      final local = await (_db.select(_db.userMemories)..where((m) => m.id.equals(localId)))
+          .getSingleOrNull();
+      if (local == null) {
+        // Forgotten before it ever reached the server, or lost with an unreadable cache.
+        await _dropPendingSave(localId);
+        continue;
+      }
+      String kind = 'semantic';
+      String? subject;
+      try {
+        final options = jsonDecode(row.value);
+        if (options is Map) {
+          kind = options['kind']?.toString() ?? kind;
+          subject = options['subject']?.toString();
+        }
+      } catch (_) {}
+      final result = await _attemptSave(localId, local.fact, kind: kind, subject: subject);
+      switch (result.outcome) {
+        case MemorySaveOutcome.saved:
+          if (result.id != localId) {
+            // The encrypted sync copy was queued under the local id when the save was made.
+            await _db.enqueueOutbox(table: 'memories', recordId: localId, operation: 'delete');
+            await _db.enqueueOutbox(
+              table: 'memories',
+              recordId: result.id,
+              operation: 'upsert',
+              payload: SyncPayloads.userMemory(local.fact),
+            );
+          }
+        case MemorySaveOutcome.refused:
+          await _db.enqueueOutbox(table: 'memories', recordId: localId, operation: 'delete');
+          refused.add(local.fact);
+        case MemorySaveOutcome.queued:
+          break; // still unreachable: the next sync tries again
+      }
+    }
+    _ref.read(memorySaveRefusalsProvider.notifier).add(refused);
+    return refused;
+  }
+
+  /// Saves being sent right now, across repository instances: a flush started while
+  /// [saveMemory]'s own attempt is out does not send the same save a second time.
+  static final Set<String> _savesInFlight = {};
+
+  /// One attempt to store the queued save [localId] on the server. On success the local row is
+  /// re-keyed to the server's id and the save leaves the queue; a refusal removes it and the
+  /// local row; anything else leaves it queued. Returns the memory's id afterwards.
+  Future<({MemorySaveOutcome outcome, String id})> _attemptSave(
+    String localId,
+    String fact, {
+    required String kind,
+    String? subject,
+  }) async {
+    _savesInFlight.add(localId);
     try {
       final uri = Uri.parse(_backendUrl);
       final response = await _send((headers) {
@@ -241,14 +385,13 @@ class MemoryRepository {
             ? client.post(uri, headers: headers, body: body)
             : http.post(uri, headers: headers, body: body);
         return sent.timeout(const Duration(seconds: 20));
-      }, write: true);
-      final serverId = response.statusCode == 200 ? _serverId(response.body) : null;
-      if (serverId == null) {
-        debugPrint("Failed to save memory remotely: ${response.statusCode} ${response.body}");
-      } else {
+      }, write: true, idempotencyKey: stableIdempotencyKey('save-memory', localId));
+      final ok = response.statusCode == 200 || response.statusCode == 201;
+      final serverId = ok ? _serverId(response.body) : null;
+      if (serverId != null) {
         await _db.transaction(() async {
-          if (serverId != id) {
-            await (_db.delete(_db.userMemories)..where((m) => m.id.equals(id))).go();
+          if (serverId != localId) {
+            await (_db.delete(_db.userMemories)..where((m) => m.id.equals(localId))).go();
           }
           await _db.into(_db.userMemories).insertOnConflictUpdate(
             UserMemoriesCompanion.insert(
@@ -259,20 +402,34 @@ class MemoryRepository {
               updatedAt: Value(DateTime.now()),
             ),
           );
+          await _dropPendingSave(localId);
         });
-        id = serverId;
+        return (outcome: MemorySaveOutcome.saved, id: serverId);
       }
+      if (_isFinalRefusal(response.statusCode)) {
+        debugPrint("[MemoryRepository] memory save refused: ${response.statusCode} ${response.body}");
+        await _db.transaction(() async {
+          await (_db.delete(_db.userMemories)..where((m) => m.id.equals(localId))).go();
+          await _dropPendingSave(localId);
+        });
+        return (outcome: MemorySaveOutcome.refused, id: localId);
+      }
+      debugPrint("[MemoryRepository] memory save queued: ${response.statusCode}");
     } catch (e) {
-      debugPrint("Save memory remotely failed: $e");
+      debugPrint("[MemoryRepository] memory save queued: $e");
+    } finally {
+      _savesInFlight.remove(localId);
     }
-
-    await _db.enqueueOutbox(
-      table: 'memories',
-      recordId: id,
-      operation: 'upsert',
-      payload: SyncPayloads.userMemory(fact),
-    );
+    return (outcome: MemorySaveOutcome.queued, id: localId);
   }
+
+  /// A 4xx that sending the same request again cannot change. Not 401 (signed out: retried once
+  /// signed in), 408 / 425 / 429 (timing), or 409 (the server is still handling this key).
+  static bool _isFinalRefusal(int status) =>
+      status >= 400 && status < 500 && !const {401, 408, 409, 425, 429}.contains(status);
+
+  Future<void> _dropPendingSave(String localId) =>
+      (_db.delete(_db.syncMetadata)..where((t) => t.key.equals('$kPendingMemorySavePrefix$localId'))).go();
 
   String? _serverId(String body) {
     try {

@@ -13,6 +13,9 @@ import 'package:aura_client/features/voice_live/presentation/widgets/live_voice_
 import 'package:aura_client/features/voice_live/presentation/widgets/voice_language_toggle.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
+/// Shown when native audio could not start (INT-102): the session still runs, but replies are
+/// text only. Worded here, in both app languages, until the string moves into the ARB files
+/// (`voiceLiveAudioUnavailable`), which this change does not own.
 /// Full-screen live voice surface (outside the shell nav bar).
 class LiveVoicePage extends ConsumerStatefulWidget {
   const LiveVoicePage({super.key});
@@ -96,6 +99,24 @@ class _LiveVoicePageState extends ConsumerState<LiveVoicePage>
                   voice.error!,
                   style: TextStyle(color: palette.danger),
                   textAlign: TextAlign.center,
+                ),
+              ),
+            if (voice.audioUnavailable)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.md),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.volume_off_outlined, size: 16, color: palette.textSecondary),
+                    const SizedBox(width: AuraSpacing.xs),
+                    Flexible(
+                      child: Text(
+                        context.l10n.voiceLiveAudioUnavailable,
+                        style: TextStyle(color: palette.textSecondary),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             if (voice.transcriptVisible)

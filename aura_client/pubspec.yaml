@@ -87,6 +87,9 @@ dependencies:
 
   crypto: any
   pointycastle: any
+  # Ed25519 verification of the desktop update manifest (F18): pointycastle has no Ed25519.
+  # Pure Dart (DartEd25519); nothing native.
+  cryptography: ^2.9.0
   meta: ^1.15.0
   # Desktop IDE dependencies
   flutter_code_editor: ^0.3.5

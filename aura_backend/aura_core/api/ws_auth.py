@@ -11,12 +11,39 @@ rules an HTTP request is, within one interval.
 
 from __future__ import annotations
 
+import enum
 import inspect
 import time
 from typing import Any, Awaitable, Callable
 
+from ..domain.errors import AuthenticationError, AuthorizationError
+
 #: How often an open socket's credential is re-checked.
 DEFAULT_RECHECK_S = 60.0
+
+
+class Recheck(enum.Enum):
+    """What a credential recheck found (INT-104).
+
+    ``REVOKED`` is an answer: the token no longer authenticates, names someone else, or the
+    account may no longer use the socket -- close it as unauthorized. ``UNAVAILABLE`` is the
+    absence of one: the authenticator or the acceptance check failed on the server's side (a
+    database or Redis blip). A socket must not tell a client its credential is dead over that;
+    close it as a server error so the client reconnects with backoff."""
+
+    VALID = "valid"
+    REVOKED = "revoked"
+    UNAVAILABLE = "unavailable"
+
+
+def is_rejection(exc: BaseException) -> bool:
+    """Whether an authenticator exception says "this credential is refused", as opposed to "the
+    server could not check it": AURA's own authentication/authorization errors, or the 401/403
+    ``HTTPException`` the JWT layer raises -- the split the host-agent socket's first
+    authentication makes."""
+    if isinstance(exc, (AuthenticationError, AuthorizationError)):
+        return True
+    return getattr(exc, "status_code", None) in (401, 403)
 
 
 class LiveCredential:
@@ -47,22 +74,32 @@ class LiveCredential:
         self.principal = principal
         self._checked_at = self._clock()
 
-    async def still_valid(self, accept: Callable[[Any], bool]) -> bool:
-        """Re-check if due. False when the token no longer authenticates, now names a
-        different user, or ``accept`` refuses the principal it resolves to."""
+    async def recheck(self, accept: Callable[[Any], Any]) -> Recheck:
+        """Re-check if due. ``REVOKED`` when the token is refused, now names a different user, or
+        ``accept`` refuses the principal it resolves to; ``UNAVAILABLE`` when the check itself
+        failed (see :class:`Recheck`). An unavailable check confirms nothing, so the credential
+        stays due and the last good principal is kept."""
         if self.seconds_until_due() > 0:
-            return True
+            return Recheck.VALID
         try:
             principal = await self._check(self.token)
-        except Exception:
-            return False
+        except Exception as exc:  # noqa: BLE001 -- classified, not swallowed
+            return Recheck.REVOKED if is_rejection(exc) else Recheck.UNAVAILABLE
         if principal.user_id != self.principal.user_id:
-            return False
-        accepted = accept(principal)
-        if inspect.isawaitable(accepted):  # e.g. a plan lookup (SaaS P1-E)
-            accepted = await accepted
+            return Recheck.REVOKED
+        try:
+            accepted = accept(principal)
+            if inspect.isawaitable(accepted):  # e.g. a plan lookup (SaaS P1-E)
+                accepted = await accepted
+        except Exception:  # noqa: BLE001
+            return Recheck.UNAVAILABLE
         if not accepted:
-            return False
+            return Recheck.REVOKED
         self.principal = principal
         self._checked_at = self._clock()
-        return True
+        return Recheck.VALID
+
+    async def still_valid(self, accept: Callable[[Any], Any]) -> bool:
+        """``recheck`` as a bool: True only for ``VALID``. Kept for sockets that close the same
+        way whatever the reason; one that can tell its client to retry uses ``recheck``."""
+        return await self.recheck(accept) is Recheck.VALID

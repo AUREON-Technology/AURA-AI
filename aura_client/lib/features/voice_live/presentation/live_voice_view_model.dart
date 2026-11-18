@@ -7,7 +7,10 @@ import 'package:aura_client/core/ai/voice/live/live_audio_sink.dart';
 import 'package:aura_client/core/ai/voice/live/live_mic_source.dart';
 import 'package:aura_client/core/ai/voice/live/live_voice_protocol.dart';
 import 'package:aura_client/core/ai/voice/live/live_voice_socket.dart';
+import 'package:aura_client/core/ai/voice/live/pcm_framer.dart';
 import 'package:aura_client/core/ai/voice/voice_language.dart';
+import 'package:aura_client/core/network/aura_api_error.dart';
+import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/features/chat/data/chat_repository.dart';
 import 'package:aura_client/features/chat/data/turn_meta.dart';
 import 'package:aura_client/features/voice_live/data/live_voice_history.dart';
@@ -32,6 +35,11 @@ final liveVoicePendingProvider =
 /// The mic a live-voice session records with; overridden in tests (no platform recorder).
 final liveMicSourceFactoryProvider = Provider<LiveMicSourceFactory>((ref) => LiveMicSource.new);
 
+/// Builds the playback sink a live-voice session plays replies through (INT-102); overridden in
+/// tests (no native audio engine).
+final liveAudioSinkFactoryProvider =
+    Provider<Future<LiveAudioSink> Function()>((ref) => createLiveAudioSink);
+
 class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
   LiveVoiceSocket? _socket;
   LiveMicSource? _mic;
@@ -40,7 +48,18 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
   StreamSubscription<List<int>>? _pcmOutSub;
   StreamSubscription<List<int>>? _micSub;
   StreamSubscription<double>? _micAmpSub;
+  StreamSubscription<double>? _sinkAmpSub;
+
+  /// Re-cuts mic audio into the 20 ms frames the server's endpointer counts (INT-116).
+  PcmFramer? _framer;
+
+  /// Set by the user's barge-in until the server's `cancelled`: reply audio it had already sent
+  /// is still arriving and must not play after the user cut it off.
+  bool _dropReplyAudio = false;
   final _uuid = const Uuid();
+
+  /// Error frames for a turn the server refused to run (F7); shown with the app's own wording.
+  static const _refusals = {'plan_limit', 'rate_limited', 'dependency_unavailable'};
 
   /// The language this session asked the server to transcribe: the user's voice language
   /// (the app's language unless the live screen's toggle overrides it; Phase V), forced to
@@ -75,15 +94,28 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
     final socket = ref.read(liveVoiceSocketFactoryProvider)(ref);
     _socket = socket;
     _mic = ref.read(liveMicSourceFactoryProvider)();
-    _sink = await createLiveAudioSink();
+    final sink = await ref.read(liveAudioSinkFactoryProvider)();
+    // Torn down (or restarted) while the audio engine started.
+    if (!identical(_socket, socket)) {
+      await sink.dispose();
+      return;
+    }
+    _sink = sink;
+    _dropReplyAudio = false;
+    // Without native audio the session still works as text; the screen says why it is silent.
+    state = state.copyWith(audioUnavailable: !sink.isAvailable);
+    _sinkAmpSub = sink.amplitude.listen((a) {
+      state = state.copyWith(playbackAmplitude: a);
+    });
 
     // Listen before connecting: a server that refuses the socket outright (4503 feature off,
     // 4429 session already held) closes it before connectAndAuth returns, and the frames
     // stream is broadcast -- an error nobody is subscribed to yet is dropped and the screen
     // would sit on "listening" (INT-015).
     _framesSub = socket.frames.listen(_onFrame);
-    _pcmOutSub = socket.pcm.listen((bytes) async {
-      await _sink?.pushPcm(bytes);
+    _pcmOutSub = socket.pcm.listen((bytes) {
+      if (_dropReplyAudio) return;
+      unawaited(_sink?.pushPcm(bytes));
     });
 
     try {
@@ -134,7 +166,13 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
       return;
     }
     if (!identical(_mic, mic)) return;
-    _micSub = mic.pcm.listen((chunk) => _socket?.sendPcm(chunk));
+    final framer = PcmFramer(sampleRate: sampleRate);
+    _framer = framer;
+    _micSub = mic.pcm.listen((chunk) {
+      for (final frame in framer.add(chunk)) {
+        _socket?.sendPcm(frame);
+      }
+    });
     _micAmpSub = mic.amplitude.listen((a) {
       state = state.copyWith(micAmplitude: a);
     });
@@ -182,8 +220,21 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
 
   Future<void> bargeIn() async {
     _socket?.bargeIn();
-    await _sink?.stop();
+    // Reply audio the server sent before it saw the barge-in is still on its way; it is dropped
+    // until the server's `cancelled` says the reply is gone.
+    if (_socket != null) _dropReplyAudio = true;
+    await _sink?.flush();
     state = state.copyWith(phase: 'listening', assistantDraft: '');
+  }
+
+  /// Ends the user's utterance now instead of waiting for the server to hear silence: the partial
+  /// last frame goes out (padded with silence to a whole 20 ms frame), then `commit` (INT-116).
+  void commitUtterance() {
+    final socket = _socket;
+    if (socket == null) return;
+    final last = _framer?.flush();
+    if (last != null) socket.sendPcm(last);
+    socket.commit();
   }
 
   Future<void> endSession() async {
@@ -255,7 +306,14 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
           }
         }
         unawaited(_socket?.reauth());
+      case LiveAudioEndFrame():
+        // The reply's last sentence is queued: let it play out.
+        unawaited(_sink?.endOfUtterance());
       case LiveCancelledFrame():
+        // The server dropped the reply (its own barge-in detection, or the user's): stop what is
+        // still playing, and play what comes after -- that belongs to the next reply.
+        _dropReplyAudio = false;
+        unawaited(_sink?.flush());
         state = state.copyWith(phase: 'listening', assistantDraft: '');
       case LiveErrorFrame(:final error)
           when error == 'language_unsupported' && !_englishOnlyServer:
@@ -269,6 +327,19 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
         // The socket is gone: stop the mic and playback rather than leave the screen
         // "listening" to nothing. Each close code carries its own message (INT-015).
         unawaited(_fail(message));
+      case LiveErrorFrame(:final error, :final message, :final details, :final retryAfter)
+          when _refusals.contains(error):
+        // A turn the server declined before running it (plan quota, rate limit, plans service
+        // down -- F7): the same wording the HTTP refusal gets, not the server's English text.
+        state = state.copyWith(
+          error: AuraFailure.from(AuraApiError(
+            error: error,
+            message: message,
+            retryable: error != 'plan_limit',
+            retryAfter: retryAfter,
+            details: details,
+          )).message,
+        );
       case LiveErrorFrame(:final message):
         state = state.copyWith(error: message);
       case LivePlaybackHintFrame(:final sampleRate):
@@ -283,10 +354,16 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
     await _pcmOutSub?.cancel();
     await _micSub?.cancel();
     await _micAmpSub?.cancel();
+    await _sinkAmpSub?.cancel();
     _framesSub = null;
     _pcmOutSub = null;
     _micSub = null;
     _micAmpSub = null;
+    _sinkAmpSub = null;
+    // A partial frame belongs to no utterance once the session is gone.
+    _framer?.reset();
+    _framer = null;
+    _dropReplyAudio = false;
     await _mic?.dispose();
     await _sink?.dispose();
     await _socket?.dispose();

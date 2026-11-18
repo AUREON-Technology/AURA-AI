@@ -9,6 +9,28 @@ class AppLocalizationsAr extends AppLocalizations {
   AppLocalizationsAr([String locale = 'ar']) : super(locale);
 
   @override
+  String get chatRetryOnlyLatestTurn =>
+      'فيه رسايل جت بعد دي، فمينفعش تعيد محاولتها من هنا. ابعتها تاني لو لسه محتاج رد.';
+
+  @override
+  String get chatImageCapabilityCheckFailed =>
+      'معرفناش نتأكد إذا كان ينفع ترفق صور. دوس عشان تجرب تاني.';
+
+  @override
+  String get memorySaveQueued =>
+      'اتحفظت على الجهاز ده. AURA هيفتكرها أول ما يوصل للسيرفر.';
+
+  @override
+  String memorySaveRefused(String fact) {
+    return 'السيرفر مقبلش الذكرى دي: $fact';
+  }
+
+  @override
+  String shareTruncatedOlder(int count, int omitted) {
+    return 'المحادثة المتشاركة بتساع آخر $count رسالة بس، فالـ$omitted رسالة الأقدم مش هتتشارك.';
+  }
+
+  @override
   String get greetingMorning => 'صباح الخير';
 
   @override
@@ -4001,6 +4023,10 @@ class AppLocalizationsAr extends AppLocalizations {
   String get voiceLiveUnsupported => 'الصوت المباشر متاح على Android و iOS بس';
 
   @override
+  String get voiceLiveAudioUnavailable =>
+      'الصوت مش متاح على الجهاز ده، الردود هتظهر كتابة بس';
+
+  @override
   String get homeAskAuraLabel => 'اسأل AURA أي حاجة';
 
   @override
@@ -4886,6 +4912,36 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get planSeatsLabel => 'عدد المقاعد';
+
+  @override
+  String get planNameFree => 'المجانية';
+
+  @override
+  String get planNamePro => 'Pro';
+
+  @override
+  String get planNameTeam => 'Team';
+
+  @override
+  String get planSeatsInvalid => 'اكتب عدد مقاعد صحيح، 1 أو أكتر.';
+
+  @override
+  String get subscriptionStatusPending => 'مستني الدفع';
+
+  @override
+  String get subscriptionStatusActive => 'شغّال';
+
+  @override
+  String get subscriptionStatusPastDue => 'الدفع متأخر';
+
+  @override
+  String get subscriptionStatusGrace => 'في فترة السماح';
+
+  @override
+  String get subscriptionStatusCanceled => 'اتلغى';
+
+  @override
+  String get subscriptionStatusExpired => 'خلص';
 
   @override
   String get planTeamNotInApp => 'باقات الفرق مش متاحة للشرا من التطبيق ده.';

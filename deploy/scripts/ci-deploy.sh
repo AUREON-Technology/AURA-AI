@@ -15,6 +15,13 @@
 #   AURA_STASH_DIRTY  default 1 -- stash tracked local edits so ff-only can proceed
 set -euo pipefail
 
+# F47: a full lowercase hex SHA or unset. It selects the vps-update.sh this script runs as root,
+# so nothing else -- a branch name, a short SHA, shell syntax -- gets as far as git.
+if [ -n "${AURA_SHA:-}" ] && ! [[ "$AURA_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "ci-deploy.sh: AURA_SHA must be a full 40-character lowercase hex commit SHA" >&2
+  exit 2
+fi
+
 export AURA_REPO="${AURA_REPO:-/opt/aura-stack}"
 export AURA_COMPOSE="${AURA_COMPOSE:-$AURA_REPO/deploy/docker-compose.prod.yml}"
 export AURA_PROJECT="${AURA_PROJECT:-aura}"
@@ -35,8 +42,12 @@ fi
 
 UPDATE_SH="$AURA_REPO/deploy/scripts/vps-update.sh"
 if [ -n "${AURA_SHA:-}" ] && git -C "$AURA_REPO" cat-file -e "${AURA_SHA}:deploy/scripts/vps-update.sh" 2>/dev/null; then
-  git -C "$AURA_REPO" show "${AURA_SHA}:deploy/scripts/vps-update.sh" > /tmp/vps-update.sh
-  UPDATE_SH=/tmp/vps-update.sh
+  # A private directory, not a fixed /tmp path another local user could pre-create or swap
+  # between the write and the run (F47).
+  WORK_DIR="$(mktemp -d)"
+  trap 'rm -rf "$WORK_DIR"' EXIT
+  git -C "$AURA_REPO" show "${AURA_SHA}:deploy/scripts/vps-update.sh" > "$WORK_DIR/vps-update.sh"
+  UPDATE_SH="$WORK_DIR/vps-update.sh"
 fi
 
 cd "$AURA_REPO/deploy"

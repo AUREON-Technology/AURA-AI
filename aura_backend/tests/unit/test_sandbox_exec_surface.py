@@ -263,3 +263,69 @@ class TestReadTimeoutDetection:
         second.__cause__ = first
 
         assert not _is_read_timeout(first)
+
+
+class TestTheGatewayOnlyReachesTheSandboxBroker:
+    """F19. docker-socket-proxy filters endpoints, not request bodies: with CONTAINERS and POST
+    on, `POST /containers/create` is allowed whatever it carries, so a gateway that could reach
+    the proxy could create a privileged container with `/` bind-mounted. The sandbox broker
+    (deploy/sandbox-broker/broker.py, tested in test_sandbox_broker_policy.py) is the server-side
+    check, and it only means anything while the gateway cannot go around it."""
+
+    _GATEWAY = {"docker-compose.prod.yml": "gateway", "docker-compose.dev.yml": "dev-gateway"}
+
+    @staticmethod
+    def _doc(compose: Path) -> dict:
+        yaml = pytest.importorskip("yaml")
+        return yaml.safe_load(compose.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _networks(service: dict) -> set[str]:
+        networks = service.get("networks") or []
+        return set(networks if isinstance(networks, list) else networks.keys())
+
+    @pytest.mark.parametrize("compose", _COMPOSE_FILES, ids=lambda p: p.name)
+    def test_the_gateway_talks_to_the_broker(self, compose: Path) -> None:
+        gateway = self._doc(compose)["services"][self._GATEWAY[compose.name]]
+        assert gateway["environment"]["DOCKER_HOST"] == "tcp://sandbox-broker:2375"
+
+    @pytest.mark.parametrize("compose", _COMPOSE_FILES, ids=lambda p: p.name)
+    def test_only_the_broker_shares_a_network_with_the_socket_proxy(self, compose: Path) -> None:
+        services = self._doc(compose)["services"]
+        proxy = self._networks(services["docker-socket-proxy"])
+        reach = {
+            name for name, svc in services.items()
+            if name != "docker-socket-proxy" and self._networks(svc) & proxy
+        }
+        assert reach == {"sandbox-broker"}, f"{compose.name}: {reach} can reach the socket proxy"
+
+    @pytest.mark.parametrize("compose", _COMPOSE_FILES, ids=lambda p: p.name)
+    def test_the_broker_bridges_the_two(self, compose: Path) -> None:
+        services = self._doc(compose)["services"]
+        broker = services["sandbox-broker"]
+        gateway = services[self._GATEWAY[compose.name]]
+        assert self._networks(broker) & self._networks(gateway)
+        assert broker["profiles"] == ["sandbox"]
+        # Built from the repository, never pulled -- same reason as the sandbox image.
+        assert broker["build"]["context"] == "./sandbox-broker"
+        assert broker["read_only"] is True
+        assert broker["cap_drop"] == ["ALL"]
+        assert "no-new-privileges:true" in broker["security_opt"]
+
+    @pytest.mark.parametrize("compose", _COMPOSE_FILES, ids=lambda p: p.name)
+    def test_the_broker_enforces_the_gateway_s_own_sandbox_settings(self, compose: Path) -> None:
+        """Image, network and workspace root must be the values the adapter sends, or the broker
+        refuses every legitimate command; and the root must be mounted read-only at the same
+        path, or its symlink check resolves nothing."""
+        services = self._doc(compose)["services"]
+        broker, gateway = services["sandbox-broker"], services[self._GATEWAY[compose.name]]
+        for key in ("AURA_SANDBOX_IMAGE", "AURA_SANDBOX_NETWORK", "AURA_SANDBOX_HOST_ROOT"):
+            assert broker["environment"][key] == gateway["environment"][key], key
+        root = gateway["environment"]["AURA_SANDBOX_HOST_ROOT"]
+        assert f"{root}:{root}:ro" in broker["volumes"]
+
+    @pytest.mark.parametrize("compose", _COMPOSE_FILES, ids=lambda p: p.name)
+    def test_both_control_networks_are_internal(self, compose: Path) -> None:
+        networks = self._doc(compose)["networks"]
+        for name in ("sandbox_ctl", "sandbox_docker"):
+            assert networks[name].get("internal") is True, f"{compose.name}: {name} is not internal"

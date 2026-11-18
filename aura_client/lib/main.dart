@@ -13,6 +13,7 @@ import 'core/platform/document_language.dart';
 import 'core/theme/theme_mode_controller.dart';
 import 'core/routing/router.dart';
 import 'core/security/encryption_service.dart';
+import 'features/sync/signed_in_session.dart';
 import 'features/workspaces/presentation/store_purchase.dart';
 import 'l10n/l10n.dart';
 
@@ -79,6 +80,10 @@ class AuraApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final router = ref.watch(routerProvider);
+    // Background sync and the post-sign-in workspace check run for as long as someone is signed
+    // in, whatever screen is open (F1): the desktop shell never builds the chat header that used
+    // to be the only thing starting the sync engine.
+    ref.listen(signedInSessionProvider, (_, _) {});
 
     final themeMode = ref.watch(themeModeProvider);
     final language = ref.watch(appLanguageProvider);

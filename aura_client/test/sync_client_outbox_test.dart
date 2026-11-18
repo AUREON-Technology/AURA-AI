@@ -244,7 +244,8 @@ void main() {
   });
 
   test('a pulled health record replaces this device\'s own row for the same day', () async {
-    final day = DateTime(2026, 10, 27);
+    // A health day is stored as its UTC midnight, the server's key for it (F4).
+    final day = DateTime.utc(2026, 10, 27);
     await db.into(db.healthRecords).insert(HealthRecordsCompanion.insert(
           id: 'local-today',
           recordDate: day,

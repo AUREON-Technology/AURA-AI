@@ -407,6 +407,14 @@ class TestEndToEndChain:
                 )
             ],
         )
+        # The row too, straight into the store (no ingestion guard runs): every dense hit is
+        # checked against the document store, and a point with no active document is dropped.
+        from aura_core.domain.identifiers import DocumentId
+        from aura_core.domain.knowledge import Document, build_chunks
+
+        document = Document(id=DocumentId("evil"), version=1, title="evil", content=INJECTION,
+                            owner_id=user)
+        await container.documents.put(document, build_chunks(document, [(INJECTION, ())]))
 
         result = await container.kernel.run(
             TurnRequest(message="What is the annual leave policy?", user_id=user)

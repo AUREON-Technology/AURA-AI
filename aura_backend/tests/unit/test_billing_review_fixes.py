@@ -179,7 +179,7 @@ async def test_checkout_voids_a_pending_renewal(billing, provider, container) ->
     stale = [p for p in await billing.payments.pending(before=None) if p.purpose == "renewal"][0]
     upgrade = await billing.checkout("own", team.id, "team", 10, email=None)
     assert (await billing.payments.get(stale.id)).status is PaymentStatus.FAILED
-    await billing.handle_notification(provider.notification(upgrade["payment_id"], "paid", 120000))
+    await billing.handle_notification(provider.notification(upgrade["payment_id"], "paid", upgrade["amount_piastres"]))
     assert await billing.handle_notification(provider.notification(stale.id, "paid", 36000)) == "needs_review"
     assert (await billing.subscriptions.get(team.id)).seats == 10
 

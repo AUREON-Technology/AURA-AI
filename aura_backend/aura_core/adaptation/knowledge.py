@@ -171,8 +171,8 @@ class ProjectKnowledge:
         offset = 0
         while True:
             page = await self._documents.list_active(owner_id=self._owner, limit=_PAGE, offset=offset)
-            # The PostgreSQL store lists an owner's documents *plus* global ones; only the
-            # project's own are ever candidates for removal.
+            # Both stores list only this owner's documents (INT-111); the filter stays as a guard,
+            # since only the project's own documents are ever candidates for removal.
             stale.extend(d for d in page
                          if d.owner_id == self._owner and d.metadata.get("element") not in wanted)
             if len(page) < _PAGE:

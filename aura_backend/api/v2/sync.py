@@ -49,7 +49,7 @@ from typing import Any, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import DateTime, select, text, tuple_
-from sqlalchemy.exc import DataError, IntegrityError, InterfaceError, OperationalError, StatementError
+from sqlalchemy.exc import IntegrityError, InterfaceError, OperationalError, StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.db.base import get_db, is_configured
@@ -277,6 +277,49 @@ def bounded_client_clock(value: datetime, *, now: datetime) -> datetime:
     return min(value, now + CLIENT_CLOCK_SKEW_ALLOWANCE)
 
 
+#: How far from the server clock a client's creation time may sit and still be kept (INT-110).
+#: A day ahead absorbs any device clock that is merely wrong rather than hostile; a month back
+#: covers an outbox that was offline that long. Outside the window the server clock is used.
+#: `created_at` only orders a user's own rows for display -- it is never a conflict comparand --
+#: so the window is about plausibility, not about who wins a write.
+CREATED_AT_FUTURE_ALLOWANCE = timedelta(hours=24)
+CREATED_AT_PAST_ALLOWANCE = timedelta(days=30)
+
+
+def _plausible_creation(value: Any, *, now: datetime) -> Optional[datetime]:
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    if now - CREATED_AT_PAST_ALLOWANCE <= value <= now + CREATED_AT_FUTURE_ALLOWANCE:
+        return value
+    return None
+
+
+def creation_time(sent: Any, client_clock: Optional[datetime], *, now: datetime) -> datetime:
+    """The `created_at` a new row is inserted with (INT-110).
+
+    It used to be left to the column default, `now()`: the push transaction's *start* time, one
+    value for every row of a batch. A device that queued a conversation offline and synced it in
+    one push gave every message the same creation time, so another device -- which orders by
+    `created_at` -- showed them in arbitrary order. The client's own time is kept instead: the
+    payload's `created_at` when it sends one, else the envelope clock it queued the row with
+    (today's client sends no `created_at`; its clock is taken when the row is queued, which for
+    an append-only row like a message is when it was written). Either is used only inside the
+    `CREATED_AT_*_ALLOWANCE` window; otherwise the server clock.
+    """
+    for candidate in (sent, client_clock):
+        value = _plausible_creation(candidate, now=now)
+        if value is not None:
+            return value
+    return now
+
+
 class SyncPullResponse(BaseModel):
     data: dict[str, list[dict[str, Any]]]
     #: The cursor to store. On a page with `has_more`, the cursor the pull started from (empty for
@@ -293,6 +336,13 @@ class SyncMutation(BaseModel):
     id: str  # client-generated UUID — makes retries idempotent
     client_updated_at: datetime
     payload: Optional[dict[str, Any]] = None
+
+
+#: Upper bound on mutations in one push (F40). Each one is a SAVEPOINT, a row lock held to the
+#: end of the request and an entry in the response, inside one transaction; without a bound the
+#: request size was limited only by the body size. The client sends `SyncClient.pushBatchSize`
+#: (100) per request, and answers a refused batch by resending its rows one at a time.
+MAX_PUSH_MUTATIONS = 500
 
 
 class SyncPushRequest(BaseModel):
@@ -430,7 +480,11 @@ async def _natural_key_twin(db: AsyncSession, model, table: str, user_id, payloa
     keys = _NATURAL_KEYS.get(table)
     if not keys or any(payload.get(k) is None for k in keys):
         return None
-    stmt = select(model).where(model.user_id == user_id).execution_options(populate_existing=True)
+    stmt = (
+        select(model).where(model.user_id == user_id)
+        .with_for_update()  # as `_apply_mutation`'s own read (F31)
+        .execution_options(populate_existing=True)
+    )
     for key in keys:
         stmt = stmt.where(getattr(model, key) == _coerce_value(model, key, payload[key]))
     return (await db.execute(stmt)).scalars().first()
@@ -488,7 +542,14 @@ async def _apply_mutation(
     payload = mutation.payload or {}
     # populate_existing: an earlier mutation in this batch may have flushed this row, leaving its
     # server-generated columns expired -- and an expired attribute cannot lazy-load under asyncio.
-    existing = await db.get(model, row_id, populate_existing=True)
+    #
+    # FOR UPDATE (F31): the LWW decision below is a read-then-write, and two pushes of the same
+    # row used to make it concurrently. Each read the committed version, each judged itself
+    # newer, and whichever committed last won -- an older edit could overwrite a newer one. The
+    # lock makes a second push wait for the first to commit and then read *its* version, so the
+    # comparison is against what is really there. The lock lasts until the push commits (or until
+    # this row's savepoint rolls back), and one push already took the same lock at its UPDATE.
+    existing = await db.get(model, row_id, populate_existing=True, with_for_update=True)
 
     if existing is not None and existing.user_id != user_id:
         raise _RowError("not owned by this user", retryable=False)
@@ -524,7 +585,12 @@ async def _apply_mutation(
             _drop_tombstone_content(existing)
     else:
         if existing is None:
-            existing = model(id=row_id, user_id=user_id)
+            # The creation time is set once, here; `created_at` stays out of the payload loop
+            # below (`_SERVER_OWNED_COLUMNS`), so no later upsert can move it (INT-110).
+            existing = model(
+                id=row_id, user_id=user_id,
+                created_at=creation_time(payload.get("created_at"), mutation.client_updated_at, now=now),
+            )
             db.add(existing)
         elif merged:
             # A new record for a key whose previous holder was deleted: the newer write is a new
@@ -550,6 +616,25 @@ async def _apply_mutation(
     return result("applied")
 
 
+#: SQLSTATEs meaning "another writer holds this row", never "this value is bad": deadlock victim,
+#: serialization failure, lock timeout. Postgres aborts only the mutation's SAVEPOINT.
+_LOCK_CONFLICT_SQLSTATES = frozenset({"40P01", "40001", "55P03"})
+
+
+def _lock_conflict(exc: BaseException) -> bool:
+    """Whether ``exc`` is a row-lock conflict with a concurrent push. F31's row locks are taken in
+    the order each client sends its mutations, so two devices can deadlock."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        for attr in ("sqlstate", "pgcode"):
+            if getattr(current, attr, None) in _LOCK_CONFLICT_SQLSTATES:
+                return True
+        current = getattr(current, "orig", None) or current.__cause__
+    return False
+
+
 @router.post("/sync", response_model=list[SyncMutationResult], response_model_exclude_none=True)
 async def push_sync(
     body: SyncPushRequest,
@@ -573,6 +658,14 @@ async def push_sync(
     those are not about the row, and nothing after them could commit anyway.
     """
     _require_db_configured()
+    if len(body.mutations) > MAX_PUSH_MUTATIONS:
+        # Before any row is read: the size of the request is the whole reason to refuse it.
+        raise HTTPException(status_code=413, detail={
+            "error": "too_many_mutations",
+            "detail": f"at most {MAX_PUSH_MUTATIONS} mutations per push; send the rest in further pushes",
+            "limit": MAX_PUSH_MUTATIONS,
+            "received": len(body.mutations),
+        })
     user = await _get_or_create_user(db, user_info)
     user_id = user.id
     now = datetime.now(timezone.utc)
@@ -591,13 +684,24 @@ async def push_sync(
             continue
         except _RowError as exc:
             detail, retryable = exc.detail, exc.retryable
-        except (OperationalError, InterfaceError):
-            raise
-        except IntegrityError as exc:
-            # Possibly ordering (a goal whose project has not arrived yet), so worth a retry.
-            logger.info("sync mutation violated a constraint: %s", str(exc.orig)[:300])
-            detail, retryable = "violates a database constraint", True
-        except (ValueError, TypeError, DataError, StatementError) as exc:
+        except StatementError as exc:
+            if _lock_conflict(exc):
+                # Another device's push holds this row. Only this mutation's SAVEPOINT was
+                # aborted; the client sends it again on its next push, once that writer is done.
+                # It used to fall through to "invalid value", not retryable, and the edit was
+                # parked for good.
+                logger.info("sync mutation lost a row-lock conflict: %s", str(exc)[:200])
+                detail, retryable = "row busy with a concurrent edit", True
+            elif isinstance(exc, (OperationalError, InterfaceError)):
+                raise
+            elif isinstance(exc, IntegrityError):
+                # Possibly ordering (a goal whose project has not arrived yet), so worth a retry.
+                logger.info("sync mutation violated a constraint: %s", str(exc.orig)[:300])
+                detail, retryable = "violates a database constraint", True
+            else:  # DataError and other statement failures: the value itself
+                logger.info("sync mutation carried an invalid value: %s", str(exc)[:300])
+                detail, retryable = "invalid value in payload", False
+        except (ValueError, TypeError) as exc:
             logger.info("sync mutation carried an invalid value: %s", str(exc)[:300])
             detail, retryable = "invalid value in payload", False
         results.append(SyncMutationResult(

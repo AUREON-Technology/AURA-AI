@@ -5,10 +5,17 @@
 // and the screen sat on "listening" with the mic running.
 // INT-020: the mic was started at a hard-coded 16 kHz, before the server's `ready` frame said
 // which capture rate it expects.
+// INT-102: reply audio went to a no-op sink; it now reaches a real one, ends with `audio_end`, and
+// a barge-in (either side) cuts it off at once.
+// INT-116: mic chunks went to the server as the platform buffered them, not in the 20 ms frames
+// its endpointer counts.
 
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:aura_client/core/network/aura_failure.dart';
+import 'package:aura_client/core/network/aura_api_error.dart';
+import 'package:aura_client/core/ai/voice/live/live_audio_sink.dart';
 import 'package:aura_client/core/ai/voice/live/live_mic_source.dart';
 import 'package:aura_client/core/ai/voice/live/live_voice_socket.dart';
 import 'package:aura_client/core/ai/voice/voice_language.dart';
@@ -102,6 +109,45 @@ class _FakeMic implements LiveMicSource {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+/// Records what the view model asks of the playback sink.
+class _RecordingSink implements LiveAudioSink {
+  _RecordingSink({this.available = true});
+
+  final bool available;
+  final calls = <String>[];
+  final pushed = <List<int>>[];
+  final _amp = StreamController<double>.broadcast();
+
+  @override
+  int sampleRate = 0;
+  @override
+  bool get isAvailable => available;
+  @override
+  Stream<double> get amplitude => _amp.stream;
+  @override
+  Future<void> start({required int sampleRate, int channels = 1}) async {
+    this.sampleRate = sampleRate;
+    calls.add('start:$sampleRate');
+  }
+
+  @override
+  Future<void> pushPcm(List<int> pcm16le) async {
+    pushed.add(pcm16le);
+    calls.add('pcm:${pcm16le.length}');
+    _amp.add(0.5);
+  }
+
+  @override
+  Future<void> endOfUtterance() async => calls.add('end');
+  @override
+  Future<void> flush() async => calls.add('flush');
+  @override
+  Future<void> dispose() async {
+    calls.add('dispose');
+    await _amp.close();
+  }
+}
+
 Future<void> _settle() => Future<void>.delayed(const Duration(milliseconds: 30));
 
 void main() {
@@ -112,8 +158,10 @@ void main() {
   late ProviderContainer container;
 
   late List<_FakeChannel> channels;
+  late _RecordingSink sink;
 
   setUp(() {
+    sink = _RecordingSink();
     SharedPreferences.setMockInitialValues({});
     channel = _FakeChannel();
     channels = [];
@@ -133,6 +181,7 @@ void main() {
         ),
       ),
       liveMicSourceFactoryProvider.overrideWithValue(() => mic),
+      liveAudioSinkFactoryProvider.overrideWithValue(() async => sink),
     ]);
   });
 
@@ -257,6 +306,50 @@ void main() {
         currentL10n.voiceLiveArabicUnavailable);
   });
 
+  group('a refused turn reads like the HTTP refusal (F7)', () {
+    Future<String?> refuse(Map<String, dynamic> frame) async {
+      final vm = container.read(liveVoiceViewModelProvider.notifier);
+      container.listen(liveVoiceViewModelProvider, (_, _) {});
+      await vm.startSession(conversationId: 'conv-1');
+      await _settle();
+      channel.incoming.add(jsonEncode({'type': 'error', ...frame}));
+      await _settle();
+      return container.read(liveVoiceViewModelProvider).error;
+    }
+
+    test('a rate limit says when to try again, not the server text', () async {
+      final shown = await refuse({
+        'error': 'rate_limited',
+        'message': 'rate limit exceeded',
+        'retryable': true,
+        'details': {'retry_after': 30},
+      });
+      expect(shown, isNot('rate limit exceeded'));
+      expect(shown, AuraFailure.from(const AuraApiError(
+        error: 'rate_limited', message: 'x', retryable: true,
+        retryAfter: Duration(seconds: 30), details: {'retry_after': 30},
+      )).message);
+    });
+
+    test('a plan limit uses the plan wording', () async {
+      const details = {'plan': 'free', 'limit': 50, 'used': 50};
+      final shown = await refuse({
+        'error': 'plan_limit',
+        'message': 'monthly message limit reached',
+        'retryable': false,
+        'details': details,
+      });
+      expect(shown, isNot('monthly message limit reached'));
+      expect(shown, AuraFailure.from(const AuraApiError(
+        error: 'plan_limit', message: 'x', retryable: false, details: details,
+      )).message);
+    });
+
+    test('an unknown error still shows the server message', () async {
+      expect(await refuse({'error': 'something_new', 'message': 'server says'}), 'server says');
+    });
+  });
+
   test('choosing Arabic again retries it after an English-only fallback', () async {
     await container.read(voiceLanguageProvider.notifier).set(VoiceLanguage.arabic);
     final vm = container.read(liveVoiceViewModelProvider.notifier);
@@ -273,5 +366,126 @@ void main() {
     await vm.setLanguage(VoiceLanguage.arabic);
     await _settle();
     expect(channel.startFrames.single['language'], 'ar');
+  });
+
+  Future<LiveVoiceViewModel> readySession({int captureRate = 16000, int playbackRate = 22050}) async {
+    final vm = container.read(liveVoiceViewModelProvider.notifier);
+    container.listen(liveVoiceViewModelProvider, (_, _) {});
+    await vm.startSession(conversationId: 'conv-1');
+    channel.incoming.add(jsonEncode({
+      'type': 'ready',
+      'capture': {'sample_rate': captureRate, 'channels': 1, 'format': 'pcm_s16le'},
+      'playback': {'sample_rate': playbackRate, 'channels': 1, 'format': 'pcm_s16le'},
+    }));
+    await _settle();
+    return vm;
+  }
+
+  group('reply audio (INT-102)', () {
+    test('reaches the sink at the announced playback rate and ends with audio_end', () async {
+      await readySession(playbackRate: 24000);
+      channel.incoming.add(List<int>.filled(4410, 1));
+      await _settle();
+      channel.incoming.add(jsonEncode({'type': 'done'}));
+      channel.incoming.add(jsonEncode({'type': 'audio_end'}));
+      await _settle();
+
+      expect(sink.calls, ['start:24000', 'pcm:4410', 'end']);
+      expect(container.read(liveVoiceViewModelProvider).playbackAmplitude, 0.5);
+    });
+
+    test('a playback frame switches the rate before the audio that uses it', () async {
+      await readySession();
+      channel.incoming.add(jsonEncode({'type': 'playback', 'sample_rate': 16000}));
+      await _settle();
+      channel.incoming.add(List<int>.filled(100, 1));
+      await _settle();
+
+      expect(sink.calls, ['start:22050', 'start:16000', 'pcm:100']);
+    });
+
+    test("the user's barge-in cuts playback at once and drops audio the server already sent", () async {
+      final vm = await readySession();
+      channel.incoming.add(List<int>.filled(100, 1));
+      await _settle();
+
+      await vm.bargeIn();
+      expect(channel.sentTypes, contains('barge_in'));
+      expect(sink.calls.last, 'flush');
+
+      // Still in flight from the reply being cancelled: must not play.
+      channel.incoming.add(List<int>.filled(200, 2));
+      await _settle();
+      expect(sink.pushed.map((p) => p.length), [100]);
+
+      // The server confirms; audio after that is the next reply's.
+      channel.incoming.add(jsonEncode({'type': 'cancelled'}));
+      await _settle();
+      channel.incoming.add(List<int>.filled(300, 3));
+      await _settle();
+      expect(sink.pushed.map((p) => p.length), [100, 300]);
+    });
+
+    test('a barge-in the server detected (cancelled) stops what is playing', () async {
+      await readySession();
+      channel.incoming.add(List<int>.filled(100, 1));
+      await _settle();
+      channel.incoming.add(jsonEncode({'type': 'cancelled'}));
+      await _settle();
+
+      expect(sink.calls.last, 'flush');
+    });
+
+    test('says audio is unavailable when the native engine could not start', () async {
+      sink = _RecordingSink(available: false);
+      await readySession();
+
+      expect(container.read(liveVoiceViewModelProvider).audioUnavailable, isTrue);
+    });
+
+    test('a working sink does not claim audio is unavailable', () async {
+      await readySession();
+
+      expect(container.read(liveVoiceViewModelProvider).audioUnavailable, isFalse);
+    });
+  });
+
+  group('mic framing (INT-116)', () {
+    List<List<int>> sentAudio() => channel.fakeSink.sent.whereType<List<int>>().toList();
+
+    test('mic chunks reach the socket as exact 20 ms frames at the capture rate', () async {
+      await readySession(captureRate: 16000);
+      mic._pcm.add(List<int>.filled(1000, 1)); // 31.25 ms
+      mic._pcm.add(List<int>.filled(1000, 2));
+      await _settle();
+
+      expect(sentAudio().map((f) => f.length), [640, 640, 640]);
+      expect(sentAudio().expand((f) => f).toList(),
+          [...List<int>.filled(1000, 1), ...List<int>.filled(920, 2)]);
+    });
+
+    test('the frame size follows the capture rate the server announced', () async {
+      await readySession(captureRate: 24000);
+      mic._pcm.add(List<int>.filled(1920, 1));
+      await _settle();
+
+      expect(sentAudio().map((f) => f.length), [960, 960]);
+    });
+
+    test('commit sends the partial last frame, padded with silence, before the commit frame', () async {
+      final vm = await readySession(captureRate: 16000);
+      mic._pcm.add(List<int>.filled(700, 1));
+      await _settle();
+
+      vm.commitUtterance();
+
+      final audio = sentAudio();
+      expect(audio.map((f) => f.length), [640, 640]);
+      expect(audio.last.sublist(0, 60), List<int>.filled(60, 1));
+      expect(audio.last.sublist(60).every((b) => b == 0), isTrue);
+      final sent = channel.fakeSink.sent;
+      expect((jsonDecode(sent.last as String) as Map)['type'], 'commit');
+      expect(sent.indexOf(audio.last), sent.length - 2, reason: 'the audio precedes the commit');
+    });
   });
 }

@@ -324,16 +324,20 @@ class TestApprovalGate:
         await registry.register(
             ModelVersion(model_id="m", version="2.0.0", provider_kind="ollama", dataset_digest="d")
         )
-        request = await approvals.request(
-            kind=ApprovalKind.MODEL_PROMOTION,
-            summary="promote 2.0.0",
-            artefact_digest="m@2.0.0",
-        )
-        await approvals.decide(request.id, approved=True, by="reviewer@example.com")
-        await registry.transition("m", "2.0.0", to=ModelStage.CANARY, canary_percent=10)
-        await registry.transition(
-            "m", "2.0.0", to=ModelStage.PRODUCTION, approval_id=request.id
-        )
+        # 1.0.0 is the known-good state: it went live through the gate before 2.0.0 replaced it.
+        # Rolling back to a version that never did is refused (INT-101,
+        # tests/unit/test_model_rollback_gate.py).
+        for version in ("1.0.0", "2.0.0"):
+            request = await approvals.request(
+                kind=ApprovalKind.MODEL_PROMOTION,
+                summary=f"promote {version}",
+                artefact_digest=f"m@{version}",
+            )
+            await approvals.decide(request.id, approved=True, by="reviewer@example.com")
+            await registry.transition("m", version, to=ModelStage.CANARY, canary_percent=10)
+            await registry.transition(
+                "m", version, to=ModelStage.PRODUCTION, approval_id=request.id
+            )
 
         restored = await registry.rollback("m", to_version="1.0.0", actor="oncall")
         assert restored.stage is ModelStage.PRODUCTION
