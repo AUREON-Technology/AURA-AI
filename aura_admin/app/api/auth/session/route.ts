@@ -36,8 +36,12 @@ import { ACCESS_COOKIE, REFRESH_COOKIE, apiOrigin, setSessionCookies } from "@/l
 // Without that header the behaviour is what it was: no refresh, nothing spent.
 const REFRESH_OPT_IN_HEADER = "x-aura-session-refresh";
 
-function refreshWith(refresh: string): Promise<RotatedTokens | null> {
-  return singleFlightRefresh(refresh, refreshAtGateway).catch(() => null);
+// This check never clears cookies, so a rejected refresh and an outage both just mean "no usable
+// session for this request": nginx answers the Grafana request with its login fallback, and the
+// console's own pages keep the session through an outage (INT-104, middleware.ts).
+async function refreshWith(refresh: string): Promise<RotatedTokens | null> {
+  const outcome = await singleFlightRefresh(refresh, refreshAtGateway);
+  return outcome.ok ? outcome.tokens : null;
 }
 
 async function whoAmI(access: string): Promise<Response> {
