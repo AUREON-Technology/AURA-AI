@@ -40,7 +40,10 @@ __all__ = [
     "extract_plain_text",
     "extract_html",
     "extract_pdf",
+    "extract_pdf_async",
     "extract_document",
+    "DocumentTooLargeError",
+    "MAX_PDF_PAGES",
     "apply_ocr",
     "blocks_for_chunking",
     "pdf_support_available",
@@ -214,6 +217,24 @@ def extract_html(content: str) -> DocumentExtraction:
     return extract_plain_text(text)
 
 
+#: The most pages ``extract_pdf`` reads (F40). Upload size is capped in bytes, but a PDF of blank
+#: or near-empty pages packs thousands of pages into very few bytes, and every one is parsed. The
+#: count is read from the page tree before any page is.
+MAX_PDF_PAGES = 500
+
+
+class DocumentTooLargeError(KnowledgeError):
+    """A document is within the byte limit but has more pages than ``MAX_PDF_PAGES``.
+
+    A :class:`KnowledgeError`, so every caller that records an unreadable document per document
+    (the connector import, the legacy ingest) records this one the same way; its own status, so
+    the upload route answers 413 naming the limit rather than a 500.
+    """
+
+    kind = "document_too_large"
+    http_status = 413
+
+
 #: A page whose text layer yields fewer characters than this is treated as unread rather than as
 #: nearly-empty. Scanned pages commonly extract to a handful of stray glyphs from a header stamp or
 #: a page number, and treating those few characters as "the content of page 7" is worse than
@@ -228,8 +249,13 @@ def extract_pdf(
     title: str = "the document",
     keep_images: bool = False,
     min_page_chars: int = MIN_PAGE_CHARS,
+    max_pages: int | None = None,
 ) -> DocumentExtraction:
     """Read a PDF page by page, preserving page numbers and flagging what could not be read.
+
+    Synchronous and CPU-bound: an ``async`` caller should use :func:`extract_pdf_async`, which
+    runs this in a worker thread. ``max_pages`` defaults to :data:`MAX_PDF_PAGES`; a longer
+    document raises :class:`DocumentTooLargeError` before any page is read.
 
     ``keep_images`` carries each unreadable page's image bytes on its block so :func:`apply_ocr` can
     run later. Default false: without an OCR engine configured the bytes are pure memory cost, and a
@@ -252,8 +278,21 @@ def extract_pdf(
             details={"dependency": "pypdf"},
         ) from exc
 
+    limit = MAX_PDF_PAGES if max_pages is None else max_pages
     try:
         reader = PdfReader(io.BytesIO(data))
+        count = len(reader.pages)
+    except Exception as exc:
+        raise KnowledgeError(
+            "could not parse the uploaded PDF",
+            details={"reason": type(exc).__name__},
+        ) from exc
+    if count > limit:
+        raise DocumentTooLargeError(
+            f"the PDF has {count} pages; at most {limit} can be read",
+            details={"pages": count, "limit_pages": limit},
+        )
+    try:
         pages = list(reader.pages)
     except Exception as exc:
         raise KnowledgeError(
@@ -302,6 +341,15 @@ def extract_pdf(
         unreadable_pages=tuple(unreadable),
         blank_pages=tuple(blank),
     )
+
+
+async def extract_pdf_async(data: bytes, **kwargs: Any) -> DocumentExtraction:
+    """:func:`extract_pdf` in a worker thread, so parsing a long PDF does not hold the event loop
+    (F40) -- every other request on that worker used to wait for it. Same arguments, result and
+    errors."""
+    import asyncio
+
+    return await asyncio.to_thread(lambda: extract_pdf(data, **kwargs))
 
 
 def extract_document(data: bytes, *, format: str, title: str = "the document") -> DocumentExtraction:
