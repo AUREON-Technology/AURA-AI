@@ -1,4 +1,5 @@
 import '../database/database.dart';
+import '../database/health_day.dart';
 import '../security/encryption_service.dart';
 
 /// Builds outbox payloads matching the backend's Postgres column names
@@ -37,7 +38,8 @@ class SyncPayloads {
       };
 
   static Map<String, dynamic> healthRecord(HealthRecord r) => {
-        "record_date": r.recordDate.toUtc().toIso8601String(),
+        // The calendar day as its UTC midnight, the server's key for it (F4).
+        "record_date": healthDayOfInstant(r.recordDate).toIso8601String(),
         "weight": r.weight,
         "water_ml": r.waterIntakeMl,
         "sleep_minutes": r.sleepMinutes,

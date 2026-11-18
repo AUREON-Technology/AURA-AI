@@ -15,10 +15,11 @@ void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
   Future<void> pumpPlan(WidgetTester tester, {bool web = true, String role = 'owner', bool teamActive = false,
-      void Function(FakeWorkspaces)? setup}) async {
+      void Function(FakeWorkspaces)? setup, Locale? locale}) async {
     await pumpScreen(
       tester,
       const PlanPage(),
+      locale: locale,
       active: teamActive ? team(role: role) : null,
       overrides: [canCheckoutHereProvider.overrideWithValue(web)],
       setup: (f) {
@@ -31,7 +32,7 @@ void main() {
   testWidgets('shows usage and when it resets', (tester) async {
     await pumpPlan(tester, setup: (f) => f.usage = PlanUsage(plan: 'free', seats: 1, messagesUsed: 12,
         messagesAllowed: 50, storageUsed: 0, storageAllowed: 1024, engineer: false, resetsAt: DateTime.utc(2026, 12, 1)));
-    expect(find.text('Plan: free'), findsOneWidget);
+    expect(find.text('Plan: Free'), findsOneWidget, reason: 'a name, not the server slug (F55)');
     expect(find.text('Messages this month: 12 of 50'), findsOneWidget);
     expect(find.textContaining('Resets on'), findsOneWidget);
     expect(find.text('Engineer agent: Pro and Team plans'), findsOneWidget);
@@ -80,6 +81,51 @@ void main() {
         ));
     expect(find.text('EGP 150.00'), findsOneWidget);
     expect(find.byKey(const Key('plan-cancel')), findsOneWidget);
+  });
+
+  // F55: the plan and the subscription status were the server's slugs ("free", "past_due"),
+  // in English words inside the Arabic UI too.
+  testWidgets('plan and subscription status are named in the UI language', (tester) async {
+    await pumpPlan(
+      tester,
+      locale: const Locale('ar'),
+      setup: (f) => f
+        ..usage = PlanUsage(plan: 'free', seats: 1, messagesUsed: 1, messagesAllowed: 50, storageUsed: 0,
+            storageAllowed: 1024, engineer: false)
+        ..billingStatus = BillingStatus(
+          subscription: SubscriptionView(plan: 'pro', seats: 1, status: 'past_due', periodEnd: DateTime.utc(2026, 12, 18)),
+          payments: const [],
+        ),
+    );
+    expect(find.text('الباقة: المجانية'), findsOneWidget);
+    expect(find.text('الاشتراك: الدفع متأخر'), findsOneWidget);
+    expect(find.textContaining('past_due'), findsNothing);
+    expect(find.textContaining('free'), findsNothing);
+  });
+
+  testWidgets('an English subscription status reads as words', (tester) async {
+    await pumpPlan(tester, setup: (f) => f.billingStatus = BillingStatus(
+          subscription: SubscriptionView(plan: 'pro', seats: 1, status: 'grace', periodEnd: DateTime.utc(2026, 12, 18)),
+          payments: const [],
+        ));
+    expect(find.text('Subscription: In grace period'), findsOneWidget);
+  });
+
+  testWidgets('seats that are not a whole number are refused, not bought as one', (tester) async {
+    await pumpPlan(tester, teamActive: true);
+    for (final typed in ['abc', '0', '2.5']) {
+      await tester.enterText(find.byKey(const Key('plan-seats')), typed);
+      await tester.tap(find.byKey(const Key('plan-buy')));
+      await tester.pumpAndSettle();
+      expect(find.text('Enter a whole number of seats, 1 or more.'), findsOneWidget, reason: typed);
+    }
+    expect(fake.calls.where((c) => c.startsWith('checkout')), isEmpty);
+
+    await tester.enterText(find.byKey(const Key('plan-seats')), '3');
+    await tester.tap(find.byKey(const Key('plan-buy')));
+    await tester.pumpAndSettle();
+    expect(fake.calls, contains('checkout:team:3'));
+    expect(find.text('Enter a whole number of seats, 1 or more.'), findsNothing);
   });
 
   test('a 402 plan_limit becomes a plan-limit row, not a connection error', () {

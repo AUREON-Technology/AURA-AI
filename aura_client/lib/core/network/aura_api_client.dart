@@ -106,11 +106,11 @@ class AuraApiClient {
               ? client.post(uri, headers: headers, body: encoded)
               : http.post(uri, headers: headers, body: encoded);
         case 'PATCH':
-          return client != null
+          pending = client != null
               ? client.patch(uri, headers: headers, body: encoded)
               : http.patch(uri, headers: headers, body: encoded);
         case 'PUT':
-          return client != null
+          pending = client != null
               ? client.put(uri, headers: headers, body: encoded)
               : http.put(uri, headers: headers, body: encoded);
         default:

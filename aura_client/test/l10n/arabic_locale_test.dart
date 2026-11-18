@@ -35,6 +35,8 @@ const _identicalOnPurpose = <String>{
   'debugStepOver', 'debugStepInto', 'debugStepOut',
   // Server environment names, shown as configured.
   'coreBackendEnvironmentProduction', 'coreBackendEnvironmentDevelopment',
+  // Paid plan names are product names, kept in Latin script as elsewhere ("اشترك في Pro").
+  'planNamePro', 'planNameTeam',
 };
 
 void main() {

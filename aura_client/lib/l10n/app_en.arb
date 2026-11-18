@@ -6534,6 +6534,46 @@
   "@planSeatsLabel": {
     "description": "Seat count field"
   },
+  "planNameFree": "Free",
+  "@planNameFree": {
+    "description": "Name of the Free plan (server slug `free`)"
+  },
+  "planNamePro": "Pro",
+  "@planNamePro": {
+    "description": "Name of the Pro plan (server slug `pro`)"
+  },
+  "planNameTeam": "Team",
+  "@planNameTeam": {
+    "description": "Name of the Team plan (server slug `team`)"
+  },
+  "planSeatsInvalid": "Enter a whole number of seats, 1 or more.",
+  "@planSeatsInvalid": {
+    "description": "Seat count field: the text is not a whole number of at least 1"
+  },
+  "subscriptionStatusPending": "Awaiting payment",
+  "@subscriptionStatusPending": {
+    "description": "Subscription status `pending`"
+  },
+  "subscriptionStatusActive": "Active",
+  "@subscriptionStatusActive": {
+    "description": "Subscription status `active`"
+  },
+  "subscriptionStatusPastDue": "Payment overdue",
+  "@subscriptionStatusPastDue": {
+    "description": "Subscription status `past_due`"
+  },
+  "subscriptionStatusGrace": "In grace period",
+  "@subscriptionStatusGrace": {
+    "description": "Subscription status `grace`"
+  },
+  "subscriptionStatusCanceled": "Canceled",
+  "@subscriptionStatusCanceled": {
+    "description": "Subscription status `canceled`"
+  },
+  "subscriptionStatusExpired": "Expired",
+  "@subscriptionStatusExpired": {
+    "description": "Subscription status `expired`"
+  },
   "planTeamNotInApp": "Team plans can't be bought in this app.",
   "@planTeamNotInApp": {
     "description": "Shown on iOS and Android for a team workspace: no store purchase and no mention of another way to pay"

@@ -306,6 +306,9 @@ class SseAgentClient {
       }
       if (response.statusCode != 200) {
         final body = await response.stream.bytesToString();
+        // The turn carried the active team; a team we were removed from is dropped, so the next
+        // turn goes out in the personal scope instead of failing the same way (F5).
+        healActiveWorkspace(_ref, statusCode: response.statusCode, body: body);
         throw AuraApiError.fromResponse(
           statusCode: response.statusCode,
           body: body,

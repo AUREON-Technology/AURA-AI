@@ -8178,6 +8178,66 @@ abstract class AppLocalizations {
   /// **'Seats'**
   String get planSeatsLabel;
 
+  /// Name of the Free plan (server slug `free`)
+  ///
+  /// In en, this message translates to:
+  /// **'Free'**
+  String get planNameFree;
+
+  /// Name of the Pro plan (server slug `pro`)
+  ///
+  /// In en, this message translates to:
+  /// **'Pro'**
+  String get planNamePro;
+
+  /// Name of the Team plan (server slug `team`)
+  ///
+  /// In en, this message translates to:
+  /// **'Team'**
+  String get planNameTeam;
+
+  /// Seat count field: the text is not a whole number of at least 1
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a whole number of seats, 1 or more.'**
+  String get planSeatsInvalid;
+
+  /// Subscription status `pending`
+  ///
+  /// In en, this message translates to:
+  /// **'Awaiting payment'**
+  String get subscriptionStatusPending;
+
+  /// Subscription status `active`
+  ///
+  /// In en, this message translates to:
+  /// **'Active'**
+  String get subscriptionStatusActive;
+
+  /// Subscription status `past_due`
+  ///
+  /// In en, this message translates to:
+  /// **'Payment overdue'**
+  String get subscriptionStatusPastDue;
+
+  /// Subscription status `grace`
+  ///
+  /// In en, this message translates to:
+  /// **'In grace period'**
+  String get subscriptionStatusGrace;
+
+  /// Subscription status `canceled`
+  ///
+  /// In en, this message translates to:
+  /// **'Canceled'**
+  String get subscriptionStatusCanceled;
+
+  /// Subscription status `expired`
+  ///
+  /// In en, this message translates to:
+  /// **'Expired'**
+  String get subscriptionStatusExpired;
+
   /// Shown on iOS and Android for a team workspace: no store purchase and no mention of another way to pay
   ///
   /// In en, this message translates to:

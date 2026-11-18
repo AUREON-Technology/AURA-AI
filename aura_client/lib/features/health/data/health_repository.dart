@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
+import 'package:aura_client/core/database/health_day.dart';
 import 'package:aura_client/core/sync/sync_payloads.dart';
 
 class HealthRepository {
@@ -17,16 +18,20 @@ class HealthRepository {
     await _db.enqueueOutbox(table: 'health_records', recordId: id, operation: 'upsert', payload: SyncPayloads.healthRecord(row));
   }
 
-  // Normalize date to starting second of the day
-  DateTime _normalizeDate(DateTime date) {
-    return DateTime(date.year, date.month, date.day);
-  }
+  // The stored key for the local calendar day [date] falls on: its UTC midnight, the same
+  // instant the server keys the day on (F4, `core/database/health_day.dart`).
+  DateTime _normalizeDate(DateTime date) => healthDayFor(date);
+
+  // Rows leave the repository with their day as local midnight, so a screen formatting
+  // `recordDate` shows the stored calendar date in every time zone.
+  HealthRecord _forDisplay(HealthRecord r) => r.copyWith(recordDate: healthDayForDisplay(r.recordDate));
 
   // Watch health record for a specific day
   Stream<HealthRecord?> watchDailyRecord(DateTime date) {
     final target = _normalizeDate(date);
     return (_db.select(_db.healthRecords)..where((t) => t.recordDate.equals(target)))
-        .watchSingleOrNull();
+        .watchSingleOrNull()
+        .map((r) => r == null ? null : _forDisplay(r));
   }
 
   // Watch the last 7 days of records for trend lines
@@ -38,7 +43,8 @@ class HealthRepository {
           ..orderBy([
             (t) => OrderingTerm(expression: t.recordDate, mode: OrderingMode.asc),
           ]))
-        .watch();
+        .watch()
+        .map((rows) => rows.map(_forDisplay).toList());
   }
 
   // Helper to retrieve or initialize today's record
