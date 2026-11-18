@@ -1,6 +1,6 @@
 # Plan: enable built runtime features on Railway, then build Arabic/live voice, vision and ops
 
-**Status:** Approved 2026-11-17; Phase V built (see its progress note) · **Date:** 2026-11-17 · **Base:** `main@446e004`
+**Status:** Approved 2026-11-17; Phases V and I built (see their progress notes) · **Date:** 2026-11-17 · **Base:** `main@446e004`
 (the SHA live on Railway) · **Branch:** `anas/laughing-hamilton-glfevj`
 
 ## Goal
@@ -48,6 +48,12 @@ Recorded 2026-11-17.
    English / العربية toggle that starts from the device locale (`ar*` → Arabic, else English)
    and is remembered on the device. The chat mic button uses the same choice. The app's UI
    stays English only; this sets only what the server's Whisper listens for.
+9. **Vision model = `Qwen/Qwen2.5-VL-7B-Instruct-AWQ` @ `536a3579…` on the existing
+   `a10g-small` Space** (2026-11-17, Phase I). It supersedes decision 4's unquantised wording
+   and the repo's earlier Qwen3-VL-8B pick, which stays the upgrade path for a bigger GPU.
+10. **The Space sleeps when idle, and health checks must not wake it** (2026-11-17, Phase I).
+    `AURA_PROVIDER_HFSPACE_HEALTH_PROBE=passive`; the first image after a quiet spell gets OCR
+    only, and the turn says so (`degraded` vision step). No always-on GPU.
 
 ## Phase 0: fix and enable on Railway (owner actions, no code)
 
@@ -117,6 +123,25 @@ Still to do: the owner's Railway change (`AURA_VOICE_STT_MODEL=base`, revision,
 A human-speech WER report is what closes GAP-020.
 
 ## Phase I: vision (mostly configuration + proof)
+
+### Phase I progress (2026-11-17)
+
+Built and tested locally (not CI-run, not deployed):
+- `AURA_PROVIDER_<NAME>_HEALTH_PROBE=active|passive`. A passive provider is reported from its
+  circuit breaker (`"probe": "passive"`) and never called by readiness. It cannot hold the
+  gateway ready on its own while a probed provider is down. Forwarded in
+  `docker-compose.prod.yml` (default `active`).
+- The vision step ends `degraded`, with a "send it again in a minute" description, when only
+  OCR read the image.
+- Client: steps update in place by `step_id`. Every finished plan step and every image turn
+  used to leave a spinning "running" row. `done` shows a check mark, `degraded` a warning.
+- Docs: `docs/deployment/inference-plane.md` §8 carries the chosen model, the pinned revision,
+  the sleeping-Space notes (persistent storage + `HF_HOME=/data/hf`) and `api.aureon-ai.tech`.
+
+The rest is the owner's: Space variables + resume, Railway variables, then
+`deploy/scripts/verify_vision.py` (→ `docs/reports/phase-6-vision-*.txt`) and the
+`evaluation.vision_eval` run. These close Phase 6/7 of ADR-031 and GAP-019.
+
 
 - **Space (`deploy/spaces/inference-vllm/`):** GPU hardware (L4 or A10G, no sleep while on trial),
   `VLLM_MODEL=Qwen/Qwen2.5-VL-7B-Instruct-AWQ` with its revision pinned, `MAX_IMAGES=4`. The

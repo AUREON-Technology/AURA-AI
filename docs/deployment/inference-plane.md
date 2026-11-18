@@ -119,8 +119,8 @@ unmeasured until the plan's P7-4 regression eval runs.
 
 | Variable | Value | Why |
 |---|---|---|
-| `VLLM_MODEL` | `Qwen/Qwen3-VL-8B-Instruct` on the L40S (48 GB, BF16 fits with room for KV cache); `Qwen/Qwen3-VL-8B-Instruct-FP8` on a 24 GB Ada/Hopper card (L4) | Apache-2.0, first-class vLLM architecture, the GAP-019 candidate. Qwen2.5-VL-3B is excluded (`qwen-research` license). |
-| `VLLM_MODEL_REVISION` | the commit SHA from the model repo's *Files and versions* history (required; the entrypoint refuses to start without it) | Without it, an upstream push silently changes what answers |
+| `VLLM_MODEL` | **`Qwen/Qwen2.5-VL-7B-Instruct-AWQ`** on the current `a10g-small` (24 GB; ~6 GB AWQ weights leave room for a 16k KV cache). Owner decision 2026-11-17. Upgrade path: `Qwen/Qwen3-VL-8B-Instruct` on an L40S (48 GB, BF16), or `-FP8` on a 24 GB Ada/Hopper card (L4) | Apache-2.0 (Hub tag, not gated), supported by vLLM. Qwen2.5-VL-3B is excluded (`qwen-research` license). |
+| `VLLM_MODEL_REVISION` | `536a35794df8831aa814970ee8f89eff577e7718` for the model above (the repo's head on 2026-11-17). Required: the entrypoint refuses to start without it | Without it, an upstream push silently changes what answers |
 | `VLLM_MAX_MODEL_LEN` | `16384` | The gateway shrinks images to a 1536 px long edge, about 2,300 vision tokens each for a square image. Four images exceed 8192 on their own, and the router then excludes this provider (`context_window_too_small`) |
 | `VLLM_MAX_IMAGES_PER_PROMPT` | `4` | Must be ≥ `AURA_VISION_MAX_IMAGES`. Any value > 0 also makes the entrypoint refuse remote media URLs (`--allowed-media-domains media.invalid`, redirects off). The gateway only ever sends base64 |
 
@@ -136,6 +136,7 @@ AURA_PROVIDER_HFSPACE_MODALITIES=text,image
 AURA_PROVIDER_HFSPACE_CONTEXT_WINDOW=16384      # exactly VLLM_MAX_MODEL_LEN
 AURA_VISION_ENABLED=true
 AURA_VISION_MAX_IMAGES=4                        # <= VLLM_MAX_IMAGES_PER_PROMPT
+AURA_PROVIDER_HFSPACE_HEALTH_PROBE=passive      # a sleeping Space: readiness must not wake it
 ```
 
 Declare no pool. A generalist provider carrying the image modality is chosen for image turns
@@ -143,6 +144,26 @@ Declare no pool. A generalist provider carrying the image modality is chosen for
 hosted slot (`hosted1`) never receives an image, whatever it declares. The router refuses every
 `third_party` provider for image requests, and image turns are SENSITIVE. `hfspace` is rented
 compute running our own weights, so it is not third-party, and its ceiling is SENSITIVE.
+
+**A Space that sleeps when idle** (owner decision 2026-11-17: pay for the GPU only while it is
+used). Hugging Face wakes a sleeping Space on *any* request, so:
+
+- Set `AURA_PROVIDER_HFSPACE_HEALTH_PROBE=passive` on the Control Plane. `/health/ready` then
+  reports the Space from its circuit breaker (`"probe": "passive"`) and never calls it. Without
+  this, a load-balancer health check or an uptime probe on `/health/ready` keeps the GPU awake
+  around the clock (an `a10g-small` is roughly $1/hour). A passive provider can never hold the
+  gateway ready on its own while a probed provider (`hosted1`) is down.
+- Text turns route to `hosted1` first (higher `quality_tier`, and it may take SENSITIVE content).
+  The Space wakes for image turns, and for text only when every hosted slot has failed.
+- The first image after a quiet spell usually finds the Space waking. The turn then answers from
+  OCR only (Tesseract is in the gateway image), and its vision step reports `degraded`: "the vision
+  model is unavailable or still starting. Send it again in a minute". The request that got OCR is
+  also the one that woke the Space.
+- Cold start = container start + weight download + model load. On a Space without persistent
+  storage the ~6 GB download repeats on every wake. **Persistent storage** (Settings → Persistent
+  storage, mounted at `/data`) plus the Space variable `HF_HOME=/data/hf` keeps the weights between
+  wakes. Measure the wake time once and record it in the Phase 6 report.
+- *Settings → Sleep time* sets how long the Space stays awake after the last request.
 
 **Order of operations:**
 1. Change the Space variables and wait for `/v1/models` to list the new model.
@@ -155,7 +176,7 @@ Reversed, the gateway offers attachments to a text-only server, and image turns 
 **Evidence** (Phase 6 exit). Run from anywhere that can reach both:
 
 ```bash
-AURA_VERIFY_GATEWAY=https://aureon-ai.tech AURA_VERIFY_TOKEN=<a user's access token> \
+AURA_VERIFY_GATEWAY=https://api.aureon-ai.tech AURA_VERIFY_TOKEN=<a user's access token> \
 AURA_VERIFY_SPACE_URL=https://<owner>-<space>.hf.space AURA_VERIFY_SPACE_KEY=<VLLM_API_KEY> \
     python deploy/scripts/verify_vision.py
 ```
@@ -182,7 +203,7 @@ python -m evaluation.vision_eval run --target space --base-url https://<owner>-<
     --api-key-env SPACE_KEY --model <VLLM_MODEL> --revision <VLLM_MODEL_REVISION> \
     --label qwen3-vl-8b --hardware "HF L40S"
 AURA_EVAL_TOKEN=<user access token> python -m evaluation.vision_eval run --target gateway \
-    --base-url https://aureon-ai.tech --label prod-gateway
+    --base-url https://api.aureon-ai.tech --label prod-gateway
 python -m evaluation.vision_eval compare ../docs/reports/vision-eval-*.json
 ```
 

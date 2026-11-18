@@ -7,6 +7,14 @@
 
 ## Summary
 
+**Update 2026-11-17, Phase I (same branch, TESTED locally, not CI-run or deployed).**
+`AURA_PROVIDER_<NAME>_HEALTH_PROBE=passive` lets readiness report a provider from its circuit
+breaker without calling it. That is for the HF Space, which sleeps when idle and wakes (and
+bills) on any request, including a `/health/ready` probe. An image turn answered by OCR alone
+now ends its vision step `degraded` with a "send it again in a minute" description. The Space
+itself is **PAUSED** (`a10g-small`). The chosen VLM (`Qwen2.5-VL-7B-Instruct-AWQ` @ `536a3579`)
+is not served yet, so GAP-019 stays `in_progress`.
+
 **Update 2026-11-17 (live probe of `api.aureon-ai.tech` at `446e004`, plus Phase V on branch
 `anas/laughing-hamilton-glfevj`).** `/health/ready`: healthy, schema `0021`, `hfspace` 503. **The
 knowledge alias still points at the `hash-embed-v1` index while the embedder is bge-small**, so

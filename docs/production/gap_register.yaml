@@ -567,6 +567,12 @@ gaps:
       tainting, SENSITIVE). The router refuses text-only and third-party providers for any request
       carrying images. Off by default (AURA_VISION_ENABLED). No vision pool is deployed (GAP-012),
       no client attaches images yet, and no eval exists. No video.
+      Phase I (2026-11-17, branch anas/laughing-hamilton-glfevj, tested locally, not deployed):
+      the owner chose Qwen/Qwen2.5-VL-7B-Instruct-AWQ @536a3579 on the existing a10g-small Space,
+      sleeping when idle. Built for that: AURA_PROVIDER_<NAME>_HEALTH_PROBE=passive, so
+      /health/ready never wakes the Space, and a `degraded` vision step when only OCR could read
+      the image (the Space was asleep). The Space is PAUSED today; serving, the verify_vision.py
+      report and the eval are still the owner's (docs/deployment/inference-plane.md section 8).
     target_state: Self-hosted VLM pool (e.g. Qwen3-VL-8B-Instruct) behind the router; image upload/understanding through the kernel.
     owner: ml
     dependencies: [GAP-012]

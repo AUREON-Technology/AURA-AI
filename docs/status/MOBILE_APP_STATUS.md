@@ -42,6 +42,14 @@ Fixed:
 Still the owner's: the iOS OAuth client values, the same setup for macOS (plus its keychain
 entitlement), the Firebase console check (SEC-08), and Sign in with Apple.
 
+## Update 2026-11-17 (Phase I, same branch)
+
+**TESTED locally**, not released. Turn steps now update in place by `step_id`. Before, every
+finished plan step, and the vision step of every image turn, left a spinning "running" row
+beside its result. The vision step's `done` shows a check mark. The new `degraded` status (only
+OCR could read the image, because the vision model was asleep) shows a warning and the server's
+"send it again in a minute" text.
+
 ## Update 2026-11-17 (Phase V voice language, branch `anas/laughing-hamilton-glfevj`)
 
 **TESTED locally** (Flutter 3.44.6: `flutter analyze` clean, `flutter test` 794 passed, 4
