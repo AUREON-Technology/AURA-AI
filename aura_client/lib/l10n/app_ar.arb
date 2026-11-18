@@ -250,6 +250,8 @@
   "hostdBrowseExecutable": "دوّر على ملف تشغيل الـ Daemon",
   "hostdSaveExecutable": "حفظ مسار ملف التشغيل",
   "liveVoiceEnd": "إنهاء الصوت المباشر",
+  "voiceLanguageLabel": "لغة الكلام",
+  "voiceLiveArabicUnavailable": "الصوت المباشر بالعربي مش متاح على السيرفر ده لسه، فالجلسة هتكمل بالإنجليزي.",
   "eventChangeStart": "تغيير وقت البداية",
   "eventChangeEnd": "تغيير وقت النهاية",
   "eventAdd": "إضافة ميعاد",

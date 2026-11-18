@@ -748,6 +748,13 @@ class AppLocalizationsAr extends AppLocalizations {
   String get liveVoiceEnd => 'إنهاء الصوت المباشر';
 
   @override
+  String get voiceLanguageLabel => 'لغة الكلام';
+
+  @override
+  String get voiceLiveArabicUnavailable =>
+      'الصوت المباشر بالعربي مش متاح على السيرفر ده لسه، فالجلسة هتكمل بالإنجليزي.';
+
+  @override
   String get eventChangeStart => 'تغيير وقت البداية';
 
   @override

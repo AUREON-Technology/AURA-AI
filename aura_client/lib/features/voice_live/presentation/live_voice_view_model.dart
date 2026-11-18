@@ -7,7 +7,7 @@ import 'package:aura_client/core/ai/voice/live/live_audio_sink.dart';
 import 'package:aura_client/core/ai/voice/live/live_mic_source.dart';
 import 'package:aura_client/core/ai/voice/live/live_voice_protocol.dart';
 import 'package:aura_client/core/ai/voice/live/live_voice_socket.dart';
-import 'package:aura_client/core/platform/client_language.dart';
+import 'package:aura_client/core/ai/voice/voice_language.dart';
 import 'package:aura_client/features/chat/data/chat_repository.dart';
 import 'package:aura_client/features/chat/data/turn_meta.dart';
 import 'package:aura_client/features/voice_live/data/live_voice_history.dart';
@@ -42,17 +42,15 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
   StreamSubscription<double>? _micAmpSub;
   final _uuid = const Uuid();
 
-  /// The language this session asked the server to transcribe. Starts as the app's language
-  /// (docs/plans/arabic-language_plan.md, stage 4); forced to English for the rest of this view
-  /// model's life once a server answers `language_unsupported` (one still on an English-only
-  /// Whisper model), so live voice keeps working there instead of failing every time.
+  /// The language this session asked the server to transcribe: the user's voice language
+  /// (the app's language unless the live screen's toggle overrides it; Phase V), forced to
+  /// English once a server answers `language_unsupported` (one still on an English-only Whisper
+  /// model), so live voice keeps working there instead of failing every time
+  /// (docs/plans/arabic-language_plan.md, stage 4). Choosing a language again clears that.
   bool _englishOnlyServer = false;
 
-  String get _sessionLanguage {
-    if (_englishOnlyServer) return 'en';
-    final app = ClientLanguage.current();
-    return app == 'ar' ? 'ar' : 'en';
-  }
+  String get _sessionLanguage =>
+      _englishOnlyServer ? 'en' : ref.read(voiceLanguageProvider).code;
 
   @override
   LiveVoiceState build() {
@@ -89,6 +87,9 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
     });
 
     try {
+      // A choice saved on an earlier run is read back asynchronously; wait for it so a session
+      // opened straight after launch does not start in the device default instead.
+      await ref.read(voiceLanguageProvider.notifier).restored;
       await socket.connectAndAuth();
       // Torn down while connecting (the server closed the socket, or the user left).
       if (!identical(_socket, socket) || !socket.isConnected) return;
@@ -114,6 +115,13 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
     );
   }
 
+  Future<void> _restartInEnglish() async {
+    await startSession(conversationId: state.sessionId);
+    if (_englishOnlyServer) {
+      state = state.copyWith(error: currentL10n.voiceLiveArabicUnavailable);
+    }
+  }
+
   /// Starts the mic at the rate the server's `ready` frame announced (INT-020).
   Future<void> _startCapture(int sampleRate) async {
     final mic = _mic;
@@ -132,6 +140,21 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
     });
     if (state.phase == 'connecting') {
       state = state.copyWith(phase: 'listening');
+    }
+  }
+
+  /// Switches the language the server listens for. The start frame fixes a session's language,
+  /// so an open session is restarted in the new one -- same conversation, fresh socket.
+  Future<void> setLanguage(VoiceLanguage language) async {
+    final notifier = ref.read(voiceLanguageProvider.notifier);
+    if (ref.read(voiceLanguageProvider) == language && !_englishOnlyServer) return;
+    // An explicit choice retries it: the server may have moved to a multilingual model.
+    _englishOnlyServer = false;
+    await notifier.set(language);
+    // An open session restarts in the new language; so does one that just failed (most
+    // often because the server refused the previous language). Ended sessions stay ended.
+    if (state.phase != 'idle') {
+      await startSession(conversationId: state.sessionId);
     }
   }
 
@@ -237,9 +260,10 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
       case LiveErrorFrame(:final error)
           when error == 'language_unsupported' && !_englishOnlyServer:
         // The server's speech model is English-only and closed the socket: start again in
-        // English, keeping the same conversation.
+        // English, keeping the same conversation, and say why -- the user may have chosen
+        // Arabic on purpose.
         _englishOnlyServer = true;
-        unawaited(startSession(conversationId: state.sessionId));
+        unawaited(_restartInEnglish());
       case LiveErrorFrame(:final error, :final message)
           when LiveVoiceSocket.terminalErrors.contains(error):
         // The socket is gone: stop the mic and playback rather than leave the screen

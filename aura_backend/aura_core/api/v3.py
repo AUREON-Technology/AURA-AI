@@ -1156,35 +1156,54 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         `faster-whisper`, Phase F2). 503s with a clear `dependency_unavailable` body when no
         engine is configured, rather than pretending an empty transcript is a real answer.
 
-        ``language`` (optional, ISO-639-1 such as ``ar``) is a hint for a multilingual model;
-        without it the model detects the language itself. An English-only (``*.en``) model
-        ignores it, exactly as before the field existed (docs/plans/arabic-language_plan.md,
-        stage 4)."""
+        ``language`` (optional, ISO-639-1 such as ``ar``; ``AR-eg`` folds to ``ar``) is a hint
+        for a multilingual model, validated exactly as a live-voice start frame is; an unknown
+        code is a 422. Without it the model detects the language itself. An English-only
+        (``*.en``) model ignores the hint, exactly as before the field existed: clients already
+        in use send ``ar`` whenever the app is in Arabic, and must keep getting a transcript
+        (docs/plans/arabic-language_plan.md, stage 4).
+
+        The response's ``language`` (Phase V, additive) is the language the engine used --
+        the hint it honoured, or the one it detected -- or ``null`` when it cannot say.
+        """
+        from ..ports.speech import LanguageAwareSpeechToText
+        from ..voice.session import normalise_language
+
         await enforce_rate_limit(request, caller, "voice")
-        if container.stt_engine is None:
+        engine = container.stt_engine
+        if engine is None:
             raise DependencyUnavailableError(
                 "no speech-to-text engine is configured on this deployment",
                 dependency="faster-whisper",
             )
+        hint: str | None = None
+        if language is not None and language.strip():
+            hint = normalise_language(language)
+            if hint is None:
+                raise ValidationError(
+                    "language is not a supported language code; send an ISO-639-1 code such "
+                    "as en or ar",
+                    details={"field": "language", "reason": "language_unsupported"},
+                )
+        language_aware = isinstance(engine, LanguageAwareSpeechToText)
+        english_only = (
+            not engine.multilingual if language_aware
+            else settings.voice.stt_model.endswith(".en")
+        )
+        if english_only:
+            hint = None
         data = await file.read()
         if len(data) > MAX_AUDIO_BYTES:
             raise ValidationError(
                 "uploaded audio exceeds the size limit", details={"limit_bytes": MAX_AUDIO_BYTES}
             )
-        hint = None
-        if language:
-            from ..voice.session import normalise_language
-
-            hint = normalise_language(language)
-            if hint is None:
-                raise ValidationError(
-                    "language is not a supported language code; send an ISO-639-1 code such as ar",
-                    details={"reason": "language_unsupported"},
-                )
-            if settings.voice.stt_model.endswith(".en"):
-                hint = None
-        text = await container.stt_engine.transcribe(data, language=hint)
-        return JSONResponse(content={"text": text, "engine": container.stt_engine.name})
+        if language_aware:
+            text, used = await engine.transcribe_detect(data, language=hint)
+        else:
+            text, used = await engine.transcribe(data, language=hint), hint
+        if english_only:
+            used = "en"
+        return JSONResponse(content={"text": text, "engine": engine.name, "language": used})
 
     @router.post("/voice/speak")
     async def synthesize_speech(

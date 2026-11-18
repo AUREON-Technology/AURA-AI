@@ -174,6 +174,7 @@ def register_voice_live(
                 voice=voice_name,
                 capabilities=_granted(container, principal),
                 safety_guards_enabled=bool(live.get("safety_guards_enabled", True)),
+                vad=(live.get("vad_factory") or (lambda: None))(),
             )
             lang_err = session.check_language()
             if lang_err:

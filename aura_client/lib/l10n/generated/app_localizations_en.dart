@@ -753,6 +753,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get liveVoiceEnd => 'End live voice';
 
   @override
+  String get voiceLanguageLabel => 'Voice language';
+
+  @override
+  String get voiceLiveArabicUnavailable =>
+      'Arabic live voice isn\'t available on this server yet, so this session continues in English.';
+
+  @override
   String get eventChangeStart => 'Change start time';
 
   @override

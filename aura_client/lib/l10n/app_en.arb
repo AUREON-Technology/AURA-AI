@@ -984,9 +984,26 @@
   "@hostdSaveExecutable": {
     "description": "Host daemon page: save path button tooltip"
   },
+  "hostdPairedToOtherServer": "This app is signed in to {appBackendUrl}. Pair again to move the daemon there.",
+  "@hostdPairedToOtherServer": {
+    "description": "Host daemon page: warning when the daemon is paired to a different backend than the app",
+    "placeholders": {
+      "appBackendUrl": {
+        "type": "String"
+      }
+    }
+  },
   "liveVoiceEnd": "End live voice",
   "@liveVoiceEnd": {
     "description": "Live voice page close button tooltip"
+  },
+  "voiceLanguageLabel": "Voice language",
+  "@voiceLanguageLabel": {
+    "description": "Live voice page: accessibility label of the toggle choosing the language the user speaks in"
+  },
+  "voiceLiveArabicUnavailable": "Arabic live voice isn't available on this server yet, so this session continues in English.",
+  "@voiceLiveArabicUnavailable": {
+    "description": "Live voice page: the server's speech model is English-only, so the session restarted in English"
   },
   "eventChangeStart": "Change start time",
   "@eventChangeStart": {

@@ -460,7 +460,7 @@ class ChatRepository {
             break;
           case SseEventKind.step:
             if (event.step != null) {
-              steps.add(event.step!);
+              upsertStep(steps, event.step!);
               meta = meta.copyWith(steps: List.of(steps));
               await _updateMessageTurnMeta(assistantMsgId, meta);
             }

@@ -7,6 +7,34 @@
 
 ## Summary
 
+**Update 2026-11-18, Phase R (same branch, TESTED locally, not CI-run or deployed).** On Railway,
+`/metrics` was answered by one random uvicorn worker per scrape. The image `CMD` now shares one
+`PROMETHEUS_MULTIPROC_DIR`. Tracing produced no spans at all; requests, provider attempts and turns
+are now traced, with no content or identity in any span. Grafana Cloud runbook:
+`docs/deployment/observability.md`. Nothing is configured on Grafana Cloud yet (GAP-036
+`in_progress`).
+
+**Update 2026-11-17, Phase I (same branch, TESTED locally, not CI-run or deployed).**
+`AURA_PROVIDER_<NAME>_HEALTH_PROBE=passive` lets readiness report a provider from its circuit
+breaker without calling it. That is for the HF Space, which sleeps when idle and wakes (and
+bills) on any request, including a `/health/ready` probe. An image turn answered by OCR alone
+now ends its vision step `degraded` with a "send it again in a minute" description. The Space
+itself is **PAUSED** (`a10g-small`). The chosen VLM (`Qwen2.5-VL-7B-Instruct-AWQ` @ `536a3579`)
+is not served yet, so GAP-019 stays `in_progress`.
+
+**Update 2026-11-17 (live probe of `api.aureon-ai.tech` at `446e004`, plus Phase V on branch
+`anas/laughing-hamilton-glfevj`).** `/health/ready`: healthy, schema `0021`, `hfspace` 503. **The
+knowledge alias still points at the `hash-embed-v1` index while the embedder is bge-small**, so
+`resolve_for_read()` refuses it and every retrieval returns `strategy="unavailable"`: RAG is off
+live until an admin runs `POST /api/v3/admin/index/rebuild` (plan Phase 0.2,
+`docs/plans/runtime_feature_enablement_plan.md`). The apex `aureon-ai.tech` answers Railway's
+`Application not found`. Phase V, TESTED locally (pytest 5156 passed / 42 skipped, legacy
+unittest 146 OK), not CI-run or deployed: `/voice/transcribe` reports the `language` it used
+(merged 2026-11-18 with Arabic stage 4, whose rule stands: an unknown code is a 422, and an
+English-only model ignores the hint), an opt-in Silero VAD (`AURA_VOICE_LIVE_VAD=silero`, reported
+as `voice.vad` on `/health/ready`) and `scripts/measure_stt_wer.py`. After the merge: pytest 5307
+passed / 42 skipped, legacy unittest 148 OK.
+
 **Update 2026-11-07 (`main` at `772f9ef`, live probe):** production serves `ffbbb9f` and
 `/health/ready` reports **`schema.revision 0019`**, so open issue 0 below is resolved live and the
 pre-deploy migration path has now (by one route or another) applied real revisions; confirm which in

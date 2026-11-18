@@ -85,6 +85,7 @@ from ..llm.router import TurnBudget
 from ..llm.sensitivity import DataScope, data_scope, escalate
 from ..llm.workload import effective_workload, workload_for_turn, workload_scope
 from ..observability.logging import LogContext, get_logger
+from ..observability.tracing import record_span
 from ..ports.runtime import ToolContext
 from ..prompts.language import reply_language
 from ..prompts.library import AGENT_PROMPT_IDS
@@ -329,6 +330,67 @@ def _stream_error_outcome(exc: AuraError) -> TurnOutcome:
     if isinstance(exc, BudgetExceededError):
         return TurnOutcome.BUDGET_EXCEEDED
     return TurnOutcome.ERROR
+
+
+def _trace_turn(telemetry: TurnTelemetry) -> None:
+    """One ``aura.turn`` span per finished turn (Phase R2), built from its telemetry record.
+
+    Bounded labels, durations and counts only. No session, user or conversation id, no prompt
+    or answer text: spans leave for a third-party collector, and the per-user detail stays in
+    AURA's own telemetry store. The stage durations are attributes rather than child spans:
+    the kernel measures them as values, not as nested blocks.
+    """
+    t = telemetry.timings
+    record_span(
+        "aura.turn",
+        duration_ms=telemetry.total_ms,
+        attributes={
+            "aura.route": telemetry.route,
+            "aura.agent": telemetry.agent,
+            "aura.strategy": telemetry.strategy,
+            "aura.outcome": str(telemetry.outcome),
+            "aura.error_kind": telemetry.error_kind,
+            "aura.provider": telemetry.provider,
+            "aura.model": telemetry.model,
+            "aura.fallback_count": telemetry.fallback_count,
+            "aura.prompt_tokens": telemetry.prompt_tokens,
+            "aura.completion_tokens": telemetry.completion_tokens,
+            "aura.ttft_ms": None if telemetry.ttft_ms is None else round(telemetry.ttft_ms, 1),
+            "aura.degraded": telemetry.degraded,
+            "aura.tainted": telemetry.tainted,
+            "aura.retrieval.strategy": telemetry.retrieval.strategy,
+            "aura.retrieval.returned": telemetry.retrieval.returned,
+            **{f"aura.stage.{name}_ms": round(getattr(t, name), 1) for name in _TRACED_STAGES},
+        },
+        error=telemetry.error_kind is not None,
+    )
+
+
+#: The `StageTiming` fields a turn span reports.
+_TRACED_STAGES = (
+    "guards_in", "memory", "retrieval", "context", "planning", "reasoning", "tools",
+    "generation", "guards_out",
+)
+
+
+def _vision_step_outcome(perception: Any) -> dict[str, str]:
+    """Status and wording for the finished vision step (ADR-031).
+
+    ``done`` when a vision model described the images. ``degraded`` when only OCR read them:
+    the usual cause is a vision server that sleeps when idle and is still waking. The step says
+    so, so the user knows to send the image again rather than trust a text-only reading.
+    ``degraded`` is a status value added for this; a client that does not know it still shows
+    the description.
+    """
+    if getattr(perception, "mode", None) == "ocr_fallback":
+        return {
+            "status": "degraded",
+            "description": (
+                "Only the text in the image(s) could be read: the vision model is unavailable "
+                "or still starting. Send it again in a minute for a full look."
+            ),
+        }
+    return {"status": "done", "description": "Looked at the image(s)"}
 
 
 class AIKernel:
@@ -738,7 +800,7 @@ class AIKernel:
                     request, perception = await self._perceive_images(request, message)
                     yield {
                         "type": "step", "step_id": "vision", "kind": "vision",
-                        "status": "done", "description": "Looked at the image(s)",
+                        **_vision_step_outcome(perception),
                         "detail": perception.as_dict(),
                         "elapsed_ms": round(perception.duration_ms, 2),
                     }
@@ -2351,6 +2413,7 @@ class AIKernel:
         )
 
     async def _record(self, telemetry: TurnTelemetry) -> None:
+        _trace_turn(telemetry)
         if self._metrics is not None:
             try:
                 self._metrics.observe_turn(telemetry)

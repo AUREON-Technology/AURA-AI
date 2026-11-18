@@ -64,17 +64,26 @@ class VoiceClient {
   /// Sends a recorded voice note and returns the transcript, or `null` on any failure --
   /// callers treat a `null` result as "nothing to insert" rather than surfacing raw errors for
   /// what is, at worst, a failed convenience feature.
-  Future<String?> transcribe(List<int> audioBytes, {String filename = 'voice.wav'}) async {
+  ///
+  /// [language] is the code the note is spoken in (`en`, `ar`): the user's voice language.
+  /// Omitted, the app's display language stands in for it.
+  Future<String?> transcribe(
+    List<int> audioBytes, {
+    String filename = 'voice.wav',
+    String? language,
+  }) async {
     final tokens = _ref.read(tokenManagerProvider);
     Future<http.StreamedResponse> send() async {
       final token = await tokens.getValidAccessToken();
       final uri = Uri.parse("$_backendUrl/transcribe");
       final request = http.MultipartRequest('POST', uri)
         ..files.add(http.MultipartFile.fromBytes('file', audioBytes, filename: filename));
-      // An Arabic app hints Arabic to a multilingual speech model; otherwise the model detects
+      // Arabic is the only hint sent: for an Arabic voice language (the live screen's toggle,
+      // passed as [language]) or, when none is given, an Arabic app. Otherwise the model detects
       // the language itself, so Arabic spoken into an English app still transcribes. Servers
       // that predate the field ignore it (docs/plans/arabic-language_plan.md, stage 4).
-      if (ClientLanguage.current() == 'ar') request.fields['language'] = 'ar';
+      final spoken = language ?? ClientLanguage.current();
+      if (spoken == 'ar') request.fields['language'] = 'ar';
       request.headers.addAll(await _headers(token));
       final client = _http;
       return client != null ? client.send(request) : http.Client().send(request);

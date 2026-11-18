@@ -116,10 +116,10 @@ Verified against tree `11abb50` on 2026-09-24.
 | quantization | CTranslate2, compute type per adapter config. NOT MEASURED |
 | VRAM requirement | N/A (CPU) |
 | tool-calling support | N/A |
-| language coverage | **English only.** Arabic speech input unsupported by default (GAP-020) |
-| benchmark results | WER NOT MEASURED. Phase F2 proved a synthesize→transcribe round trip works, but didn't measure WER |
+| language coverage | **English only.** Arabic speech input unsupported by default (GAP-020). Phase V plans `AURA_VOICE_STT_MODEL=base` (multilingual) on Railway; the route refuses `language=ar` with 422 while a `*.en` size is configured |
+| benchmark results | WER NOT MEASURED on human speech. `scripts/measure_stt_wer.py` produces the report. Smoke on synthetic speech only (`docs/reports/STT_WER_SMOKE_2026-11-17.md`): `base`, 4 Piper Arabic clips 22% WER; 2 espeak English clips 0% |
 | latency / throughput | NOT MEASURED |
-| known limitations | Smallest Whisper size. Energy-based VAD (`aura_core/voice/vad.py`) |
+| known limitations | Smallest Whisper size. Energy-based VAD by default (`aura_core/voice/vad.py`); Silero (`AURA_VOICE_LIVE_VAD=silero`, ships inside faster-whisper, MIT) is opt-in |
 | status | **production** |
 
 ### 1.5 Text-to-speech: Piper (primary) + espeak-ng (fallback)
@@ -155,6 +155,7 @@ with `KNOWLEDGE_OCR_LANG=eng` by default (`settings.py:447`). Proven on one scan
 | `smollm2:135m` (Ollama) | Opt-in `tests/load/test_multi_model_routing.py` (Phase G2) | **test-only** |
 | `hash-embed-v1` | In-code default embedder (`settings.py:317`), refused outside dev/test by `AuraSettings.validate()` | **test-only** |
 | `Qwen/Qwen2.5-32B-Instruct-AWQ` | Default `AURA_VLLM_MODEL` for the `gpu` compose profile (`docker-compose.prod.yml:713`). Never run, no GPU host exists | **candidate** (superseded by the Qwen3 set below) |
+| `Qwen/Qwen2.5-VL-7B-Instruct-AWQ` @ `536a35794df8831aa814970ee8f89eff577e7718` | Chosen 2026-11-17 for the HF Space (`a10g-small`) to serve chat failover and ADR-031 image perception (one VLM, decision D2). Licence **Apache-2.0** (Hub tag on that revision, not gated). Weights ~6 GB AWQ. Not yet served, no `phase-6-vision` report or eval (GAP-019). Qwen3-VL-8B (below) remains the upgrade once a bigger GPU is justified | **candidate** |
 | `Qwen/Qwen2.5-7B-Instruct-AWQ` | Example `AURA_PROVIDER_HFSPACE_MODEL` (`.env.example:132`). Remote failover, off by default (GAP-034) | **rejected for production**: rented off-host inference conflicts with the "no hosted-AI fallback" rule unless an ADR says otherwise |
 
 ---
