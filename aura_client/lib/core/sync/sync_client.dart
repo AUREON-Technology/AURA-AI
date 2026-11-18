@@ -329,9 +329,29 @@ class SyncClient {
   /// cut off midway starts again from the old cursor -- the rows already
   /// applied are simply applied again. A server that predates paging ignores
   /// `limit` and answers in one response without `has_more`.
+  ///
+  /// The rows belong to the session that asked for them. A pull still in flight when that session
+  /// ends (sign-out wipes the database right after) used to write its rows and cursor into the
+  /// wiped database, where the next account to sign in inherited them (F56). Each page, and the
+  /// cursor, is written only while the session it was fetched under is still the current one
+  /// ([TokenManager.sessionGeneration]), checked inside the write's own transaction.
   Future<SyncResult> pull() async {
+    final tokens = _ref.read(tokenManagerProvider);
+    final session = tokens.sessionGeneration;
     final cursor = await _db.getSyncCursor();
     String? page;
+
+    /// Runs [write] in a transaction unless the session changed; false when it did.
+    Future<bool> writeForSession(Future<void> Function() write) async {
+      var written = false;
+      await _db.transaction(() async {
+        if (tokens.sessionGeneration != session) return;
+        await write();
+        written = true;
+      });
+      if (!written) debugPrint("[SyncClient] session ended during the pull; its rows were dropped");
+      return written;
+    }
 
     try {
       while (true) {
@@ -360,7 +380,9 @@ class SyncClient {
         final body = jsonDecode(response.body) as Map<String, dynamic>;
         final data = body["data"] as Map<String, dynamic>;
 
-        await _db.transaction(() => _applyRows(data));
+        if (!await writeForSession(() => _applyRows(data))) {
+          return const SyncResult.fail(SyncFailureKind.unauthorized);
+        }
 
         final next = body["next_page"];
         if (body["has_more"] == true && next is String) {
@@ -371,7 +393,9 @@ class SyncClient {
           page = next;
           continue;
         }
-        await _db.setSyncCursor(body["cursor"] as String);
+        if (!await writeForSession(() => _db.setSyncCursor(body["cursor"] as String))) {
+          return const SyncResult.fail(SyncFailureKind.unauthorized);
+        }
         return const SyncResult.success();
       }
     } catch (e) {
