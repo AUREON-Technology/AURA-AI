@@ -246,6 +246,67 @@ void main() {
     });
   });
 
+  group('TokenManager.applyDesktopSession (browser hand-off, WP12)', () {
+    const session = {
+      'access_token': 'device-access-2',
+      'refresh_token': 'device-refresh-2',
+      'token_type': 'bearer',
+      'expires_in': 900,
+      'device_id': 'dev-2',
+    };
+
+    test('makes the hand-off session this device\'s, refresh token persisted', () async {
+      final store = _MemoryRefreshTokenStore();
+      final httpClient = MockClient((request) async {
+        fail('unexpected ${request.method} ${request.url}');
+      });
+      final container = ProviderContainer(
+        overrides: [
+          tokenManagerProvider.overrideWith(
+            (ref) => TokenManager(ref, httpClient: httpClient, store: store),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      final tm = container.read(tokenManagerProvider);
+
+      final token = await tm.applyDesktopSession(Map<String, dynamic>.from(session));
+
+      expect(token.accessToken, 'device-access-2');
+      expect(token.expiry.isAfter(DateTime.now().add(const Duration(minutes: 14))), isTrue);
+      expect(store.token, 'device-refresh-2');
+      expect(await tm.hasCachedRefreshToken(), isTrue);
+      expect(await tm.getValidAccessToken(), 'device-access-2');
+    });
+
+    test('revokes a refresh token an earlier session left on this device', () async {
+      final store = _MemoryRefreshTokenStore('old-account-refresh');
+      final revoked = <String>[];
+      final httpClient = MockClient((request) async {
+        if (request.url.path.endsWith('/revoke')) {
+          revoked.add(jsonDecode(request.body)['refresh_token'] as String);
+          return http.Response('{}', 200);
+        }
+        fail('unexpected ${request.method} ${request.url}');
+      });
+      final container = ProviderContainer(
+        overrides: [
+          tokenManagerProvider.overrideWith(
+            (ref) => TokenManager(ref, httpClient: httpClient, store: store),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await container
+          .read(tokenManagerProvider)
+          .applyDesktopSession(Map<String, dynamic>.from(session));
+
+      expect(revoked, ['old-account-refresh']);
+      expect(store.token, 'device-refresh-2');
+    });
+  });
+
   test('applyPersistedDesktopToken makes getValidAccessToken reuse it without a network call', () async {
     final httpClient = MockClient((request) async {
       fail('unexpected ${request.method} ${request.url}');

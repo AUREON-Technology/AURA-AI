@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:aura_client/core/auth/desktop_oauth_client.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _FakeTokenServer {
@@ -425,5 +426,180 @@ void main() {
       ),
       throwsA(isA<DesktopOAuthCancelledException>()),
     );
+  });
+  // WP12: Firebase sign-in (Google, Apple, email) through the web app's /desktop-sign-in page,
+  // which hands a one-time code back to the loopback listener. Here `launch` plays both the page
+  // and the browser: it reads what the app put in the page's address and redirects back.
+  group('browser hand-off (signInWithBrowserHandoff)', () {
+    final signInPage = Uri.parse('https://app.example.test/desktop-sign-in');
+    const session = {
+      'access_token': 'aura-access',
+      'refresh_token': 'aura-refresh',
+      'token_type': 'bearer',
+      'expires_in': 900,
+      'device_id': 'dev-1',
+    };
+
+    test('opens the page with a loopback redirect, state and S256 challenge, then redeems the '
+        'code with the matching verifier', () async {
+      final backend = await _FakeBackend.start(response: session);
+      addTearDown(backend.close);
+      Uri? opened;
+
+      final result = await signInWithBrowserHandoff(
+        signInPage: signInPage,
+        exchangeEndpoint: backend.uri,
+        deviceName: 'ann-laptop',
+        launch: (pageUri) {
+          opened = pageUri;
+          return _fakeLaunch({'code': 'handoff-code-1'})(pageUri);
+        },
+      );
+
+      expect(result.tokenResponse, session);
+      expect(result.accessToken, 'aura-access');
+
+      final page = opened!;
+      expect(page.scheme, 'https');
+      expect(page.host, 'app.example.test');
+      expect(page.path, '/desktop-sign-in');
+      final redirect = page.queryParameters['redirect_uri']!;
+      expect(redirect, matches(RegExp(r'^http://127\.0\.0\.1:\d{1,5}/$')));
+      expect(page.queryParameters['state'], matches(RegExp(r'^[A-Za-z0-9_-]{16,}$')));
+      expect(page.queryParameters['code_challenge'], matches(RegExp(r'^[A-Za-z0-9_-]{43}$')));
+      expect(page.queryParameters, isNot(contains('code_verifier')),
+          reason: 'the verifier never leaves this process except to the exchange');
+
+      final sent = backend.lastRequestBody!;
+      expect(backend.lastContentType, 'application/json');
+      expect(sent['code'], 'handoff-code-1');
+      expect(sent['redirect_uri'], redirect);
+      expect(sent['device_name'], 'ann-laptop');
+      final verifier = sent['code_verifier'] as String;
+      expect(verifier, matches(RegExp(r'^[A-Za-z0-9\-._~]{43,128}$')));
+      final s256 = base64UrlEncode(sha256.convert(utf8.encode(verifier)).bytes).replaceAll('=', '');
+      expect(s256, page.queryParameters['code_challenge'],
+          reason: 'the server checks the verifier against the challenge the page sent');
+    });
+
+    test('a redirect whose state does not match is refused and never exchanged', () async {
+      final backend = await _FakeBackend.start(response: session);
+      addTearDown(backend.close);
+
+      await expectLater(
+        signInWithBrowserHandoff(
+          signInPage: signInPage,
+          exchangeEndpoint: backend.uri,
+          launch: (pageUri) {
+            final redirectUri = Uri.parse(pageUri.queryParameters['redirect_uri']!);
+            final callback = redirectUri.replace(
+              queryParameters: {'state': 'someone-elses-state', 'code': 'stolen-code'},
+            );
+            unawaited(() async {
+              final client = HttpClient();
+              try {
+                await (await (await client.getUrl(callback)).close()).drain<void>();
+              } finally {
+                client.close(force: true);
+              }
+            }());
+            return Future<bool>.value(true);
+          },
+        ),
+        throwsA(isA<DesktopOAuthCancelledException>()),
+      );
+      expect(backend.requestCount, 0);
+    });
+
+    test('an error the page sends back is reported and nothing is exchanged', () async {
+      final backend = await _FakeBackend.start(response: session);
+      addTearDown(backend.close);
+
+      await expectLater(
+        signInWithBrowserHandoff(
+          signInPage: signInPage,
+          exchangeEndpoint: backend.uri,
+          launch: _fakeLaunch({'error': 'access_denied'}),
+        ),
+        throwsA(isA<DesktopOAuthCancelledException>()
+            .having((e) => e.message, 'message', contains('access_denied'))
+            .having((e) => e.statusCode, 'statusCode', isNull)),
+      );
+      expect(backend.requestCount, 0);
+    });
+
+    // A Free-plan customer (or a non-operator) completes the browser step and is then refused:
+    // the server's own sentence must reach the screen, with the status that marks it a refusal.
+    test('a 403 from the exchange carries the server\'s reason and status', () async {
+      const detail = 'The desktop Engineer needs a Pro or Team plan. Upgrade to use it.';
+      final backend = await _FakeBackend.start(response: {'detail': detail}, statusCode: 403);
+      addTearDown(backend.close);
+
+      await expectLater(
+        signInWithBrowserHandoff(
+          signInPage: signInPage,
+          exchangeEndpoint: backend.uri,
+          launch: _fakeLaunch({'code': 'handoff-code-1'}),
+        ),
+        throwsA(isA<DesktopOAuthCancelledException>()
+            .having((e) => e.message, 'message', detail)
+            .having((e) => e.statusCode, 'statusCode', 403)),
+      );
+    });
+
+    test('a spent or expired code (400) says so in the server\'s words', () async {
+      const detail = 'Sign-in code is invalid, expired, or already used. Sign in again.';
+      final backend = await _FakeBackend.start(response: {'detail': detail}, statusCode: 400);
+      addTearDown(backend.close);
+
+      await expectLater(
+        signInWithBrowserHandoff(
+          signInPage: signInPage,
+          exchangeEndpoint: backend.uri,
+          launch: _fakeLaunch({'code': 'handoff-code-1'}),
+        ),
+        throwsA(isA<DesktopOAuthCancelledException>()
+            .having((e) => e.message, 'message', detail)
+            .having((e) => e.statusCode, 'statusCode', 400)),
+      );
+    });
+
+    test('a 200 without a usable session is refused', () async {
+      final backend = await _FakeBackend.start(response: {'access_token': 'only-access'});
+      addTearDown(backend.close);
+
+      await expectLater(
+        signInWithBrowserHandoff(
+          signInPage: signInPage,
+          exchangeEndpoint: backend.uri,
+          launch: _fakeLaunch({'code': 'handoff-code-1'}),
+        ),
+        throwsA(isA<DesktopOAuthCancelledException>()),
+      );
+    });
+
+    test('an over-long device name is cut to what the server accepts', () async {
+      final backend = await _FakeBackend.start(response: session);
+      addTearDown(backend.close);
+
+      await signInWithBrowserHandoff(
+        signInPage: signInPage,
+        exchangeEndpoint: backend.uri,
+        deviceName: 'x' * 300,
+        launch: _fakeLaunch({'code': 'handoff-code-1'}),
+      );
+      expect(backend.lastRequestBody?['device_name'], hasLength(128));
+    });
+
+    test('throws when the browser cannot be opened', () async {
+      await expectLater(
+        signInWithBrowserHandoff(
+          signInPage: signInPage,
+          exchangeEndpoint: Uri.parse('http://127.0.0.1:9/unused'),
+          launch: (_) async => false,
+        ),
+        throwsA(isA<DesktopOAuthCancelledException>()),
+      );
+    });
   });
 }

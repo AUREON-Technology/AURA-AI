@@ -6656,5 +6656,79 @@
         "type": "String"
       }
     }
+  },
+  "loginBrowserHandoff": "Continue in your browser — Google, Apple or email",
+  "@loginBrowserHandoff": {
+    "description": "Desktop (Linux/Windows) login button: sign in with any Firebase method on the web app, which hands the sign-in back to this app"
+  },
+  "coreDesktopSignInBrowserError": "The browser sign-in reported an error: {error}",
+  "@coreDesktopSignInBrowserError": {
+    "description": "Desktop browser sign-in failure: the web page redirected back with an error code; error = that code, left untranslated",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "coreDesktopSignInNoSession": "The AURA server did not return a session.",
+  "@coreDesktopSignInNoSession": {
+    "description": "Desktop browser sign-in failure: the AURA server answered without the session tokens"
+  },
+  "desktopSignInTitle": "Sign in to the AURA desktop app",
+  "@desktopSignInTitle": {
+    "description": "Web page the desktop app opens for sign-in: heading"
+  },
+  "desktopSignInSubtitle": "Choose how to sign in. When you're done, this tab hands the sign-in back to the desktop app.",
+  "@desktopSignInSubtitle": {
+    "description": "Web desktop sign-in page: explains what happens"
+  },
+  "desktopSignInSharedComputer": "AURA signs you out of this browser again once the desktop app has your sign-in.",
+  "@desktopSignInSharedComputer": {
+    "description": "Web desktop sign-in page: the browser is signed out afterwards, since the computer may be shared"
+  },
+  "desktopSignInWorking": "Finishing sign-in…",
+  "@desktopSignInWorking": {
+    "description": "Web desktop sign-in page: busy while handing the sign-in to the desktop app"
+  },
+  "desktopSignInDone": "Signed in. Returning you to the AURA desktop app…",
+  "@desktopSignInDone": {
+    "description": "Web desktop sign-in page: success, the browser is going back to the desktop app"
+  },
+  "desktopSignInDoneHint": "If nothing happens, switch back to the desktop app. You can close this tab.",
+  "@desktopSignInDoneHint": {
+    "description": "Web desktop sign-in page: shown under the success message"
+  },
+  "desktopSignInInvalidLink": "This sign-in link isn't valid. Start again from the AURA desktop app: choose \"Continue in your browser\" on its sign-in screen.",
+  "@desktopSignInInvalidLink": {
+    "description": "Web desktop sign-in page: the link is missing its parameters or points somewhere other than this computer's desktop app"
+  },
+  "desktopSignInWebOnly": "This page is for a web browser. In the desktop app, choose \"Continue in your browser\" on the sign-in screen and it opens this page for you.",
+  "@desktopSignInWebOnly": {
+    "description": "Desktop sign-in page opened outside a web browser"
+  },
+  "desktopSignInGoToLogin": "Go to sign-in",
+  "@desktopSignInGoToLogin": {
+    "description": "Desktop sign-in page opened outside a browser: button to the normal sign-in screen"
+  },
+  "desktopSignInServerUnreachable": "Couldn't reach the AURA server. Check your connection and try again.",
+  "@desktopSignInServerUnreachable": {
+    "description": "Web desktop sign-in page: the hand-off request got no answer"
+  },
+  "desktopSignInServerFailed": "The AURA server couldn't hand this sign-in to the desktop app (HTTP {status}).",
+  "@desktopSignInServerFailed": {
+    "description": "Web desktop sign-in page: the hand-off was refused without a reason from the server",
+    "placeholders": {
+      "status": {
+        "type": "int"
+      }
+    }
+  },
+  "desktopSignInNoIdentityToken": "The sign-in service returned no identity token for this account. Try again.",
+  "@desktopSignInNoIdentityToken": {
+    "description": "Web desktop sign-in page: Firebase signed in but gave no ID token"
+  },
+  "desktopSignInReturnFailed": "Couldn't go back to the desktop app. Make sure it's still waiting for you, then start again from it.",
+  "@desktopSignInReturnFailed": {
+    "description": "Web desktop sign-in page: the browser would not navigate back to the desktop app's local address"
   }
 }

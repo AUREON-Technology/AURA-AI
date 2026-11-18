@@ -9,6 +9,7 @@ import 'package:aura_client/core/auth/identity_service.dart';
 import 'package:aura_client/core/auth/platform_login_support.dart';
 import 'package:aura_client/core/auth/sign_in_refused.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
+import 'package:aura_client/core/config/app_links.dart';
 import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/config/config.dart';
 import 'package:aura_client/core/database/database_provider.dart';
@@ -16,7 +17,8 @@ import 'package:aura_client/core/security/aura_secure_storage.dart';
 import 'package:aura_client/core/sync/sync_client.dart';
 import 'package:aura_client/core/undo/undoable_deletes.dart';
 
-/// Reads the display-only claims (name/email/picture) out of a Google ID token's payload without
+/// Reads the display-only claims (name/email/picture) out of a Google ID token's (or, after the
+/// browser hand-off, the AURA access token's) payload without
 /// verifying its signature -- safe here because it's only for populating [UserProfile] in the
 /// UI; the backend independently verifies the same token's signature/issuer/audience for real
 /// (`services/security.py::verify_identity_token`) during `signInWithDesktopOAuth`'s exchange.
@@ -31,6 +33,17 @@ Map<String, dynamic> _unverifiedJwtPayload(String jwt) {
     return const {};
   }
 }
+
+/// The browser hand-off [AuthNotifier.signInWithDesktopBrowser] runs (`signInWithBrowserHandoff`),
+/// behind a provider so a test can play the browser.
+typedef DesktopBrowserHandoff = Future<DesktopHandoffResult> Function({
+  required Uri signInPage,
+  required Uri exchangeEndpoint,
+  String? deviceName,
+});
+
+final desktopBrowserHandoffProvider =
+    Provider<DesktopBrowserHandoff>((ref) => signInWithBrowserHandoff);
 
 class UserProfile {
   final String id;
@@ -214,6 +227,66 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
       // (`_restorePersistedDesktopToken`) only so a token issued before this change keeps
       // working until it expires, and `expireSession` still deletes them.
       debugPrint("[AuthNotifier] desktop session until ${deviceToken.expiry.toIso8601String()}");
+
+      state = AsyncValue.data(profile);
+    } catch (err, stack) {
+      state = AsyncValue.error(err, stack);
+    }
+  }
+
+  /// Desktop login (Linux/Windows) with any Firebase method -- Google, Apple or email -- through
+  /// the browser (module readiness WP12). The web app's `/desktop-sign-in` page signs in with
+  /// Firebase and hands a one-time code back to this app's loopback listener; the code and the
+  /// PKCE verifier are redeemed at `/api/v3/auth/desktop/firebase-exchange` for the same
+  /// device-bound session `/desktop/login` issues (`signInWithBrowserHandoff`). Same state and
+  /// storage handling as [signInWithDesktopOAuth], which stays as it is.
+  Future<void> signInWithDesktopBrowser() async {
+    state = const AsyncValue.loading();
+    try {
+      final signInPage = desktopSignInPageFor(ref.read(appBaseUrlProvider));
+      if (signInPage.isEmpty) {
+        // The login page only offers this when the build knows where the web app is.
+        throw StateError('No APP_BASE_URL in this build: browser sign-in is not set up.');
+      }
+      final backendUrl = ref.read(backendUrlProvider);
+      final DesktopHandoffResult handoff;
+      try {
+        handoff = await ref.read(desktopBrowserHandoffProvider)(
+          signInPage: Uri.parse(signInPage),
+          exchangeEndpoint: Uri.parse('$backendUrl/api/v3/auth/desktop/firebase-exchange'),
+          deviceName: desktopDeviceName(),
+        );
+      } on DesktopOAuthCancelledException catch (e) {
+        // The server said no to this account (operators only, or a plan without the desktop
+        // Engineer): the same refusal [signInWithDesktopOAuth] reports, with the server's reason.
+        if (e.statusCode == 403) throw SignInRefused(e.message);
+        rethrow;
+      }
+      final deviceToken =
+          await ref.read(tokenManagerProvider).applyDesktopSession(handoff.tokenResponse);
+
+      // The AURA access token's own claims (`services/jwt_auth.create_access_token`), read for
+      // display only: the server issued it a moment ago and verifies it on every request.
+      final claims = _unverifiedJwtPayload(handoff.accessToken);
+      final email = (claims['email'] as String?) ?? '';
+      final name = (claims['name'] as String?)?.trim();
+      final profile = UserProfile(
+        id: (claims['sub'] as String?) ?? '',
+        email: email,
+        displayName: (name != null && name.isNotEmpty)
+            ? name
+            : (email.contains('@') ? email.split('@').first : 'AURA user'),
+        photoUrl: claims['picture'] as String?,
+      );
+      await _forgetDataOfOtherAccount(profile.id);
+
+      await _storage.write(key: 'user_id', value: profile.id);
+      await _storage.write(key: 'user_email', value: profile.email);
+      await _storage.write(key: 'user_name', value: profile.displayName);
+      if (profile.photoUrl != null) {
+        await _storage.write(key: 'user_photo', value: profile.photoUrl);
+      }
+      debugPrint("[AuthNotifier] desktop browser session until ${deviceToken.expiry.toIso8601String()}");
 
       state = AsyncValue.data(profile);
     } catch (err, stack) {

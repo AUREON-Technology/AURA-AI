@@ -1,9 +1,11 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../features/analytics/presentation/analytics_page.dart';
 import '../../features/auth/presentation/auth_provider.dart';
+import '../../features/auth/presentation/desktop_sign_in_page.dart';
 import '../../features/auth/presentation/linked_accounts_page.dart';
 import '../../features/auth/presentation/login_page.dart';
 import '../../features/auth/presentation/profile_page.dart';
@@ -36,6 +38,7 @@ import '../../features/workspaces/presentation/shared_chats_page.dart';
 import '../../features/workspaces/presentation/team_settings_page.dart';
 import '../../l10n/l10n.dart';
 import '../../features/voice_live/presentation/live_voice_page.dart';
+import '../config/app_links.dart';
 import '../design_system/design_system.dart';
 import '../platform/aura_platform.dart';
 import '../../desktop/shell/desktop_ide_unavailable_page.dart';
@@ -474,6 +477,9 @@ Future<String?> resolveAppRedirect({
   final isLoggingIn = location == '/login';
   final isOnboarding = location == '/onboarding';
 
+  // The page the desktop app opens in the browser to sign in (WP12) is for whoever is at this
+  // browser, signed in to AURA here or not: never sent to login, onboarding or the landing screen.
+  if (location == desktopSignInPath) return null;
   if (!isLoggedIn && !isLoggingIn) return '/login';
   if (isLoggedIn && isLoggingIn) {
     if (onboarded == false) return '/onboarding';
@@ -519,11 +525,22 @@ bool isReachableRoute(String location, {required bool desktop}) {
   return !(under('/today') || under('/life'));
 }
 
+/// Where a web build starts when the address bar already names a page the router must open
+/// directly. The web build keeps Flutter's default hash URL strategy, under which a path such as
+/// `https://app.example/desktop-sign-in?…` (the address the desktop app opens, WP12) reaches the
+/// router as `/`; this reads it back from [base] so the page opens with its query intact. Null for
+/// every other address, which then starts as it always has.
+@visibleForTesting
+String? webDeepLinkLocation(Uri base) {
+  if (base.path != desktopSignInPath) return null;
+  return base.hasQuery ? '${base.path}?${base.query}' : base.path;
+}
+
 final routerProvider = Provider<GoRouter>((ref) {
   final notifier = RouterTransitionNotifier(ref);
 
   return GoRouter(
-    initialLocation: appLandingRoute,
+    initialLocation: (kIsWeb ? webDeepLinkLocation(Uri.base) : null) ?? appLandingRoute,
     refreshListenable: notifier,
     redirect: (context, state) async {
       final isLoggedIn = ref.read(authProvider).value != null;
@@ -541,6 +558,10 @@ final routerProvider = Provider<GoRouter>((ref) {
     },
     routes: [
       GoRoute(path: '/login', builder: (context, state) => const LoginPage()),
+      GoRoute(
+        path: desktopSignInPath,
+        builder: (context, state) => DesktopSignInPage(query: state.uri.queryParameters),
+      ),
       GoRoute(
         path: '/onboarding',
         builder: (context, state) => const OnboardingPage(),

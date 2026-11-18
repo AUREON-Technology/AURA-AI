@@ -16,8 +16,16 @@ const minPasswordLength = 8;
 /// provider then refuses (wrong password, address taken) arrives as an `IdentityError` on
 /// [authProvider] and the login page words it. The reset mode always reports the same sentence,
 /// so the form cannot be used to learn which addresses have accounts.
+///
+/// By default it signs in through [authProvider]. A page that must not start an AURA session of
+/// its own -- the web page that signs in for the desktop app (`desktop_sign_in_page.dart`) --
+/// passes [onSignIn] and [onPasswordReset] instead; the form then offers no account creation,
+/// since that page only hands an existing sign-in to the desktop app.
 class EmailSignInForm extends ConsumerStatefulWidget {
-  const EmailSignInForm({super.key});
+  const EmailSignInForm({super.key, this.onSignIn, this.onPasswordReset});
+
+  final Future<void> Function(String email, String password)? onSignIn;
+  final Future<void> Function(String email)? onPasswordReset;
 
   @override
   ConsumerState<EmailSignInForm> createState() => _EmailSignInFormState();
@@ -68,17 +76,28 @@ class _EmailSignInFormState extends ConsumerState<EmailSignInForm> {
 
   Future<void> _submit() async {
     if (!_validate()) return;
-    final auth = ref.read(authProvider.notifier);
     final email = _emailController.text.trim();
     switch (_mode) {
       case EmailFormMode.signIn:
-        await auth.signInWithEmail(email, _password.text);
+        final signIn = widget.onSignIn;
+        if (signIn != null) {
+          await signIn(email, _password.text);
+        } else {
+          await ref.read(authProvider.notifier).signInWithEmail(email, _password.text);
+        }
       case EmailFormMode.register:
         final name = _name.text.trim();
-        await auth.registerWithEmail(email, _password.text, displayName: name.isEmpty ? null : name);
+        await ref
+            .read(authProvider.notifier)
+            .registerWithEmail(email, _password.text, displayName: name.isEmpty ? null : name);
       case EmailFormMode.reset:
         try {
-          await auth.sendPasswordReset(email);
+          final reset = widget.onPasswordReset;
+          if (reset != null) {
+            await reset(email);
+          } else {
+            await ref.read(authProvider.notifier).sendPasswordReset(email);
+          }
         } catch (_) {
           // Network trouble reads the same as success here; the user can simply try again.
         }
@@ -157,10 +176,11 @@ class _EmailSignInFormState extends ConsumerState<EmailSignInForm> {
               onPressed: () => _switchTo(EmailFormMode.reset),
               child: Text(l10n.emailForgotPassword, style: TextStyle(color: palette.textSecondary)),
             ),
-            TextButton(
-              onPressed: () => _switchTo(EmailFormMode.register),
-              child: Text(l10n.emailSwitchToRegister),
-            ),
+            if (widget.onSignIn == null)
+              TextButton(
+                onPressed: () => _switchTo(EmailFormMode.register),
+                child: Text(l10n.emailSwitchToRegister),
+              ),
           ] else
             TextButton(
               onPressed: () => _switchTo(EmailFormMode.signIn),

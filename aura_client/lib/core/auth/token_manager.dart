@@ -522,6 +522,32 @@ class TokenManager {
     }
   }
 
+  /// Takes the desktop session the browser hand-off produced (`POST
+  /// /api/v3/auth/desktop/firebase-exchange`, `core/auth/desktop_oauth_client.dart`'s
+  /// `signInWithBrowserHandoff`, module readiness WP12) and makes it this manager's session,
+  /// through the same [_applyTokenResponse] path [exchangeDesktopLogin] uses: the refresh token is
+  /// persisted, so [getValidAccessToken] keeps the session alive across launches.
+  ///
+  /// The exchange already happened (the code is single-use and the verifier lives in that flow),
+  /// so this makes no call of its own except, like [startSession], revoking a refresh token an
+  /// earlier session left on this device -- otherwise a different account signing in here would
+  /// leave the old account's session renewable on the server. A renewal of that earlier session
+  /// still in flight is dropped rather than written over this one (INT-027).
+  Future<DesktopDeviceToken> applyDesktopSession(Map<String, dynamic> tokenResponse) async {
+    _generation++;
+    _inFlightAccessToken = null;
+    _unansweredRefresh = null;
+    await _loadCachedRefreshToken();
+    final previous = _refreshToken;
+    await _applyTokenResponse(tokenResponse);
+    if (previous != null && previous.isNotEmpty && previous != _refreshToken) {
+      await _revoke(previous);
+    }
+    lastDesktopLoginRefusal = null;
+    _ref.read(authExchangeFailureProvider.notifier).set(AuthExchangeFailure.none);
+    return DesktopDeviceToken(accessToken: _accessToken!, expiry: _accessTokenExpiry!);
+  }
+
   /// Why the server refused the last [exchangeDesktopLogin] (its `detail`), when it answered
   /// 400/401/403 -- for instance desktop sign-in being limited to operators (F-09). Null when
   /// that call succeeded or failed without an answer.

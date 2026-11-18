@@ -4960,4 +4960,67 @@ class AppLocalizationsEn extends AppLocalizations {
   String shareConfirm(String name) {
     return 'Share a copy of this chat with $name? Everyone in the team can read it.';
   }
+
+  @override
+  String get loginBrowserHandoff =>
+      'Continue in your browser — Google, Apple or email';
+
+  @override
+  String coreDesktopSignInBrowserError(String error) {
+    return 'The browser sign-in reported an error: $error';
+  }
+
+  @override
+  String get coreDesktopSignInNoSession =>
+      'The AURA server did not return a session.';
+
+  @override
+  String get desktopSignInTitle => 'Sign in to the AURA desktop app';
+
+  @override
+  String get desktopSignInSubtitle =>
+      'Choose how to sign in. When you\'re done, this tab hands the sign-in back to the desktop app.';
+
+  @override
+  String get desktopSignInSharedComputer =>
+      'AURA signs you out of this browser again once the desktop app has your sign-in.';
+
+  @override
+  String get desktopSignInWorking => 'Finishing sign-in…';
+
+  @override
+  String get desktopSignInDone =>
+      'Signed in. Returning you to the AURA desktop app…';
+
+  @override
+  String get desktopSignInDoneHint =>
+      'If nothing happens, switch back to the desktop app. You can close this tab.';
+
+  @override
+  String get desktopSignInInvalidLink =>
+      'This sign-in link isn\'t valid. Start again from the AURA desktop app: choose \"Continue in your browser\" on its sign-in screen.';
+
+  @override
+  String get desktopSignInWebOnly =>
+      'This page is for a web browser. In the desktop app, choose \"Continue in your browser\" on the sign-in screen and it opens this page for you.';
+
+  @override
+  String get desktopSignInGoToLogin => 'Go to sign-in';
+
+  @override
+  String get desktopSignInServerUnreachable =>
+      'Couldn\'t reach the AURA server. Check your connection and try again.';
+
+  @override
+  String desktopSignInServerFailed(int status) {
+    return 'The AURA server couldn\'t hand this sign-in to the desktop app (HTTP $status).';
+  }
+
+  @override
+  String get desktopSignInNoIdentityToken =>
+      'The sign-in service returned no identity token for this account. Try again.';
+
+  @override
+  String get desktopSignInReturnFailed =>
+      'Couldn\'t go back to the desktop app. Make sure it\'s still waiting for you, then start again from it.';
 }

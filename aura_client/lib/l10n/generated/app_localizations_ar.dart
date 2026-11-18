@@ -4988,4 +4988,66 @@ class AppLocalizationsAr extends AppLocalizations {
   String shareConfirm(String name) {
     return 'تشارك نسخة من المحادثة دي مع $name؟ كل اللي في التيم هيقدروا يقروها.';
   }
+
+  @override
+  String get loginBrowserHandoff =>
+      'تكمّل في المتصفح — Google أو Apple أو الإيميل';
+
+  @override
+  String coreDesktopSignInBrowserError(String error) {
+    return 'تسجيل الدخول في المتصفح رجّع مشكلة: $error';
+  }
+
+  @override
+  String get coreDesktopSignInNoSession => 'سيرفر AURA مرجّعش جلسة دخول.';
+
+  @override
+  String get desktopSignInTitle => 'سجّل دخول على تطبيق AURA للكمبيوتر';
+
+  @override
+  String get desktopSignInSubtitle =>
+      'اختار هتسجّل دخول إزاي. لما تخلّص، التاب ده هيرجّع تسجيل الدخول لتطبيق الكمبيوتر.';
+
+  @override
+  String get desktopSignInSharedComputer =>
+      'AURA هيخرّجك من المتصفح ده تاني أول ما تطبيق الكمبيوتر ياخد تسجيل الدخول.';
+
+  @override
+  String get desktopSignInWorking => 'بنكمّل تسجيل الدخول…';
+
+  @override
+  String get desktopSignInDone =>
+      'سجّلت الدخول. بنرجّعك لتطبيق AURA على الكمبيوتر…';
+
+  @override
+  String get desktopSignInDoneHint =>
+      'لو محصلش حاجة، ارجع لتطبيق الكمبيوتر. تقدر تقفل التاب ده.';
+
+  @override
+  String get desktopSignInInvalidLink =>
+      'لينك تسجيل الدخول ده مش صالح. ابدأ تاني من تطبيق AURA على الكمبيوتر: اختار \"تكمّل في المتصفح\" في شاشة تسجيل الدخول.';
+
+  @override
+  String get desktopSignInWebOnly =>
+      'الصفحة دي للمتصفح. في تطبيق الكمبيوتر، اختار \"تكمّل في المتصفح\" في شاشة تسجيل الدخول وهو هيفتحلك الصفحة دي.';
+
+  @override
+  String get desktopSignInGoToLogin => 'روح لتسجيل الدخول';
+
+  @override
+  String get desktopSignInServerUnreachable =>
+      'مقدرناش نوصل لسيرفر AURA. اتأكد من الاتصال وجرّب تاني.';
+
+  @override
+  String desktopSignInServerFailed(int status) {
+    return 'سيرفر AURA مقدرش يوصّل تسجيل الدخول ده لتطبيق الكمبيوتر (HTTP $status).';
+  }
+
+  @override
+  String get desktopSignInNoIdentityToken =>
+      'خدمة تسجيل الدخول مرجّعتش identity token للحساب ده. جرّب تاني.';
+
+  @override
+  String get desktopSignInReturnFailed =>
+      'مقدرناش نرجع لتطبيق الكمبيوتر. اتأكد إنه لسه مستنيك، وبعدين ابدأ تاني منه.';
 }

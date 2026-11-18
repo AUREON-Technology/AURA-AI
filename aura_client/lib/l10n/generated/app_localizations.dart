@@ -8333,6 +8333,102 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Share a copy of this chat with {name}? Everyone in the team can read it.'**
   String shareConfirm(String name);
+
+  /// Desktop (Linux/Windows) login button: sign in with any Firebase method on the web app, which hands the sign-in back to this app
+  ///
+  /// In en, this message translates to:
+  /// **'Continue in your browser — Google, Apple or email'**
+  String get loginBrowserHandoff;
+
+  /// Desktop browser sign-in failure: the web page redirected back with an error code; error = that code, left untranslated
+  ///
+  /// In en, this message translates to:
+  /// **'The browser sign-in reported an error: {error}'**
+  String coreDesktopSignInBrowserError(String error);
+
+  /// Desktop browser sign-in failure: the AURA server answered without the session tokens
+  ///
+  /// In en, this message translates to:
+  /// **'The AURA server did not return a session.'**
+  String get coreDesktopSignInNoSession;
+
+  /// Web page the desktop app opens for sign-in: heading
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in to the AURA desktop app'**
+  String get desktopSignInTitle;
+
+  /// Web desktop sign-in page: explains what happens
+  ///
+  /// In en, this message translates to:
+  /// **'Choose how to sign in. When you\'re done, this tab hands the sign-in back to the desktop app.'**
+  String get desktopSignInSubtitle;
+
+  /// Web desktop sign-in page: the browser is signed out afterwards, since the computer may be shared
+  ///
+  /// In en, this message translates to:
+  /// **'AURA signs you out of this browser again once the desktop app has your sign-in.'**
+  String get desktopSignInSharedComputer;
+
+  /// Web desktop sign-in page: busy while handing the sign-in to the desktop app
+  ///
+  /// In en, this message translates to:
+  /// **'Finishing sign-in…'**
+  String get desktopSignInWorking;
+
+  /// Web desktop sign-in page: success, the browser is going back to the desktop app
+  ///
+  /// In en, this message translates to:
+  /// **'Signed in. Returning you to the AURA desktop app…'**
+  String get desktopSignInDone;
+
+  /// Web desktop sign-in page: shown under the success message
+  ///
+  /// In en, this message translates to:
+  /// **'If nothing happens, switch back to the desktop app. You can close this tab.'**
+  String get desktopSignInDoneHint;
+
+  /// Web desktop sign-in page: the link is missing its parameters or points somewhere other than this computer's desktop app
+  ///
+  /// In en, this message translates to:
+  /// **'This sign-in link isn\'t valid. Start again from the AURA desktop app: choose \"Continue in your browser\" on its sign-in screen.'**
+  String get desktopSignInInvalidLink;
+
+  /// Desktop sign-in page opened outside a web browser
+  ///
+  /// In en, this message translates to:
+  /// **'This page is for a web browser. In the desktop app, choose \"Continue in your browser\" on the sign-in screen and it opens this page for you.'**
+  String get desktopSignInWebOnly;
+
+  /// Desktop sign-in page opened outside a browser: button to the normal sign-in screen
+  ///
+  /// In en, this message translates to:
+  /// **'Go to sign-in'**
+  String get desktopSignInGoToLogin;
+
+  /// Web desktop sign-in page: the hand-off request got no answer
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t reach the AURA server. Check your connection and try again.'**
+  String get desktopSignInServerUnreachable;
+
+  /// Web desktop sign-in page: the hand-off was refused without a reason from the server
+  ///
+  /// In en, this message translates to:
+  /// **'The AURA server couldn\'t hand this sign-in to the desktop app (HTTP {status}).'**
+  String desktopSignInServerFailed(int status);
+
+  /// Web desktop sign-in page: Firebase signed in but gave no ID token
+  ///
+  /// In en, this message translates to:
+  /// **'The sign-in service returned no identity token for this account. Try again.'**
+  String get desktopSignInNoIdentityToken;
+
+  /// Web desktop sign-in page: the browser would not navigate back to the desktop app's local address
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t go back to the desktop app. Make sure it\'s still waiting for you, then start again from it.'**
+  String get desktopSignInReturnFailed;
 }
 
 class _AppLocalizationsDelegate
