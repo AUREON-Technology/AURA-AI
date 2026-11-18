@@ -91,7 +91,7 @@ class _PlanBody extends ConsumerWidget {
         data: (u) => AuraCard(
           key: const Key('plan-usage'),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(l10n.planCurrent(u.plan), style: Theme.of(context).textTheme.titleMedium),
+            Text(l10n.planCurrent(planLabel(context, u.plan)), style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: AuraSpacing.sm),
             Text(l10n.planMessages('${u.messagesUsed}', '${u.messagesAllowed}')),
             if (u.resetsAt != null) Text(l10n.planResets(_date(context, u.resetsAt))),
@@ -126,7 +126,7 @@ class _BillingSection extends ConsumerWidget {
       children.add(AuraCard(
         key: const Key('plan-subscription'),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(l10n.planSubscriptionStatus(sub.status)),
+          Text(l10n.planSubscriptionStatus(subscriptionStatusLabel(context, sub.status))),
           if (sub.periodEnd != null) Text(l10n.planPaidThrough(_date(context, sub.periodEnd))),
           if (sub.graceUntil != null) Text(l10n.planGraceUntil(_date(context, sub.graceUntil))),
         ]),
@@ -197,6 +197,17 @@ class _UpgradeState extends ConsumerState<_Upgrade> {
   late final _seats = TextEditingController(text: '${widget.current?.seats ?? 2}');
   bool _busy = false;
 
+  /// Set when the seat count typed is not a whole number of at least one. It used to become one
+  /// seat without a word (F55); the server still enforces the plan's own range.
+  bool _seatsInvalid = false;
+
+  void _buyTeam() {
+    final seats = int.tryParse(_seats.text.trim());
+    final valid = seats != null && seats >= 1;
+    setState(() => _seatsInvalid = !valid);
+    if (valid) _checkout('team', seats);
+  }
+
   @override
   void dispose() {
     _seats.dispose();
@@ -244,13 +255,14 @@ class _UpgradeState extends ConsumerState<_Upgrade> {
           controller: _seats,
           label: l10n.planSeatsLabel,
           keyboardType: TextInputType.number,
+          errorText: _seatsInvalid ? l10n.planSeatsInvalid : null,
         ),
         const SizedBox(height: AuraSpacing.sm),
         AuraButton(
           key: const Key('plan-buy'),
           label: l10n.planUpgradeTeam,
           loading: _busy,
-          onPressed: () => _checkout('team', int.tryParse(_seats.text.trim()) ?? 1),
+          onPressed: _buyTeam,
         ),
       ] else
         AuraButton(key: const Key('plan-buy'), label: l10n.planUpgradePro, loading: _busy, onPressed: () => _checkout('pro', 1)),

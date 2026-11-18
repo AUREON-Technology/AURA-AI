@@ -4858,6 +4858,36 @@ class AppLocalizationsEn extends AppLocalizations {
   String get planSeatsLabel => 'Seats';
 
   @override
+  String get planNameFree => 'Free';
+
+  @override
+  String get planNamePro => 'Pro';
+
+  @override
+  String get planNameTeam => 'Team';
+
+  @override
+  String get planSeatsInvalid => 'Enter a whole number of seats, 1 or more.';
+
+  @override
+  String get subscriptionStatusPending => 'Awaiting payment';
+
+  @override
+  String get subscriptionStatusActive => 'Active';
+
+  @override
+  String get subscriptionStatusPastDue => 'Payment overdue';
+
+  @override
+  String get subscriptionStatusGrace => 'In grace period';
+
+  @override
+  String get subscriptionStatusCanceled => 'Canceled';
+
+  @override
+  String get subscriptionStatusExpired => 'Expired';
+
+  @override
   String get planTeamNotInApp => 'Team plans can\'t be bought in this app.';
 
   @override

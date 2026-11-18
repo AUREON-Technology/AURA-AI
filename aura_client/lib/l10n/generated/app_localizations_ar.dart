@@ -4888,6 +4888,36 @@ class AppLocalizationsAr extends AppLocalizations {
   String get planSeatsLabel => 'عدد المقاعد';
 
   @override
+  String get planNameFree => 'المجانية';
+
+  @override
+  String get planNamePro => 'Pro';
+
+  @override
+  String get planNameTeam => 'Team';
+
+  @override
+  String get planSeatsInvalid => 'اكتب عدد مقاعد صحيح، 1 أو أكتر.';
+
+  @override
+  String get subscriptionStatusPending => 'مستني الدفع';
+
+  @override
+  String get subscriptionStatusActive => 'شغّال';
+
+  @override
+  String get subscriptionStatusPastDue => 'الدفع متأخر';
+
+  @override
+  String get subscriptionStatusGrace => 'في فترة السماح';
+
+  @override
+  String get subscriptionStatusCanceled => 'اتلغى';
+
+  @override
+  String get subscriptionStatusExpired => 'خلص';
+
+  @override
   String get planTeamNotInApp => 'باقات الفرق مش متاحة للشرا من التطبيق ده.';
 
   @override

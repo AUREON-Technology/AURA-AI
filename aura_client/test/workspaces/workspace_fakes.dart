@@ -149,7 +149,7 @@ class FakeStore implements StoreGateway {
 /// Pumps [child] at '/' inside a router that also knows [routes].
 Future<void> pumpScreen(WidgetTester tester, Widget child, {String uid = 'own', WorkspaceSummary? active,
     List<GoRoute> routes = const [], List<Override> overrides = const [], void Function(FakeWorkspaces)? setup,
-    StoreGateway store = const NoStoreGateway()}) async {
+    StoreGateway store = const NoStoreGateway(), Locale? locale}) async {
   final router = GoRouter(routes: [
     GoRoute(path: '/', builder: (_, _) => child),
     ...routes,
@@ -170,6 +170,7 @@ Future<void> pumpScreen(WidgetTester tester, Widget child, {String uid = 'own', 
     ],
     child: MaterialApp.router(
       theme: AuraThemeV2.light,
+      locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       routerConfig: router,
