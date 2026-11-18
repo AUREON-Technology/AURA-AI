@@ -23,6 +23,7 @@ export function ConfirmDialog({
   confirmText,
   onConfirm,
   children,
+  body,
   danger = false,
   disabled = false,
   size = "sm",
@@ -31,6 +32,8 @@ export function ConfirmDialog({
   confirmText: string;
   onConfirm: () => Promise<void> | void;
   children: ReactNode;
+  /** Extra fields shown above the confirmation word, e.g. a value the action takes. */
+  body?: ReactNode;
   danger?: boolean;
   disabled?: boolean;
   size?: "sm" | "md";
@@ -95,6 +98,7 @@ export function ConfirmDialog({
                 <DialogDescription>{t("confirm.auditNote")}</DialogDescription>
               </div>
             </div>
+            {body ? <div className="mt-5">{body}</div> : null}
             <div className="mt-5 flex flex-col gap-1.5">
               <label htmlFor={inputId} className="text-[12.5px] font-medium text-muted">
                 {labelBefore}

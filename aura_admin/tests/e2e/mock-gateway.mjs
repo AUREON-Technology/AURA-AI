@@ -111,6 +111,30 @@ const state = {
   localModelDeletes: [],
   revoked: [],
   promptPin: null,
+  // aura_core/billing/service.py BillingService.customers rows, in workspace_id order.
+  customers: [
+    {
+      workspace_id: "ws-ali", workspace_name: "Ali", kind: "personal", plan: "pro", seats: 1,
+      status: "past_due", provider: "fawry", period_end: "2026-11-10T00:00:00+00:00", grace_until: null,
+      last_payment: { status: "failed", amount_piastres: 25000, at: "2026-11-10T00:05:00+00:00" },
+    },
+    {
+      workspace_id: "ws-ios", workspace_name: "Mona", kind: "personal", plan: "pro", seats: 1,
+      status: "grace", provider: "apple", period_end: "2026-11-12T00:00:00+00:00",
+      grace_until: "2026-11-19T00:00:00+00:00", last_payment: null,
+    },
+    {
+      workspace_id: "ws-refund", workspace_name: "Refunded Co", kind: "team", plan: "team", seats: 3,
+      status: "past_due", provider: "fawry", period_end: "2026-11-11T00:00:00+00:00", grace_until: null,
+      last_payment: { status: "refunded", amount_piastres: 90000, at: "2026-10-11T09:00:00+00:00" },
+    },
+    {
+      workspace_id: "ws-team", workspace_name: "Nile Labs", kind: "team", plan: "team", seats: 5,
+      status: "active", provider: "fawry", period_end: "2026-12-01T00:00:00+00:00", grace_until: null,
+      last_payment: { status: "paid", amount_piastres: 150000, at: "2026-11-01T10:00:00+00:00" },
+    },
+  ],
+  customerLists: 0,
 };
 
 const SUPER_ADMIN_APPROVAL_KINDS = new Set(["connector_registration", "blueprint_deployment"]);
@@ -241,6 +265,11 @@ const server = http.createServer(async (request, response) => {
 
   if (method === "GET" && path === "/__test/local-model-deletes") {
     json(response, 200, { paths: state.localModelDeletes });
+    return;
+  }
+
+  if (method === "GET" && path === "/__test/customer-lists") {
+    json(response, 200, { calls: state.customerLists });
     return;
   }
 
@@ -429,6 +458,47 @@ const server = http.createServer(async (request, response) => {
     row.status = body.approved ? "approved" : "rejected";
     row.decided_by = who.email;
     json(response, 200, { approval: row });
+    return;
+  }
+
+  // aura_core/api/billing.py: both SuperAdmin-only (SaaS P1-F1).
+  if (method === "GET" && path === "/api/v3/admin/customers") {
+    if (!coreGate(response, who, "SuperAdmin")) return;
+    state.customerLists += 1;
+    // MOCK_CUSTOMER_PAGE caps the page so "Load more" is exercised with four rows.
+    const cap = Number(process.env.MOCK_CUSTOMER_PAGE || 3);
+    const limit = Math.max(1, Math.min(Number(url.searchParams.get("limit") || 50), 200, cap));
+    const after = url.searchParams.get("after");
+    const rest = state.customers.filter((row) => !after || row.workspace_id > after);
+    const page = rest.slice(0, limit);
+    json(response, 200, {
+      customers: page,
+      next: page.length === limit && rest.length > limit ? page[page.length - 1].workspace_id : null,
+    });
+    return;
+  }
+
+  const grace = path.match(/^\/api\/v3\/admin\/customers\/([^/]+)\/extend-grace$/);
+  if (method === "POST" && grace) {
+    if (!coreGate(response, who, "SuperAdmin")) return;
+    const body = await readBody(request);
+    if (!Number.isInteger(body.days) || body.days < 1 || body.days > 30) {
+      auraError(response, 422, "validation_error", "days must be between 1 and 30");
+      return;
+    }
+    const row = state.customers.find((item) => item.workspace_id === grace[1]);
+    if (!row || row.provider !== "fawry" || !["past_due", "grace", "expired"].includes(row.status)) {
+      auraError(response, 409, "conflict", "only a Fawry subscription that is past due, in grace or expired can get more grace");
+      return;
+    }
+    if (row.last_payment?.status === "refunded") {
+      auraError(response, 409, "conflict", "this subscription's last payment was refunded");
+      return;
+    }
+    const base = Math.max(Date.parse(row.grace_until || row.period_end) || 0, Date.parse("2026-11-18T00:00:00Z"));
+    row.status = "grace";
+    row.grace_until = new Date(base + body.days * 86_400_000).toISOString();
+    json(response, 200, { status: "grace", grace_until: row.grace_until });
     return;
   }
 

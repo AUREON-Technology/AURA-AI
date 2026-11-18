@@ -29,6 +29,7 @@ export const en = {
   "nav.audit": "Audit",
   "nav.access": "Access",
   "nav.settings": "Settings",
+  "nav.customers": "Customers",
 
   // Command palette
   "palette.aria": "Command palette",
@@ -271,6 +272,22 @@ export const en = {
   "learning.cpuHoursLabel": "CPU hours",
   "learning.emptyJobs": "No fine-tune jobs yet.",
   "models.empty": "No model versions registered.",
+  "customers.sub": "Subscribed workspaces, their plan and state, and their last payment. Refunds happen in Fawry's or the stores' own dashboards.",
+  "customers.superAdminOnly": "Only a SuperAdmin can see customers and their billing.",
+  "customers.colWorkspace": "Workspace",
+  "customers.colPlan": "Plan",
+  "customers.colProvider": "Paid through",
+  "customers.colUntil": "Paid until",
+  "customers.colLastPayment": "Last payment",
+  "customers.graceUntil": "grace until {date}",
+  "customers.extend": "Extend grace",
+  "customers.extendTitle": "Extend grace for {name}",
+  "customers.extendWord": "extend",
+  "customers.days": "Days of grace",
+  "customers.daysHelp": "Added to the later of today and the current grace end. An expired subscription gets its plan back.",
+  "customers.daysRange": "Grace must be a whole number of days from 1 to 30.",
+  "customers.loadMore": "Load more",
+  "customers.empty": "No subscribed workspaces yet.",
 } satisfies Record<string, string>;
 
 export type MessageKey = keyof typeof en;
