@@ -116,7 +116,11 @@ void main() {
       final memories = scope(rec.client()).read(memoryRepositoryProvider);
       await memories.saveMemory('I live in Cairo');
       await memories.syncMemories();
-      expect(rec.keysFor('POST').single, matches(_uuidV4));
+      // Stable per saved memory (F22): a queued save retried on a later sync presents the same
+      // key, so the server replays its first answer instead of storing the memory twice.
+      final key = rec.keysFor('POST').single!;
+      expect(key, startsWith('save-memory-'));
+      expect(key.substring('save-memory-'.length), matches(_uuidV4));
       expect(rec.keysFor('GET').every((k) => k == null), isTrue);
     });
   });
