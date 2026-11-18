@@ -1040,9 +1040,13 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 details={"limit_bytes": settings.knowledge.max_document_bytes},
             )
 
-        from ..knowledge.documents import apply_ocr, extract_pdf, image_extraction_available
+        from ..knowledge.documents import apply_ocr, extract_pdf_async, image_extraction_available
 
-        extraction = extract_pdf(data, title=title, keep_images=image_extraction_available())
+        # In a worker thread (F40): parsing a long PDF held this worker's event loop. A PDF over
+        # the page cap raises DocumentTooLargeError, which answers 413 naming the limit.
+        extraction = await extract_pdf_async(
+            data, title=title, keep_images=image_extraction_available()
+        )
         if extraction.unreadable_pages and container.ocr_engine is not None:
             extraction = await apply_ocr(extraction, container.ocr_engine)
 
