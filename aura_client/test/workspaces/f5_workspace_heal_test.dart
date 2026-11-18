@@ -87,4 +87,30 @@ void main() {
     await expectLater(container.read(knowledgeCenterProvider).listDocuments(), throwsA(isA<AuraApiError>()));
     expect(container.read(activeWorkspaceProvider)?.id, 'ws-team');
   });
+
+  // INT-111: the server answers 404 `not_found` for a document that is unknown, already deleted
+  // or not ours. From the caller's view it is gone, so a retried delete is not an error.
+  group('deleteDocument', () {
+    test('a 404 is a successful delete', () async {
+      final container = await inTeam(MockClient((request) async {
+        requests.add(request);
+        return http.Response('{"error":"not_found","message":"document not found"}', 404);
+      }));
+      await container.read(knowledgeCenterProvider).deleteDocument('doc-1');
+      expect(requests.single.method, 'DELETE');
+      expect(container.read(activeWorkspaceProvider)?.id, 'ws-team');
+    });
+
+    test('a not-a-member 403 still fails and drops the team', () async {
+      final container = await inTeam(refusing());
+      await expectLater(container.read(knowledgeCenterProvider).deleteDocument('doc-1'),
+          throwsA(isA<AuraApiError>().having((e) => e.statusCode, 'statusCode', 403)));
+      expect(container.read(activeWorkspaceProvider), isNull);
+    });
+
+    test('a server error is still an error', () async {
+      final container = await inTeam(MockClient((request) async => http.Response('{}', 500)));
+      await expectLater(container.read(knowledgeCenterProvider).deleteDocument('doc-1'), throwsA(isA<AuraApiError>()));
+    });
+  });
 }

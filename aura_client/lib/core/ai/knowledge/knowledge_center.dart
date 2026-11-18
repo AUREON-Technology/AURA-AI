@@ -439,6 +439,10 @@ class KnowledgeCenter {
 
   Future<void> deleteDocument(String documentId) async {
     final response = await _send('DELETE', '/documents/$documentId');
+    // 404 `not_found`: unknown, already deleted, or not ours (INT-111). Either way it is gone from
+    // this caller's view, so a retried delete succeeds. A 403 (not a member) is still an error,
+    // and `_send` has already healed the active team for it.
+    if (response.statusCode == 404) return;
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw AuraApiError.fromResponse(
         statusCode: response.statusCode,
