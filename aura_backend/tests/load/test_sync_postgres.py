@@ -555,3 +555,149 @@ async def test_a_pull_without_a_limit_is_one_response_for_older_clients(migrated
         body = await api.pull()
         assert sorted(_ids(body, "tasks")) == sorted(tasks)
         assert body["has_more"] is False and body.get("next_page") is None
+
+
+# -- F31: two pushes racing for the same row -----------------------------------------------------
+
+
+def _clock(row) -> datetime:
+    value = row["client_updated_at"]
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+async def _wait_until_blocked(conn, database: str) -> None:
+    """Until some session on ``database`` is waiting on a row lock."""
+    import asyncio
+
+    for _ in range(500):
+        waiting = await conn.fetchval(
+            "SELECT count(*) FROM pg_stat_activity WHERE datname = $1 AND wait_event_type = 'Lock'", database,
+        )
+        if waiting:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("the push never waited on the concurrent writer's lock")
+
+
+async def test_an_older_push_racing_a_newer_write_does_not_overwrite_it(migrated_url, monkeypatch) -> None:
+    """The race the audit described (F31), made deterministic: another push's newer edit has been
+    written but not yet committed when an older edit of the same row arrives.
+
+    Without a row lock the older push read the committed (oldest) version, judged itself newer,
+    waited on the UPDATE, and then overwrote the newer edit as soon as it committed."""
+    import asyncio
+
+    import asyncpg
+
+    async with _Api(migrated_url, monkeypatch) as api:
+        task_id = str(uuid.uuid4())
+        assert (await api.push(_task(task_id, at="2026-03-01T10:00:00Z"))).status_code == 200
+        conn = await asyncpg.connect(migrated_url)
+        newer = await asyncpg.connect(migrated_url)
+        try:
+            transaction = newer.transaction()
+            await transaction.start()
+            await newer.execute(
+                "UPDATE tasks SET title_enc = 'gcm:newer:x', client_updated_at = '2026-03-01T10:00:20Z' "
+                "WHERE id = $1", uuid.UUID(task_id),
+            )
+            older = asyncio.create_task(api.push(_task(task_id, at="2026-03-01T10:00:10Z", title_enc="gcm:older:x")))
+            await _wait_until_blocked(conn, urlsplit(migrated_url).path.lstrip("/"))
+            await transaction.commit()
+            response = await older
+
+            assert response.status_code == 200, response.text
+            assert response.json()[0]["status"] == "conflict"
+            row = await conn.fetchrow("SELECT title_enc, client_updated_at FROM tasks WHERE id = $1", uuid.UUID(task_id))
+            assert row["title_enc"] == "gcm:newer:x"
+            assert _clock(row) == datetime(2026, 3, 1, 10, 0, 20, tzinfo=timezone.utc)
+        finally:
+            await newer.close()
+            await conn.close()
+
+
+async def test_concurrent_pushes_of_one_row_leave_the_newest_edit(migrated_url, monkeypatch) -> None:
+    """Many devices pushing the same row at once: whatever order they commit in, the row ends at
+    the newest clock and every older push is told it lost."""
+    import asyncio
+
+    import asyncpg
+
+    async with _Api(migrated_url, monkeypatch) as api:
+        task_id = str(uuid.uuid4())
+        await api.push(_task(task_id, at="2026-03-01T10:00:00Z"))
+        base = datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc)
+        seconds = [7, 3, 12, 1, 9, 4, 11, 2, 8, 5, 10, 6]
+        responses = await asyncio.gather(*(
+            api.push(_task(task_id, at=(base + timedelta(seconds=s)).isoformat(), title_enc=f"gcm:{s}:x"))
+            for s in seconds
+        ))
+        assert all(r.status_code == 200 for r in responses), [r.text for r in responses]
+        conn = await asyncpg.connect(migrated_url)
+        try:
+            row = await conn.fetchrow("SELECT title_enc, client_updated_at FROM tasks WHERE id = $1", uuid.UUID(task_id))
+        finally:
+            await conn.close()
+        assert row["title_enc"] == "gcm:12:x"
+        assert _clock(row) == base + timedelta(seconds=12)
+
+
+# -- INT-110: a batch's messages keep their order ------------------------------------------------
+
+
+def _chat(message_id: str, *, at: datetime, created: datetime | None = None, text: str = "x") -> dict:
+    payload = {"conversation_id": "c1", "role": "user", "content_enc": f"gcm:iv:{text}"}
+    if created is not None:
+        payload["created_at"] = created.isoformat()
+    return {"table": "messages", "op": "upsert", "id": message_id, "client_updated_at": at.isoformat(),
+            "payload": payload}
+
+
+def _created(body: dict, ids: list[str]) -> list[datetime]:
+    by_id = {row["id"]: datetime.fromisoformat(row["created_at"]) for row in body["data"]["messages"]}
+    return [by_id[i] for i in ids]
+
+
+async def test_a_batch_of_messages_keeps_its_order_on_another_device(migrated_url, monkeypatch) -> None:
+    """Today's client sends no `created_at`; the envelope clock it queued each row with orders them."""
+    async with _Api(migrated_url, monkeypatch) as api:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        ids = [str(uuid.uuid4()) for _ in range(3)]
+        clocks = [now - timedelta(minutes=3 - i) for i in range(3)]
+        results = (await api.push(*(_chat(i, at=c) for i, c in zip(ids, clocks)))).json()
+        assert [r["status"] for r in results] == ["applied"] * 3
+
+        created = _created(await api.pull(), ids)
+        assert created == clocks
+        assert created == sorted(created) and len(set(created)) == 3
+
+
+async def test_a_sent_creation_time_is_kept_and_never_rewritten(migrated_url, monkeypatch) -> None:
+    async with _Api(migrated_url, monkeypatch) as api:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        ids = [str(uuid.uuid4()) for _ in range(3)]
+        created_at = [now - timedelta(hours=5 - i) for i in range(3)]
+        # Queued in the opposite order to their creation: `created_at` wins.
+        await api.push(*(
+            _chat(i, at=now - timedelta(seconds=10 - n), created=c) for n, (i, c) in enumerate(zip(ids, created_at))
+        ))
+        assert _created(await api.pull(), ids) == created_at
+
+        # A later edit cannot move it.
+        await api.push(_chat(ids[0], at=now + timedelta(seconds=1), created=now, text="edited"))
+        assert _created(await api.pull(), ids)[0] == created_at[0]
+
+
+async def test_an_implausible_creation_time_is_replaced_by_the_envelope_or_server_clock(migrated_url, monkeypatch) -> None:
+    async with _Api(migrated_url, monkeypatch) as api:
+        message_id, other = str(uuid.uuid4()), str(uuid.uuid4())
+        before = (datetime.now(timezone.utc) - timedelta(seconds=5)).replace(microsecond=0)
+        far = datetime(2031, 1, 1, tzinfo=timezone.utc)
+        await api.push(_chat(message_id, at=before, created=far))
+        # The payload value is refused; the (plausible) envelope clock is used instead.
+        assert _created(await api.pull(), [message_id])[0] == before
+
+        ancient = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        await api.push(_chat(other, at=ancient, created=ancient))
+        stamped = _created(await api.pull(), [other])[0]
+        assert abs(stamped - datetime.now(timezone.utc)) < timedelta(minutes=5)
