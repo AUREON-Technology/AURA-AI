@@ -1,5 +1,6 @@
 import ast
 import json
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -78,9 +79,13 @@ class TestCoverageAndMutationAnalyzer:
         """Run pytest under coverage.py and return parsed coverage metrics if available."""
         with tempfile.TemporaryDirectory() as tmpdir:
             cov_json = Path(tmpdir) / "coverage.json"
-            cmd = ["coverage", "run", "-m", "pytest", test_target, "-q"]
+            cov_data = str(Path(tmpdir) / ".coverage")
+            cmd = ["coverage", "run", f"--data-file={cov_data}", "-m", "pytest", test_target, "-q"]
             if source_package:
-                cmd = ["coverage", "run", f"--source={source_package}", "-m", "pytest", test_target, "-q"]
+                cmd = [
+                    "coverage", "run", f"--data-file={cov_data}",
+                    f"--source={source_package}", "-m", "pytest", test_target, "-q",
+                ]
 
             try:
                 proc = subprocess.run(
@@ -104,7 +109,7 @@ class TestCoverageAndMutationAnalyzer:
                 }
 
             subprocess.run(
-                ["coverage", "json", "-o", str(cov_json)],
+                ["coverage", "json", f"--data-file={cov_data}", "-o", str(cov_json)],
                 cwd=working_dir,
                 capture_output=True,
                 text=True,
@@ -138,6 +143,7 @@ class TestCoverageAndMutationAnalyzer:
                 mutations.append({
                     "line": getattr(node, "lineno", 0),
                     "col": getattr(node, "col_offset", 0),
+                    "end_col": getattr(node, "end_col_offset", 0),
                     "original": node.value,
                     "mutated": mutated_val,
                 })
@@ -146,22 +152,22 @@ class TestCoverageAndMutationAnalyzer:
     @classmethod
     def evaluate_mutations_against_tests(
         cls,
-        source_code: str,
         source_filename: str,
-        test_code: str,
         working_dir: str,
         timeout_seconds: int = 30,
     ) -> Dict[str, Any]:
         """
         Apply simple boolean mutations to a target file inside working_dir and run pytest
         to measure how many mutants are killed by the test suite.
+
+        All mutations are performed on a temporary copy of the project — the original
+        source files are never modified.
         """
         target_path = Path(working_dir) / source_filename
         if not target_path.exists():
             return {"evaluated": False, "error": f"Target file not found: {target_path}"}
 
         original_text = target_path.read_text(encoding="utf-8")
-        lines = original_text.splitlines()
         candidates = cls.generate_boolean_mutations(original_text)
 
         if not candidates:
@@ -169,42 +175,87 @@ class TestCoverageAndMutationAnalyzer:
                 "evaluated": True,
                 "mutants_total": 0,
                 "mutants_killed": 0,
-                "mutation_score": 100.0,
+                "mutation_score": None,
+                "note": "No boolean constants found — mutation testing not applicable.",
             }
 
-        killed = 0
-        tested = 0
-        try:
+        # --- Work on a temporary copy so the original files are never touched ---
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_working = Path(tmpdir) / "workspace"
+            shutil.copytree(working_dir, str(tmp_working))
+            tmp_target = tmp_working / source_filename
+
+            # --- Validate: tests must pass on the unmodified code first ---
+            baseline = subprocess.run(
+                ["pytest", "-q"],
+                cwd=str(tmp_working),
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+            )
+            if baseline.returncode != 0:
+                reason = (
+                    "No tests were collected by pytest."
+                    if baseline.returncode == 5
+                    else "The test suite does not pass on unmodified code."
+                )
+                return {
+                    "evaluated": False,
+                    "error": (
+                        f"{reason} Mutation testing requires a green test suite. "
+                        f"pytest exit code: {baseline.returncode}"
+                    ),
+                    "stdout": baseline.stdout.strip(),
+                    "stderr": baseline.stderr.strip(),
+                }
+
+            lines = original_text.splitlines()
+            killed = 0
+            tested = 0
+
             for mut in candidates[:10]:
                 line_idx = mut["line"] - 1
                 if line_idx < 0 or line_idx >= len(lines):
                     continue
+
                 old_line = lines[line_idx]
+                col_start = mut["col"]
+                col_end = mut["end_col"]
+
+                # Validate that the AST offsets actually match the expected token
                 target_str = "True" if mut["original"] else "False"
-                repl_str = "False" if mut["original"] else "True"
-                if target_str not in old_line:
+                if old_line[col_start:col_end] != target_str:
                     continue
 
-                tested += 1
-                lines[line_idx] = old_line.replace(target_str, repl_str, 1)
-                target_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                repl_str = "False" if mut["original"] else "True"
 
-                proc = subprocess.run(
-                    ["pytest", "-q"],
-                    cwd=working_dir,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout_seconds,
-                )
-                if proc.returncode != 0:
+                # AST-precise replacement using column offsets
+                mutated_line = old_line[:col_start] + repl_str + old_line[col_end:]
+
+                tested += 1
+                mutated_lines = list(lines)
+                mutated_lines[line_idx] = mutated_line
+                tmp_target.write_text("\n".join(mutated_lines) + "\n", encoding="utf-8")
+
+                try:
+                    proc = subprocess.run(
+                        ["pytest", "-q"],
+                        cwd=str(tmp_working),
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout_seconds,
+                    )
+                    # Exit code 5 means no tests collected — not a kill
+                    if proc.returncode != 0 and proc.returncode != 5:
+                        killed += 1
+                except subprocess.TimeoutExpired:
+                    # Timeout means the mutant caused a hang — treat as killed
                     killed += 1
 
-                lines[line_idx] = old_line
-                target_path.write_text(original_text, encoding="utf-8")
-        finally:
-            target_path.write_text(original_text, encoding="utf-8")
+                # Restore the copy to its original state for the next mutation
+                tmp_target.write_text(original_text, encoding="utf-8")
 
-        score = round((killed / tested) * 100.0, 2) if tested > 0 else 100.0
+        score = round((killed / tested) * 100.0, 2) if tested > 0 else None
         return {
             "evaluated": True,
             "mutants_total": tested,
