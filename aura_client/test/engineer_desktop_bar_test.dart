@@ -213,6 +213,11 @@ void main() {
       databaseProvider.overrideWithValue(db),
       ideEventBusProvider.overrideWithValue(bus),
       workspaceNotifierProvider.overrideWith((ref) => WorkspaceNotifier(db, bus)),
+      // The Engineer panel's host banner watches /status, which polls every 3 s; a
+      // running, paired daemon keeps the banner hidden and leaves no poll timer behind.
+      hostdStatusProvider.overrideWith(
+        (ref) => Stream.value(HostdStatusSnapshot(reachable: true, authenticated: true)),
+      ),
       agentsProvider.overrideWith((ref) async => _agents),
       tokenManagerProvider.overrideWith((ref) => _StubTokenManager(ref)),
       engineerFolderAccountProvider.overrideWithValue(account),

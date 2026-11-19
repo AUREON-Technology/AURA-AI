@@ -9,6 +9,7 @@ library;
 
 import 'dart:async';
 
+import 'package:aura_client/desktop/host/host_access.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -248,26 +249,9 @@ class _HostPanelState extends ConsumerState<HostPanel> {
   }
 
   Future<void> _startDaemon(BuildContext context, WidgetRef ref) async {
-    final path = await ref.read(hostdExecutablePathProvider.future);
-    if (path == null || path.isEmpty) {
-      if (context.mounted) {
-        AuraSnackbar.show(
-          context,
-          message: context.l10n.hostSetExecutableFirst,
-          kind: AuraSnackbarKind.error,
-        );
-      }
-      return;
-    }
     setState(() => _starting = true);
     try {
-      await ref.read(hostdSupervisorProvider).start(path);
-      await Future<void>.delayed(const Duration(milliseconds: 500));
-      ref.invalidate(hostdStatusProvider);
-    } catch (error) {
-      if (context.mounted) {
-        AuraSnackbar.show(context, message: context.l10n.hostCouldNotStart(describeHostdError(error)), kind: AuraSnackbarKind.error);
-      }
+      await startHostDaemon(context, ref);
     } finally {
       if (mounted) setState(() => _starting = false);
     }

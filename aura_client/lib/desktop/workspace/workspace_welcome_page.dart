@@ -23,74 +23,83 @@ class WorkspaceWelcomePage extends ConsumerWidget {
     final workspaceState = ref.watch(workspaceNotifierProvider);
 
     return Scaffold(
+      // Scrolls rather than overflowing: with the terminal panel open the editor area can be
+      // half the window, too short for the logo, the button and more than a couple of recents.
       body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 600),
-          child: Padding(
-            padding: EdgeInsets.all(ideDensity.spacingScale * AuraSpacing.xl),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Logo
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(AuraRadius.lg),
-                  child: Image.asset(
-                    'assets/app_icon.png',
-                    width: 96,
-                    height: 96,
-                    fit: BoxFit.contain,
-                  ),
-                ),
-                const SizedBox(height: AuraSpacing.md),
-                Text(
-                  'AURA Desktop IDE',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: palette.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: AuraSpacing.xs),
-                Text(
-                  context.l10n.workspaceWelcomeSubtitle,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: palette.textSecondary),
-                ),
-                const SizedBox(height: AuraSpacing.xxxl),
-
-                // Open Folder button
-                AuraButton(
-                  label: context.l10n.workspaceOpenFolder,
-                  icon: Icons.folder_open,
-                  onPressed: () => _openFolder(context, ref),
-                ),
-                const SizedBox(height: AuraSpacing.lg),
-
-                // Divider
-                Row(
-                  children: [
-                    Expanded(child: Divider(color: palette.border)),
-                    Padding(
-                      padding: EdgeInsets.symmetric(horizontal: ideDensity.spacingScale * AuraSpacing.md),
-                      child: Text(context.l10n.workspaceRecent, style: TextStyle(color: palette.textSecondary)),
+        child: SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 600),
+            child: Padding(
+              padding: EdgeInsets.all(ideDensity.spacingScale * AuraSpacing.xl),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Logo
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(AuraRadius.lg),
+                    child: Image.asset(
+                      'assets/app_icon.png',
+                      width: 96,
+                      height: 96,
+                      fit: BoxFit.contain,
                     ),
-                    Expanded(child: Divider(color: palette.border)),
-                  ],
-                ),
-                const SizedBox(height: AuraSpacing.lg),
-
-                // Recent workspaces
-                if (workspaceState.workspaces.isEmpty)
-                  _EmptyRecent(palette: palette, ideDensity: ideDensity)
-                else
-                  _RecentWorkspacesList(
-                    workspaces: workspaceState.workspaces,
-                    activeWorkspaceId: workspaceState.activeWorkspaceId,
-                    ideDensity: ideDensity,
-                    palette: palette,
                   ),
-              ],
+                  const SizedBox(height: AuraSpacing.md),
+                  Text(
+                    'AURA Desktop IDE',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: palette.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: AuraSpacing.xs),
+                  Text(
+                    context.l10n.workspaceWelcomeSubtitle,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: palette.textSecondary),
+                  ),
+                  const SizedBox(height: AuraSpacing.xxxl),
+
+                  // Open Folder button
+                  AuraButton(
+                    label: context.l10n.workspaceOpenFolder,
+                    icon: Icons.folder_open,
+                    onPressed: () => _openFolder(context, ref),
+                  ),
+                  const SizedBox(height: AuraSpacing.lg),
+
+                  // Divider
+                  Row(
+                    children: [
+                      Expanded(child: Divider(color: palette.border)),
+                      Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: ideDensity.spacingScale * AuraSpacing.md,
+                        ),
+                        child: Text(
+                          context.l10n.workspaceRecent,
+                          style: TextStyle(color: palette.textSecondary),
+                        ),
+                      ),
+                      Expanded(child: Divider(color: palette.border)),
+                    ],
+                  ),
+                  const SizedBox(height: AuraSpacing.lg),
+
+                  // Recent workspaces
+                  if (workspaceState.workspaces.isEmpty)
+                    _EmptyRecent(palette: palette, ideDensity: ideDensity)
+                  else
+                    _RecentWorkspacesList(
+                      workspaces: workspaceState.workspaces,
+                      activeWorkspaceId: workspaceState.activeWorkspaceId,
+                      ideDensity: ideDensity,
+                      palette: palette,
+                    ),
+                ],
+              ),
             ),
           ),
         ),
@@ -105,26 +114,36 @@ class WorkspaceWelcomePage extends ConsumerWidget {
     final workspaceId = 'ws_${DateTime.now().millisecondsSinceEpoch}';
     final displayName = path.split('/').last.split('\\').last;
 
-    await ref.read(workspaceNotifierProvider.notifier).createWorkspace(
-      id: workspaceId,
-      rootPath: path,
-      displayName: displayName,
-    );
+    await ref
+        .read(workspaceNotifierProvider.notifier)
+        .createWorkspace(
+          id: workspaceId,
+          rootPath: path,
+          displayName: displayName,
+        );
 
     // Offer to grant to hostd
-    final hostStatus = await ref.read(hostdControlClientProvider).status().catchError((_) => <String, dynamic>{});
+    final hostStatus = await ref
+        .read(hostdControlClientProvider)
+        .status()
+        .catchError((_) => <String, dynamic>{});
     if (hostStatus['authenticated'] == true) {
       if (!context.mounted) return;
       final shouldGrant = await _showGrantDialog(context, path);
       if (shouldGrant == true) {
         try {
           await ref.read(hostdControlClientProvider).grantRoot(path);
-          ref.read(workspaceNotifierProvider.notifier).updateHostdRoots(
-            [...ref.read(workspaceNotifierProvider).hostdRoots, HostdRoot(path: path, trusted: false)],
-          );
+          ref.read(workspaceNotifierProvider.notifier).updateHostdRoots([
+            ...ref.read(workspaceNotifierProvider).hostdRoots,
+            HostdRoot(path: path, trusted: false),
+          ]);
         } catch (e) {
           if (context.mounted) {
-            AuraSnackbar.show(context, message: context.l10n.explorerGrantFailed(e.toString()), kind: AuraSnackbarKind.error);
+            AuraSnackbar.show(
+              context,
+              message: context.l10n.explorerGrantFailed(e.toString()),
+              kind: AuraSnackbarKind.error,
+            );
           }
         }
       }
@@ -188,11 +207,15 @@ class _RecentWorkspacesList extends ConsumerWidget {
       children: workspaces.map((ws) {
         final isActive = ws.id == activeWorkspaceId;
         return Padding(
-          padding: EdgeInsets.only(bottom: ideDensity.spacingScale * AuraSpacing.sm),
+          padding: EdgeInsets.only(
+            bottom: ideDensity.spacingScale * AuraSpacing.sm,
+          ),
           child: AuraCard(
             padding: EdgeInsets.all(ideDensity.spacingScale * AuraSpacing.md),
             child: InkWell(
-              onTap: () => ref.read(workspaceNotifierProvider.notifier).setActiveWorkspace(ws.id),
+              onTap: () => ref
+                  .read(workspaceNotifierProvider.notifier)
+                  .setActiveWorkspace(ws.id),
               borderRadius: BorderRadius.circular(AuraRadius.md),
               child: Row(
                 children: [
@@ -208,7 +231,9 @@ class _RecentWorkspacesList extends ConsumerWidget {
                         Text(
                           ws.displayName,
                           style: TextStyle(
-                            fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                            fontWeight: isActive
+                                ? FontWeight.w600
+                                : FontWeight.w400,
                             color: palette.textPrimary,
                           ),
                         ),
@@ -228,8 +253,14 @@ class _RecentWorkspacesList extends ConsumerWidget {
                     Icon(Icons.check_circle, color: palette.brand, size: 20)
                   else
                     IconButton(
-                      icon: Icon(Icons.close, size: 18, color: palette.textDisabled),
-                      onPressed: () => ref.read(workspaceNotifierProvider.notifier).removeWorkspace(ws.id),
+                      icon: Icon(
+                        Icons.close,
+                        size: 18,
+                        color: palette.textDisabled,
+                      ),
+                      onPressed: () => ref
+                          .read(workspaceNotifierProvider.notifier)
+                          .removeWorkspace(ws.id),
                       tooltip: context.l10n.workspaceRemoveFromRecent,
                     ),
                 ],

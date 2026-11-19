@@ -1930,6 +1930,22 @@
   "@hostStartNow": {
     "description": "IDE Host panel: start button while an automatic restart is pending"
   },
+  "hostRequiredNotRunning": "The host daemon isn't running. Start it so AURA can reach this workspace's files.",
+  "@hostRequiredNotRunning": {
+    "description": "Desktop IDE panel (Source Control, Terminal) shown while the host daemon is not running"
+  },
+  "hostRequiredNotPaired": "The host daemon is running but isn't paired with your account. Pair it to continue.",
+  "@hostRequiredNotPaired": {
+    "description": "Desktop IDE panel shown while the host daemon runs unpaired"
+  },
+  "agentHostNotRunning": "Host daemon isn't running. Engineer can't read or change files until it starts.",
+  "@agentHostNotRunning": {
+    "description": "Desktop Engineer panel banner above the composer while the host daemon is not running"
+  },
+  "agentHostNotPaired": "Host daemon isn't paired. Engineer can't read or change files until you pair it.",
+  "@agentHostNotPaired": {
+    "description": "Desktop Engineer panel banner above the composer while the host daemon runs unpaired"
+  },
   "hostStart": "Start",
   "@hostStart": {
     "description": "IDE Host panel: start daemon button"

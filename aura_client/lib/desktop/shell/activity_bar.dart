@@ -99,8 +99,8 @@ class ActivityBar extends ConsumerWidget {
               ),
             ),
           ),
-          const Spacer(),
-          // Activity items
+          // Activity items sit right under the logo, as in every IDE: they used to be centred
+          // between two Spacers, leaving a third of the bar empty above them.
           _ActivityItem(
             icon: Icons.folder_outlined,
             selectedIcon: Icons.folder,

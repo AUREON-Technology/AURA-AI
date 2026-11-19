@@ -11,6 +11,7 @@
 /// `_translateKey` never did.
 library;
 
+import 'package:aura_client/desktop/host/host_access.dart';
 import 'package:aura_client/core/locale/text_direction.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -103,7 +104,12 @@ class _TerminalViewState extends ConsumerState<TerminalView> {
 
     if (session == null) {
       if (matchingRoot == null) {
-        return _CenteredMessage(text: context.l10n.terminalGrantWorkspace, palette: palette);
+        return HostAccessNotice(
+          workspaceRoot: rootPath,
+          grantMessage: context.l10n.terminalGrantWorkspace,
+          background: _bg,
+          textStyle: const TextStyle(color: Color(0xFF808080), fontFamily: 'Courier', fontSize: 13),
+        );
       }
       if (!trusted) {
         return _CenteredMessage(

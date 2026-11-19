@@ -1433,6 +1433,22 @@ class AppLocalizationsAr extends AppLocalizations {
   String get hostStartNow => 'شغّل دلوقتي';
 
   @override
+  String get hostRequiredNotRunning =>
+      'الـ Host daemon مش شغّال. شغّله علشان AURA يقدر يوصل لملفات الـ workspace ده.';
+
+  @override
+  String get hostRequiredNotPaired =>
+      'الـ Host daemon شغّال بس مش متربط بحسابك. اربطه علشان تكمّل.';
+
+  @override
+  String get agentHostNotRunning =>
+      'الـ Host daemon مش شغّال. الـ Engineer مش هيقدر يقرا أو يعدّل الملفات لحد ما يشتغل.';
+
+  @override
+  String get agentHostNotPaired =>
+      'الـ Host daemon مش متربط. الـ Engineer مش هيقدر يقرا أو يعدّل الملفات لحد ما تربطه.';
+
+  @override
   String get hostStart => 'تشغيل';
 
   @override

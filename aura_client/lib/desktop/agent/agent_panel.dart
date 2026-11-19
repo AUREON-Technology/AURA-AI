@@ -6,6 +6,9 @@
 /// Replaces the static "Agent Panel (D6)" placeholder that was here before.
 library;
 
+import 'package:aura_client/features/engineering/presentation/hostd_pairing_flow.dart';
+import 'package:aura_client/core/hostd/hostd_providers.dart';
+import 'package:aura_client/desktop/host/host_access.dart';
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -253,6 +256,7 @@ class _AgentPanelState extends ConsumerState<AgentPanel> {
               ),
             ),
             const PendingActionsCard(),
+            const _HostRequiredBanner(),
             ChatComposer(controller: _controller, isMobile: true, onSend: _send),
             ],
           ],
@@ -364,6 +368,92 @@ class _EngineerLocked extends ConsumerWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// Says, above the composer, when Engineer cannot touch files: the daemon is down or unpaired.
+/// Without it a request like "analyze this project" went out anyway, Engineer answered from the
+/// knowledge base alone, and the reply read as Engineer not understanding the request.
+class _HostRequiredBanner extends ConsumerStatefulWidget {
+  const _HostRequiredBanner();
+
+  @override
+  ConsumerState<_HostRequiredBanner> createState() =>
+      _HostRequiredBannerState();
+}
+
+class _HostRequiredBannerState extends ConsumerState<_HostRequiredBanner> {
+  bool _busy = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
+    final l10n = context.l10n;
+    final statusAsync = ref.watch(hostdStatusProvider);
+    // Nothing until the first poll answers: a banner that flashes on every panel open would
+    // teach people to ignore it.
+    if (!statusAsync.hasValue) return const SizedBox.shrink();
+    final step = hostAccessStepFor(statusAsync.value);
+    if (step == HostAccessStep.grant) return const SizedBox.shrink();
+    final notRunning = step == HostAccessStep.start;
+
+    return Semantics(
+      liveRegion: true,
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(
+          AuraSpacing.sm,
+          0,
+          AuraSpacing.sm,
+          AuraSpacing.sm,
+        ),
+        padding: const EdgeInsetsDirectional.fromSTEB(
+          AuraSpacing.md,
+          AuraSpacing.sm,
+          AuraSpacing.sm,
+          AuraSpacing.sm,
+        ),
+        decoration: BoxDecoration(
+          color: palette.warning.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(AuraRadius.md),
+          border: Border.all(color: palette.warning.withValues(alpha: 0.35)),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              notRunning ? Icons.cloud_off : Icons.link_off,
+              size: 18,
+              color: palette.warning,
+            ),
+            const SizedBox(width: AuraSpacing.sm),
+            Expanded(
+              child: Text(
+                notRunning ? l10n.agentHostNotRunning : l10n.agentHostNotPaired,
+                style: TextStyle(color: palette.textPrimary, fontSize: 12.5),
+              ),
+            ),
+            const SizedBox(width: AuraSpacing.sm),
+            AuraButton(
+              label: notRunning ? l10n.hostStart : l10n.hostPair,
+              icon: notRunning ? Icons.play_arrow : Icons.link,
+              variant: AuraButtonVariant.secondary,
+              loading: _busy,
+              onPressed: () async {
+                setState(() => _busy = true);
+                try {
+                  if (notRunning) {
+                    await startHostDaemon(context, ref);
+                  } else {
+                    await pairHostDaemon(context, ref);
+                  }
+                } finally {
+                  if (mounted) setState(() => _busy = false);
+                }
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

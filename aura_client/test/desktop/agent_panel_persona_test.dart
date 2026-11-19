@@ -1,6 +1,7 @@
 // The desktop Engineer panel borrows the app-wide persona (audit 2026-11-16, F7): it switches
 // to Engineer only when the account may use it, shows why when it may not, and hands the previous
 // persona back when it closes -- unless the user picked another one in the meantime.
+import 'package:aura_client/core/hostd/hostd_providers.dart';
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
@@ -61,6 +62,11 @@ void main() {
         databaseProvider.overrideWithValue(db),
         ideEventBusProvider.overrideWithValue(bus),
         workspaceNotifierProvider.overrideWith((ref) => WorkspaceNotifier(db, bus)),
+        // The Engineer panel's host banner watches /status, which polls every 3 s; a
+        // running, paired daemon keeps the banner hidden and leaves no poll timer behind.
+        hostdStatusProvider.overrideWith(
+          (ref) => Stream.value(HostdStatusSnapshot(reachable: true, authenticated: true)),
+        ),
         agentsProvider.overrideWith((ref) async => agents),
       ],
     );
