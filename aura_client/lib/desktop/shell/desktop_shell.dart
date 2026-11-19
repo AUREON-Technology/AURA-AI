@@ -85,6 +85,8 @@ class _DesktopShellState extends ConsumerState<DesktopShell> {
       commands: buildDesktopCommands(
         ref,
         platform: Theme.of(context).platform,
+        // This State's context outlives the palette, so Save can still ask and report through it.
+        context: context,
       ),
     );
   }

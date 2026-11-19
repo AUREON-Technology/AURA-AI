@@ -41,6 +41,9 @@ String modifierLabel(TargetPlatform platform) =>
 List<AuraCommandItem> buildDesktopCommands(
   WidgetRef ref, {
   required TargetPlatform platform,
+  // Lets Save show a failure or a changed-on-disk question; without one Save still works, it just
+  // cannot ask, so it never overwrites a changed file.
+  BuildContext? context,
 }) {
   final mod = modifierLabel(platform);
   final layout = ref.read(layoutNotifierProvider);
@@ -82,7 +85,7 @@ List<AuraCommandItem> buildDesktopCommands(
           : (!activeTab.isDirty ? l10n.ideCmdNoUnsavedChanges : null),
       onInvoke: activeTab != null && activeTab.isDirty
           // The same function Ctrl/Cmd+S runs -- see desktop_actions.dart.
-          ? () => saveActiveFile(ref)
+          ? () => saveActiveFile(ref, context: context)
           : null,
     ),
     AuraCommandItem(
