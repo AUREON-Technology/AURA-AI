@@ -1,10 +1,10 @@
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 class NotebookReader:
-    """Reader for parsing Jupyter (.ipynb) notebooks from file path or JSON string."""
+    """Reader for parsing Jupyter (.ipynb) notebooks, extracting code, markdown, outputs, and stripping outputs."""
 
     @staticmethod
     def parse_notebook(path_or_json: str) -> Dict[str, Any]:
@@ -47,6 +47,7 @@ class NotebookReader:
                     "cell_index": idx,
                     "execution_count": cell.get("execution_count"),
                     "code": source_text,
+                    "has_output": bool(cell.get("outputs")),
                 })
             elif ctype == "markdown":
                 markdown_cells.append({
@@ -62,3 +63,94 @@ class NotebookReader:
             "code_cells": code_cells,
             "markdown_cells": markdown_cells,
         }
+
+    @classmethod
+    def extract_runnable_python(cls, path_or_json: str) -> str:
+        """Convert all notebook code cells into a standalone runnable Python script."""
+        res = cls.parse_notebook(path_or_json)
+        if not res["valid"]:
+            return f"# Error parsing notebook: {res.get('error')}\n"
+
+        py_lines = [
+            f"# Auto-generated Python script from notebook",
+            f"# Total Code Cells: {res['code_cells_count']}",
+            "",
+        ]
+
+        for cell in res["code_cells"]:
+            idx = cell["cell_index"]
+            py_lines.append(f"# --- [Cell {idx}] ---")
+            raw_code = cell["code"]
+            # Comment out ipython magic lines (% or !)
+            for line in raw_code.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("%") or stripped.startswith("!"):
+                    py_lines.append(f"# {line}  # ipython magic")
+                else:
+                    py_lines.append(line)
+            py_lines.append("")
+
+        return "\n".join(py_lines)
+
+    @classmethod
+    def extract_markdown_document(cls, path_or_json: str) -> str:
+        """Extract narrative text from markdown cells as a clean documentation document."""
+        res = cls.parse_notebook(path_or_json)
+        if not res["valid"]:
+            return f"# Error: {res.get('error')}\n"
+
+        md_lines = [
+            "# Notebook Documentation Extract",
+            "",
+        ]
+        for cell in res["markdown_cells"]:
+            md_lines.append(cell["markdown"])
+            md_lines.append("")
+
+        return "\n".join(md_lines).strip()
+
+    @staticmethod
+    def extract_cell_outputs(path_or_json: str) -> List[Dict[str, Any]]:
+        """Extract captured stdout, stderr, errors, and image display metadata from notebook cells."""
+        candidate = Path(path_or_json)
+        try:
+            raw_text = candidate.read_text(encoding="utf-8") if candidate.exists() and candidate.is_file() else path_or_json
+            nb = json.loads(raw_text)
+        except Exception:
+            return []
+
+        outputs = []
+        for idx, cell in enumerate(nb.get("cells", [])):
+            if cell.get("cell_type") != "code":
+                continue
+            for out in cell.get("outputs", []):
+                out_type = out.get("output_type", "")
+                text = ""
+                if "text" in out:
+                    text = "".join(out["text"]) if isinstance(out["text"], list) else str(out["text"])
+                elif "data" in out and "text/plain" in out["data"]:
+                    t = out["data"]["text/plain"]
+                    text = "".join(t) if isinstance(t, list) else str(t)
+
+                has_image = "data" in out and any("image/" in k for k in out["data"])
+                outputs.append({
+                    "cell_index": idx,
+                    "output_type": out_type,
+                    "text": text.strip(),
+                    "has_image": has_image,
+                })
+        return outputs
+
+    @staticmethod
+    def strip_notebook_outputs(path_or_json: str) -> str:
+        """Clear all output cells and execution counts for clean git commit diffs."""
+        candidate = Path(path_or_json)
+        raw_text = candidate.read_text(encoding="utf-8") if candidate.exists() and candidate.is_file() else path_or_json
+        nb = json.loads(raw_text)
+
+        for cell in nb.get("cells", []):
+            if cell.get("cell_type") == "code":
+                cell["outputs"] = []
+                cell["execution_count"] = None
+
+        return json.dumps(nb, indent=2)

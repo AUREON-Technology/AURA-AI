@@ -59,8 +59,13 @@ class RegressionImpactAnalyzer:
 
         try:
             proc = subprocess.run(
-                # Use ``--`` separator so the ref is never parsed as an option.
-                ["git", "diff", "--name-only", "--", base_ref],
+                # NOTE: do NOT place base_ref after "--" here.  After "--", git
+                # interprets the argument as a *file path*, not a revision, so
+                # "git diff --name-only -- HEAD^1" always returns 0 lines.
+                # The injection risk is covered by the allowlist check above
+                # (_SAFE_REF_CHARS + reject leading "-"), so the separator is
+                # intentionally absent.
+                ["git", "diff", "--name-only", base_ref],
                 cwd=repo_dir,
                 capture_output=True,
                 text=True,

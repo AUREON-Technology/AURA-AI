@@ -1,8 +1,9 @@
-from typing import Any, Dict, List, Optional
+from collections import defaultdict, deque
+from typing import Any, Dict, List, Optional, Set
 
 
 class DataLineageProvenanceTracker:
-    """Tracker for recording and querying data transformations, sources, and provenance edges."""
+    """Tracker for recording and querying data transformations, sources, provenance trees, and Mermaid lineage export."""
 
     def __init__(self) -> None:
         self.edges: List[Dict[str, Any]] = []
@@ -64,3 +65,70 @@ class DataLineageProvenanceTracker:
             "lineage_path": lineage_path,
             "hops": len(lineage_path) - 1,
         }
+
+    def get_provenance_chain(self, target: str) -> List[str]:
+        """Retrieve complete upstream ancestry trace from original roots up to target."""
+        ancestors: List[str] = []
+        queue = deque([target])
+        visited: Set[str] = {target}
+
+        while queue:
+            curr = queue.popleft()
+            upstreams = self.get_upstream_sources(curr)
+            for u in upstreams:
+                if u not in visited:
+                    visited.add(u)
+                    ancestors.append(u)
+                    queue.append(u)
+
+        return ancestors
+
+    def detect_circular_lineage(self) -> List[List[str]]:
+        """Identify circular loops in data transformation lineage graph."""
+        adj: Dict[str, List[str]] = defaultdict(list)
+        all_nodes: Set[str] = set()
+
+        for e in self.edges:
+            adj[e["source"]].append(e["target"])
+            all_nodes.add(e["source"])
+            all_nodes.add(e["target"])
+
+        cycles: List[List[str]] = []
+        state: Dict[str, int] = {n: 0 for n in all_nodes}
+        stack: List[str] = []
+
+        def dfs(node: str) -> None:
+            state[node] = 1
+            stack.append(node)
+            for nxt in adj.get(node, []):
+                if state.get(nxt, 0) == 1:
+                    idx = stack.index(nxt)
+                    cycles.append(stack[idx:] + [nxt])
+                elif state.get(nxt, 0) == 0:
+                    dfs(nxt)
+            stack.pop()
+            state[node] = 2
+
+        for n in sorted(all_nodes):
+            if state[n] == 0:
+                dfs(n)
+
+        return cycles
+
+    def export_to_mermaid(self, direction: str = "LR") -> str:
+        """Generate a Mermaid flowchart visualizing data flow lineage."""
+        lines = [f"flowchart {direction}"]
+        if not self.edges:
+            lines.append("    empty_lineage[\"No Transformations Recorded\"]")
+            return "\n".join(lines)
+
+        def sanitize(text: str) -> str:
+            return "".join(c if c.isalnum() else "_" for c in text)
+
+        for e in self.edges:
+            src_id = sanitize(e["source"])
+            tgt_id = sanitize(e["target"])
+            op = e.get("operation", "transforms")
+            lines.append(f'    {src_id}["{e["source"]}"] -->|"{op}"| {tgt_id}["{e["target"]}"]')
+
+        return "\n".join(lines)

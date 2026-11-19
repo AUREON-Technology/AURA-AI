@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional
 
 
 class DataQualityAndValidationEngine:
-    """Engine for checking null counts, duplicate records, schema keys, and value ranges on tabular rows."""
+    """Engine for checking null counts, duplicate records, schema types, outlier detection, and numeric bounds."""
 
     @staticmethod
     def validate_records(
@@ -95,4 +95,143 @@ class DataQualityAndValidationEngine:
             "within_bounds": len(out_of_bounds) == 0,
             "violations_count": len(out_of_bounds),
             "violations": out_of_bounds,
+        }
+
+    @staticmethod
+    def detect_missing_values(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Calculate per-column missing and null value ratios."""
+        if not records:
+            return {"total_rows": 0, "columns": {}}
+
+        total_rows = len(records)
+        all_cols = set()
+        for r in records:
+            all_cols.update(r.keys())
+
+        col_stats: Dict[str, Dict[str, Any]] = {}
+        for col in sorted(all_cols):
+            missing_count = 0
+            for r in records:
+                v = r.get(col)
+                if v is None or v == "" or (isinstance(v, float) and math.isnan(v)):
+                    missing_count += 1
+            col_stats[col] = {
+                "missing_count": missing_count,
+                "missing_ratio": round(missing_count / total_rows, 4),
+            }
+
+        return {"total_rows": total_rows, "columns": col_stats}
+
+    @staticmethod
+    def detect_duplicates(
+        records: List[Dict[str, Any]],
+        subset_keys: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Find duplicate records based on full row or a subset of key columns."""
+        seen: Dict[Any, int] = {}
+        duplicates: List[Dict[str, Any]] = []
+
+        for idx, row in enumerate(records):
+            if subset_keys:
+                key_tuple = tuple(row.get(k) for k in subset_keys)
+            else:
+                key_tuple = tuple(sorted((k, repr(v)) for k, v in row.items()))
+
+            if key_tuple in seen:
+                duplicates.append({
+                    "original_row_index": seen[key_tuple],
+                    "duplicate_row_index": idx,
+                    "key": str(key_tuple),
+                })
+            else:
+                seen[key_tuple] = idx
+
+        return {
+            "has_duplicates": len(duplicates) > 0,
+            "duplicates_count": len(duplicates),
+            "duplicates": duplicates[:50],
+        }
+
+    @staticmethod
+    def detect_statistical_outliers(
+        records: List[Dict[str, Any]],
+        field: str,
+        z_score_threshold: float = 3.0,
+    ) -> Dict[str, Any]:
+        """Detect numeric outliers using standard z-score metric."""
+        values: List[float] = []
+        indices: List[int] = []
+
+        for idx, row in enumerate(records):
+            val = row.get(field)
+            if val is not None and not isinstance(val, bool):
+                try:
+                    f = float(val)
+                    if not math.isnan(f):
+                        values.append(f)
+                        indices.append(idx)
+                except (ValueError, TypeError):
+                    pass
+
+        if len(values) < 3:
+            return {"field": field, "outliers_count": 0, "outliers": [], "note": "Insufficient numeric sample size"}
+
+        mean = sum(values) / len(values)
+        variance = sum((x - mean) ** 2 for x in values) / len(values)
+        std_dev = math.sqrt(variance)
+
+        if std_dev == 0.0:
+            return {"field": field, "outliers_count": 0, "outliers": [], "std_dev": 0.0}
+
+        outliers: List[Dict[str, Any]] = []
+        for idx, val in zip(indices, values):
+            z = abs(val - mean) / std_dev
+            if z > z_score_threshold:
+                outliers.append({
+                    "row_index": idx,
+                    "value": val,
+                    "z_score": round(z, 2),
+                })
+
+        return {
+            "field": field,
+            "mean": round(mean, 2),
+            "std_dev": round(std_dev, 2),
+            "outliers_count": len(outliers),
+            "outliers": outliers,
+        }
+
+    @staticmethod
+    def validate_types_and_schemas(
+        records: List[Dict[str, Any]],
+        type_contracts: Dict[str, str],
+    ) -> Dict[str, Any]:
+        """Verify that column values match declared string, int, float, bool, or dict types."""
+        type_map = {
+            "str": str,
+            "int": int,
+            "float": (int, float),
+            "bool": bool,
+            "dict": dict,
+            "list": list,
+        }
+        violations: List[Dict[str, Any]] = []
+
+        for idx, row in enumerate(records):
+            for col, expected_type_str in type_contracts.items():
+                if col in row and row[col] is not None:
+                    exp_cls = type_map.get(expected_type_str.lower())
+                    if exp_cls and not isinstance(row[col], exp_cls):
+                        violations.append({
+                            "row_index": idx,
+                            "column": col,
+                            "expected_type": expected_type_str,
+                            "actual_type": type(row[col]).__name__,
+                            "value": repr(row[col]),
+                        })
+
+        return {
+            "schema_compliant": len(violations) == 0,
+            "violations_count": len(violations),
+            "violations": violations[:50],
         }

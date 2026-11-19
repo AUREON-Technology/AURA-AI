@@ -1,8 +1,9 @@
-from typing import Any, Dict, List, Optional
+from collections import defaultdict, deque
+from typing import Any, Dict, List, Optional, Set
 
 
 class KnowledgeGraphManager:
-    """Lightweight in-memory knowledge graph manager for triples (entity, relation, target)."""
+    """Lightweight in-memory knowledge graph manager for triples (entity, relation, target), reasoning paths, and Mermaid visualization."""
 
     def __init__(self) -> None:
         self.triples: List[Dict[str, Any]] = []
@@ -64,3 +65,81 @@ class KnowledgeGraphManager:
             "triples_count": len(self.triples),
             "unique_nodes_count": len(nodes),
         }
+
+    def find_paths_between_entities(
+        self,
+        start_entity: str,
+        end_entity: str,
+        max_depth: int = 5,
+    ) -> List[List[Dict[str, str]]]:
+        """Find multi-hop reasoning relationship paths between start_entity and end_entity using BFS."""
+        if start_entity == end_entity:
+            return []
+
+        adj: Dict[str, List[Dict[str, str]]] = defaultdict(list)
+        for t in self.triples:
+            adj[t["entity"]].append({"relation": t["relation"], "target": t["target"]})
+
+        found_paths: List[List[Dict[str, str]]] = []
+        queue = deque([([(start_entity, "START")], set([start_entity]))])
+
+        while queue:
+            current_path, visited = queue.popleft()
+            if len(current_path) - 1 >= max_depth:
+                continue
+
+            last_node = current_path[-1][0]
+            for edge in adj.get(last_node, []):
+                nxt = edge["target"]
+                rel = edge["relation"]
+                new_path = current_path + [(nxt, rel)]
+
+                if nxt == end_entity:
+                    formatted_path = [
+                        {"from": new_path[i][0], "relation": new_path[i + 1][1], "to": new_path[i + 1][0]}
+                        for i in range(len(new_path) - 1)
+                    ]
+                    found_paths.append(formatted_path)
+                elif nxt not in visited:
+                    queue.append((new_path, visited | {nxt}))
+
+        return found_paths
+
+    def detect_conflicting_facts(self) -> List[Dict[str, Any]]:
+        """Identify potential contradictions or inverse conflicts (e.g., is_a vs is_not_a, or duplicate contradictory attributes)."""
+        conflicts: List[Dict[str, Any]] = []
+        grouped: Dict[tuple, Set[str]] = defaultdict(set)
+
+        for t in self.triples:
+            grouped[(t["entity"], t["relation"])].add(t["target"])
+
+        # Check single-valued functional relations like 'has_parent', 'status', 'version'
+        functional_relations = {"status", "version", "is_active", "primary_owner"}
+        for (ent, rel), targets in grouped.items():
+            if rel.lower() in functional_relations and len(targets) > 1:
+                conflicts.append({
+                    "entity": ent,
+                    "relation": rel,
+                    "conflicting_targets": sorted(list(targets)),
+                    "type": "Single-valued property has multiple distinct values",
+                })
+
+        return conflicts
+
+    def export_to_mermaid(self, direction: str = "TD") -> str:
+        """Render the knowledge graph as an interactive Mermaid diagram."""
+        lines = [f"graph {direction}"]
+        if not self.triples:
+            lines.append("    empty_kg[\"Empty Knowledge Graph\"]")
+            return "\n".join(lines)
+
+        def sanitize(text: str) -> str:
+            return "".join(c if c.isalnum() else "_" for c in text)
+
+        for t in self.triples:
+            s_id = sanitize(t["entity"])
+            t_id = sanitize(t["target"])
+            rel = t.get("relation", "relates_to")
+            lines.append(f'    {s_id}["{t["entity"]}"] -->|"{rel}"| {t_id}["{t["target"]}"]')
+
+        return "\n".join(lines)

@@ -29,30 +29,20 @@ def _run_coroutine(coro: Any) -> Any:
 
 
 def _invoke(func: Any, *args: Any, **kwargs: Any) -> Any:
-    """Invoke a callable or executable code string, resolving coroutines if needed."""
-    if callable(func):
-        target = func
-    elif isinstance(func, str):
-        try:
-            val = eval(func, {})
-            if callable(val):
-                target = val
-            else:
-                return val
-        except Exception:
-            local_scope: Dict[str, Any] = {}
-            exec(func, {}, local_scope)
-            callable_found = None
-            for v in local_scope.values():
-                if callable(v):
-                    callable_found = v
-                    break
-            if callable_found:
-                target = callable_found
-            else:
-                return None
-    else:
-        raise TypeError(f"Expected callable or code string, got {type(func).__name__}")
+    """Invoke a callable, resolving coroutines if needed.
+
+    Security fix (v2): eval() and exec() have been removed.  The function now
+    only accepts Python callables.  Passing a string raises TypeError with a
+    clear message so callers that relied on the old code-string path get an
+    actionable error rather than silent arbitrary code execution.
+    """
+    if not callable(func):
+        raise TypeError(
+            f"Expected a Python callable, got {type(func).__name__!r}.  "
+            "Code strings are no longer accepted; wrap the code in a function "
+            "and pass the function object instead."
+        )
+    target = func
 
     res = target(*args, **kwargs)
     if inspect.iscoroutine(res):
@@ -61,7 +51,11 @@ def _invoke(func: Any, *args: Any, **kwargs: Any) -> Any:
 
 
 class PerformanceProfiler:
-    """Profiler for measuring execution latency, peak memory usage, and CPU hotspots."""
+    """Profiler for measuring execution latency, peak memory usage, and CPU hotspots.
+
+    Security fix (v2): all methods now require Python callables; code strings
+    are no longer accepted (eval/exec removed from _invoke).
+    """
 
     @staticmethod
     def profile_callable(

@@ -1,8 +1,10 @@
+import urllib.error
+import urllib.request
 from typing import Any, Dict, List, Optional
 
 
 class BrowserSubagent:
-    """Browser automation subagent interface backed by Playwright when available."""
+    """Browser automation subagent interface backed by Playwright when available, with fallback HTTP diagnostics."""
 
     @staticmethod
     def check_playwright_availability() -> Dict[str, Any]:
@@ -18,6 +20,27 @@ class BrowserSubagent:
             }
 
     @classmethod
+    def check_url_accessibility(cls, url: str, timeout_seconds: float = 5.0) -> Dict[str, Any]:
+        """Perform lightweight HTTP GET probe to verify destination responsiveness before launching browser."""
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AURA-Browser/1.0"},
+            )
+            with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+                code = resp.getcode()
+                return {
+                    "accessible": 200 <= code < 400,
+                    "status_code": code,
+                    "url": url,
+                    "content_type": resp.headers.get("Content-Type", ""),
+                }
+        except urllib.error.HTTPError as exc:
+            return {"accessible": False, "status_code": exc.code, "error": str(exc), "url": url}
+        except Exception as exc:
+            return {"accessible": False, "status_code": 0, "error": f"{type(exc).__name__}: {exc}", "url": url}
+
+    @classmethod
     def run_actions(
         cls,
         url: str,
@@ -26,10 +49,7 @@ class BrowserSubagent:
         screenshot_path: Optional[str] = None,
         timeout_ms: int = 15000,
     ) -> Dict[str, Any]:
-        """
-        Navigate to a URL and execute browser actions (click, fill, wait_for) using Playwright.
-        Returns structured step logs and optional screenshot path.
-        """
+        """Navigate to a URL and execute browser actions (click, fill, wait_for) using Playwright."""
         avail = cls.check_playwright_availability()
         if not avail["available"]:
             return {
@@ -39,7 +59,10 @@ class BrowserSubagent:
                 "steps": [],
             }
 
-        from playwright.sync_api import sync_playwright
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            return {"executed": False, "url": url, "error": "Playwright sync_api import failed", "steps": []}
 
         steps_log: List[Dict[str, Any]] = []
         action_list = actions or []
@@ -93,3 +116,95 @@ class BrowserSubagent:
                 "error": f"{type(exc).__name__}: {exc}",
                 "steps": steps_log,
             }
+
+    @classmethod
+    def navigate_and_screenshot(
+        cls,
+        url: str,
+        output_path: str,
+        viewport_width: int = 1280,
+        viewport_height: int = 720,
+        full_page: bool = True,
+        headless: bool = True,
+    ) -> Dict[str, Any]:
+        """Capture screenshot of a web page using specified viewport dimensions."""
+        avail = cls.check_playwright_availability()
+        if not avail["available"]:
+            return {"success": False, "error": avail["error"], "output_path": output_path}
+
+        try:
+            from playwright.sync_api import sync_playwright
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=headless)
+                context = browser.new_context(viewport={"width": viewport_width, "height": viewport_height})
+                page = context.new_page()
+                page.goto(url, wait_until="networkidle", timeout=20000)
+                page.screenshot(path=output_path, full_page=full_page)
+                title = page.title()
+                browser.close()
+
+            return {
+                "success": True,
+                "url": url,
+                "output_path": output_path,
+                "title": title,
+            }
+        except Exception as exc:
+            return {"success": False, "error": str(exc), "output_path": output_path}
+
+    @classmethod
+    def extract_page_content(
+        cls,
+        url: str,
+        selector: Optional[str] = None,
+        headless: bool = True,
+    ) -> Dict[str, Any]:
+        """Fetch rendered text content or innerHTML from a live web page."""
+        avail = cls.check_playwright_availability()
+        if not avail["available"]:
+            return {"success": False, "error": avail["error"]}
+
+        try:
+            from playwright.sync_api import sync_playwright
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=headless)
+                page = browser.new_page()
+                page.goto(url, wait_until="domcontentloaded")
+
+                if selector:
+                    elem = page.query_selector(selector)
+                    text = elem.inner_text() if elem else ""
+                else:
+                    text = page.inner_text("body")
+
+                title = page.title()
+                browser.close()
+
+            return {"success": True, "url": url, "title": title, "content": text}
+        except Exception as exc:
+            return {"success": False, "error": str(exc), "url": url}
+
+    @classmethod
+    def run_script_in_page(
+        cls,
+        url: str,
+        script_js: str,
+        headless: bool = True,
+    ) -> Dict[str, Any]:
+        """Evaluate a custom JavaScript expression inside page DOM and return output."""
+        avail = cls.check_playwright_availability()
+        if not avail["available"]:
+            return {"success": False, "error": avail["error"]}
+
+        try:
+            from playwright.sync_api import sync_playwright
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=headless)
+                page = browser.new_page()
+                page.goto(url, wait_until="domcontentloaded")
+                result = page.evaluate(script_js)
+                browser.close()
+
+            return {"success": True, "result": result}
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
