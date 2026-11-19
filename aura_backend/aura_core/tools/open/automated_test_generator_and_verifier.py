@@ -11,8 +11,8 @@ from typing import Any, Dict, List, Optional
 class AutomatedTestGeneratorAndVerifier:
     """Generates executable pytest suites from Python AST and verifies them in isolation."""
 
-    @staticmethod
-    def extract_testable_targets(source_code: str) -> Dict[str, Any]:
+    @classmethod
+    def extract_testable_targets(cls, source_code: str) -> Dict[str, Any]:
         try:
             tree = ast.parse(source_code)
         except SyntaxError as e:
@@ -145,18 +145,18 @@ class AutomatedTestGeneratorAndVerifier:
             lines.append(f"def test_{fname}_basic():")
             lines.append(f"    fn = getattr(target_module, '{fname}')")
             lines.append("    assert callable(fn)")
-            lines.append(f"    sig = inspect.signature(fn)")
+            lines.append("    sig = inspect.signature(fn)")
             lines.append(f"    assert len(sig.parameters) >= {func['required_positional_count']}")
             if func["is_async"]:
                 lines.append("    import asyncio")
                 lines.append(f"    res = asyncio.run(fn({req_args}))")
                 lines.append("    assert res is not None or res is None")
             else:
-                lines.append(f"    try:")
+                lines.append("    try:")
                 lines.append(f"        res = fn({req_args})")
-                lines.append(f"        assert res is not None or res is None")
-                lines.append(f"    except TypeError:")
-                lines.append(f"        pytest.skip('Function requires specific argument types/values')")
+                lines.append("        assert res is not None or res is None")
+                lines.append("    except TypeError:")
+                lines.append("        pytest.skip('Function requires specific argument types/values')")
             lines.append("")
 
             if include_edge_cases:
@@ -272,15 +272,25 @@ class AutomatedTestGeneratorAndVerifier:
 
         start_time = time.time()
         with tempfile.TemporaryDirectory() as tmpdir:
-            tmp_path = Path(tmpdir)
+            tmp_path = Path(tmpdir).resolve()
             if source_code is not None:
-                target_file = tmp_path / source_filename
+                target_file = (tmp_path / source_filename).resolve()
+                if tmp_path not in target_file.parents and target_file.parent != tmp_path:
+                    return {
+                        "passed": False,
+                        "exit_code": -1,
+                        "error": f"Invalid source_filename outside temp directory: {source_filename}",
+                        "stdout": "",
+                        "stderr": "",
+                        "duration_ms": 0,
+                    }
                 target_file.parent.mkdir(parents=True, exist_ok=True)
-                for parent in list(target_file.parents)[:-1]:
-                    if parent != tmp_path:
-                        init_file = parent / "__init__.py"
-                        if not init_file.exists():
-                            init_file.write_text("", encoding="utf-8")
+                curr = target_file.parent
+                while curr != tmp_path and tmp_path in curr.parents:
+                    init_file = curr / "__init__.py"
+                    if not init_file.exists():
+                        init_file.write_text("", encoding="utf-8")
+                    curr = curr.parent
                 target_file.write_text(source_code, encoding="utf-8")
 
             test_file = tmp_path / "test_generated.py"

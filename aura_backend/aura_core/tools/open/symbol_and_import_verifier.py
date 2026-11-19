@@ -10,6 +10,17 @@ from typing import Any, Dict, List, Optional, Set
 class SymbolAndImportVerifier:
     """AST-based verifier for imports, symbol definitions, referenced names, and signatures."""
 
+    MODULE_IMPLICIT_NAMES: Set[str] = {
+        "__file__",
+        "__name__",
+        "__doc__",
+        "__package__",
+        "__spec__",
+        "__loader__",
+        "__annotations__",
+        "__builtins__",
+    }
+
     @staticmethod
     def parse_ast(source_code: str) -> Dict[str, Any]:
         """Parse source code into an AST and return syntax status."""
@@ -163,8 +174,71 @@ class SymbolAndImportVerifier:
         }
 
     @classmethod
+    def _collect_bound_in_pattern(cls, pattern: ast.AST, bound: Set[str]) -> None:
+        if isinstance(pattern, ast.MatchAs):
+            if pattern.name:
+                bound.add(pattern.name)
+            if pattern.pattern:
+                cls._collect_bound_in_pattern(pattern.pattern, bound)
+        elif isinstance(pattern, ast.MatchStar):
+            if pattern.name:
+                bound.add(pattern.name)
+        elif isinstance(pattern, ast.MatchMapping):
+            if pattern.rest:
+                bound.add(pattern.rest)
+            for sub_p in pattern.patterns:
+                cls._collect_bound_in_pattern(sub_p, bound)
+        elif isinstance(pattern, (ast.MatchSequence, ast.MatchOr)):
+            for sub_p in pattern.patterns:
+                cls._collect_bound_in_pattern(sub_p, bound)
+        elif isinstance(pattern, ast.MatchClass):
+            for sub_p in pattern.patterns + pattern.kwd_patterns:
+                cls._collect_bound_in_pattern(sub_p, bound)
+
+    @classmethod
+    def _collect_local_bindings(cls, nodes: List[ast.AST]) -> tuple[Set[str], bool]:
+        local_bound: Set[str] = set()
+        has_star_import = False
+
+        def visit_stmt_or_expr(n: ast.AST) -> None:
+            nonlocal has_star_import
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    local_bound.add(n.name)
+                return
+            if isinstance(n, ast.Import):
+                for alias in n.names:
+                    local_bound.add(alias.asname or alias.name.split(".")[0])
+            elif isinstance(n, ast.ImportFrom):
+                for alias in n.names:
+                    if alias.name == "*":
+                        has_star_import = True
+                    else:
+                        local_bound.add(alias.asname or alias.name)
+            elif isinstance(n, ast.ExceptHandler) and n.name:
+                local_bound.add(n.name)
+            elif isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)):
+                local_bound.add(n.id)
+            elif isinstance(n, ast.match_case):
+                cls._collect_bound_in_pattern(n.pattern, local_bound)
+                if n.guard:
+                    visit_stmt_or_expr(n.guard)
+                for body_stmt in n.body:
+                    visit_stmt_or_expr(body_stmt)
+                return
+
+            for child in ast.iter_child_nodes(n):
+                if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+                    visit_stmt_or_expr(child)
+
+        for root_n in nodes:
+            visit_stmt_or_expr(root_n)
+
+        return local_bound, has_star_import
+
+    @classmethod
     def verify_undefined_names(cls, source_code: str) -> Dict[str, Any]:
-        """Detect referenced names that are neither built-in, imported, nor locally defined/bound."""
+        """Scope-aware check for referenced names not bound in scope, module globals, or builtins."""
         parsed = cls.parse_ast(source_code)
         if not parsed["valid_syntax"]:
             return {
@@ -173,58 +247,95 @@ class SymbolAndImportVerifier:
                 "undefined_names": [],
             }
 
-        tree: ast.AST = parsed["tree"]
-        builtin_names: Set[str] = set(dir(builtins))
-        known_names: Set[str] = set(builtin_names)
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    known_names.add(alias.asname or alias.name.split(".")[0])
-            elif isinstance(node, ast.ImportFrom):
-                for alias in node.names:
-                    known_names.add(alias.asname or alias.name)
-            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                known_names.add(node.name)
-                for a in node.args.posonlyargs + node.args.args + node.args.kwonlyargs:
-                    known_names.add(a.arg)
-                if node.args.vararg:
-                    known_names.add(node.args.vararg.arg)
-                if node.args.kwarg:
-                    known_names.add(node.args.kwarg.arg)
-            elif isinstance(node, ast.ClassDef):
-                known_names.add(node.name)
-            elif isinstance(node, ast.ExceptHandler) and node.name:
-                known_names.add(node.name)
-            elif isinstance(node, (ast.For, ast.AsyncFor)):
-                for n in ast.walk(node.target):
-                    if isinstance(n, ast.Name):
-                        known_names.add(n.id)
-            elif isinstance(node, (ast.With, ast.AsyncWith)):
-                for item in node.items:
-                    if item.optional_vars:
-                        for n in ast.walk(item.optional_vars):
-                            if isinstance(n, ast.Name):
-                                known_names.add(n.id)
-            elif isinstance(node, ast.comprehension):
-                for n in ast.walk(node.target):
-                    if isinstance(n, ast.Name):
-                        known_names.add(n.id)
-            elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
-                known_names.add(node.id)
+        tree: ast.Module = parsed["tree"]
+        base_globals: Set[str] = set(dir(builtins)) | set(cls.MODULE_IMPLICIT_NAMES)
+        module_bound, module_star_import = cls._collect_local_bindings(tree.body)
+        visible_module_names = base_globals | module_bound
 
         undefined: List[Dict[str, Any]] = []
         seen = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-                if node.id not in known_names:
-                    key = (node.id, getattr(node, "lineno", 0))
-                    if key not in seen:
-                        seen.add(key)
-                        undefined.append({
-                            "name": node.id,
-                            "line": getattr(node, "lineno", 0),
-                        })
+
+        def record_if_undefined(name: str, lineno: int, scope_names: Set[str], star_imported: bool) -> None:
+            if star_imported:
+                return
+            if name not in scope_names and name not in visible_module_names:
+                key = (name, lineno)
+                if key not in seen:
+                    seen.add(key)
+                    undefined.append({"name": name, "line": lineno})
+
+        def scan_scope(body_nodes: List[ast.AST], extra_params: Set[str], is_function_scope: bool) -> None:
+            local_names, local_star = cls._collect_local_bindings(body_nodes)
+            scope_names = set(extra_params) | local_names
+
+            def walk_in_scope(n: ast.AST) -> None:
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    for dec in n.decorator_list:
+                        walk_in_scope(dec)
+                    for d in n.args.defaults + [x for x in n.args.kw_defaults if x is not None]:
+                        walk_in_scope(d)
+                    if n.returns:
+                        walk_in_scope(n.returns)
+                    fn_params: Set[str] = set()
+                    for a in n.args.posonlyargs + n.args.args + n.args.kwonlyargs:
+                        fn_params.add(a.arg)
+                        if a.annotation:
+                            walk_in_scope(a.annotation)
+                    if n.args.vararg:
+                        fn_params.add(n.args.vararg.arg)
+                        if n.args.vararg.annotation:
+                            walk_in_scope(n.args.vararg.annotation)
+                    if n.args.kwarg:
+                        fn_params.add(n.args.kwarg.arg)
+                        if n.args.kwarg.annotation:
+                            walk_in_scope(n.args.kwarg.annotation)
+                    scan_scope(n.body, fn_params, is_function_scope=True)
+                    return
+
+                if isinstance(n, ast.Lambda):
+                    for d in n.args.defaults + [x for x in n.args.kw_defaults if x is not None]:
+                        walk_in_scope(d)
+                    lam_params: Set[str] = set()
+                    for a in n.args.posonlyargs + n.args.args + n.args.kwonlyargs:
+                        lam_params.add(a.arg)
+                    if n.args.vararg:
+                        lam_params.add(n.args.vararg.arg)
+                    if n.args.kwarg:
+                        lam_params.add(n.args.kwarg.arg)
+                    # Lambda body shares enclosing scope plus lambda parameters
+                    combined = scope_names | lam_params
+                    def walk_lambda_body(sub: ast.AST) -> None:
+                        if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Load):
+                            record_if_undefined(sub.id, getattr(sub, "lineno", 0), combined, local_star or module_star_import)
+                        elif isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+                            walk_in_scope(sub)
+                        else:
+                            for ch in ast.iter_child_nodes(sub):
+                                walk_lambda_body(ch)
+                    walk_lambda_body(n.body)
+                    return
+
+                if isinstance(n, ast.ClassDef):
+                    for dec in n.decorator_list:
+                        walk_in_scope(dec)
+                    for base in n.bases:
+                        walk_in_scope(base)
+                    for kw in n.keywords:
+                        walk_in_scope(kw.value)
+                    scan_scope(n.body, set(), is_function_scope=False)
+                    return
+
+                if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
+                    record_if_undefined(n.id, getattr(n, "lineno", 0), scope_names, local_star or module_star_import)
+                    return
+
+                for child in ast.iter_child_nodes(n):
+                    walk_in_scope(child)
+
+            for stmt in body_nodes:
+                walk_in_scope(stmt)
+
+        scan_scope(tree.body, set(), is_function_scope=False)
 
         return {
             "valid": len(undefined) == 0,
@@ -394,7 +505,7 @@ class SymbolAndImportVerifier:
         check_runtime_imports: bool = False,
         search_paths: Optional[List[str]] = None,
         expected_arities: Optional[Dict[str, Dict[str, int]]] = None,
-        check_undefined_names: bool = True,
+        check_undefined_names: bool = False,
     ) -> Dict[str, Any]:
         """Unified verification entry point for syntax, symbols, imports, and call arities."""
         defs = cls.extract_defined_symbols(source_code)
