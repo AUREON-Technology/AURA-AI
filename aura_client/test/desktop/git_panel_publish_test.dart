@@ -14,7 +14,6 @@ import 'package:aura_client/desktop/events/ide_event_bus.dart';
 import 'package:aura_client/desktop/git/git_panel.dart';
 import 'package:aura_client/desktop/state/desktop_application_state.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
-import 'package:aura_client/l10n/generated/app_localizations.dart';
 import 'package:aura_client/l10n/l10n.dart';
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
