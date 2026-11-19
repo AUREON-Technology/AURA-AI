@@ -7,6 +7,7 @@
 /// D5's design decision 1 (a human's own click here is the consent).
 library;
 
+import 'package:aura_client/desktop/host/host_access.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -112,7 +113,8 @@ class _GitPanelState extends ConsumerState<GitPanel> {
     }
     final matchingRoot = hostdRoots.where((r) => r.path == workspace.rootPath).firstOrNull;
     if (matchingRoot == null) {
-      return _Centered(text: context.l10n.gitGrantRequired, palette: palette);
+      // Not "grant" outright: with the daemon down there is nothing to grant to yet.
+      return HostAccessNotice(workspaceRoot: workspace.rootPath, grantMessage: context.l10n.gitGrantRequired);
     }
 
     _maybeRefresh(workspace.id, workspace.rootPath);

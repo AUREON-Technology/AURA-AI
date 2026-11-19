@@ -3,6 +3,7 @@
 // engine, with only the HTTP edges (consent route, chat stream) faked.
 import 'dart:convert';
 
+import 'package:aura_client/core/hostd/hostd_providers.dart';
 import 'package:aura_client/core/ai/engineer/engineer_consent_repository.dart';
 import 'package:aura_client/core/ai/engineer/host_folders_client.dart';
 import 'package:aura_client/core/ai/online_agents/sse_agent_client.dart';
@@ -162,6 +163,11 @@ void main() {
         databaseProvider.overrideWithValue(db),
         ideEventBusProvider.overrideWithValue(bus),
         workspaceNotifierProvider.overrideWith((ref) => WorkspaceNotifier(db, bus)),
+        // The Engineer panel's host banner watches /status, which polls every 3 s; a
+        // running, paired daemon keeps the banner hidden and leaves no poll timer behind.
+        hostdStatusProvider.overrideWith(
+          (ref) => Stream.value(HostdStatusSnapshot(reachable: true, authenticated: true)),
+        ),
         agentsProvider.overrideWith((ref) async => _agents),
         tokenManagerProvider.overrideWith((ref) => _StubTokenManager(ref)),
         engineerConsentRepositoryProvider

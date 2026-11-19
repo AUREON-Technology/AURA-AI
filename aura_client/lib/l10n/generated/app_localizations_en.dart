@@ -1437,6 +1437,22 @@ class AppLocalizationsEn extends AppLocalizations {
   String get hostStartNow => 'Start now';
 
   @override
+  String get hostRequiredNotRunning =>
+      'The host daemon isn\'t running. Start it so AURA can reach this workspace\'s files.';
+
+  @override
+  String get hostRequiredNotPaired =>
+      'The host daemon is running but isn\'t paired with your account. Pair it to continue.';
+
+  @override
+  String get agentHostNotRunning =>
+      'Host daemon isn\'t running. Engineer can\'t read or change files until it starts.';
+
+  @override
+  String get agentHostNotPaired =>
+      'Host daemon isn\'t paired. Engineer can\'t read or change files until you pair it.';
+
+  @override
   String get hostStart => 'Start';
 
   @override

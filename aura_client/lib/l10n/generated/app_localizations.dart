@@ -2696,6 +2696,30 @@ abstract class AppLocalizations {
   /// **'Start now'**
   String get hostStartNow;
 
+  /// Desktop IDE panel (Source Control, Terminal) shown while the host daemon is not running
+  ///
+  /// In en, this message translates to:
+  /// **'The host daemon isn\'t running. Start it so AURA can reach this workspace\'s files.'**
+  String get hostRequiredNotRunning;
+
+  /// Desktop IDE panel shown while the host daemon runs unpaired
+  ///
+  /// In en, this message translates to:
+  /// **'The host daemon is running but isn\'t paired with your account. Pair it to continue.'**
+  String get hostRequiredNotPaired;
+
+  /// Desktop Engineer panel banner above the composer while the host daemon is not running
+  ///
+  /// In en, this message translates to:
+  /// **'Host daemon isn\'t running. Engineer can\'t read or change files until it starts.'**
+  String get agentHostNotRunning;
+
+  /// Desktop Engineer panel banner above the composer while the host daemon runs unpaired
+  ///
+  /// In en, this message translates to:
+  /// **'Host daemon isn\'t paired. Engineer can\'t read or change files until you pair it.'**
+  String get agentHostNotPaired;
+
   /// IDE Host panel: start daemon button
   ///
   /// In en, this message translates to:
