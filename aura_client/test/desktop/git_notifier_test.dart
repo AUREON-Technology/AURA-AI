@@ -27,6 +27,7 @@ class _FakeHostd extends HostdControlClient {
   Map<String, dynamic> pullResult = {'ok': true};
   Map<String, dynamic> pushResult = {'ok': true};
   Map<String, dynamic> publishResult = {'ok': true};
+  Map<String, dynamic> checkoutResult = {'ok': true};
   Map<String, dynamic> remotesResult = {'remotes': <String>['origin']};
   Object? remotesError;
   Object? pushError;
@@ -62,6 +63,12 @@ class _FakeHostd extends HostdControlClient {
     calls.add('push');
     if (pushError != null) throw pushError!;
     return pushGate != null ? pushGate!.future : pushResult;
+  }
+
+  @override
+  Future<Map<String, dynamic>> gitCheckout({required String root, required String branch, bool create = false}) async {
+    calls.add('checkout:$branch:${create ? 'create' : 'switch'}');
+    return checkoutResult;
   }
 
   @override
@@ -113,6 +120,17 @@ void main() {
       expect(hostd.calls, ['fetch', 'status', 'pull', 'status', 'push', 'status']);
       expect(notifier.state.error, isNull);
       expect(notifier.state.busy, isFalse);
+    });
+
+    test('creating a branch whose name is taken says so, and stays on screen (GT-02)', () async {
+      hostd.checkoutResult = {'ok': false, 'reason': 'branch_exists'};
+
+      await notifier.checkout('develop', create: true);
+
+      expect(notifier.state.error, currentL10n.gitBranchExists('develop'));
+      expect(notifier.state.error, isNot(currentL10n.gitCheckoutOverwrite),
+          reason: 'it is not a local-changes problem and must not be reported as one');
+      expect(hostd.calls, contains('checkout:develop:create'));
     });
 
     test('each structured failure reaches the person as its own message, and stays on screen', () async {
