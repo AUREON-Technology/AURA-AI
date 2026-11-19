@@ -2,7 +2,9 @@
 #
 # Prod ingress (nginx in docker-compose.prod.yml) routes dev.aureon-ai.tech to
 # this stack via the shared external network `aura_edge`. Ollama stays on prod
-# to save RAM; dev gateway reaches it at http://ollama:11434/v1 over aura_edge.
+# to save RAM; dev gateway reaches it at http://ollama:11434/v1 over aura_edge,
+# where `ollama` is prod's `ollama-dev-gate`, not Ollama itself (F46): inference
+# and read-only endpoints pass, model administration is refused.
 #
 # Bring up:
 #   docker compose -p aura-dev -f deploy/docker-compose.dev.yml \
@@ -64,9 +66,11 @@ x-celery-beat-healthcheck: &celery_beat_healthcheck
 # HF Space; no network was widened for this.
 #
 # Keys are file-backed like hfspace_api_key: secret_hydration.py reads
-# /run/secrets/hostedN_api_key into AURA_PROVIDER_HOSTEDN_API_KEY. bootstrap-secrets.sh writes a
-# random placeholder so the file exists; overwrite it with the real key before enabling a slot:
-#   printf '%s' "$KEY" > deploy/secrets/hosted1_api_key
+# /run/secrets/hostedN_api_key into AURA_PROVIDER_HOSTEDN_API_KEY. In THIS stack that secret is
+# backed by deploy/secrets/dev_hostedN_api_key, never prod's hostedN_api_key (F46; see the
+# `secrets:` block). bootstrap-secrets.sh writes a random placeholder so the file exists;
+# overwrite it with a dev key (ideally a separate provider project) before enabling a slot:
+#   printf '%s' "$KEY" > deploy/secrets/dev_hosted1_api_key
 #
 # AURA_ALLOW_HOSTED_INFERENCE defaults to "false", not empty: aura_core rejects an empty boolean,
 # and that error would mask the one that explains the opt-in. AURA_LLM_ROUTING_POLICY was never
@@ -80,6 +84,9 @@ x-hosted-providers: &hosted_providers
   # unless AURA_ALLOW_CLAUDE_INFERENCE=true, which AURA_ALLOW_HOSTED_INFERENCE does not cover.
   # COMPLEXITY_ROUTING sends complex interactive turns to the `reasoning` pool, so set that
   # slot's POOLS=reasoning.
+  # For the Engineer (module readiness WP6, D-02) the slot instead takes POOLS=coder,
+  # MAX_DATA_CLASSIFICATION=sensitive, WORKLOADS=engineer (the fence: without it a sensitive slot
+  # receives every unhinted generation) and USER_TPD (per-person daily cap, shared through Redis).
   AURA_ALLOW_CLAUDE_INFERENCE: ${AURA_ALLOW_CLAUDE_INFERENCE:-false}
   AURA_LLM_COMPLEXITY_ROUTING: ${AURA_LLM_COMPLEXITY_ROUTING:-false}
   AURA_LLM_COMPLEXITY_THRESHOLD: ${AURA_LLM_COMPLEXITY_THRESHOLD:-0.5}
@@ -108,6 +115,8 @@ x-hosted-providers: &hosted_providers
   AURA_PROVIDER_HOSTED1_SUPPORTS_REASONING: ${AURA_PROVIDER_HOSTED1_SUPPORTS_REASONING:-false}
   AURA_PROVIDER_HOSTED1_COST_INPUT: ${AURA_PROVIDER_HOSTED1_COST_INPUT:-0}
   AURA_PROVIDER_HOSTED1_COST_OUTPUT: ${AURA_PROVIDER_HOSTED1_COST_OUTPUT:-0}
+  AURA_PROVIDER_HOSTED1_WORKLOADS: ${AURA_PROVIDER_HOSTED1_WORKLOADS:-}
+  AURA_PROVIDER_HOSTED1_USER_TPD: ${AURA_PROVIDER_HOSTED1_USER_TPD:-0}
   AURA_PROVIDER_HOSTED1_IS_LOCAL: "false"
   AURA_PROVIDER_HOSTED1_API_KEY_ENV: AURA_PROVIDER_HOSTED1_API_KEY
   AURA_PROVIDER_HOSTED1_API_KEY_FILE: /run/secrets/hosted1_api_key
@@ -136,6 +145,8 @@ x-hosted-providers: &hosted_providers
   AURA_PROVIDER_HOSTED2_SUPPORTS_REASONING: ${AURA_PROVIDER_HOSTED2_SUPPORTS_REASONING:-false}
   AURA_PROVIDER_HOSTED2_COST_INPUT: ${AURA_PROVIDER_HOSTED2_COST_INPUT:-0}
   AURA_PROVIDER_HOSTED2_COST_OUTPUT: ${AURA_PROVIDER_HOSTED2_COST_OUTPUT:-0}
+  AURA_PROVIDER_HOSTED2_WORKLOADS: ${AURA_PROVIDER_HOSTED2_WORKLOADS:-}
+  AURA_PROVIDER_HOSTED2_USER_TPD: ${AURA_PROVIDER_HOSTED2_USER_TPD:-0}
   AURA_PROVIDER_HOSTED2_IS_LOCAL: "false"
   AURA_PROVIDER_HOSTED2_API_KEY_ENV: AURA_PROVIDER_HOSTED2_API_KEY
   AURA_PROVIDER_HOSTED2_API_KEY_FILE: /run/secrets/hosted2_api_key
@@ -164,6 +175,8 @@ x-hosted-providers: &hosted_providers
   AURA_PROVIDER_HOSTED3_SUPPORTS_REASONING: ${AURA_PROVIDER_HOSTED3_SUPPORTS_REASONING:-false}
   AURA_PROVIDER_HOSTED3_COST_INPUT: ${AURA_PROVIDER_HOSTED3_COST_INPUT:-0}
   AURA_PROVIDER_HOSTED3_COST_OUTPUT: ${AURA_PROVIDER_HOSTED3_COST_OUTPUT:-0}
+  AURA_PROVIDER_HOSTED3_WORKLOADS: ${AURA_PROVIDER_HOSTED3_WORKLOADS:-}
+  AURA_PROVIDER_HOSTED3_USER_TPD: ${AURA_PROVIDER_HOSTED3_USER_TPD:-0}
   AURA_PROVIDER_HOSTED3_IS_LOCAL: "false"
   AURA_PROVIDER_HOSTED3_API_KEY_ENV: AURA_PROVIDER_HOSTED3_API_KEY
   AURA_PROVIDER_HOSTED3_API_KEY_FILE: /run/secrets/hosted3_api_key
@@ -177,14 +190,20 @@ networks:
     internal: true
   egress:
     driver: bridge
-  # Shared with prod nginx + ollama (created by prod stack as `aura_edge`).
+  # Shared with prod nginx + ollama-dev-gate (created by prod stack as `aura_edge`). Prod's Ollama
+  # itself is not on it (F46); `ollama` here resolves to the gate.
   aura_edge:
     external: true
     name: aura_edge
   # Engineer agent (AURA_SANDBOX_ENABLED, off by default) -- see docker-compose.prod.yml's
-  # `sandbox_ctl`/`sandbox_egress`/`docker-socket-proxy` comments for the full rationale; this
-  # dev stack mirrors the same shape rather than repeating it.
+  # `sandbox_ctl`/`sandbox_docker`/`sandbox_egress`/`docker-socket-proxy`/`sandbox-broker`
+  # comments for the full rationale; this dev stack mirrors the same shape rather than repeating
+  # it. gateway <-> sandbox-broker only (audit F19).
   sandbox_ctl:
+    driver: bridge
+    internal: true
+  # sandbox-broker <-> docker-socket-proxy only.
+  sandbox_docker:
     driver: bridge
     internal: true
   # Mirrors prod: no default route out; sandboxes reach the internet only via sandbox-proxy.
@@ -214,9 +233,12 @@ secrets:
     file: ./secrets/dev_jwt_secret
   firebase_credentials:
     file: ./secrets/firebase_credentials.json
-  # See docker-compose.prod.yml's `secrets:` block for what these two are.
+  # See docker-compose.prod.yml's `secrets:` block for what this is. Dev's own Fernet key, never
+  # prod's (F46): with prod's, dev could decrypt any prod GitHub token row it ever got hold of.
+  # Starting from a fresh key orphans GitHub accounts connected in dev before the split -- those
+  # users reconnect. bootstrap-secrets.sh generates it.
   secrets_encryption_key:
-    file: ./secrets/secrets_encryption_key
+    file: ./secrets/dev_secrets_encryption_key
   # Encryption-at-rest key for memories/personal-OS records -- see docker-compose.prod.yml's
   # `secrets:` block. Optional here (AURA_ENVIRONMENT=development runs in plaintext without it)
   # but wired the same way so the dev stack exercises the encrypted path prod runs. Its own file,
@@ -224,16 +246,19 @@ secrets:
   # rotation must not touch prod. bootstrap-secrets.sh generates it.
   data_encryption_keys:
     file: ./secrets/dev_data_encryption_keys
+  # Dev's own (F46). A placeholder from bootstrap-secrets.sh until overwritten -- use a separate
+  # GitHub App for dev (its callback URL is the dev domain anyway), never prod's client secret.
   github_oauth_client_secret:
-    file: ./secrets/github_oauth_client_secret
-  # API keys for the hosted open-weight slots (x-hosted-providers above). Placeholders from
-  # bootstrap-secrets.sh until overwritten; unused unless the slot is enabled.
+    file: ./secrets/dev_github_oauth_client_secret
+  # API keys for the hosted open-weight slots (x-hosted-providers above). Dev's own files, never
+  # prod's (F46): a dev compromise must not spend production's provider quota or leak its keys.
+  # Placeholders from bootstrap-secrets.sh until overwritten; unused unless the slot is enabled.
   hosted1_api_key:
-    file: ./secrets/hosted1_api_key
+    file: ./secrets/dev_hosted1_api_key
   hosted2_api_key:
-    file: ./secrets/hosted2_api_key
+    file: ./secrets/dev_hosted2_api_key
   hosted3_api_key:
-    file: ./secrets/hosted3_api_key
+    file: ./secrets/dev_hosted3_api_key
 
 services:
   console:
@@ -340,7 +365,7 @@ services:
       AURA_LLM_TURN_GENERATION_BUDGET_S: ${AURA_LLM_TURN_GENERATION_BUDGET_S:-0}
       AURA_LLM_STREAM_MAX_S: ${AURA_LLM_STREAM_MAX_S:-0}
       AURA_EMBEDDING_PROVIDER: ${AURA_EMBEDDING_PROVIDER:-sentence-transformers}
-      AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-intfloat/multilingual-e5-small}
       # Hub commit of the embedding weights (audit FSA-110). Part of the index identity: changing
       # it builds and promotes a new index. Empty = the repo's head, as before.
       AURA_EMBEDDING_MODEL_REVISION: ${AURA_EMBEDDING_MODEL_REVISION:-}
@@ -355,6 +380,13 @@ services:
       # /health/ready. Whisper is also loaded at startup in production so the first live-voice
       # turn of a fresh container does not pay the download (AURA_VOICE_STT_WARM_ON_STARTUP).
       AURA_VOICE_STT_MODEL_REVISION: ${AURA_VOICE_STT_MODEL_REVISION:-}
+      # Arabic search (docs/plans/arabic-language_plan.md, stage 4, decision 17; measured in
+      # docs/reports/ARABIC_RETRIEVAL_EVAL_2026-11-17.md): multilingual E5 embeddings (384-dim,
+      # so the dimension is unchanged, but a new index -- run scripts/rebuild_index.py after the
+      # first deploy) and the "either" relevance gate, which passes a passage the word-overlap
+      # heuristic OR the multilingual cross-encoder accepts (~100-300 ms CPU per search).
+      AURA_KNOWLEDGE_RERANK_PROVIDER: ${AURA_KNOWLEDGE_RERANK_PROVIDER:-either}
+      AURA_KNOWLEDGE_RERANK_MODEL: ${AURA_KNOWLEDGE_RERANK_MODEL:-cross-encoder/mmarco-mMiniLMv2-L12-H384-v1}
       AURA_KNOWLEDGE_RERANK_MODEL_REVISION: ${AURA_KNOWLEDGE_RERANK_MODEL_REVISION:-}
       AURA_POSTGRES_POOL_MAX_SIZE: ${AURA_POSTGRES_POOL_MAX_SIZE:-10}
       AURA_LEGACY_DB_POOL_SIZE: ${AURA_LEGACY_DB_POOL_SIZE:-5}
@@ -435,7 +467,8 @@ services:
       AURA_SANDBOX_WORKSPACE_TTL_HOURS: ${AURA_SANDBOX_WORKSPACE_TTL_HOURS:-72}
       AURA_SANDBOX_MAX_WORKSPACES: ${AURA_SANDBOX_DEV_MAX_WORKSPACES:-2}
       AURA_SANDBOX_MAX_RUNNING: ${AURA_SANDBOX_DEV_MAX_RUNNING:-1}
-      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      # The sandbox broker, never the socket proxy -- see prod's `sandbox-broker` (audit F19).
+      DOCKER_HOST: tcp://sandbox-broker:2375
       AURA_GITHUB_ENABLED: ${AURA_GITHUB_ENABLED:-false}
       AURA_GITHUB_DEFAULT_OWNER: ${AURA_GITHUB_DEFAULT_OWNER:-}
       AURA_GITHUB_DEFAULT_REPO: ${AURA_GITHUB_DEFAULT_REPO:-}
@@ -492,7 +525,9 @@ services:
         limits: {cpus: "1.5", memory: 2G}
 
   # Engineer agent (AURA_SANDBOX_ENABLED, off by default) -- mirrors prod: IMAGES off because
-  # `sandbox-image` builds the workspace image locally. See prod's docker-socket-proxy comment.
+  # `sandbox-image` builds the workspace image locally. See prod's docker-socket-proxy comment,
+  # including what this allowlist does not do: it never looks at a request body, so only
+  # `sandbox-broker` may reach it (audit F19).
   docker-socket-proxy:
     profiles: [sandbox]
     image: tecnativa/docker-socket-proxy:0.3.0@sha256:9e4b9e7517a6b660f2cc903a19b257b1852d5b3344794e3ea334ff00ae677ac2
@@ -521,7 +556,34 @@ services:
       AUTH: "0"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks: [sandbox_ctl]
+    networks: [sandbox_docker]
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 128M}
+
+  # Mirrors prod's `sandbox-broker`, with dev's own sandbox root and network: the gateway's only
+  # Docker API, refusing any container the sandbox would not create (audit F19).
+  sandbox-broker:
+    profiles: [sandbox]
+    build:
+      context: ./sandbox-broker
+      dockerfile: Dockerfile
+    image: aura-sandbox-broker:latest
+    <<: *restart
+    logging: *logging
+    environment:
+      AURA_SANDBOX_IMAGE: ${AURA_SANDBOX_IMAGE:-aura-sandbox:latest}
+      AURA_SANDBOX_NETWORK: ${AURA_SANDBOX_NETWORK:-aura-dev_sandbox_egress}
+      AURA_SANDBOX_HOST_ROOT: ${AURA_SANDBOX_DEV_HOST_ROOT:-/opt/aura-stack/deploy/sandboxes-dev}
+      BROKER_UPSTREAM: docker-socket-proxy:2375
+      BROKER_LISTEN: 0.0.0.0:2375
+    volumes:
+      - ${AURA_SANDBOX_DEV_HOST_ROOT:-/opt/aura-stack/deploy/sandboxes-dev}:${AURA_SANDBOX_DEV_HOST_ROOT:-/opt/aura-stack/deploy/sandboxes-dev}:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [sandbox_ctl, sandbox_docker]
+    depends_on: [docker-socket-proxy]
     deploy:
       resources:
         limits: {cpus: "0.25", memory: 128M}
@@ -587,7 +649,7 @@ services:
       AURA_LLM_ADMISSION_MAX_QUEUE: ${AURA_LLM_ADMISSION_MAX_QUEUE:-4}
       AURA_LLM_ADMISSION_QUEUE_TIMEOUT_S: ${AURA_LLM_WORKER_ADMISSION_QUEUE_TIMEOUT_S:-300}
       AURA_EMBEDDING_PROVIDER: ${AURA_EMBEDDING_PROVIDER:-sentence-transformers}
-      AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-intfloat/multilingual-e5-small}
       # Hub commit of the embedding weights (audit FSA-110). Part of the index identity: changing
       # it builds and promotes a new index. Empty = the repo's head, as before.
       AURA_EMBEDDING_MODEL_REVISION: ${AURA_EMBEDDING_MODEL_REVISION:-}

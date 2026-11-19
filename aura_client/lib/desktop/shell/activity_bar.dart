@@ -12,6 +12,7 @@ import 'package:aura_client/desktop/events/ide_event.dart';
 import 'package:aura_client/desktop/events/ide_event_bus.dart';
 import 'package:aura_client/desktop/state/desktop_application_state.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class ActivityBar extends ConsumerWidget {
   const ActivityBar({
@@ -98,13 +99,13 @@ class ActivityBar extends ConsumerWidget {
               ),
             ),
           ),
-          const Spacer(),
-          // Activity items
+          // Activity items sit right under the logo, as in every IDE: they used to be centred
+          // between two Spacers, leaving a third of the bar empty above them.
           _ActivityItem(
             icon: Icons.folder_outlined,
             selectedIcon: Icons.folder,
-            label: 'Explorer',
-            tooltip: 'Explorer (Ctrl+B)',
+            label: context.l10n.ideActivityExplorer,
+            tooltip: context.l10n.ideActivityExplorerTooltip,
             isSelected: layoutState.showPrimarySidebar &&
                 layoutState.primarySidebarPanel == PrimarySidebarPanel.explorer,
             onTap: () {
@@ -122,8 +123,8 @@ class ActivityBar extends ConsumerWidget {
           _ActivityItem(
             icon: Icons.search_outlined,
             selectedIcon: Icons.search,
-            label: 'Go to File',
-            tooltip: 'Go to File (Ctrl+P)',
+            label: context.l10n.ideActivityGoToFile,
+            tooltip: context.l10n.ideActivityGoToFileTooltip,
             isSelected: false,
             onTap: hasWorkspace
                 ? () => ref.read(ideEventBusProvider).publish(const ShowQuickOpenRequested())
@@ -133,8 +134,8 @@ class ActivityBar extends ConsumerWidget {
           _ActivityItem(
             icon: Icons.source_outlined,
             selectedIcon: Icons.source,
-            label: 'Source Control',
-            tooltip: 'Source Control',
+            label: context.l10n.ideActivitySourceControl,
+            tooltip: context.l10n.ideActivitySourceControl,
             isSelected: layoutState.showPrimarySidebar &&
                 layoutState.primarySidebarPanel == PrimarySidebarPanel.sourceControl,
             onTap: () {
@@ -151,8 +152,8 @@ class ActivityBar extends ConsumerWidget {
           _ActivityItem(
             icon: Icons.smart_toy_outlined,
             selectedIcon: Icons.smart_toy,
-            label: 'AURA Agents',
-            tooltip: 'AURA Agents (Ctrl+J)',
+            label: context.l10n.ideActivityAgents,
+            tooltip: context.l10n.ideActivityAgentsTooltip,
             isSelected: layoutState.showSecondarySidebar,
             onTap: () => ref.read(layoutNotifierProvider.notifier).toggleSecondarySidebar(),
             density: ideDensity,
@@ -161,7 +162,7 @@ class ActivityBar extends ConsumerWidget {
             icon: Icons.auto_awesome_outlined,
             selectedIcon: Icons.auto_awesome,
             label: 'AURA',
-            tooltip: 'AURA Control Center',
+            tooltip: context.l10n.ideActivityControlCenterTooltip,
             isSelected: layoutState.showPrimarySidebar &&
                 layoutState.primarySidebarPanel == PrimarySidebarPanel.controlCenter,
             onTap: () {
@@ -184,10 +185,10 @@ class ActivityBar extends ConsumerWidget {
           _ActivityItem(
             icon: Icons.terminal_outlined,
             selectedIcon: Icons.terminal,
-            label: 'Panel',
-            tooltip: 'Terminal, Output & Problems (Ctrl+Shift+J)',
+            label: context.l10n.ideActivityPanel,
+            tooltip: context.l10n.ideActivityPanelTooltip,
             badgeCount: problemCount,
-            badgeNoun: 'problem',
+            badgeSemanticLabel: (count) => context.l10n.ideActivityPanelProblems(count),
             isSelected: layoutState.showBottomPanel,
             onTap: () => _openBottomPanel(ref.read(layoutNotifierProvider.notifier), layoutState),
             density: ideDensity,
@@ -209,7 +210,7 @@ class _ActivityItem extends StatelessWidget {
     required this.density,
     this.tooltip,
     this.badgeCount = 0,
-    this.badgeNoun,
+    this.badgeSemanticLabel,
   });
 
   final IconData icon;
@@ -229,10 +230,11 @@ class _ActivityItem extends StatelessWidget {
   /// Count of things needing attention behind this item. `0` renders nothing.
   final int badgeCount;
 
-  /// Singular noun for [badgeCount] in the semantic label, e.g. `'problem'`
-  /// gives "Panel, 3 problems". A bare number read aloud says nothing about
-  /// what it counts, and a coloured dot says nothing at all.
-  final String? badgeNoun;
+  /// The whole semantic label for a non-zero [badgeCount], e.g. "Panel, 3
+  /// problems" (localized, so the plural is the language's own). A bare
+  /// number read aloud says nothing about what it counts, and a coloured dot
+  /// says nothing at all.
+  final String Function(int count)? badgeSemanticLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -245,8 +247,8 @@ class _ActivityItem extends StatelessWidget {
             : palette.textSecondary;
 
     final badgeText = badgeCount > 99 ? '99+' : '$badgeCount';
-    final semanticLabel = badgeCount > 0 && badgeNoun != null
-        ? '$label, $badgeCount $badgeNoun${badgeCount == 1 ? '' : 's'}'
+    final semanticLabel = badgeCount > 0 && badgeSemanticLabel != null
+        ? badgeSemanticLabel!(badgeCount)
         : label;
 
     return Semantics(

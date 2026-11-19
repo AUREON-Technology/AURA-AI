@@ -3,6 +3,7 @@
 /// Uses the EditorProvider abstraction to support multiple editor implementations.
 library;
 
+import 'package:aura_client/core/locale/text_direction.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -15,6 +16,7 @@ import 'package:aura_client/desktop/editor/editor_tab.dart';
 import 'package:aura_client/desktop/editor/providers/flutter_code_editor_provider.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 import 'package:aura_client/desktop/workspace/workspace_file_service.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class CodeEditorView extends ConsumerWidget {
   const CodeEditorView({super.key});
@@ -30,7 +32,13 @@ class CodeEditorView extends ConsumerWidget {
 
     // Keying by tab id ensures the editor state (and its async load) resets
     // when the active tab changes, rather than reusing stale State.
-    return _EditorContent(key: ValueKey(activeTab.id), tab: activeTab);
+    // The workspace and the tab's revision are part of the key: the same relative path in another
+    // workspace is a different file, and a reload from disk must rebuild the view around the new
+    // text rather than keep showing the old.
+    return _EditorContent(
+      key: ValueKey('${editorState.workspaceId}|${activeTab.id}|${activeTab.revision}'),
+      tab: activeTab,
+    );
   }
 }
 
@@ -47,12 +55,12 @@ class _EmptyEditorPlaceholder extends StatelessWidget {
           Icon(Icons.code_outlined, size: 64, color: palette.textDisabled),
           const SizedBox(height: AuraSpacing.md),
           Text(
-            'No file open',
+            context.l10n.editorNoFileOpen,
             style: TextStyle(color: palette.textSecondary, fontSize: 18),
           ),
           const SizedBox(height: AuraSpacing.xs),
           Text(
-            'Open a file from the Explorer or press Ctrl+P',
+            context.l10n.editorNoFileOpenHint,
             style: TextStyle(color: palette.textDisabled, fontSize: 12),
           ),
         ],
@@ -91,7 +99,8 @@ class _EditorContentState extends ConsumerState<_EditorContent> {
     _ideEventSubscription = ref.read(ideEventBusProvider).stream.listen((event) {
       if (event is RequestInlineCompletionRequested) {
         _controller?.executeCommand(const RequestInlineCompletionCommand());
-      } else if (event is RevealPositionRequested && event.path == widget.tab.path) {
+      } else if (event is RevealPositionRequested &&
+          ref.read(editorNotifierProvider.notifier).isSameTabPath(event.path, widget.tab.path)) {
         _controller?.executeCommand(RevealPositionCommand(line: event.line, column: event.column));
       }
     });
@@ -111,25 +120,27 @@ class _EditorContentState extends ConsumerState<_EditorContent> {
       if (root != null) {
         try {
           initialText = await WorkspaceFileService(root).readFile(widget.tab.path);
+          // The tab may have been closed (or the workspace switched) while the file was being
+          // read; recording it now would leave a stale buffer for the next tab of this path.
+          if (!mounted) return;
           notifier.recordDiskBase(widget.tab.id, initialText);
           notifier.setContent(widget.tab.id, initialText);
         } catch (e) {
-          loadError = 'Could not read ${widget.tab.path}: $e';
+          loadError = currentL10n.editorCouldNotRead(widget.tab.path, '$e');
         }
       } else {
-        loadError = 'No active workspace';
+        loadError = currentL10n.editorNoActiveWorkspace;
       }
     } else if (notifier.wasRestored(widget.tab.id)) {
       // The text is an unsaved buffer from the last session (hot exit). Say so, and check the
       // file underneath it: if it changed since, saving would overwrite that change.
-      restoredNotice = 'Restored unsaved changes from your last session.';
+      restoredNotice = currentL10n.editorRestoredNotice;
       if (root != null) {
         try {
           final onDisk = await WorkspaceFileService(root).readFile(widget.tab.path);
           if (notifier.restoredOverChangedFile(widget.tab.id, onDisk)) {
             restoredOverChange = true;
-            restoredNotice = 'Restored unsaved changes from your last session. The file has '
-                'changed on disk since; saving will overwrite that change.';
+            restoredNotice = currentL10n.editorRestoredOverChange;
           }
         } catch (_) {
           // Deleted or unreadable since: the restored text is still the user's work.
@@ -207,7 +218,7 @@ class _EditorContentState extends ConsumerState<_EditorContent> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    return Container(
+    return LtrContent(child: Container(
       color: AuraPalette.of(context).background,
       child: Column(
         children: [
@@ -236,16 +247,30 @@ class _EditorContentState extends ConsumerState<_EditorContent> {
               ),
             ),
           Expanded(
-            child: FlutterCodeEditorWidget(
-              controller: _controller!,
-              onTextChange: _handleTextChange,
-              onSelectionChange: _handleSelectionChange,
-              onCursorChange: _handleCursorChange,
-            ),
+            // A file that failed to load is not shown as an empty, editable buffer: typing into
+            // it and saving would replace the file the editor could not read (a non-UTF-8 or
+            // locked file) with whatever was typed.
+            child: _loadError != null
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(AuraSpacing.lg),
+                      child: Text(
+                        context.l10n.editorNotEditable,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: AuraPalette.of(context).textSecondary, fontSize: 13),
+                      ),
+                    ),
+                  )
+                : FlutterCodeEditorWidget(
+                    controller: _controller!,
+                    onTextChange: _handleTextChange,
+                    onSelectionChange: _handleSelectionChange,
+                    onCursorChange: _handleCursorChange,
+                  ),
           ),
         ],
       ),
-    );
+    ));
   }
 
   void _handleTextChange(String text) {

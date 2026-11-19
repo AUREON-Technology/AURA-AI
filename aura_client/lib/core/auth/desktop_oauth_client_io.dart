@@ -32,6 +32,10 @@
 /// A build can still skip the backend: when [clientSecret] is non-empty (injected with
 /// `--dart-define=GOOGLE_DESKTOP_CLIENT_SECRET=...`), or when no `backendExchangeEndpoint` is
 /// given, the exchange goes straight to Google as before. Nothing needs that by default.
+///
+/// [signInWithBrowserHandoff] is the second loopback flow in this file: the browser signs in with
+/// Firebase (Google, Apple or email) on the web app's `/desktop-sign-in` page and hands a one-time
+/// code back here (module readiness WP12). Both flows share the listener, PKCE and redirect check.
 library;
 
 import 'dart:async';
@@ -39,14 +43,24 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:aura_client/l10n/l10n.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class DesktopOAuthCancelledException implements Exception {
-  DesktopOAuthCancelledException(this.message);
+  DesktopOAuthCancelledException(this.message, {this.statusCode, this.refusal});
 
   final String message;
+
+  /// The server's `X-Aura-Refusal` marker on a refusal, e.g. `plan_required` when the fix is a Pro
+  /// or Team plan (module readiness WP11). Null when absent.
+  final String? refusal;
+
+  /// The AURA server's HTTP status when it answered the exchange with a refusal; null for every
+  /// failure that was not such an answer (browser, timeout, network). `AuthNotifier` reads it to
+  /// tell "the server said no to this account" (403) apart from "try again".
+  final int? statusCode;
 
   @override
   String toString() => 'DesktopOAuthCancelledException: $message';
@@ -59,6 +73,18 @@ class DesktopOAuthResult {
   /// `POST /api/v3/auth/desktop/login`, which verifies it directly
   /// (`services/security.py::verify_identity_token`). Not a Firebase ID token.
   final String idToken;
+}
+
+/// What [signInWithBrowserHandoff] got back: the AURA server's desktop session, exactly as
+/// `POST /api/v3/auth/desktop/firebase-exchange` answered it (the same shape as
+/// `/desktop/login`: `access_token`, `refresh_token`, `token_type`, `expires_in`, `device_id`).
+/// `TokenManager.applyDesktopSession` takes it from here.
+class DesktopHandoffResult {
+  DesktopHandoffResult({required this.tokenResponse});
+
+  final Map<String, dynamic> tokenResponse;
+
+  String get accessToken => tokenResponse['access_token'] as String;
 }
 
 const _authorizationEndpoint = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -98,9 +124,8 @@ Future<DesktopOAuthResult> signInWithGoogleLoopback({
   final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
   try {
     final redirectUri = 'http://127.0.0.1:${server.port}/';
-    final verifier = _randomUrlSafeToken(64);
-    final challenge = base64UrlEncode(sha256.convert(utf8.encode(verifier)).bytes)
-        .replaceAll('=', '');
+    final pkce = _newPkce();
+    final verifier = pkce.verifier;
     final state = _randomUrlSafeToken(24);
 
     final authUri = Uri.parse(_authorizationEndpoint).replace(queryParameters: {
@@ -108,42 +133,22 @@ Future<DesktopOAuthResult> signInWithGoogleLoopback({
       'redirect_uri': redirectUri,
       'response_type': 'code',
       'scope': 'openid email profile',
-      'code_challenge': challenge,
+      'code_challenge': pkce.challenge,
       'code_challenge_method': 'S256',
       'state': state,
     });
 
     final opened = await doLaunch(authUri);
     if (!opened) {
-      throw DesktopOAuthCancelledException('Could not open the system browser.');
+      throw DesktopOAuthCancelledException(currentL10n.coreDesktopSignInBrowserFailed);
     }
 
-    final HttpRequest request;
-    try {
-      request = await server.first.timeout(timeout);
-    } on TimeoutException {
-      throw DesktopOAuthCancelledException(
-        'Timed out waiting for the browser sign-in to complete.',
-      );
-    }
-
-    final params = request.uri.queryParameters;
-    final code = params['code'];
-    final returnedState = params['state'];
-    final error = params['error'];
-
-    if (error != null) {
-      await _respond(request, success: false, message: 'Sign-in was cancelled ($error).');
-      throw DesktopOAuthCancelledException('Google returned an error: $error');
-    }
-    if (code == null || returnedState != state) {
-      await _respond(request, success: false, message: 'Sign-in failed: invalid response.');
-      throw DesktopOAuthCancelledException(
-        'Missing authorization code or a state mismatch (possible CSRF).',
-      );
-    }
-
-    await _respond(request, success: true, message: 'Signed in -- you can close this tab.');
+    final code = await _awaitRedirectCode(
+      server,
+      state: state,
+      timeout: timeout,
+      reportedError: currentL10n.coreDesktopSignInGoogleError,
+    );
 
     final String idToken;
     if (backendExchangeEndpoint != null && clientSecret.isEmpty) {
@@ -167,6 +172,140 @@ Future<DesktopOAuthResult> signInWithGoogleLoopback({
   } finally {
     await server.close(force: true);
   }
+}
+
+/// Desktop sign-in with Firebase (Google, Apple or email) through the browser -- module
+/// readiness WP12. FlutterFire has no Linux implementation and no provider sign-in on Windows, so
+/// this app cannot sign in with Firebase itself; the web app does it and hands the result back,
+/// the same RFC 8252 loopback shape as [signInWithGoogleLoopback]:
+///
+/// 1. Bind a listener on `127.0.0.1` and make a PKCE verifier/challenge and a random `state`.
+/// 2. Open [signInPage] (the web app's `/desktop-sign-in`) with `redirect_uri`, `state` and
+///    `code_challenge`. The page signs the person in with Firebase, trades the Firebase ID token
+///    at `POST /api/v3/auth/desktop/handoff` for a one-time code bound to the challenge and the
+///    redirect, and sends the browser to `redirect_uri?code=&state=`.
+/// 3. Check `state`, then redeem the code with the verifier at [exchangeEndpoint]
+///    (`POST /api/v3/auth/desktop/firebase-exchange`), which applies the desktop gate and issues
+///    the device-bound session.
+///
+/// The Firebase ID token never reaches this process and never travels in a URL; the code alone is
+/// useless without the verifier, which never leaves this process except to [exchangeEndpoint].
+///
+/// Throws [DesktopOAuthCancelledException] for every failure. When the server refused the
+/// exchange its `detail` is the message and [DesktopOAuthCancelledException.statusCode] is set.
+///
+/// [launch] exists only so `desktop_oauth_client_io_test.dart` can play the browser -- production
+/// callers never pass it.
+Future<DesktopHandoffResult> signInWithBrowserHandoff({
+  required Uri signInPage,
+  required Uri exchangeEndpoint,
+  String? deviceName,
+  Duration timeout = const Duration(minutes: 5),
+  @visibleForTesting Future<bool> Function(Uri uri)? launch,
+}) async {
+  final doLaunch = launch ?? _defaultLaunch;
+
+  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+  try {
+    final redirectUri = 'http://127.0.0.1:${server.port}/';
+    final pkce = _newPkce();
+    final state = _randomUrlSafeToken(24);
+
+    final pageUri = signInPage.replace(queryParameters: {
+      ...signInPage.queryParameters,
+      'redirect_uri': redirectUri,
+      'state': state,
+      'code_challenge': pkce.challenge,
+    });
+
+    final opened = await doLaunch(pageUri);
+    if (!opened) {
+      throw DesktopOAuthCancelledException(currentL10n.coreDesktopSignInBrowserFailed);
+    }
+
+    final code = await _awaitRedirectCode(
+      server,
+      state: state,
+      timeout: timeout,
+      reportedError: currentL10n.coreDesktopSignInBrowserError,
+    );
+
+    // The server bounds the name at 128 characters (`DesktopFirebaseExchangeRequest`); a longer
+    // hostname must not turn a good sign-in into a 422.
+    final name = (deviceName == null || deviceName.isEmpty)
+        ? null
+        : (deviceName.length > 128 ? deviceName.substring(0, 128) : deviceName);
+    final answer = await _postJsonToBackend(exchangeEndpoint, {
+      'code': code,
+      'code_verifier': pkce.verifier,
+      'redirect_uri': redirectUri,
+      'device_name': ?name,
+    });
+    if (answer.status != 200) throw _backendRefusal(answer);
+
+    final body = answer.body;
+    if (body['access_token'] is! String ||
+        (body['access_token'] as String).isEmpty ||
+        body['refresh_token'] is! String ||
+        body['expires_in'] is! int) {
+      throw DesktopOAuthCancelledException(currentL10n.coreDesktopSignInNoSession);
+    }
+    return DesktopHandoffResult(tokenResponse: body);
+  } finally {
+    await server.close(force: true);
+  }
+}
+
+/// RFC 7636 S256: a 64-byte random verifier (86 base64url characters, inside the 43-128 the
+/// server accepts) and its unpadded SHA-256 challenge.
+({String verifier, String challenge}) _newPkce() {
+  final verifier = _randomUrlSafeToken(64);
+  final challenge =
+      base64UrlEncode(sha256.convert(utf8.encode(verifier)).bytes).replaceAll('=', '');
+  return (verifier: verifier, challenge: challenge);
+}
+
+/// Waits for the one request the browser makes to the loopback listener, answers it with a small
+/// page so the tab does not hang, and returns its `code`. Anything but a `code` with the exact
+/// [state] this process made is refused: a redirect it cannot match to its own request is never
+/// trusted (CSRF). An `error` parameter becomes [reportedError]'s message.
+Future<String> _awaitRedirectCode(
+  HttpServer server, {
+  required String state,
+  required Duration timeout,
+  required String Function(String error) reportedError,
+}) async {
+  final HttpRequest request;
+  try {
+    request = await server.first.timeout(timeout);
+  } on TimeoutException {
+    throw DesktopOAuthCancelledException(currentL10n.coreDesktopSignInTimedOut);
+  }
+
+  final params = request.uri.queryParameters;
+  final code = params['code'];
+  final returnedState = params['state'];
+  final error = params['error'];
+
+  if (error != null) {
+    await _respond(
+      request,
+      success: false,
+      message: currentL10n.coreDesktopSignInPageCancelled(error),
+    );
+    throw DesktopOAuthCancelledException(reportedError(error));
+  }
+  if (code == null || code.isEmpty || returnedState != state) {
+    await _respond(
+      request,
+      success: false,
+      message: currentL10n.coreDesktopSignInPageInvalidResponse,
+    );
+    throw DesktopOAuthCancelledException(currentL10n.coreDesktopSignInInvalidRedirect);
+  }
+
+  await _respond(request, success: true, message: currentL10n.coreDesktopSignInPageSuccess);
+  return code;
 }
 
 Future<bool> _defaultLaunch(Uri uri) => launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -248,37 +387,49 @@ Future<String> _exchangeCodeViaBackend({
   required String verifier,
   required String redirectUri,
 }) async {
+  final answer = await _postJsonToBackend(endpoint, {
+    'code': code,
+    'code_verifier': verifier,
+    'redirect_uri': redirectUri,
+  });
+  if (answer.status != 200) throw _backendRefusal(answer);
+  final idToken = answer.body['id_token'];
+  if (idToken is! String || idToken.isEmpty) {
+    throw DesktopOAuthCancelledException(currentL10n.coreDesktopSignInNoIdentityToken);
+  }
+  return idToken;
+}
+
+/// One JSON `POST` to the AURA server, for both desktop exchanges. Sends no credential of the
+/// user's. Every way of getting no answer becomes a [DesktopOAuthCancelledException] with a plain
+/// sentence, so the sign-in screen never has to guess between "the server said no" and "AURA is
+/// unreachable"; an answer comes back as its status and its JSON object (empty when the body was
+/// not one).
+Future<({int status, Map<String, dynamic> body, String? refusal})> _postJsonToBackend(
+  Uri endpoint,
+  Map<String, Object?> payload,
+) async {
   final client = HttpClient();
   try {
     final String raw;
     final int status;
+    final String? refusal;
     try {
       final request = await client.postUrl(endpoint).timeout(const Duration(seconds: 30));
       request.headers.contentType = ContentType.json;
-      request.write(jsonEncode({
-        'code': code,
-        'code_verifier': verifier,
-        'redirect_uri': redirectUri,
-      }));
+      request.write(jsonEncode(payload));
       final response = await request.close().timeout(const Duration(seconds: 30));
       status = response.statusCode;
+      refusal = response.headers.value('x-aura-refusal');
       raw = await response.transform(utf8.decoder).join().timeout(const Duration(seconds: 30));
     } on SocketException {
-      throw DesktopOAuthCancelledException(
-        'Could not reach the AURA server to finish signing in. Check your connection and try again.',
-      );
+      throw DesktopOAuthCancelledException(currentL10n.coreDesktopSignInServerUnreachable);
     } on HandshakeException {
-      throw DesktopOAuthCancelledException(
-        'Could not make a secure connection to the AURA server to finish signing in.',
-      );
+      throw DesktopOAuthCancelledException(currentL10n.coreDesktopSignInServerInsecure);
     } on HttpException {
-      throw DesktopOAuthCancelledException(
-        'The AURA server did not answer properly while finishing sign-in. Try again.',
-      );
+      throw DesktopOAuthCancelledException(currentL10n.coreDesktopSignInServerBadAnswer);
     } on TimeoutException {
-      throw DesktopOAuthCancelledException(
-        'The AURA server took too long to finish signing in. Try again.',
-      );
+      throw DesktopOAuthCancelledException(currentL10n.coreDesktopSignInServerTimedOut);
     }
 
     Object? decoded;
@@ -287,24 +438,29 @@ Future<String> _exchangeCodeViaBackend({
     } on FormatException {
       decoded = null;
     }
-    final body = decoded is Map<String, dynamic> ? decoded : const <String, dynamic>{};
-
-    if (status != 200) {
-      final detail = body['detail'];
-      throw DesktopOAuthCancelledException(
-        detail is String && detail.isNotEmpty
-            ? detail
-            : 'The AURA server could not finish signing in (HTTP $status).',
-      );
-    }
-    final idToken = body['id_token'];
-    if (idToken is! String || idToken.isEmpty) {
-      throw DesktopOAuthCancelledException('The AURA server returned no identity token.');
-    }
-    return idToken;
+    return (
+      status: status,
+      body: decoded is Map<String, dynamic> ? decoded : <String, dynamic>{},
+      refusal: refusal,
+    );
   } finally {
     client.close(force: true);
   }
+}
+
+/// A non-200 answer from the AURA server, worded by its own `detail` (already written to be shown)
+/// or, without one, by the status.
+DesktopOAuthCancelledException _backendRefusal(
+  ({int status, Map<String, dynamic> body, String? refusal}) answer,
+) {
+  final detail = answer.body['detail'];
+  return DesktopOAuthCancelledException(
+    detail is String && detail.isNotEmpty
+        ? detail
+        : currentL10n.coreDesktopSignInServerFailed(answer.status),
+    statusCode: answer.status,
+    refusal: answer.refusal,
+  );
 }
 
 String _randomUrlSafeToken(int length) {
@@ -318,7 +474,7 @@ String _resultPage({required bool success, required String message}) => '''
 <html>
 <head><meta charset="utf-8"><title>AURA</title></head>
 <body style="font-family: sans-serif; text-align: center; margin-top: 3rem;">
-<h2>${success ? 'Signed in' : 'Sign-in failed'}</h2>
+<h2>${success ? currentL10n.coreDesktopSignInPageSignedIn : currentL10n.coreDesktopSignInPageFailed}</h2>
 <p>$message</p>
 </body>
 </html>

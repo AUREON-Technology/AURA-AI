@@ -1,3 +1,4 @@
+import 'package:aura_client/core/workspaces/active_workspace.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -143,6 +144,7 @@ Map<String, dynamic> chatStreamBody({
   double temperature = 0.3,
   List<ChatImageAttachment> images = const [],
   String? workspaceRoot,
+  bool desktopTaskIsolation = false,
 }) {
   return {
     "message": message,
@@ -156,6 +158,9 @@ Map<String, dynamic> chatStreamBody({
     "temperature": temperature,
     if (images.isNotEmpty) "images": [for (final image in images) image.toWire()],
     "workspace_root": ?workspaceRoot,
+    // WP4 (D-09): an Engineer turn on the user's computer works in its own git worktree, keyed
+    // by `session_id` (branch `aura/task-…`), never in the live checkout. Omitted when false.
+    if (desktopTaskIsolation) "desktop_task_isolation": true,
   };
 }
 
@@ -201,6 +206,8 @@ class SseAgentClient {
     // FSA-006: the Desktop IDE's active workspace root, so the daemon runs commands there and
     // not in whichever root was granted first. Null from every surface without one.
     String? workspaceRoot,
+    // WP4: ask the daemon to isolate this turn's work in its own git worktree.
+    bool desktopTaskIsolation = false,
   }) {
     final ownsClient = _httpClient == null;
     final client = _httpClient ?? http.Client();
@@ -223,6 +230,7 @@ class SseAgentClient {
           temperature: temperature,
           images: images,
           workspaceRoot: workspaceRoot,
+          desktopTaskIsolation: desktopTaskIsolation,
         ).listen(controller.add, onError: controller.addError, onDone: controller.close);
       },
       onPause: () => inner?.pause(),
@@ -255,6 +263,7 @@ class SseAgentClient {
     required double temperature,
     required List<ChatImageAttachment> images,
     required String? workspaceRoot,
+    required bool desktopTaskIsolation,
   }) async* {
     final cid = correlationId ?? _uuid.v4();
     try {
@@ -267,6 +276,8 @@ class SseAgentClient {
         req.headers.addAll(
           await DeviceValidationService.getAttestationHeaders(backendUrl: _backendUrl),
         );
+        // A team turn retrieves the team's corpus and is metered to the team (ADR-034).
+        req.headers.addAll(await workspaceHeaders(_ref));
       }
 
       await applyAuth(request);
@@ -282,6 +293,7 @@ class SseAgentClient {
         temperature: temperature,
         images: images,
         workspaceRoot: workspaceRoot,
+        desktopTaskIsolation: desktopTaskIsolation,
       ));
 
       var response = await client.send(request).timeout(kLlmConnectTimeout);
@@ -294,6 +306,9 @@ class SseAgentClient {
       }
       if (response.statusCode != 200) {
         final body = await response.stream.bytesToString();
+        // The turn carried the active team; a team we were removed from is dropped, so the next
+        // turn goes out in the personal scope instead of failing the same way (F5).
+        healActiveWorkspace(_ref, statusCode: response.statusCode, body: body);
         throw AuraApiError.fromResponse(
           statusCode: response.statusCode,
           body: body,

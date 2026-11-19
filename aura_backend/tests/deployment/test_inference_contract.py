@@ -74,3 +74,20 @@ def test_the_weights_can_be_pinned() -> None:
     """A Space serving whatever `main` is today answers with weights nobody reviewed."""
     text = ENTRYPOINT_FILE.read_text(encoding="utf-8")
     assert "VLLM_MODEL_REVISION" in text and '--revision "$MODEL_REVISION"' in text
+
+
+def test_deploy_keeps_the_space_on_the_owner_gpu_and_awake() -> None:
+    """SaaS P1-G (owner decision 2026-11-18): the sensitive-capable source is one L4, always on.
+
+    The deploy asks Hugging Face for both on every run, so a Space someone set back to sleep,
+    or to another GPU, in the Space's settings returns to the decided state on the next deploy.
+    """
+    import yaml
+
+    workflow = REPO_ROOT / ".github" / "workflows" / "inference-plane-deploy.yml"
+    deploy = yaml.safe_load(workflow.read_text())["jobs"]["deploy"]
+    script = "\n".join(str(step.get("run", "")) for step in deploy["steps"])
+    env = {k: v for step in deploy["steps"] for k, v in (step.get("env") or {}).items()}
+    assert "request_space_hardware(" in script
+    assert re.search(r"sleep_time\s*=\s*-1", script), "the Space must never sleep (-1)"
+    assert "HF_SPACE_HARDWARE" in env and "'l4x1'" in env["HF_SPACE_HARDWARE"], env.get("HF_SPACE_HARDWARE")

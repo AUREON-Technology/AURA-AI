@@ -22,6 +22,13 @@ class AuraTextField extends StatelessWidget {
   /// Leading glyph inside the field, e.g. a magnifier on a search input.
   final IconData? prefixIcon;
 
+  /// Hides the text (passwords).
+  final bool obscureText;
+  final TextInputType? keyboardType;
+
+  /// Platform autofill hints, e.g. [AutofillHints.email] / [AutofillHints.password].
+  final Iterable<String>? autofillHints;
+
   const AuraTextField({
     super.key,
     this.controller,
@@ -36,6 +43,9 @@ class AuraTextField extends StatelessWidget {
     this.autofocus = false,
     this.focusNode,
     this.prefixIcon,
+    this.obscureText = false,
+    this.keyboardType,
+    this.autofillHints,
   });
 
   @override
@@ -46,7 +56,12 @@ class AuraTextField extends StatelessWidget {
       focusNode: focusNode,
       autofocus: autofocus,
       enabled: enabled,
-      maxLines: maxLines,
+      maxLines: obscureText ? 1 : maxLines,
+      obscureText: obscureText,
+      keyboardType: keyboardType,
+      autofillHints: autofillHints,
+      autocorrect: !obscureText,
+      enableSuggestions: !obscureText,
       textInputAction: textInputAction,
       onSubmitted: onSubmitted,
       onChanged: onChanged,

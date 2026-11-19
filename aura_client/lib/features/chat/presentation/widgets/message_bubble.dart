@@ -1,3 +1,4 @@
+import 'package:aura_client/core/locale/text_direction.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -27,6 +28,7 @@ import 'tool_call_chip.dart';
 import 'turn_status_row.dart';
 import 'user_facing_citations.dart';
 import 'voice_playback_button.dart';
+import 'package:aura_client/features/workspaces/presentation/plan_limit_card.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
 class MessageBubble extends ConsumerWidget {
@@ -52,6 +54,17 @@ class MessageBubble extends ConsumerWidget {
     }
   }
 
+  /// The fixed notices the repository stores in English (persisted and synced as the turn's
+  /// text) are shown in the language on screen; anything else is the model's own answer.
+  static String _displayContent(BuildContext context, String content) {
+    final l10n = context.l10n;
+    if (content == kChatWithheldText) return l10n.chatWithheldNotice;
+    if (content == kChatBlockedText) return l10n.chatBlockedNotice;
+    if (content == kChatApprovalExpiredText) return l10n.chatApprovalExpiredNotice;
+    if (content == kChatFeatureUnavailableText) return l10n.chatFeatureUnavailableNotice;
+    return localizedEngineerRefusal(content, l10n) ?? content;
+  }
+
   List<Map<String, dynamic>> _decodeToolCalls() {
     final raw = message.toolCallsJson;
     if (raw == null || raw.isEmpty) return const [];
@@ -62,6 +75,26 @@ class MessageBubble extends ConsumerWidget {
     }
   }
 
+  /// Whether this reply is its conversation's newest: only then does a failed turn offer Retry
+  /// (F2). While that is not known yet (the lookup is loading, or failed) Retry stays, as before;
+  /// the repository resends the tapped turn's own message either way.
+  bool _isLatestTurn(WidgetRef ref) {
+    final latest = ref.watch(latestAssistantMessageIdProvider(message.conversationId)).value;
+    return latest == null || latest == message.id;
+  }
+
+  /// Resends this bubble's own turn -- not "the last message" (F2 / INT-108). The repository
+  /// refuses while another reply is streaming and removes the failed rows only once the resend
+  /// is accepted, so nothing here touches Drift or `ref` after the bubble unmounts.
+  void _retry(WidgetRef ref) {
+    unawaited(
+      ref.read(chatRepositoryProvider).retryLastFailedTurn(
+            conversationId: message.conversationId,
+            errorMessageId: message.id,
+          ),
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = AuraPalette.of(context);
@@ -70,7 +103,19 @@ class MessageBubble extends ConsumerWidget {
         ? 0.85
         : 0.65;
 
+    if (!isUser && isChatPlanLimitText(message.content)) {
+      return Align(
+        alignment: AlignmentDirectional.centerStart,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: AuraSpacing.lg),
+          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * maxWidthFraction),
+          child: PlanLimitCard(text: message.content.substring(kChatPlanLimitPrefix.length + 2)),
+        ),
+      );
+    }
+
     if (!isUser && isChatConnectionErrorText(message.content)) {
+      final canRetry = _isLatestTurn(ref);
       return Align(
         alignment: AlignmentDirectional.centerStart,
         child: Container(
@@ -100,7 +145,9 @@ class MessageBubble extends ConsumerWidget {
                 ),
                 const SizedBox(height: AuraSpacing.sm),
                 Text(
-                  context.l10n.chatCloudUnavailableBody,
+                  canRetry
+                      ? context.l10n.chatCloudUnavailableBody
+                      : context.l10n.chatRetryOnlyLatestTurn,
                   style: TextStyle(
                     color: palette.textSecondary,
                     fontSize: 13,
@@ -112,19 +159,12 @@ class MessageBubble extends ConsumerWidget {
                   spacing: AuraSpacing.sm,
                   runSpacing: AuraSpacing.sm,
                   children: [
-                    AuraButton(
-                      label: context.l10n.retry,
-                      icon: Icons.refresh,
-                      onPressed: () {
-                        final repo = ref.read(chatRepositoryProvider);
-                        unawaited(
-                          repo.retryLastFailedTurn(
-                            conversationId: message.conversationId,
-                            errorMessageId: message.id,
-                          ),
-                        );
-                      },
-                    ),
+                    if (canRetry)
+                      AuraButton(
+                        label: context.l10n.retry,
+                        icon: Icons.refresh,
+                        onPressed: () => _retry(ref),
+                      ),
                     AuraButton(
                       label: context.l10n.chatReportIssue,
                       icon: Icons.bug_report_outlined,
@@ -167,6 +207,12 @@ class MessageBubble extends ConsumerWidget {
     final agentId = message.agentId;
     final personaInfo = agentId != null ? personaDisplay(agentId) : null;
     final turnMeta = TurnMeta.decode(message.turnMetaJson);
+    // G-14a: whether this turn's held calls are on offer right now (live, or brought back after a
+    // restart). A held turn with none left was answered, or outlived the server's TTL.
+    final turnKey = turnMeta.turnId ?? message.id;
+    final awaitingHere = !isUser &&
+        turnMeta.needsConfirmation &&
+        ref.watch(pendingConfirmationProvider.select((all) => all.any((c) => c.turnId == turnKey)));
     // ADR-031: the stored text ends in the "[N images attached]" marker; the bubble shows the
     // images (or a count) instead of the marker itself.
     final userImages = isUser
@@ -251,38 +297,41 @@ class MessageBubble extends ConsumerWidget {
                     else if (!isStreaming &&
                         message.content.trim().isEmpty &&
                         turnMeta.needsConfirmation)
-                      const _AwaitingConfirmationHint()
+                      // The card is below; if it is gone without an answer, the approval expired
+                      // (no Retry: it would resend the message as a new turn).
+                      awaitingHere
+                          ? _AwaitingConfirmationHint(text: context.l10n.chatAwaitingConfirmation)
+                          : turnMeta.confirmationResolved
+                              ? const SizedBox.shrink()
+                              : _AwaitingConfirmationHint(text: context.l10n.chatApprovalExpiredNotice)
                     else if (!isStreaming && message.content.trim().isEmpty)
                       EmptyAnswerRetryCard(
-                        onRetry: () {
-                          final repo = ref.read(chatRepositoryProvider);
-                          unawaited(
-                            repo.retryLastFailedTurn(
-                              conversationId: message.conversationId,
-                              errorMessageId: message.id,
-                            ),
-                          );
-                        },
+                        onRetry: _isLatestTurn(ref) ? () => _retry(ref) : null,
                       )
                     else
-                      MarkdownBody(
-                        data: message.content,
-                        styleSheet: MarkdownStyleSheet(
-                          p: TextStyle(
-                            color: palette.textPrimary,
-                            fontSize: 15,
-                            height: 1.4,
-                          ),
-                          code: TextStyle(
-                            backgroundColor: palette.surfaceVariant,
-                            color: palette.warning,
-                            fontFamily: 'Courier',
-                            fontSize: 13,
-                          ),
-                          codeblockDecoration: BoxDecoration(
-                            color: palette.background,
-                            borderRadius: BorderRadius.circular(AuraRadius.sm),
-                            border: Border.all(color: palette.border),
+                      // The message reads in its own direction (first strong letter outside
+                      // code); its fenced code blocks stay left-to-right (text_direction.dart).
+                      Directionality(
+                        textDirection: directionOfText(message.content) ?? Directionality.of(context),
+                        child: _MarkdownWithLtrCode(
+                          data: _displayContent(context, message.content),
+                          styleSheet: MarkdownStyleSheet(
+                            p: TextStyle(
+                              color: palette.textPrimary,
+                              fontSize: 15,
+                              height: 1.4,
+                            ),
+                            code: TextStyle(
+                              backgroundColor: palette.surfaceVariant,
+                              color: palette.warning,
+                              fontFamily: 'Courier',
+                              fontSize: 13,
+                            ),
+                            codeblockDecoration: BoxDecoration(
+                              color: palette.background,
+                              borderRadius: BorderRadius.circular(AuraRadius.sm),
+                              border: Border.all(color: palette.border),
+                            ),
                           ),
                         ),
                       ),
@@ -292,7 +341,7 @@ class MessageBubble extends ConsumerWidget {
                     ],
                     if (turnMeta.steps.isNotEmpty) ...[
                       const SizedBox(height: AuraSpacing.sm),
-                      StepLogPanel(steps: turnMeta.steps),
+                      StepLogPanel(steps: turnMeta.steps, live: isStreaming),
                     ],
                     // Only once the turn has finished: mid-stream, a step that
                     // has not completed yet is simply a step in progress.
@@ -389,7 +438,9 @@ class _ResolvedAgentMismatchBanner extends StatelessWidget {
 /// waiting on the user to confirm a proposed tool action, not because it failed outright --
 /// retrying would just resend the same unconfirmed request.
 class _AwaitingConfirmationHint extends StatelessWidget {
-  const _AwaitingConfirmationHint();
+  const _AwaitingConfirmationHint({required this.text});
+
+  final String text;
 
   @override
   Widget build(BuildContext context) {
@@ -401,11 +452,63 @@ class _AwaitingConfirmationHint extends StatelessWidget {
         const SizedBox(width: 6),
         Expanded(
           child: Text(
-            context.l10n.chatAwaitingConfirmation,
+            text,
             style: TextStyle(color: palette.textSecondary, fontSize: 13, height: 1.4),
           ),
         ),
       ],
     );
+  }
+}
+
+
+/// Markdown whose closed fenced code blocks are laid out left-to-right whatever the message's
+/// direction: in a right-to-left paragraph a line like `foo();` would show its trailing
+/// punctuation on the wrong side (docs/plans/arabic-language_plan.md, stage 2). Prose between
+/// the blocks renders through [MarkdownBody] as before; an unclosed fence (mid-stream) stays in
+/// the prose until it closes.
+class _MarkdownWithLtrCode extends StatelessWidget {
+  const _MarkdownWithLtrCode({required this.data, required this.styleSheet});
+
+  final String data;
+  final MarkdownStyleSheet styleSheet;
+
+  static final _fence = RegExp(r'```[^\n]*\n([\s\S]*?)```');
+
+  @override
+  Widget build(BuildContext context) {
+    final matches = _fence.allMatches(data).toList();
+    if (matches.isEmpty) return MarkdownBody(data: data, styleSheet: styleSheet);
+
+    final children = <Widget>[];
+    var cursor = 0;
+    void prose(String text) {
+      if (text.trim().isEmpty) return;
+      children.add(MarkdownBody(data: text, styleSheet: styleSheet));
+    }
+
+    for (final match in matches) {
+      prose(data.substring(cursor, match.start));
+      children.add(
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: AuraSpacing.xs),
+          child: LtrContent(
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(AuraSpacing.sm),
+              clipBehavior: Clip.hardEdge,
+              decoration: styleSheet.codeblockDecoration,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Text(match.group(1)!.trimRight(), style: styleSheet.code),
+              ),
+            ),
+          ),
+        ),
+      );
+      cursor = match.end;
+    }
+    prose(data.substring(cursor));
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children);
   }
 }

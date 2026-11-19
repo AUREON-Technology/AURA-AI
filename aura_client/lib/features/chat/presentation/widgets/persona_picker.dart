@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
+import 'package:aura_client/core/workspaces/active_workspace.dart';
 
 import '../../data/agent_config_repository.dart';
 import '../../data/agents_repository.dart';
@@ -62,13 +63,14 @@ class PersonaChip extends ConsumerWidget {
 /// A short human label for a capability gate, falling back to the raw name for anything not
 /// explicitly known -- so a new backend-declared capability never breaks this UI, it just reads
 /// a little less polished until this map is updated.
-const Map<String, String> _knownCapabilityLabels = {
-  'engineer_agent': 'the Engineer capability',
-};
+Map<String, String> _knownCapabilityLabels(AppLocalizations l10n) => {
+      'engineer_agent': l10n.chatCapabilityEngineer,
+    };
 
-String _capabilityLabel(Set<String> capabilities) {
-  if (capabilities.isEmpty) return 'an additional capability';
-  return capabilities.map((c) => _knownCapabilityLabels[c] ?? c).join(', ');
+String _capabilityLabel(AppLocalizations l10n, Set<String> capabilities) {
+  if (capabilities.isEmpty) return l10n.chatCapabilityAdditional;
+  final known = _knownCapabilityLabels(l10n);
+  return capabilities.map((c) => known[c] ?? c).join(l10n.chatListSeparator);
 }
 
 void showPersonaPicker(BuildContext context) {
@@ -85,11 +87,23 @@ void showPersonaPicker(BuildContext context) {
 class PersonaPickerSheet extends ConsumerWidget {
   const PersonaPickerSheet({super.key});
 
+  Widget _failure(WidgetRef ref, Object error) => Padding(
+        padding: const EdgeInsets.all(AuraSpacing.xl),
+        child: AuraFailureView(
+          failure: AuraFailure.from(error),
+          compact: true,
+          // G-15: a failed load is not the last word.
+          onRetry: () => ref.invalidate(agentsProvider),
+        ),
+      );
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = AuraPalette.of(context);
     final agentsAsync = ref.watch(agentsProvider);
     final activeId = ref.watch(activeAgentIdProvider);
+    // The caller's other workspaces whose plan includes the Engineer, when it is locked here.
+    final engineerElsewhere = ref.watch(engineerWorkspacesProvider);
     final maxHeight = MediaQuery.sizeOf(context).height * 0.75;
 
     return SafeArea(
@@ -116,7 +130,12 @@ class PersonaPickerSheet extends ConsumerWidget {
                 ),
                 const SizedBox(height: AuraSpacing.sm),
                 Flexible(
-                  child: agentsAsync.when(
+                  // While Riverpod retries a failed load on its own, the value is "loading,
+                  // with an error": show the error (and Retry) rather than a spinner that may
+                  // run for a long while (G-15).
+                  child: agentsAsync.error != null && !agentsAsync.hasValue
+                      ? _failure(ref, agentsAsync.error!)
+                      : agentsAsync.when(
                     data: (agents) => ListView.builder(
                       shrinkWrap: true,
                       itemCount: agents.length,
@@ -129,11 +148,35 @@ class PersonaPickerSheet extends ConsumerWidget {
                         // silently answers as the orchestrator instead, which is worse than a
                         // greyed-out tile the user can see the reason for.
                         final locked = !agent.usable;
+                        // Locked here, but part of a team's plan the caller belongs to: a turn
+                        // uses the active workspace, so offer to switch to that team instead of a
+                        // dead end. Switching refetches the list (agentsProvider watches the
+                        // active workspace), and the Engineer is selected in the same tap.
+                        final switchTo = locked && agent.id == 'engineer' && engineerElsewhere.isNotEmpty
+                            ? engineerElsewhere.first
+                            : null;
+                        if (switchTo != null) {
+                          return AuraSelectTile(
+                            key: const Key('persona-engineer-switch'),
+                            icon: Icons.swap_horiz,
+                            title: label,
+                            subtitle: context.l10n.chatPersonaSwitchToUse(switchTo.name),
+                            selected: false,
+                            onTap: () async {
+                              final navigator = Navigator.of(context);
+                              await ref.read(activeWorkspaceProvider.notifier).select(switchTo);
+                              ref.read(activeAgentIdProvider.notifier).setAgent(agent.id);
+                              navigator.pop();
+                            },
+                          );
+                        }
                         final tile = AuraSelectTile(
                           icon: locked ? Icons.lock_outline : icon,
                           title: label,
                           subtitle: locked
-                              ? 'Requires ${_capabilityLabel(agent.requiredCapabilities)} -- not available on this account'
+                              ? context.l10n.chatPersonaRequires(
+                                  _capabilityLabel(context.l10n, agent.requiredCapabilities),
+                                )
                               : (agent.description.isEmpty ? null : agent.description),
                           selected: isActive,
                           trailing: !locked && agent.id == 'engineer'
@@ -169,13 +212,7 @@ class PersonaPickerSheet extends ConsumerWidget {
                       padding: EdgeInsets.all(AuraSpacing.xl),
                       child: Center(child: CircularProgressIndicator()),
                     ),
-                    error: (e, _) => Padding(
-                      padding: const EdgeInsets.all(AuraSpacing.xl),
-                      child: AuraFailureView(
-                        failure: AuraFailure.from(e),
-                        compact: true,
-                      ),
-                    ),
+                    error: (e, _) => _failure(ref, e),
                   ),
                 ),
               ],

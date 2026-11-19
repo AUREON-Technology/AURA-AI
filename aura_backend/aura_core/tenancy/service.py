@@ -10,7 +10,10 @@ port; the HTTP routes only translate. Invariants this module keeps:
 * a team's members plus its open invites never exceed its seats;
 * "no such workspace" and "not a member" are the same error, so the API never confirms that a
   workspace someone does not belong to exists;
-* every change is audited, and no audit record carries an invite token.
+* every change is audited, and no audit record carries an invite token;
+* an invite never outlives its inviter's authority: removing, demoting or losing an inviter
+  revokes their open invites, and accepting re-checks that the inviter could still send it (F9);
+* deleting a team erases the knowledge shared under ``workspace:<id>`` first (F10).
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..domain.errors import AuthorizationError, ConflictError, ValidationError
+from ..domain.identifiers import UserId
 from ..domain.tenancy import (
     INVITE_TTL,
     Invite,
@@ -34,12 +38,16 @@ from ..domain.tenancy import (
     new_invite_token,
     new_workspace_id,
     parse_invite_token,
+    workspace_scope,
 )
+from ..domain.plans import PlanLimitError
 from ..ports.runtime import AuditEvent
 
 __all__ = ["TenancyService"]
 
 _NOT_A_MEMBER = "not a member of this workspace"
+_INVALID_INVITE = "this invite is no longer valid"
+_RANK = {WorkspaceRole.MEMBER: 0, WorkspaceRole.ADMIN: 1, WorkspaceRole.OWNER: 2}
 _MAX_EMAIL = 320
 
 
@@ -49,6 +57,32 @@ class TenancyService:
     clock: Any
     audit: Any
     settings: Any
+    #: ``async (workspace_id) -> int``: the team's seats from its plan (``PlanService.seat_limit``,
+    #: SaaS P1-C). Unset (tests, no plans wired): ``settings.default_team_seats``.
+    seat_limit: Any = None
+    #: ``async (workspace_id) -> str``: the plan's id, for the seats refusal's details.
+    plan_of: Any = None
+    #: ``Notifier`` (SaaS P1-F1): emails an invite to the invitee. Unset: the token is only in
+    #: the route's response, as before.
+    notifier: Any = None
+    #: ``async (UserId) -> int``: erase everything owned by a scope (``KnowledgeEngine.erase_owner``).
+    #: Called with the team's ``workspace:<id>`` scope before the team is deleted (F10). Unset
+    #: (tests without knowledge): nothing to erase.
+    erase_knowledge: Any = None
+    #: ``async (workspace_id) -> None``: told before an Owner transfer, so billing stops charging
+    #: the outgoing Owner's saved card (``BillingService.forget_card``, F41). Unset: no billing.
+    owner_changing: Any = None
+
+    async def _no_free_seats(self, workspace_id: str, used: int, allowed: int) -> PlanLimitError:
+        plan = await self.plan_of(workspace_id) if self.plan_of is not None else ""
+        return PlanLimitError(
+            "this workspace has no free seats", limit="seats", plan=plan, used=used, allowed=allowed,
+        )
+
+    async def _seats(self, workspace_id: str) -> int:
+        if self.seat_limit is not None:
+            return await self.seat_limit(workspace_id)
+        return self.settings.default_team_seats
 
     # -- reading --------------------------------------------------------------------------
 
@@ -103,18 +137,20 @@ class TenancyService:
 
     # -- changing -------------------------------------------------------------------------
 
-    async def create_team(self, user_id: str, name: str) -> Workspace:
+    async def create_team(self, user_id: str, name: str, *, owner_email: str | None = None) -> Workspace:
         now = self.clock.now()
         ws = Workspace(
             id=new_workspace_id(), kind=WorkspaceKind.TEAM, name=clean_workspace_name(name),
             created_by=user_id, created_at=now,
         )
-        await self.store.create_workspace(ws, Membership(ws.id, user_id, WorkspaceRole.OWNER, now))
+        email = _clean_email(owner_email) if owner_email else None
+        await self.store.create_workspace(ws, Membership(ws.id, user_id, WorkspaceRole.OWNER, now, email=email))
         await self._audit("create", user_id, WorkspaceRole.OWNER, ws.id)
         return ws
 
     async def invite(
-        self, actor: str, workspace_id: str, email: str, role: WorkspaceRole
+        self, actor: str, workspace_id: str, email: str, role: WorkspaceRole, *,
+        inviter_email: str | None = None,
     ) -> tuple[Invite, str]:
         _ws, mine = await self._team(actor, workspace_id)
         self._require(mine.role, "invite")
@@ -125,8 +161,10 @@ class TenancyService:
         now = self.clock.now()
         members = await self.store.list_members(workspace_id)
         open_invites = [i for i in await self.store.list_invites(workspace_id) if i.is_open(now)]
-        if len(members) + len(open_invites) >= self.settings.default_team_seats:
-            raise ConflictError("this workspace has no free seats")
+        seats = await self._seats(workspace_id)
+        if len(members) + len(open_invites) >= seats:
+            # A plan limit (402, limit=seats), which the app words (review C#3).
+            raise await self._no_free_seats(workspace_id, len(members) + len(open_invites), seats)
         invite_id, token = new_invite_token()
         invite = Invite(
             invite_id=invite_id, workspace_id=workspace_id, email=address, role=role,
@@ -134,15 +172,30 @@ class TenancyService:
         )
         await self.store.put_invite(invite)
         await self._audit("invite", actor, mine.role, workspace_id, {"invite_id": invite_id, "role": role.value})
+        if self.notifier is not None:
+            await self.notifier.invite(address, _ws.name, inviter_email, role.value, token)  # never raises
         return invite, token
 
-    async def accept(self, user_id: str, token: str) -> Membership:
+    async def accept(self, user_id: str, token: str, *, email: str | None = None) -> Membership:
+        """``email`` is the accepting account's own verified address: the members list shows who
+        actually joined, even when an invite link was forwarded (review F2#7)."""
         invite_id = parse_invite_token(token)
         invite = await self.store.get_invite(invite_id)
         if invite is None or not hmac.compare_digest(invite.digest, invite_digest(token)):
-            raise ConflictError("this invite is no longer valid")
+            raise ConflictError(_INVALID_INVITE)
+        if invite.is_open(self.clock.now()) and not await self._inviter_still_may(invite):
+            # Its inviter was removed or demoted after sending it (or the revocation raced it).
+            await self.store.revoke_invite(invite_id)
+            await self._audit("revoke_invite", user_id, invite.role, invite.workspace_id,
+                              {"invite_id": invite_id, "reason": "inviter_lost_authority"})
+            raise ConflictError(_INVALID_INVITE)
+        seats = await self._seats(invite.workspace_id)
+        members = await self.store.list_members(invite.workspace_id)
+        if len(members) >= seats and invite.is_open(self.clock.now()):
+            raise await self._no_free_seats(invite.workspace_id, len(members), seats)
         member = await self.store.accept_invite(
-            invite_id, user_id=user_id, at=self.clock.now(), seat_limit=self.settings.default_team_seats
+            invite_id, user_id=user_id, at=self.clock.now(), seat_limit=seats,
+            email=_clean_email(email) if email else None,
         )
         await self._audit("join", user_id, member.role, member.workspace_id, {"invite_id": invite_id})
         return member
@@ -169,6 +222,7 @@ class TenancyService:
         if not await self.store.remove_member(workspace_id, user_id, expected=target.role):
             raise ConflictError("this member's role changed; reload and try again")
         await self._audit("remove_member", actor, mine.role, workspace_id, {"member": user_id})
+        await self._revoke_invites_of(workspace_id, user_id, None, actor, mine.role)
 
     async def leave(self, user_id: str, workspace_id: str) -> None:
         _ws, mine = await self._team(user_id, workspace_id)
@@ -177,6 +231,7 @@ class TenancyService:
         if not await self.store.remove_member(workspace_id, user_id, expected=mine.role):
             raise ConflictError("your role changed; reload and try again")
         await self._audit("leave", user_id, mine.role, workspace_id)
+        await self._revoke_invites_of(workspace_id, user_id, None, user_id, mine.role)
 
     async def change_role(self, actor: str, workspace_id: str, user_id: str, role: WorkspaceRole) -> None:
         _ws, mine = await self._team(actor, workspace_id)
@@ -190,18 +245,28 @@ class TenancyService:
             raise AuthorizationError("your role cannot change this member's role")
         await self.store.set_role(workspace_id, user_id, role, expected=target.role)
         await self._audit("change_role", actor, mine.role, workspace_id, {"member": user_id, "role": role.value})
+        if _RANK[role] < _RANK[target.role]:
+            await self._revoke_invites_of(workspace_id, user_id, role, actor, mine.role)
 
     async def transfer(self, actor: str, workspace_id: str, to_user: str) -> None:
         _ws, mine = await self._team(actor, workspace_id)
         self._require(mine.role, "transfer")
         if to_user == actor or await self.store.get_membership(workspace_id, to_user) is None:
             raise ConflictError("ownership can only pass to another member")
+        if self.owner_changing is not None:
+            # Before the transfer: a failure stops it, rather than leaving the outgoing Owner's
+            # card charged for a team they no longer own (F41).
+            await self.owner_changing(workspace_id)
         await self.store.transfer_ownership(workspace_id, actor, to_user)
         await self._audit("transfer", actor, mine.role, workspace_id, {"to": to_user})
 
     async def delete_team(self, actor: str, workspace_id: str) -> None:
         _ws, mine = await self._team(actor, workspace_id)
         self._require(mine.role, "delete")
+        if self.erase_knowledge is not None:
+            # Before the row goes: once the team is gone nobody can reach -- or delete -- what was
+            # shared under its scope. A failure stops the delete, so a retry can finish (F10).
+            await self.erase_knowledge(UserId(workspace_scope(workspace_id)))
         await self.store.delete_workspace(workspace_id)
         await self._audit("delete", actor, mine.role, workspace_id)
 
@@ -212,6 +277,26 @@ class TenancyService:
         if ws.kind is not WorkspaceKind.TEAM:
             raise ValidationError("a personal workspace has no members to manage")
         return ws, mine
+
+    async def _inviter_still_may(self, invite: Invite) -> bool:
+        """Whether the invite's sender is still a member who may invite to its role."""
+        inviter = await self.store.get_membership(invite.workspace_id, invite.created_by)
+        return (inviter is not None and can(inviter.role, "invite")
+                and _RANK[WorkspaceRole(invite.role)] <= _RANK[inviter.role])
+
+    async def _revoke_invites_of(self, workspace_id: str, user_id: str, role: WorkspaceRole | None,
+                                actor: str, actor_role: WorkspaceRole) -> None:
+        """Revoke ``user_id``'s open invites that ``role`` (None: no longer a member) could not
+        send (F9)."""
+        now = self.clock.now()
+        for invite in await self.store.list_invites(workspace_id):
+            if invite.created_by != user_id or not invite.is_open(now):
+                continue
+            if role is not None and can(role, "invite") and _RANK[WorkspaceRole(invite.role)] <= _RANK[role]:
+                continue
+            if await self.store.revoke_invite(invite.invite_id):
+                await self._audit("revoke_invite", actor, actor_role, workspace_id,
+                                  {"invite_id": invite.invite_id, "reason": "inviter_lost_authority"})
 
     @staticmethod
     def _require(role: WorkspaceRole, action: str) -> None:

@@ -27,6 +27,7 @@ from aura_core.domain.service_keys import looks_like_service_token
 from aura_core.domain.tenancy import WorkspaceContext
 from aura_core.observability.logging import get_logger
 from aura_core.security import SlidingWindowRateLimiter
+from aura_core.security.role_capabilities import capabilities_for_role
 from infrastructure.http_limits import PayloadSizeLimitMiddleware
 from infrastructure.secret_hydration import hydrate_secrets_from_files
 
@@ -65,7 +66,7 @@ def _build_authenticator(settings: Any, *, service_keys: Any = None, tenancy: An
             # Reachable only in local/development: production settings validation refuses this
             # combination, and the metric `aura_insecure_mode{bypass="mock_auth"}` reports it.
             logger.warning("mock authentication is enabled; this must never run in production")
-            return Principal(user_id=UserId("mock-user"), email="mock@local", role="Admin")
+            return Principal(user_id=UserId("mock-user"), email="mock@local", role="Admin", email_verified=True)
 
         header = request.headers.get("authorization", "")
         if not header.lower().startswith("bearer "):
@@ -117,25 +118,21 @@ def _build_authenticator(settings: Any, *, service_keys: Any = None, tenancy: An
         from services.rbac import get_user_role  # type: ignore
 
         role = get_user_role(claims)
-        capabilities: list[str] = []
-        if role in settings.security.admin_roles:
-            capabilities.append("admin.act")
-        if role == "SuperAdmin":
-            capabilities.append("admin.super")
-        # Gates the `engineer` persona and every tool in tools/coding.py (sandboxed
-        # filesystem/command/git, GitHub read+write) -- empty by default, so nobody has it
-        # until an operator explicitly opts a role in via AURA_ENGINEER_AGENT_ROLES.
-        if role in settings.security.engineer_agent_roles:
-            capabilities.append("engineer_agent")
-        # Gates agents and tools compiled from a deployed Project Blueprint (Track AP7) --
-        # empty by default; AURA_PROJECT_DATA_ROLES opts roles in.
-        if role in settings.security.project_data_roles:
-            capabilities.append("project_data")
+        # One rule shared with the pairing approval route (audit INT-003), so a daemon can only
+        # be paired to an account the host-agent socket will accept.
         return Principal(
             user_id=UserId(str(subject)),
             email=claims.get("email") or "",
             role=role,
-            capabilities=tuple(capabilities),
+            capabilities=capabilities_for_role(settings.security, role),
+            email_verified=claims.get("email_verified") is True,
+            # WP8: a desktop-app token carries both a signed ``platform: desktop`` claim and its
+            # device id; require both, so a stray claim alone never makes a caller "desktop".
+            client_platform=(
+                "desktop"
+                if claims.get("platform") == "desktop" and claims.get("device_id")
+                else None
+            ),
         )
 
     return authenticate
@@ -225,6 +222,22 @@ def _require_jwt_secret(settings) -> None:
         )
 
 
+def _register_auth_state_handler(app) -> None:
+    """Auth state Redis cannot answer (erasure, device revocation) is a retryable 503 wherever it
+    surfaces -- the same body the sign-in routes return themselves -- never an unstructured 500
+    that a client would read as a hard failure and sign out on."""
+    from services.jwt_auth import AUTH_STATE_UNAVAILABLE_DETAIL, AuthStateUnavailable
+
+    @app.exception_handler(AuthStateUnavailable)
+    async def auth_state_unavailable_handler(request, exc: AuthStateUnavailable):
+        logger.warning("auth state unavailable: %s", exc)
+        return JSONResponse(
+            status_code=503,
+            content={"detail": dict(AUTH_STATE_UNAVAILABLE_DETAIL)},
+            headers={"Retry-After": "5"},
+        )
+
+
 def _register_inference_budget_handler(app) -> None:
     from services.budget import InferenceBudgetExceededException
 
@@ -247,6 +260,28 @@ _UPLOAD_FRAMING_BYTES = 1024 * 1024
 #: The text part of a chat turn (message, history hints, approval ids) beside its images.
 _CHAT_TEXT_BYTES = 1024 * 1024
 
+#: The cap for every POST/PUT/PATCH body without a route limit of its own.
+_DEFAULT_BODY_BYTES = 5 * 1024 * 1024
+
+
+def document_body_limit(knowledge) -> int:
+    """The body ceiling for ``POST /api/v3/knowledge/documents`` (JSON text, INT-112).
+
+    The engine stores up to ``max_document_bytes`` of UTF-8 text. JSON escaping grows it: a
+    newline, quote or backslash is two bytes on the wire, so twice the document plus the
+    envelope covers any ordinary text. The flat 5MB cap refused every 5-8MB document the engine
+    would have accepted.
+    """
+    return 2 * knowledge.max_document_bytes + _UPLOAD_FRAMING_BYTES
+
+
+def transcribe_body_limit() -> int:
+    """The body ceiling for ``POST /api/v3/voice/transcribe``: the audio the route advertises
+    (``MAX_AUDIO_BYTES``, checked again by the route) plus multipart framing (INT-112)."""
+    from aura_core.api.v3 import MAX_AUDIO_BYTES
+
+    return MAX_AUDIO_BYTES + _UPLOAD_FRAMING_BYTES
+
 
 def chat_body_limit(vision) -> int | None:
     """The body ceiling for ``/api/v3/chat`` and ``/api/v3/chat/stream`` when images are on.
@@ -266,17 +301,28 @@ def chat_body_limit(vision) -> int | None:
 def _apply_http_limits(app, settings) -> None:
     # Document upload has its own ceiling, ``knowledge.max_document_bytes`` (8MB by default); the
     # flat 5MB cap used to refuse every document between the two with a 413 the knowledge
-    # engine would have accepted. nginx's ``client_max_body_size 20m`` stays above both, and
-    # above the chat ceiling with vision's defaults (12MB of images -> ~17MB of body).
+    # engine would have accepted. nginx's ``client_max_body_size 20m`` stays above both, above
+    # the JSON document ceiling (17MB with the defaults) and above the chat ceiling with
+    # vision's defaults (12MB of images -> ~17MB of body). It is *below* the transcribe ceiling
+    # (25MB of audio + framing), so on the VPS stack nginx, not this, refuses 20-25MB audio;
+    # Railway has no nginx and serves the advertised 25MB.
     upload_limit = settings.knowledge.max_document_bytes + _UPLOAD_FRAMING_BYTES
-    route_limits = {"/api/v3/knowledge/documents/upload": upload_limit}
+    # Prefix matches, first match wins: the upload route and every other sub-route of
+    # /knowledge/documents (cag-pin, ...) are listed before the JSON ingest route, so its wider
+    # ceiling applies to that one path only.
+    route_limits = {
+        "/api/v3/knowledge/documents/upload": upload_limit,
+        "/api/v3/knowledge/documents/": _DEFAULT_BODY_BYTES,
+        "/api/v3/knowledge/documents": document_body_limit(settings.knowledge),
+        "/api/v3/voice/transcribe": transcribe_body_limit(),
+    }
     chat_limit = chat_body_limit(settings.vision)
     if chat_limit is not None:
         # A prefix match: covers /api/v3/chat and /api/v3/chat/stream.
         route_limits["/api/v3/chat"] = chat_limit
     app.add_middleware(
         PayloadSizeLimitMiddleware,
-        max_bytes=5 * 1024 * 1024,
+        max_bytes=_DEFAULT_BODY_BYTES,
         route_limits=route_limits,
     )
     # No second, legacy per-IP limiter here (audit FSA-005). `infrastructure.http_limits.
@@ -307,6 +353,10 @@ def _apply_cors(app) -> None:
         allow_credentials=not allow_all,
         allow_methods=["*"],
         allow_headers=["*"],
+        # A browser hides response headers from page scripts unless listed here; the web app
+        # reads X-Aura-Refusal to explain a plan refusal (api/v2/auth.py REFUSAL_HEADER) and
+        # Retry-After to wait out a 429/503 rather than guess (INT-118).
+        expose_headers=["X-Aura-Refusal", "Retry-After"],
     )
 
 
@@ -339,6 +389,11 @@ def create_app():
     settings = load_settings()
     _require_jwt_secret(settings)
     container = build_container(settings)
+    # INT-106: a self-approval is refused while another eligible approver exists. The operator
+    # directory lives outside aura_core, so it is attached here, once the container exists.
+    from api.admin_platform import other_approver_exists
+
+    container.approvals.use_other_approver_check(other_approver_exists)
     authenticator = _build_authenticator(
         settings, service_keys=container.service_keys, tenancy=container.tenancy
     )
@@ -367,6 +422,7 @@ def create_app():
     _mount_platform_routers(app)
     _warn_if_no_console_operator(settings)
     _register_inference_budget_handler(app)
+    _register_auth_state_handler(app)
     _apply_http_limits(app, settings)
     _apply_cors(app)
     # Last, so outermost: a request the size limit, rate limiter or CORS refuses is counted too.
@@ -376,6 +432,9 @@ def create_app():
 
     # Exposed so Celery tasks and the CLI can reach the same wired graph without rebuilding it.
     app.state.aura = container
+    # The one per-user/per-address limiter, for the platform routes mounted outside the v3
+    # router (api/automation.py, F36). ``None`` when rate limiting is off.
+    app.state.rate_limiter = rate_limiter
     # The legacy SQLAlchemy engine (api/v2 sync, insights) lives outside the container and was
     # never disposed at shutdown (audit FSA-073). Registered after build_app's own handler, so
     # it runs after the container's pools close, once uvicorn's graceful drain has finished.

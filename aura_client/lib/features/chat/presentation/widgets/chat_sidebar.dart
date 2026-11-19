@@ -182,8 +182,8 @@ class ChatSidebar extends ConsumerWidget {
               Expanded(
                 child: Text(
                   ref.watch(aiRouterStatusProvider).isOffline
-                      ? 'AURA (unreachable)'
-                      : 'AURA server',
+                      ? context.l10n.chatEngineUnreachable
+                      : context.l10n.chatEngineServer,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.end,

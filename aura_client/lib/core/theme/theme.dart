@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../design_system/typography.dart';
+
 class AuraTheme {
   // Brand Colors
   static const Color background = Color(0xFF0F0C1B); // Deep space background
@@ -46,7 +48,7 @@ class AuraTheme {
           bodyLarge: TextStyle(fontSize: 16, color: textPrimary),
           bodyMedium: TextStyle(fontSize: 14, color: textSecondary),
         ),
-      ),
+      ).apply(fontFamilyFallback: AuraTypography.arabicFallback),
       cardTheme: CardThemeData(
         color: cardBg,
         elevation: 0,

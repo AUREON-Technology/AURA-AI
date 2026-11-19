@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'package:aura_client/core/theme/theme.dart';
+import 'package:aura_client/core/design_system/design_system.dart';
 import '../data/health_repository.dart';
 import 'health_view_model.dart';
 import 'widgets/health_daily_dashboard.dart';
 import 'widgets/health_trend_charts.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class HealthPage extends ConsumerWidget {
   const HealthPage({super.key});
@@ -17,16 +18,18 @@ class HealthPage extends ConsumerWidget {
     final selectedDate = ref.watch(healthViewModelProvider);
     final dailyRecordAsync = ref.watch(dailyHealthStreamProvider(selectedDate));
     final weeklyRecordsAsync = ref.watch(weeklyHealthStreamProvider);
+    final palette = AuraPalette.of(context);
 
     return Scaffold(
+      backgroundColor: palette.background,
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: RadialGradient(
-            center: Alignment(-0.6, 0.6),
+            center: const Alignment(-0.6, 0.6),
             radius: 1.5,
             colors: [
-              Color(0xFF1E1B4B),
-              Color(0xFF0F0C1B),
+              palette.brand.withValues(alpha: 0.12),
+              Colors.transparent,
             ],
           ),
         ),
@@ -36,10 +39,10 @@ class HealthPage extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('Health Monitor', style: Theme.of(context).textTheme.displayLarge?.copyWith(fontSize: 28)),
+                Text(context.l10n.healthPageTitle, style: Theme.of(context).textTheme.displayLarge?.copyWith(fontSize: 28)),
                 const SizedBox(height: 4),
                 Text(
-                  'Track fitness parameters, log water, sleep, and review logs',
+                  context.l10n.healthPageSubtitle,
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
                 const SizedBox(height: 24),
@@ -48,13 +51,13 @@ class HealthPage extends ConsumerWidget {
                     builder: (context, constraints) {
                       final isDesktop = constraints.maxWidth > 900;
                       final dailySummary = dailyRecordAsync.when(
-                        loading: () => const Center(child: CircularProgressIndicator(color: AuraTheme.accentIndigo)),
+                        loading: () => Center(child: CircularProgressIndicator(color: palette.brand)),
                         error: (err, stack) =>
                             AuraFailureView(failure: AuraFailure.from(err), compact: true),
                         data: (record) => HealthDailyDashboard(record: record),
                       );
                       final chartsWidget = weeklyRecordsAsync.when(
-                        loading: () => const Center(child: CircularProgressIndicator(color: AuraTheme.accentIndigo)),
+                        loading: () => Center(child: CircularProgressIndicator(color: palette.brand)),
                         error: (err, stack) =>
                             AuraFailureView(failure: AuraFailure.from(err), compact: true),
                         data: (records) => HealthTrendCharts(records: records),

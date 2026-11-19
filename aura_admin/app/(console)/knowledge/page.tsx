@@ -3,16 +3,26 @@
 import { useEffect, useState } from "react";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { Alert } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Field, Input } from "@/components/ui/input";
+import { PageHeader } from "@/components/ui/page-header";
+import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow, TableSkeleton } from "@/components/ui/table";
 import { api, fetchMe } from "@/lib/api";
+import { useI18n } from "@/lib/i18n/context";
 import type { KnowledgeSource, Me } from "@/lib/types";
 
 export default function KnowledgePage() {
+  const { t, errorText } = useI18n();
   const [me, setMe] = useState<Me | null>(null);
   const [sources, setSources] = useState<KnowledgeSource[]>([]);
   const [indexes, setIndexes] = useState<{ physical_name: string; active: boolean }[]>([]);
   const [id, setId] = useState("");
   const [uri, setUri] = useState("https://");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [loaded, setLoaded] = useState(false);
 
   async function load() {
     const [meRow, sourceBody, indexBody] = await Promise.all([
@@ -26,76 +36,109 @@ export default function KnowledgePage() {
   }
 
   useEffect(() => {
-    load().catch((err: Error) => setError(err.message));
+    load()
+      .catch((err: unknown) => setError(err))
+      .finally(() => setLoaded(true));
   }, []);
 
   return (
     <>
-      <h1>Knowledge</h1>
-      <p className="sub">Approved sources and versioned indexes. Not a user document browser.</p>
-      {error ? <div className="banner">{error}</div> : null}
-      <div className="card">
-        <h2>Sources</h2>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Id</th>
-              <th>URI</th>
-              <th>Enabled</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
+      <PageHeader title={t("nav.knowledge")}>{t("knowledge.sub")}</PageHeader>
+      {error ? <Alert>{errorText(error)}</Alert> : null}
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>{t("knowledge.sources")}</CardTitle>
+            <CardDescription>{t("knowledge.sourcesHelp")}</CardDescription>
+          </div>
+        </CardHeader>
+        <Table flush>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t("knowledge.colId")}</TableHead>
+              <TableHead>{t("knowledge.colUri")}</TableHead>
+              <TableHead>{t("knowledge.colEnabled")}</TableHead>
+              <TableHead></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {sources.map((source) => (
-              <tr key={source.id}>
-                <td>{source.id}</td>
-                <td>{source.uri}</td>
-                <td>{source.enabled ? "yes" : "no"}</td>
-                <td>
-                  <button
-                    className="btn"
-                    type="button"
-                    onClick={async () => {
-                      await api(`/admin/sources/${source.id}`, {
-                        method: "PATCH",
-                        body: JSON.stringify({ enabled: !source.enabled }),
-                      });
-                      await load();
-                    }}
-                  >
-                    {source.enabled ? "Disable" : "Enable"}
-                  </button>
-                  {me?.is_super_admin ? (
-                    <ConfirmDialog
-                      danger
-                      title={`Delete ${source.id}`}
-                      confirmText={source.id}
-                      onConfirm={async () => {
-                        await api(`/admin/sources/${source.id}`, { method: "DELETE" });
-                        await load();
+              <TableRow key={source.id}>
+                <TableCell className="font-medium">{source.id}</TableCell>
+                <TableCell className="max-w-[360px] truncate text-muted">{source.uri}</TableCell>
+                <TableCell>
+                  <Badge tone={source.enabled ? "ok" : "neutral"} dot>
+                    {source.enabled ? t("common.yes") : t("common.no")}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  <div className="flex flex-wrap justify-end gap-1.5">
+                    <Button
+                      size="sm"
+                      onClick={async () => {
+                        // Not an unhandled rejection: a failed toggle says why (audit INT-032).
+                        setError(null);
+                        try {
+                          await api(`/admin/sources/${encodeURIComponent(source.id)}`, {
+                            method: "PATCH",
+                            body: JSON.stringify({ enabled: !source.enabled }),
+                          });
+                          await load();
+                        } catch (err) {
+                          setError(
+                            t("knowledge.toggleFailed", {
+                              action: source.enabled ? t("knowledge.disable") : t("knowledge.enable"),
+                              id: source.id,
+                              reason: errorText(err),
+                            }),
+                          );
+                        }
                       }}
                     >
-                      Delete
-                    </ConfirmDialog>
-                  ) : null}
-                </td>
-              </tr>
+                      {source.enabled ? t("knowledge.disable") : t("knowledge.enable")}
+                    </Button>
+                    {me?.is_super_admin ? (
+                      <ConfirmDialog
+                        danger
+                        title={t("common.deleteTitle", { name: source.id })}
+                        confirmText={source.id}
+                        onConfirm={async () => {
+                          await api(`/admin/sources/${encodeURIComponent(source.id)}`, { method: "DELETE" });
+                          await load();
+                        }}
+                      >
+                        {t("common.delete")}
+                      </ConfirmDialog>
+                    ) : null}
+                  </div>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+            {!loaded ? <TableSkeleton cols={4} /> : null}
+            {loaded && sources.length === 0 && !error ? <TableEmpty colSpan={4}>{t("knowledge.emptySources")}</TableEmpty> : null}
+          </TableBody>
+        </Table>
         {me?.is_super_admin ? (
-          <div className="row" style={{ marginTop: 12 }}>
-            <label className="field">
-              Id
-              <input value={id} onChange={(e) => setId(e.target.value)} />
-            </label>
-            <label className="field">
-              HTTPS URI
-              <input value={uri} onChange={(e) => setUri(e.target.value)} />
-            </label>
+          <div className="mt-4 flex flex-wrap items-end gap-2">
+            <Field>
+              {t("knowledge.colId")}
+              {/* Same rule as the gateway's SourceCreateRequest: the id is a URL path segment. */}
+              <Input
+                value={id}
+                onChange={(e) => setId(e.target.value)}
+                pattern="[A-Za-z0-9][A-Za-z0-9._:\-]*"
+                maxLength={128}
+                title={t("knowledge.idHint")}
+              />
+            </Field>
+            <Field className="min-w-[240px] flex-1">
+              {t("knowledge.fieldUri")}
+              <Input value={uri} onChange={(e) => setUri(e.target.value)} />
+            </Field>
             <ConfirmDialog
-              title="Register source"
-              confirmText={id || "source"}
+              size="md"
+              title={t("knowledge.registerTitle")}
+              confirmText={id || t("knowledge.registerWord")}
               onConfirm={async () => {
                 await api("/admin/sources", {
                   method: "POST",
@@ -105,41 +148,56 @@ export default function KnowledgePage() {
                 await load();
               }}
             >
-              Register
+              {t("knowledge.register")}
             </ConfirmDialog>
           </div>
         ) : null}
-      </div>
-      <div className="card" style={{ marginTop: 16 }}>
-        <h2>Indexes</h2>
-        <ConfirmDialog
-          title="Rebuild index"
-          confirmText="rebuild"
-          onConfirm={async () => {
-            await api("/admin/index/rebuild", { method: "POST" });
-            await load();
-          }}
-        >
-          Rebuild
-        </ConfirmDialog>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Physical name</th>
-              <th>Active</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
+      </Card>
+      <Card className="mt-4">
+        <CardHeader>
+          <div>
+            <CardTitle>{t("knowledge.indexes")}</CardTitle>
+            <CardDescription>{t("knowledge.indexesHelp")}</CardDescription>
+          </div>
+          <ConfirmDialog
+            title={t("knowledge.rebuildTitle")}
+            confirmText={t("knowledge.rebuildWord")}
+            onConfirm={async () => {
+              await api("/admin/index/rebuild", { method: "POST" });
+              await load();
+            }}
+          >
+            {t("knowledge.rebuild")}
+          </ConfirmDialog>
+        </CardHeader>
+        <Table flush>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t("knowledge.colPhysicalName")}</TableHead>
+              <TableHead>{t("common.active")}</TableHead>
+              <TableHead></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {indexes.map((row) => (
-              <tr key={row.physical_name}>
-                <td>{row.physical_name}</td>
-                <td>{row.active ? "yes" : ""}</td>
-                <td>
+              <TableRow key={row.physical_name}>
+                <TableCell>
+                  <code className="text-xs">{row.physical_name}</code>
+                </TableCell>
+                <TableCell>
+                  {row.active ? (
+                    <Badge tone="ok" dot pulse>
+                      {t("common.yes")}
+                    </Badge>
+                  ) : (
+                    ""
+                  )}
+                </TableCell>
+                <TableCell className="text-end">
                   {row.active ? null : (
                     <ConfirmDialog
-                      title="Rollback alias"
-                      confirmText="rollback"
+                      title={t("knowledge.rollbackAliasTitle")}
+                      confirmText={t("common.rollbackWord")}
                       onConfirm={async () => {
                         await api("/admin/index/rollback", {
                           method: "POST",
@@ -148,15 +206,17 @@ export default function KnowledgePage() {
                         await load();
                       }}
                     >
-                      Rollback
+                      {t("common.rollback")}
                     </ConfirmDialog>
                   )}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
-      </div>
+            {!loaded ? <TableSkeleton cols={3} rows={2} /> : null}
+            {loaded && indexes.length === 0 && !error ? <TableEmpty colSpan={3}>{t("knowledge.emptyIndexes")}</TableEmpty> : null}
+          </TableBody>
+        </Table>
+      </Card>
     </>
   );
 }

@@ -13,7 +13,11 @@ Four independent apps in one repo:
   essential.
 - **`aura_client/`** — Flutter app (Android/iOS/macOS/web/desktop) that talks to the backend's
   `/api/v3/*` routes.
-- **`aura_admin/`** — Next.js operator console served at `/console` (10 pages; `npm run
+- **`aura_admin/`** — Next.js operator console. On Railway it is its own host,
+  `https://console.aureon-ai.tech/`, served from the root (the image's default base path; old
+  `/console/...` links 308 to the same page without the prefix). The VPS stacks still serve it
+  under `/console` via nginx, because the compose files pass that base path explicitly. Plan and
+  decisions: `docs/plans/console-subdomain-plan.md`. (11 pages; `npm run
   dev|build|lint`, `npm run test:e2e` for Playwright against a mock gateway; `lint` is ESLint
   with Next's rule sets, warnings fail it, and Admin CI runs it from PR #226 on -- no run with that step had executed when this was written). Built, but not
   reachable on any live target as of 2026-11-07. Admin CI ran for the first time on 2026-11-07
@@ -267,10 +271,10 @@ permanent platform adapters mounted outside `aura_core` (ADR-002), not legacy co
 removal.
 
 Full ADR list and the ten essential decisions are in `docs/architecture/00-overview.md` and
-`docs/architecture/001-*.md`–`034-*.md` (there is no 012 or 017; 018–028 are Track AP drafts, Proposed); read the relevant one before touching
+`docs/architecture/001-*.md`–`035-*.md` (there is no 012 or 017; 018–028 are Track AP drafts, Proposed); read the relevant one before touching
 retrieval, memory, routing, safety, indexing, desktop hostd (011), engineer workspaces
 (013/014), service keys / caller context / structured output on `/chat` (029), images on
-`/chat` (031), the Claude provider and complexity routing (033), or customer workspaces and team scopes (034) — each encodes a reason something is shaped the way it is, not just what it does.
+`/chat` (031), the Claude provider and complexity routing (033), customer workspaces and team scopes (034), or adaptive knowledge updates (035) — each encodes a reason something is shaped the way it is, not just what it does.
 
 ## Client architecture — the parts that span files
 

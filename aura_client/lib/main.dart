@@ -2,15 +2,20 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'core/auth/token_manager.dart';
 import 'core/config/backend_url_policy.dart';
 import 'core/config/config.dart';
 import 'core/design_system/design_system.dart';
+import 'core/locale/app_language.dart';
+import 'core/platform/document_language.dart';
 import 'core/theme/theme_mode_controller.dart';
 import 'core/routing/router.dart';
 import 'core/security/encryption_service.dart';
-import 'l10n/generated/app_localizations.dart';
+import 'features/sync/signed_in_session.dart';
+import 'features/workspaces/presentation/store_purchase.dart';
+import 'l10n/l10n.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -30,6 +35,9 @@ void main() async {
   }
 
   final container = ProviderContainer();
+  // From app start, so a store transaction left unfinished (the app was killed mid-purchase) is
+  // finished on the next launch (SaaS P1-F2b). A no-op where there is no store.
+  container.read(storePurchaseListenerProvider);
 
   runApp(
     UncontrolledProviderScope(
@@ -72,8 +80,13 @@ class AuraApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final router = ref.watch(routerProvider);
+    // Background sync and the post-sign-in workspace check run for as long as someone is signed
+    // in, whatever screen is open (F1): the desktop shell never builds the chat header that used
+    // to be the only thing starting the sync engine.
+    ref.listen(signedInSessionProvider, (_, _) {});
 
     final themeMode = ref.watch(themeModeProvider);
+    final language = ref.watch(appLanguageProvider);
 
     return MaterialApp.router(
       title: 'AURA AI',
@@ -82,9 +95,10 @@ class AuraApp extends ConsumerWidget {
       darkTheme: AuraThemeV2.dark,
       themeMode: themeMode,
       routerConfig: router,
-      // V2 i18n scaffold (Doc/V2_BLUEPRINT.md §12) — only English shipped
-      // so far (see lib/l10n/app_en.arb); this wiring is what makes adding
-      // a second locale a translation-file change, not an app restructure.
+      // English and Egyptian Arabic (docs/plans/arabic-language_plan.md). `locale` is the
+      // user's choice from Settings -> Appearance; null follows the device, resolved against
+      // `supportedLocales` (so an ar-EG phone gets `ar`, which formats with Western digits).
+      locale: language.locale,
       localizationsDelegates: const [
         AppLocalizations.delegate,
         GlobalMaterialLocalizations.delegate,
@@ -99,20 +113,23 @@ class AuraApp extends ConsumerWidget {
       // should stay usable.
       builder: (context, child) {
         if (child == null) return const SizedBox.shrink();
+        // Every DateFormat/NumberFormat that names no locale follows the language on screen.
+        final languageCode = Localizations.localeOf(context).languageCode;
+        Intl.defaultLocale = languageCode;
+        setDocumentLanguage(languageCode);
+        setCurrentL10n(AppLocalizations.of(context));
         final failure = ref.watch(authExchangeFailureProvider);
         if (failure != AuthExchangeFailure.deviceAttestationRejected) return child;
         return Column(
           children: [
             MaterialBanner(
-              content: const Text(
-                'This device could not be verified. Some features may be unavailable.',
-              ),
+              content: Text(context.l10n.deviceUnverifiedBanner),
               actions: [
                 TextButton(
                   onPressed: () => ref
                       .read(authExchangeFailureProvider.notifier)
                       .set(AuthExchangeFailure.none),
-                  child: const Text('Dismiss'),
+                  child: Text(context.l10n.commonDismiss),
                 ),
               ],
             ),

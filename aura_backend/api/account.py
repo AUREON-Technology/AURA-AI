@@ -20,6 +20,7 @@ import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from api.admin_platform import erase_account
@@ -50,9 +51,19 @@ async def delete_my_account(
     subject = user_info.get("uid")
     if not subject:
         raise HTTPException(status_code=401, detail="This token does not name an account.")
-    result = await erase_account(
-        getattr(request.app.state, "aura", None), str(subject), unknown_user_ok=True,
-    )
+    container = getattr(request.app.state, "aura", None)
+    tenancy = getattr(container, "tenancy", None)
+    if tenancy is not None:
+        # Spec 5.1 (SaaS P1-F1): a team cannot lose its only Owner to an account deletion. The
+        # person hands each team over or deletes it first; nothing is erased until then.
+        owned = await tenancy.sole_ownerships(str(subject))
+        if owned:
+            return JSONResponse(status_code=409, content={
+                "error": "owns_team_workspaces",
+                "detail": "Transfer or delete these team workspaces before deleting your account.",
+                "workspaces": [{"id": ws.id, "name": ws.name} for ws in owned],
+            })
+    result = await erase_account(container, str(subject), unknown_user_ok=True)
     # No subject or email in the log line: the account is being erased, and the audit log
     # pseudonymises it for the same reason (FSA-016).
     logger.info(

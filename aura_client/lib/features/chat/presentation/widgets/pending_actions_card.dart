@@ -16,6 +16,7 @@ class PendingActionsCard extends ConsumerWidget {
     final palette = AuraPalette.of(context);
     final actions = ref.watch(pendingActionsProvider);
     if (actions.isEmpty) return const SizedBox();
+    final approving = ref.watch(chatViewModelProvider.select((s) => s.approvingActions));
 
     return Padding(
       padding: const EdgeInsets.symmetric(
@@ -48,7 +49,7 @@ class PendingActionsCard extends ConsumerWidget {
             ...actions.map((act) {
               final type = act['type'] ?? '';
               final params = act['params'] ?? {};
-              final display = _displayFor(type, params, palette);
+              final display = _displayFor(context.l10n, type, params, palette);
               return Padding(
                 padding: const EdgeInsets.only(bottom: AuraSpacing.sm),
                 child: Row(
@@ -77,19 +78,22 @@ class PendingActionsCard extends ConsumerWidget {
                 AuraButton(
                   label: context.l10n.pendingActionsReject,
                   variant: AuraButtonVariant.ghost,
-                  onPressed: () => ref
-                      .read(chatViewModelProvider.notifier)
-                      .rejectPendingActions(),
+                  onPressed: approving
+                      ? null
+                      : () => ref.read(chatViewModelProvider.notifier).rejectPendingActions(),
                 ),
                 AuraButton(
                   label: context.l10n.pendingActionsApprove,
                   variant: AuraButtonVariant.primary,
+                  // F20: disabled with a spinner while the actions run, so a second tap cannot
+                  // create them again (the view model ignores one that slips through).
+                  loading: approving,
                   onPressed: () async {
                     final messenger = ScaffoldMessenger.of(context);
                     final outcome = await ref
                         .read(chatViewModelProvider.notifier)
                         .approvePendingActions();
-                    if (!context.mounted) return;
+                    if (outcome == null || !context.mounted) return;
                     messenger.showSnackBar(_snackBarFor(outcome, palette, context.l10n));
                   },
                 ),
@@ -134,34 +138,39 @@ class _ActionDisplay {
   });
 }
 
-_ActionDisplay _displayFor(dynamic type, dynamic params, AuraPalette palette) {
+_ActionDisplay _displayFor(
+  AppLocalizations l10n,
+  dynamic type,
+  dynamic params,
+  AuraPalette palette,
+) {
   final t = type?.toString() ?? '';
   final p = params is Map ? params : const {};
   if (t == 'add_task') {
     return _ActionDisplay(
       label:
-          'Create Task: ${p['title']} (${p['priority']} priority, ${p['category']})',
+          l10n.chatActionCreateTaskDetail('${p['title']}', '${p['priority']}', '${p['category']}'),
       icon: Icons.playlist_add,
       color: palette.success,
     );
   }
   if (t == 'add_event') {
     return _ActionDisplay(
-      label: 'Schedule Event: ${p['title']} at ${p['startTime']}',
+      label: l10n.chatActionScheduleEventAt('${p['title']}', '${p['startTime']}'),
       icon: Icons.event,
       color: palette.brand,
     );
   }
   if (t == 'add_expense') {
     return _ActionDisplay(
-      label: 'Log Expense: \$${p['amount']} for ${p['category']}',
+      label: l10n.chatActionLogExpenseFor('${p['amount']}', '${p['category']}'),
       icon: Icons.remove_circle_outline,
       color: palette.danger,
     );
   }
   if (t == 'add_income') {
     return _ActionDisplay(
-      label: 'Log Income: \$${p['amount']} for ${p['category']}',
+      label: l10n.chatActionLogIncomeFor('${p['amount']}', '${p['category']}'),
       icon: Icons.add_circle_outline,
       color: palette.success,
     );
@@ -169,22 +178,22 @@ _ActionDisplay _displayFor(dynamic type, dynamic params, AuraPalette palette) {
   if (t == 'log_health') {
     final metrics = <String>[];
     if (p['waterIntakeMl'] != null) {
-      metrics.add('${p['waterIntakeMl']}ml water');
+      metrics.add(l10n.chatHealthWater('${p['waterIntakeMl']}'));
     }
     if (p['sleepMinutes'] != null) {
-      metrics.add('${p['sleepMinutes']}m sleep');
+      metrics.add(l10n.chatHealthSleep('${p['sleepMinutes']}'));
     }
     if (p['caloriesConsumed'] != null) {
       metrics.add('${p['caloriesConsumed']}kcal');
     }
     if (p['exerciseMinutes'] != null) {
-      metrics.add('${p['exerciseMinutes']}m exercise');
+      metrics.add(l10n.chatHealthExercise('${p['exerciseMinutes']}'));
     }
     if (p['weight'] != null) {
       metrics.add('${p['weight']}kg');
     }
     return _ActionDisplay(
-      label: 'Log Health: ${metrics.join(', ')}',
+      label: l10n.chatActionLogHealthDetail(metrics.join(l10n.chatListSeparator)),
       icon: Icons.favorite_outline,
       color: Colors.pinkAccent,
     );

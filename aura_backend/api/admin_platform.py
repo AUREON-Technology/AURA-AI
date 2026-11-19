@@ -4,6 +4,7 @@ Lives outside ``aura_core`` because it talks to SQLAlchemy, JWT refresh
 storage, and Celery (ADR-002).
 """
 
+import hashlib
 import logging
 from datetime import datetime, timezone
 
@@ -52,6 +53,90 @@ def last_superadmin_block(
         if actor_email and target_email and actor_email == target_email:
             return "cannot change your own SuperAdmin role"
     return None
+
+
+def _client_ip(request: Request) -> str | None:
+    """The caller's address as the trusted proxy saw it, the way ``aura_core/api/v3``'s
+    ``client_ip`` names it for every audit record (never ``request.client.host`` alone)."""
+    from aura_core.config import load_settings
+    from aura_core.security.rate_limit import extract_client_ip
+
+    try:
+        return str(extract_client_ip(
+            request.headers,
+            peer=request.client.host if request.client else None,
+            trusted_proxies=load_settings(validate=False).security.trusted_proxy_count,
+        ))
+    except Exception:  # noqa: BLE001 -- an address is context, not a reason to lose the record
+        return None
+
+
+async def _audit(
+    request: Request, user_info: dict, action: str, resource: str, outcome: str,
+    detail: dict | None = None,
+) -> None:
+    """One audit event for an Access-page mutation (INT-107), shaped like ``audit_admin`` in
+    ``aura_core/api/v3.py``: the operator as actor, never a secret or token. A failed write is
+    logged and does not undo the action, as there."""
+    from aura_core.ports.runtime import AuditEvent
+
+    container = getattr(request.app.state, "aura", None)
+    audit = getattr(container, "audit", None)
+    if audit is None:
+        return
+    try:
+        await audit.record(AuditEvent(
+            action=action,
+            actor=user_info.get("email") or str(user_info.get("uid") or ""),
+            actor_role=user_info.get("role") or "",
+            resource=resource,
+            outcome=outcome,
+            correlation_id=request.headers.get("x-correlation-id") or "",
+            source_ip=_client_ip(request),
+            detail=detail,
+        ))
+    except Exception:
+        logger.debug("admin audit write failed", extra={"action": action}, exc_info=True)
+
+
+def _erased_pseudonym(subject: str) -> str:
+    """The name an erased person's own audit events are given (``_erase_core``'s
+    ``audit_actor``), so the record of erasing them does not keep the identity it erased."""
+    return "erased:" + hashlib.sha256(subject.encode("utf-8")).hexdigest()[:12]
+
+
+#: Approval kinds only a SuperAdmin may decide -- the same set ``aura_core/api/admin.py`` gates the
+#: decide route on (``_SUPER_ADMIN_APPROVAL_KINDS``); everything else an Admin may decide.
+_SUPER_ADMIN_APPROVAL_KINDS = frozenset({"connector_registration", "blueprint_deployment"})
+
+
+async def other_approver_exists(requester: str, kind) -> bool:
+    """Whether anyone besides ``requester`` (an email or auth subject, as
+    ``ApprovalService.request(requested_by=...)`` records it) holds the role that may decide an
+    approval of ``kind``: SuperAdmin for the Track AP kinds, Admin otherwise (INT-106).
+
+    The ``ApprovalService`` check, so a self-approval is refused while someone else could decide.
+    Counts everyone the env lists and roles.json grant the role to -- signed in yet or not -- and
+    everyone the Access page assigned it, each person once. Raises when the directory cannot be
+    read, so the service refuses the self-approval with a retryable error rather than guessing."""
+    from infrastructure.db.base import get_session_factory, is_configured
+
+    needed = "SuperAdmin" if str(kind) in _SUPER_ADMIN_APPROVAL_KINDS else "Admin"
+    requester = (requester or "").strip()
+    known: set[str] = set()
+    if is_configured():
+        async with get_session_factory()() as db:
+            for user, role, _ in await _operators(db):
+                names = {user.email, user.auth_subject}
+                known |= names
+                if requester not in names and ROLE_HIERARCHY[role] >= ROLE_HIERARCHY[needed]:
+                    return True
+    for name in configured_identities() - known:
+        # Not signed in yet (no row): the configuration alone names them. An email or a uid.
+        role, _ = granted_role(name, name)
+        if name != requester and ROLE_HIERARCHY[role] >= ROLE_HIERARCHY[needed]:
+            return True
+    return False
 
 
 def _forbid(message: str) -> HTTPException:
@@ -135,13 +220,25 @@ async def list_operators(user_info: dict = Depends(require_role("Admin"))):
     except HTTPException:
         raise
     except Exception:
-        return {"operators": []}
+        # Not ``[]`` with 200: the Access page would show "nobody has access", which is
+        # indistinguishable from a real, empty directory (audit INT-034). The cause stays in the
+        # log, not in the response.
+        logger.exception("operator directory lookup failed")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "operator_directory_unavailable",
+                "message": "The operator directory could not be read. Try again shortly.",
+                "retryable": True,
+            },
+        )
 
 
 @router.patch("/operators/{email}/role")
 async def assign_role(
     email: str,
     payload: RolePatch,
+    request: Request,
     user_info: dict = Depends(require_role("SuperAdmin")),
 ):
     """Assign a role on the Access page.
@@ -210,11 +307,18 @@ async def assign_role(
                 "sessions": revoke_all_for_uid(user.auth_subject),
                 "devices": revoke_all_devices_for_uid(user.auth_subject),
             }
+        await _audit(
+            request, user_info, "admin.operator.role", f"user:{user.auth_subject}", "ok",
+            detail={"from": current, "to": role, "requested": payload.role,
+                    "granted_by": granted_by, "revoked": revoked},
+        )
         return {"email": user.email, "role": role, "granted_by": granted_by, "revoked": revoked}
 
 
 @router.post("/operators/{email}/revoke-sessions")
-async def revoke_sessions(email: str, user_info: dict = Depends(require_role("SuperAdmin"))):
+async def revoke_sessions(
+    email: str, request: Request, user_info: dict = Depends(require_role("SuperAdmin")),
+):
     from infrastructure.db.base import get_session_factory, is_configured
     from infrastructure.db.models import User
 
@@ -227,6 +331,8 @@ async def revoke_sessions(email: str, user_info: dict = Depends(require_role("Su
         if user is None:
             raise HTTPException(status_code=404, detail="operator not found")
         revoked = revoke_all_for_uid(user.auth_subject)
+    await _audit(request, user_info, "admin.operator.revoke_sessions", f"user:{user.auth_subject}", "ok",
+                 detail={"revoked": revoked})
     return {"email": email, "revoked": revoked}
 
 
@@ -305,6 +411,14 @@ async def _erase_core(
     await step("personal_os_records", personal_os)
     await step("conversations", conversations)
     await step("telemetry_turns", lambda: container.telemetry_sink.purge_sessions(conversation_ids))
+    sharing = getattr(container, "sharing", None)
+    if sharing is not None:
+        # Copies they shared into teams are theirs to take back (review F1#7).
+        await step("shared_chats", lambda: sharing.store.delete_by_sharer(owner))
+    consent_store = getattr(container, "engineer_consent", None)
+    if consent_store is not None:
+        # D-03: the record of agreeing to send code to Anthropic is personal data too.
+        await step("engineer_consent", lambda: consent_store.delete_for_owner(owner_id))
     await step("audit_events_pseudonymised", audit_actor)
     return counts, failed
 
@@ -333,6 +447,16 @@ async def erase_account(container, subject: str, *, unknown_user_ok: bool = Fals
     failed: list = []
 
     async def erase_everything_but_the_row(auth_subject: str, conversation_ids: set, email: str | None = None) -> None:
+        tenancy = getattr(container, "tenancy", None)
+        if tenancy is not None:
+            # A team cannot lose its only Owner to an erasure, the operator's included (SaaS
+            # P1-F1 review #7): hand the team over or delete it first. Nothing is erased here.
+            owned = await tenancy.sole_ownerships(auth_subject)
+            if owned:
+                raise HTTPException(status_code=409, detail={
+                    "error": "owns_team_workspaces",
+                    "workspaces": [{"id": ws.id, "name": ws.name} for ws in owned],
+                })
         if container is not None:
             core, core_failed = await _erase_core(
                 container, auth_subject, conversation_ids, aliases={email} if email else frozenset(),
@@ -399,8 +523,18 @@ async def forget_user(
     (and their vectors), knowledge documents, server-side transcripts, agent-written records,
     projects and goals, device tokens and the ciphertext itself all stayed. What it does now is
     ``erase_account``'s docstring.
+
+    Audited (INT-107) under the erased person's pseudonym, not their subject or email: the
+    record that someone was erased must not keep who they were. Counts only, as returned.
     """
-    return await erase_account(getattr(request.app.state, "aura", None), subject)
+    result = await erase_account(getattr(request.app.state, "aura", None), subject)
+    await _audit(
+        request, user_info, "admin.user.forget", f"user:{_erased_pseudonym(subject)}",
+        "ok" if result["forgotten"] else "partial",
+        detail={"forgotten": result["forgotten"], "failed": list(result["failed"]),
+                "counts": dict(result["counts"])},
+    )
+    return result
 
 
 @router.get("/jobs/{task_id}")

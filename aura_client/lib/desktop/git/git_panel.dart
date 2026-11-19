@@ -7,6 +7,7 @@
 /// D5's design decision 1 (a human's own click here is the consent).
 library;
 
+import 'package:aura_client/desktop/host/host_access.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -14,6 +15,7 @@ import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/desktop/git/git_diff_page.dart';
 import 'package:aura_client/desktop/state/desktop_application_state.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class GitPanel extends ConsumerStatefulWidget {
   const GitPanel({super.key});
@@ -66,12 +68,12 @@ class _GitPanelState extends ConsumerState<GitPanel> {
     final chosen = await showDialog<GitBranch>(
       context: context,
       builder: (dialogContext) => SimpleDialog(
-        title: const Text('Merge branch into current'),
+        title: Text(dialogContext.l10n.gitMergeDialogTitle),
         children: [
           for (final branch in candidates)
             SimpleDialogOption(
               onPressed: () => Navigator.of(dialogContext).pop(branch),
-              child: Text(branch.isRemote ? '${branch.name} (remote)' : branch.name),
+              child: Text(branch.isRemote ? dialogContext.l10n.gitRemoteBranch(branch.name) : branch.name),
             ),
         ],
       ),
@@ -90,14 +92,64 @@ class _GitPanelState extends ConsumerState<GitPanel> {
     _branchController.clear();
     final name = await AuraDialog.show<String>(
       context: context,
-      title: 'Create branch',
-      child: AuraTextField(controller: _branchController, hintText: 'Branch name'),
-      confirmLabel: 'Create',
-      cancelLabel: 'Cancel',
+      title: context.l10n.gitCreateBranchTitle,
+      child: AuraTextField(controller: _branchController, hintText: context.l10n.gitBranchNameHint),
+      confirmLabel: context.l10n.explorerCreate,
+      cancelLabel: context.l10n.cancel,
       onConfirm: () => Navigator.of(context).pop(_branchController.text.trim()),
     );
     if (name == null || name.isEmpty || !mounted) return;
     await ref.read(gitNotifierProvider.notifier).checkout(name, create: true);
+  }
+
+  /// "Publish branch" (decision D-01): reads the remotes, has the person confirm which remote the
+  /// checked-out branch goes to (named in the dialog; a choice when there are several), then
+  /// pushes it there and makes it the branch's upstream. Nothing is sent until they confirm.
+  Future<void> _publishBranch() async {
+    final notifier = ref.read(gitNotifierProvider.notifier);
+    final branch = ref.read(gitNotifierProvider).branch;
+    if (branch == null) return;
+    final remotes = await notifier.loadRemotes();
+    if (remotes == null || remotes.isEmpty || !mounted) return;
+    final remote = await _confirmPublish(branch, remotes);
+    if (remote == null || !mounted) return;
+    await notifier.publish(remote);
+  }
+
+  /// The confirmation: one remote is named in the question; several are a radio choice (the first
+  /// pre-selected, `origin` when there is one). Returns the chosen remote, or null on cancel.
+  Future<String?> _confirmPublish(String branch, List<String> remotes) {
+    var selected = remotes.contains('origin') ? 'origin' : remotes.first;
+    return AuraDialog.show<String>(
+      context: context,
+      title: context.l10n.gitPublishDialogTitle,
+      child: remotes.length == 1
+          ? Text(context.l10n.gitPublishConfirm(branch, selected))
+          : StatefulBuilder(
+              builder: (context, setDialogState) => Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(context.l10n.gitPublishChooseRemote(branch)),
+                  RadioGroup<String>(
+                    groupValue: selected,
+                    onChanged: (value) {
+                      if (value != null) setDialogState(() => selected = value);
+                    },
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (final remote in remotes) RadioListTile<String>(value: remote, title: Text(remote)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+      confirmLabel: context.l10n.gitPublishAction,
+      cancelLabel: context.l10n.cancel,
+      onConfirm: () => Navigator.of(context).pop(selected),
+    );
   }
 
   @override
@@ -107,11 +159,12 @@ class _GitPanelState extends ConsumerState<GitPanel> {
     final hostdRoots = ref.watch(workspaceNotifierProvider).hostdRoots;
 
     if (workspace == null) {
-      return _Centered(text: 'Open a workspace to use Source Control.', palette: palette);
+      return _Centered(text: context.l10n.gitNoWorkspace, palette: palette);
     }
     final matchingRoot = hostdRoots.where((r) => r.path == workspace.rootPath).firstOrNull;
     if (matchingRoot == null) {
-      return _Centered(text: 'Grant this workspace to the host daemon to use Source Control.', palette: palette);
+      // Not "grant" outright: with the daemon down there is nothing to grant to yet.
+      return HostAccessNotice(workspaceRoot: workspace.rootPath, grantMessage: context.l10n.gitGrantRequired);
     }
 
     _maybeRefresh(workspace.id, workspace.rootPath);
@@ -131,7 +184,10 @@ class _GitPanelState extends ConsumerState<GitPanel> {
     final staged = git.files.where((f) => f.staged).toList();
     final unstaged = git.files.where((f) => !f.staged).toList();
 
-    return Container(
+    // A Material rather than a coloured Container: the History ExpansionTile below paints its
+    // background and ink splashes on the nearest Material, which a ColoredBox would hide (and
+    // Flutter asserts about, in debug builds).
+    return Material(
       color: palette.surface,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -150,7 +206,7 @@ class _GitPanelState extends ConsumerState<GitPanel> {
                   ),
                 IconButton(
                   icon: const Icon(Icons.refresh, size: 18),
-                  tooltip: 'Refresh',
+                  tooltip: context.l10n.commonRefresh,
                   onPressed: () => ref.read(gitNotifierProvider.notifier).refresh(workspace.id, workspace.rootPath),
                 ),
               ],
@@ -162,36 +218,53 @@ class _GitPanelState extends ConsumerState<GitPanel> {
               children: [
                 _SyncButton(
                   icon: Icons.cloud_download,
-                  tooltip: 'Fetch from all remotes',
+                  tooltip: context.l10n.gitFetchTooltip,
                   busy: git.busy,
                   onPressed: () => ref.read(gitNotifierProvider.notifier).fetch(),
                 ),
                 _SyncButton(
                   icon: Icons.arrow_downward,
-                  tooltip: 'Pull (fast-forward only)',
+                  tooltip: context.l10n.gitPullTooltip,
                   busy: git.busy,
                   onPressed: () => ref.read(gitNotifierProvider.notifier).pull(),
                 ),
                 _SyncButton(
                   icon: Icons.arrow_upward,
-                  tooltip: 'Push current branch to its upstream',
+                  tooltip: context.l10n.gitPushTooltip,
                   busy: git.busy,
                   onPressed: () => ref.read(gitNotifierProvider.notifier).push(),
                 ),
                 const Spacer(),
                 TextButton.icon(
                   icon: const Icon(Icons.call_merge, size: 16),
-                  label: const Text('Merge'),
+                  label: Text(context.l10n.gitMerge),
                   onPressed: git.busy || git.branches.length < 2 ? null : _showMergeDialog,
                 ),
                 TextButton.icon(
                   icon: const Icon(Icons.add, size: 16),
-                  label: const Text('Branch'),
+                  label: Text(context.l10n.gitBranch),
                   onPressed: git.busy ? null : _showCreateBranchDialog,
                 ),
               ],
             ),
           ),
+          // A branch with no upstream (e.g. one just created here) cannot be pushed as it is; this
+          // is the way to give it one (decision D-01).
+          if (git.branch != null && git.upstream == null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.md),
+              child: Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: Tooltip(
+                  message: context.l10n.gitPublishTooltip,
+                  child: TextButton.icon(
+                    icon: const Icon(Icons.cloud_upload_outlined, size: 16),
+                    label: Text(context.l10n.gitPublishBranch),
+                    onPressed: git.busy ? null : _publishBranch,
+                  ),
+                ),
+              ),
+            ),
           if (git.conflictedFiles.isNotEmpty)
             _ConflictBanner(
               conflictedFiles: git.conflictedFiles,
@@ -205,14 +278,14 @@ class _GitPanelState extends ConsumerState<GitPanel> {
             padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.md),
             child: AuraTextField(
               controller: _messageController,
-              hintText: 'Commit message',
+              hintText: context.l10n.gitCommitMessageHint,
               maxLines: 2,
             ),
           ),
           Padding(
             padding: const EdgeInsets.all(AuraSpacing.md),
             child: AuraButton(
-              label: git.busy ? 'Working...' : 'Commit',
+              label: git.busy ? context.l10n.gitWorking : context.l10n.gitCommit,
               expand: true,
               onPressed: staged.isEmpty || git.busy || _messageController.text.trim().isEmpty
                   ? null
@@ -227,7 +300,7 @@ class _GitPanelState extends ConsumerState<GitPanel> {
           ),
           ExpansionTile(
             title: Text(
-              'History',
+              context.l10n.gitHistory,
               style: TextStyle(color: palette.textSecondary, fontSize: 11, fontWeight: FontWeight.w600),
             ),
             tilePadding: const EdgeInsets.symmetric(horizontal: AuraSpacing.md),
@@ -244,7 +317,7 @@ class _GitPanelState extends ConsumerState<GitPanel> {
                   padding: const EdgeInsets.fromLTRB(AuraSpacing.md, 0, AuraSpacing.md, AuraSpacing.sm),
                   child: Align(
                     alignment: AlignmentDirectional.centerStart,
-                    child: Text('No commits loaded.', style: TextStyle(color: palette.textDisabled, fontSize: 12)),
+                    child: Text(context.l10n.gitNoCommits, style: TextStyle(color: palette.textDisabled, fontSize: 12)),
                   ),
                 )
               else
@@ -256,13 +329,13 @@ class _GitPanelState extends ConsumerState<GitPanel> {
               children: [
                 if (staged.isNotEmpty)
                   _Section(
-                    title: 'Staged Changes',
+                    title: context.l10n.gitStagedChanges,
                     palette: palette,
                     trailing: TextButton(
                       onPressed: git.busy
                           ? null
                           : () => ref.read(gitNotifierProvider.notifier).unstage(staged.map((f) => f.path).toList()),
-                      child: const Text('Unstage All'),
+                      child: Text(context.l10n.gitUnstageAll),
                     ),
                     children: [
                       for (final file in staged)
@@ -270,7 +343,7 @@ class _GitPanelState extends ConsumerState<GitPanel> {
                           file: file,
                           palette: palette,
                           actionIcon: Icons.remove,
-                          actionTooltip: 'Unstage',
+                          actionTooltip: context.l10n.gitUnstage,
                           onAction: git.busy ? null : () => ref.read(gitNotifierProvider.notifier).unstage([file.path]),
                           onTap: () => _openDiff(context, file.path, GitDiffScope.staged),
                         ),
@@ -278,11 +351,11 @@ class _GitPanelState extends ConsumerState<GitPanel> {
                   ),
                 if (unstaged.isNotEmpty)
                   _Section(
-                    title: 'Changes',
+                    title: context.l10n.gitChanges,
                     palette: palette,
                     trailing: TextButton(
                       onPressed: git.busy ? null : () => ref.read(gitNotifierProvider.notifier).stageAll(),
-                      child: const Text('Stage All'),
+                      child: Text(context.l10n.gitStageAll),
                     ),
                     children: [
                       for (final file in unstaged)
@@ -290,7 +363,7 @@ class _GitPanelState extends ConsumerState<GitPanel> {
                           file: file,
                           palette: palette,
                           actionIcon: Icons.add,
-                          actionTooltip: 'Stage',
+                          actionTooltip: context.l10n.gitStage,
                           onAction: git.busy ? null : () => ref.read(gitNotifierProvider.notifier).stage([file.path]),
                           onTap: () => _openDiff(context, file.path, GitDiffScope.workingTree),
                         ),
@@ -299,7 +372,7 @@ class _GitPanelState extends ConsumerState<GitPanel> {
                 if (staged.isEmpty && unstaged.isEmpty)
                   Padding(
                     padding: const EdgeInsets.all(AuraSpacing.lg),
-                    child: Text('No changes.', style: TextStyle(color: palette.textSecondary)),
+                    child: Text(context.l10n.gitNoChanges, style: TextStyle(color: palette.textSecondary)),
                   ),
               ],
             ),
@@ -327,7 +400,7 @@ class _BranchSelector extends StatelessWidget {
     const nameStyle = TextStyle(fontWeight: FontWeight.w600, fontSize: 13);
     if (git.branches.isEmpty) {
       return Text(
-        git.branch ?? '(detached HEAD)',
+        git.branch ?? context.l10n.gitDetachedHead,
         overflow: TextOverflow.ellipsis,
         style: nameStyle.copyWith(color: palette.textPrimary),
       );
@@ -340,14 +413,14 @@ class _BranchSelector extends StatelessWidget {
       child: DropdownButton<GitBranch>(
         value: selected,
         isExpanded: true,
-        hint: Text('(detached HEAD)', style: nameStyle.copyWith(color: palette.textSecondary)),
+        hint: Text(context.l10n.gitDetachedHead, style: nameStyle.copyWith(color: palette.textSecondary)),
         style: nameStyle.copyWith(color: palette.textPrimary),
         items: [
           for (final branch in git.branches)
             DropdownMenuItem(
               value: branch,
               child: Text(
-                branch.isRemote ? '${branch.name} (remote)' : branch.name,
+                branch.isRemote ? context.l10n.gitRemoteBranch(branch.name) : branch.name,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 13),
               ),
@@ -401,13 +474,13 @@ class _ConflictBanner extends StatelessWidget {
               const SizedBox(width: AuraSpacing.xs),
               Expanded(
                 child: Text(
-                  '${conflictedFiles.length} file(s) have merge conflicts',
+                  context.l10n.gitConflictCount(conflictedFiles.length),
                   style: TextStyle(color: palette.danger, fontWeight: FontWeight.w600, fontSize: 12),
                 ),
               ),
               TextButton(
                 onPressed: busy ? null : onAbort,
-                child: const Text('Abort Merge'),
+                child: Text(context.l10n.gitAbortMerge),
               ),
             ],
           ),
@@ -428,7 +501,7 @@ class _ConflictBanner extends StatelessWidget {
                   ),
                   TextButton(
                     onPressed: busy ? null : () => onMarkResolved(path),
-                    child: const Text('Mark Resolved', style: TextStyle(fontSize: 11)),
+                    child: Text(context.l10n.gitMarkResolved, style: const TextStyle(fontSize: 11)),
                   ),
                 ],
               ),
@@ -604,7 +677,7 @@ class _Centered extends StatelessWidget {
               Text(text, textAlign: TextAlign.center, style: TextStyle(color: palette.textSecondary)),
               if (onRetry != null) ...[
                 const SizedBox(height: AuraSpacing.sm),
-                TextButton(onPressed: onRetry, child: const Text('Retry')),
+                TextButton(onPressed: onRetry, child: Text(context.l10n.retry)),
               ],
             ],
           ),

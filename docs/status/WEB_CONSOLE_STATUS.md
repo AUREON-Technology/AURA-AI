@@ -1,19 +1,36 @@
 # Web console status
 
 **As of 2026-10-28 (evening), `main` at `2337577`.** Covers `aura_admin/`, the Next.js operator console
-(Next 15.5.27) served under `/console`. The Flutter client's web target (`aura_client/web/`) is a
-different thing: it is built locally but deployed nowhere. Evidence scale and refresh steps:
-[README.md](README.md).
+(Next 15.5.27). On Railway it moves to its own host, `https://console.aureon-ai.tech/`, served
+from the root; the VPS stacks keep `/console` (see "Domain move" below). The Flutter client's web
+target (`aura_client/web/`) is a different thing: it is built locally but deployed nowhere.
+Evidence scale and refresh steps: [README.md](README.md).
+
+## Domain move to `console.aureon-ai.tech` (2026-11-18)
+
+Plan and user decisions: [`docs/plans/console-subdomain-plan.md`](../plans/console-subdomain-plan.md).
+
+| Step | Status | Evidence |
+| --- | --- | --- |
+| Image defaults to the root base path; `/console`, `/console/*` → 308 to the unprefixed path when the base path is empty | TESTED locally (2026-11-18), not CI-run | `aura_admin/Dockerfile`, `next.config.ts`; `tests/e2e/legacy-path.spec.ts`; full suite 33 passed; `tsc`, lint, and both builds (root, and `/console` showing `basePath: '/console'` with no redirects) clean |
+| VPS prod/dev stacks unchanged at `/console` | BUILT (no change) | Both compose files pass `/console` as build args and runtime env |
+| Railway custom domain `console.aureon-ai.tech` on `AURA-Admin` (port 3000) | LIVE 2026-11-18 | Custom domain `a9c3ee6b-…` verified, Let's Encrypt cert valid to 2027-02-15; Hostinger `CNAME console → mdgyf063.up.railway.app` and `TXT _railway-verify.console`. Before the switch, `https://console.aureon-ai.tech/console/login` → 200 and `/login` → 404 |
+| Railway variables `NEXT_BASE_PATH` / `NEXT_PUBLIC_BASE_PATH` (`/console`) removed | OPEN | Do this only after the PR is merged; it is the step that moves the console to the root. Rollback: set both back to `/console` |
+| Google OAuth Authorized JavaScript origin `https://console.aureon-ai.tech` | OPEN (owner) | Without it the Google sign-in button does not load on the new host |
+| Live: `/login` 200, `/console/login` 308 → `/login`, operator sign-in | OPEN | Not proven until checked on the live host |
 
 **Re-read against commit:** `b2e14c4` (2026-11-08) for every row dated 2026-11-07 or later (their live checks came first; the re-read confirmed that tree holds what they describe); older rows carry the commit they were checked at. Refresh this line whenever a row is re-verified (audit FSA-120).
 
 ## Summary
 
-The console is built: 10 pages, Google sign-in for Developer+ roles, and a same-origin proxy that
+The console is built: 10 pages (11 with the unmerged Customers page, PR #246), Google sign-in for Developer+ roles, and a same-origin proxy that
 turns a cookie into a Bearer token against `/api/v3/admin/*`. It is wired into both compose files
 and both nginx server blocks. None of it is proven:
 - It is **not served anywhere reachable today**: `aureon-ai.tech/console/login` returns 404 on
-  Railway, the VPS takes no deploys, and the dev domain no longer resolves.
+  Railway, the VPS takes no deploys, and the dev domain no longer resolves. *Update
+  2026-11-18:* the Railway `AURA-Admin` service serves it on its generated host
+  (`aura-admin-production-03530311.up.railway.app/console/login` → 200), and it is moving to
+  `console.aureon-ai.tech` (table above).
 - Admin CI has **never run**.
 - The Track AP Super-Admin screens (AP9) have not been started.
 
@@ -29,10 +46,12 @@ and both nginx server blocks. None of it is proven:
 | Providers: ADR-030 ceiling, `third_party`, `may_train_on_prompts` | OPEN | `router.stats()` emits them, but `src/lib/types.ts` `ProviderRow` lacks the fields |
 | Prompts (pin version) | BUILT; e2e spec | `prompts/page.tsx` |
 | Approvals (any kind, including `blueprint_deployment`) | BUILT; e2e spec | `approvals/page.tsx`; `admin.py` |
+| Customers (SaaS P1-F3: subscribed workspaces, plan, status, last payment; SuperAdmin-only "Extend grace" for Fawry subscriptions behind on payment) | BUILT; TESTED locally 2026-11-18 (lint, build, e2e 40 passed incl. 5 in `customers.spec.ts`), not CI-run, branch `claude/saas-production-readiness-f5i61d` (PR #246), unmerged | `customers/page.tsx`; `aura_core/api/billing.py` `/admin/customers`, `/admin/customers/{id}/extend-grace`. Not proven against a real gateway: the mock enforces the same gates and refusals as `BillingService.extend_grace` |
 | Access (operators, roles, session revoke, GDPR forget, last-SuperAdmin guard) | BUILT; e2e spec; backend TESTED at `dc87beb` | `access/page.tsx`; `tests/unit/test_admin_platform.py`. #188 (`3e4e0f5`, `0e27c51`): grant/remove roles, shows who granted each, and assignments now take effect in role resolution — needs migration `0015`, which production lacks (CB-43); not CI-run (CB-44) |
 | Knowledge, Models, Learning, Audit | BUILT; no spec | `knowledge/`, `models/`, `learning/`, `audit/` pages |
 | Track AP Project Factory (connectors, twin, blueprint evaluate / approve / deploy / rollback) | OPEN (not started) | AP9 / GAP-058 / CB-39. Backend routes exist (`admin_adaptation.py`) with no console caller. |
 | Service keys, scorecard, CAG pin | OPEN | Backend routes exist with no console caller |
+| Egyptian Arabic, right to left (Arabic plan stage 3) | BUILT; TESTED locally 2026-11-17 (lint, tsc, build, e2e 32 passed), not CI-run (CB-44), branch `anas/kind-rubin-dpm0sq`, unmerged | `src/lib/i18n/{en,ar}.ts` (207 keys each), cookie `aura_console_lang` sets `<html lang dir>` on the server, EN / ع toggle in the header, logical CSS properties, Cairo via `next/font/local`; `tests/e2e/arabic.spec.ts`. Translations not yet reviewed by a native speaker |
 
 ## Deployment and verification
 

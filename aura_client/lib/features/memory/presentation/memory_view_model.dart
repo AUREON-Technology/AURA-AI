@@ -79,17 +79,18 @@ class MemoryViewModel extends Notifier<MemoryUiState> {
         : state.copyWith(kindFilter: kind);
   }
 
-  Future<void> add({
+  Future<MemorySaveOutcome> add({
     required String content,
     required String kind,
     String? subject,
   }) async {
-    await ref.read(memoryRepositoryProvider).saveMemory(
+    final outcome = await ref.read(memoryRepositoryProvider).saveMemory(
           content,
           kind: kind,
           subject: subject,
         );
     await refresh();
+    return outcome;
   }
 
   /// Forgets a memory. Returns whether the server confirmed it; throws when

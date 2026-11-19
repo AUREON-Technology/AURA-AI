@@ -13,6 +13,9 @@ from infrastructure.http_limits import RateLimitMiddleware
 
 def _client() -> TestClient:
     RateLimitMiddleware.request_history.clear()
+    from api.v2.auth import _reset_auth_rate_limits
+
+    _reset_auth_rate_limits()  # /nonce is throttled per address (F39)
     import infrastructure.http_limits as http_limits
 
     http_limits._rate_limit_redis = None

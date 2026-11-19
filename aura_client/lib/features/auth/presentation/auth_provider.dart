@@ -2,12 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_sign_in/google_sign_in.dart';
+import 'package:aura_client/core/workspaces/active_workspace.dart';
 import 'package:aura_client/core/auth/account_client.dart';
 import 'package:aura_client/core/auth/desktop_oauth_client.dart';
+import 'package:aura_client/core/auth/identity_service.dart';
 import 'package:aura_client/core/auth/platform_login_support.dart';
 import 'package:aura_client/core/auth/sign_in_refused.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
+import 'package:aura_client/core/config/app_links.dart';
 import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/config/config.dart';
 import 'package:aura_client/core/database/database_provider.dart';
@@ -15,7 +17,8 @@ import 'package:aura_client/core/security/aura_secure_storage.dart';
 import 'package:aura_client/core/sync/sync_client.dart';
 import 'package:aura_client/core/undo/undoable_deletes.dart';
 
-/// Reads the display-only claims (name/email/picture) out of a Google ID token's payload without
+/// Reads the display-only claims (name/email/picture) out of a Google ID token's (or, after the
+/// browser hand-off, the AURA access token's) payload without
 /// verifying its signature -- safe here because it's only for populating [UserProfile] in the
 /// UI; the backend independently verifies the same token's signature/issuer/audience for real
 /// (`services/security.py::verify_identity_token`) during `signInWithDesktopOAuth`'s exchange.
@@ -30,6 +33,17 @@ Map<String, dynamic> _unverifiedJwtPayload(String jwt) {
     return const {};
   }
 }
+
+/// The browser hand-off [AuthNotifier.signInWithDesktopBrowser] runs (`signInWithBrowserHandoff`),
+/// behind a provider so a test can play the browser.
+typedef DesktopBrowserHandoff = Future<DesktopHandoffResult> Function({
+  required Uri signInPage,
+  required Uri exchangeEndpoint,
+  String? deviceName,
+});
+
+final desktopBrowserHandoffProvider =
+    Provider<DesktopBrowserHandoff>((ref) => signInWithBrowserHandoff);
 
 class UserProfile {
   final String id;
@@ -65,50 +79,22 @@ class UserProfile {
 
 class AuthNotifier extends AsyncNotifier<UserProfile?> {
   final _storage = auraSecureStorage;
-  late final GoogleSignIn _googleSignIn;
-  GoogleSignInAccount? _currentAccount;
+
+  /// Google, Apple and email/password all sign in through Firebase (SaaS P1-B). Linux and
+  /// Windows have no Firebase or google_sign_in plugin and keep the loopback desktop flow below.
+  IdentityService get _identity => ref.read(identityServiceProvider);
 
   @override
   FutureOr<UserProfile?> build() async {
-    // Getting the singleton reference is cheap (no plugin channel call yet) -- always assign it
-    // so every other method that reads `_googleSignIn` below stays valid on every platform (a
-    // `late final` left unassigned throws on first read). What's actually unsafe on Linux/Windows
-    // (ADR-011 Unit 7) is initializing/using it, guarded below.
-    _googleSignIn = GoogleSignIn.instance;
-
-    // google_sign_in has no plugin implementation on Linux/Windows -- skip initializing it there
-    // entirely rather than relying on the try/catch below to swallow the MissingPluginException
-    // on every launch. signInCached's desktop-device-token path
-    // (_restorePersistedDesktopToken) and signInWithDesktopOAuth cover login on these platforms.
     if (!supportsNativeGoogleSignIn()) {
       return null;
     }
-
-    // Initialise Google Sign In using Client ID
     try {
-      await _googleSignIn.initialize(
-        clientId: kIsWeb ? '87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com' : null,
-        serverClientId: '87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com',
-      );
-
-      // Track the current user account via stream events (new in google_sign_in 7.x)
-      _googleSignIn.authenticationEvents.listen((event) {
-        if (event is GoogleSignInAuthenticationEventSignIn) {
-          _currentAccount = event.user;
-        } else if (event is GoogleSignInAuthenticationEventSignOut) {
-          _currentAccount = null;
-        }
-      }, onError: (Object error) {
-        debugPrint("[AuthNotifier] Google authenticationEvents: $error");
-      });
-
-      // Attempt silently restoring session
-      await _googleSignIn.attemptLightweightAuthentication();
+      await _identity.initialize();
     } catch (e) {
-      debugPrint("[AuthNotifier] Google init or lightweight auth failed: $e");
+      debugPrint("[AuthNotifier] identity provider initialisation failed: $e");
     }
-
-    return null; // Require biometric/google sign-in explicitly at launch
+    return null; // Require biometric/explicit sign-in at launch
   }
 
   Future<bool> hasCachedCredentials() async {
@@ -129,18 +115,19 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
         return;
       }
 
-      GoogleSignInAccount? restored;
-      try {
-        restored = await _googleSignIn.attemptLightweightAuthentication();
-        if (restored != null) {
-          _currentAccount = restored;
-          final idToken = restored.authentication.idToken;
-          if (idToken != null) {
-            await _storage.write(key: 'auth_token', value: idToken);
+      IdentityUser? restored;
+      if (supportsNativeGoogleSignIn()) {
+        try {
+          restored = await _identity.restore();
+          if (restored != null) {
+            final idToken = await _identity.idToken();
+            if (idToken != null) {
+              await _storage.write(key: 'auth_token', value: idToken);
+            }
           }
+        } catch (e) {
+          debugPrint("[AuthNotifier] Silent identity restore after cached sign-in failed: $e");
         }
-      } catch (e) {
-        debugPrint("[AuthNotifier] Silent Google restore after cached sign-in failed: $e");
       }
 
       if (restored == null) {
@@ -161,9 +148,10 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
         }
       }
 
+      ref.read(sessionEndedForPlanProvider.notifier).set(false);
       ref.read(sessionExpiredProvider.notifier).set(false);
       state = AsyncValue.data(UserProfile(
-        id: restored?.id ?? cachedId,
+        id: restored?.uid ?? cachedId,
         email: restored?.email ?? cachedEmail,
         displayName: restored?.displayName ?? cachedName,
         photoUrl: restored?.photoUrl ?? cachedPhoto,
@@ -215,7 +203,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
         // A refusal (desktop sign-in is for operators only, F-09) gets its own words and the
         // server's reason; anything else did not get an answer at all.
         final refusal = tokens.lastDesktopLoginRefusal;
-        if (refusal != null) throw SignInRefused(refusal);
+        if (refusal != null) throw SignInRefused(refusal, tokens.lastDesktopLoginPlanRequired);
         throw StateError('The backend did not accept this Google sign-in for desktop login.');
       }
 
@@ -247,14 +235,117 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     }
   }
 
-  Future<void> signInWithGoogle() async {
+  /// Desktop login (Linux/Windows) with any Firebase method -- Google, Apple or email -- through
+  /// the browser (module readiness WP12). The web app's `/desktop-sign-in` page signs in with
+  /// Firebase and hands a one-time code back to this app's loopback listener; the code and the
+  /// PKCE verifier are redeemed at `/api/v3/auth/desktop/firebase-exchange` for the same
+  /// device-bound session `/desktop/login` issues (`signInWithBrowserHandoff`). Same state and
+  /// storage handling as [signInWithDesktopOAuth], which stays as it is.
+  Future<void> signInWithDesktopBrowser() async {
     state = const AsyncValue.loading();
     try {
-      final googleUser = await _googleSignIn.authenticate();
-      final idToken = googleUser.authentication.idToken;
+      final signInPage = desktopSignInPageFor(ref.read(appBaseUrlProvider));
+      if (signInPage.isEmpty) {
+        // The login page only offers this when the build knows where the web app is.
+        throw StateError('No APP_BASE_URL in this build: browser sign-in is not set up.');
+      }
+      final backendUrl = ref.read(backendUrlProvider);
+      final DesktopHandoffResult handoff;
+      try {
+        handoff = await ref.read(desktopBrowserHandoffProvider)(
+          signInPage: Uri.parse(signInPage),
+          exchangeEndpoint: Uri.parse('$backendUrl/api/v3/auth/desktop/firebase-exchange'),
+          deviceName: desktopDeviceName(),
+        );
+      } on DesktopOAuthCancelledException catch (e) {
+        // The server said no to this account (operators only, or a plan without the desktop
+        // Engineer): the same refusal [signInWithDesktopOAuth] reports, with the server's reason.
+        if (e.statusCode == 403) throw SignInRefused(e.message, e.refusal == 'plan_required');
+        rethrow;
+      }
+      final deviceToken =
+          await ref.read(tokenManagerProvider).applyDesktopSession(handoff.tokenResponse);
+
+      // The AURA access token's own claims (`services/jwt_auth.create_access_token`), read for
+      // display only: the server issued it a moment ago and verifies it on every request.
+      final claims = _unverifiedJwtPayload(handoff.accessToken);
+      final email = (claims['email'] as String?) ?? '';
+      final name = (claims['name'] as String?)?.trim();
+      final profile = UserProfile(
+        id: (claims['sub'] as String?) ?? '',
+        email: email,
+        displayName: (name != null && name.isNotEmpty)
+            ? name
+            : (email.contains('@') ? email.split('@').first : 'AURA user'),
+        photoUrl: claims['picture'] as String?,
+      );
+      await _forgetDataOfOtherAccount(profile.id);
+
+      await _storage.write(key: 'user_id', value: profile.id);
+      await _storage.write(key: 'user_email', value: profile.email);
+      await _storage.write(key: 'user_name', value: profile.displayName);
+      if (profile.photoUrl != null) {
+        await _storage.write(key: 'user_photo', value: profile.photoUrl);
+      }
+      debugPrint("[AuthNotifier] desktop browser session until ${deviceToken.expiry.toIso8601String()}");
+
+      state = AsyncValue.data(profile);
+    } catch (err, stack) {
+      state = AsyncValue.error(err, stack);
+    }
+  }
+
+  Future<void> signInWithGoogle() => _signInWith(_identity.signInWithGoogle);
+
+  Future<void> signInWithApple() => _signInWith(_identity.signInWithApple);
+
+  Future<void> signInWithEmail(String email, String password) =>
+      _signInWith(() => _identity.signInWithEmail(email, password));
+
+  /// Creates an email/password account (Firebase sends the verification email) and signs in.
+  /// Teams stay closed to it until the address is verified (the backend checks).
+  Future<void> registerWithEmail(String email, String password, {String? displayName}) =>
+      _signInWith(() => _identity.registerWithEmail(email, password, displayName: displayName));
+
+  Future<void> sendPasswordReset(String email) => _identity.sendPasswordReset(email);
+
+  Future<void> resendVerification() => _identity.resendVerification();
+
+  /// After the person clicked the verification link: re-read them from the identity provider
+  /// and, if verified now, start a new backend session with a force-refreshed ID token. The
+  /// refresh token would otherwise keep re-issuing "unverified" for the life of the session,
+  /// since `/refresh` reuses the identity it was issued for (review B#1). Returns whether the
+  /// address is verified.
+  Future<bool> confirmEmailVerified() async {
+    final user = await _identity.reload();
+    if (user == null || !user.emailVerified) return false;
+    final idToken = await _identity.idToken(forceRefresh: true);
+    if (idToken == null) return false;
+    await ref.read(tokenManagerProvider).startSession(idToken);
+    await _storage.write(key: 'auth_token', value: idToken);
+    return true;
+  }
+
+  /// The second sign-in step answered (SaaS P1-I): the resolved user goes through the same
+  /// completion as every sign-in, which starts the backend session.
+  Future<void> completeSecondFactor(IdentityUser user) => _signInWith(() async => user);
+
+  /// The second sign-in step abandoned: nobody is signed in, and no session was started.
+  Future<void> cancelSecondFactor() async {
+    await _abandonIdentity();
+    state = const AsyncValue.data(null);
+  }
+
+  /// Every sign-in method ends here: exchange the provider's ID token for a backend session,
+  /// forget another account's local data, cache the profile.
+  Future<void> _signInWith(Future<IdentityUser> Function() signIn) async {
+    state = const AsyncValue.loading();
+    try {
+      final user = await signIn();
+      final idToken = await _identity.idToken();
       if (idToken == null) {
-        await _abandonGoogleSignIn();
-        throw const SignInRefused('Google returned no identity token for this account.');
+        await _abandonIdentity();
+        throw const SignInRefused('The sign-in provider returned no identity token for this account.');
       }
 
       // Start the backend session now, not on the first API call, so a refusal is shown here
@@ -263,20 +354,18 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
       // gets in and keeps everything that works without the backend.
       final outcome = await ref.read(tokenManagerProvider).startSession(idToken);
       if (outcome == SessionStart.refused) {
-        await _abandonGoogleSignIn();
+        await _abandonIdentity();
         throw const SignInRefused();
       }
-      _currentAccount = googleUser;
 
       final profile = UserProfile(
-        id: googleUser.id,
-        email: googleUser.email,
-        displayName: googleUser.displayName ?? 'Google User',
-        photoUrl: googleUser.photoUrl,
+        id: user.uid,
+        email: user.email,
+        displayName: user.displayName.isEmpty ? 'AURA user' : user.displayName,
+        photoUrl: user.photoUrl,
       );
       await _forgetDataOfOtherAccount(profile.id);
 
-      // Cache details
       await _storage.write(key: 'user_id', value: profile.id);
       await _storage.write(key: 'user_email', value: profile.email);
       await _storage.write(key: 'user_name', value: profile.displayName);
@@ -286,18 +375,22 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
       await _storage.write(key: 'auth_token', value: idToken);
 
       state = AsyncValue.data(profile);
+    } on IdentityError catch (err, stack) {
+      // Closing the provider's sheet is a choice, not a failure: nothing to show.
+      state = err.kind == IdentityErrorKind.cancelled
+          ? const AsyncValue.data(null)
+          : AsyncValue.error(err, stack);
     } catch (err, stack) {
       state = AsyncValue.error(err, stack);
     }
   }
 
-  /// Signs out of Google after a sign-in that will not go ahead, so the next attempt offers the
-  /// account picker again instead of silently reusing the account that was just refused.
-  Future<void> _abandonGoogleSignIn() async {
+  /// Signs out of the identity provider after a sign-in that will not go ahead, so the next
+  /// attempt offers the account picker again instead of silently reusing the refused account.
+  Future<void> _abandonIdentity() async {
     try {
-      await _googleSignIn.signOut();
+      await _identity.signOut();
     } catch (_) {}
-    _currentAccount = null;
   }
 
   // Developer bypass bypass for desktop testing without full OAuth redirect config
@@ -336,7 +429,10 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
   /// where the user was, which is what the "Sign in again" copy promises. The
   /// cached profile id stays too, so a *different* account signing in next
   /// still gets a clean device ([_forgetDataOfOtherAccount]).
-  Future<void> expireSession() async {
+  ///
+  /// [planRequired]: the server ended it because the account's plan no longer includes the
+  /// desktop Engineer (a downgrade, WP11); the login page then says so instead of "expired".
+  Future<void> expireSession({bool planRequired = false}) async {
     final current = state.value;
     // The developer bypass never had a backend session to lose.
     if (current == null || current.id == _mockUserId) return;
@@ -347,7 +443,33 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     await _storage.delete(key: _desktopTokenKey);
     await _storage.delete(key: _desktopTokenExpiryKey);
     ref.read(sessionExpiredProvider.notifier).set(true);
+    ref.read(sessionEndedForPlanProvider.notifier).set(planRequired);
     state = const AsyncValue.data(null);
+  }
+
+  /// The backend said this account was deleted (`account_deleted`) -- from another device, or by
+  /// an operator. Unlike [expireSession], the local data goes too: it belongs to an account that
+  /// no longer exists, and keeping it (with its unsynced outbox) would push it into whatever
+  /// account signs in next under the same Google identity (audit INT-010). Google is signed out
+  /// as well, so nothing can silently re-exchange its way back in; only a deliberate sign-in
+  /// starts a fresh account. [TokenManager] calls this instead of falling back to `/token`.
+  Future<void> endDeletedAccount() async {
+    final current = state.value;
+    if (current != null && current.id == _mockUserId) return;
+    try {
+      ref.read(undoableDeletesProvider.notifier).discardAll();
+      // Out of Google, Apple or the email account too (SaaS P1-B), so nothing can silently
+      // re-exchange its way back in.
+      await _abandonIdentity();
+      // The server already revoked every refresh token of the account.
+      await _clearThisDevice(revoke: false);
+    } catch (e) {
+      debugPrint("[Auth] local cleanup after a remote account deletion failed: $e");
+      await ref.read(tokenManagerProvider).clear();
+    } finally {
+      ref.read(sessionExpiredProvider.notifier).set(true);
+      state = const AsyncValue.data(null);
+    }
   }
 
   /// [expireSession] keeps the local data for the account that was signed
@@ -355,9 +477,11 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
   /// that data must go first -- the same reason [signOut] wipes it.
   Future<void> _forgetDataOfOtherAccount(String newUserId) async {
     ref.read(sessionExpiredProvider.notifier).set(false);
+    ref.read(sessionEndedForPlanProvider.notifier).set(false);
     final previous = await _storage.read(key: 'user_id');
     if (previous != null && previous.isNotEmpty && previous != newUserId) {
       await ref.read(databaseProvider).wipeUserData();
+      await ref.read(activeWorkspaceProvider.notifier).clear();
     }
   }
 
@@ -370,10 +494,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     } catch (e) {
       debugPrint("[Auth] pending deletes before sign-out failed (continuing): $e");
     }
-    try {
-      await _googleSignIn.signOut();
-    } catch (_) {} // Might fail if never logged into google
-    _currentAccount = null;
+    await _abandonIdentity(); // also fine when this device never used the identity provider
 
     // Last chance to upload offline edits before they are wiped below.
     // Best effort and bounded: signing out must work offline too, and an
@@ -417,10 +538,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     state = const AsyncValue.loading();
     try {
       ref.read(undoableDeletesProvider.notifier).discardAll();
-      try {
-        await _googleSignIn.signOut();
-      } catch (_) {}
-      _currentAccount = null;
+      await _abandonIdentity();
       // The server already revoked every refresh token of the account.
       await _clearThisDevice(revoke: false);
     } catch (e) {
@@ -443,6 +561,9 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     // would otherwise inherit this one's data, unsynced outbox and cursor.
     await ref.read(databaseProvider).wipeUserData();
 
+    // The next account must not start in this one's team (F2 review #1).
+    await ref.read(activeWorkspaceProvider.notifier).clear();
+
     await _storage.deleteAll();
     // Shared storage also drops the DB encryption-key copy. Tokens must be
     // re-issued on login; EncryptionService restores the Drift key from
@@ -452,30 +573,16 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
 
   Future<String?> getIdToken() async {
     try {
-      // google_sign_in 7.x: authentication.idToken is a snapshot from the last
-      // authenticate / lightweight restore, not a live refresh. Re-run silent
-      // restore whenever a Google account is (or might be) present.
-      try {
-        final restored = await _googleSignIn.attemptLightweightAuthentication();
-        if (restored != null) {
-          _currentAccount = restored;
-        }
-      } catch (e) {
-        debugPrint("[AuthNotifier] Silent Google ID token refresh failed: $e");
-      }
-
-      final currentAccount = _currentAccount;
-      if (currentAccount != null) {
-        final idToken = currentAccount.authentication.idToken;
+      // Firebase refreshes its ID token itself; this is always a live one when a user is signed in.
+      if (supportsNativeGoogleSignIn()) {
+        final idToken = await _identity.idToken();
         if (idToken != null) {
           await _storage.write(key: 'auth_token', value: idToken);
           return idToken;
         }
       }
-
-      // Fallback: cached Google ID token or mock token. Not claimed as fresh.
-      final cached = await _storage.read(key: 'auth_token');
-      return cached;
+      // Fallback: cached token or mock token. Not claimed as fresh.
+      return await _storage.read(key: 'auth_token');
     } catch (e) {
       debugPrint("[AuthNotifier] Error refreshing or reading ID Token: $e");
       try {
@@ -501,4 +608,10 @@ class SessionExpiredNotifier extends Notifier<bool> {
 }
 
 final sessionExpiredProvider =
+    NotifierProvider<SessionExpiredNotifier, bool>(SessionExpiredNotifier.new);
+
+/// Whether the session that [sessionExpiredProvider] reports ended because the account's plan no
+/// longer includes the desktop Engineer (`X-Aura-Refusal: plan_required` on `/refresh`, WP11).
+/// Cleared with it by the next sign-in.
+final sessionEndedForPlanProvider =
     NotifierProvider<SessionExpiredNotifier, bool>(SessionExpiredNotifier.new);

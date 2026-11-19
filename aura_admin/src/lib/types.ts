@@ -39,6 +39,24 @@ export type AdminStatus = {
   settings: Record<string, unknown>;
   learning: Record<string, unknown>;
   refresh: Record<string, unknown> | null;
+  /** "worker": provider and breaker state is this gateway worker's, not the deployment's. */
+  providers_scope?: string;
+  worker_pid?: number;
+};
+
+/** POST /admin/providers/{name}/reset-circuit. The scope fields are optional (older gateways). */
+export type ResetCircuitResult = {
+  reset: string;
+  scope?: string;
+  worker_pid?: number;
+  note?: string;
+};
+
+/** POST /admin/prompts/{id}/pin. `shared`/`propagation_s` are optional (older gateways). */
+export type PinResult = {
+  pinned: string;
+  shared?: boolean;
+  propagation_s?: number;
 };
 
 export type KnowledgeSource = {
@@ -89,3 +107,30 @@ export type Operator = {
   /** "Access page", an env list (e.g. "ADMIN_EMAILS"), or "roles.json". */
   granted_by?: string | null;
 };
+
+/** POST /admin/users/{subject}/forget (api/admin_platform.py, erase_account). */
+export type ForgetResult = {
+  /** False when any store failed; the users row is then kept. */
+  forgotten: boolean;
+  counts: Record<string, number>;
+  /** Stores that could not be erased. */
+  failed?: string[];
+  /** What erasure does not reach yet, reported with every result. */
+  not_erased?: string[];
+};
+
+/** One row of GET /admin/customers (aura_core/billing/service.py BillingService.customers). */
+export type Customer = {
+  workspace_id: string;
+  workspace_name: string | null;
+  kind: string | null;
+  plan: string;
+  seats: number;
+  status: string;
+  provider: string;
+  period_end: string;
+  grace_until: string | null;
+  last_payment: { status: string; amount_piastres: number; at: string } | null;
+};
+
+export type CustomersPage = { customers: Customer[]; next: string | null };

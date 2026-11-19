@@ -278,6 +278,65 @@ except Exception as init_err:
     logger.error(f"Error during Firebase Admin SDK initialization: {init_err}")
 
 
+async def _subject_has_account(subject: str) -> bool:
+    from infrastructure.db.base import get_session_factory, is_configured
+    from infrastructure.db.models import User
+    from sqlalchemy import select
+
+    if not subject or not is_configured():
+        return False
+    async with get_session_factory()() as db:
+        return (await db.scalar(select(User.id).where(User.auth_subject == subject))) is not None
+
+
+def _firebase_second_factor_enrolled(sub: str | None, email: str | None) -> bool:
+    """Whether the Firebase account for this Google subject -- or, failing that, this email --
+    has a second factor enrolled (SaaS P1-I). Imported users keep their Google subject as their
+    Firebase uid; anyone else is found by email, which is also what email role grants key on.
+
+    The Python Admin SDK exposes no multi-factor field on ``UserRecord``; ``mfaInfo`` is the
+    account lookup's own field (Identity Toolkit ``accounts:lookup``), kept on ``_data``.
+    """
+    from firebase_admin import auth
+
+    lookups = []
+    if sub:
+        lookups.append(lambda: auth.get_user(sub))
+    if email:
+        lookups.append(lambda: auth.get_user_by_email(email))
+    for lookup in lookups:
+        try:
+            record = lookup()
+        except auth.UserNotFoundError:
+            continue
+        if (getattr(record, "_data", None) or {}).get("mfaInfo"):
+            return True
+    return False
+
+
+async def canonical_subject(decoded_token: dict, *, exists=_subject_has_account) -> str:
+    """The subject a verified Firebase token signs in as (SaaS P1-B, review B#4).
+
+    Firebase's uid, except when that uid has no account yet and the token's Google identity is an
+    existing subject: then that Google ``sub`` -- the subject every pre-Firebase sign-in stored the
+    person's data under (``scripts/import_users_to_firebase.py`` covers those who existed at import
+    time; this covers old app versions and anyone created after). A uid that already has an account
+    is never moved, and any lookup failure keeps the uid.
+    """
+    uid = str(decoded_token.get("uid") or "")
+    identities = (decoded_token.get("firebase") or {}).get("identities") or {}
+    google = [str(g) for g in identities.get("google.com") or [] if g]
+    if not uid or not google or google[0] == uid:
+        return uid
+    try:
+        if await exists(uid) or not await exists(google[0]):
+            return uid
+    except Exception:
+        logger.warning("could not resolve the canonical subject; using the Firebase uid", exc_info=True)
+        return uid
+    return google[0]
+
+
 async def verify_identity_token(
     request: Request,
     authorization: Optional[HTTPAuthorizationCredentials] = Security(security_scheme),
@@ -324,6 +383,29 @@ async def verify_identity_token(
         if id_info.get("aud") not in accepted_audiences:
             raise ValueError(f"Unrecognized audience: {id_info.get('aud')!r}")
         logger.debug(f"Google ID token verified successfully for: {id_info.get('email')}")
+        google_verified = True
+    except Exception as google_err:
+        google_verified = False
+        logger.warning(f"Token is not a valid Google ID token: {google_err}. Trying Firebase...")
+
+    if google_verified:
+        # SaaS P1-I review #1: a raw Google token never passes through Firebase, so it would
+        # skip a second factor the person enrolled there. Refused for such an account; the app's
+        # own sign-in goes through Firebase, which asks for the code. Fails closed when Firebase
+        # cannot answer: an unchecked token is the very bypass this guards.
+        if firebase_app:
+            try:
+                enrolled = await anyio.to_thread.run_sync(
+                    _firebase_second_factor_enrolled, id_info.get("sub"), id_info.get("email")
+                )
+            except Exception as lookup_err:
+                logger.warning(f"Second-factor lookup failed; refusing the Google token: {lookup_err}")
+                enrolled = True
+            if enrolled:
+                raise HTTPException(
+                    status_code=401,
+                    detail="This account uses two-step verification: sign in through the AURA app.",
+                )
         return {
             "uid": id_info.get("sub"),
             "email": id_info.get("email"),
@@ -334,8 +416,6 @@ async def verify_identity_token(
             "email_verified": id_info.get("email_verified") is True,
             "sign_in_provider": "google.com",
         }
-    except Exception as google_err:
-        logger.warning(f"Token is not a valid Google ID token: {google_err}. Trying Firebase...")
 
     if firebase_app:
         try:
@@ -346,7 +426,7 @@ async def verify_identity_token(
             )
             logger.debug(f"Firebase ID token verified successfully for: {decoded_token.get('email')}")
             return {
-                "uid": decoded_token.get("uid"),
+                "uid": await canonical_subject(decoded_token),
                 "email": decoded_token.get("email"),
                 "name": decoded_token.get("name"),
                 "picture": decoded_token.get("picture"),

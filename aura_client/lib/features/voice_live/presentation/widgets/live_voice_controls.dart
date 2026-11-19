@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class LiveVoiceControls extends StatelessWidget {
   const LiveVoiceControls({
@@ -35,12 +36,12 @@ class LiveVoiceControls extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               AuraButton(
-                label: 'Confirm',
+                label: context.l10n.commonConfirm,
                 onPressed: onConfirm,
               ),
               const SizedBox(width: AuraSpacing.md),
               AuraButton(
-                label: 'Reject',
+                label: context.l10n.pendingActionsReject,
                 variant: AuraButtonVariant.secondary,
                 onPressed: onReject,
               ),
@@ -52,7 +53,7 @@ class LiveVoiceControls extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             IconButton(
-              tooltip: 'Transcript',
+              tooltip: context.l10n.voiceLiveTranscript,
               onPressed: onToggleTranscript,
               icon: Icon(
                 transcriptVisible ? Icons.subtitles : Icons.subtitles_off,
@@ -61,13 +62,13 @@ class LiveVoiceControls extends StatelessWidget {
             ),
             const SizedBox(width: AuraSpacing.md),
             IconButton(
-              tooltip: 'Interrupt',
+              tooltip: context.l10n.voiceLiveInterrupt,
               onPressed: phase == 'speaking' || phase == 'thinking' ? onBargeIn : null,
               icon: Icon(Icons.hearing_disabled, color: palette.warning),
             ),
             const SizedBox(width: AuraSpacing.md),
             IconButton(
-              tooltip: 'End',
+              tooltip: context.l10n.voiceLiveEndShort,
               onPressed: onEnd,
               icon: Icon(Icons.call_end, color: palette.danger),
             ),

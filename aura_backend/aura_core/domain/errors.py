@@ -41,6 +41,8 @@ __all__ = [
     "CapabilityUnavailableError",
     "OverloadedError",
     "UserConcurrencyLimitError",
+    "ConsentRequiredError",
+    "UserQuotaExhaustedError",
     "EmbeddingError",
     "VectorStoreError",
     "MemoryStoreError",
@@ -346,6 +348,31 @@ class UserConcurrencyLimitError(OverloadedError):
 
     kind = "user_concurrency_limit"
     http_status = 429
+
+
+class ConsentRequiredError(AuraError):
+    """An Engineer turn from someone who has not agreed to the current Anthropic notice (D-03).
+
+    **403** and not retryable: sending the same turn again changes nothing until the person agrees
+    in the app. ``details["current_version"]`` names the notice they need to see.
+    """
+
+    kind = "consent_required"
+    http_status = 403
+    retryable = False
+
+
+class UserQuotaExhaustedError(AuraError):
+    """This person has used today's token allowance on every provider that could answer (D-05).
+
+    **429**, not retryable as sent: it clears at ``details["reset_at"]`` (the next UTC midnight),
+    not after a short back-off. Distinct from :class:`UserConcurrencyLimitError`, which is about
+    generations running *at once* and clears in seconds.
+    """
+
+    kind = "user_quota_exhausted"
+    http_status = 429
+    retryable = False
 
 
 class EmbeddingError(AuraError):

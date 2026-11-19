@@ -5,6 +5,7 @@
 /// failure, this knows which failure it is.
 library;
 
+import 'package:aura_client/l10n/l10n.dart';
 import 'package:flutter/material.dart';
 
 import '../design_system/aura_palette.dart';
@@ -56,6 +57,7 @@ class AuraFailureView extends StatelessWidget {
         AuraFailureKind.authRequired => Icons.lock_outline,
         AuraFailureKind.forbidden => Icons.block_outlined,
         AuraFailureKind.budgetExceeded => Icons.account_balance_wallet_outlined,
+        AuraFailureKind.planLimit => Icons.workspace_premium_outlined,
         AuraFailureKind.blocked => Icons.gpp_maybe_outlined,
         AuraFailureKind.indexing => Icons.hourglass_empty_outlined,
         AuraFailureKind.degraded => Icons.warning_amber_outlined,
@@ -68,7 +70,7 @@ class AuraFailureView extends StatelessWidget {
   static AuraStateTone toneFor(AuraFailureKind kind) => switch (kind) {
         AuraFailureKind.unreachable => AuraStateTone.offline,
         // Nothing is broken and nothing to fix: a limitation, stated plainly.
-        AuraFailureKind.featureUnavailable => AuraStateTone.neutral,
+        AuraFailureKind.featureUnavailable || AuraFailureKind.planLimit => AuraStateTone.neutral,
         AuraFailureKind.busy ||
         AuraFailureKind.rateLimited ||
         AuraFailureKind.turnInFlight ||
@@ -96,7 +98,7 @@ class AuraFailureView extends StatelessWidget {
       tone: toneFor(failure.kind),
       title: failure.title,
       message: detail == null ? failure.message : '${failure.message}\n\n$detail',
-      actionLabel: showRetry ? 'Retry' : null,
+      actionLabel: showRetry ? context.l10n.retry : null,
       onAction: showRetry ? onRetry : null,
       secondaryActionLabel: onSecondaryAction == null ? null : secondaryActionLabel,
       onSecondaryAction: onSecondaryAction,
@@ -141,7 +143,7 @@ class AuraFailureView extends StatelessWidget {
                   visualDensity: VisualDensity.compact,
                   foregroundColor: palette.brandOnSurfaceText,
                 ),
-                child: const Text('Retry'),
+                child: Text(context.l10n.retry),
               ),
             ],
           ],

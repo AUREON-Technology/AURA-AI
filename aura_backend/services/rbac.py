@@ -14,6 +14,14 @@ ROLE_HIERARCHY = {
 
 CONSOLE_MIN_ROLE = "Developer"
 
+#: Sessions from the customer web sign-in (``POST /api/v3/auth/consumer/token``) carry this
+#: ``channel``. They skip device attestation, so they can never hold a platform role above
+#: ``User`` -- whatever an email list, roles.json, the Access page or a claim says (SaaS P1-B).
+CONSUMER_WEB_CHANNEL = "consumer_web"
+#: A customer's desktop session (SaaS P1-E): also unattested, so capped the same way.
+CONSUMER_DESKTOP_CHANNEL = "consumer_desktop"
+CONSUMER_CHANNELS = frozenset({CONSUMER_WEB_CHANNEL, CONSUMER_DESKTOP_CHANNEL})
+
 
 #: The env lists that can grant a console-capable role, highest first. Names are read *both*
 #: bare and `AURA_`-prefixed -- see `_email_list`.
@@ -124,7 +132,8 @@ def email_grant_eligible(user_info: dict) -> bool:
     Both keys are written only by ``services.security.verify_identity_token`` from a verified
     Google or Firebase ID token (Firebase's ``firebase.sign_in_provider``; a Google ID token is
     Google sign-in by definition), and travel with the server-side refresh record. Nothing a
-    client sends can set them: access-token claims (``verify_access_token``) never carry them.
+    client sends can set them. Access tokens now carry ``email_verified`` (SaaS P1-B, server-set) but never
+    ``sign_in_provider``, so an access-token identity can never match an email list.
     An identity without them still keeps a role it holds by uid in roles.json, by Access-page
     assignment, or by the role claim this server stamped into its own access token.
     """
@@ -147,6 +156,8 @@ def get_user_role(user_info: dict, *, assigned_role: str | None = None) -> str:
     15-minute statement of the role; refresh strips it before re-resolving
     (``services/jwt_auth.refresh_token_pair``) so it can never outlive its sources.
     """
+    if user_info.get("channel") in CONSUMER_CHANNELS:
+        return "User"
     # An unverified or non-Google email selects nothing from the email lists; roles.json is
     # still consulted by uid, which the identity provider -- not the user -- chose.
     email = (user_info.get("email") or "").strip() if email_grant_eligible(user_info) else ""

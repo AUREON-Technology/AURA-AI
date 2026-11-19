@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
-import 'package:aura_client/core/theme/theme.dart';
+import 'package:aura_client/core/design_system/design_system.dart';
 import '../finance_view_model.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
@@ -30,6 +30,7 @@ class _FinanceTransactionFormState
   Widget build(BuildContext context) {
     final composer = ref.watch(financeViewModelProvider);
     final vm = ref.read(financeViewModelProvider.notifier);
+    final palette = AuraPalette.of(context);
 
     return Card(
       child: Padding(
@@ -38,43 +39,43 @@ class _FinanceTransactionFormState
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'Log Transaction',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+            Text(
+              context.l10n.financeLogTransaction,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
             ),
             const SizedBox(height: 16),
             Row(
               children: [
                 Expanded(
                   child: ChoiceChip(
-                    label: const Center(child: Text('Expense')),
+                    label: Center(child: Text(context.l10n.financeExpense)),
                     selected: composer.transactionType == 'expense',
                     onSelected: (val) {
                       if (val) vm.setType('expense');
                     },
-                    selectedColor: Colors.redAccent.withValues(alpha: 0.2),
-                    checkmarkColor: Colors.redAccent,
+                    selectedColor: palette.danger.withValues(alpha: 0.2),
+                    checkmarkColor: palette.danger,
                     labelStyle: TextStyle(
                       color: composer.transactionType == 'expense'
-                          ? Colors.redAccent
-                          : AuraTheme.textSecondary,
+                          ? palette.danger
+                          : palette.textSecondary,
                     ),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: ChoiceChip(
-                    label: const Center(child: Text('Income')),
+                    label: Center(child: Text(context.l10n.financeIncome)),
                     selected: composer.transactionType == 'income',
                     onSelected: (val) {
                       if (val) vm.setType('income');
                     },
-                    selectedColor: AuraTheme.accentTeal.withValues(alpha: 0.2),
-                    checkmarkColor: AuraTheme.accentTeal,
+                    selectedColor: palette.success.withValues(alpha: 0.2),
+                    checkmarkColor: palette.success,
                     labelStyle: TextStyle(
                       color: composer.transactionType == 'income'
-                          ? AuraTheme.accentTeal
-                          : AuraTheme.textSecondary,
+                          ? palette.success
+                          : palette.textSecondary,
                     ),
                   ),
                 ),
@@ -86,11 +87,11 @@ class _FinanceTransactionFormState
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
               ),
-              decoration: const InputDecoration(
-                labelText: r'Amount ($)',
+              decoration: InputDecoration(
+                labelText: context.l10n.financeAmountLabel(r'$'),
                 hintText: '0.00',
               ),
-              style: const TextStyle(color: Colors.white),
+              style: TextStyle(color: palette.textPrimary),
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
@@ -98,14 +99,14 @@ class _FinanceTransactionFormState
               initialValue: financeCategories.contains(composer.category)
                   ? composer.category
                   : 'Other',
-              dropdownColor: const Color(0xFF0F0C1B),
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(labelText: 'Category'),
+              dropdownColor: palette.surface,
+              style: TextStyle(color: palette.textPrimary),
+              decoration: InputDecoration(labelText: context.l10n.financeCategory),
               items: financeCategories.map((cat) {
                 return DropdownMenuItem(
                   value: cat,
                   child: Text(
-                    cat,
+                    financeCategoryLabel(context.l10n, cat),
                     overflow: TextOverflow.ellipsis,
                     maxLines: 1,
                   ),
@@ -118,35 +119,35 @@ class _FinanceTransactionFormState
             const SizedBox(height: 16),
             TextField(
               controller: _descriptionController,
-              decoration: const InputDecoration(
-                labelText: 'Description (Optional)',
-                hintText: 'e.g. Weekly grocery shopping',
+              decoration: InputDecoration(
+                labelText: context.l10n.financeDescriptionLabel,
+                hintText: context.l10n.financeDescriptionHint,
               ),
-              style: const TextStyle(color: Colors.white),
+              style: TextStyle(color: palette.textPrimary),
             ),
             const SizedBox(height: 16),
             Material(
               type: MaterialType.transparency,
               child: ListTile(
                 contentPadding: EdgeInsets.zero,
-                leading: const Icon(
+                leading: Icon(
                   Icons.calendar_month,
-                  color: AuraTheme.accentIndigo,
+                  color: palette.brandOnSurfaceText,
                 ),
-                title: const Text(
-                  'Date',
+                title: Text(
+                  context.l10n.financeDate,
                   style: TextStyle(
                     fontSize: 13,
-                    color: AuraTheme.textSecondary,
+                    color: palette.textSecondary,
                   ),
                 ),
                 subtitle: Text(
                   DateFormat('yyyy-MM-dd').format(composer.selectedDate),
-                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                  style: TextStyle(color: palette.textPrimary, fontSize: 14),
                 ),
                 trailing: IconButton(
                   tooltip: context.l10n.changeDate,
-                  icon: const Icon(Icons.edit, color: AuraTheme.textSecondary),
+                  icon: Icon(Icons.edit, color: palette.textSecondary),
                   onPressed: () async {
                     final date = await showDatePicker(
                       context: context,
@@ -173,7 +174,7 @@ class _FinanceTransactionFormState
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       content: Text(error),
-                      backgroundColor: Colors.redAccent,
+                      backgroundColor: palette.danger,
                     ),
                   );
                   return;
@@ -181,18 +182,18 @@ class _FinanceTransactionFormState
                 _amountController.clear();
                 _descriptionController.clear();
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Transaction logged successfully!'),
-                    backgroundColor: AuraTheme.accentTeal,
+                  SnackBar(
+                    content: Text(context.l10n.financeLogged),
+                    backgroundColor: palette.success,
                   ),
                 );
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: composer.transactionType == 'expense'
-                    ? Colors.redAccent
-                    : AuraTheme.accentTeal,
+                    ? palette.danger
+                    : palette.success,
               ),
-              child: const Text('Submit Ledger Entry'),
+              child: Text(context.l10n.financeSubmit),
             ),
           ],
         ),

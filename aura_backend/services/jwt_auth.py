@@ -14,6 +14,7 @@ before this module ever runs) — it is deliberately not re-checked on every
 subsequent request once a session exists; that's the whole point of having
 a session.
 """
+import hashlib
 import json
 import logging
 import os
@@ -179,8 +180,42 @@ _DEVICES_BY_UID_PREFIX = "devices_by_uid:"
 #: Private key carried on the identity `consume_refresh_token` returns, so the pair minted next
 #: joins the same family. Never a claim: `create_access_token` copies named keys only.
 _FAMILY_KEY = "_refresh_family"
-_local_refresh_used: Dict[str, str] = {}
+_local_refresh_used: Dict[str, Any] = {}
 _local_refresh_families: Dict[str, set] = {}
+
+# --- Retrying a refresh whose response was lost (integration audit INT-012) ------------------
+# A client that times out on /refresh cannot know whether the server rotated its token. Before
+# this, its only move was to present the old token again, which is indistinguishable from a
+# thief's replay and revoked the whole family -- a slow network signed desktop users out.
+#
+# The retry is allowed only when it proves it is the *same request*, not merely the same token:
+# the client picks a random ``retry_key`` per refresh attempt and sends it with the token; the
+# server keeps only its SHA-256 on the consumed token's ``refresh_used:`` marker. Re-presenting a
+# rotated token is still a replay (whole family revoked, exactly as before) unless all of these
+# hold:
+#   * the key matches the one the original rotation was made with -- a token stolen at rest
+#     carries no key, and a thief guessing one gets the replay path;
+#   * it is within REFRESH_RETRY_GRACE of that rotation;
+#   * the successor minted by that rotation was never used -- if it was, somebody holds a live
+#     branch and the chain is compromised.
+# The retry then *spends* the lost successor (a later presentation of it is a replay) and mints a
+# new pair in the same family, through the same route checks (role, device revocation, erasure)
+# as any refresh. So the chain never has two live branches, and outside a key-matched retry the
+# replay detection of FSA-015 is unchanged. A client that sends no key gets exactly the old
+# behaviour.
+REFRESH_RETRY_GRACE = timedelta(minutes=5)
+#: Private key on the identity ``consume_refresh_token`` returns: the consumed token whose marker
+#: should record the successor minted next. Never a claim, like ``_FAMILY_KEY``.
+_ROTATED_FROM_KEY = "_rotated_from"
+RETRY_KEY_MAX_CHARS = 128
+
+# --- Sessions ended by account erasure (integration audit INT-010) ---------------------------
+# revoke_all_for_uid deletes the refresh tokens, after which /refresh cannot tell "erased" from
+# "never existed", and a second phone falls back to a silent /token that recreates the account.
+# A bulk revocation leaves a tombstone naming the subject, so /refresh can answer
+# ``account_deleted`` for a session whose account has since been erased.
+_REFRESH_REVOKED_PREFIX = "refresh_revoked:"
+_local_refresh_revoked: Dict[str, str] = {}
 
 
 #: When the indexed code first ran against this Redis, written once (SET NX) and kept. The
@@ -231,7 +266,10 @@ def _refresh_store_set(token: str, user_info: dict, ttl: timedelta) -> None:
     global _warned_no_redis
     info = dict(user_info)
     family = info.pop(_FAMILY_KEY, None) or secrets.token_urlsafe(16)
+    rotated_from = info.pop(_ROTATED_FROM_KEY, None)
     ttl_s = int(ttl.total_seconds())
+    if rotated_from:
+        _note_successor(rotated_from, token)
     uid = str(info.get("uid", ""))
     device_id = info.get("device_id")
     redis_client = get_redis_client()
@@ -280,7 +318,55 @@ def _unindex(redis_client: Any, token: str, user_info: dict, family: Optional[st
         redis_client.srem(f"{_REFRESH_FAMILY_PREFIX}{family}", token)
 
 
-def _refresh_store_take(token: str) -> Optional[dict]:
+def _retry_digest(retry_key: str) -> str:
+    return hashlib.sha256(retry_key.encode("utf-8")).hexdigest()
+
+
+def _write_used_marker(token: str, marker: Dict[str, Any]) -> None:
+    redis_client = get_redis_client()
+    if redis_client is not None:
+        redis_client.setex(
+            f"{_REFRESH_USED_PREFIX}{token}", int(REFRESH_TOKEN_TTL.total_seconds()), json.dumps(marker)
+        )
+        return
+    _local_refresh_used[token] = dict(marker)
+
+
+def _used_marker(token: str) -> Optional[Dict[str, Any]]:
+    """The ``refresh_used:`` marker of an already-consumed token, if it was consumed within its
+    lifetime: ``{"family", "at", "retry", "successor"}``. A marker written before INT-012 is the
+    bare family name and reads as one with no retry key, so it can only ever be a replay."""
+    redis_client = get_redis_client()
+    if redis_client is not None:
+        raw = redis_client.get(f"{_REFRESH_USED_PREFIX}{token}")
+    else:
+        raw = _local_refresh_used.get(token)
+    if not raw:
+        return None
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, bytes):
+        raw = raw.decode()
+    try:
+        marker = json.loads(raw)
+    except (TypeError, ValueError):
+        marker = None
+    if isinstance(marker, dict) and marker.get("family"):
+        return marker
+    return {"family": str(raw)}
+
+
+def _note_successor(consumed: str, successor: str) -> None:
+    marker = _used_marker(consumed)
+    if marker is None:
+        return
+    marker["successor"] = successor
+    _write_used_marker(consumed, marker)
+
+
+def _refresh_store_take(
+    token: str, *, retry_key: Optional[str] = None, rotated_from: Optional[str] = None,
+) -> Optional[dict]:
     """Atomically read *and* consume a refresh token -- the only safe primitive for rotation.
 
     A GET followed by a DEL is two round trips: concurrent refreshes of one token (the gateway
@@ -289,7 +375,11 @@ def _refresh_store_take(token: str) -> Optional[dict]:
     runs 7) is one command, so exactly one caller gets the value.
 
     The identity comes back carrying ``_FAMILY_KEY`` so the successor joins the same family, and
-    the consumed token leaves a ``refresh_used:`` marker for replay detection.
+    the consumed token leaves a ``refresh_used:`` marker for replay detection. With a
+    ``retry_key`` the marker also keeps its digest, and the identity carries ``_ROTATED_FROM_KEY``
+    so the successor's name is recorded once it is minted (INT-012). ``rotated_from`` names a
+    different token to record it on: a retry spends the lost successor, but the client still
+    holds the original token, so that is where the next successor must be findable.
     """
     redis_client = get_redis_client()
     if redis_client is not None:
@@ -298,25 +388,42 @@ def _refresh_store_take(token: str) -> Optional[dict]:
             return None
         user_info, family = _parse_refresh_entry(raw)
         _unindex(redis_client, token, user_info, family)
+    else:
+        with _local_refresh_lock:
+            entry = _local_refresh_store.pop(token, None)
+        if entry is None or entry["expires_at"] < datetime.now(timezone.utc):
+            return None
+        family = entry.get("family")
+        user_info = dict(entry["user_info"])
         if family:
-            redis_client.setex(f"{_REFRESH_USED_PREFIX}{token}", int(REFRESH_TOKEN_TTL.total_seconds()), family)
-            user_info[_FAMILY_KEY] = family
-        return user_info
-    with _local_refresh_lock:
-        entry = _local_refresh_store.pop(token, None)
-    if entry is None or entry["expires_at"] < datetime.now(timezone.utc):
-        return None
-    family = entry.get("family")
-    user_info = dict(entry["user_info"])
+            _local_refresh_families.get(family, set()).discard(token)
     if family:
-        _local_refresh_families.get(family, set()).discard(token)
-        _local_refresh_used[token] = family
+        _write_used_marker(token, {
+            "family": family,
+            "at": datetime.now(timezone.utc).timestamp(),
+            "retry": _retry_digest(retry_key) if retry_key else None,
+            "successor": None,
+        })
         user_info[_FAMILY_KEY] = family
+        link = rotated_from or (token if retry_key else None)
+        if link:
+            user_info[_ROTATED_FROM_KEY] = link
     return user_info
 
 
-def _refresh_store_delete(token: str) -> bool:
-    """Drop one refresh token and its index entries. True when it existed."""
+def restore_refresh_token(token: str, user_info: dict) -> None:
+    """Put back a refresh token ``consume_refresh_token`` just spent, when the request then could
+    not be answered for a reason that is not the caller's (a plan lookup failed): the client may
+    retry with the same token. ``user_info`` is what consumption returned, family included."""
+    _refresh_store_set(token, user_info, REFRESH_TOKEN_TTL)
+
+
+def _refresh_store_delete(token: str, *, tombstone: bool = False) -> bool:
+    """Drop one refresh token and its index entries. True when it existed.
+
+    With ``tombstone`` (bulk revocation of an account's or a device's sessions) the token leaves
+    a ``refresh_revoked:`` record naming its subject, so ``/refresh`` can still tell that it
+    belonged to an account that has since been erased (INT-010)."""
     redis_client = get_redis_client()
     if redis_client is not None:
         raw = redis_client.getdel(f"{_REFRESH_PREFIX}{token}")
@@ -324,21 +431,44 @@ def _refresh_store_delete(token: str) -> bool:
             return False
         user_info, family = _parse_refresh_entry(raw)
         _unindex(redis_client, token, user_info, family)
+        if tombstone and user_info.get("uid"):
+            redis_client.setex(
+                f"{_REFRESH_REVOKED_PREFIX}{token}", int(REFRESH_TOKEN_TTL.total_seconds()),
+                str(user_info["uid"]),
+            )
         return True
     entry = _local_refresh_store.pop(token, None)
     if entry is None:
         return False
     if entry.get("family"):
         _local_refresh_families.get(entry["family"], set()).discard(token)
+    uid = entry.get("user_info", {}).get("uid")
+    if tombstone and uid:
+        _local_refresh_revoked[token] = str(uid)
     return True
 
 
-def _used_family(token: str) -> Optional[str]:
-    """The family of an already-consumed token, if it was consumed within its lifetime."""
+def _revoked_token_subject(token: str) -> Optional[str]:
     redis_client = get_redis_client()
     if redis_client is not None:
-        return redis_client.get(f"{_REFRESH_USED_PREFIX}{token}")
-    return _local_refresh_used.get(token)
+        try:
+            raw = redis_client.get(f"{_REFRESH_REVOKED_PREFIX}{token}")
+        except Exception:  # noqa: BLE001 -- only the wording of a refusal depends on it
+            logger.warning("revoked-session lookup unavailable (redis error)")
+            return None
+        if raw is None:
+            return None
+        return raw.decode() if isinstance(raw, bytes) else str(raw)
+    return _local_refresh_revoked.get(token)
+
+
+def refresh_token_of_erased_account(refresh_token: str) -> bool:
+    """Whether a refresh token that no longer works was revoked in bulk for an account that has
+    since been erased -- the session of a deleted account, not merely a dead one. ``/refresh``
+    answers that with ``account_deleted`` so the client wipes its copy of the account's data
+    instead of re-exchanging its way into a recreated account (INT-010)."""
+    uid = _revoked_token_subject(refresh_token)
+    return bool(uid) and _account_erased_at(uid) is not None
 
 
 def _revoke_family(family: str) -> int:
@@ -382,6 +512,13 @@ def create_access_token(
         "iat": now,
         "exp": now + ttl,
     }
+    # Server-set from the verified identity token (services.security.verify_identity_token):
+    # team actions require a verified address (SaaS P1-B, spec 5.1).
+    payload["email_verified"] = user_info.get("email_verified") is True
+    if user_info.get("channel"):
+        # Server-set, never client-set: rbac.get_user_role caps a consumer_web identity at User
+        # on every request, so this claim must survive into the access token (SaaS P1-B).
+        payload["channel"] = user_info["channel"]
     if extra_claims:
         payload.update(extra_claims)
     # After extra_claims so a caller can never mint a token bound to another deployment (F-03).
@@ -598,18 +735,18 @@ def _revoke_refresh_tokens_for_device(device_id: str) -> int:
     redis_client = get_redis_client()
     if redis_client is not None:
         indexed = set(redis_client.smembers(f"{_REFRESH_BY_DEVICE_PREFIX}{device_id}"))
-        revoked += sum(1 for token in indexed if _refresh_store_delete(token))
+        revoked += sum(1 for token in indexed if _refresh_store_delete(token, tombstone=True))
         redis_client.delete(f"{_REFRESH_BY_DEVICE_PREFIX}{device_id}")
         if _index_free_records_possible():
             for token in _scan_refresh_tokens(redis_client, lambda info: info.get("device_id") == device_id):
-                if token not in indexed and _refresh_store_delete(token):
+                if token not in indexed and _refresh_store_delete(token, tombstone=True):
                     revoked += 1
     stale = [
         token for token, entry in _local_refresh_store.items()
         if entry.get("user_info", {}).get("device_id") == device_id
     ]
     for token in stale:
-        if _refresh_store_delete(token):
+        if _refresh_store_delete(token, tombstone=True):
             revoked += 1
     return revoked
 
@@ -668,7 +805,9 @@ def mark_account_erased(uid: str) -> None:
     row and write data back into an account that was just deleted. ``verify_access_token``
     refuses a token whose ``iat`` is not after this moment. Kept for the longest access-token
     lifetime (a device token's), after which no such token can exist. Signing in again later
-    issues newer tokens and starts a fresh account, as it should.
+    issues newer tokens and starts a fresh account, as it should -- but only a deliberate
+    sign-in (``mark_account_reinstated``): a device's silent re-exchange is refused with
+    ``account_deleted`` meanwhile (INT-010).
     """
     now = datetime.now(timezone.utc).timestamp()
     redis_client = get_redis_client()
@@ -680,14 +819,97 @@ def mark_account_erased(uid: str) -> None:
     _local_erased_accounts[uid] = now
 
 
-def _account_erased_at(uid: str) -> Optional[float]:
+_REINSTATED_ACCOUNT_PREFIX = "reinstated_account:"
+_local_reinstated_accounts: Dict[str, float] = {}
+
+
+def mark_account_reinstated(uid: str) -> None:
+    """Record that ``uid`` signed in again *on purpose* after an erasure, starting a fresh
+    account (INT-010). From then on a silent re-exchange is an ordinary renewal of that new
+    account, not a stale device resurrecting the deleted one. Old access tokens stay refused:
+    ``verify_access_token`` still compares their ``iat`` with the erasure."""
+    now = datetime.now(timezone.utc).timestamp()
+    redis_client = get_redis_client()
+    if redis_client is not None:
+        try:
+            redis_client.setex(
+                f"{_REINSTATED_ACCOUNT_PREFIX}{uid}", int(DEVICE_ACCESS_TOKEN_TTL.total_seconds()), str(now)
+            )
+        except Exception as exc:  # noqa: BLE001 -- the sign-in that called this answers 503
+            raise AuthStateUnavailable("could not record the reinstatement (redis error)") from exc
+        return
+    _local_reinstated_accounts[uid] = now
+
+
+def _account_reinstated_at(uid: str, *, strict: bool = False) -> Optional[float]:
+    redis_client = get_redis_client()
+    if redis_client is not None:
+        try:
+            raw = redis_client.get(f"{_REINSTATED_ACCOUNT_PREFIX}{uid}")
+        except Exception as exc:  # noqa: BLE001
+            if strict:
+                raise AuthStateUnavailable("reinstated-account check unavailable (redis error)") from exc
+            logger.warning("reinstated-account check unavailable (redis error)")
+            return None
+        if raw is None:
+            return None
+        return float(raw.decode() if isinstance(raw, bytes) else raw)
+    return _local_reinstated_accounts.get(uid)
+
+
+class AuthStateUnavailable(RuntimeError):
+    """A store behind a session decision (erasure, reinstatement, device revocation) could not be
+    read or written. Not an answer either way: the caller must neither issue nor refuse on it, but
+    answer a retryable 503 (``AUTH_STATE_UNAVAILABLE_DETAIL``)."""
+
+
+#: The ``detail`` of a sign-in or request answered 503 because ``AuthStateUnavailable`` was
+#: raised -- the v3 error envelope, retryable, so a client retries rather than signing out.
+AUTH_STATE_UNAVAILABLE_DETAIL = {
+    "error": "auth_state_unavailable",
+    "message": "Sign-in could not be checked just now; please try again.",
+    "retryable": True,
+}
+
+
+def account_erased_and_not_reinstated(uid: str) -> bool:
+    """True while ``uid`` is erased and nobody has deliberately signed in to it since: the state
+    in which a silent re-exchange from a still-signed-in device must be refused (INT-010).
+
+    For token *issuance* only, so it fails closed: when Redis cannot be read it raises
+    ``AuthStateUnavailable`` rather than guessing (a guess of "not erased" would resurrect an
+    erased account; a guess of "not reinstated" would tell someone who signed in again that their
+    account is deleted). Per-request verification reads the erasure leniently instead -- see
+    ``verify_access_token``."""
+    erased_at = _account_erased_at(uid, strict=True)
+    if erased_at is None:
+        return False
+    reinstated_at = _account_reinstated_at(uid, strict=True)
+    return reinstated_at is None or reinstated_at < erased_at
+
+
+#: The ``detail`` of every "this account was deleted" refusal: the v3 error envelope's shape
+#: (``{"error", "message", "retryable"}``), so a client can tell it from an ordinary expiry and
+#: wipe its local copy instead of silently re-exchanging (INT-010).
+ACCOUNT_DELETED_DETAIL = {
+    "error": "account_deleted",
+    "message": "This account has been deleted.",
+    "retryable": False,
+}
+
+
+def _account_erased_at(uid: str, *, strict: bool = False) -> Optional[float]:
     redis_client = get_redis_client()
     if redis_client is not None:
         try:
             raw = redis_client.get(f"{_ERASED_ACCOUNT_PREFIX}{uid}")
-        except Exception:
-            # The same store backs refresh tokens; if it is down, sign-in is down too. Do not
-            # turn every authenticated request into a 500 over this one check.
+        except Exception as exc:
+            if strict:
+                # Issuing a token: fail closed (``account_erased_and_not_reinstated``).
+                raise AuthStateUnavailable("erased-account check unavailable (redis error)") from exc
+            # Per request: fail open, deliberately. The token being checked was issued before
+            # this blip and lives ACCESS_TOKEN_TTL at most; its refresh and every new sign-in
+            # fail closed. Refusing here would turn one Redis blip into a full API outage.
             logger.warning("erased-account check unavailable (redis error)")
             return None
         if raw is None:
@@ -697,13 +919,21 @@ def _account_erased_at(uid: str) -> Optional[float]:
 
 
 def is_device_revoked(device_id: str) -> bool:
+    """Whether ``device_id`` was revoked. Raises ``AuthStateUnavailable`` when Redis cannot say:
+    the device check is the whole revocation mechanism for a daemon token, so it never fails open,
+    but an unanswered question is not a revocation either (INT-104)."""
     redis_client = get_redis_client()
     if redis_client is not None:
-        return redis_client.exists(f"{_REVOKED_DEVICE_PREFIX}{device_id}") > 0
+        try:
+            return redis_client.exists(f"{_REVOKED_DEVICE_PREFIX}{device_id}") > 0
+        except Exception as exc:  # noqa: BLE001
+            raise AuthStateUnavailable("device revocation check unavailable (redis error)") from exc
     return device_id in _local_revoked_devices
 
 
-def consume_refresh_token(refresh_token: str) -> Optional[Dict[str, Any]]:
+def consume_refresh_token(
+    refresh_token: str, *, retry_key: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     """Spend a refresh token (single use) and return the identity it was issued for, with the
     previously stamped role removed, ready to be re-resolved; None when it is not valid.
 
@@ -711,22 +941,52 @@ def consume_refresh_token(refresh_token: str) -> Optional[Dict[str, Any]]:
     one of the candidates ``get_user_role`` takes the max of, so a role once granted would
     survive every rotation for as long as the user keeps refreshing -- removing someone from
     ADMIN_EMAILS or roles.json, or demoting them on the Access page, would never take effect.
+
+    ``retry_key`` (INT-012) is the client's random name for this refresh *attempt*; re-sending a
+    rotated token with the same key inside ``REFRESH_RETRY_GRACE`` is a retry after a lost
+    response rather than a replay -- see the comment at ``REFRESH_RETRY_GRACE``.
     """
-    user_info = _refresh_store_take(refresh_token)
+    if retry_key is not None and not (0 < len(retry_key) <= RETRY_KEY_MAX_CHARS):
+        retry_key = None
+    user_info = _refresh_store_take(refresh_token, retry_key=retry_key)
     if user_info is None:
-        family = _used_family(refresh_token)
-        if family:
+        marker = _used_marker(refresh_token)
+        if not marker:
+            return None
+        if retry_key and _is_retry_of(marker, retry_key):
+            successor = marker.get("successor")
+            if not successor:
+                # The original rotation has not minted a successor (still in flight, or its route
+                # refused): nothing to hand back, and nothing suggests a second holder.
+                return None
+            # The same request again, its response lost: spend the successor nobody has seen and
+            # mint the next pair from it. Gone already means someone used it -- a replay.
+            user_info = _refresh_store_take(successor, rotated_from=refresh_token)
+            if user_info is not None:
+                logger.info("refresh retried after a lost response; the unseen successor was spent")
+        if user_info is None:
             # Replay (audit FSA-015): this token was already rotated. Whoever holds the live
             # successor may be the thief, so the whole chain ends and the user signs in again.
-            revoked = _revoke_family(family)
+            revoked = _revoke_family(marker["family"])
             logger.warning(
                 "refresh token replayed after rotation; its family was revoked",
                 extra={"revoked": revoked},
             )
-        return None
+            return None
     fresh = dict(user_info)
     fresh.pop("role", None)
     return fresh
+
+
+def _is_retry_of(marker: Dict[str, Any], retry_key: str) -> bool:
+    digest = marker.get("retry")
+    at = marker.get("at")
+    if not digest or at is None:
+        return False
+    if not secrets.compare_digest(str(digest), _retry_digest(retry_key)):
+        return False
+    age = datetime.now(timezone.utc).timestamp() - float(at)
+    return 0 <= age < REFRESH_RETRY_GRACE.total_seconds()
 
 
 def refresh_token_pair(refresh_token: str) -> Optional[Dict[str, Any]]:
@@ -754,11 +1014,11 @@ def revoke_all_for_uid(uid: str) -> int:
     redis_client = get_redis_client()
     if redis_client is not None:
         indexed = set(redis_client.smembers(f"{_REFRESH_BY_UID_PREFIX}{uid}"))
-        revoked += sum(1 for token in indexed if _refresh_store_delete(token))
+        revoked += sum(1 for token in indexed if _refresh_store_delete(token, tombstone=True))
         redis_client.delete(f"{_REFRESH_BY_UID_PREFIX}{uid}")
         if _index_free_records_possible():
             for token in _scan_refresh_tokens(redis_client, lambda info: info.get("uid") == uid):
-                if token not in indexed and _refresh_store_delete(token):
+                if token not in indexed and _refresh_store_delete(token, tombstone=True):
                     revoked += 1
     stale = [
         token
@@ -766,7 +1026,7 @@ def revoke_all_for_uid(uid: str) -> int:
         if entry.get("user_info", {}).get("uid") == uid
     ]
     for token in stale:
-        if _refresh_store_delete(token):
+        if _refresh_store_delete(token, tombstone=True):
             revoked += 1
     return revoked
 
@@ -796,10 +1056,19 @@ async def verify_access_token(
     subject = payload.get("sub")
     erased_at = _account_erased_at(str(subject)) if subject else None
     if erased_at is not None and float(payload.get("iat") or 0) <= erased_at:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="This account has been deleted.")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=dict(ACCOUNT_DELETED_DETAIL))
 
     device_id = payload.get("device_id")
-    if device_id and is_device_revoked(device_id):
+    try:
+        device_revoked = bool(device_id) and is_device_revoked(device_id)
+    except AuthStateUnavailable:
+        # Not 401 (the client would sign out, a daemon would unpair) and not a bare 500: a 503
+        # the gateway passes through, which the host-agent socket answers with 1011, "retry".
+        logger.warning("device revocation unreadable; answering 503")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=dict(AUTH_STATE_UNAVAILABLE_DETAIL),
+        ) from None
+    if device_revoked:
         # A device token has no refresh token to decline to renew (issue_device_token's doc
         # comment) -- this check is the entire revocation mechanism for it, so it must run on
         # every call, not just at issue time.
@@ -821,4 +1090,9 @@ async def verify_access_token(
         "picture": payload.get("picture"),
         "role": payload.get("role"),
         "device_id": device_id,
+        "channel": payload.get("channel"),
+        "email_verified": payload.get("email_verified") is True,
+        # Set only on the desktop app's own tokens (issue_desktop_session/issue_device_token).
+        # The gateway reads it to tell a desktop turn from a phone or web one (WP8).
+        "platform": payload.get("platform"),
     }

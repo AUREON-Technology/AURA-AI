@@ -119,8 +119,8 @@ unmeasured until the plan's P7-4 regression eval runs.
 
 | Variable | Value | Why |
 |---|---|---|
-| `VLLM_MODEL` | `Qwen/Qwen3-VL-8B-Instruct` on the L40S (48 GB, BF16 fits with room for KV cache); `Qwen/Qwen3-VL-8B-Instruct-FP8` on a 24 GB Ada/Hopper card (L4) | Apache-2.0, first-class vLLM architecture, the GAP-019 candidate. Qwen2.5-VL-3B is excluded (`qwen-research` license). |
-| `VLLM_MODEL_REVISION` | the commit SHA from the model repo's *Files and versions* history (required; the entrypoint refuses to start without it) | Without it, an upstream push silently changes what answers |
+| `VLLM_MODEL` | **`Qwen/Qwen2.5-VL-7B-Instruct-AWQ`** on the current `a10g-small` (24 GB; ~6 GB AWQ weights leave room for a 16k KV cache). Owner decision 2026-11-17. Upgrade path: `Qwen/Qwen3-VL-8B-Instruct` on an L40S (48 GB, BF16), or `-FP8` on a 24 GB Ada/Hopper card (L4) | Apache-2.0 (Hub tag, not gated), supported by vLLM. Qwen2.5-VL-3B is excluded (`qwen-research` license). |
+| `VLLM_MODEL_REVISION` | `536a35794df8831aa814970ee8f89eff577e7718` for the model above (the repo's head on 2026-11-17). Required: the entrypoint refuses to start without it | Without it, an upstream push silently changes what answers |
 | `VLLM_MAX_MODEL_LEN` | `16384` | The gateway shrinks images to a 1536 px long edge, about 2,300 vision tokens each for a square image. Four images exceed 8192 on their own, and the router then excludes this provider (`context_window_too_small`) |
 | `VLLM_MAX_IMAGES_PER_PROMPT` | `4` | Must be ≥ `AURA_VISION_MAX_IMAGES`. Any value > 0 also makes the entrypoint refuse remote media URLs (`--allowed-media-domains media.invalid`, redirects off). The gateway only ever sends base64 |
 
@@ -136,6 +136,7 @@ AURA_PROVIDER_HFSPACE_MODALITIES=text,image
 AURA_PROVIDER_HFSPACE_CONTEXT_WINDOW=16384      # exactly VLLM_MAX_MODEL_LEN
 AURA_VISION_ENABLED=true
 AURA_VISION_MAX_IMAGES=4                        # <= VLLM_MAX_IMAGES_PER_PROMPT
+AURA_PROVIDER_HFSPACE_HEALTH_PROBE=passive      # a sleeping Space: readiness must not wake it
 ```
 
 Declare no pool. A generalist provider carrying the image modality is chosen for image turns
@@ -143,6 +144,30 @@ Declare no pool. A generalist provider carrying the image modality is chosen for
 hosted slot (`hosted1`) never receives an image, whatever it declares. The router refuses every
 `third_party` provider for image requests, and image turns are SENSITIVE. `hfspace` is rented
 compute running our own weights, so it is not third-party, and its ceiling is SENSITIVE.
+
+**Superseded on 2026-11-18 (SaaS P1-G):** the Space now runs on an **L4, always on** (§9). The
+sleeping setup below is kept for the record, and for a staging Space. On the production Space, do
+not set `HEALTH_PROBE=passive`.
+
+**A Space that sleeps when idle** (owner decision 2026-11-17: pay for the GPU only while it is
+used). Hugging Face wakes a sleeping Space on *any* request, so:
+
+- Set `AURA_PROVIDER_HFSPACE_HEALTH_PROBE=passive` on the Control Plane. `/health/ready` then
+  reports the Space from its circuit breaker (`"probe": "passive"`) and never calls it. Without
+  this, a load-balancer health check or an uptime probe on `/health/ready` keeps the GPU awake
+  around the clock (an `a10g-small` is roughly $1/hour). A passive provider can never hold the
+  gateway ready on its own while a probed provider (`hosted1`) is down.
+- Text turns route to `hosted1` first (higher `quality_tier`, and it may take SENSITIVE content).
+  The Space wakes for image turns, and for text only when every hosted slot has failed.
+- The first image after a quiet spell usually finds the Space waking. The turn then answers from
+  OCR only (Tesseract is in the gateway image), and its vision step reports `degraded`: "the vision
+  model is unavailable or still starting. Send it again in a minute". The request that got OCR is
+  also the one that woke the Space.
+- Cold start = container start + weight download + model load. On a Space without persistent
+  storage the ~6 GB download repeats on every wake. **Persistent storage** (Settings → Persistent
+  storage, mounted at `/data`) plus the Space variable `HF_HOME=/data/hf` keeps the weights between
+  wakes. Measure the wake time once and record it in the Phase 6 report.
+- *Settings → Sleep time* sets how long the Space stays awake after the last request.
 
 **Order of operations:**
 1. Change the Space variables and wait for `/v1/models` to list the new model.
@@ -155,7 +180,7 @@ Reversed, the gateway offers attachments to a text-only server, and image turns 
 **Evidence** (Phase 6 exit). Run from anywhere that can reach both:
 
 ```bash
-AURA_VERIFY_GATEWAY=https://aureon-ai.tech AURA_VERIFY_TOKEN=<a user's access token> \
+AURA_VERIFY_GATEWAY=https://api.aureon-ai.tech AURA_VERIFY_TOKEN=<a user's access token> \
 AURA_VERIFY_SPACE_URL=https://<owner>-<space>.hf.space AURA_VERIFY_SPACE_KEY=<VLLM_API_KEY> \
     python deploy/scripts/verify_vision.py
 ```
@@ -182,7 +207,7 @@ python -m evaluation.vision_eval run --target space --base-url https://<owner>-<
     --api-key-env SPACE_KEY --model <VLLM_MODEL> --revision <VLLM_MODEL_REVISION> \
     --label qwen3-vl-8b --hardware "HF L40S"
 AURA_EVAL_TOKEN=<user access token> python -m evaluation.vision_eval run --target gateway \
-    --base-url https://aureon-ai.tech --label prod-gateway
+    --base-url https://api.aureon-ai.tech --label prod-gateway
 python -m evaluation.vision_eval compare ../docs/reports/vision-eval-*.json
 ```
 
@@ -194,3 +219,83 @@ on the run the owner accepts, and `--baseline` on later runs, to gate against it
   the attach button.
 - To also revert the Space, set `VLLM_MODEL` back, `VLLM_MAX_IMAGES_PER_PROMPT=0`, and
   `VLLM_MAX_MODEL_LEN` / `AURA_PROVIDER_HFSPACE_CONTEXT_WINDOW` back to `8192`.
+
+## 9. Always on, on one L4 (SaaS P1-G, owner decision 2026-11-18)
+
+Phase 1 needs a provider that may read `sensitive` content at every hour. Every memory, document,
+tool, Engineer and image turn is `sensitive`, and the only other slot, `hosted1`, stops at
+`internal`. While the Space sleeps or is down, those turns have no provider at all.
+
+| Decision | Value |
+|---|---|
+| GPU | one NVIDIA **L4** (24 GB), flavor `l4x1`, $0.80/h, about **$584 a month** at 730 h |
+| Sleep | **never** |
+| Model | unchanged: `Qwen/Qwen2.5-VL-7B-Instruct-AWQ` at revision `536a35794df8831aa814970ee8f89eff577e7718`, `VLLM_MAX_MODEL_LEN=16384`, `VLLM_MAX_IMAGES_PER_PROMPT=4` |
+| Launch target | 10 concurrent users (spec §8, decision 3) |
+
+The L4 has about half the memory bandwidth of the A10G it replaces, so expect fewer tokens per
+second. Check 7 of the verifier below measures this; it is not assumed.
+
+**The deploy enforces it.** `inference-plane-deploy.yml` calls
+`request_space_hardware(<space>, vars.HF_SPACE_HARDWARE or "l4x1", sleep_time=-1)` on every
+deploy. A Space switched to another GPU, or set to sleep, from its settings page goes back to the
+decided state on the next deploy. `tests/deployment/test_inference_contract.py` pins this. To
+change the GPU, set the repository variable `HF_SPACE_HARDWARE` (for example `l40sx1`) and update
+this table.
+
+**Owner steps, in order:**
+
+1. Space → Settings → **Hardware: Nvidia L4**, then **Sleep time: Don't sleep**. The workflow
+   does the same on its next run, but the next run may be days away.
+2. Space → Settings → **Persistent storage**. Add the Space variable `HF_HOME=/data/hf`, so a
+   restart does not download the weights again.
+3. Wait until `GET /v1/models`, sent with the key, lists the model.
+4. On Railway, set `AURA_PROVIDER_HFSPACE_HEALTH_PROBE=active`, or delete the variable, since
+   `active` is the default. Then redeploy. Readiness now calls the Space, and a dead Space shows as
+   unhealthy within one probe instead of being reported from the circuit breaker.
+5. Run the verifier from anywhere and commit the report:
+
+   ```bash
+   AURA_VERIFY_GATEWAY=https://api.aureon-ai.tech \
+   AURA_VERIFY_TOKEN=<an operator's or a Pro user's access token> \
+   AURA_VERIFY_EXTRA_TOKENS=<optional: more users' tokens, comma-separated> \
+   AURA_VERIFY_ADMIN_TOKEN=<an Admin's access token> \
+   AURA_VERIFY_SPACE_URL=https://<owner>-<space>.hf.space AURA_VERIFY_SPACE_KEY=<VLLM_API_KEY> \
+   AURA_VERIFY_HF_TOKEN=<a read token> AURA_VERIFY_SPACE_ID=<owner>/<space> \
+       python deploy/scripts/verify_gpu_source.py
+   ```
+
+   It writes `docs/reports/readiness-gpu-<UTC>.txt` and checks:
+
+   1. the Space refuses unauthenticated calls;
+   2. it runs on `l4x1` and never sleeps;
+   3. the gateway actively probes it as healthy;
+   4. `/metrics`, `/docs`, `/redoc` and `/openapi.json` are not public;
+   5. no provider may train on prompts;
+   6. a document turn is answered from the document by `hfspace`;
+   7. 10 concurrent turns all succeed, with p95 at most `AURA_VERIFY_P95_S` (default 60 s).
+
+   A check whose credential was not given reports **SKIP**, and the report then says
+   **NOT PROVEN**. Spec §6.1 items 2, 3, 6 and 9 are proven only by a committed report with no FAIL
+   and no SKIP.
+
+   The default limit is about 60 chats a minute per user (`RATE_LIMIT_USER_PER_MIN=60`, at 10
+   units a turn), so a single token is enough for 10 turns. If check 7 reports `rate-limited`, the
+   deployment's limit is lower. Pass more users' tokens in that case; the GPU is not at fault.
+
+   A test document that cannot be deleted fails check 6 and names the id, to delete by hand.
+
+**When the workflow switches the GPU.** The deploy job runs on every push to `main` that touches
+`deploy/spaces/inference-vllm/`, including its README. If `HF_TOKEN` and `HF_SPACE_ID` are set,
+each such push requests the L4 and never-sleep, whatever the Space settings say. Do steps 1 and 2
+before the first such push, so the L4 starts with persistent storage. The merge of PR #246 was
+the first such push. It ran with CI runners unavailable, so check the Space's hardware rather
+than assuming it switched.
+
+**Rollback:** the workflow re-applies its hardware on the next deploy, so a change in the Space
+settings alone does not last.
+- **To another GPU:** set the repository variable `HF_SPACE_HARDWARE`.
+- **To a Space that sleeps:** `sleep_time=-1` is fixed in the workflow, so change that step (or
+  disable it) in the same PR. Set `AURA_PROVIDER_HFSPACE_HEALTH_PROBE=passive` on Railway first;
+  otherwise readiness polling keeps the Space awake.
+

@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:aura_client/core/ai/vision/chat_images.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 import '../../calendar/data/calendar_repository.dart';
 import '../../finance/data/finance_repository.dart';
@@ -12,8 +14,8 @@ import '../data/chat_repository.dart';
 import '../data/turn_meta.dart';
 import 'pending_actions_executor.dart';
 
-/// What an image-only message asks.
-const kDefaultImageQuestion = 'What is in this image?';
+/// What an image-only message asks, in the language on screen when it is sent.
+String get kDefaultImageQuestion => currentL10n.chatDefaultImageQuestion;
 
 @immutable
 class ChatUiState {
@@ -23,12 +25,17 @@ class ChatUiState {
   final bool sendInFlight;
   final bool consumedInitialQuery;
 
+  /// Suggested actions are being carried out (F20): Approve shows a spinner and a second tap is
+  /// ignored rather than creating every task and expense twice.
+  final bool approvingActions;
+
   const ChatUiState({
     this.useRag = true,
     this.useMemory = true,
     this.useTools = true,
     this.sendInFlight = false,
     this.consumedInitialQuery = false,
+    this.approvingActions = false,
   });
 
   bool composerLocked({required bool isStreaming}) => sendInFlight || isStreaming;
@@ -51,6 +58,7 @@ class ChatUiState {
     bool? useTools,
     bool? sendInFlight,
     bool? consumedInitialQuery,
+    bool? approvingActions,
   }) {
     return ChatUiState(
       useRag: useRag ?? this.useRag,
@@ -58,6 +66,7 @@ class ChatUiState {
       useTools: useTools ?? this.useTools,
       sendInFlight: sendInFlight ?? this.sendInFlight,
       consumedInitialQuery: consumedInitialQuery ?? this.consumedInitialQuery,
+      approvingActions: approvingActions ?? this.approvingActions,
     );
   }
 }
@@ -102,7 +111,8 @@ class ChatViewModel extends Notifier<ChatUiState> {
   }
 
   /// Auto-sends the Home capture-bar query once. Returns false if already consumed.
-  Future<bool> consumeInitialQuery(String query) async {
+  /// [workspaceRoot] as for [sendMessage].
+  Future<bool> consumeInitialQuery(String query, {String? workspaceRoot, bool desktopTaskIsolation = false}) async {
     if (!state.canConsumeInitialQuery(query)) return false;
     state = state.copyWith(consumedInitialQuery: true, sendInFlight: true);
     try {
@@ -113,6 +123,8 @@ class ChatViewModel extends Notifier<ChatUiState> {
             useRag: state.useRag,
             useMemory: state.useMemory,
             useTools: state.useTools,
+            workspaceRoot: workspaceRoot,
+            desktopTaskIsolation: desktopTaskIsolation,
           );
       return true;
     } finally {
@@ -124,9 +136,14 @@ class ChatViewModel extends Notifier<ChatUiState> {
   /// (`pendingChatImagesProvider`) go with this message and are cleared once it is sent; with
   /// images and no text, the question defaults to [kDefaultImageQuestion].
   ///
-  /// [workspaceRoot] is the Desktop IDE's active workspace root (FSA-006): the backend forwards
-  /// it to the paired daemon as the `cwd` of every command. Null from any surface without one.
-  Future<bool> sendMessage(String text, {String? workspaceRoot}) async {
+  /// [workspaceRoot] is the folder on the user's computer the turn works in: the Desktop IDE's
+  /// active workspace root (FSA-006), or the folder a phone or web Engineer chat picked in its
+  /// desktop bar (WP8). The backend forwards it to the paired daemon as the `cwd` of every
+  /// command. Null from any surface without one.
+  ///
+  /// [desktopTaskIsolation] asks the daemon to do the turn's work in the conversation's own git
+  /// worktree (WP4, D-09) -- every Engineer turn on the user's computer does.
+  Future<bool> sendMessage(String text, {String? workspaceRoot, bool desktopTaskIsolation = false}) async {
     final isStreaming = ref.read(streamingMessageIdProvider) != null;
     final images = ref.read(pendingChatImagesProvider);
     if (!state.canSend(text, isStreaming: isStreaming, hasImages: images.isNotEmpty)) {
@@ -146,6 +163,7 @@ class ChatViewModel extends Notifier<ChatUiState> {
             useTools: state.useTools,
             images: images,
             workspaceRoot: workspaceRoot,
+            desktopTaskIsolation: desktopTaskIsolation,
           );
       return true;
     } finally {
@@ -167,15 +185,21 @@ class ChatViewModel extends Notifier<ChatUiState> {
   /// Declines the given pending calls without sending anything to the backend -- their approval
   /// ids are never sent, so they never run, and the held turn expires server-side.
   void rejectTools(List<PendingToolCall> calls) {
-    ref.read(chatRepositoryProvider).rejectPendingCalls(calls);
+    unawaited(ref.read(chatRepositoryProvider).rejectPendingCalls(calls));
   }
 
   void rejectPendingActions() {
     ref.read(pendingActionsProvider.notifier).clear();
   }
 
-  Future<PendingActionsOutcome> approvePendingActions() {
+  /// Carries out the suggested actions once. Returns null, doing nothing, while an approval is
+  /// already running or when there is nothing to approve (F20): the actions are claimed before
+  /// the first one runs, so a double tap cannot run them twice.
+  Future<PendingActionsOutcome?> approvePendingActions() async {
+    if (state.approvingActions) return null;
     final actions = ref.read(pendingActionsProvider);
+    if (actions.isEmpty) return null;
+    state = state.copyWith(approvingActions: true);
     final executor = PendingActionsExecutor(
       addTask: ref.read(taskRepositoryProvider).addTask,
       addEvent: ({
@@ -198,9 +222,15 @@ class ChatViewModel extends Notifier<ChatUiState> {
       logExercise: ref.read(healthRepositoryProvider).logExercise,
       logWeight: ref.read(healthRepositoryProvider).logWeight,
     );
-    return executor.execute(actions).whenComplete(() {
-      ref.read(pendingActionsProvider.notifier).clear();
-    });
+    try {
+      return await executor.execute(actions);
+    } finally {
+      // Only these actions: a turn that arrived meanwhile may have suggested new ones.
+      if (identical(ref.read(pendingActionsProvider), actions)) {
+        ref.read(pendingActionsProvider.notifier).clear();
+      }
+      state = state.copyWith(approvingActions: false);
+    }
   }
 }
 

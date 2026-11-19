@@ -160,6 +160,25 @@ class IndexManager:
     async def active_identity(self) -> IndexIdentity | None:
         return await self._vectors.resolve_alias(self._alias)
 
+    async def identities_for_removal(self) -> list[IndexIdentity]:
+        """Every existing index a document's points may be in, whatever embedder is configured.
+
+        Removal never goes through :meth:`resolve_for_read`: that refuses when no alias is
+        published or the alias was built by another embedding model -- the right answer for a
+        query, and exactly the wrong one for "delete my document" or a GDPR erasure, which must
+        reach the points wherever they are (F14). That is the published index (which model
+        built it does not matter to a delete by id) and the one the current embedder writes to,
+        when they differ; an index that does not exist is skipped rather than created.
+        """
+        candidates = [await self.active_identity(), self.identity_for_current_embedder()]
+        found: list[IndexIdentity] = []
+        for identity in candidates:
+            if identity is None or identity in found:
+                continue
+            if await self._vectors.index_exists(identity):
+                found.append(identity)
+        return found
+
     async def resolve_for_read(self) -> IndexIdentity:
         """The index reads must go through.
 

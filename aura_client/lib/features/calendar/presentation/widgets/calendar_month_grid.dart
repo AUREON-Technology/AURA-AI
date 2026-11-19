@@ -4,7 +4,6 @@ import 'package:intl/intl.dart';
 
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
-import 'package:aura_client/core/theme/theme.dart';
 import '../calendar_view_model.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
@@ -18,12 +17,21 @@ class CalendarMonthGrid extends ConsumerWidget {
     final ui = ref.watch(calendarViewModelProvider);
     final vm = ref.read(calendarViewModelProvider.notifier);
     final monthDays = daysInMonth(ui.currentMonthDate);
-    final offset = firstDayOffset(ui.currentMonthDate);
+    final localizations = MaterialLocalizations.of(context);
+    final firstDay = localizations.firstDayOfWeekIndex;
+    final offset = firstDayOffset(ui.currentMonthDate, firstDayOfWeekIndex: firstDay);
     final totalCells = monthDays + offset;
     final rowCount = (totalCells / 7).ceil();
     final prevMonthDate = DateTime(ui.currentMonthDate.year, ui.currentMonthDate.month - 1, 1);
     final daysInPrev = daysInMonth(prevMonthDate);
-    const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    // Day names in the language on screen, starting on the locale's first day of the week.
+    // 2023-01-01 was a Sunday (index 0). Arabic has no short day names, and its full ones do not
+    // fit seven columns on a phone, so a long name falls back to Material's narrow label.
+    final weekdays = List.generate(7, (i) {
+      final index = (firstDay + i) % 7;
+      final name = DateFormat.E().format(DateTime(2023, 1, 1 + index));
+      return name.length > 3 ? localizations.narrowWeekdays[index] : name;
+    });
 
     return Card(
       child: Padding(
@@ -33,17 +41,17 @@ class CalendarMonthGrid extends ConsumerWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(DateFormat('MMMM yyyy').format(ui.currentMonthDate), style: Theme.of(context).textTheme.titleLarge),
+                Text(DateFormat.yMMMM().format(ui.currentMonthDate), style: Theme.of(context).textTheme.titleLarge),
                 Row(
                   children: [
                     IconButton(
                       tooltip: context.l10n.calendarPreviousMonth,
-                      icon: const Icon(Icons.chevron_left, color: Colors.white),
+                      icon: Icon(Icons.chevron_left, color: palette.textPrimary),
                       onPressed: vm.prevMonth,
                     ),
                     IconButton(
                       tooltip: context.l10n.calendarNextMonth,
-                      icon: const Icon(Icons.chevron_right, color: Colors.white),
+                      icon: Icon(Icons.chevron_right, color: palette.textPrimary),
                       onPressed: vm.nextMonth,
                     ),
                   ],
@@ -57,7 +65,7 @@ class CalendarMonthGrid extends ConsumerWidget {
                   child: Center(
                     child: Text(
                       day,
-                      style: const TextStyle(color: AuraTheme.textSecondary, fontWeight: FontWeight.bold, fontSize: 12),
+                      style: TextStyle(color: palette.textSecondary, fontWeight: FontWeight.bold, fontSize: 12),
                     ),
                   ),
                 );
@@ -93,15 +101,15 @@ class CalendarMonthGrid extends ConsumerWidget {
                         child: Container(
                           margin: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 2.0),
                           decoration: BoxDecoration(
-                            gradient: isSelected ? AuraTheme.primaryGradient : null,
+                            gradient: isSelected ? palette.brandGradient : null,
                             color: isSelected
                                 ? null
                                 : isToday
-                                    ? const Color(0x336366F1)
+                                    ? palette.brand.withValues(alpha: 0.20)
                                     : Colors.transparent,
                             borderRadius: BorderRadius.circular(10),
                             border: Border.all(
-                              color: isToday && !isSelected ? AuraTheme.accentIndigo : Colors.transparent,
+                              color: isToday && !isSelected ? palette.brand : Colors.transparent,
                               width: 1,
                             ),
                           ),
@@ -113,7 +121,7 @@ class CalendarMonthGrid extends ConsumerWidget {
                                 Text(
                                   '$dayNum',
                                   style: TextStyle(
-                                    color: isSelected ? Colors.white : palette.textPrimary,
+                                    color: isSelected ? palette.onBrand : palette.textPrimary,
                                     fontWeight: isSelected || isToday ? FontWeight.bold : FontWeight.normal,
                                     fontSize: 14,
                                   ),
@@ -123,7 +131,7 @@ class CalendarMonthGrid extends ConsumerWidget {
                                   width: 5,
                                   height: 5,
                                   decoration: BoxDecoration(
-                                    color: hasEvents ? (isSelected ? Colors.white : AuraTheme.accentIndigo) : Colors.transparent,
+                                    color: hasEvents ? (isSelected ? palette.onBrand : palette.brandOnSurfaceText) : Colors.transparent,
                                     shape: BoxShape.circle,
                                   ),
                                 ),

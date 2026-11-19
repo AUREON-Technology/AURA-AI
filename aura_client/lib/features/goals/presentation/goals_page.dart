@@ -2,13 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:aura_client/core/database/database.dart';
-import 'package:aura_client/core/theme/theme.dart';
+import 'package:aura_client/core/design_system/design_system.dart';
 import '../../auth/presentation/auth_provider.dart';
 import '../../auth/presentation/sign_out_confirmation.dart';
 import '../data/goal_providers.dart';
 import 'goals_view_model.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class GoalsPage extends ConsumerWidget {
   const GoalsPage({super.key});
@@ -20,16 +21,17 @@ class GoalsPage extends ConsumerWidget {
     ref.watch(goalsViewModelProvider);
     final vm = ref.read(goalsViewModelProvider.notifier);
     final user = authState.value;
+    final palette = AuraPalette.of(context);
 
     return Scaffold(
-      backgroundColor: AuraTheme.background,
+      backgroundColor: palette.background,
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: RadialGradient(
-            center: Alignment(0.8, -0.6),
+            center: const Alignment(0.8, -0.6),
             radius: 1.2,
             colors: [
-              Color(0x1F6366F1),
+              palette.brand.withValues(alpha: 0.12),
               Colors.transparent,
             ],
           ),
@@ -50,8 +52,8 @@ class GoalsPage extends ConsumerWidget {
                     else
                       CircleAvatar(
                         radius: 24,
-                        backgroundColor: AuraTheme.accentIndigo.withValues(alpha: 0.2),
-                        child: const Icon(Icons.person, color: AuraTheme.accentIndigo),
+                        backgroundColor: palette.brand.withValues(alpha: 0.2),
+                        child: Icon(Icons.person, color: palette.brandOnSurfaceText),
                       ),
                     const SizedBox(width: 16),
                     Expanded(
@@ -59,13 +61,13 @@ class GoalsPage extends ConsumerWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Welcome back,',
+                            context.l10n.goalsWelcomeBack,
                             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                  color: AuraTheme.textSecondary,
+                                  color: palette.textSecondary,
                                 ),
                           ),
                           Text(
-                            user?.displayName ?? 'Aura User',
+                            user?.displayName ?? context.l10n.goalsDefaultUserName,
                             style: Theme.of(context).textTheme.titleLarge?.copyWith(
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -74,8 +76,8 @@ class GoalsPage extends ConsumerWidget {
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.logout, color: Colors.redAccent),
-                      tooltip: 'Sign Out',
+                      icon: Icon(Icons.logout, color: palette.danger),
+                      tooltip: context.l10n.signOut,
                       onPressed: () => confirmAndSignOut(context, ref),
                     ),
                   ],
@@ -91,16 +93,16 @@ class GoalsPage extends ConsumerWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Goals',
+                          context.l10n.goalsPageTitle,
                           style: Theme.of(context).textTheme.displayLarge?.copyWith(
                                 fontSize: 28,
                                 fontWeight: FontWeight.w900,
                               ),
                         ),
                         Text(
-                          'Track your aspirations and progress',
+                          context.l10n.goalsPageSubtitle,
                           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: AuraTheme.textSecondary,
+                                color: palette.textSecondary,
                               ),
                         ),
                       ],
@@ -108,7 +110,7 @@ class GoalsPage extends ConsumerWidget {
                     FilledButton.icon(
                       onPressed: () => _showAddGoalDialog(context, ref, vm),
                       icon: const Icon(Icons.add),
-                      label: const Text('New Goal'),
+                      label: Text(context.l10n.goalsNewGoal),
                     ),
                   ],
                 ),
@@ -117,15 +119,15 @@ class GoalsPage extends ConsumerWidget {
                   child: goalsAsync.when(
                     data: (goals) {
                       if (goals.isEmpty) {
-                        return const Center(
+                        return Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.flag, size: 64, color: Colors.grey),
-                              SizedBox(height: 16),
-                              Text('No goals yet', style: TextStyle(fontSize: 18, color: Colors.grey)),
-                              SizedBox(height: 8),
-                              Text('Create your first goal to get started', style: TextStyle(color: Colors.grey)),
+                              Icon(Icons.flag, size: 64, color: palette.textSecondary),
+                              const SizedBox(height: 16),
+                              Text(context.l10n.goalsEmptyTitle, style: TextStyle(fontSize: 18, color: palette.textSecondary)),
+                              const SizedBox(height: 8),
+                              Text(context.l10n.goalsEmptyMessage, style: TextStyle(color: palette.textSecondary)),
                             ],
                           ),
                         );
@@ -169,39 +171,39 @@ class GoalsPage extends ConsumerWidget {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: const Text('Create Goal'),
+          title: Text(context.l10n.goalsCreateGoalTitle),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
                   controller: titleController,
-                  decoration: const InputDecoration(labelText: 'Title *'),
+                  decoration: InputDecoration(labelText: context.l10n.goalsTitleRequiredLabel),
                   autofocus: true,
                 ),
                 const SizedBox(height: 16),
                 TextField(
                   controller: descController,
-                  decoration: const InputDecoration(labelText: 'Description'),
+                  decoration: InputDecoration(labelText: context.l10n.goalsDescriptionLabel),
                   maxLines: 3,
                 ),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<String>(
                   initialValue: status,
-                  items: ['active', 'achieved', 'abandoned'].map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                  items: ['active', 'achieved', 'abandoned'].map((s) => DropdownMenuItem(value: s, child: Text(_goalStatusLabel(context, s)))).toList(),
                   onChanged: (v) => setState(() => status = v!),
-                  decoration: const InputDecoration(labelText: 'Status'),
+                  decoration: InputDecoration(labelText: context.l10n.goalsStatusLabel),
                 ),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<String>(
                   initialValue: priority,
-                  items: ['low', 'medium', 'high'].map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                  items: ['low', 'medium', 'high'].map((s) => DropdownMenuItem(value: s, child: Text(_goalPriorityLabel(context, s)))).toList(),
                   onChanged: (v) => setState(() => priority = v!),
-                  decoration: const InputDecoration(labelText: 'Priority'),
+                  decoration: InputDecoration(labelText: context.l10n.goalsPriorityLabel),
                 ),
                 const SizedBox(height: 16),
                 ListTile(
-                  title: Text(targetDate == null ? 'Set target date (optional)' : 'Target: ${targetDate!.toLocal().toString().split(' ')[0]}'),
+                  title: Text(targetDate == null ? context.l10n.goalsSetTargetDate : context.l10n.goalsTargetDate(targetDate!.toLocal().toString().split(' ')[0])),
                   trailing: const Icon(Icons.calendar_today),
                   onTap: () async {
                     final date = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime.now(), lastDate: DateTime.now().add(const Duration(days: 365 * 5)));
@@ -209,7 +211,7 @@ class GoalsPage extends ConsumerWidget {
                   },
                 ),
                 const SizedBox(height: 16),
-                Text('Progress: $progressPct%'),
+                Text(context.l10n.goalsProgressPercent(progressPct)),
                 Slider(
                   value: progressPct.toDouble(),
                   min: 0,
@@ -221,7 +223,7 @@ class GoalsPage extends ConsumerWidget {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            TextButton(onPressed: () => Navigator.pop(context), child: Text(context.l10n.cancel)),
             FilledButton(
               onPressed: () async {
                 if (titleController.text.trim().isEmpty) return;
@@ -235,7 +237,7 @@ class GoalsPage extends ConsumerWidget {
                 );
                 if (context.mounted) Navigator.pop(context);
               },
-              child: const Text('Create'),
+              child: Text(context.l10n.goalsCreate),
             ),
           ],
         ),
@@ -250,30 +252,31 @@ class _GoalCard extends StatelessWidget {
 
   const _GoalCard({required this.goal, required this.onDelete});
 
-  Color _statusColor(String status) {
+  Color _statusColor(AuraPalette palette, String status) {
     switch (status) {
       case 'achieved':
-        return Colors.green;
+        return palette.success;
       case 'abandoned':
-        return Colors.grey;
+        return palette.textSecondary;
       default:
-        return Colors.blue;
+        return palette.info;
     }
   }
 
-  Color _priorityColor(String priority) {
+  Color _priorityColor(AuraPalette palette, String priority) {
     switch (priority) {
       case 'high':
-        return Colors.red;
+        return palette.danger;
       case 'low':
-        return Colors.green;
+        return palette.success;
       default:
-        return Colors.orange;
+        return palette.warning;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
@@ -284,8 +287,8 @@ class _GoalCard extends StatelessWidget {
             Row(
               children: [
                 CircleAvatar(
-                  backgroundColor: _statusColor(goal.status).withValues(alpha: 0.2),
-                  child: Icon(Icons.flag, color: _statusColor(goal.status)),
+                  backgroundColor: _statusColor(palette, goal.status).withValues(alpha: 0.2),
+                  child: Icon(Icons.flag, color: _statusColor(palette, goal.status)),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -294,7 +297,7 @@ class _GoalCard extends StatelessWidget {
                     children: [
                       Text(goal.title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
                       if (goal.description != null && goal.description!.isNotEmpty)
-                        Text(goal.description!, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+                        Text(goal.description!, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: palette.textSecondary)),
                     ],
                   ),
                 ),
@@ -303,8 +306,8 @@ class _GoalCard extends StatelessWidget {
                     if (value == 'delete') onDelete();
                   },
                   itemBuilder: (context) => [
-                    const PopupMenuItem(value: 'edit', child: Text('Edit')),
-                    const PopupMenuItem(value: 'delete', child: Text('Delete', style: TextStyle(color: Colors.red))),
+                    PopupMenuItem(value: 'edit', child: Text(context.l10n.commonEdit)),
+                    PopupMenuItem(value: 'delete', child: Text(context.l10n.commonDelete, style: TextStyle(color: palette.danger))),
                   ],
                 ),
               ],
@@ -317,17 +320,17 @@ class _GoalCard extends StatelessWidget {
                     padding: const EdgeInsetsDirectional.only(end: 8),
                     child: Chip(
                       label: Text(goal.category!, style: const TextStyle(fontSize: 11)),
-                      backgroundColor: Colors.blue.withValues(alpha: 0.1),
+                      backgroundColor: palette.info.withValues(alpha: 0.1),
                     ),
                   ),
                 Chip(
-                  label: Text(goal.status, style: TextStyle(fontSize: 11, color: _statusColor(goal.status))),
-                  backgroundColor: _statusColor(goal.status).withValues(alpha: 0.1),
+                  label: Text(_goalStatusLabel(context, goal.status), style: TextStyle(fontSize: 11, color: _statusColor(palette, goal.status))),
+                  backgroundColor: _statusColor(palette, goal.status).withValues(alpha: 0.1),
                 ),
                 const SizedBox(width: 8),
                 Chip(
-                  label: Text(goal.priority, style: TextStyle(fontSize: 11, color: _priorityColor(goal.priority))),
-                  backgroundColor: _priorityColor(goal.priority).withValues(alpha: 0.1),
+                  label: Text(_goalPriorityLabel(context, goal.priority), style: TextStyle(fontSize: 11, color: _priorityColor(palette, goal.priority))),
+                  backgroundColor: _priorityColor(palette, goal.priority).withValues(alpha: 0.1),
                 ),
               ],
             ),
@@ -337,8 +340,8 @@ class _GoalCard extends StatelessWidget {
                 Expanded(
                   child: LinearProgressIndicator(
                     value: goal.progressPct / 100,
-                    backgroundColor: Colors.grey[200],
-                    valueColor: AlwaysStoppedAnimation<Color>(_statusColor(goal.status)),
+                    backgroundColor: palette.surfaceVariant,
+                    valueColor: AlwaysStoppedAnimation<Color>(_statusColor(palette, goal.status)),
                     minHeight: 8,
                   ),
                 ),
@@ -348,11 +351,39 @@ class _GoalCard extends StatelessWidget {
             ),
             if (goal.targetDate != null) ...[
               const SizedBox(height: 8),
-              Text('Target: ${goal.targetDate!.toLocal().toString().split(' ')[0]}', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+              Text(context.l10n.goalsTargetDate(goal.targetDate!.toLocal().toString().split(' ')[0]), style: TextStyle(fontSize: 12, color: palette.textSecondary)),
             ],
           ],
         ),
       ),
     );
+  }
+}
+
+/// Display label for a stored goal status; unknown values are shown as stored.
+String _goalStatusLabel(BuildContext context, String status) {
+  switch (status) {
+    case 'active':
+      return context.l10n.goalsStatusActive;
+    case 'achieved':
+      return context.l10n.goalsStatusAchieved;
+    case 'abandoned':
+      return context.l10n.goalsStatusAbandoned;
+    default:
+      return status;
+  }
+}
+
+/// Display label for a stored goal priority; unknown values are shown as stored.
+String _goalPriorityLabel(BuildContext context, String priority) {
+  switch (priority) {
+    case 'low':
+      return context.l10n.goalsPriorityLow;
+    case 'medium':
+      return context.l10n.goalsPriorityMedium;
+    case 'high':
+      return context.l10n.goalsPriorityHigh;
+    default:
+      return priority;
   }
 }

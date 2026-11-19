@@ -246,6 +246,110 @@ class TestDevelopmentToolingIsHashPinned:
         assert swallowed == [], f"hash-checked installs whose failure is ignored: {swallowed}"
 
 
+#: pip options that take a value as the next token (so that value is not read as a package).
+_PIP_VALUE_FLAGS = frozenset({
+    "-r", "--requirement", "-c", "--constraint", "-i", "--index-url", "--extra-index-url",
+    "-t", "--target", "--prefix", "--root", "-f", "--find-links", "--only-binary", "--no-binary",
+    "--platform", "--python-version", "--implementation", "--abi", "--progress-bar", "--report",
+})
+_PINNED_PIP = re.compile(r"^[A-Za-z0-9._-]+(\[[A-Za-z0-9._,-]+\])?==[A-Za-z0-9.+!_-]+$")
+_PINNED_NPM = re.compile(r"^(@[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+@\d+\.\d+\.\d+$")
+
+
+def _unpinned_install(line: str) -> str | None:
+    """Why a workflow `run:` line installs something unpinned, or None when it does not.
+
+    A pip install passes if it is hash-checked (`--require-hashes`) or names every package as
+    `name==version`; a requirements file is only accepted with hashes. A global npm install must
+    name every package as `name@x.y.z`. Project installs (`npm ci`) are pinned by their lockfile.
+    """
+    import shlex
+
+    text = line.strip()
+    if text.startswith("#"):
+        return None
+    text = re.sub(r"^(-\s+)?run:\s*", "", text)
+    pip = re.search(r"\bpip3?\s+install\b(.*)$", text)
+    npm = re.search(r"\bnpm\s+(?:install|i|add)\b(.*)$", text)
+    if pip is None and npm is None:
+        return None
+    try:
+        tokens = shlex.split((pip or npm).group(1), comments=True)
+    except ValueError:
+        return "unparseable install line"
+    for stop in ("&&", "||", ";", "|"):
+        if stop in tokens:
+            tokens = tokens[: tokens.index(stop)]
+    if pip is not None:
+        if "--require-hashes" in tokens:
+            return None
+        packages, skip = [], False
+        for token in tokens:
+            if skip:
+                skip = False
+                continue
+            if token in ("-r", "--requirement"):
+                return "a requirements file installed without --require-hashes"
+            if token in _PIP_VALUE_FLAGS:
+                skip = True
+                continue
+            if token.startswith("-"):
+                continue
+            packages.append(token)
+        loose = [p for p in packages if not _PINNED_PIP.match(p)]
+        return f"pip packages not pinned with ==: {loose}" if loose or not packages else None
+    if not ({"-g", "--global"} & set(tokens)):
+        return None
+    packages = [t for t in tokens if not t.startswith("-")]
+    loose = [p for p in packages if not _PINNED_NPM.match(p)]
+    return f"global npm packages not pinned to an exact version: {loose}" if loose or not packages else None
+
+
+class TestWorkflowInstallsArePinned:
+    """Audit F49. `npm install -g @railway/cli` and `pip install -U huggingface_hub` ran in the
+    production deploy jobs, with the deploy token in the environment, whatever version the
+    registry served that minute. Every tool a workflow installs must be pinned: hash-checked, or at
+    least an exact version."""
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "run: npm install -g @railway/cli",
+            "run: pip install -U huggingface_hub",
+            'python -m pip install --quiet "pytest>=8.0"',
+            "pip install pip-audit",
+            "pip install -r requirements.txt",
+            "npm i -g typescript@latest",
+            "pip install --quiet httpx && echo done",
+        ],
+    )
+    def test_the_checker_flags_an_unpinned_install(self, line: str) -> None:
+        assert _unpinned_install(line) is not None
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "run: npm install -g @railway/cli@5.71.0",
+            "pip install --require-hashes --only-binary=:all: -r deploy/ci/huggingface-hub.lock",
+            'python -m pip install --quiet "pytest==9.2.0"',
+            "pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock",
+            "run: npm ci",
+            "# pip install anything-in-a-comment",
+        ],
+    )
+    def test_the_checker_accepts_a_pinned_install(self, line: str) -> None:
+        assert _unpinned_install(line) is None
+
+    def test_no_workflow_installs_an_unpinned_tool(self) -> None:
+        offenders = []
+        for path in _workflows():
+            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                reason = _unpinned_install(line)
+                if reason:
+                    offenders.append(f"{path.name}:{lineno}: {line.strip()} -- {reason}")
+        assert offenders == [], "unpinned installs in workflows:\n" + "\n".join(offenders)
+
+
 class TestWindowsJobsGate:
     """Audit G-03 / FSA-063: the desktop targets are Windows-first, and the Windows jobs were the
     only ones allowed to fail silently. Both have been seen green on real runners (client #213-#215,

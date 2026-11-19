@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:aura_client/core/database/database.dart';
-import 'package:aura_client/core/theme/theme.dart';
+import 'package:aura_client/core/design_system/design_system.dart';
 import '../data/calendar_repository.dart';
 import 'calendar_view_model.dart';
 import 'widgets/calendar_month_grid.dart';
@@ -19,22 +19,24 @@ class CalendarPage extends ConsumerWidget {
     final eventsAsync = ref.watch(calendarEventsStreamProvider);
     final ui = ref.watch(calendarViewModelProvider);
     final vm = ref.read(calendarViewModelProvider.notifier);
+    final palette = AuraPalette.of(context);
 
     return Scaffold(
+      backgroundColor: palette.background,
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: RadialGradient(
-            center: Alignment(0.6, -0.6),
+            center: const Alignment(0.6, -0.6),
             radius: 1.5,
-            colors: [Color(0xFF1E1B4B), Color(0xFF0F0C1B)],
+            colors: [palette.brand.withValues(alpha: 0.12), Colors.transparent],
           ),
         ),
         child: SafeArea(
           child: Padding(
             padding: const EdgeInsets.all(24.0),
             child: eventsAsync.when(
-              loading: () => const Center(
-                child: CircularProgressIndicator(color: AuraTheme.accentIndigo),
+              loading: () => Center(
+                child: CircularProgressIndicator(color: palette.brand),
               ),
               error: (err, stack) => Center(
                 child: SingleChildScrollView(
@@ -72,12 +74,12 @@ class CalendarPage extends ConsumerWidget {
                           SnackBar(
                             content: Text(
                               hadErrors
-                                  ? 'Calendar sync encountered errors.'
-                                  : 'Google Calendar sync completed successfully!',
+                                  ? context.l10n.calendarSyncFailed
+                                  : context.l10n.calendarSyncSucceeded,
                             ),
                             backgroundColor: hadErrors
-                                ? Colors.redAccent
-                                : AuraTheme.accentTeal,
+                                ? palette.danger
+                                : palette.success,
                           ),
                         );
                       },
@@ -136,6 +138,7 @@ class _CalendarHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
     return Wrap(
       spacing: 12,
       runSpacing: 12,
@@ -146,14 +149,14 @@ class _CalendarHeader extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Calendar',
+              context.l10n.calendarPageTitle,
               style: Theme.of(
                 context,
               ).textTheme.displayLarge?.copyWith(fontSize: 28),
             ),
             const SizedBox(height: 4),
             Text(
-              'Manage local schedules and sync with Google',
+              context.l10n.calendarPageSubtitle,
               style: Theme.of(context).textTheme.bodyMedium,
             ),
           ],
@@ -165,11 +168,11 @@ class _CalendarHeader extends StatelessWidget {
           children: [
             if (hasLogs)
               IconButton(
-                icon: const Icon(
+                icon: Icon(
                   Icons.receipt_long,
-                  color: AuraTheme.textSecondary,
+                  color: palette.textSecondary,
                 ),
-                tooltip: 'View Sync Logs',
+                tooltip: context.l10n.calendarViewSyncLogs,
                 onPressed: () => _showLogs(context, logs),
               ),
             isSyncing
@@ -179,11 +182,11 @@ class _CalendarHeader extends StatelessWidget {
                       vertical: 12,
                     ),
                     decoration: BoxDecoration(
-                      color: AuraTheme.cardBg,
+                      color: palette.surfaceVariant,
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color(0x1F94A3B8)),
+                      border: Border.all(color: palette.border),
                     ),
-                    child: const Row(
+                    child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         SizedBox(
@@ -191,20 +194,21 @@ class _CalendarHeader extends StatelessWidget {
                           height: 16,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: Colors.white,
+                            color: palette.brandOnSurfaceText,
                           ),
                         ),
-                        SizedBox(width: 12),
-                        Text('Syncing...', style: TextStyle(fontSize: 14)),
+                        const SizedBox(width: 12),
+                        Text(context.l10n.calendarSyncing, style: TextStyle(fontSize: 14, color: palette.textPrimary)),
                       ],
                     ),
                   )
                 : ElevatedButton.icon(
                     onPressed: onSync,
                     icon: const Icon(Icons.sync),
-                    label: const Text('Sync Calendar'),
+                    label: Text(context.l10n.calendarSyncButton),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AuraTheme.accentIndigo,
+                      backgroundColor: palette.brand,
+                      foregroundColor: palette.onBrand,
                     ),
                   ),
           ],
@@ -216,22 +220,23 @@ class _CalendarHeader extends StatelessWidget {
   void _showLogs(BuildContext context, List<String> logs) {
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF0F0C1B),
+      backgroundColor: AuraPalette.of(context).background,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (context) {
+        final palette = AuraPalette.of(context);
         return SizedBox(
           height: MediaQuery.sizeOf(context).height * 0.5,
           child: Container(
             padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
-              color: AuraTheme.cardBg,
+              color: palette.surface,
               borderRadius: const BorderRadius.vertical(
                 top: Radius.circular(24),
               ),
-              border: Border.all(color: const Color(0x1F94A3B8)),
+              border: Border.all(color: palette.border),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -240,7 +245,7 @@ class _CalendarHeader extends StatelessWidget {
                   children: [
                     Expanded(
                       child: Text(
-                        'Sync Activity Log',
+                        context.l10n.calendarSyncLogTitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.titleLarge,
@@ -248,18 +253,18 @@ class _CalendarHeader extends StatelessWidget {
                     ),
                     IconButton(
                       tooltip: context.l10n.close,
-                      icon: const Icon(Icons.close, color: Colors.white),
+                      icon: Icon(Icons.close, color: palette.textPrimary),
                       onPressed: () => Navigator.pop(context),
                     ),
                   ],
                 ),
-                const Divider(color: Color(0x1F94A3B8), height: 24),
+                Divider(color: palette.border, height: 24),
                 Expanded(
                   child: logs.isEmpty
-                      ? const Center(
+                      ? Center(
                           child: Text(
-                            'No logs recorded yet. Press sync to begin.',
-                            style: TextStyle(color: AuraTheme.textSecondary),
+                            context.l10n.calendarSyncLogEmpty,
+                            style: TextStyle(color: palette.textSecondary),
                           ),
                         )
                       : ListView.builder(
@@ -267,18 +272,18 @@ class _CalendarHeader extends StatelessWidget {
                           itemBuilder: (context, index) {
                             final log = logs[index];
                             var logIcon = Icons.info_outline;
-                            var logColor = AuraTheme.textSecondary;
+                            var logColor = palette.textSecondary;
                             if (log.toLowerCase().contains('error') ||
                                 log.toLowerCase().contains('failed')) {
                               logIcon = Icons.error_outline;
-                              logColor = Colors.redAccent;
+                              logColor = palette.danger;
                             } else if (log.toLowerCase().contains('success')) {
                               logIcon = Icons.check_circle_outline;
-                              logColor = AuraTheme.accentTeal;
+                              logColor = palette.success;
                             } else if (log.toLowerCase().contains('import') ||
                                 log.toLowerCase().contains('upload')) {
                               logIcon = Icons.cloud_sync_outlined;
-                              logColor = AuraTheme.accentIndigo;
+                              logColor = palette.brandOnSurfaceText;
                             }
                             return Padding(
                               padding: const EdgeInsets.symmetric(

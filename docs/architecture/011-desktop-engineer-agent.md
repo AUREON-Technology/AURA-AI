@@ -58,7 +58,11 @@ workspace" mode — is allowed to lift. A path outside every granted root is ref
 confirmable; the user adds a root instead of the agent working around the boundary.
 
 Containment is a `cwd`-level control for `run_command`, so a shell command's own arguments can
-name a path elsewhere. In an untrusted root the read-only tier already refuses such arguments; in
+name a path elsewhere. In an untrusted root the read-only tier already refuses such arguments,
+and since 2026-11-18 (audit F16) it judges what a command would actually open rather than how
+an argument is spelled: arguments are resolved through symlinks, and an unquoted glob or a
+recursive read (`grep -R`, `ls -RL`) scans the folders it names for a symlink leaving the root,
+asking for approval if one does (`command_policy.dart::_mayFollowLinkOutside`). In
 a *trusted* root, since the 2026-10-31 audit (FSA-006), the daemon applies the same argument
 containment to a documented set of destructive verbs (remove, move, copy, find, chmod,
 `git clean`/`reset`/`checkout`, … — `command_policy.dart::destructiveVerbPattern`), including
@@ -99,6 +103,76 @@ exchanges it for a narrower, revocable token — the same shape `/api/v3/auth/we
 uses for the browser's non-attested path. This is a real relaxation of the attestation
 requirement for one platform, made deliberately and narrowly rather than silently, and confined
 to identity — it grants no bypass of `ToolPolicy`, taint, or the daemon's own containment.
+
+### Customers (SaaS P1-E, 2026-11-17): threat model
+
+Until P1-E the desktop sign-in was for console operators only (audit F-09): it skips device
+attestation, so any Google account could otherwise mint there what a phone gets only after Play
+Integrity or App Attest. The owner decided (2026-11-16) to open the desktop Engineer to paying
+customers. This section is the threat-model change that decision required. It applies only with
+`AURA_ENGINEER_FOR_CUSTOMERS=true`. With the switch off, every route behaves as before.
+
+**Who can now hold a desktop session.** An operator, as before. Otherwise only a person with at
+least one workspace (personal, or a team they belong to) whose plan includes the Engineer, which is
+Pro or Team (`PlanService.engineer_entitled`). That applies at `/desktop/login`, at pairing
+approval, and at every desktop refresh.
+
+**Why the missing attestation stops mattering.** A customer desktop session, and the daemon token
+paired from it, carries `channel=consumer_desktop`. `services.rbac.get_user_role` caps that channel
+at `User` on issue, on every refresh, and in the gateway's per-request resolution. It is the same
+mechanism as the customer browser sign-in (`consumer_web`, Plan B). So an unattested desktop
+session is worth exactly what an unattested browser session is already worth, and never a
+console role, even when the person's address is on an operator list.
+
+**What stays mandatory.** The Engineer's safety on someone's own computer rests on four things:
+- `ToolPolicy` confirmation (ADR-006);
+- taint: a tainted turn is held for confirmation before any side effect on the user's machine,
+  whatever `block_side_effects_when_tainted` says;
+- the daemon's own folder grants and containment;
+- credentials that belong to the person, not the operator.
+
+Startup therefore refuses the switch alongside any of these:
+- `AURA_TOOLS_REQUIRE_CONFIRMATION=false`;
+- `AURA_SANDBOX_ENABLED=true` (server sandbox workspaces for customers are phase 1b);
+- `AURA_GITHUB_ENABLED` without OAuth (one shared operator token);
+- `AURA_MCP_ENABLED` (the operator's MCP servers);
+- `User` in `AURA_ENGINEER_AGENT_ROLES` (a role grant to everyone would skip every plan check).
+
+**Abuse limits.** The new entry points are open beyond operators, so each is limited:
+- desktop sign-ins and pairing starts, per client address: 10 a minute;
+- wrong pairing codes, per person: 5 an hour (correct approvals are not counted);
+- paired daemons, per person: 10;
+- app sign-ins, per person: the newest 10 are kept, and older ones are revoked.
+
+These limits are in-process and per worker, so a deployment with N workers allows N times as
+many. An IPv6 caller is counted per /64. A per-address limit is a burst bound, not a guarantee;
+the per-person limits cannot be forged.
+
+**Revocation on downgrade.** Losing Pro, or leaving the only team that had it, ends the desktop
+Engineer through three independent paths:
+- the next desktop refresh is 401 (access tokens live 15 minutes);
+- the daemon socket re-checks entitlement on its 60-second credential recheck and closes;
+- the next turn carries no `engineer_agent` capability (`admit_turn`, Plan C).
+
+Paired devices are not deleted. Upgrading again works without re-pairing, and the person can
+still revoke devices in Settings. A turn already running when the downgrade lands can keep
+calling the daemon until the socket's next recheck (at most 60 seconds).
+
+A failed plan lookup is not a downgrade. Sign-in and pairing answer 503. A refresh answers 503
+and puts the refresh token back, so the app can retry. A daemon already connected stays until a
+recheck succeeds.
+
+Sign-in, pairing and the daemon socket accept an Engineer plan on *any* of the person's
+workspaces. A turn uses only the *active* workspace's plan. A Team member whose personal
+workspace is Free can therefore pair a daemon, but gets the Engineer only in the team. This
+fails closed, and it is deliberate: the daemon belongs to the person, and the plan belongs to
+the workspace.
+
+**Still not offered to customers:** the server-side sandbox and durable workspaces (ADR-013/014),
+MCP, and a shared GitHub token. Tests: `tests/integration/test_desktop_engineer_customers.py`,
+`tests/integration/test_engineer_for_customers.py`,
+`tests/unit/test_engineer_for_customers_config.py`. Setup:
+`docs/deployment/desktop-engineer-customers.md`.
 
 ## Consequences
 
@@ -317,6 +391,44 @@ watch for and recover from a crash); and a bundled `aura_hostd` binary (there is
 configures the executable path themselves, the same disclosed-until-configured shape
 `google_desktop_client_id` already uses on the backend).
 
+**Integration audit fixes (2026-11-17, INT-002/003/007/019/036–038).** These change the
+contract described above:
+
+- **Grants are live.** Before, the daemon built `TaskHandler` and `IsolatedTaskRegistry` from a
+  start-up snapshot of the roots, while `/roots` wrote a fresh copy to disk. A revoke, trust or
+  untrust in the UI therefore didn't reach the agent until a restart.
+  - Now `WorkspaceStore.live` is the one set every agent RPC resolves against. It is updated on
+    save and re-read from disk before each request, so a CLI change from another process also
+    applies.
+  - A task bound to a root at `create_task` re-checks that root, and its current trust, on every
+    call.
+- **A refused token is visible.** After the backend closes the socket with 4401 (token expired,
+  device revoked, or the account lacks `engineer_agent`), the daemon stops reconnecting.
+  - `/status` reports `credentials_rejected: true` and `last_close_code`, and a new pairing
+    replaces the refused connection.
+  - The app shows "Re-pair required" with a Pair button. Before this it showed "reconnecting…"
+    indefinitely.
+  - The backend also refuses `/desktop/pair/approve` with 403 when the approver lacks
+    `engineer_agent` (the same `host_agent.may_host` check the socket uses), so that case fails at
+    pairing.
+- **Disconnects cancel pending approvals.** When the socket closes, every approval an in-flight
+  call is waiting on is cancelled. The backend has already failed those calls, so approving one
+  later would run a side effect nobody is waiting for.
+- **Sends are guarded.** Every socket send checks that the socket is open, and `run` executes
+  inside `runZonedGuarded`.
+- **`read_file` is capped at 2 MiB**, the same limit as the control server's `/read`.
+- **The control server is narrower.**
+  - Every route except `/status` needs the token. `/status` without the token returns only status
+    flags: no root paths and no backend URL.
+  - A request whose `Host` header is not loopback gets 403 (DNS rebinding).
+  - The token is compared in constant time.
+- **The daemon collects an approved pairing itself**, not only when the UI polls `/pair/status`.
+- **The app's control calls time out:** 30 s by default, 10 minutes for git network operations and
+  lint.
+
+Tests: `aura_hostd/test/daemon_wiring_test.dart` runs the real `ControlServer` over HTTP, and the
+real `BackendConnection` over WebSocket to a fake backend, on one store on disk.
+
 **Interactive tiered consent (D5) — now built.** Three tiers, `lib/src/command_policy.dart`: a
 hard denylist that no tier can lift (`rm -rf`, fork bombs, `mkfs`, pipe-to-shell, ...); a
 read-only inspection allowlist (`ls`/`cat`/`grep`/`git status`/... — `find`/`env` deliberately
@@ -489,3 +601,101 @@ that ties a new desktop device to an attested one, for instance a desktop device
 inactive until its owner approves it from the phone app, not with a lower gate.
 
 See `docs/AURA_UPGRADE_ROADMAP.md` for the up-to-date status of what is and is not built.
+
+## Amendment 2026-11-17: remote control from the phone and web (WP8)
+
+Owner decisions D-10, D-10b and D-10c
+(`docs/module-readiness/engineer-agent/desktop-github/2026-11-17/`): the Engineer may work on
+the person's paired computer from the phone and web app. It needs two guards. Remote control is
+off until switched on at the computer itself. Every change a remote turn makes there is approved
+on the remote device.
+
+**Origin.** A turn is `desktop` only when its access token carries the server-signed
+`platform: desktop` claim together with a device id. That claim is set only by
+`issue_desktop_session` / `issue_device_token`. Everything else is `remote`. The value is
+derived in the authenticator (`Principal.origin`) and never read from a request body. It travels
+on `TurnRequest.origin` → `ToolContext.metadata["origin"]` → `create_task.origin`. Delegation
+carries it to the sub-turn. An approval resumed from a phone is `remote`, because the device that
+approves is the one acting.
+
+**Backend hold.** `ToolPolicy` holds every desktop-routed (`workspace_local` and side-effecting)
+call of a remote turn for confirmation, tainted or not, with reason
+`side_effect_on_user_machine_from_remote_device`. The phone already renders held calls, through
+`EngineerConfirmationCard`. `ToolRegistry` marks the approved call (`TOOL_CALL_CONFIRMED`), and
+the runner sends `confirmed: true` with that `run` / `write_file` / `write_files` only.
+
+**Daemon.** `config.json` `remote_control`, off by default, is set only through the loopback
+control server (`POST /remote_control`) from the desktop app. No RPC can change it.
+- A `remote` `create_task` is refused unless it is on.
+- The flag is re-read on every later call, so switching it off stops a conversation at its next
+  call.
+- A remote task never uses the trusted tier and never queues a local approval, because nobody is
+  at the desk to answer one.
+- On a remote task, everything refused in every tier stays refused (hard denylist, protected
+  `.git` writes, containment). Every other write or command needs `confirmed: true`.
+- A `desktop` task ignores `confirmed`: the backend can never waive the desk's own consent.
+- `list_roots` returns the granted folders and the flag, for the phone's folder picker
+  (`GET /api/v3/host/folders`).
+
+**What it does and does not defend.**
+- **Stolen phone or web session, honest backend:** the attacker can act only if the person has
+  switched remote control on at the computer. Even then, every change goes through the approval
+  flow on that same stolen device. The owner accepted this residual risk in D-10c and declined
+  re-authentication per approval. Device revoke and the 15-minute access token bound it.
+- **Compromised backend:** origin is not a boundary. The backend can always claim `desktop`, as
+  before this amendment. With remote control on, it can also send `confirmed`. Leaving remote
+  control off keeps the pre-amendment posture.
+- **A second desktop computer:** any desktop-app token is `desktop`, whichever computer the
+  daemon runs on. The app's device is not linked to the daemon's.
+
+**Status.** Built and tested locally (backend, daemon, client), not CI-run, and never exercised
+between a real phone and a real computer. That proof belongs to the WP10 end-to-end report.
+
+## Amendment 2026-11-18: customers' Engineer outside turns (WP11) and desktop sign-in through the browser (WP12)
+
+Module readiness stage 2 (`docs/module-readiness/engineer-agent/desktop-github/2026-11-17/`),
+built on SaaS P1-E ("Customers", above).
+
+**WP11: the plan grants the Engineer to routes as well as turns.** P1-E gives a customer
+`engineer_agent` per turn, in `admit_turn`, from the active workspace's plan. Three routes are
+not turns and checked only the caller's role capabilities:
+- `GET /api/v3/agents`, which reported the Engineer `usable: false` to a paying customer;
+- `GET /api/v3/host/folders`, which refused the phone's folder picker for remote control;
+- `POST /api/v3/host/folders/git-init`, which refused "Initialize git here".
+
+`engineer_granted(caller)` now applies `admit_turn`'s rule in all three: the role, or the plan
+with `AURA_ENGINEER_FOR_CUSTOMERS` on. A plan lookup failure is 503, never "not entitled". F-09
+stays narrowed exactly as P1-E narrowed it. Nothing widens it further: a Free account is
+refused on every one of these routes (tests in `tests/integration/test_engineer_for_customers.py`).
+
+**WP12: desktop sign-in through the browser.** `firebase_core` has no Linux implementation and
+`firebase_auth` no provider sign-in on Windows, so the desktop app cannot sign in with Firebase
+itself. It hands off to the web app, in RFC 8252's loopback shape
+(`services/desktop_handoff.py`):
+
+1. **The app.** It makes a PKCE verifier, listens on `http://127.0.0.1:<port>/`, and opens
+   `{APP_BASE_URL}/desktop-sign-in` with that redirect, a `state` and the S256 challenge.
+2. **The page.** It signs in with Firebase (Google, Apple or email), then sends the ID token to
+   `POST /api/v3/auth/desktop/handoff`. The server verifies it and stores the identity under a
+   one-time code, bound to the challenge and the redirect. The redirect must be the loopback
+   form. The page then sends the browser to the loopback with the code and `state`, and signs out
+   of Firebase in that browser.
+3. **The exchange.** The app checks `state` and calls `POST /api/v3/auth/desktop/firebase-exchange`
+   with the code and its verifier. That route applies the same gate and device-bound issuance as
+   `/desktop/login`: one shared `_finish_desktop_sign_in`, so the two cannot drift. It admits an
+   operator, or an entitled customer capped at `consumer_desktop` (T-6).
+
+**What it defends.**
+- **A code seen by anyone else** is useless without the verifier, which never leaves the app.
+  That covers browser history, a referrer, and another local process that wins the loopback
+  port.
+- **Every code is single use** (Redis `GET`+`DEL` in one `MULTI`), spent even by a failed
+  exchange, and lives 60 seconds.
+- **The ID token never appears in a URL.**
+- **SEC-08 still holds.** Only a Google sign-in may match an operator email list, so an
+  operator's address registered through Apple or email/password grants nothing.
+
+**What it does not defend.** Malware already running as the person on that computer can read the
+app's memory or its stored refresh token, whatever the sign-in method. Both routes are rate
+limited per address, but per worker. The existing Google loopback path (`/desktop/exchange` +
+`/desktop/login`) stays until it is retired.

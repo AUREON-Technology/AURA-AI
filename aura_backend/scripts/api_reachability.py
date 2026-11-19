@@ -47,6 +47,9 @@ METHOD_BLIND_NOTE = (
 # merely shares the spelling (`/xy`). See triage_note().
 TRIAGE = (
     ("/api/v3/integrations/github/callback", "server-only: OAuth redirect target, reached by the browser"),
+    ("/api/v3/billing/fawry/notify", "server-only: Fawry's server notification (SaaS P1-D1)"),
+    ("/api/v3/billing/apple/notify", "server-only: App Store Server Notifications V2 (SaaS P1-D2)"),
+    ("/api/v3/billing/google/notify", "server-only: Play RTDN via Pub/Sub push (SaaS P1-D2)"),
     ("/api/v3/chat$", "server-to-server: the non-streaming turn is for integrating systems (ADR-029 service keys, AR-6 structured output); the app streams via /chat/stream"),
     ("/api/v3/auth/desktop/", "to wire: desktop pairing flow (ADR-011), no caller in client or hostd yet"),
     ("/api/v3/agents/runs", "to wire: agent-run history (wave 2) has no client or admin view yet"),
@@ -57,7 +60,7 @@ TRIAGE = (
     ("/api/v3/admin/", "to wire: admin console page missing for this route"),
     ("/api/v3/learning/", "to wire or remove: learning surface with no caller (GAP-013)"),
     ("/api/v3/tools", "to wire: tool catalogue is not shown anywhere"),
-    ("/api/v3/workspaces", "to wire: team workspaces (ADR-034) have no client or console screen yet -- SaaS P1 plan F"),
+    ("/api/v3/workspaces", "client: team workspaces, plan, billing and shared chats are called from aura_client/lib/features/workspaces/data/workspaces_client.dart through AuraApiClient's string-built paths (SaaS P1-F2)"),
 )
 
 # Served to infrastructure or browsers rather than an app client; never "to wire".

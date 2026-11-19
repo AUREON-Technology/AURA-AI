@@ -190,7 +190,11 @@ Known limits:
 - **Coarse classification.** Any retrieved chunk counts, shared or owned, because the index does
   not record which documents are safe to send.
 - **No per-user opt-in.** Under ADR-019 an install is the tenant, so the provider ceiling is the
-  install-wide setting.
+  install-wide setting. One exception since 2026-11-17 (ADR-033 amendment): a Claude slot raised
+  to `sensitive` for Engineer turns only (`AURA_PROVIDER_<NAME>_WORKLOADS=engineer`), and only for
+  a person with a current, server-held consent (`/api/v3/engineering/consent`). On such a
+  deployment "sensitive content stays on self-hosted models" is true for everything except
+  Engineer turns.
 - **Admin UI.** `router.stats()` exposes each provider's ceiling and `third_party` flag, but the
   `aura_admin/` dashboard does not display them yet.
 

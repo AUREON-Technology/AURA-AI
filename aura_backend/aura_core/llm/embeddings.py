@@ -336,7 +336,14 @@ class SentenceTransformerProvider:
 
     @property
     def model_id(self) -> str:
-        return f"{self._model_name}@{self._revision}" if self._revision else self._model_name
+        base = f"{self._model_name}@{self._revision}" if self._revision else self._model_name
+        # A document prefix changes every stored vector, so it is part of the index identity: a
+        # new prefix builds a new index (ADR-007) instead of mixing incompatible vectors. Absent
+        # (every deployment before E5), the id is exactly what it always was.
+        if self._document_prefix:
+            digest = hashlib.sha256(self._document_prefix.encode("utf-8")).hexdigest()[:8]
+            base = f"{base}#doc-prefix-{digest}"
+        return base
 
     @property
     def dimension(self) -> int:

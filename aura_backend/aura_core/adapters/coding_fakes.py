@@ -192,6 +192,10 @@ class InMemoryGitHubClient:
         self._issues: dict[tuple[str, int], Mapping[str, Any]] = {}
         self._pulls: dict[tuple[str, int], Mapping[str, Any]] = {}
         self._next_pr_number = 1
+        self._default_branches: dict[str, str] = {}
+
+    def set_default_branch(self, repo: str, branch: str) -> None:
+        self._default_branches[repo] = branch
 
     def seed_file(self, repo: str, branch: str, path: str, content: str) -> None:
         self._files[(repo, branch, path)] = content
@@ -234,6 +238,9 @@ class InMemoryGitHubClient:
             if r == repo and b == from_ref:
                 self._files[(repo, branch, path)] = content
         return f"Created branch {branch!r} on {repo} from {from_ref!r}"
+
+    async def default_branch(self, repo: str) -> str:
+        return self._default_branches.get(repo, "main")
 
     async def commit_files(
         self, repo: str, *, branch: str, message: str, files: Mapping[str, str]

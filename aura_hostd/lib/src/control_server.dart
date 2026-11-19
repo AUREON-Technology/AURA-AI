@@ -6,7 +6,9 @@
 ///
 /// Binds `127.0.0.1` on an ephemeral port and writes `{port, token}` to `control.json` in the
 /// daemon's config dir so a same-machine process can discover it; the token (a random, per-run
-/// secret) is required on every request except `GET /status`, and is the only thing standing
+/// secret) is required on every request except a reduced `GET /status` (audit INT-037: without
+/// the token it says only whether the daemon is paired and connected -- never the granted root
+/// paths or the backend URL), and is the only thing standing
 /// between "any local process" and "this daemon's granted filesystem access" -- a real but
 /// disclosed limitation for v1 (a local process with filesystem access to the config dir can also
 /// read the token file; this is a convenience boundary against accidental cross-talk, not a
@@ -29,6 +31,8 @@ import 'config.dart';
 import 'containment.dart';
 import 'debug_session_manager.dart';
 import 'diagnostics_service.dart';
+import 'error_codes.dart';
+import 'git_init.dart';
 import 'git_service.dart';
 import 'isolated_task_registry.dart';
 import 'pairing_client.dart';
@@ -51,11 +55,22 @@ class ControlServer {
     required this.approvalQueue,
     required this.isolatedTasks,
     bool Function()? isBackendConnected,
+    bool Function()? isCredentialsRejected,
+    int? Function()? lastCloseCode,
+    Duration minPairingPollInterval = const Duration(seconds: 1),
     GitService? gitService,
     DiagnosticsService? diagnosticsService,
     ControlServerLogger? logger,
   })  : isBackendConnected = isBackendConnected ?? (() => false),
-        gitService = gitService ?? GitService(),
+        isCredentialsRejected = isCredentialsRejected ?? (() => false),
+        lastCloseCode = lastCloseCode ?? (() => null),
+        _minPairingPollInterval = minPairingPollInterval,
+        // F45: the repository's own hooks and fsmonitor run only in a folder the person trusts.
+        gitService = gitService ??
+            GitService(
+              runsRepositoryPrograms: (cwd) =>
+                  workspaceStore.load().findContainingRoot(cwd)?.trusted ?? false,
+            ),
         diagnosticsService = diagnosticsService ?? DiagnosticsService(),
         _logger = logger ?? _defaultLogger;
 
@@ -99,6 +114,20 @@ class ControlServer {
   /// all), which is the honest answer in both cases.
   final bool Function() isBackendConnected;
 
+  /// Whether the backend refused this daemon's stored token (WebSocket close 4401) and the
+  /// daemon stopped reconnecting (audit INT-003). `/status` reports it as `credentials_rejected`
+  /// so the UI can say "re-pair required" and offer pairing again, instead of "reconnecting..."
+  /// forever while `authenticated` (a token is stored) stays true.
+  final bool Function() isCredentialsRejected;
+
+  /// The close code of the daemon's most recent backend connection, reported as
+  /// `last_close_code` -- `null` before any connection has closed.
+  final int? Function() lastCloseCode;
+
+  /// The floor under the backend's advised poll interval for the daemon's own background
+  /// pairing poll (INT-038). Injected so a test need not wait a second per poll.
+  final Duration _minPairingPollInterval;
+
   final ControlServerLogger _logger;
 
   HttpServer? _server;
@@ -110,6 +139,16 @@ class ControlServer {
   /// juggle: `/pair/start` replaces whatever was here, `/pair/status` always means "this one."
   PairingSession? _pairingSession;
   String? _pairingBackendUrl;
+
+  /// How the most recent pairing session ended (`approved`/`expired` body), kept after the
+  /// session is cleared so a UI that polls `/pair/status` only after the daemon's own background
+  /// poll collected the token still learns it was approved (INT-038).
+  Map<String, Object?>? _pairingOutcome;
+
+  /// The one backend poll in flight, shared by the background poller and `/pair/status`, so the
+  /// two never race to consume the same one-shot approval.
+  Future<Map<String, Object?>?>? _pollInFlight;
+  Timer? _pairingTimer;
 
   int? get port => _server?.port;
 
@@ -125,6 +164,8 @@ class ControlServer {
   }
 
   Future<void> stop() async {
+    _pairingTimer?.cancel();
+    _pairingTimer = null;
     try {
       _controlFile?.deleteSync();
     } on FileSystemException {
@@ -135,8 +176,15 @@ class ControlServer {
 
   Future<void> _handle(HttpRequest request) async {
     try {
+      // DNS rebinding (INT-037): a web page whose hostname re-resolves to 127.0.0.1 can reach
+      // this port from the user's browser, but its requests still carry that page's own Host.
+      if (!_loopbackHost(request)) {
+        await _fail(request, 403, HostdErrorCode.hostNotLoopback,
+            'requests must address the loopback interface');
+        return;
+      }
       if (request.uri.path != '/status' && !_authorized(request)) {
-        await _respond(request, 401, {'error': 'missing or invalid control token'});
+        await _fail(request, 401, HostdErrorCode.unauthorized, 'missing or invalid control token');
         return;
       }
       final segments = request.uri.pathSegments;
@@ -154,6 +202,8 @@ class ControlServer {
           await _handleListRoots(request);
         case 'POST /roots':
           await _handleRootAction(request);
+        case 'POST /remote_control':
+          await _handleRemoteControl(request);
         case 'GET /list':
           await _handleList(request);
         case 'GET /read':
@@ -166,6 +216,8 @@ class ControlServer {
           await _handleApprovalsList(request);
         case 'GET /git/status':
           await _handleGitStatus(request);
+        case 'POST /git/init':
+          await _handleGitInit(request);
         case 'GET /git/diff':
           await _handleGitDiff(request);
         case 'GET /git/log':
@@ -186,6 +238,10 @@ class ControlServer {
           await _handleGitPull(request);
         case 'POST /git/push':
           await _handleGitPush(request);
+        case 'GET /git/remotes':
+          await _handleGitRemotes(request);
+        case 'POST /git/publish':
+          await _handleGitPublish(request);
         case 'GET /diagnostics/detect':
           await _handleDiagnosticsDetect(request);
         case 'POST /diagnostics/run':
@@ -212,12 +268,12 @@ class ControlServer {
           await _respond(request, 200, {'status': 'shutting down'});
           unawaited(Future(() => exit(0)));
         default:
-          await _respond(request, 404, {'error': 'no such endpoint'});
+          await _fail(request, 404, HostdErrorCode.noSuchEndpoint, 'no such endpoint');
       }
     } catch (error) {
       _logger('control server: unhandled error: $error');
       try {
-        await _respond(request, 500, {'error': error.toString()});
+        await _fail(request, 500, HostdErrorCode.internalError, error.toString());
       } catch (_) {
         // Response already closed -- nothing more to do.
       }
@@ -226,18 +282,61 @@ class ControlServer {
 
   bool _authorized(HttpRequest request) {
     final header = request.headers.value(HttpHeaders.authorizationHeader);
-    return header != null && header == 'Bearer $_token';
+    final token = _token;
+    if (header == null || token == null) return false;
+    return constantTimeEquals(header, 'Bearer $token');
+  }
+
+  /// Whether the request's Host header names this machine's loopback interface. Every
+  /// legitimate client (the desktop app, the CLI, a test) connects to `127.0.0.1:<port>` and
+  /// sends that; a missing Host (HTTP/1.0) is let through, since no browser sends one.
+  bool _loopbackHost(HttpRequest request) {
+    final host = request.headers.host;
+    if (host == null) return true;
+    final name = host.toLowerCase();
+    return name == '127.0.0.1' || name == 'localhost' || name == '::1' || name == '[::1]';
   }
 
   Future<void> _handleStatus(HttpRequest request) async {
     final config = configStore.load();
-    final roots = workspaceStore.load();
-    await _respond(request, 200, {
+    final body = <String, Object?>{
       'authenticated': config.authToken != null && config.authToken!.isNotEmpty,
       'backend_connected': isBackendConnected(),
-      'backend_url': config.backendUrl,
-      'roots': roots.all.map((r) => r.toJson()).toList(),
-    });
+      'credentials_rejected': isCredentialsRejected(),
+      'last_close_code': lastCloseCode(),
+    };
+    // Without the token, only the booleans above (INT-037): the granted root paths say what on
+    // this machine the agent can reach, and are no business of an arbitrary local process.
+    if (_authorized(request)) {
+      body['backend_url'] = config.backendUrl;
+      body['roots'] = workspaceStore.load().all.map((r) => r.toJson()).toList();
+      body['remote_control'] = config.remoteControl;
+    }
+    await _respond(request, 200, body);
+  }
+
+  /// `POST /remote_control` `{"enabled": <bool>}` (WP8, D-10b): the desktop's "Allow control
+  /// from my phone and the web" switch, persisted to `config.json`. This route -- token-guarded
+  /// and loopback-only like every other mutating one -- is the only way to change it; no RPC from
+  /// the backend can. The agent's `TaskHandler` reads it from disk on every call of a remote task,
+  /// so switching it off refuses that task's next call.
+  Future<void> _handleRemoteControl(HttpRequest request) async {
+    final Object? decoded;
+    try {
+      final raw = await utf8.decoder.bind(request).join();
+      decoded = raw.trim().isEmpty ? null : jsonDecode(raw);
+    } on FormatException {
+      await _fail(request, 400, HostdErrorCode.invalidRequestBody, 'the body must be JSON: {"enabled": true|false}');
+      return;
+    }
+    final enabled = decoded is Map ? decoded['enabled'] : null;
+    if (enabled is! bool) {
+      await _fail(request, 400, HostdErrorCode.missingParameter, '"enabled" is required and must be true or false');
+      return;
+    }
+    configStore.save(configStore.load().copyWith(remoteControl: enabled));
+    _logger('remote control ${enabled ? 'enabled' : 'disabled'} from the desktop');
+    await _respond(request, 200, {'remote_control': enabled});
   }
 
   Future<void> _handleListRoots(HttpRequest request) async {
@@ -250,7 +349,7 @@ class ControlServer {
     final action = body['action'] as String?;
     final path = body['path'] as String?;
     if (action == null || path == null) {
-      await _respond(request, 400, {'error': 'action and path are required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'action and path are required');
       return;
     }
     final roots = workspaceStore.load();
@@ -261,7 +360,7 @@ class ControlServer {
           workspaceStore.save(roots);
           await _respond(request, 200, {'root': root.toJson()});
         } on InvalidRootError catch (error) {
-          await _respond(request, 400, {'error': error.message});
+          await _fail(request, 400, error.code, error.message);
         }
       case 'revoke':
         final removed = roots.removeRoot(path);
@@ -271,13 +370,13 @@ class ControlServer {
       case 'untrust':
         final updated = roots.setTrusted(path, action == 'trust');
         if (updated == null) {
-          await _respond(request, 404, {'error': '$path is not a granted root'});
+          await _fail(request, 404, HostdErrorCode.rootNotGranted, '$path is not a granted root');
           return;
         }
         workspaceStore.save(roots);
         await _respond(request, 200, {'root': updated.toJson()});
       default:
-        await _respond(request, 400, {'error': 'unknown action "$action"'});
+        await _fail(request, 400, HostdErrorCode.unknownAction, 'unknown action "$action"');
     }
   }
 
@@ -288,7 +387,7 @@ class ControlServer {
     final rootParam = request.uri.queryParameters['root'];
     final relative = request.uri.queryParameters['path'] ?? '';
     if (rootParam == null) {
-      await _respond(request, 400, {'error': 'root query parameter is required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'root query parameter is required');
       return;
     }
     final roots = workspaceStore.load();
@@ -300,7 +399,7 @@ class ControlServer {
       final resolved = roots.requireContained(root, relative.isEmpty ? '.' : relative);
       final dir = Directory(resolved);
       if (!dir.existsSync()) {
-        await _respond(request, 404, {'error': '$relative does not exist'});
+        await _fail(request, 404, HostdErrorCode.pathNotFound, '$relative does not exist');
         return;
       }
       final entries = dir
@@ -318,9 +417,9 @@ class ControlServer {
         });
       await _respond(request, 200, {'root': root.canonicalPath, 'path': relative, 'entries': entries});
     } on ContainmentViolation catch (error) {
-      await _respond(request, 403, {'error': error.message});
+      await _fail(request, 403, error.code, error.message);
     } on RootNotFoundError {
-      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+      await _fail(request, 404, HostdErrorCode.rootNotGranted, '$rootParam is not a granted root');
     }
   }
 
@@ -330,7 +429,7 @@ class ControlServer {
     final rootParam = request.uri.queryParameters['root'];
     final relative = request.uri.queryParameters['path'];
     if (rootParam == null || relative == null) {
-      await _respond(request, 400, {'error': 'root and path query parameters are required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'root and path query parameters are required');
       return;
     }
     final roots = workspaceStore.load();
@@ -342,7 +441,7 @@ class ControlServer {
       final resolved = roots.requireContained(root, relative);
       final file = File(resolved);
       if (!file.existsSync()) {
-        await _respond(request, 404, {'error': '$relative does not exist'});
+        await _fail(request, 404, HostdErrorCode.pathNotFound, '$relative does not exist');
         return;
       }
       final size = file.lengthSync();
@@ -353,7 +452,7 @@ class ControlServer {
       try {
         content = utf8.decode(bytes);
       } on FormatException {
-        await _respond(request, 415, {'error': 'file is not valid UTF-8 text'});
+        await _fail(request, 415, HostdErrorCode.fileNotUtf8, 'file is not valid UTF-8 text');
         return;
       }
       await _respond(request, 200, {
@@ -362,9 +461,9 @@ class ControlServer {
         'size': size,
       });
     } on ContainmentViolation catch (error) {
-      await _respond(request, 403, {'error': error.message});
+      await _fail(request, 403, error.code, error.message);
     } on RootNotFoundError {
-      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+      await _fail(request, 404, HostdErrorCode.rootNotGranted, '$rootParam is not a granted root');
     }
   }
 
@@ -377,7 +476,7 @@ class ControlServer {
   Future<void> _handleTerminalUpgrade(HttpRequest request) async {
     final rootParam = request.uri.queryParameters['root'];
     if (rootParam == null) {
-      await _respond(request, 400, {'error': 'root query parameter is required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'root query parameter is required');
       return;
     }
     final socket = await WebSocketTransformer.upgrade(request);
@@ -391,7 +490,7 @@ class ControlServer {
   Future<void> _handleDebugUpgrade(HttpRequest request) async {
     final rootParam = request.uri.queryParameters['root'];
     if (rootParam == null) {
-      await _respond(request, 400, {'error': 'root query parameter is required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'root query parameter is required');
       return;
     }
     final socket = await WebSocketTransformer.upgrade(request);
@@ -413,12 +512,12 @@ class ControlServer {
     final body = await _readJsonBody(request);
     final approved = body['approved'];
     if (approved is! bool) {
-      await _respond(request, 400, {'error': '"approved" (bool) is required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, '"approved" (bool) is required');
       return;
     }
     final found = approvalQueue.respond(id, approved);
     if (!found) {
-      await _respond(request, 404, {'error': 'no such pending approval (resolved or expired)'});
+      await _fail(request, 404, HostdErrorCode.approvalNotFound, 'no such pending approval (resolved or expired)');
       return;
     }
     await _respond(request, 200, {'ok': true});
@@ -430,27 +529,51 @@ class ControlServer {
   Future<void> _handleGitStatus(HttpRequest request) async {
     final rootParam = request.uri.queryParameters['root'];
     if (rootParam == null) {
-      await _respond(request, 400, {'error': 'root query parameter is required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'root query parameter is required');
       return;
     }
     try {
       final root = _requireRoot(workspaceStore.load(), rootParam);
       await _respond(request, 200, await gitService.status(root.canonicalPath));
     } on RootNotFoundError {
-      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+      await _fail(request, 404, HostdErrorCode.rootNotGranted, '$rootParam is not a granted root');
     } on GitNotARepositoryError {
-      await _respond(request, 409, {'error': 'not a git repository'});
+      await _fail(request, 409, HostdErrorCode.notAGitRepository, 'not a git repository');
     } on GitDecodeError catch (error) {
-      await _respond(request, 415, {'error': error.message});
+      await _fail(request, 415, HostdErrorCode.gitOutputNotUtf8, error.message);
     } on GitCommandError catch (error) {
-      await _respond(request, 500, {'error': error.message});
+      await _fail(request, 500, HostdErrorCode.gitCommandFailed, error.message);
+    }
+  }
+
+  /// `POST /git/init` `{"root": <path>}` (WP4, D-13): "Initialize git here" from the desktop app.
+  /// [root] must be exactly a granted root; one that already is a repository with a commit is a
+  /// 409. Otherwise `git init`, `git add -A` and a first commit with the person's own git identity
+  /// (`AURA <aura@localhost>` only if git has none) -- `git_init.dart`, the same as the `init_git`
+  /// RPC the phone and the web use. Responds `{"ok": true, "commit": <sha>}`.
+  Future<void> _handleGitInit(HttpRequest request) async {
+    final body = await _readJsonBody(request);
+    final root = body['root'];
+    if (root is! String || root.isEmpty) {
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'root is required');
+      return;
+    }
+    try {
+      await _respond(request, 200, await initializeGrantedFolder(workspaceStore.load(), gitService, root));
+    } on GitInitRefusal catch (error) {
+      final status = switch (error.code) {
+        HostdErrorCode.rootNotGranted => 404,
+        HostdErrorCode.alreadyAGitRepo => 409,
+        _ => 500,
+      };
+      await _fail(request, status, error.code, error.message, detail: error.detail);
     }
   }
 
   Future<void> _handleGitDiff(HttpRequest request) async {
     final rootParam = request.uri.queryParameters['root'];
     if (rootParam == null) {
-      await _respond(request, 400, {'error': 'root query parameter is required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'root query parameter is required');
       return;
     }
     final relativeFile = request.uri.queryParameters['file'];
@@ -462,22 +585,22 @@ class ControlServer {
       final resolvedFile = relativeFile == null ? null : roots.requireContained(root, relativeFile);
       await _respond(request, 200, await gitService.diff(root.canonicalPath, file: resolvedFile, scope: scope));
     } on RootNotFoundError {
-      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+      await _fail(request, 404, HostdErrorCode.rootNotGranted, '$rootParam is not a granted root');
     } on ContainmentViolation catch (error) {
-      await _respond(request, 403, {'error': error.message});
+      await _fail(request, 403, error.code, error.message);
     } on GitNotARepositoryError {
-      await _respond(request, 409, {'error': 'not a git repository'});
+      await _fail(request, 409, HostdErrorCode.notAGitRepository, 'not a git repository');
     } on GitDecodeError catch (error) {
-      await _respond(request, 415, {'error': error.message});
+      await _fail(request, 415, HostdErrorCode.gitOutputNotUtf8, error.message);
     } on GitCommandError catch (error) {
-      await _respond(request, 500, {'error': error.message});
+      await _fail(request, 500, HostdErrorCode.gitCommandFailed, error.message);
     }
   }
 
   Future<void> _handleGitLog(HttpRequest request) async {
     final rootParam = request.uri.queryParameters['root'];
     if (rootParam == null) {
-      await _respond(request, 400, {'error': 'root query parameter is required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'root query parameter is required');
       return;
     }
     final limit = int.tryParse(request.uri.queryParameters['limit'] ?? '') ?? 30;
@@ -485,13 +608,13 @@ class ControlServer {
       final root = _requireRoot(workspaceStore.load(), rootParam);
       await _respond(request, 200, await gitService.log(root.canonicalPath, limit: limit));
     } on RootNotFoundError {
-      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+      await _fail(request, 404, HostdErrorCode.rootNotGranted, '$rootParam is not a granted root');
     } on GitNotARepositoryError {
-      await _respond(request, 409, {'error': 'not a git repository'});
+      await _fail(request, 409, HostdErrorCode.notAGitRepository, 'not a git repository');
     } on GitDecodeError catch (error) {
-      await _respond(request, 415, {'error': error.message});
+      await _fail(request, 415, HostdErrorCode.gitOutputNotUtf8, error.message);
     } on GitCommandError catch (error) {
-      await _respond(request, 500, {'error': error.message});
+      await _fail(request, 500, HostdErrorCode.gitCommandFailed, error.message);
     }
   }
 
@@ -502,13 +625,13 @@ class ControlServer {
     final body = await _readJsonBody(request);
     final rootParam = body['root'] as String?;
     if (rootParam == null) {
-      await _respond(request, 400, {'error': 'root is required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'root is required');
       return;
     }
     final all = body['all'] == true;
     final rawPaths = (body['paths'] as List?)?.cast<Object?>().map((e) => e.toString()).toList() ?? const [];
     if (!all && rawPaths.isEmpty) {
-      await _respond(request, 400, {'error': 'paths (or all: true) is required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'paths (or all: true) is required');
       return;
     }
     final roots = workspaceStore.load();
@@ -520,15 +643,15 @@ class ControlServer {
           : await gitService.stage(root.canonicalPath, paths);
       await _respond(request, 200, result);
     } on RootNotFoundError {
-      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+      await _fail(request, 404, HostdErrorCode.rootNotGranted, '$rootParam is not a granted root');
     } on ContainmentViolation catch (error) {
-      await _respond(request, 403, {'error': error.message});
+      await _fail(request, 403, error.code, error.message);
     } on GitNotARepositoryError {
-      await _respond(request, 409, {'error': 'not a git repository'});
+      await _fail(request, 409, HostdErrorCode.notAGitRepository, 'not a git repository');
     } on GitDecodeError catch (error) {
-      await _respond(request, 415, {'error': error.message});
+      await _fail(request, 415, HostdErrorCode.gitOutputNotUtf8, error.message);
     } on GitCommandError catch (error) {
-      await _respond(request, 500, {'error': error.message});
+      await _fail(request, 500, HostdErrorCode.gitCommandFailed, error.message);
     }
   }
 
@@ -537,7 +660,7 @@ class ControlServer {
     final rootParam = body['root'] as String?;
     final message = body['message'] as String?;
     if (rootParam == null || message == null || message.trim().isEmpty) {
-      await _respond(request, 400, {'error': 'root and a non-empty message are required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'root and a non-empty message are required');
       return;
     }
     try {
@@ -545,13 +668,13 @@ class ControlServer {
       final result = await gitService.commit(root.canonicalPath, message);
       await _respond(request, result['ok'] == false ? 409 : 200, result);
     } on RootNotFoundError {
-      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+      await _fail(request, 404, HostdErrorCode.rootNotGranted, '$rootParam is not a granted root');
     } on GitNotARepositoryError {
-      await _respond(request, 409, {'error': 'not a git repository'});
+      await _fail(request, 409, HostdErrorCode.notAGitRepository, 'not a git repository');
     } on GitDecodeError catch (error) {
-      await _respond(request, 415, {'error': error.message});
+      await _fail(request, 415, HostdErrorCode.gitOutputNotUtf8, error.message);
     } on GitCommandError catch (error) {
-      await _respond(request, 500, {'error': error.message});
+      await _fail(request, 500, HostdErrorCode.gitCommandFailed, error.message);
     }
   }
 
@@ -561,7 +684,7 @@ class ControlServer {
     final branch = body['branch'] as String?;
     final create = body['create'] == true;
     if (rootParam == null || branch == null || branch.trim().isEmpty) {
-      await _respond(request, 400, {'error': 'root and branch are required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'root and branch are required');
       return;
     }
     try {
@@ -569,13 +692,13 @@ class ControlServer {
       final result = await gitService.checkout(root.canonicalPath, branch, create: create);
       await _respond(request, result['ok'] == false ? 409 : 200, result);
     } on RootNotFoundError {
-      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+      await _fail(request, 404, HostdErrorCode.rootNotGranted, '$rootParam is not a granted root');
     } on GitNotARepositoryError {
-      await _respond(request, 409, {'error': 'not a git repository'});
+      await _fail(request, 409, HostdErrorCode.notAGitRepository, 'not a git repository');
     } on GitDecodeError catch (error) {
-      await _respond(request, 415, {'error': error.message});
+      await _fail(request, 415, HostdErrorCode.gitOutputNotUtf8, error.message);
     } on GitCommandError catch (error) {
-      await _respond(request, 500, {'error': error.message});
+      await _fail(request, 500, HostdErrorCode.gitCommandFailed, error.message);
     }
   }
 
@@ -587,7 +710,7 @@ class ControlServer {
     final rootParam = body['root'] as String?;
     final branch = body['branch'] as String?;
     if (rootParam == null || branch == null || branch.trim().isEmpty) {
-      await _respond(request, 400, {'error': 'root and branch are required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'root and branch are required');
       return;
     }
     try {
@@ -595,13 +718,13 @@ class ControlServer {
       final result = await gitService.mergeBranch(root.canonicalPath, branch);
       await _respond(request, result['ok'] == false ? 409 : 200, result);
     } on RootNotFoundError {
-      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+      await _fail(request, 404, HostdErrorCode.rootNotGranted, '$rootParam is not a granted root');
     } on GitNotARepositoryError {
-      await _respond(request, 409, {'error': 'not a git repository'});
+      await _fail(request, 409, HostdErrorCode.notAGitRepository, 'not a git repository');
     } on GitDecodeError catch (error) {
-      await _respond(request, 415, {'error': error.message});
+      await _fail(request, 415, HostdErrorCode.gitOutputNotUtf8, error.message);
     } on GitCommandError catch (error) {
-      await _respond(request, 500, {'error': error.message});
+      await _fail(request, 500, HostdErrorCode.gitCommandFailed, error.message);
     }
   }
 
@@ -609,7 +732,7 @@ class ControlServer {
     final body = await _readJsonBody(request);
     final rootParam = body['root'] as String?;
     if (rootParam == null) {
-      await _respond(request, 400, {'error': 'root is required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'root is required');
       return;
     }
     try {
@@ -617,45 +740,73 @@ class ControlServer {
       final result = await gitService.abortMerge(root.canonicalPath);
       await _respond(request, 200, result);
     } on RootNotFoundError {
-      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+      await _fail(request, 404, HostdErrorCode.rootNotGranted, '$rootParam is not a granted root');
     } on GitNotARepositoryError {
-      await _respond(request, 409, {'error': 'not a git repository'});
+      await _fail(request, 409, HostdErrorCode.notAGitRepository, 'not a git repository');
     } on GitDecodeError catch (error) {
-      await _respond(request, 415, {'error': error.message});
+      await _fail(request, 415, HostdErrorCode.gitOutputNotUtf8, error.message);
     } on GitCommandError catch (error) {
-      await _respond(request, 500, {'error': error.message});
+      await _fail(request, 500, HostdErrorCode.gitCommandFailed, error.message);
     }
   }
 
-  /// Human-only remote-sync routes -- same boundary as the other `/git/*` write
-  /// routes above (a click in the Git panel is the consent; no `root.trusted`
-  /// check, no approval queue). `push` intentionally takes no refspec, so the
-  /// panel can only ever push the checked-out branch to its own upstream.
+  /// `GET /git/remotes?root=<path>` -- the configured remotes, for "Publish branch" to offer. Read-only.
+  Future<void> _handleGitRemotes(HttpRequest request) async {
+    final rootParam = request.uri.queryParameters['root'];
+    if (rootParam == null) {
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'root query parameter is required');
+      return;
+    }
+    try {
+      final root = _requireRoot(workspaceStore.load(), rootParam);
+      await _respond(request, 200, await gitService.remotes(root.canonicalPath));
+    } on RootNotFoundError {
+      await _fail(request, 404, HostdErrorCode.rootNotGranted, '$rootParam is not a granted root');
+    } on GitNotARepositoryError {
+      await _fail(request, 409, HostdErrorCode.notAGitRepository, 'not a git repository');
+    } on GitDecodeError catch (error) {
+      await _fail(request, 415, HostdErrorCode.gitOutputNotUtf8, error.message);
+    } on GitCommandError catch (error) {
+      await _fail(request, 500, HostdErrorCode.gitCommandFailed, error.message);
+    }
+  }
+
   Future<void> _handleGitBranches(HttpRequest request) async {
     final rootParam = request.uri.queryParameters['root'];
     if (rootParam == null) {
-      await _respond(request, 400, {'error': 'root query parameter is required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'root query parameter is required');
       return;
     }
     try {
       final root = _requireRoot(workspaceStore.load(), rootParam);
       await _respond(request, 200, await gitService.branches(root.canonicalPath));
     } on RootNotFoundError {
-      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+      await _fail(request, 404, HostdErrorCode.rootNotGranted, '$rootParam is not a granted root');
     } on GitNotARepositoryError {
-      await _respond(request, 409, {'error': 'not a git repository'});
+      await _fail(request, 409, HostdErrorCode.notAGitRepository, 'not a git repository');
     } on GitDecodeError catch (error) {
-      await _respond(request, 415, {'error': error.message});
+      await _fail(request, 415, HostdErrorCode.gitOutputNotUtf8, error.message);
     } on GitCommandError catch (error) {
-      await _respond(request, 500, {'error': error.message});
+      await _fail(request, 500, HostdErrorCode.gitCommandFailed, error.message);
     }
   }
 
+  /// Human-only remote-sync routes (`/git/fetch`, `/pull`, `/push`, `/publish`) -- same boundary as
+  /// the other `/git/*` write routes above (a click in the Git panel is the consent; no
+  /// `root.trusted` check, no approval queue). `push` takes no refspec: it runs the person's own
+  /// `git push`, so what it sends follows their git configuration like a terminal's (decision D-03).
+  /// `publish` takes only the name of a configured remote and pushes the checked-out branch to it
+  /// under its own name, setting the upstream (decision D-01).
   Future<void> _handleGitRemoteOp(HttpRequest request, String op) async {
     final body = await _readJsonBody(request);
     final rootParam = body['root'] as String?;
     if (rootParam == null) {
-      await _respond(request, 400, {'error': 'root is required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'root is required');
+      return;
+    }
+    final remoteParam = body['remote'];
+    if (op == 'publish' && (remoteParam is! String || remoteParam.isEmpty)) {
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'remote is required');
       return;
     }
     try {
@@ -664,17 +815,18 @@ class ControlServer {
         'fetch' => await gitService.fetch(root.canonicalPath),
         'pull' => await gitService.pull(root.canonicalPath),
         'push' => await gitService.push(root.canonicalPath),
+        'publish' => await gitService.publish(root.canonicalPath, remote: remoteParam! as String),
         _ => throw StateError('unknown git remote op: $op'),
       };
       await _respond(request, result['ok'] == false ? 409 : 200, result);
     } on RootNotFoundError {
-      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+      await _fail(request, 404, HostdErrorCode.rootNotGranted, '$rootParam is not a granted root');
     } on GitNotARepositoryError {
-      await _respond(request, 409, {'error': 'not a git repository'});
+      await _fail(request, 409, HostdErrorCode.notAGitRepository, 'not a git repository');
     } on GitDecodeError catch (error) {
-      await _respond(request, 415, {'error': error.message});
+      await _fail(request, 415, HostdErrorCode.gitOutputNotUtf8, error.message);
     } on GitCommandError catch (error) {
-      await _respond(request, 500, {'error': error.message});
+      await _fail(request, 500, HostdErrorCode.gitCommandFailed, error.message);
     }
   }
 
@@ -684,12 +836,14 @@ class ControlServer {
 
   Future<void> _handleGitPush(HttpRequest request) => _handleGitRemoteOp(request, 'push');
 
+  Future<void> _handleGitPublish(HttpRequest request) => _handleGitRemoteOp(request, 'publish');
+
   /// D7 Part A.2. No trust/approval gate: a lint run mutates nothing, the same precedent
   /// `/git/status` etc. already establish for read-only human-only routes.
   Future<void> _handleDiagnosticsDetect(HttpRequest request) async {
     final rootParam = request.uri.queryParameters['root'];
     if (rootParam == null) {
-      await _respond(request, 400, {'error': 'root query parameter is required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'root query parameter is required');
       return;
     }
     try {
@@ -697,7 +851,7 @@ class ControlServer {
       final tool = diagnosticsService.detect(root.canonicalPath);
       await _respond(request, 200, {'tool': tool});
     } on RootNotFoundError {
-      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+      await _fail(request, 404, HostdErrorCode.rootNotGranted, '$rootParam is not a granted root');
     }
   }
 
@@ -706,12 +860,12 @@ class ControlServer {
     final rootParam = body['root'] as String?;
     final tool = body['tool'] as String?;
     if (rootParam == null || tool == null) {
-      await _respond(request, 400, {'error': 'root and tool are required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'root and tool are required');
       return;
     }
     try {
       final root = _requireRoot(workspaceStore.load(), rootParam);
-      final result = await diagnosticsService.run(root.canonicalPath, tool);
+      final result = await diagnosticsService.run(root.canonicalPath, tool, trusted: root.trusted);
       await _respond(request, 200, {
         'tool': result.tool,
         'exit_code': result.exitCode,
@@ -719,11 +873,15 @@ class ControlServer {
         'stderr': result.stderr,
         'truncated': result.truncated,
         'not_found': result.notFound,
+        'timed_out': result.timedOut,
       });
+    } on DiagnosticsNotTrustedError catch (error) {
+      // G-17 (SEC-10): see `diagnostics_service.dart`'s doc comment.
+      await _fail(request, 403, HostdErrorCode.diagnosticsUntrusted, error.toString());
     } on RootNotFoundError {
-      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+      await _fail(request, 404, HostdErrorCode.rootNotGranted, '$rootParam is not a granted root');
     } on ArgumentError catch (error) {
-      await _respond(request, 400, {'error': error.message});
+      await _fail(request, 400, HostdErrorCode.unknownDiagnosticsTool, '${error.message}');
     }
   }
 
@@ -742,23 +900,23 @@ class ControlServer {
     final taskKey = request.uri.queryParameters['task_key'];
     final base = request.uri.queryParameters['base'];
     if (taskKey == null || base == null) {
-      await _respond(request, 400, {'error': 'task_key and base query parameters are required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'task_key and base query parameters are required');
       return;
     }
     final info = isolatedTasks.infoFor(taskKey);
     if (info == null) {
-      await _respond(request, 404, {'error': 'no isolated workspace is known for task_key "$taskKey"'});
+      await _fail(request, 404, HostdErrorCode.taskNotFound, 'no isolated workspace is known for task_key "$taskKey"');
       return;
     }
     try {
       final result = await gitService.diff(info.root.canonicalPath, scope: GitDiffScope.branchRange, base: base);
       await _respond(request, 200, result);
     } on GitNotARepositoryError {
-      await _respond(request, 409, {'error': 'not a git repository'});
+      await _fail(request, 409, HostdErrorCode.notAGitRepository, 'not a git repository');
     } on GitDecodeError catch (error) {
-      await _respond(request, 415, {'error': error.message});
+      await _fail(request, 415, HostdErrorCode.gitOutputNotUtf8, error.message);
     } on GitCommandError catch (error) {
-      await _respond(request, 500, {'error': error.message});
+      await _fail(request, 500, HostdErrorCode.gitCommandFailed, error.message);
     }
   }
 
@@ -766,23 +924,23 @@ class ControlServer {
     final taskKey = request.uri.queryParameters['task_key'];
     final base = request.uri.queryParameters['base'];
     if (taskKey == null || base == null) {
-      await _respond(request, 400, {'error': 'task_key and base query parameters are required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'task_key and base query parameters are required');
       return;
     }
     final info = isolatedTasks.infoFor(taskKey);
     if (info == null) {
-      await _respond(request, 404, {'error': 'no isolated workspace is known for task_key "$taskKey"'});
+      await _fail(request, 404, HostdErrorCode.taskNotFound, 'no isolated workspace is known for task_key "$taskKey"');
       return;
     }
     try {
       final result = await gitService.diffStat(info.root.canonicalPath, base);
       await _respond(request, 200, result);
     } on GitNotARepositoryError {
-      await _respond(request, 409, {'error': 'not a git repository'});
+      await _fail(request, 409, HostdErrorCode.notAGitRepository, 'not a git repository');
     } on GitDecodeError catch (error) {
-      await _respond(request, 415, {'error': error.message});
+      await _fail(request, 415, HostdErrorCode.gitOutputNotUtf8, error.message);
     } on GitCommandError catch (error) {
-      await _respond(request, 500, {'error': error.message});
+      await _fail(request, 500, HostdErrorCode.gitCommandFailed, error.message);
     }
   }
 
@@ -796,7 +954,7 @@ class ControlServer {
     final rootParam = body['root'] as String?;
     final taskBranch = body['task_branch'] as String?;
     if (rootParam == null || taskBranch == null) {
-      await _respond(request, 400, {'error': 'root and task_branch are required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'root and task_branch are required');
       return;
     }
     final squash = body['squash'] == true;
@@ -805,13 +963,13 @@ class ControlServer {
       final result = await gitService.mergeTask(root.canonicalPath, taskBranch, squash: squash);
       await _respond(request, result['ok'] == false ? 409 : 200, result);
     } on RootNotFoundError {
-      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+      await _fail(request, 404, HostdErrorCode.rootNotGranted, '$rootParam is not a granted root');
     } on GitNotARepositoryError {
-      await _respond(request, 409, {'error': 'not a git repository'});
+      await _fail(request, 409, HostdErrorCode.notAGitRepository, 'not a git repository');
     } on GitDecodeError catch (error) {
-      await _respond(request, 415, {'error': error.message});
+      await _fail(request, 415, HostdErrorCode.gitOutputNotUtf8, error.message);
     } on GitCommandError catch (error) {
-      await _respond(request, 500, {'error': error.message});
+      await _fail(request, 500, HostdErrorCode.gitCommandFailed, error.message);
     }
   }
 
@@ -822,16 +980,16 @@ class ControlServer {
     final body = await _readJsonBody(request);
     final taskKey = body['task_key'] as String?;
     if (taskKey == null) {
-      await _respond(request, 400, {'error': 'task_key is required'});
+      await _fail(request, 400, HostdErrorCode.missingParameter, 'task_key is required');
       return;
     }
     try {
       final result = await isolatedTasks.discard(taskKey);
       await _respond(request, 200, result);
     } on TaskNotFoundError catch (error) {
-      await _respond(request, 404, {'error': error.toString()});
+      await _fail(request, 404, HostdErrorCode.taskNotFound, error.toString());
     } on GitCommandError catch (error) {
-      await _respond(request, 500, {'error': error.message});
+      await _fail(request, 500, HostdErrorCode.gitCommandFailed, error.message);
     }
   }
 
@@ -850,46 +1008,119 @@ class ControlServer {
   Future<void> _handlePairStart(HttpRequest request) async {
     final body = await _readJsonBody(request);
     final backendUrl = body['backend_url'] as String? ?? configStore.load().backendUrl;
+    // F53: a token is never paired over (and later sent to) a plain-http host elsewhere.
+    try {
+      requireSecureBackendUrl(backendUrl);
+    } on InvalidBackendUrlError catch (error) {
+      await _fail(request, 400, HostdErrorCode.invalidRequestBody, error.message);
+      return;
+    }
     try {
       final session = await startPairing(backendUrl);
       _pairingSession = session;
       _pairingBackendUrl = backendUrl;
+      _pairingOutcome = null;
+      _scheduleBackgroundPoll(session, DateTime.now().add(Duration(seconds: session.expiresIn)));
       await _respond(request, 200, {
         'user_code': session.userCode,
         'expires_in': session.expiresIn,
         'interval': session.intervalS,
       });
     } on PairingFailedError catch (error) {
-      await _respond(request, 502, {'error': error.message});
+      await _fail(request, 502, HostdErrorCode.pairingFailed, error.message);
     }
   }
 
-  /// Polls the in-flight session started by `/pair/start` exactly once (`pairing_client.dart
-  /// ::pollPairingOnce`) and reports where it stands -- the UI is responsible for calling this
-  /// again after the session's own `interval`, matching the discipline `pairWithCode`'s CLI path
-  /// applies to itself. On approval, saves the token (same as `auth set-token` would have) and
-  /// calls [onPaired] so the daemon connects to the backend without needing `run` restarted.
+  /// Reports where the session started by `/pair/start` stands. The daemon polls the backend
+  /// itself in the background (INT-038), so the token is collected even if the UI that started
+  /// pairing goes away; this route polls once more on top of that (sharing one in-flight poll
+  /// with the background loop) so a UI polling at the session's interval sees the outcome at
+  /// once. On approval the token is saved (as `auth set-token` would) and [onPaired] is called,
+  /// exactly once, whichever poll saw it first.
   Future<void> _handlePairStatus(HttpRequest request) async {
-    final session = _pairingSession;
-    final backendUrl = _pairingBackendUrl;
-    if (session == null || backendUrl == null) {
-      await _respond(request, 409, {'error': 'no pairing session in progress -- call /pair/start first'});
+    if (_pairingSession == null) {
+      final outcome = _pairingOutcome;
+      if (outcome != null) {
+        await _respond(request, 200, outcome);
+      } else {
+        await _fail(request, 409, HostdErrorCode.noPairingSession,
+            'no pairing session in progress -- call /pair/start first');
+      }
       return;
     }
+    final outcome = await _pollPairing();
+    await _respond(request, 200, outcome ?? _pairingOutcome ?? {'status': 'pending'});
+  }
+
+  void _scheduleBackgroundPoll(PairingSession session, DateTime deadline) {
+    _pairingTimer?.cancel();
+    final advised = Duration(seconds: session.intervalS);
+    final interval = advised < _minPairingPollInterval ? _minPairingPollInterval : advised;
+    _pairingTimer = Timer(interval, () async {
+      _pairingTimer = null;
+      if (!identical(_pairingSession, session)) return;
+      if (DateTime.now().isAfter(deadline)) {
+        _pairingSession = null;
+        _pairingBackendUrl = null;
+        _pairingOutcome = {
+          'status': 'expired',
+          'reason': 'pairing code expired before it was approved',
+          'code': HostdErrorCode.pairingEnded,
+        };
+        return;
+      }
+      try {
+        await _pollPairing();
+      } catch (error) {
+        // A transient backend or network failure; keep polling until the code expires.
+        _logger('pairing poll failed: $error');
+      }
+      if (identical(_pairingSession, session)) _scheduleBackgroundPoll(session, deadline);
+    });
+  }
+
+  /// Polls the backend once for the current session, or joins the poll already in flight.
+  /// Returns the response body for a pending/approved/expired outcome, or `null` when the
+  /// session was replaced or finished while this poll was out.
+  Future<Map<String, Object?>?> _pollPairing() {
+    final inFlight = _pollInFlight;
+    if (inFlight != null) return inFlight;
+    final future = _pollPairingOnce();
+    _pollInFlight = future;
+    return future.whenComplete(() => _pollInFlight = null);
+  }
+
+  Future<Map<String, Object?>?> _pollPairingOnce() async {
+    final session = _pairingSession;
+    final backendUrl = _pairingBackendUrl;
+    if (session == null || backendUrl == null) return _pairingOutcome;
     final outcome = await pollPairingOnce(backendUrl, session);
+    if (!identical(_pairingSession, session)) return _pairingOutcome;
     switch (outcome) {
       case PairingPending():
-        await _respond(request, 200, {'status': 'pending'});
+        return {'status': 'pending'};
       case PairingApproved(result: final result):
         _pairingSession = null;
         _pairingBackendUrl = null;
-        configStore.save(DaemonConfig(backendUrl: backendUrl, authToken: result.accessToken));
+        _pairingTimer?.cancel();
+        _pairingTimer = null;
+        configStore.saveCredentials(backendUrl: backendUrl, authToken: result.accessToken);
+        final body = <String, Object?>{'status': 'approved', 'device_id': result.deviceId};
+        _pairingOutcome = body;
         onPaired(result.accessToken);
-        await _respond(request, 200, {'status': 'approved', 'device_id': result.deviceId});
+        return body;
       case PairingGone(reason: final reason):
         _pairingSession = null;
         _pairingBackendUrl = null;
-        await _respond(request, 200, {'status': 'expired', 'reason': reason});
+        _pairingTimer?.cancel();
+        _pairingTimer = null;
+        final body = <String, Object?>{
+          'status': 'expired',
+          'reason': reason,
+          'code': HostdErrorCode.pairingEnded,
+        };
+        _pairingOutcome = body;
+        return body;
     }
   }
 
@@ -900,7 +1131,18 @@ class ControlServer {
     return decoded is Map<String, dynamic> ? decoded : {};
   }
 
+  /// Every error response: the English [message] under `error` (what apps predating codes
+  /// show), plus its stable machine [code] (`error_codes.dart`), which a newer app translates.
+  /// [detail]: the underlying error alone (git's own message for `git_init_failed`), so a
+  /// translated message can quote it.
+  Future<void> _fail(HttpRequest request, int statusCode, String code, String message, {String? detail}) =>
+      _respond(request, statusCode, {'error': message, 'code': code}..addAll({if (detail != null) 'detail': detail}));
+
   Future<void> _respond(HttpRequest request, int statusCode, Map<String, Object?> body) async {
+    assert(
+      !body.containsKey('error') || body.containsKey('code'),
+      'an error response must carry a code -- use _fail',
+    );
     request.response.statusCode = statusCode;
     request.response.headers.contentType = ContentType.json;
     request.response.write(jsonEncode(body));
@@ -916,6 +1158,19 @@ class RootNotFoundError implements Exception {
 typedef ControlServerLogger = void Function(String message);
 
 void _defaultLogger(String message) => stdout.writeln('[aura_hostd] $message');
+
+/// Compares two strings in time that depends only on their lengths, not on where they first
+/// differ (INT-037), so the control token cannot be recovered a character at a time by timing.
+bool constantTimeEquals(String a, String b) {
+  final x = utf8.encode(a);
+  final y = utf8.encode(b);
+  var diff = x.length ^ y.length;
+  final n = x.length < y.length ? x.length : y.length;
+  for (var i = 0; i < n; i++) {
+    diff |= x[i] ^ y[i];
+  }
+  return diff == 0;
+}
 
 String _randomToken() {
   final random = Random.secure();

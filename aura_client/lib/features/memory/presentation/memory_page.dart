@@ -4,7 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
+import 'package:aura_client/features/chat/data/memory_repository.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
+import 'memory_save_feedback.dart';
 import 'memory_view_model.dart';
 
 class MemoryPage extends ConsumerWidget {
@@ -12,6 +15,14 @@ class MemoryPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // A queued save the server later refused in the background (F22).
+    ref.listen(memorySaveRefusalsProvider, (_, next) {
+      if (next.isEmpty) return;
+      for (final fact in ref.read(memorySaveRefusalsProvider.notifier).take()) {
+        AuraSnackbar.show(context,
+            message: context.l10n.memorySaveRefused(fact), kind: AuraSnackbarKind.error);
+      }
+    });
     final state = ref.watch(memoryViewModelProvider);
     final palette = AuraPalette.of(context);
 
@@ -20,10 +31,10 @@ class MemoryPage extends ConsumerWidget {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: Text('Memory', style: Theme.of(context).textTheme.headlineMedium),
+        title: Text(context.l10n.memoryTitle, style: Theme.of(context).textTheme.headlineMedium),
         actions: [
           IconButton(
-            tooltip: 'Refresh',
+            tooltip: context.l10n.commonRefresh,
             onPressed: () => ref.read(memoryViewModelProvider.notifier).refresh(),
             icon: const Icon(Icons.refresh),
           ),
@@ -44,7 +55,7 @@ class MemoryPage extends ConsumerWidget {
                 Padding(
                   padding: const EdgeInsetsDirectional.only(end: AuraSpacing.sm),
                   child: FilterChip(
-                    label: const Text('All'),
+                    label: Text(context.l10n.memoryFilterAll),
                     selected: state.kindFilter == null,
                     onSelected: (_) =>
                         ref.read(memoryViewModelProvider.notifier).setFilter(null),
@@ -54,7 +65,7 @@ class MemoryPage extends ConsumerWidget {
                   Padding(
                     padding: const EdgeInsetsDirectional.only(end: AuraSpacing.sm),
                     child: FilterChip(
-                      label: Text(kind),
+                      label: Text(memoryKindLabel(context.l10n, kind)),
                       selected: state.kindFilter == kind,
                       onSelected: (_) =>
                           ref.read(memoryViewModelProvider.notifier).setFilter(kind),
@@ -84,10 +95,10 @@ class MemoryPage extends ConsumerWidget {
                         onRetry: () => ref.read(memoryViewModelProvider.notifier).refresh(),
                       )
                     : state.visible.isEmpty
-                    ? const AuraEmptyState(
+                    ? AuraEmptyState(
                         icon: Icons.psychology_outlined,
-                        title: 'No memories yet',
-                        message: 'Save a fact with a kind so Copilot can use it later.',
+                        title: context.l10n.memoryEmptyTitle,
+                        message: context.l10n.memoryEmptyMessage,
                       )
                     : ListView.separated(
                         padding: const EdgeInsets.fromLTRB(
@@ -107,13 +118,13 @@ class MemoryPage extends ConsumerWidget {
                               title: Text(item.content),
                               subtitle: Text(
                                 [
-                                  item.kind,
+                                  memoryKindLabel(context.l10n, item.kind),
                                   if (item.subject != null && item.subject!.isNotEmpty)
                                     item.subject,
                                 ].join(' · '),
                               ),
                               trailing: IconButton(
-                                tooltip: 'Delete',
+                                tooltip: context.l10n.commonDelete,
                                 icon: const Icon(Icons.delete_outline),
                                 onPressed: () => _remove(context, ref, item.id),
                               ),
@@ -134,9 +145,8 @@ class MemoryPage extends ConsumerWidget {
       AuraSnackbar.show(
         context,
         message: confirmed
-            ? 'Memory forgotten'
-            : 'Forgotten on this device. AURA will finish removing it from the '
-                'server the next time it can reach it.',
+            ? context.l10n.memoryForgotten
+            : context.l10n.memoryForgottenLocally,
         kind: confirmed ? AuraSnackbarKind.success : AuraSnackbarKind.info,
       );
     } catch (e) {
@@ -144,7 +154,7 @@ class MemoryPage extends ConsumerWidget {
       final failure = AuraFailure.from(e);
       AuraSnackbar.show(
         context,
-        message: 'Could not forget this memory. ${failure.message}',
+        message: context.l10n.memoryForgetFailed(failure.message),
         kind: AuraSnackbarKind.error,
       );
     }
@@ -156,38 +166,40 @@ class MemoryPage extends ConsumerWidget {
     var kind = 'semantic';
     await AuraDialog.show<void>(
       context: context,
-      title: 'Remember this',
-      confirmLabel: 'Save',
-      cancelLabel: 'Cancel',
+      title: context.l10n.memoryAddTitle,
+      confirmLabel: context.l10n.commonSave,
+      cancelLabel: context.l10n.cancel,
       onConfirm: () async {
         final text = content.text.trim();
         if (text.isEmpty) return;
-        await ref.read(memoryViewModelProvider.notifier).add(
+        final outcome = await ref.read(memoryViewModelProvider.notifier).add(
               content: text,
               kind: kind,
               subject: subject.text.trim().isEmpty ? null : subject.text.trim(),
             );
-        if (context.mounted) Navigator.of(context).pop();
+        if (!context.mounted) return;
+        Navigator.of(context).pop();
+        showMemorySaveOutcome(context, outcome, text);
       },
       child: StatefulBuilder(
         builder: (context, setState) {
           return Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              AuraTextField(controller: content, label: 'Fact', maxLines: 3),
+              AuraTextField(controller: content, label: context.l10n.memoryFactLabel, maxLines: 3),
               const SizedBox(height: AuraSpacing.md),
-              AuraTextField(controller: subject, label: 'Subject (optional)'),
+              AuraTextField(controller: subject, label: context.l10n.memorySubjectLabel),
               const SizedBox(height: AuraSpacing.md),
               DropdownButtonFormField<String>(
                 initialValue: kind,
                 items: [
                   for (final value in kMemoryKinds)
-                    DropdownMenuItem(value: value, child: Text(value)),
+                    DropdownMenuItem(value: value, child: Text(memoryKindLabel(context.l10n, value))),
                 ],
                 onChanged: (value) {
                   if (value != null) setState(() => kind = value);
                 },
-                decoration: const InputDecoration(labelText: 'Kind'),
+                decoration: InputDecoration(labelText: context.l10n.memoryKindField),
               ),
             ],
           );
@@ -196,5 +208,26 @@ class MemoryPage extends ConsumerWidget {
     );
     content.dispose();
     subject.dispose();
+  }
+}
+
+/// A memory kind (a backend identifier such as `semantic`) in the language on screen; an
+/// unknown kind is shown as sent.
+String memoryKindLabel(AppLocalizations l10n, String kind) {
+  switch (kind) {
+    case 'working':
+      return l10n.memoryKindWorking;
+    case 'episodic':
+      return l10n.memoryKindEpisodic;
+    case 'semantic':
+      return l10n.memoryKindSemantic;
+    case 'entity':
+      return l10n.memoryKindEntity;
+    case 'procedural':
+      return l10n.memoryKindProcedural;
+    case 'reflection':
+      return l10n.memoryKindReflection;
+    default:
+      return kind;
   }
 }

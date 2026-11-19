@@ -43,14 +43,16 @@ provider's own ``429`` remains the authority, and this module only avoids asking
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
 import time
 from collections import deque
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 __all__ = [
     "QuotaLimits",
@@ -77,14 +79,18 @@ class QuotaLimits:
     rpd: int = 0
     tpm: int = 0
     tpd: int = 0
+    #: Tokens one user may spend on this provider per UTC day (module readiness WP2, D-05). The
+    #: provider-wide limits above are shared by everyone; without this, one heavy user could
+    #: spend the whole day's allowance and lock every other user out.
+    user_tpd: int = 0
 
     def __post_init__(self) -> None:
-        if min(self.rpm, self.rpd, self.tpm, self.tpd) < 0:
+        if min(self.rpm, self.rpd, self.tpm, self.tpd, self.user_tpd) < 0:
             raise ValueError("quota limits cannot be negative")
 
     @property
     def declared(self) -> bool:
-        return bool(self.rpm or self.rpd or self.tpm or self.tpd)
+        return bool(self.rpm or self.rpd or self.tpm or self.tpd or self.user_tpd)
 
 
 @dataclass(slots=True)
@@ -104,6 +110,17 @@ class QuotaReservation:
     estimated_tokens: int
     _entry: _Entry | None = None
     settled: bool = False
+    #: Whose per-user daily count this reservation was also added to (WP2), if any.
+    user_key: str | None = None
+    _user_tokens: int = 0
+
+
+@dataclass(slots=True)
+class _UserState:
+    """One user's spend on one provider today."""
+
+    day: str
+    tokens: int = 0
 
 
 @dataclass(slots=True)
@@ -221,6 +238,7 @@ class QuotaTracker:
         self._store = store
         self._metrics = metrics
         self._states: dict[str, _State] = {}
+        self._users: dict[tuple[str, str], _UserState] = {}
         #: Every provider whose cooldown should survive a restart, declared limits or not. The
         #: router registers its whole pool; without that, a provider with no declared limits
         #: would be unknown at hydrate time and its stored cooldown silently dropped.
@@ -255,7 +273,9 @@ class QuotaTracker:
 
     # -- decisions ---------------------------------------------------------------------
 
-    def refusal(self, name: str, estimated_tokens: int) -> str | None:
+    def refusal(
+        self, name: str, estimated_tokens: int, *, user_key: str | None = None
+    ) -> str | None:
         """Why ``name`` must not be sent this request right now, or ``None`` if it may."""
         now = self._wall()
         state = self._states.get(name)
@@ -277,13 +297,21 @@ class QuotaTracker:
             return "quota_rpm"
         if limits.tpm and sum(e.tokens for e in state.window) + estimated > limits.tpm:
             return "quota_tpm"
+        if limits.user_tpd and user_key:
+            # Checked last: a provider-wide limit is everyone's problem and must be reported as
+            # that, not as this user's (WP2).
+            if self._user_state(name, user_key, now).tokens + estimated > limits.user_tpd:
+                return "user_quota_tpd"
         return None
 
     def try_reserve(
-        self, name: str, estimated_tokens: int
+        self, name: str, estimated_tokens: int, *, user_key: str | None = None
     ) -> tuple[QuotaReservation | None, str | None]:
-        """Count a request against ``name``'s budget, or say why it cannot be sent."""
-        reason = self.refusal(name, estimated_tokens)
+        """Count a request against ``name``'s budget, or say why it cannot be sent.
+
+        ``user_key`` also counts it against that user's daily allowance when the provider
+        declares ``user_tpd``; ``None`` (an unhinted background call) is never counted."""
+        reason = self.refusal(name, estimated_tokens, user_key=user_key)
         if reason is not None:
             self._count(name, reason)
             return None, reason
@@ -297,9 +325,16 @@ class QuotaTracker:
         state.day_requests += 1
         state.day_tokens += estimated
         self._share(name, state.day, requests=1, tokens=estimated)
-        return QuotaReservation(
+        reservation = QuotaReservation(
             provider=name, day=state.day, estimated_tokens=estimated, _entry=entry
-        ), None
+        )
+        if self.limits(name).user_tpd and user_key:
+            user = self._user_state(name, user_key, now)
+            user.tokens += estimated
+            reservation.user_key = user_key
+            reservation._user_tokens = estimated
+            self._share_user(name, user_key, user.day, estimated)
+        return reservation, None
 
     def settle(self, reservation: QuotaReservation | None, actual_tokens: int | None) -> None:
         """Replace a reservation's estimate with what the provider reported.
@@ -320,6 +355,13 @@ class QuotaTracker:
         if state is not None and state.day == reservation.day:
             state.day_tokens = max(0, state.day_tokens + delta)
             self._share(reservation.provider, reservation.day, tokens=delta)
+        if reservation.user_key is not None:
+            user_delta = actual - reservation._user_tokens
+            reservation._user_tokens = actual
+            user = self._users.get((reservation.provider, reservation.user_key))
+            if user is not None and user.day == reservation.day and user_delta:
+                user.tokens = max(0, user.tokens + user_delta)
+                self._share_user(reservation.provider, reservation.user_key, user.day, user_delta)
 
     def cooldown(self, name: str, seconds: float | None, *, reason: str = "rate_limited") -> float:
         """Bench ``name`` for ``seconds`` (the provider's own reset when it gave one).
@@ -367,6 +409,60 @@ class QuotaTracker:
             counter.labels(provider=name, reason=reason).inc()
         except Exception:  # pragma: no cover - metrics must never fail a routing decision
             pass
+
+    # -- per-user allowance (WP2) --------------------------------------------------------
+
+    def _user_state(self, name: str, user_key: str, now: float) -> _UserState:
+        today = _utc_day(now)
+        key = (name, user_key)
+        user = self._users.get(key)
+        if user is None or user.day != today:
+            if len(self._users) > 10_000:
+                # Bounded: yesterday's users are dropped first; a user active today keeps count.
+                self._users = {k: v for k, v in self._users.items() if v.day == today}
+            user = _UserState(day=today)
+            self._users[key] = user
+        return user
+
+    def user_quota_details(self, names: Sequence[str]) -> dict[str, Any]:
+        """What a ``user_quota_exhausted`` refusal tells the person: when it resets (the next
+        UTC midnight) and the smallest per-user allowance among ``names``."""
+        now = self._wall()
+        midnight = (int(now // 86_400) + 1) * 86_400
+        caps = [self.limits(n).user_tpd for n in names if self.limits(n).user_tpd]
+        return {
+            "reset_at": datetime.fromtimestamp(midnight, tz=timezone.utc).isoformat(),
+            "limit_tokens": min(caps) if caps else None,
+        }
+
+    def _user_key_digest(self, user_key: str) -> str:
+        # The cache key carries a digest, not the raw id: keys show up in Redis tooling.
+        return hashlib.sha256(user_key.encode("utf-8")).hexdigest()[:32]
+
+    def _share_user(self, name: str, user_key: str, day: str, tokens: int) -> None:
+        """Add this process's spend for one user to the shared counter and fold the total back,
+        as :meth:`_share` does for the provider. Best effort: the cache never fails a request."""
+        if self._store is None or not tokens:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        store = self._store
+        key = f"{_KEY_PREFIX}:{name}:user:{self._user_key_digest(user_key)}:day:{day}:tokens"
+
+        async def share() -> None:
+            try:
+                total = await store.incr(key, amount=tokens, ttl_s=2 * 86400)
+            except Exception:  # best-effort: the Cache port's contract
+                return
+            user = self._users.get((name, user_key))
+            if user is not None and user.day == day:
+                user.tokens = max(user.tokens, int(total))
+
+        task = loop.create_task(share())
+        self._pending.add(task)
+        task.add_done_callback(self._pending.discard)
 
     # -- persistence -------------------------------------------------------------------
 

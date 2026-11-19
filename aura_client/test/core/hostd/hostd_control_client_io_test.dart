@@ -45,7 +45,8 @@ void main() {
     await expectLater(client.roots(), throwsA(isA<HostdControlUnavailable>()));
   });
 
-  test('status() succeeds without an Authorization header', () async {
+  test('status() sends the token, since the daemon only lists roots to an authorized caller '
+      '(INT-037)', () async {
     final server = await _FakeControlServer.start(
       respond: (request, body) => {'authenticated': false, 'backend_url': null, 'roots': []},
     );
@@ -57,7 +58,25 @@ void main() {
     final result = await client.status();
 
     expect(result['authenticated'], false);
-    expect(server.receivedAuthHeaders.single, '');
+    expect(server.receivedAuthHeaders.single, 'Bearer tok');
+  });
+
+  test('a daemon that accepts the connection but never answers is reported unavailable after '
+      'the timeout, not awaited forever (INT-038)', () async {
+    final httpServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final held = <HttpRequest>[];
+    httpServer.listen(held.add); // never responds
+    addTearDown(() => httpServer.close(force: true));
+    final client = HostdControlClient(
+      discoverEndpoint: () async => HostdControlEndpoint(port: httpServer.port, token: 'tok'),
+      requestTimeout: const Duration(milliseconds: 200),
+    );
+    addTearDown(client.close);
+
+    await expectLater(
+      client.pairingStatus(),
+      throwsA(isA<HostdControlUnavailable>().having((e) => e.message, 'message', contains('did not answer'))),
+    );
   });
 
   test('every other call sends the discovered token as a bearer header', () async {
@@ -180,5 +199,86 @@ void main() {
 
     expect(seenUri?.queryParameters['root'], '/a b');
     expect(seenUri?.queryParameters['path'], 'sub dir');
+  });
+
+  group('remote control (WP8, D-10b)', () {
+    test('setRemoteControl POSTs {enabled} to /remote_control with the token and returns the '
+        "daemon's answer", () async {
+      final seen = <String>[];
+      Map<String, dynamic>? seenBody;
+      final server = await _FakeControlServer.start(
+        respond: (request, body) {
+          seen.add('${request.method} ${request.uri.path}');
+          seenBody = body;
+          return {'remote_control': body['enabled']};
+        },
+      );
+      addTearDown(server.close);
+      final client = HostdControlClient(
+        discoverEndpoint: () async => HostdControlEndpoint(port: server._httpServer.port, token: 'tok'),
+      );
+
+      expect(await client.setRemoteControl(true), isTrue);
+      expect(seen.single, 'POST /remote_control');
+      expect(seenBody, {'enabled': true});
+      expect(server.receivedAuthHeaders.single, 'Bearer tok');
+
+      expect(await client.setRemoteControl(false), isFalse);
+      expect(seenBody, {'enabled': false});
+    });
+
+    test('the answer is what the daemon says, not what was asked for', () async {
+      final server = await _FakeControlServer.start(respond: (request, body) => {'remote_control': false});
+      addTearDown(server.close);
+      final client = HostdControlClient(
+        discoverEndpoint: () async => HostdControlEndpoint(port: server._httpServer.port, token: 't'),
+      );
+
+      expect(await client.setRemoteControl(true), isFalse);
+    });
+
+    test('an older daemon without the route reports the out-of-date hint', () async {
+      final httpServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      unawaited(() async {
+        await for (final request in httpServer) {
+          request.response.statusCode = 404;
+          request.response.headers.contentType = ContentType.json;
+          request.response.write(jsonEncode({'error': 'no such endpoint'}));
+          await request.response.close();
+        }
+      }());
+      addTearDown(() => httpServer.close(force: true));
+      final client = HostdControlClient(
+        discoverEndpoint: () async => HostdControlEndpoint(port: httpServer.port, token: 't'),
+      );
+
+      await expectLater(
+        client.setRemoteControl(true),
+        throwsA(isA<HostdControlError>().having((e) => e.message, 'message', contains('out of date'))),
+      );
+    });
+  });
+
+  test('initGit POSTs {root} to /git/init with the token and returns the first commit (D-13)', () async {
+    final seen = <String>[];
+    Map<String, dynamic>? seenBody;
+    final server = await _FakeControlServer.start(
+      respond: (request, body) {
+        seen.add('${request.method} ${request.uri.path}');
+        seenBody = body;
+        return {'ok': true, 'commit': 'abc123'};
+      },
+    );
+    addTearDown(server.close);
+    final client = HostdControlClient(
+      discoverEndpoint: () async => HostdControlEndpoint(port: server._httpServer.port, token: 'tok'),
+    );
+
+    final result = await client.initGit(root: '/home/me/notes');
+
+    expect(seen.single, 'POST /git/init');
+    expect(seenBody, {'root': '/home/me/notes'});
+    expect(server.receivedAuthHeaders.single, 'Bearer tok');
+    expect(result['commit'], 'abc123');
   });
 }

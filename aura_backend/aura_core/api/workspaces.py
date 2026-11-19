@@ -16,7 +16,7 @@ and an invented one.
 # function, and FastAPI must resolve their annotations at decoration time (as in v3.py).
 from typing import Any, Callable
 
-from ..domain.errors import RateLimitedError, ValidationError
+from ..domain.errors import AuthorizationError, RateLimitedError, ValidationError
 from ..domain.tenancy import Invite, Membership, Workspace, WorkspaceRole
 
 __all__ = ["register_workspace_ops"]
@@ -30,7 +30,7 @@ def _workspace(ws: Workspace, role: WorkspaceRole) -> dict[str, Any]:
 
 
 def _member(m: Membership) -> dict[str, Any]:
-    return {"user_id": m.user_id, "role": m.role.value, "joined_at": m.joined_at.isoformat()}
+    return {"user_id": m.user_id, "role": m.role.value, "email": m.email, "joined_at": m.joined_at.isoformat()}
 
 
 def _invite(i: Invite) -> dict[str, Any]:
@@ -89,6 +89,12 @@ def register_workspace_ops(
     def person(caller: Any) -> str:
         return str(caller.user_id)
 
+    def require_verified_email(caller: Any) -> None:
+        # Spec 5.1: an email/password account proves its address before it can create or join a
+        # team (Google and Apple sign-ins arrive verified).
+        if not getattr(caller, "email_verified", False):
+            raise AuthorizationError("verify your email address before creating or joining a team")
+
     async def invite_budget(caller: Any) -> None:
         decision = await limiter.check_limit(
             key=person(caller), scope="workspace_invite", limit=INVITE_BUDGET_PER_MINUTE
@@ -103,7 +109,8 @@ def register_workspace_ops(
 
     @router.post("/workspaces", dependencies=idempotent)
     async def create_workspace(payload: CreateRequest, caller=Depends(principal)) -> JSONResponse:
-        ws = await tenancy.create_team(person(caller), payload.name)
+        require_verified_email(caller)
+        ws = await tenancy.create_team(person(caller), payload.name, owner_email=getattr(caller, "email", None) or None)
         return JSONResponse(status_code=201, content=_workspace(ws, WorkspaceRole.OWNER))
 
     @router.delete("/workspaces/{workspace_id}", dependencies=idempotent)
@@ -115,6 +122,12 @@ def register_workspace_ops(
     async def list_members(workspace_id: str, caller=Depends(principal)) -> JSONResponse:
         members = await tenancy.list_members(person(caller), workspace_id)
         return JSONResponse(content={"members": [_member(m) for m in members]})
+
+    @router.get("/workspaces/{workspace_id}/plan")
+    async def workspace_plan(workspace_id: str, caller=Depends(principal)) -> JSONResponse:
+        """The workspace's plan, its limits and this month's usage (SaaS P1-C). Any member."""
+        await tenancy.resolve(person(caller), workspace_id)
+        return JSONResponse(content=await container.plans.usage(workspace_id))
 
     @router.patch("/workspaces/{workspace_id}/members/{user_id}", dependencies=idempotent)
     async def change_role(workspace_id: str, user_id: str, payload: RoleRequest, caller=Depends(principal)) -> Response:
@@ -135,7 +148,8 @@ def register_workspace_ops(
     @router.post("/workspaces/{workspace_id}/invites")
     async def create_invite(workspace_id: str, payload: InviteRequest, caller=Depends(principal)) -> JSONResponse:
         await invite_budget(caller)
-        invite, token = await tenancy.invite(person(caller), workspace_id, payload.email, _role(payload.role))
+        invite, token = await tenancy.invite(person(caller), workspace_id, payload.email, _role(payload.role),
+                                             inviter_email=getattr(caller, "email", None) or None)
         return JSONResponse(
             status_code=201,
             content={"invite": _invite(invite), "token": token,
@@ -155,7 +169,8 @@ def register_workspace_ops(
 
     @router.post("/workspaces/invites/accept")
     async def accept_invite(payload: AcceptRequest, caller=Depends(principal)) -> JSONResponse:
+        require_verified_email(caller)
         await invite_budget(caller)
-        member = await tenancy.accept(person(caller), payload.token)
+        member = await tenancy.accept(person(caller), payload.token, email=getattr(caller, "email", None) or None)
         ws, _ = await tenancy.resolve(person(caller), member.workspace_id)
         return JSONResponse(content={"workspace": _workspace(ws, member.role), "role": member.role.value})

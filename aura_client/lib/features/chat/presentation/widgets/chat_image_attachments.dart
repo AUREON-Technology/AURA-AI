@@ -29,7 +29,17 @@ class AttachImageButton extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final capabilities = ref.watch(visionCapabilitiesProvider).value;
+    final check = ref.watch(visionCapabilitiesProvider);
+    if (check.hasError && !check.isLoading) {
+      // F25: the server could not be asked, which is not a "no". Offer to ask again rather than
+      // hiding image attachments for the rest of the session.
+      return IconButton(
+        tooltip: context.l10n.chatImageCapabilityCheckFailed,
+        icon: const Icon(Icons.image_not_supported_outlined),
+        onPressed: enabled ? () => ref.invalidate(visionCapabilitiesProvider) : null,
+      );
+    }
+    final capabilities = check.value;
     if (capabilities == null || !capabilities.canAttach) return const SizedBox.shrink();
     final count = ref.watch(pendingChatImagesProvider).length;
     final full = count >= capabilities.maxImages;
@@ -49,17 +59,21 @@ class AttachImageButton extends ConsumerWidget {
     for (final file in files) {
       final bytes = file.bytes;
       if (bytes == null) {
-        problem = 'Could not read ${file.name}.';
+        problem = context.l10n.chatImageReadFailed(file.name);
         continue;
       }
       final rejection = pending.add(ChatImageAttachment(bytes: bytes, name: file.name), limits);
       if (rejection == AttachRejection.tooMany) {
-        problem = 'You can attach up to ${limits.maxImages} images to one message.';
+        problem = context.l10n.chatImageTooMany(limits.maxImages);
         break;
       }
       if (rejection == AttachRejection.tooLarge) {
         final mb = (limits.maxImageBytes / (1024 * 1024)).toStringAsFixed(0);
-        problem = '${file.name} is larger than $mb MB.';
+        problem = context.l10n.chatImageTooLarge(file.name, mb);
+      }
+      if (rejection == AttachRejection.totalTooLarge) {
+        final mb = (limits.maxRequestImageBytes / (1024 * 1024)).toStringAsFixed(0);
+        problem = '${file.name} was not added: one message can carry at most $mb MB of images.';
       }
     }
     if (problem != null && context.mounted) {
@@ -152,7 +166,7 @@ class SentImagesView extends ConsumerWidget {
     final images = ref.watch(sentChatImagesProvider)[messageId] ?? const <ChatImageAttachment>[];
     if (images.isEmpty) {
       if (imageCount == 0) return const SizedBox.shrink();
-      final label = imageCount == 1 ? '1 image attached' : '$imageCount images attached';
+      final label = context.l10n.chatImagesAttached(imageCount);
       return Semantics(
         label: label,
         excludeSemantics: true,

@@ -10,7 +10,9 @@ class LiveTranscriptLine {
 
 @immutable
 class LiveVoiceState {
-  final String phase; // connecting | listening | thinking | speaking | awaiting_confirmation | idle
+  /// connecting | listening | thinking | speaking | awaiting_confirmation | idle | error.
+  /// `error` means the session ended on a failure (see [error]); the mic is stopped.
+  final String phase;
   final double micAmplitude;
   final double playbackAmplitude;
   final bool transcriptVisible;
@@ -20,6 +22,9 @@ class LiveVoiceState {
   final String? error;
   final String? sessionId;
   final bool supported;
+
+  /// Native audio could not start (INT-102): replies arrive as text only, and the screen says so.
+  final bool audioUnavailable;
 
   const LiveVoiceState({
     this.phase = 'idle',
@@ -32,6 +37,7 @@ class LiveVoiceState {
     this.error,
     this.sessionId,
     this.supported = true,
+    this.audioUnavailable = false,
   });
 
   bool get isBusy =>
@@ -49,6 +55,7 @@ class LiveVoiceState {
     bool clearError = false,
     String? sessionId,
     bool? supported,
+    bool? audioUnavailable,
   }) {
     return LiveVoiceState(
       phase: phase ?? this.phase,
@@ -61,6 +68,7 @@ class LiveVoiceState {
       error: clearError ? null : (error ?? this.error),
       sessionId: sessionId ?? this.sessionId,
       supported: supported ?? this.supported,
+      audioUnavailable: audioUnavailable ?? this.audioUnavailable,
     );
   }
 }

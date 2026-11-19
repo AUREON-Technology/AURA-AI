@@ -22,6 +22,7 @@ import unicodedata
 from typing import Iterable, Sequence
 
 from ..domain.safety import GuardAction, GuardStage, GuardVerdict, Span, redact_spans
+from ..text import ARABIC_STOPWORDS, arabic_view, fold, is_arabic_token, light_stem
 
 __all__ = [
     "Guard",
@@ -44,27 +45,15 @@ __all__ = [
 # jailbreak passed untouched while the product ships an Arabic UI and Arabic speech)
 # --------------------------------------------------------------------------------------
 
-_ARABIC_LETTER = re.compile(r"[\u0600-\u06FF]")
 #: Harakat, Quranic marks, superscript alef and tatweel: optional in written Arabic, so a pattern
-#: must not depend on whether the writer used them.
+#: must not depend on whether the writer used them. The folding itself (and this same class) lives
+#: in ``aura_core/text/arabic.py``, shared with retrieval so a guard and search agree on what
+#: counts as the same word; this copy only extends a match's span over trailing marks.
 _ARABIC_STRIP = re.compile(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u0640]")
-#: Letters written interchangeably in practice: hamza-carrying alefs, alef maqsura, teh marbuta.
-_ARABIC_FOLD = str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ٱ": "ا", "ى": "ي", "ة": "ه"})
 
-
-def _arabic_view(text: str) -> tuple[str, list[int]] | None:
-    """``text`` with diacritics removed and letter variants folded, plus each kept character's
-    index in ``text`` (so a match maps back to an accurate span). ``None`` if there is no Arabic."""
-    if not _ARABIC_LETTER.search(text):
-        return None
-    kept: list[str] = []
-    index: list[int] = []
-    for position, char in enumerate(text):
-        if _ARABIC_STRIP.match(char):
-            continue
-        kept.append(char.translate(_ARABIC_FOLD))
-        index.append(position)
-    return "".join(kept), index
+#: ``text`` with diacritics removed and letter variants folded, plus each kept character's index
+#: in ``text`` (so a match maps back to an accurate span). ``None`` if there is no Arabic.
+_arabic_view = arabic_view
 
 
 def _scan(
@@ -207,6 +196,9 @@ class EncodingGuard(Guard):
         "\u206a-\u206f"  # deprecated formatting controls
         "\ufeff"          # zero-width no-break space / BOM
         "\u00ad"          # soft hyphen
+        # Unicode tag block (F35): invisible, survives NFKC, and spells ASCII one code point per
+        # letter ("ASCII smuggling"), so a whole instruction can hide in text that looks clean.
+        "\U000e0000-\U000e007f"
         "]"
     )
     _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -625,10 +617,21 @@ class GroundednessGuard(Guard):
         self._min_words = min_sentence_words
 
     def _content_words(self, text: str) -> set[str]:
-        return {
-            w for w in re.findall(r"[a-z0-9']+", text.lower())
-            if len(w) > 2 and w not in self._STOPWORDS
-        }
+        # Arabic words are folded and light-stemmed so an answer that says "الطلاب" is supported
+        # by a source that says "طلاب". Without the Arabic alternative every Arabic answer had no
+        # content words at all, so the guard allowed it unexamined.
+        words: set[str] = set()
+        for word in re.findall(r"[a-z0-9']+|[\u0621-\u064A]+", fold(text.lower())):
+            if len(word) <= 2:
+                continue
+            if is_arabic_token(word):
+                if word in ARABIC_STOPWORDS:
+                    continue
+                word = light_stem(word)
+            elif word in self._STOPWORDS:
+                continue
+            words.add(word)
+        return words
 
     def _evaluate(self, text: str, *, stage: GuardStage, context: dict) -> GuardVerdict:
         sources: Sequence[str] = context.get("citations_text") or ()
@@ -642,12 +645,18 @@ class GroundednessGuard(Guard):
             source_words |= self._content_words(source)
         if not source_words:
             return GuardVerdict.allow(self.name)
+        # Word overlap only means something within one script. An Arabic answer drawn from
+        # English documents (an Arabic speaker's everyday case) shares no words with them however
+        # faithful it is, so each sentence is scored only on the words written in a script the
+        # sources also use; one with too few such words is left unscored, as before this guard
+        # could read Arabic at all (guard eval case ground-18).
+        source_scripts = {is_arabic_token(w) for w in source_words}
 
-        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?\u061F\u06D4])\s+", text) if s.strip()]
         scored: list[float] = []
         ungrounded = 0
         for sentence in sentences:
-            words = self._content_words(sentence)
+            words = {w for w in self._content_words(sentence) if is_arabic_token(w) in source_scripts}
             if len(words) < self._min_words:
                 continue
             support = len(words & source_words) / len(words)

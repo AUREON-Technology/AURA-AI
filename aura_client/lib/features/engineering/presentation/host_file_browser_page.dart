@@ -6,6 +6,7 @@ import 'package:aura_client/core/hostd/hostd_control_client.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart';
 import 'package:aura_client/desktop/explorer/explorer_service.dart';
 import 'package:aura_client/features/chat/presentation/widgets/sandbox_file_view.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// Read-only browser for one granted `aura_hostd` workspace root (ADR-011 Unit 8) -- lists
 /// directories via `GET /list` and shows file content via `GET /read`, both containment-checked
@@ -128,7 +129,7 @@ class _HostFileBrowserPageState extends ConsumerState<HostFileBrowserPage> {
         Padding(
           padding: const EdgeInsets.all(AuraSpacing.md),
           child: AuraButton(
-            label: 'Back to file list',
+            label: context.l10n.engineeringBackToFileList,
             icon: Icons.arrow_back,
             onPressed: () => setState(() => _selectedFileContent = null),
           ),
@@ -137,7 +138,7 @@ class _HostFileBrowserPageState extends ConsumerState<HostFileBrowserPage> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.md),
             child: Text(
-              'File is larger than this preview shows.',
+              context.l10n.engineeringFileTruncated,
               style: TextStyle(color: palette.textSecondary, fontSize: 12),
             ),
           ),
@@ -161,7 +162,7 @@ class _HostFileBrowserPageState extends ConsumerState<HostFileBrowserPage> {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(AuraSpacing.lg),
-          child: Text('Could not read this directory: $_error', style: TextStyle(color: palette.danger)),
+          child: Text(context.l10n.engineeringReadDirFailed(_error!), style: TextStyle(color: palette.danger)),
         ),
       );
     }
@@ -185,7 +186,7 @@ class _HostFileBrowserPageState extends ConsumerState<HostFileBrowserPage> {
         if (entries.isEmpty)
           Padding(
             padding: const EdgeInsets.all(AuraSpacing.lg),
-            child: Text('This folder is empty.', style: TextStyle(color: palette.textSecondary)),
+            child: Text(context.l10n.engineeringFolderEmpty, style: TextStyle(color: palette.textSecondary)),
           ),
       ],
     );

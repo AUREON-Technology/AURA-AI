@@ -100,7 +100,7 @@ class TestAuthorisation:
         ("get", "/api/v3/admin/status", None),
         ("post", "/api/v3/admin/index/rebuild", None),
         ("post", "/api/v3/admin/providers/local/reset-circuit", None),
-        ("post", "/api/v3/admin/prompts/system.orchestrator/pin", {"version": "1.1.0"}),
+        ("post", "/api/v3/admin/prompts/system.orchestrator/pin", {"version": "1.2.0"}),
         ("get", "/api/v3/admin/audit", None),
         ("get", "/api/v3/admin/sources", None),
         ("get", "/api/v3/admin/approvals", None),
@@ -143,13 +143,12 @@ class TestKnowledgeRoutes:
         assert deleted.status_code == 200
         assert deleted.json()["deleted"] is True
 
-    def test_deleting_an_unknown_document_reports_zero_rather_than_404(
-        self, user_client
-    ) -> None:
-        """The end state the caller wanted is reached either way."""
+    def test_deleting_an_unknown_document_is_404(self, user_client) -> None:
+        """INT-111: an unknown document answers exactly as someone else's does -- 404, never a
+        200 "deleted" -- so the answer reveals nothing about documents the caller cannot see."""
         response = user_client.delete("/api/v3/knowledge/documents/never-existed")
-        assert response.status_code == 200
-        assert response.json()["chunks_removed"] == 0
+        assert response.status_code == 404
+        assert response.json()["error"] == "not_found"
 
     def test_search_over_an_empty_corpus_returns_an_empty_list(self, user_client) -> None:
         response = user_client.post("/api/v3/knowledge/search", json={"query": "anything"})
@@ -403,10 +402,10 @@ class TestAdminOperations:
 
     def test_pinning_a_prompt_version_is_the_rollback_lever(self, admin_client) -> None:
         response = admin_client.post(
-            "/api/v3/admin/prompts/system.orchestrator/pin", json={"version": "1.1.0"}
+            "/api/v3/admin/prompts/system.orchestrator/pin", json={"version": "1.2.0"}
         )
         assert response.status_code == 200
-        assert response.json()["pinned"] == "system.orchestrator@1.1.0"
+        assert response.json()["pinned"] == "system.orchestrator@1.2.0"
 
     def test_pinning_an_unknown_version_is_refused(self, admin_client) -> None:
         response = admin_client.post(

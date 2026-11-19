@@ -9,8 +9,9 @@ import 'dart:convert';
 import 'package:collection/collection.dart';
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:drift/drift.dart';
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, defaultTargetPlatform;
 import 'package:flutter_riverpod/legacy.dart';
+import 'package:path/path.dart' as p;
 import 'package:xterm/xterm.dart' as xterm;
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
@@ -19,11 +20,13 @@ import 'package:aura_client/core/hostd/hostd_providers.dart' hide HostdRoot;
 import 'package:aura_client/core/hostd/hostd_terminal_client.dart';
 import 'package:aura_client/core/security/encryption_service.dart';
 import 'package:aura_client/desktop/editor/editor_abstraction.dart';
+import 'package:aura_client/desktop/shell/ide_platform_commands.dart';
 import 'package:aura_client/desktop/state/desktop_application_state.dart';
 import 'package:aura_client/desktop/state/git_notifier.dart';
 import 'package:aura_client/desktop/events/ide_event_bus.dart';
 import 'package:aura_client/desktop/events/ide_event.dart';
 import 'package:aura_client/desktop/editor/editor_tab.dart';
+import 'package:aura_client/desktop/workspace/workspace_file_service.dart';
 
 /// Workspace state notifier.
 class WorkspaceNotifier extends StateNotifier<WorkspaceState> {
@@ -85,13 +88,23 @@ class WorkspaceNotifier extends StateNotifier<WorkspaceState> {
 
 /// Editor state notifier.
 class EditorNotifier extends StateNotifier<EditorState> {
-  EditorNotifier(this._db, this._eventBus, {this.backupDelay = const Duration(seconds: 1)})
-      : super(const EditorState()) {
+  EditorNotifier(
+    this._db,
+    this._eventBus, {
+    this.backupDelay = const Duration(seconds: 1),
+    this.rootPathFor,
+  }) : super(const EditorState()) {
     _subscribeToEvents();
   }
 
   final AppDatabase _db;
   final IdeEventBus _eventBus;
+
+  /// The root folder of a workspace, by id. Tab identity is the file's path *relative to that
+  /// root*, so the same file opened from the Explorer (absolute), Quick Open or the Git panel
+  /// (relative) is one tab, and a rename or delete event (absolute) can find the tabs it affects.
+  /// `null` (tests that never open a folder) leaves paths as they were given.
+  final String? Function(String workspaceId)? rootPathFor;
 
   /// Hot exit (M8.8): how long after the last edit a dirty buffer is backed up to
   /// [DesktopUnsavedBuffers]. At most this much typing is lost if the app is killed.
@@ -133,6 +146,165 @@ class EditorNotifier extends StateNotifier<EditorState> {
   void setContent(String tabId, String content) {
     _tabContents[tabId] = content;
     _scheduleBackup(tabId);
+  }
+
+  // -- tab identity ---------------------------------------------------------------------------
+
+  /// Windows paths are case-insensitive, so `Src/A.dart` and `src/a.dart` are the same file there.
+  bool get _foldsCase => p.style == p.Style.windows;
+
+  String? _rootFor(String? workspaceId) => workspaceId == null ? null : rootPathFor?.call(workspaceId);
+
+  /// [path] as a workspace-relative path with forward slashes: what a tab stores and what
+  /// `WorkspaceFileService` is given. An absolute path inside the workspace is made relative; one
+  /// that is not inside it (or a workspace with no known root) is left absolute.
+  String normalizeTabPath(String path, {String? workspaceId}) {
+    var value = path;
+    final root = _rootFor(workspaceId ?? state.workspaceId);
+    if (root != null && p.isAbsolute(value) && p.isWithin(root, value)) {
+      value = p.relative(value, from: root);
+    }
+    if (p.style == p.Style.windows) value = value.replaceAll('\\', '/');
+    return value;
+  }
+
+  /// The comparison key of a normalized path: the path itself, lower-cased on Windows.
+  String tabKeyFor(String normalizedPath) => _foldsCase ? normalizedPath.toLowerCase() : normalizedPath;
+
+  /// Whether [a] and [b] name the same file once normalized.
+  bool isSameTabPath(String a, String b) => tabKeyFor(normalizeTabPath(a)) == tabKeyFor(normalizeTabPath(b));
+
+  bool _isSameOrUnder(String path, String ancestor) {
+    final key = tabKeyFor(path);
+    final ancestorKey = tabKeyFor(ancestor);
+    return key == ancestorKey || key.startsWith('$ancestorKey/');
+  }
+
+  EditorTab? _tabForPath(String normalizedPath) {
+    final key = tabKeyFor(normalizedPath);
+    return state.tabs.where((t) => tabKeyFor(normalizeTabPath(t.path)) == key).firstOrNull;
+  }
+
+  EditorTab? _tab(String tabId) => state.tabs.where((t) => t.id == tabId).firstOrNull;
+
+  static String _titleOf(String normalizedPath) => p.posix.basename(normalizedPath);
+
+  // -- disk state -----------------------------------------------------------------------------
+
+  /// Whether the file's content on disk is no longer the one [tabId]'s edits were made against.
+  /// `false` when there is no recorded base to compare with.
+  bool hasDiskChanged(String tabId, String diskContent) {
+    final base = _baseHashes[tabId];
+    return base != null && base != _hash(diskContent);
+  }
+
+  /// Records that [savedContent] was written to disk for [tabId]. The tab is marked clean only if
+  /// the buffer still *is* that text: anything typed while the write was in flight stays unsaved
+  /// (and backed up), instead of being declared saved along with it.
+  Future<void> markSaved(String tabId, String savedContent) async {
+    if (_tab(tabId) == null) return;
+    _baseHashes[tabId] = _hash(savedContent);
+    _restored.remove(tabId);
+    if ((_tabContents[tabId] ?? savedContent) == savedContent) {
+      await markDirty(tabId, false);
+    } else {
+      _scheduleBackup(tabId);
+    }
+  }
+
+  /// Replaces [tabId]'s buffer with [diskContent] -- the file as it is on disk -- discarding any
+  /// unsaved edits, and rebuilds the editor view around it.
+  void reloadFromDisk(String tabId, String diskContent) {
+    final tab = _tab(tabId);
+    if (tab == null) return;
+    _tabContents[tabId] = diskContent;
+    _baseHashes[tabId] = _hash(diskContent);
+    _dropBackup(tabId);
+    state = state.copyWith(
+      tabs: state.tabs
+          .map((t) => t.id == tabId ? t.copyWith(isDirty: false, revision: t.revision + 1) : t)
+          .toList(),
+    );
+    _eventBus.publish(TabDirtyChanged(tabId, false, state.workspaceId ?? ''));
+  }
+
+  /// Reloads a *clean* tab whose file changed on disk since it was read (the Engineer agent, a
+  /// `git checkout`, a formatter), so the tab does not keep showing -- and later offer to save
+  /// over -- text that is no longer the file. A dirty tab is left alone; the save-time check
+  /// (see `saveActiveFile`) asks the user before it would overwrite the change.
+  Future<void> refreshIfChangedOnDisk(String tabId) async {
+    final workspaceId = state.workspaceId;
+    final root = _rootFor(workspaceId);
+    final tab = _tab(tabId);
+    final base = _baseHashes[tabId];
+    if (root == null || tab == null || tab.isDirty || base == null) return;
+    final String onDisk;
+    try {
+      onDisk = await WorkspaceFileService(root).readFile(tab.path);
+    } catch (_) {
+      return; // Deleted or unreadable: the open buffer is still the best copy there is.
+    }
+    final current = _tab(tabId);
+    if (current == null || current.isDirty || state.workspaceId != workspaceId) return;
+    if (_baseHashes[tabId] != base || _hash(onDisk) == base) return;
+    reloadFromDisk(tabId, onDisk);
+  }
+
+  /// Moves the in-memory buffer, base hash and backup of [from] to [to] (a renamed file).
+  void _moveBuffer(String from, String to) {
+    final content = _tabContents.remove(from);
+    final base = _baseHashes.remove(from);
+    final wasRestored = _restored.containsKey(from);
+    final restoredBase = _restored[from];
+    _dropBackup(from);
+    if (content != null) _tabContents[to] = content;
+    if (base != null) _baseHashes[to] = base;
+    if (wasRestored) _restored[to] = restoredBase;
+  }
+
+  void _handleFileRenamed(FileRenamed event) {
+    if (event.workspaceId != state.workspaceId) return;
+    final from = normalizeTabPath(event.oldPath);
+    final to = normalizeTabPath(event.newPath);
+    var changed = false;
+    var activeId = state.activeTabId;
+    final tabs = <EditorTab>[];
+    final moved = <String>[];
+    for (final tab in state.tabs) {
+      final path = normalizeTabPath(tab.path);
+      if (!_isSameOrUnder(path, from)) {
+        tabs.add(tab);
+        continue;
+      }
+      final newPath = to + path.substring(from.length);
+      // A tab whose id *is* its path follows the file; one with a custom id keeps it.
+      final newId = tab.id == tabKeyFor(path) ? tabKeyFor(newPath) : tab.id;
+      if (newId != tab.id) {
+        _moveBuffer(tab.id, newId);
+        if (activeId == tab.id) activeId = newId;
+      }
+      tabs.add(tab.copyWith(id: newId, path: newPath, title: _titleOf(newPath)));
+      if (tab.isDirty) moved.add(newId);
+      changed = true;
+    }
+    if (!changed) return;
+    state = state.copyWith(tabs: tabs, activeTabId: activeId);
+    for (final id in moved) {
+      _scheduleBackup(id);
+    }
+    unawaited(saveSession());
+  }
+
+  void _handleFileDeleted(FileDeleted event) {
+    if (event.workspaceId != state.workspaceId) return;
+    final gone = normalizeTabPath(event.path);
+    for (final tab in List<EditorTab>.of(state.tabs)) {
+      // A clean tab of a deleted file has nothing left to show. A dirty one stays: its unsaved
+      // text is the only copy, and saving it is the user's call.
+      if (!tab.isDirty && _isSameOrUnder(normalizeTabPath(tab.path), gone)) {
+        unawaited(closeTab(tab.id));
+      }
+    }
   }
 
   // -- hot exit (M8.8) ------------------------------------------------------------------------
@@ -238,7 +410,14 @@ class EditorNotifier extends StateNotifier<EditorState> {
   /// Puts back the unsaved buffers backed up for [workspaceId] into [tabs], marking each tab
   /// dirty. A backup that can no longer be decrypted (the key is gone) is dropped rather than
   /// shown as ciphertext.
-  Future<List<EditorTab>> _restoreBackups(String workspaceId, List<EditorTab> tabs) async {
+  ///
+  /// [idRemap] maps the ids sessions saved before tab ids were canonical (an absolute or
+  /// backslashed path) to the ids those tabs have now, so their backups still find their tab.
+  Future<List<EditorTab>> _restoreBackups(
+    String workspaceId,
+    List<EditorTab> tabs, {
+    Map<String, String> idRemap = const {},
+  }) async {
     final rows = await (_db.select(_db.desktopUnsavedBuffers)
           ..where((t) => t.workspaceId.equals(workspaceId)))
         .get();
@@ -252,18 +431,30 @@ class EditorNotifier extends StateNotifier<EditorState> {
             .go();
         continue;
       }
-      _tabContents[row.tabId] = content;
-      _restored[row.tabId] = row.baseHash;
-      if (row.baseHash != null) _baseHashes[row.tabId] = row.baseHash!;
-      final index = restored.indexWhere((t) => t.id == row.tabId);
+      final path = normalizeTabPath(row.path, workspaceId: workspaceId);
+      // The same file may already be open under another id (the same path spelled differently).
+      final byPath = restored.where((t) => tabKeyFor(normalizeTabPath(t.path, workspaceId: workspaceId)) == tabKeyFor(path));
+      final id = idRemap[row.tabId] ?? byPath.firstOrNull?.id ?? row.tabId;
+      if (id != row.tabId) {
+        // The row is filed under the old id; refile it under the new one (the next backup of
+        // this tab writes it) so it is not restored a second time on the next launch.
+        await (_db.delete(_db.desktopUnsavedBuffers)
+              ..where((t) => t.workspaceId.equals(workspaceId) & t.tabId.equals(row.tabId)))
+            .go();
+        _rekeyedBackups.add(id);
+      }
+      _tabContents[id] = content;
+      _restored[id] = row.baseHash;
+      if (row.baseHash != null) _baseHashes[id] = row.baseHash!;
+      final index = restored.indexWhere((t) => t.id == id);
       if (index >= 0) {
         restored[index] = restored[index].copyWith(isDirty: true);
       } else {
         // The tab list was not saved with this tab in it; reopen it so the edits are not lost.
         restored.add(EditorTab(
-          id: row.tabId,
-          path: row.path,
-          title: row.path.split('/').last,
+          id: id,
+          path: path,
+          title: _titleOf(path),
           lastAccessed: DateTime.now(),
           isDirty: true,
         ));
@@ -272,10 +463,16 @@ class EditorNotifier extends StateNotifier<EditorState> {
     return restored;
   }
 
+  /// Tabs whose backup row was refiled under a new id while restoring; re-backed up once the
+  /// restored state is in place.
+  final Set<String> _rekeyedBackups = {};
+
   void _subscribeToEvents() {
     _eventSub = _eventBus.stream.listen((event) {
       if (event is TabOpened) _handleTabOpened(event);
       if (event is WorkspaceOpened) _loadSession(event.workspaceId);
+      if (event is FileRenamed) _handleFileRenamed(event);
+      if (event is FileDeleted) _handleFileDeleted(event);
     });
     _eventSub?.onDone(() => _eventSub = null);
   }
@@ -285,64 +482,102 @@ class EditorNotifier extends StateNotifier<EditorState> {
   Future<void> _loadSession(String workspaceId) async {
     // Pending backups belong to the workspace being left; write them under its id first.
     await flushBackups();
+    // The buffers belong to the workspace being left. Kept, they would be served to a tab of the
+    // same relative path in the next workspace (a README.md, a pubspec.yaml) -- showing, and on
+    // save writing, the previous workspace's text. Anything unsaved was just backed up above and
+    // is restored from there if this workspace is opened again.
     _restored.clear();
+    _tabContents.clear();
+    _baseHashes.clear();
+    _rekeyedBackups.clear();
     final row = await (_db.select(_db.desktopEditorState)
           ..where((t) => t.workspaceId.equals(workspaceId)))
         .getSingleOrNull();
     if (row == null) {
       final tabs = await _restoreBackups(workspaceId, const []);
       state = EditorState(tabs: tabs, activeTabId: tabs.firstOrNull?.id, workspaceId: workspaceId);
+      _rebackupRekeyed();
       return;
     }
     try {
       final decoded = jsonDecode(row.openTabsJson) as List<dynamic>;
-      final tabs = decoded
-          .cast<Map<String, dynamic>>()
-          .map((json) => EditorTab(
-                id: json['id'] as String,
-                path: json['path'] as String,
-                title: json['title'] as String,
-                isPinned: json['isPinned'] as bool? ?? false,
-                lastAccessed: DateTime.now(),
-                cursorPosition: (json['cursorOffset'] as num?) != null
-                    ? EditorCursor(offset: (json['cursorOffset'] as num).toInt())
-                    : null,
-                selection: (json['selectionStart'] as num?) != null && (json['selectionEnd'] as num?) != null
-                    ? EditorSelection(
-                        start: (json['selectionStart'] as num).toInt(),
-                        end: (json['selectionEnd'] as num).toInt(),
-                      )
-                    : null,
-              ))
-          .toList();
-      final withBackups = await _restoreBackups(workspaceId, tabs);
-      final activeTab = withBackups.where((t) => t.path == row.activeTabPath).firstOrNull;
+      final tabs = <EditorTab>[];
+      final idRemap = <String, String>{};
+      final idByKey = <String, String>{};
+      for (final json in decoded.cast<Map<String, dynamic>>()) {
+        final rawId = json['id'] as String;
+        final rawPath = json['path'] as String;
+        final path = normalizeTabPath(rawPath, workspaceId: workspaceId);
+        final key = tabKeyFor(path);
+        final duplicateOf = idByKey[key];
+        if (duplicateOf != null) {
+          // Two tabs of one file (saved by a version that let that happen): keep the first.
+          idRemap[rawId] = duplicateOf;
+          continue;
+        }
+        // A tab whose id was its path (every tab opened from the UI) gets the canonical id.
+        final id = rawId == rawPath ? key : rawId;
+        idByKey[key] = id;
+        if (id != rawId) idRemap[rawId] = id;
+        tabs.add(EditorTab(
+          id: id,
+          path: path,
+          title: _titleOf(path),
+          isPinned: json['isPinned'] as bool? ?? false,
+          lastAccessed: DateTime.now(),
+          cursorPosition: (json['cursorOffset'] as num?) != null
+              ? EditorCursor(offset: (json['cursorOffset'] as num).toInt())
+              : null,
+          selection: (json['selectionStart'] as num?) != null && (json['selectionEnd'] as num?) != null
+              ? EditorSelection(
+                  start: (json['selectionStart'] as num).toInt(),
+                  end: (json['selectionEnd'] as num).toInt(),
+                )
+              : null,
+        ));
+      }
+      final withBackups = await _restoreBackups(workspaceId, tabs, idRemap: idRemap);
+      final activePath = row.activeTabPath;
+      final activeKey = activePath == null ? null : tabKeyFor(normalizeTabPath(activePath, workspaceId: workspaceId));
+      final activeTab = activeKey == null
+          ? null
+          : withBackups.where((t) => tabKeyFor(normalizeTabPath(t.path, workspaceId: workspaceId)) == activeKey).firstOrNull;
       state = EditorState(
         tabs: withBackups,
         activeTabId: activeTab?.id,
         workspaceId: workspaceId,
       );
+      _rebackupRekeyed();
     } catch (_) {
       state = EditorState(workspaceId: workspaceId);
     }
   }
 
-  void _handleTabOpened(TabOpened event) {
-    final exists = state.tabs.any((t) => t.id == event.tabId);
-    if (!exists) {
-      final newTab = EditorTab(
-        id: event.tabId,
-        path: event.path,
-        title: event.path.split('/').last,
-        lastAccessed: DateTime.now(),
-      );
-      state = state.copyWith(
-        tabs: [...state.tabs, newTab],
-        activeTabId: event.tabId,
-      );
-    } else {
-      state = state.copyWith(activeTabId: event.tabId);
+  void _rebackupRekeyed() {
+    for (final id in _rekeyedBackups) {
+      _scheduleBackup(id);
     }
+    _rekeyedBackups.clear();
+  }
+
+  /// The tab for [path], created if it is not open yet. A file that is already open -- however
+  /// its path is spelled -- is that tab, never a second one with its own buffer.
+  EditorTab _resolveTab({required String tabId, required String path, String? workspaceId}) {
+    final normalized = normalizeTabPath(path, workspaceId: workspaceId);
+    final existing = _tabForPath(normalized) ?? _tab(tabId);
+    if (existing != null) return existing;
+    // Callers pass the path as the id; that becomes the canonical key. A caller that names a
+    // distinct id keeps it.
+    final id = tabId == path ? tabKeyFor(normalized) : tabId;
+    return EditorTab(id: id, path: normalized, title: _titleOf(normalized), lastAccessed: DateTime.now());
+  }
+
+  void _handleTabOpened(TabOpened event) {
+    final tab = _resolveTab(tabId: event.tabId, path: event.path, workspaceId: event.workspaceId);
+    final exists = state.tabs.any((t) => t.id == tab.id);
+    state = exists
+        ? state.copyWith(activeTabId: tab.id)
+        : state.copyWith(tabs: [...state.tabs, tab], activeTabId: tab.id);
   }
 
   Future<void> openTab({
@@ -350,23 +585,19 @@ class EditorNotifier extends StateNotifier<EditorState> {
     required String path,
     required String workspaceId,
   }) async {
-    final exists = state.tabs.any((t) => t.id == tabId);
+    final tab = _resolveTab(tabId: tabId, path: path, workspaceId: workspaceId);
+    final exists = state.tabs.any((t) => t.id == tab.id);
     if (!exists) {
-      final newTab = EditorTab(
-        id: tabId,
-        path: path,
-        title: path.split('/').last,
-        lastAccessed: DateTime.now(),
-      );
       state = state.copyWith(
-        tabs: [...state.tabs, newTab],
-        activeTabId: tabId,
+        tabs: [...state.tabs, tab],
+        activeTabId: tab.id,
         workspaceId: workspaceId,
       );
     } else {
-      state = state.copyWith(activeTabId: tabId);
+      state = state.copyWith(activeTabId: tab.id);
     }
-    _eventBus.publish(TabOpened(tabId, path, workspaceId));
+    _eventBus.publish(TabOpened(tab.id, tab.path, workspaceId));
+    if (exists && !tab.isDirty) unawaited(refreshIfChangedOnDisk(tab.id));
     await saveSession();
   }
 
@@ -398,6 +629,7 @@ class EditorNotifier extends StateNotifier<EditorState> {
     final tab = state.tabs.where((t) => t.id == tabId).firstOrNull;
     if (tab != null) {
       _eventBus.publish(TabActivated(tabId, state.workspaceId ?? ''));
+      if (!tab.isDirty) unawaited(refreshIfChangedOnDisk(tabId));
     }
     await saveSession();
   }
@@ -528,7 +760,7 @@ class TerminalNotifier extends StateNotifier<TerminalState> {
     if (existing != null) return existing;
     final terminal = xterm.Terminal(
       maxLines: 10000,
-      platform: xterm.TerminalTargetPlatform.windows,
+      platform: ideTerminalTargetPlatform(defaultTargetPlatform),
     );
     terminal.onOutput = (data) => sendInput(sessionId, Uint8List.fromList(utf8.encode(data)));
     // xterm invokes this synchronously from RenderTerminal.performLayout, so calling
@@ -1166,7 +1398,16 @@ final workspaceNotifierProvider = StateNotifierProvider<WorkspaceNotifier, Works
 final editorNotifierProvider = StateNotifierProvider<EditorNotifier, EditorState>((ref) {
   final db = ref.watch(databaseProvider);
   final eventBus = ref.watch(ideEventBusProvider);
-  return EditorNotifier(db, eventBus);
+  return EditorNotifier(
+    db,
+    eventBus,
+    rootPathFor: (workspaceId) => ref
+        .read(workspaceNotifierProvider)
+        .workspaces
+        .where((w) => w.id == workspaceId)
+        .firstOrNull
+        ?.rootPath,
+  );
 });
 
 /// Provider for terminal notifier.

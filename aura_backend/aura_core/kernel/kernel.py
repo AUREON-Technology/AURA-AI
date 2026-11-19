@@ -37,21 +37,24 @@ from ..domain.errors import (
     AllProvidersFailedError,
     AuraError,
     BudgetExceededError,
+    ConsentRequiredError,
     DependencyUnavailableError,
     OutputInvalidError,
     OverloadedError,
     PlanningError,
     SafetyViolationError,
     UserConcurrencyLimitError,
+    UserQuotaExhaustedError,
+    ValidationError,
 )
 from ..domain.events import TurnCompleted, TurnFailed, TurnStarted
 from ..domain.caller_context import CallerContext
 from ..domain.images import ImageInput
 from ..domain.connectors import Credential, connector_token_key
 from ..domain.context import user_facing_citations
-from ..domain.engineering import EngineerRun, EngineerRunStatus
+from ..domain.engineering import ENGINEER_CONSENT_NOTICE_VERSION, EngineerRun, EngineerRunStatus
 from ..domain.identifiers import CorrelationId, EngineerRunId, SessionId, TurnId, UserId
-from ..domain.knowledge import RetrievalResult
+from ..domain.knowledge import RetrievalResult, RetrievedChunk
 from ..domain.llm import (
     CompletionRequest,
     CompletionResponse,
@@ -81,11 +84,13 @@ from ..execution.confirmations import PendingConfirmationStore, ResumedTurn
 from ..execution.engine import ExecutionOutcome, StepEvent
 from ..llm.cache import InMemoryCache
 from ..llm.deadline import generation_budget, no_generation_budget
-from ..llm.router import TurnBudget
+from ..llm.router import TurnBudget, current_turn_budget, no_turn_budget, turn_budget_scope
 from ..llm.sensitivity import DataScope, data_scope, escalate
 from ..llm.workload import effective_workload, workload_for_turn, workload_scope
 from ..observability.logging import LogContext, get_logger
+from ..observability.tracing import record_span
 from ..ports.runtime import ToolContext
+from ..prompts.language import reply_language
 from ..prompts.library import AGENT_PROMPT_IDS
 from ..agents.registry import AgentRegistry, AgentSpec
 from ..reasoning.engine import ReasoningRequest
@@ -106,6 +111,11 @@ _SHA_RE = re.compile(r"\(([0-9a-f]{7,40})\)\s*$")
 #: positive marker so that losing it (eviction, a Redis restart) fails *closed*: a session whose
 #: marker is missing but which has history is treated as having been sensitive.
 _SESSION_CLEAN_KEY = "llm:session-clean:v1:{user}:{session}"
+#: Written by every SENSITIVE turn and never removed by a clean one (F32). A session reads as
+#: clean only while the clean mark is present *and* this one is absent, so two overlapping turns
+#: cannot leave it clean in whichever order their writes land. Same lifetime as the clean mark:
+#: it can never expire while a clean mark written alongside it survives.
+_SESSION_SENSITIVE_KEY = "llm:session-sensitive:v1:{user}:{session}"
 _SESSION_CLEAN_TTL_S = 30 * 86400
 
 
@@ -171,6 +181,12 @@ class TurnRequest:
     #: inside a granted root, and refuses it otherwise. `None` for every caller without an open
     #: desktop workspace, which leaves the daemon on its "first granted root" fallback.
     workspace_root: str | None = None
+    #: Where the person driving this turn is (module readiness WP8, D-10): ``"desktop"`` for the
+    #: desktop app (its access token carries the server-signed ``platform: desktop`` claim),
+    #: ``"remote"`` for phone and web. ``None`` (internal callers, evals) behaves as desktop. A
+    #: remote turn's work on the paired desktop is always held for confirmation, and the daemon
+    #: refuses it unless remote control was switched on at the computer itself.
+    origin: str | None = None
     #: Admission class for every generation this turn makes (roadmap P2.4). ``None`` derives it
     #: from ``route``/``agent`` (``llm/workload.py``): Engineer -> coder pool at priority 2,
     #: voice and chat -> general-fast at priority 1. Background callers set it explicitly.
@@ -190,6 +206,11 @@ class TurnRequest:
     #: Redacting ``Credential`` values, carried for this turn only into ``ToolContext.credentials``
     #: and from there to that one connector's reads; nothing stores a ``TurnRequest``.
     connector_tokens: Mapping[str, Credential] | None = None
+    #: The language the app is displaying (``"ar"``/``"en"``), from ``X-Client-Language``. Only a
+    #: fallback: the reply mirrors the language the message is written in, and this decides only
+    #: when the message has no clear language (a link, a number, code). ``None`` -- an old app,
+    #: a service key -- leaves such a message to the model, as before.
+    preferred_language: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,6 +288,10 @@ class KernelDependencies:
     #: Per-run agent state (GAP-024) is recorded by `agentic_executor` itself, through the
     #: `AgentRunStore` extension of this same port.
     engineer_runs: Any = None
+    #: `EngineerConsentStore` (`ports/coding.py`, D-03). When wired, an Engineer turn from someone
+    #: without a current consent is refused before anything is planned or sent anywhere. `None`
+    #: (a bare test kernel) checks nothing -- the container always wires it.
+    engineer_consent: Any = None
     episodic: Any = None
     cache: Any = None
     #: Key/value store (the ``Cache`` port, not ``LLMCache``) for ADR-030 Phase 4's per-session
@@ -316,13 +341,74 @@ def _consume_shadow_result(task: "asyncio.Task[None]") -> None:
 
 def _stream_error_outcome(exc: AuraError) -> TurnOutcome:
     """The telemetry outcome for an error ending a streamed turn, as ``run`` maps them."""
-    if isinstance(exc, UserConcurrencyLimitError):
+    if isinstance(exc, (UserConcurrencyLimitError, UserQuotaExhaustedError)):
         return TurnOutcome.RATE_LIMITED
     if isinstance(exc, SafetyViolationError):
         return TurnOutcome.BLOCKED
     if isinstance(exc, BudgetExceededError):
         return TurnOutcome.BUDGET_EXCEEDED
     return TurnOutcome.ERROR
+
+
+def _trace_turn(telemetry: TurnTelemetry) -> None:
+    """One ``aura.turn`` span per finished turn (Phase R2), built from its telemetry record.
+
+    Bounded labels, durations and counts only. No session, user or conversation id, no prompt
+    or answer text: spans leave for a third-party collector, and the per-user detail stays in
+    AURA's own telemetry store. The stage durations are attributes rather than child spans:
+    the kernel measures them as values, not as nested blocks.
+    """
+    t = telemetry.timings
+    record_span(
+        "aura.turn",
+        duration_ms=telemetry.total_ms,
+        attributes={
+            "aura.route": telemetry.route,
+            "aura.agent": telemetry.agent,
+            "aura.strategy": telemetry.strategy,
+            "aura.outcome": str(telemetry.outcome),
+            "aura.error_kind": telemetry.error_kind,
+            "aura.provider": telemetry.provider,
+            "aura.model": telemetry.model,
+            "aura.fallback_count": telemetry.fallback_count,
+            "aura.prompt_tokens": telemetry.prompt_tokens,
+            "aura.completion_tokens": telemetry.completion_tokens,
+            "aura.ttft_ms": None if telemetry.ttft_ms is None else round(telemetry.ttft_ms, 1),
+            "aura.degraded": telemetry.degraded,
+            "aura.tainted": telemetry.tainted,
+            "aura.retrieval.strategy": telemetry.retrieval.strategy,
+            "aura.retrieval.returned": telemetry.retrieval.returned,
+            **{f"aura.stage.{name}_ms": round(getattr(t, name), 1) for name in _TRACED_STAGES},
+        },
+        error=telemetry.error_kind is not None,
+    )
+
+
+#: The `StageTiming` fields a turn span reports.
+_TRACED_STAGES = (
+    "guards_in", "memory", "retrieval", "context", "planning", "reasoning", "tools",
+    "generation", "guards_out",
+)
+
+
+def _vision_step_outcome(perception: Any) -> dict[str, str]:
+    """Status and wording for the finished vision step (ADR-031).
+
+    ``done`` when a vision model described the images. ``degraded`` when only OCR read them:
+    the usual cause is a vision server that sleeps when idle and is still waking. The step says
+    so, so the user knows to send the image again rather than trust a text-only reading.
+    ``degraded`` is a status value added for this; a client that does not know it still shows
+    the description.
+    """
+    if getattr(perception, "mode", None) == "ocr_fallback":
+        return {
+            "status": "degraded",
+            "description": (
+                "Only the text in the image(s) could be read: the vision model is unavailable "
+                "or still starting. Send it again in a minute for a full look."
+            ),
+        }
+    return {"status": "done", "description": "Looked at the image(s)"}
 
 
 class AIKernel:
@@ -362,11 +448,15 @@ class AIKernel:
             try:
                 with workload_scope(self._workload_hint(request)), data_scope(
                     *self._baseline_classification(request)
-                ) as scope, generation_budget(self._turn_generation_budget_s(request)):
-                    result = await self._run_turn(request, correlation, turn_id, started)
+                ) as scope, generation_budget(
+                    self._turn_generation_budget_s(request)
+                ), turn_budget_scope(self._new_turn_budget()) as budget:
+                    result = await self._run_turn(
+                        request, correlation, turn_id, started, budget
+                    )
                     await self._remember_session_classification(request, scope)
                     return result
-            except UserConcurrencyLimitError as exc:
+            except (UserConcurrencyLimitError, UserQuotaExhaustedError) as exc:
                 return self._error_result(
                     request, correlation, turn_id, started, exc, TurnOutcome.RATE_LIMITED
                 )
@@ -396,19 +486,16 @@ class AIKernel:
         correlation: CorrelationId,
         turn_id: TurnId,
         started: float,
+        budget: TurnBudget,
     ) -> TurnResult:
         deps = self._deps
         resume = await self._claim_confirmation(request)
         if resume is not None:
             request = self._resumed_request(request, resume)
         resolved_spec = self._resolve_agent(request)
+        await self._require_engineer_consent(request)
         resolved_agent = resolved_spec.id if resolved_spec is not None else request.agent
         timings: dict[str, float] = {}
-        budget = TurnBudget(
-            max_generations=getattr(
-                getattr(deps.settings, "llm", None), "max_generations_per_turn", 8
-            )
-        )
 
         # 1. Input guards -----------------------------------------------------------
         guard_records: list[Mapping[str, Any]] = []
@@ -433,29 +520,12 @@ class AIKernel:
         timings["memory"] = timings["retrieval"] = (time.perf_counter() - stage_start) * 1000.0
         await self._classify_context(request, memories, retrieval, history, goals, cag_prefix)
 
-        # 5. Guard retrieved content -------------------------------------------------
-        tainted = False
-        quarantined_count = 0
-        if deps.safety is not None and retrieval is not None and retrieval.chunks:
-            stage_start = time.perf_counter()
-            items = [(c.citation(), c.chunk.content) for c in retrieval.chunks]
-            accepted, quarantined, tainted = await deps.safety.guard_context_items(
-                items, user_id=request.user_id, turn_id=turn_id
-            )
-            quarantined_count = len(quarantined)
-            if quarantined_count:
-                accepted_citations = {citation for citation, _ in accepted}
-                retrieval = RetrievalResult(
-                    chunks=tuple(c for c in retrieval.chunks if c.citation() in accepted_citations),
-                    query=retrieval.query,
-                    candidates_considered=retrieval.candidates_considered,
-                    below_threshold=retrieval.below_threshold,
-                    quarantined=tuple(
-                        c for c in retrieval.chunks if c.citation() not in accepted_citations
-                    ),
-                    strategy=retrieval.strategy,
-                    duration_ms=retrieval.duration_ms,
-                )
+        # 5. Guard retrieved content and recalled memories ----------------------------
+        stage_start = time.perf_counter()
+        retrieval, memories, tainted, quarantined_count = await self._guard_context(
+            request, retrieval, memories, turn_id
+        )
+        if deps.safety is not None:
             timings["guards_in"] = timings.get("guards_in", 0.0) + (
                 time.perf_counter() - stage_start
             ) * 1000.0
@@ -591,7 +661,6 @@ class AIKernel:
             )
             if repair_usage is not None:
                 usage = (usage or TokenUsage(prompt_tokens=assembled.prompt_tokens)) + repair_usage
-                cost += repair_cost
 
         # 10. Persist session state --------------------------------------------------
         if deps.episodic is not None and request.session_id is not None:
@@ -619,7 +688,9 @@ class AIKernel:
             cache=CacheOutcome(hit=cached, tier=cache_tier),
             prompt_tokens=usage.prompt_tokens if usage else assembled.prompt_tokens,
             completion_tokens=usage.completion_tokens if usage else 0,
-            cost_usd=cost,
+            # Every generation the turn made -- planning, reasoning, the answer, a repair --
+            # was charged to its budget (F30), not just the last one.
+            cost_usd=budget.cost_used_usd,
             total_ms=(time.perf_counter() - started) * 1000.0,
             timings=StageTiming(**timings),
             retrieval=self._retrieval_telemetry(retrieval, quarantined_count),
@@ -695,20 +766,16 @@ class AIKernel:
             self._workload_hint(request)
         ), data_scope(*self._baseline_classification(request)) as scope, generation_budget(
             self._turn_generation_budget_s(request)
-        ):
+        ), turn_budget_scope(self._new_turn_budget()) as budget:
             try:
                 deps = self._deps
-                budget = TurnBudget(
-                    max_generations=getattr(
-                        getattr(deps.settings, "llm", None), "max_generations_per_turn", 8
-                    )
-                )
                 timings: dict[str, float] = {}
                 guard_records: list[Mapping[str, Any]] = []
                 resume = await self._claim_confirmation(request)
                 if resume is not None:
                     request = self._resumed_request(request, resume)
                 resolved_spec = self._resolve_agent(request)
+                await self._require_engineer_consent(request)
                 resolved_agent = resolved_spec.id if resolved_spec is not None else request.agent
                 message = request.message
                 if deps.safety is not None:
@@ -732,7 +799,7 @@ class AIKernel:
                     request, perception = await self._perceive_images(request, message)
                     yield {
                         "type": "step", "step_id": "vision", "kind": "vision",
-                        "status": "done", "description": "Looked at the image(s)",
+                        **_vision_step_outcome(perception),
                         "detail": perception.as_dict(),
                         "elapsed_ms": round(perception.duration_ms, 2),
                     }
@@ -748,28 +815,9 @@ class AIKernel:
                     request, memories, retrieval, history, goals, cag_prefix
                 )
 
-                tainted = False
-                quarantined_count = 0
-                if deps.safety is not None and retrieval is not None and retrieval.chunks:
-                    items = [(c.citation(), c.chunk.content) for c in retrieval.chunks]
-                    accepted, _quarantined, tainted = await deps.safety.guard_context_items(
-                        items, user_id=request.user_id, turn_id=turn_id
-                    )
-                    quarantined_count = len(_quarantined)
-                    accepted_citations = {citation for citation, _ in accepted}
-                    retrieval = RetrievalResult(
-                        chunks=tuple(
-                            c for c in retrieval.chunks if c.citation() in accepted_citations
-                        ),
-                        query=retrieval.query,
-                        candidates_considered=retrieval.candidates_considered,
-                        below_threshold=retrieval.below_threshold,
-                        quarantined=tuple(
-                            c for c in retrieval.chunks if c.citation() not in accepted_citations
-                        ),
-                        strategy=retrieval.strategy,
-                        duration_ms=retrieval.duration_ms,
-                    )
+                retrieval, memories, tainted, quarantined_count = await self._guard_context(
+                    request, retrieval, memories, turn_id
+                )
                 caller_context, context_quarantined = await self._guard_caller_context(
                     request, turn_id
                 )
@@ -952,6 +1000,10 @@ class AIKernel:
                                 "reason": "output_guard_redaction",
                                 "text": decision.text,
                             }
+                            # And from here on the redacted text *is* the answer (F26), as in
+                            # `run`: session history must not keep what the guard took out, or
+                            # the next turn's prompt -- possibly to a hosted provider -- would.
+                            answer = decision.text
                     except SafetyViolationError as exc:
                         self._error_result(
                             request, correlation, turn_id, started, exc, TurnOutcome.BLOCKED
@@ -1250,6 +1302,13 @@ class AIKernel:
             user=request.user_id.value, session=request.session_id.value
         )
 
+    def _session_sensitive_key(self, request: TurnRequest) -> str | None:
+        if request.session_id is None:
+            return None
+        return _SESSION_SENSITIVE_KEY.format(
+            user=request.user_id.value, session=request.session_id.value
+        )
+
     async def _session_was_clean(self, request: TurnRequest) -> bool:
         """Whether every earlier turn of this session stayed below SENSITIVE.
 
@@ -1260,28 +1319,42 @@ class AIKernel:
         if not self._restricts_data():
             return True
         key = self._session_clean_key(request)
+        sensitive_key = self._session_sensitive_key(request)
         cache = self._deps.session_marks
-        if key is None or cache is None:
+        if key is None or sensitive_key is None or cache is None:
             return False
         try:
-            return await cache.get(key) is not None
+            found = await cache.get_many([key, sensitive_key])
         except Exception:
             return False
+        # Monotonic (F32): a sensitive mark wins over a clean one, whichever was written last.
+        return key in found and sensitive_key not in found
 
     async def _remember_session_classification(
         self, request: TurnRequest, scope: DataScope
     ) -> None:
-        """Mark the session clean after an INTERNAL turn, or unmark it after a SENSITIVE one."""
+        """Mark the session clean after an INTERNAL turn, or sensitive after a SENSITIVE one.
+
+        Once sensitive, a session stays sensitive (F32). Turns of one session can overlap: a
+        clean turn that started before a sensitive one and finished after it used to re-set the
+        clean mark the sensitive one had just removed, and the next turn's history -- carrying
+        the sensitive answer -- could go to a hosted provider. The sensitive mark is written and
+        never removed by a clean turn, and reads honour it over the clean mark.
+        """
         if not self._restricts_data():
             return
         key = self._session_clean_key(request)
+        sensitive_key = self._session_sensitive_key(request)
         cache = self._deps.session_marks
-        if key is None or cache is None:
+        if key is None or sensitive_key is None or cache is None:
             return
         try:
             if scope.level.rank <= DataClassification.INTERNAL.rank:
                 await cache.set(key, b"1", ttl_s=_SESSION_CLEAN_TTL_S)
             else:
+                # Sensitive first: if the delete below then fails, the session already reads
+                # as not clean.
+                await cache.set(sensitive_key, b"1", ttl_s=_SESSION_CLEAN_TTL_S)
                 await cache.delete(key)
         except Exception:
             # A marker that failed to be written reads as "not clean" next turn: safe.
@@ -1308,6 +1381,25 @@ class AIKernel:
             message=request.message,
             complexity_threshold=threshold,
         )
+
+    async def _require_engineer_consent(self, request: TurnRequest) -> None:
+        """Refuse an Engineer turn from someone without a current Anthropic consent (D-03, WP1).
+
+        Keyed on the same thing the Claude slot is fenced on -- the turn's workload being
+        ENGINEER, from the *resolved* persona (WP6a) -- so consent covers exactly the turns that
+        can reach Anthropic: chat and stream, an approval resume (checked after the held turn's
+        own persona is restored) and a delegated sub-turn (delegation runs the kernel again).
+        Called before planning, so a refused turn sends nothing anywhere.
+        """
+        store = self._deps.engineer_consent
+        if store is None or self._workload_hint(request).workload is not WorkloadClass.ENGINEER:
+            return
+        consent = await store.get(request.user_id)
+        if consent is None or not consent.is_current(ENGINEER_CONSENT_NOTICE_VERSION):
+            raise ConsentRequiredError(
+                "The Engineer sends your code to Anthropic; agree to that in the app first.",
+                details={"current_version": ENGINEER_CONSENT_NOTICE_VERSION},
+            )
 
     def _resolve_agent(self, request: TurnRequest) -> AgentSpec | None:
         """The turn's resolved persona (Phase C1), or ``None`` with no registry configured.
@@ -1592,6 +1684,7 @@ class AIKernel:
                 "session_id": str(request.session_id) if request.session_id else None,
                 "desktop_task_isolation": request.desktop_task_isolation,
                 "workspace_root": request.workspace_root,
+                "origin": request.origin,
             },
         )
 
@@ -1938,23 +2031,116 @@ class AIKernel:
                                      details={"errors": errors, "repaired": True})
         return repaired, value, response.usage or TokenUsage(), response.cost_usd
 
+    def _new_turn_budget(self) -> TurnBudget:
+        """This turn's generation and cost ceiling (F30).
+
+        Charged by every generation made inside the turn, not only the kernel's own: the router
+        reads it ambiently. A sub-turn (delegation) also charges the turn it was started from.
+        ``max_cost_per_turn_usd`` of 0 (the default) leaves the cost ceiling off.
+        """
+        llm = getattr(self._deps.settings, "llm", None)
+        return TurnBudget(
+            max_generations=getattr(llm, "max_generations_per_turn", 8),
+            max_cost_usd=float(getattr(llm, "max_cost_per_turn_usd", 0.0) or 0.0),
+            parent=current_turn_budget(),
+        )
+
+    async def _guard_context(
+        self,
+        request: TurnRequest,
+        retrieval: RetrievalResult | None,
+        memories: Sequence[MemoryHit],
+        turn_id: TurnId,
+    ) -> tuple[RetrievalResult | None, list[MemoryHit], bool, int]:
+        """Retrieved chunks *and* recalled memories through the context guards (F35).
+
+        Returns them with the guards' sanitised text in place of the original -- stripping
+        invisible characters is pointless if the stripped text is then thrown away -- minus
+        anything quarantined, plus whether the turn is now tainted and how many were dropped.
+        A memory is third-party text as much as a document is: it can have been written from a
+        poisoned page or tool output, so it gets the same treatment.
+        """
+        memories = list(memories)
+        safety = self._deps.safety
+        chunks = tuple(retrieval.chunks) if retrieval is not None else ()
+        if safety is None or not (chunks or memories):
+            return retrieval, memories, False, 0
+        items = [(f"chunk:{i}:{c.citation()}", c.chunk.content) for i, c in enumerate(chunks)]
+        items += [(f"memory:{i}", h.record.content) for i, h in enumerate(memories)]
+        accepted, quarantined, tainted = await safety.guard_context_items(
+            items, user_id=request.user_id, turn_id=turn_id
+        )
+        sanitised = dict(accepted)
+
+        kept_chunks: list[RetrievedChunk] = []
+        dropped_chunks: list[RetrievedChunk] = []
+        for i, chunk in enumerate(chunks):
+            text = sanitised.get(items[i][0])
+            if text is None or not text.strip():
+                dropped_chunks.append(chunk)
+            elif text == chunk.chunk.content:
+                kept_chunks.append(chunk)
+            else:
+                kept_chunks.append(replace(chunk, chunk=replace(chunk.chunk, content=text)))
+        kept_memories: list[MemoryHit] = []
+        for i, hit in enumerate(memories):
+            text = sanitised.get(items[len(chunks) + i][0])
+            if text is None or not text.strip():
+                continue
+            kept_memories.append(
+                hit if text == hit.record.content
+                else replace(hit, record=replace(hit.record, content=text))
+            )
+
+        changed = bool(dropped_chunks) or any(a is not b for a, b in zip(kept_chunks, chunks))
+        if retrieval is not None and changed:
+            retrieval = RetrievalResult(
+                chunks=tuple(kept_chunks),
+                query=retrieval.query,
+                candidates_considered=retrieval.candidates_considered,
+                below_threshold=retrieval.below_threshold,
+                quarantined=tuple(dropped_chunks),
+                strategy=retrieval.strategy,
+                duration_ms=retrieval.duration_ms,
+            )
+        return retrieval, kept_memories, tainted, len(quarantined)
+
     async def _guard_caller_context(
         self, request: TurnRequest, turn_id: TurnId
     ) -> tuple[tuple[CallerContext, ...], int]:
         """Caller-supplied evidence through the same context guards as retrieved chunks (AR-5).
 
-        Returns the entries that passed and how many were quarantined. Whatever this returns,
-        the caller taints the turn when any context was *sent*: a side effect must never be
-        unlocked by evidence a calling system put in front of the model.
+        Returns the entries that passed -- carrying the guards' sanitised text (F35) -- and how
+        many were quarantined. Whatever this returns, the caller taints the turn when any
+        context was *sent*: a side effect must never be unlocked by evidence a calling system
+        put in front of the model.
         """
         entries = request.caller_context
         if not entries or self._deps.safety is None:
             return entries, 0
+        keys = [f"{i}:{e.id}" for i, e in enumerate(entries)]
         accepted, quarantined, _ = await self._deps.safety.guard_context_items(
-            [(e.id, e.content()) for e in entries], user_id=request.user_id, turn_id=turn_id
+            [(key, e.content()) for key, e in zip(keys, entries)],
+            user_id=request.user_id, turn_id=turn_id,
         )
-        kept = {provenance for provenance, _ in accepted}
-        return tuple(e for e in entries if e.id in kept), len(quarantined)
+        sanitised = dict(accepted)
+        kept: list[CallerContext] = []
+        for key, entry in zip(keys, entries):
+            text = sanitised.get(key)
+            if text is None:
+                continue
+            if text != entry.content():
+                prefix = f"{entry.source}: " if entry.source else ""
+                body = text[len(prefix):] if prefix and text.startswith(prefix) else text
+                try:
+                    entry = CallerContext.of(
+                        id=entry.id, text=body, source=entry.source if prefix and
+                        text.startswith(prefix) else "",
+                    )
+                except ValidationError:
+                    continue  # nothing left once sanitised
+            kept.append(entry)
+        return tuple(kept), len(quarantined)
 
     @staticmethod
     def _resolve_citations(
@@ -1998,6 +2184,11 @@ class AIKernel:
                     "capabilities": self._format_tool_capabilities(tools),
                     "desktop_paired": "true" if desktop_active else "",
                     "sandbox_mode": "" if desktop_active else "true",
+                    "arabic_reply": (
+                        "true"
+                        if reply_language(request.message, request.preferred_language) == "ar"
+                        else ""
+                    ),
                 },
             )
             return rendered.text
@@ -2139,7 +2330,7 @@ class AIKernel:
         Runs with no generation budget: the turn that started it is over, and its spent budget
         would otherwise cut the shadow call short (PP-06).
         """
-        with no_generation_budget():
+        with no_generation_budget(), no_turn_budget():
             await self._mirror_to_shadows(completion)
 
     async def _mirror_to_shadows(self, completion: CompletionRequest) -> None:
@@ -2336,10 +2527,15 @@ class AIKernel:
         )
         return TurnResult(
             text="", telemetry=telemetry, retry_after_s=getattr(exc, "retry_after", None),
-            error_details=dict(exc.details) if isinstance(exc, OutputInvalidError) else None,
+            error_details=(
+                dict(exc.details)
+                if isinstance(exc, (OutputInvalidError, ConsentRequiredError, UserQuotaExhaustedError))
+                else None
+            ),
         )
 
     async def _record(self, telemetry: TurnTelemetry) -> None:
+        _trace_turn(telemetry)
         if self._metrics is not None:
             try:
                 self._metrics.observe_turn(telemetry)

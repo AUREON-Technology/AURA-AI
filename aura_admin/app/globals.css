@@ -1,66 +1,221 @@
+@import "tailwindcss";
+
+/*
+ * AURA Console design tokens.
+ *
+ * These mirror the Flutter client's `AuraPalette` (aura_client/lib/core/design_system/
+ * aura_palette.dart) so the operator console and the app read as one product. Change a brand or
+ * status colour there and here in the same commit.
+ *
+ * The raw values live on :root (dark is the default, light follows prefers-color-scheme); the
+ * `@theme inline` block below exposes them to Tailwind as utilities (bg-surface, text-muted,
+ * border-line, shadow-card, rounded-md, animate-fade-up, …), so a theme switch is only a
+ * variable swap and no component needs a `dark:` variant.
+ */
 :root {
-  --bg: #0b1020;
-  --bg-elev: #12182b;
-  --bg-soft: #1a2238;
-  --line: #2a3454;
-  --text: #e8edf7;
-  --muted: #93a0c0;
-  --accent: #6ea8ff;
-  --ok: #3dd68c;
-  --warn: #f5c14a;
-  --bad: #ff6b7a;
-  --super: #c084fc;
+  color-scheme: dark;
+  --bg: #0f0c1b;
+  --bg-elev: #17162b; /* surface */
+  --bg-soft: #221f3b; /* surfaceVariant */
+  --bg-hover: #2a2748;
+  --line: rgba(148, 163, 184, 0.14);
+  --line-strong: rgba(148, 163, 184, 0.26);
+  --text: #f8fafc;
+  --muted: #94a3b8;
+  --faint: #64748b;
+  --brand: #6366f1;
+  --brand-2: #8b5cf6;
+  --accent: #818cf8; /* brandOnSurfaceText: AA on dark surfaces */
+  --brand-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  --ok: #10b981;
+  --warn: #f59e0b;
+  --bad: #f87171;
+  --info: #38bdf8;
+  --super: #c4b5fd;
+  --ok-soft: rgba(16, 185, 129, 0.14);
+  --warn-soft: rgba(245, 158, 11, 0.14);
+  --bad-soft: rgba(248, 113, 113, 0.14);
+  --brand-soft: rgba(99, 102, 241, 0.16);
+  --overlay: rgba(8, 6, 18, 0.55);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.18);
+  --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.5);
+  --glow: 0 6px 18px rgba(99, 102, 241, 0.45);
+  --shimmer: rgba(255, 255, 255, 0.06);
 }
 
-* { box-sizing: border-box; }
-html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font: 14px/1.45 "Segoe UI", Inter, system-ui, sans-serif; }
-a { color: inherit; text-decoration: none; }
-button, input, select, textarea { font: inherit; color: inherit; }
-button { cursor: pointer; }
-
-.shell { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
-.nav { background: var(--bg-elev); border-right: 1px solid var(--line); padding: 20px 14px; }
-.brand { font-weight: 700; letter-spacing: 0.04em; margin: 0 10px 18px; }
-.nav a { display: block; padding: 8px 10px; border-radius: 8px; color: var(--muted); }
-.nav a.active, .nav a:hover { background: var(--bg-soft); color: var(--text); }
-.badge { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 999px; background: #3b2060; color: var(--super); font-size: 11px; }
-.main { padding: 28px 32px 48px; }
-h1 { font-size: 22px; margin: 0 0 8px; }
-.sub { color: var(--muted); margin-bottom: 22px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
-.card { background: var(--bg-elev); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
-.metric { color: var(--muted); font-size: 12px; }
-.metric b { display: block; color: var(--text); font-size: 22px; margin-top: 6px; }
-.table { width: 100%; border-collapse: collapse; }
-.table th, .table td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); }
-.pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; }
-.pill.ok { background: #163528; color: var(--ok); }
-.pill.warn { background: #3a2e12; color: var(--warn); }
-.pill.bad { background: #3a1520; color: var(--bad); }
-.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.btn { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
-.btn.primary { background: #1d4ed8; border-color: #1d4ed8; }
-.btn.danger { background: #7f1d1d; border-color: #7f1d1d; }
-.field { display: flex; flex-direction: column; gap: 4px; color: var(--muted); }
-.field input, .field select, .field textarea { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
-.banner { background: #3a1520; border: 1px solid var(--bad); color: #ffc9cf; padding: 10px 12px; border-radius: 10px; margin-bottom: 16px; }
-.login { max-width: 420px; margin: 12vh auto; }
-.muted { color: var(--muted); }
-iframe.grafana { width: 100%; height: 420px; border: 1px solid var(--line); border-radius: 12px; background: #000; }
-.palette {
-  position: fixed;
-  top: 18vh;
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(480px, 92vw);
-  background: var(--bg-elev);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 12px;
-  z-index: 40;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  box-shadow: 0 16px 48px #0008;
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #f8fafc;
+    --bg-elev: #ffffff;
+    --bg-soft: #f1f5f9;
+    --bg-hover: #e8edf5;
+    --line: rgba(15, 23, 42, 0.08);
+    --line-strong: rgba(15, 23, 42, 0.16);
+    --text: #0f172a;
+    --muted: #475569;
+    --faint: #64748b;
+    --accent: #4f46e5;
+    --ok: #047857;
+    --warn: #b45309;
+    --bad: #dc2626;
+    --info: #0369a1;
+    --super: #6d28d9;
+    --ok-soft: rgba(4, 120, 87, 0.1);
+    --warn-soft: rgba(180, 83, 9, 0.1);
+    --bad-soft: rgba(220, 38, 38, 0.08);
+    --brand-soft: rgba(99, 102, 241, 0.1);
+    --overlay: rgba(15, 23, 42, 0.32);
+    --shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 8px 24px rgba(15, 23, 42, 0.05);
+    --shadow-lg: 0 24px 64px rgba(15, 23, 42, 0.18);
+    --glow: 0 6px 18px rgba(99, 102, 241, 0.3);
+    --shimmer: rgba(15, 23, 42, 0.05);
+  }
 }
-.palette input { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--bg-elev);
+  --color-surface-variant: var(--bg-soft);
+  --color-hover: var(--bg-hover);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--text);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-brand: var(--brand);
+  --color-brand-2: var(--brand-2);
+  --color-accent: var(--accent);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-info: var(--info);
+  --color-super: var(--super);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn-soft: var(--warn-soft);
+  --color-bad-soft: var(--bad-soft);
+  --color-brand-soft: var(--brand-soft);
+  --color-overlay: var(--overlay);
+
+  --shadow-card: var(--shadow);
+  --shadow-raised: var(--shadow-lg);
+  --shadow-glow: var(--glow);
+}
+
+@theme {
+  /* No font is fetched at build time: Inter when installed, then Cairo (app/layout.tsx, committed
+     files, Arabic script only via unicode-range: plan decision 13), then the platform UI font. */
+  --font-sans: Inter, var(--font-cairo), "SF Pro Text", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+
+  /* Below this the sidebar collapses into a wrapping top bar (`max-desk:` / `desk:`). */
+  --breakpoint-desk: 860px;
+
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --animate-fade-in: fade-in 180ms ease-out both;
+  --animate-fade-out: fade-out 140ms ease-in both;
+  --animate-fade-up: fade-up 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-page-in: page-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-dialog-in: dialog-in 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-dialog-out: dialog-out 130ms ease-in both;
+  --animate-card-in: card-in 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-pulse-dot: pulse-dot 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+  --animate-drift: drift 18s ease-in-out infinite alternate;
+  --animate-drift-reverse: drift 22s ease-in-out infinite alternate-reverse;
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes fade-out {
+    from { opacity: 1; }
+    to { opacity: 0; }
+  }
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes page-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes dialog-in {
+    from { opacity: 0; transform: translateY(4px) scale(0.96); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes dialog-out {
+    from { opacity: 1; transform: none; }
+    to { opacity: 0; transform: scale(0.97); }
+  }
+  @keyframes card-in {
+    from { opacity: 0; transform: translateY(14px) scale(0.98); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes shimmer {
+    from { background-position: 200% 0; }
+    to { background-position: -200% 0; }
+  }
+  @keyframes pulse-dot {
+    0% { transform: scale(1); opacity: 0.7; }
+    75%, 100% { transform: scale(2.6); opacity: 0; }
+  }
+  @keyframes drift {
+    from { transform: translate3d(0, 0, 0) scale(1); }
+    to { transform: translate3d(40px, 30px, 0) scale(1.08); }
+  }
+}
+
+@layer base {
+  html,
+  body {
+    min-height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Inter's character variants; Arabic pages render in Cairo, which they are not meant for. */
+  html:not(:lang(ar)),
+  html:not(:lang(ar)) body {
+    font-feature-settings: "cv11", "ss01";
+  }
+  /* Tracking breaks Arabic letter joining, and uppercase is a no-op there. */
+  :lang(ar) * {
+    letter-spacing: 0 !important;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  code,
+  pre,
+  kbd {
+    font-family: var(--font-mono);
+    /* Code, digests, JSON and the ⌘K hint read left to right inside an RTL page. */
+    direction: ltr;
+    unicode-bidi: isolate;
+  }
+  ::selection {
+    background: var(--brand-soft);
+  }
+}
+
+/* A blanket floor under the per-utility `motion-safe:` guards: nothing moves for a viewer who asked. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

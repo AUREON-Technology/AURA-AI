@@ -9,10 +9,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:aura_client/l10n/l10n.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'hostd_config_paths_io.dart';
+import 'hostd_error_codes.dart';
 
 /// Thrown when `aura_hostd` isn't reachable at all -- no control file, or nothing listening on
 /// the port it names (the daemon crashed or was killed without cleaning up after itself).
@@ -28,10 +30,17 @@ class HostdControlUnavailable implements Exception {
 /// Thrown when the control server answered but rejected the call (bad path, containment
 /// violation, pairing not started yet, ...).
 class HostdControlError implements Exception {
-  HostdControlError(this.statusCode, this.message);
+  HostdControlError(this.statusCode, this.message, {this.code});
 
   final int statusCode;
+
+  /// Text for a person, in the language on screen when the daemon sent a [code] this app knows;
+  /// otherwise the daemon's own English.
   final String message;
+
+  /// The daemon's stable machine code for this error (`hostd_error_codes.dart`), or null for a
+  /// daemon that predates codes.
+  final String? code;
 
   @override
   String toString() => 'HTTP $statusCode: $message';
@@ -65,42 +74,59 @@ Future<HostdControlEndpoint?> discoverHostdControlEndpoint() async {
   }
 }
 
+/// How long an ordinary control-server call may take before it is reported as unreachable
+/// (audit INT-038): a daemon that accepts the connection but never answers (wedged, or paused
+/// in a debugger) used to hang the calling screen forever.
+const hostdDefaultRequestTimeout = Duration(seconds: 30);
+
+/// The ceiling for calls that legitimately run long -- git fetch/pull/push/merge against a
+/// remote, a whole-project lint run.
+const hostdLongRequestTimeout = Duration(minutes: 10);
+
 class HostdControlClient {
   HostdControlClient({
     http.Client? httpClient,
     @visibleForTesting Future<HostdControlEndpoint?> Function()? discoverEndpoint,
+    @visibleForTesting Duration requestTimeout = hostdDefaultRequestTimeout,
   })  : _http = httpClient ?? http.Client(),
-        _discoverEndpoint = discoverEndpoint ?? discoverHostdControlEndpoint;
+        _discoverEndpoint = discoverEndpoint ?? discoverHostdControlEndpoint,
+        _requestTimeout = requestTimeout;
 
   final http.Client _http;
   final Future<HostdControlEndpoint?> Function() _discoverEndpoint;
+  final Duration _requestTimeout;
 
   Future<Map<String, dynamic>> _request(
     String method,
     String path, {
     Map<String, Object?>? body,
     bool authorize = true,
+    Duration? timeout,
   }) async {
     final endpoint = await _discoverEndpoint();
     if (endpoint == null) {
-      throw HostdControlUnavailable('aura_hostd is not running.');
+      throw HostdControlUnavailable(currentL10n.coreHostdNotRunning);
     }
     final uri = Uri.parse('http://127.0.0.1:${endpoint.port}$path');
     final headers = <String, String>{
       if (authorize) 'Authorization': 'Bearer ${endpoint.token}',
       if (body != null) 'Content-Type': 'application/json',
     };
+    final limit = timeout ?? _requestTimeout;
     http.Response response;
     try {
-      response = switch (method) {
-        'GET' => await _http.get(uri, headers: headers),
-        'POST' => await _http.post(uri, headers: headers, body: body == null ? null : jsonEncode(body)),
+      final pending = switch (method) {
+        'GET' => _http.get(uri, headers: headers),
+        'POST' => _http.post(uri, headers: headers, body: body == null ? null : jsonEncode(body)),
         _ => throw ArgumentError('unsupported method $method'),
       };
+      response = await pending.timeout(limit);
+    } on TimeoutException {
+      throw HostdControlUnavailable('aura_hostd did not answer within ${limit.inSeconds}s.');
     } on http.ClientException catch (error) {
-      throw HostdControlUnavailable('Could not reach aura_hostd: $error');
+      throw HostdControlUnavailable(currentL10n.coreHostdUnreachable('$error'));
     } on SocketException catch (error) {
-      throw HostdControlUnavailable('Could not reach aura_hostd: $error');
+      throw HostdControlUnavailable(currentL10n.coreHostdUnreachable('$error'));
     }
     final decoded = response.body.isEmpty ? <String, dynamic>{} : jsonDecode(response.body);
     final decodedMap = decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
@@ -125,18 +151,23 @@ class HostdControlClient {
       if (response.statusCode == 404 && message == 'no such endpoint') {
         throw HostdControlError(
           response.statusCode,
-          'The local aura_hostd daemon does not recognize this request -- it may be out of '
-          'date. Rebuild and restart aura_hostd, then try again.',
+          currentL10n.coreHostdOutOfDate,
         );
       }
-      throw HostdControlError(response.statusCode, message);
+      // Newer daemons send a stable `code` next to the English `error`; translate by it, and
+      // keep the English for an older daemon or a code this app does not know yet.
+      final code = decodedMap['code'] as String?;
+      // `detail` is the underlying tool output a few codes quote (git_init_failed, ...).
+      final detail = decodedMap['detail'] as String?;
+      throw HostdControlError(response.statusCode, hostdCodeMessage(code, message, detail: detail), code: code);
     }
     return decodedMap;
   }
 
-  /// The one call that works even when `aura_hostd` has no auth token yet -- so the daemon
-  /// status card can show "running, not paired" instead of a hard error.
-  Future<Map<String, dynamic>> status() => _request('GET', '/status', authorize: false);
+  /// Sends the control token like every other call: the daemon answers `/status` without one
+  /// too, but then leaves out the granted roots and backend URL (audit INT-037), which the
+  /// status card shows.
+  Future<Map<String, dynamic>> status() => _request('GET', '/status');
 
   Future<List<Map<String, dynamic>>> roots() async {
     final result = await _request('GET', '/roots');
@@ -205,25 +236,46 @@ class HostdControlClient {
   /// D5 Git panel: merges [branch] into the human's own checked-out working tree -- distinct from
   /// [gitMergeTask] below, which only ever targets a task's isolated worktree.
   Future<Map<String, dynamic>> gitMerge({required String root, required String branch}) =>
-      _request('POST', '/git/merge', body: {'root': root, 'branch': branch});
+      _request('POST', '/git/merge', body: {'root': root, 'branch': branch}, timeout: hostdLongRequestTimeout);
+
+  /// D-13: makes the granted folder [root] a git repository -- `git init` plus a first commit of
+  /// its current files (respecting an existing `.gitignore`) -- so the Engineer can isolate its
+  /// work there. Human-only, like the other git routes. Answers `{ok, commit}`; refuses a folder
+  /// that already is a repository (`already_a_git_repo`) or one that is not granted.
+  Future<Map<String, dynamic>> initGit({required String root}) =>
+      _request('POST', '/git/init', body: {'root': root}, timeout: hostdLongRequestTimeout);
 
   Future<Map<String, dynamic>> gitMergeAbort({required String root}) =>
       _request('POST', '/git/merge-abort', body: {'root': root});
 
-  /// Human-only remote-sync routes (`git_service.dart` branches/fetch/pull/push) --
-  /// same boundary as the git routes above. `push` takes no refspec server-side:
-  /// only the checked-out branch can ever go to its own upstream.
+  /// Human-only remote-sync routes (`git_service.dart` branches/fetch/pull/push/publish) --
+  /// same boundary as the git routes above. `push` takes no refspec server-side: it runs the
+  /// person's own `git push`, so what it sends follows their git configuration like a terminal's
+  /// (decision D-03). They wait [hostdLongRequestTimeout], which is longer than the daemon's own
+  /// five-minute limit on a remote operation (`defaultGitNetworkTimeout`), so a hung git is reported
+  /// by the daemon's message, which names the limit, not by this client giving up first.
   Future<Map<String, dynamic>> gitBranches({required String root}) =>
       _request('GET', '/git/branches?root=${Uri.encodeQueryComponent(root)}');
 
   Future<Map<String, dynamic>> gitFetch({required String root}) =>
-      _request('POST', '/git/fetch', body: {'root': root});
+      _request('POST', '/git/fetch', body: {'root': root}, timeout: hostdLongRequestTimeout);
 
   Future<Map<String, dynamic>> gitPull({required String root}) =>
-      _request('POST', '/git/pull', body: {'root': root});
+      _request('POST', '/git/pull', body: {'root': root}, timeout: hostdLongRequestTimeout);
 
   Future<Map<String, dynamic>> gitPush({required String root}) =>
-      _request('POST', '/git/push', body: {'root': root});
+      _request('POST', '/git/push', body: {'root': root}, timeout: hostdLongRequestTimeout);
+
+  /// The configured remotes (`{remotes: [name, ...]}`), for "Publish branch" to offer.
+  Future<Map<String, dynamic>> gitRemotes({required String root}) =>
+      _request('GET', '/git/remotes?root=${Uri.encodeQueryComponent(root)}');
+
+  /// "Publish branch" (decision D-01): pushes the checked-out branch to [remote] under its own name
+  /// and sets it as the branch's upstream. Answers `{ok, branch, remote}`, or an `ok: false` body
+  /// with a `reason` (`unknown_remote`, `detached_head`, `no_commits`, `diverged`, `auth_failed`).
+  Future<Map<String, dynamic>> gitPublish({required String root, required String remote}) =>
+      _request('POST', '/git/publish',
+          body: {'root': root, 'remote': remote}, timeout: hostdLongRequestTimeout);
 
   /// D7 Part A.2's diagnostics routes (`aura_hostd/lib/src/diagnostics_service.dart`) -- direct,
   /// human-only batch linting, entirely independent of the agent-facing RPC surface (same
@@ -232,7 +284,7 @@ class HostdControlClient {
       _request('GET', '/diagnostics/detect?root=${Uri.encodeQueryComponent(root)}');
 
   Future<Map<String, dynamic>> diagnosticsRun({required String root, required String tool}) =>
-      _request('POST', '/diagnostics/run', body: {'root': root, 'tool': tool});
+      _request('POST', '/diagnostics/run', body: {'root': root, 'tool': tool}, timeout: hostdLongRequestTimeout);
 
   /// D9's "Agent Review" panel routes (`aura_hostd/lib/src/control_server.dart` +
   /// `isolated_task_registry.dart`) -- every isolated per-task worktree this daemon currently
@@ -258,10 +310,23 @@ class HostdControlClient {
     required String taskBranch,
     bool squash = false,
   }) =>
-      _request('POST', '/git/merge-task', body: {'root': root, 'task_branch': taskBranch, 'squash': squash});
+      _request(
+        'POST',
+        '/git/merge-task',
+        body: {'root': root, 'task_branch': taskBranch, 'squash': squash},
+        timeout: hostdLongRequestTimeout,
+      );
 
   Future<Map<String, dynamic>> gitDiscardTask({required String taskKey}) =>
       _request('POST', '/git/discard-task', body: {'task_key': taskKey});
+
+  /// WP8 (D-10b): whether phone and web Engineer turns may use this computer. Settable only
+  /// here, through the local control server -- never by the backend -- and off until the person
+  /// turns it on. Returns the daemon's own answer, which is what the UI then shows.
+  Future<bool> setRemoteControl(bool enabled) async {
+    final result = await _request('POST', '/remote_control', body: {'enabled': enabled});
+    return result['remote_control'] == true;
+  }
 
   Future<Map<String, dynamic>> startPairing({String? backendUrl}) =>
       _request('POST', '/pair/start', body: {'backend_url': ?backendUrl});

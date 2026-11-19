@@ -71,7 +71,7 @@ class DesktopShortcuts extends ConsumerWidget {
 
     return Actions(
       actions: {
-        _SaveIntent: CallbackAction<_SaveIntent>(onInvoke: (_) => saveActiveFile(ref)),
+        _SaveIntent: CallbackAction<_SaveIntent>(onInvoke: (_) => saveActiveFile(ref, context: context)),
         _CloseTabIntent: CallbackAction<_CloseTabIntent>(onInvoke: (_) => _handleCloseTab(ref)),
         _QuickOpenIntent: CallbackAction<_QuickOpenIntent>(onInvoke: (_) => _handleQuickOpen(ref)),
         _CommandPaletteIntent: CallbackAction<_CommandPaletteIntent>(

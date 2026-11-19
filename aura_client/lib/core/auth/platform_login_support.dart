@@ -13,3 +13,13 @@ bool supportsNativeGoogleSignIn() {
       defaultTargetPlatform == TargetPlatform.iOS ||
       defaultTargetPlatform == TargetPlatform.macOS;
 }
+
+/// Whether this platform can attest the device in a way the backend verifies: Play Integrity on
+/// Android, App Attest on iOS (`aura_backend/services/security.py`, which refuses any other
+/// platform). Native sign-in on these goes through the attested `/api/v3/auth/token`; everything
+/// else -- the web, macOS -- signs in at `/consumer/token`, which needs no attestation (INT-103).
+bool platformHasDeviceAttestation({bool isWeb = kIsWeb, TargetPlatform? platform}) {
+  if (isWeb) return false;
+  final target = platform ?? defaultTargetPlatform;
+  return target == TargetPlatform.android || target == TargetPlatform.iOS;
+}

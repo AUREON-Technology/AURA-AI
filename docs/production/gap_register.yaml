@@ -567,6 +567,12 @@ gaps:
       tainting, SENSITIVE). The router refuses text-only and third-party providers for any request
       carrying images. Off by default (AURA_VISION_ENABLED). No vision pool is deployed (GAP-012),
       no client attaches images yet, and no eval exists. No video.
+      Phase I (2026-11-17, branch anas/laughing-hamilton-glfevj, tested locally, not deployed):
+      the owner chose Qwen/Qwen2.5-VL-7B-Instruct-AWQ @536a3579 on the existing a10g-small Space,
+      sleeping when idle. Built for that: AURA_PROVIDER_<NAME>_HEALTH_PROBE=passive, so
+      /health/ready never wakes the Space, and a `degraded` vision step when only OCR could read
+      the image (the Space was asleep). The Space is PAUSED today; serving, the verify_vision.py
+      report and the eval are still the owner's (docs/deployment/inference-plane.md section 8).
     target_state: Self-hosted VLM pool (e.g. Qwen3-VL-8B-Instruct) behind the router; image upload/understanding through the kernel.
     owner: ml
     dependencies: [GAP-012]
@@ -598,17 +604,24 @@ gaps:
     component: voice/stt-language
     severity: P2
     current_state: >-
-      STT default is faster-whisper `tiny.en` (aura_core/config/settings.py:1048, :1080),
-      English-only, while TTS ships an Arabic Piper voice (ar_JO-kareem-medium,
-      aura_backend/Dockerfile:54-57). Arabic speech input is not supported by default. Live-voice
-      VAD is energy-based (aura_core/voice/vad.py); Phase H is scaffolding, not device-proven.
+      2026-11-17 (Arabic plan stage 4, branch anas/kind-rubin-dpm0sq, since merged): the STT default
+      is faster-whisper `small` (multilingual; VoiceSettings.stt_model), so live voice accepts
+      Arabic and POST /voice/transcribe takes an optional `language` hint. Measured offline on
+      FLEURS (docs/reports/STT_WER_ARABIC_ENGLISH_2026-11-17.md): English WER 6.46% (tiny.en was
+      11.96%), Egyptian Arabic 24.96%, RTF ~0.3 on 4 dev CPU cores. Not yet the production model
+      and not measured on the production host. TTS ships Arabic Piper (ar_JO-kareem-medium).
+      Phase V (branch anas/laughing-hamilton-glfevj, merged with stage 4; tested locally, not
+      deployed): the transcribe response reports the `language` used; an opt-in Silero VAD
+      (`AURA_VOICE_LIVE_VAD=silero`, adapters/silero_vad.py) ignores a steady hum the default
+      energy VAD takes for speech; the live voice screen can override the app language for
+      speech (EN / Arabic toggle); `scripts/measure_stt_wer.py`.
     target_state: Multilingual self-hosted ASR (Arabic + English) with measured WER; neural VAD.
     owner: ml
     dependencies: [GAP-012]
     test: synthesize->transcribe round trip in Arabic and English with WER threshold
     metric: WER per language; voice round-trip latency
     exit_condition: WER report in docs/reports/ for both languages on the production ASR model.
-    status: open
+    status: built_not_proven
 
   - gap_id: GAP-021
     component: evaluation/real-model-quality
@@ -923,13 +936,20 @@ gaps:
       non-LLM API latency and 5xx rate SLOs are therefore unmeasurable from Prometheus; only nginx
       access logs via Loki could approximate them. Scrape config has one app job
       (deploy/monitoring/prometheus.yml: aura-gateway).
+      Since then: F-24/CB-15 added the per-route HTTP metrics. Phase R (2026-11-18, branch
+      anas/laughing-hamilton-glfevj, tested locally, not deployed): the Railway image's CMD now
+      shares one PROMETHEUS_MULTIPROC_DIR across its uvicorn workers (each scrape used to see
+      one random worker); request/LLM/turn trace spans exist (none did); and
+      docs/deployment/observability.md is the Grafana Cloud runbook (scrape job aura-gateway,
+      the VPS rule file loaded with mimirtool, synthetic liveness/readiness checks as the
+      external probe). Nothing is configured on Grafana Cloud yet.
     target_state: Bounded-cardinality http_requests_total{route,method,status} and http_request_duration_seconds; external blackbox probe for availability.
     owner: platform-ops
     dependencies: []
     test: metrics unit test asserting labels are route templates, not raw paths
     metric: aura_http_requests_total, aura_http_request_duration_seconds (proposed)
     exit_condition: Metrics live on the VPS and wired into PRODUCTION_SLO alerts.
-    status: open
+    status: in_progress
     reverified_2026_09_25: >-
       The load harness confirmed two more measurement holes: aura_turns_in_flight is only
       updated on the non-streaming AIKernel.run path (every client uses /chat/stream), and no
@@ -1609,3 +1629,36 @@ gaps:
       passing and check 10 run (not skipped), and tests/fixtures/provider_wire/ carrying live
       captures from scripts/capture_provider_wire.py.
     status: built_not_proven
+
+  - gap_id: GAP-065
+    component: knowledge/adaptive-updates
+    severity: P2
+    current_state: >-
+      Designed, not built (ADR-035, docs/plans/adaptive-knowledge-update-system.md). The global
+      corpus changes only through Loop A's nightly refresh from registered sources and through
+      direct REST ingest/delete. searched_but_empty (kernel/kernel.py) reaches the client and is
+      then discarded; a feedback correction feeds only Loop B fine-tune curation; documents carry
+      no freshness fields and nothing detects contradictions between them; memory's
+      near-duplicate check reinforces an old fact and drops its correction (memory/engine.py).
+    target_state: >-
+      Loop C: knowledge gaps (behind the general-knowledge gate), explicit requests, corrections,
+      admin-proposed new versions and nightly staleness are researched from approved sources and
+      a self-hosted SearxNG into cited KnowledgeProposals; each waits for a platform admin's
+      digest-bound knowledge_update approval and is applied to the global corpus through
+      KnowledgeEngine with revert. Off by default (AURA_KNOWLEDGE_ADAPTIVE_ENABLED).
+    owner: platform-core
+    dependencies: [GAP-023]
+    test: >-
+      Default pytest (in-memory ports, gate conditions including a private-entity leakage case,
+      digest/base-version binding, CAS transitions, research-prompt input fitness test);
+      tests/load migration round-trip for 0031; compose parity tests for the searxng service;
+      aura_admin Playwright e2e for the proposals and gaps pages.
+    metric: >-
+      proposals applied and reverted on the dev stack; review-queue age; NO_SOURCES rate;
+      fetch refusals by reason
+    exit_condition: >-
+      docs/reports/loop-c-*.md committed showing, on the dev stack, at least one full
+      gap -> research -> proposal -> approve -> apply -> retrieval cites id@vN -> revert cycle
+      (phase C3) and one staleness run producing an unchanged verification and a REFRESH
+      proposal (phase C5).
+    status: open

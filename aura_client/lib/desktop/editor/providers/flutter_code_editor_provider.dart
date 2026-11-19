@@ -100,6 +100,17 @@ final Map<String, LanguageMode> _languageModes = {
   ),
 };
 
+/// The package's default modifiers minus [TabModifier], which would turn tab characters in a
+/// loaded file into spaces (and so change them on the next save).
+@visibleForTesting
+final List<CodeModifier> preservingTabModifiers =
+    CodeController.defaultCodeModifiers.where((m) => m is! TabModifier).toList(growable: false);
+
+/// The whole text of [controller]'s document -- including any range the field is hiding, which
+/// `controller.text` leaves out. This, never `controller.text`, is what gets saved.
+@visibleForTesting
+String documentTextOf(CodeController controller) => controller.fullText;
+
 /// Signature for requesting one inline completion -- injected rather than read from a Riverpod
 /// `Ref` directly, since [EditorController]/[EditorProvider] are meant to be usable without
 /// Riverpod (see `editor_abstraction.dart`'s own doc comment on swappable editor backends).
@@ -138,6 +149,11 @@ class _FlutterCodeEditorController implements EditorController {
     _codeController = CodeController(
       text: document.text,
       language: _highlightModes[document.languageId],
+      // Not the package's `TabModifier`: it rewrites every tab character in the file to spaces
+      // the moment the text is loaded or edited, so saving a Makefile, a Go file or a TSV changed
+      // lines the user never touched. Pressing Tab still indents (the package's own
+      // `TabKeyAction`); existing tabs are left as they are.
+      modifiers: preservingTabModifiers,
     );
     _codeController.addListener(_handleControllerChanged);
   }
@@ -386,7 +402,11 @@ class _FlutterCodeEditorWidgetState extends State<FlutterCodeEditorWidget> {
       data: _createThemeData(),
       child: CodeField(
         controller: _codeController,
-        onChanged: widget.onTextChange,
+        // Folding is off: a folded block is cut out of the text the field reports, so editing
+        // with one folded and saving would write the file without it. Every save also reads
+        // `fullText`, the whole document, rather than what the field shows, as a second guard.
+        gutterStyle: const GutterStyle(showFoldingHandles: false),
+        onChanged: (_) => widget.onTextChange(documentTextOf(_codeController)),
         textStyle: const TextStyle(fontFamily: 'Courier', fontSize: 13),
         expands: true,
       ),

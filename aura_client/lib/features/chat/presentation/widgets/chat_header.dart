@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:aura_client/features/workspaces/presentation/share_with_team_button.dart';
 import 'package:aura_client/core/ai/ai_router/aura_ai_router.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 
@@ -60,8 +61,10 @@ class ChatHeader extends ConsumerWidget {
             ),
           if (isMobile) ...[
             const SizedBox(width: AuraSpacing.xs),
+            const ShareWithTeamButton(),
             const ChatHeaderOverflowMenu(),
           ] else ...[
+            const ShareWithTeamButton(),
             ChatHeaderActionButton(
               icon: Icons.psychology_outlined,
               color: palette.warning,
@@ -145,7 +148,11 @@ class _DesktopTitle extends StatelessWidget {
             const SizedBox(width: 6),
             Expanded(
               child: Text(
-                'Active • ${status.activeModel} (${status.status}) • ${status.latencyMs.toStringAsFixed(0)}ms',
+                context.l10n.chatHeaderStatus(
+                  status.activeModel,
+                  status.status,
+                  status.latencyMs.toStringAsFixed(0),
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(fontSize: 11, color: palette.textSecondary),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -9,6 +10,7 @@ import 'package:uuid/uuid.dart';
 import '../auth/token_manager.dart';
 import '../config/backend_url_provider.dart';
 import '../security/device_validation_service.dart';
+import '../workspaces/active_workspace.dart';
 import 'aura_api_error.dart';
 
 /// Shared authenticated HTTP client for `/api/v3` JSON routes.
@@ -16,18 +18,39 @@ import 'aura_api_error.dart';
 /// Attaches JWT, attestation, and `X-Correlation-Id`. Retries once on 401
 /// after dropping the cached access token. Does not handle SSE — that stays
 /// in [SseAgentClient].
+///
+/// Every send has a deadline (INT-028): without one, a request to a server that accepted the
+/// connection and then went silent left the caller's spinner up for as long as the OS kept the
+/// socket. A timeout surfaces as [AuraApiError.unreachable], the same as a refused connection.
 class AuraApiClient {
   final Ref _ref;
   final http.Client? _http;
   final _uuid = const Uuid();
 
-  AuraApiClient(this._ref, {http.Client? httpClient}) : _http = httpClient;
+  /// Default deadline for one send of a JSON route. Callers whose route legitimately runs
+  /// longer (a model-backed analysis, say) pass their own to [request] / [json].
+  final Duration timeout;
+
+  /// Deadline for `/health/ready`: a readiness probe that takes longer than this is a failed
+  /// probe, whatever it eventually answers.
+  final Duration healthTimeout;
+
+  static const defaultTimeout = Duration(seconds: 30);
+  static const defaultHealthTimeout = Duration(seconds: 5);
+
+  AuraApiClient(
+    this._ref, {
+    http.Client? httpClient,
+    this.timeout = defaultTimeout,
+    this.healthTimeout = defaultHealthTimeout,
+  }) : _http = httpClient;
 
   String get _backendUrl => _ref.read(backendUrlProvider);
 
   Future<Map<String, String>> _headers({
     required bool jsonBody,
     String? correlationId,
+    bool workspaceScoped = true,
   }) async {
     final headers = <String, String>{
       'X-Correlation-Id': correlationId ?? _uuid.v4(),
@@ -38,6 +61,7 @@ class AuraApiClient {
     headers.addAll(
       await DeviceValidationService.getAttestationHeaders(backendUrl: _backendUrl),
     );
+    if (workspaceScoped) headers.addAll(await workspaceHeaders(_ref));
     return headers;
   }
 
@@ -46,7 +70,9 @@ class AuraApiClient {
     required String path,
     Map<String, dynamic>? body,
     String? correlationId,
+    Duration? timeout,
   }) async {
+    final deadline = timeout ?? this.timeout;
     final uri = path.startsWith('http')
         ? Uri.parse(path)
         : Uri.parse('$_backendUrl$path');
@@ -58,26 +84,39 @@ class AuraApiClient {
       final headers = await _headers(
         jsonBody: body != null,
         correlationId: correlationId,
+        // The workspace routes name the workspace in the path; a stale header there would only
+        // fail them (F2 review #10).
+        workspaceScoped: !uri.path.startsWith('/api/v3/workspaces'),
       );
       if (idempotencyKey != null) headers[idempotencyKeyHeader] = idempotencyKey;
       final encoded = body == null ? null : jsonEncode(body);
       final client = _http;
+      final Future<http.Response> pending;
       switch (method) {
         case 'GET':
-          return client != null
+          pending = client != null
               ? client.get(uri, headers: headers)
               : http.get(uri, headers: headers);
         case 'DELETE':
-          return client != null
+          pending = client != null
               ? client.delete(uri, headers: headers)
               : http.delete(uri, headers: headers);
         case 'POST':
-          return client != null
+          pending = client != null
               ? client.post(uri, headers: headers, body: encoded)
               : http.post(uri, headers: headers, body: encoded);
+        case 'PATCH':
+          pending = client != null
+              ? client.patch(uri, headers: headers, body: encoded)
+              : http.patch(uri, headers: headers, body: encoded);
+        case 'PUT':
+          pending = client != null
+              ? client.put(uri, headers: headers, body: encoded)
+              : http.put(uri, headers: headers, body: encoded);
         default:
           throw ArgumentError('Unsupported method $method');
       }
+      return pending.timeout(deadline);
     }
 
     try {
@@ -87,7 +126,14 @@ class AuraApiClient {
         tokens.invalidateAccessToken();
         response = await send();
       }
+      if (!uri.path.startsWith('/api/v3/workspaces')) {
+        healActiveWorkspace(_ref, statusCode: response.statusCode, body: response.body);
+      }
       return response;
+    } on TimeoutException {
+      throw AuraApiError.unreachable(
+        'no answer within ${deadline.inSeconds > 0 ? '${deadline.inSeconds} s' : '${deadline.inMilliseconds} ms'}',
+      );
     } catch (e) {
       throw AuraApiError.unreachable(e);
     }
@@ -98,12 +144,14 @@ class AuraApiClient {
     required String path,
     Map<String, dynamic>? body,
     String? correlationId,
+    Duration? timeout,
   }) async {
     final response = await request(
       method: method,
       path: path,
       body: body,
       correlationId: correlationId,
+      timeout: timeout,
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw AuraApiError.fromResponse(
@@ -124,10 +172,11 @@ class AuraApiClient {
 
   Future<http.Response> get(String path) => request(method: 'GET', path: path);
 
+  /// `GET /health/ready`, bounded by [healthTimeout]; throws [TimeoutException] past it.
   Future<http.Response> probeHealth() {
     final uri = Uri.parse('$_backendUrl/health/ready');
     final client = _http;
-    return client != null ? client.get(uri) : http.get(uri);
+    return (client != null ? client.get(uri) : http.get(uri)).timeout(healthTimeout);
   }
 }
 

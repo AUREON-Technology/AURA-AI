@@ -26,7 +26,7 @@ from typing import ClassVar, Any, Mapping, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 from ..domain.errors import ConfigurationError
-from ..domain.llm import DataClassification, Modality, ModelPool, RoutingPolicy
+from ..domain.llm import DataClassification, Modality, ModelPool, RoutingPolicy, WorkloadClass
 from .external_inference import (
     CLAUDE_PROVIDER_KIND,
     is_claude_model,
@@ -45,6 +45,7 @@ __all__ = [
     "Environment",
     "AuraSettings",
     "TenancySettings",
+    "BillingSettings",
     "LLMSettings",
     "ProviderConfig",
     "KnowledgeSettings",
@@ -126,6 +127,18 @@ class Environment(str, Enum):
 
 def _env(key: str, default: str | None = None) -> str | None:
     return os.environ.get(f"AURA_{key}", default)
+
+
+def _embedding_prefix(kind: str) -> str:
+    """``AURA_EMBEDDING_<kind>_PREFIX`` if set (even to empty), else the model family's own:
+    ``query: `` / ``passage: `` for E5 models, nothing for anything else."""
+    explicit = _env(f"EMBEDDING_{kind}_PREFIX")
+    if explicit is not None:
+        return explicit
+    model = (_env("EMBEDDING_MODEL", "") or "").rsplit("/", 1)[-1].lower()
+    if model.startswith(("e5-", "multilingual-e5-")):
+        return "query: " if kind == "QUERY" else "passage: "
+    return ""
 
 
 def _bool(key: str, default: bool) -> bool:
@@ -243,6 +256,9 @@ def _redact_url_userinfo(value: str) -> str:
 # --------------------------------------------------------------------------------------
 
 
+#: How readiness may learn a provider's health (``ProviderConfig.health_probe``).
+HEALTH_PROBE_MODES = frozenset({"active", "passive"})
+
 @dataclass(frozen=True, slots=True)
 class ProviderConfig:
     """One configured model endpoint.
@@ -287,6 +303,9 @@ class ProviderConfig:
     languages: tuple[str, ...] = ()
     model_revision: str = ""
     capacity_group: str = ""
+    # AURA_PROVIDER_<NAME>_WORKLOADS (module readiness WP6a): the workload classes this provider
+    # may serve, e.g. ``engineer``. Empty = all, as every provider configured before it.
+    workloads: tuple[str, ...] = ()
     # Admission (roadmap P2.4) -- AURA_PROVIDER_<NAME>_{MAX_QUEUE,QUEUE_TIMEOUT_S}. None = inherit
     # AURA_LLM_ADMISSION_MAX_QUEUE / AURA_LLM_ADMISSION_QUEUE_TIMEOUT_S. The concurrency cap is
     # the existing max_concurrency.
@@ -300,9 +319,19 @@ class ProviderConfig:
     rpd: int = 0
     tpm: int = 0
     tpd: int = 0
+    # AURA_PROVIDER_<NAME>_USER_TPD (module readiness WP2, D-05): tokens one user may spend on
+    # this provider per UTC day. 0 = no per-user cap.
+    user_tpd: int = 0
     #: The liveness probe's path under base_url. ``/models`` is universal for OpenAI-compatible
     #: servers; override it for a hosted API that does not serve it at the chat base URL.
     health_path: str = "/models"
+    #: How readiness learns this provider's health. ``active`` (default) calls ``health_path``
+    #: on every ``/health/ready``. ``passive`` never calls it: readiness reports the circuit
+    #: breaker, which only real generations move. For a server that sleeps when idle and wakes
+    #: on any request -- a Hugging Face Space -- an active probe is a request, so a load
+    #: balancer or uptime check polling readiness keeps a paid GPU awake around the clock.
+    #: AURA_PROVIDER_<NAME>_HEALTH_PROBE.
+    health_probe: str = "active"
     #: The most private content this provider may receive -- public | internal | sensitive
     #: (ADR-030 §4). Empty = the category default: ``internal`` for a hosted open-weight API,
     #: ``sensitive`` (everything) for anything else. AURA_PROVIDER_<NAME>_MAX_DATA_CLASSIFICATION.
@@ -365,6 +394,12 @@ class ProviderConfig:
                 f"provider {self.name!r} health_path must start with '/'",
                 details={"provider": self.name, "health_path": self.health_path},
             )
+        if self.health_probe not in HEALTH_PROBE_MODES:
+            raise ConfigurationError(
+                f"provider {self.name!r} health_probe must be one of "
+                f"{sorted(HEALTH_PROBE_MODES)}",
+                details={"provider": self.name, "health_probe": self.health_probe},
+            )
         self._validate_extra_body()
         known_classes = {c.value for c in DataClassification}
         if self.max_data_classification and self.max_data_classification not in known_classes:
@@ -389,6 +424,13 @@ class ProviderConfig:
             raise ConfigurationError(
                 f"provider {self.name!r} declares unknown pool(s) {unknown}",
                 details={"supported": sorted(known_pools)},
+            )
+        known_workloads = {w.value for w in WorkloadClass}
+        bad_workloads = [w for w in self.workloads if w not in known_workloads]
+        if bad_workloads:
+            raise ConfigurationError(
+                f"provider {self.name!r} declares unknown workload(s) {bad_workloads}",
+                details={"supported": sorted(known_workloads)},
             )
         known_mods = {m.value for m in Modality}
         bad_mods = [m for m in self.modalities if m not in known_mods]
@@ -581,6 +623,15 @@ class ProviderConfig:
                 "Engineer workspaces): AURA_PROVIDER_<NAME>_MAX_DATA_CLASSIFICATION=sensitive",
                 extra=details,
             )
+            if not self.workloads:
+                # Module readiness G-26: a ceiling without a fence makes this slot eligible for
+                # every unhinted generation, which counts as SENSITIVE. D-02 sent the Engineer's
+                # code to Anthropic, not everything else.
+                logger.warning(
+                    "Claude provider at the sensitive ceiling serves every workload: set "
+                    "AURA_PROVIDER_<NAME>_WORKLOADS (e.g. engineer) to fence it",
+                    extra=details,
+                )
 
     def _gate_hosted_open_weight(self, host: str, matched: str) -> None:
         """ADR-030: a hosted open-weight API is allowed only on purpose, and only for open weights.
@@ -697,6 +748,7 @@ class ProviderConfig:
             languages=tuple(v.lower() for v in _list(f"{p}_LANGUAGES")),
             model_revision=_env(f"{p}_MODEL_REVISION", "") or "",
             capacity_group=_env(f"{p}_CAPACITY_GROUP", "") or "",
+            workloads=tuple(v.lower() for v in _list(f"{p}_WORKLOADS")),
             max_queue=(
                 _int(f"{p}_MAX_QUEUE", -1, minimum=-1) if _env(f"{p}_MAX_QUEUE") else None
             ),
@@ -709,7 +761,9 @@ class ProviderConfig:
             rpd=_int(f"{p}_RPD", 0, minimum=0),
             tpm=_int(f"{p}_TPM", 0, minimum=0),
             tpd=_int(f"{p}_TPD", 0, minimum=0),
+            user_tpd=_int(f"{p}_USER_TPD", 0, minimum=0),
             health_path=_env(f"{p}_HEALTH_PATH", "/models") or "/models",
+            health_probe=(_env(f"{p}_HEALTH_PROBE", "active") or "active").strip().lower(),
             max_data_classification=(_env(f"{p}_MAX_DATA_CLASSIFICATION", "") or "").lower(),
             tokens_per_second=_float(f"{p}_TOKENS_PER_SECOND", 0.0, minimum=0.0),
             extra_body=(_env(f"{p}_EXTRA_BODY", "") or "").strip(),
@@ -728,6 +782,14 @@ class LLMSettings:
     embedding_model_revision: str = ""
     embedding_dimension: int = 384
     embedding_batch_size: int = 64
+    #: Asymmetric embedders want different text in front of queries and documents. E5 models
+    #: (``intfloat/multilingual-e5-*``) are trained with ``query: `` / ``passage: `` and lose
+    #: several points of recall without them, so those are the default for an E5 model; any
+    #: other model gets none unless ``AURA_EMBEDDING_QUERY_PREFIX`` / ``..._DOCUMENT_PREFIX`` say
+    #: so (an explicitly empty value means none). The document prefix is part of the index
+    #: identity (``SentenceTransformerProvider.model_id``): changing it builds a new index.
+    embedding_query_prefix: str = ""
+    embedding_document_prefix: str = ""
     request_timeout_s: float = 60.0
     max_fallbacks: int = 2
     circuit_failure_threshold: int = 5
@@ -737,6 +799,8 @@ class LLMSettings:
     semantic_cache_enabled: bool = True
     semantic_cache_threshold: float = 0.97
     max_generations_per_turn: int = 8
+    #: USD ceiling on every generation in one turn (F30); 0 disables. Checked before each generation.
+    max_cost_per_turn_usd: float = 0.0
     #: Assembled prompt cap (prefill). Independent of the provider context window so a local
     #: 8k model does not ingest 1k+ token RAG prompts that CPU Ollama cannot evaluate in time.
     max_prompt_tokens: int = 400
@@ -802,6 +866,8 @@ class LLMSettings:
             embedding_model_revision=_env("EMBEDDING_MODEL_REVISION", "") or "",
             embedding_dimension=_int("EMBEDDING_DIMENSION", 384, minimum=16),
             embedding_batch_size=_int("EMBEDDING_BATCH_SIZE", 64, minimum=1, maximum=1024),
+            embedding_query_prefix=_embedding_prefix("QUERY"),
+            embedding_document_prefix=_embedding_prefix("DOCUMENT"),
             request_timeout_s=_float("LLM_TIMEOUT_S", 60.0, minimum=1.0),
             max_fallbacks=_int("LLM_MAX_FALLBACKS", 2, minimum=0, maximum=5),
             circuit_failure_threshold=_int("LLM_CIRCUIT_THRESHOLD", 5, minimum=1),
@@ -811,6 +877,7 @@ class LLMSettings:
             semantic_cache_enabled=_bool("LLM_SEMANTIC_CACHE_ENABLED", True),
             semantic_cache_threshold=_float("LLM_SEMANTIC_CACHE_THRESHOLD", 0.97, minimum=0.5, maximum=1.0),
             max_generations_per_turn=_int("LLM_MAX_GENERATIONS_PER_TURN", 8, minimum=1, maximum=64),
+            max_cost_per_turn_usd=_float("LLM_MAX_COST_PER_TURN_USD", 0.0, minimum=0.0),
             max_prompt_tokens=_int("LLM_MAX_PROMPT_TOKENS", 400, minimum=64, maximum=32768),
             admission_max_queue=_int("LLM_ADMISSION_MAX_QUEUE", -1, minimum=-1),
             admission_queue_timeout_s=_float("LLM_ADMISSION_QUEUE_TIMEOUT_S", 0.0, minimum=0.0),
@@ -885,7 +952,10 @@ class KnowledgeSettings:
     #: PATH -- this flag lets an operator opt out even when it is, e.g. to keep CPU free for the
     #: generator; it can never opt *in* to an engine that was never present.
     ocr_enabled: bool = True
-    ocr_lang: str = "eng"
+    #: Tesseract languages, ``+``-joined. Arabic and English (decision 16): the image installs
+    #: ``tesseract-ocr-ara``; a host without it falls back to the installed subset
+    #: (``TesseractOcrEngine._installed_subset``).
+    ocr_lang: str = "ara+eng"
     #: Whether chunk text (and a memory's ``subject``) is copied into the vector payload (audit
     #: FSA-018 / CB-22). ``None`` decides by where the vector store runs
     #: (:func:`vector_payload_content_enabled`): on-host stores keep it for speed; an off-host
@@ -924,7 +994,7 @@ class KnowledgeSettings:
             max_document_bytes=_int("KNOWLEDGE_MAX_DOC_BYTES", 8 * 1024 * 1024, minimum=1024),
             prompt_chunk_max_chars=_int("KNOWLEDGE_PROMPT_CHUNK_CHARS", 280, minimum=64, maximum=4000),
             ocr_enabled=_bool("KNOWLEDGE_OCR_ENABLED", True),
-            ocr_lang=_env("KNOWLEDGE_OCR_LANG", "eng") or "eng",
+            ocr_lang=_env("KNOWLEDGE_OCR_LANG", "ara+eng") or "ara+eng",
         )
 
     def __post_init__(self) -> None:
@@ -1176,6 +1246,10 @@ class SecuritySettings:
     #: not a side effect of upgrading, matching how AURA_SANDBOX_ENABLED/AURA_GITHUB_ENABLED
     #: default off for the same reason.
     engineer_agent_roles: tuple[str, ...] = ()
+    #: SaaS P1-E: the Engineer agent for customers whose workspace plan includes it, on their own
+    #: computer through a paired desktop app (ADR-011, "Customers"). Off by default; startup
+    #: refuses it beside anything a customer must never reach (``AuraSettings.validate``).
+    engineer_for_customers: bool = False
     #: Roles granted the "project_data" capability -- the gate on every agent and tool compiled
     #: from a deployed Project Blueprint (Track AP7): reading the connected organisation's own
     #: system. Empty by default for the same reason as `engineer_agent_roles`: which staff may
@@ -1212,6 +1286,7 @@ class SecuritySettings:
             allow_mock_attestation=_bool_aliased("ALLOW_MOCK_ATTESTATION", False),
             admin_roles=_list("ADMIN_ROLES", ("Admin", "SuperAdmin")),
             engineer_agent_roles=_list("ENGINEER_AGENT_ROLES", ()),
+            engineer_for_customers=_bool("ENGINEER_FOR_CUSTOMERS", False),
             project_data_roles=_list("PROJECT_DATA_ROLES", ()),
             security_headers_enabled=_bool("SECURITY_HEADERS_ENABLED", True),
             content_security_policy=(_env("CONTENT_SECURITY_POLICY", "") or "").strip(),
@@ -1708,6 +1783,10 @@ class SandboxSettings:
         )
 
 
+#: The voice-activity detectors ``AURA_VOICE_LIVE_VAD`` may name.
+LIVE_VAD_KINDS = frozenset({"energy", "silero"})
+
+
 @dataclass(frozen=True, slots=True)
 class VoiceSettings:
     """Self-hosted speech recognition and synthesis (Phase F2) -- both engines are only ever
@@ -1725,7 +1804,11 @@ class VoiceSettings:
     """
 
     stt_enabled: bool = True
-    stt_model: str = "tiny.en"
+    #: faster-whisper size. ``small`` is multilingual: Egyptian Arabic and English, measured on
+    #: FLEURS (docs/reports/STT_WER_ARABIC_ENGLISH_2026-11-17.md): English WER 6.5% (``tiny.en``
+    #: was 12.0%), Egyptian Arabic 25.0%, at ~0.3 real-time factor on 4 CPU cores (``tiny.en``
+    #: ~0.1). An ``.en`` model keeps live voice English-only (``LiveVoiceConfig.english_only_stt``).
+    stt_model: str = "small"
     #: Hub commit of the Whisper weights (audit FSA-110); empty loads the repo's head.
     stt_model_revision: str = ""
     #: Load Whisper at container startup instead of on the first transcription of every fresh
@@ -1758,12 +1841,41 @@ class VoiceSettings:
     live_max_utterance_ms: int = 15_000
     live_max_output_tokens: int = 400
     live_playback_sample_rate: int = 22_050
+    #: Which voice-activity detector a live session uses (GAP-020). ``energy`` is the RMS +
+    #: zero-crossing detector in ``voice/vad.py``; ``silero`` is the Silero ONNX model that
+    #: faster-whisper ships, run frame by frame (``adapters/silero_vad.py``). It ignores noise
+    #: an energy threshold mistakes for speech. It needs a 16 kHz capture rate and falls back to
+    #: ``energy`` with a warning when it cannot load, so a session is never refused over it.
+    #: AURA_VOICE_LIVE_VAD.
+    live_vad: str = "energy"
+    #: Silero speech probability above which a frame counts as speech, and the higher bar used
+    #: while AURA is thinking or speaking, so its own playback leaking into the mic does not
+    #: barge in. AURA_VOICE_LIVE_VAD_THRESHOLD / AURA_VOICE_LIVE_VAD_BARGE_IN_THRESHOLD.
+    live_vad_threshold: float = 0.5
+    live_vad_barge_in_threshold: float = 0.7
+
+    def __post_init__(self) -> None:
+        if self.live_vad not in LIVE_VAD_KINDS:
+            raise ConfigurationError(
+                "AURA_VOICE_LIVE_VAD is not a known voice-activity detector",
+                details={"value": self.live_vad, "supported": sorted(LIVE_VAD_KINDS)},
+            )
+        if self.live_vad_barge_in_threshold < self.live_vad_threshold:
+            raise ConfigurationError(
+                "AURA_VOICE_LIVE_VAD_BARGE_IN_THRESHOLD cannot be below "
+                "AURA_VOICE_LIVE_VAD_THRESHOLD -- barge-in would trigger more easily than a "
+                "new utterance",
+                details={
+                    "threshold": self.live_vad_threshold,
+                    "barge_in_threshold": self.live_vad_barge_in_threshold,
+                },
+            )
 
     @classmethod
     def from_env(cls) -> "VoiceSettings":
         return cls(
             stt_enabled=_bool("VOICE_STT_ENABLED", True),
-            stt_model=_env("VOICE_STT_MODEL", "tiny.en") or "tiny.en",
+            stt_model=_env("VOICE_STT_MODEL", "small") or "small",
             stt_model_revision=_env("VOICE_STT_MODEL_REVISION", "") or "",
             stt_warm_on_startup=(
                 None if not _env("VOICE_STT_WARM_ON_STARTUP", "") else _bool("VOICE_STT_WARM_ON_STARTUP", True)
@@ -1820,6 +1932,13 @@ class VoiceSettings:
             ),
             live_playback_sample_rate=_int(
                 "VOICE_LIVE_PLAYBACK_SAMPLE_RATE", 22_050, minimum=8_000, maximum=48_000,
+            ),
+            live_vad=(_env("VOICE_LIVE_VAD", "energy") or "energy").strip().lower(),
+            live_vad_threshold=_float(
+                "VOICE_LIVE_VAD_THRESHOLD", 0.5, minimum=0.05, maximum=0.95,
+            ),
+            live_vad_barge_in_threshold=_float(
+                "VOICE_LIVE_VAD_BARGE_IN_THRESHOLD", 0.7, minimum=0.05, maximum=0.99,
             ),
         )
 
@@ -1885,10 +2004,131 @@ class TenancySettings:
     """
 
     default_team_seats: int = 5
+    #: ``AURA_PLAN_CATALOGUE``: JSON replacing the built-in placeholder plans
+    #: (``aura_core/domain/plans.py``, SaaS P1-C). Empty keeps the defaults.
+    plan_catalogue_json: str = ""
 
     @classmethod
     def from_env(cls) -> "TenancySettings":
-        return cls(default_team_seats=_int("TEAM_DEFAULT_SEATS", 5, minimum=2, maximum=1000))
+        return cls(
+            default_team_seats=_int("TEAM_DEFAULT_SEATS", 5, minimum=2, maximum=1000),
+            plan_catalogue_json=(_env("PLAN_CATALOGUE", "") or "").strip(),
+        )
+
+
+FAWRY_SANDBOX_URL = "https://atfawry.fawrystaging.com/ECommerceWeb/Fawry/"
+
+
+@dataclass(frozen=True, slots=True)
+class BillingSettings:
+    """Subscriptions paid through Fawry (SaaS P1-D1). Off until the owner turns it on; every
+    billing route answers 503 until then.
+
+    The secure key is **not a field**: it is read from the environment variable named by
+    ``fawry_secure_key_env`` through a property, like provider API keys, so ``as_dict`` (served on
+    ``/admin/status``) can never walk into it."""
+
+    enabled: bool = False
+    fawry_base_url: str = FAWRY_SANDBOX_URL
+    fawry_merchant_code: str = ""
+    fawry_secure_key_env: str = "AURA_FAWRY_SECURE_KEY"
+    #: ``AURA_PLAN_PRICES``: JSON plan -> piastres per month (per seat for team).
+    prices_json: str = ""
+    renewal_lead_days: int = 3
+    grace_days: int = 7
+    reference_expiry_hours: int = 72
+    #: In-app subscriptions (SaaS P1-D2). Each store is off until its fields are set.
+    apple_bundle_id: str = ""
+    #: ``Production`` (also when empty) or ``Sandbox``. Sandbox purchases are free: testing only.
+    apple_environment: str = ""
+    google_package_name: str = ""
+    #: The audience the Pub/Sub push subscription puts in its OIDC token (the notify URL).
+    google_push_audience: str = ""
+    google_push_service_account: str = ""
+    #: Env var holding the Play service-account JSON. Read through a property, never a field.
+    google_play_credentials_env: str = "AURA_GOOGLE_PLAY_CREDENTIALS_JSON"
+    #: ``AURA_STORE_PRODUCTS``: ``{"apple": {productId: plan}, "google": {productId: plan}}``.
+    store_products_json: str = ""
+
+    @property
+    def google_play_credentials(self) -> dict | None:
+        raw = (os.environ.get(self.google_play_credentials_env, "") or "").strip()
+        if not raw:
+            return None
+        try:
+            value = json.loads(raw)
+        except ValueError:
+            return None
+        return value if isinstance(value, dict) else None
+
+    @property
+    def apple_configured(self) -> bool:
+        return bool(self.apple_bundle_id)
+
+    @property
+    def google_configured(self) -> bool:
+        return bool(self.google_package_name and self.google_push_audience and self.google_push_service_account
+                    and self.google_play_credentials)
+
+    @property
+    def fawry_secure_key(self) -> str:
+        return (os.environ.get(self.fawry_secure_key_env, "") or "").strip()
+
+    @property
+    def fawry_configured(self) -> bool:
+        return bool(self.fawry_merchant_code and self.fawry_secure_key)
+
+    @classmethod
+    def from_env(cls) -> "BillingSettings":
+        return cls(
+            enabled=_bool("BILLING_ENABLED", False),
+            fawry_base_url=(_env("FAWRY_BASE_URL", "") or "").strip() or FAWRY_SANDBOX_URL,
+            fawry_merchant_code=(_env("FAWRY_MERCHANT_CODE", "") or "").strip(),
+            prices_json=(_env("PLAN_PRICES", "") or "").strip(),
+            renewal_lead_days=_int("BILLING_RENEWAL_LEAD_DAYS", 3, minimum=1, maximum=14),
+            grace_days=_int("BILLING_GRACE_DAYS", 7, minimum=0, maximum=60),
+            reference_expiry_hours=_int("FAWRY_REFERENCE_EXPIRY_HOURS", 72, minimum=1, maximum=720),
+            apple_bundle_id=(_env("APPLE_BUNDLE_ID", "") or "").strip(),
+            apple_environment=(_env("APPLE_ENVIRONMENT", "") or "").strip(),
+            google_package_name=(_env("GOOGLE_PACKAGE_NAME", "") or "").strip(),
+            google_push_audience=(_env("GOOGLE_PUSH_AUDIENCE", "") or "").strip(),
+            google_push_service_account=(_env("GOOGLE_PUSH_SERVICE_ACCOUNT", "") or "").strip(),
+            store_products_json=(_env("STORE_PRODUCTS", "") or "").strip(),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class EmailSettings:
+    """Customer email over SMTP (SaaS P1-F1): invites, receipts, renewal and past-due notices.
+    Off until configured; any transactional provider's SMTP endpoint works. The password is read
+    from the env var named by ``smtp_password_env`` through a property, never a field."""
+
+    enabled: bool = False
+    #: e.g. ``AURA <billing@aureon-ai.tech>``; the domain needs SPF/DKIM for the provider.
+    from_address: str = ""
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password_env: str = "AURA_SMTP_PASSWORD"
+    smtp_starttls: bool = True
+    #: Where the customer app is served, for links in email (``/invite?token=...``).
+    app_base_url: str = ""
+
+    @property
+    def smtp_password(self) -> str:
+        return (os.environ.get(self.smtp_password_env, "") or "").strip()
+
+    @classmethod
+    def from_env(cls) -> "EmailSettings":
+        return cls(
+            enabled=_bool("EMAIL_ENABLED", False),
+            from_address=(_env("EMAIL_FROM", "") or "").strip(),
+            smtp_host=(_env("SMTP_HOST", "") or "").strip(),
+            smtp_port=_int("SMTP_PORT", 587, minimum=1, maximum=65535),
+            smtp_username=(_env("SMTP_USERNAME", "") or "").strip(),
+            smtp_starttls=_bool("SMTP_STARTTLS", True),
+            app_base_url=(_env("APP_BASE_URL", "") or "").strip(),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -2035,6 +2275,8 @@ class AuraSettings:
     sandbox: SandboxSettings = field(default_factory=SandboxSettings)
     release: ReleaseSettings = field(default_factory=ReleaseSettings)
     tenancy: TenancySettings = field(default_factory=TenancySettings)
+    billing: BillingSettings = field(default_factory=BillingSettings)
+    email: EmailSettings = field(default_factory=EmailSettings)
 
     @classmethod
     def from_env(cls) -> "AuraSettings":
@@ -2072,6 +2314,8 @@ class AuraSettings:
             sandbox=SandboxSettings.from_env(),
             release=ReleaseSettings.from_env(),
             tenancy=TenancySettings.from_env(),
+            billing=BillingSettings.from_env(),
+            email=EmailSettings.from_env(),
         )
 
     # -- validation --------------------------------------------------------------------
@@ -2084,6 +2328,36 @@ class AuraSettings:
         where one of these is violated.
         """
         problems: list[str] = []
+
+        if self.security.engineer_for_customers:
+            # SaaS P1-E: a customer's Engineer runs on their own computer only. Each of these
+            # would hand customers something that belongs to the operator or is not built for them.
+            if self.sandbox.enabled:
+                problems.append("AURA_ENGINEER_FOR_CUSTOMERS needs AURA_SANDBOX_ENABLED=false: the server "
+                                "sandbox is not open to customers yet (phase 1b)")
+            if self.github.enabled and not self.github.oauth_enabled:
+                problems.append("AURA_ENGINEER_FOR_CUSTOMERS needs AURA_GITHUB_OAUTH_ENABLED (or GitHub off): "
+                                "AURA_GITHUB_ENABLED alone shares the operator's token with every customer")
+            if self.mcp.enabled:
+                problems.append("AURA_ENGINEER_FOR_CUSTOMERS needs AURA_MCP_ENABLED=false: MCP servers are "
+                                "the operator's and would be reachable by every customer's Engineer")
+            if "User" in self.security.engineer_agent_roles:
+                problems.append("AURA_ENGINEER_FOR_CUSTOMERS cannot be combined with User in "
+                                "AURA_ENGINEER_AGENT_ROLES: that grant would skip every plan check")
+            if not self.tools.require_confirmation_for_side_effects:
+                problems.append("AURA_ENGINEER_FOR_CUSTOMERS needs AURA_TOOLS_REQUIRE_CONFIRMATION=true: "
+                                "per-call confirmation stays mandatory for customers (ADR-006)")
+
+        if self.email.enabled and not (self.email.smtp_host and self.email.from_address and self.email.app_base_url):
+            problems.append("AURA_EMAIL_ENABLED needs AURA_SMTP_HOST, AURA_EMAIL_FROM and AURA_APP_BASE_URL")
+
+        if self.billing.apple_environment not in ("", "Production", "Sandbox"):
+            problems.append("billing.apple_environment must be Production, Sandbox or empty")
+        if self.billing.google_package_name and not self.billing.google_configured:
+            # SaaS P1-D2: half a Play configuration would 503 every RTDN push, and Pub/Sub would
+            # retry them for a week before dropping them.
+            problems.append("billing.google_package_name needs AURA_GOOGLE_PUSH_AUDIENCE, "
+                            "AURA_GOOGLE_PUSH_SERVICE_ACCOUNT and the Play credentials JSON")
 
         if self.environment.is_production_like:
             # SEC-05: a single debug flag currently turns every endpoint into an
@@ -2100,6 +2374,10 @@ class AuraSettings:
                 )
             if not self.safety.enabled:
                 problems.append("safety.enabled must be true in staging/production")
+            if self.billing.enabled and not self.billing.fawry_configured:
+                # SaaS P1-D1: billing on with no merchant credentials would answer every checkout
+                # with the in-memory fake provider -- payments nobody can actually make.
+                problems.append("billing.enabled needs AURA_FAWRY_MERCHANT_CODE and AURA_FAWRY_SECURE_KEY")
             if not self.security.rate_limit_enabled:
                 problems.append("security.rate_limit_enabled must be true in staging/production")
             if not self.security.audit_enabled:

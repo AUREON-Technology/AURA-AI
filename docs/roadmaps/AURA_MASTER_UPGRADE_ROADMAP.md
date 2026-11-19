@@ -400,6 +400,20 @@ Testing · Failure tests · Metrics · Exit criteria · Rollback · Evidence req
   promotion + rollback executed; isolation probe report.
 - **Rollback:** alias switch back (ADR-007).
 - **Evidence required:** `docs/reports/m10-rag-memory.md`.
+- **Loop C, adaptive knowledge updates (ADR-035, GAP-065; designed, not built).** Knowledge gaps,
+  explicit requests, corrections, new versions and staleness are researched from approved sources
+  and a self-hosted SearxNG into cited proposals. Each proposal is applied to the global corpus
+  only after a platform admin approves it. Design: `docs/plans/adaptive-knowledge-update-system.md`.
+  Phases:
+  - C0: foundation.
+  - C1: gap capture.
+  - C2: research.
+  - C3: review, apply and revert.
+  - C4: corrections and suggestions.
+  - C5: staleness and conflicts.
+
+  Evidence: `docs/reports/loop-c-*.md` from the dev stack. A C3 cycle and a C5 staleness run prove
+  it.
 
 ### M11 — Agents, Proactivity & Personal OS *(Agent platform, part 2; Personal OS)*
 

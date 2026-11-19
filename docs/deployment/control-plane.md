@@ -45,6 +45,10 @@ and healthcheck. Railway does not support declaring four services with different
 in one config file today — the other three are dashboard/CLI service creations pointed at the
 same repo, using the commands in the table above.
 
+**Backups are a separate, sixth service.** Nothing above backs up Railway's Postgres or Redis,
+or Qdrant Cloud. A cron service built from `deploy/backup/railway.Dockerfile` does it nightly, to
+Backblaze B2 and Cloudflare R2: see [backups.md](backups.md).
+
 ## 3. Environment variables (Control Plane)
 
 Set these as Railway **service variables** (encrypted at rest by Railway, never committed).
@@ -71,8 +75,13 @@ DEBUG_MODE=false
 # Changing model or dimension after documents exist means re-indexing (see the knowledge
 # engine's index manager); the dimension must match the model (bge-small = 384).
 AURA_EMBEDDING_PROVIDER=sentence-transformers
-AURA_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+AURA_EMBEDDING_MODEL=intfloat/multilingual-e5-small
 AURA_EMBEDDING_DIMENSION=384
+# Arabic search (docs/plans/arabic-language_plan.md, stage 4): the "either" relevance gate.
+AURA_KNOWLEDGE_RERANK_PROVIDER=either
+AURA_KNOWLEDGE_RERANK_MODEL=cross-encoder/mmarco-mMiniLMv2-L12-H384-v1
+# After changing the embedder, rebuild the index once (reads refuse an index built by another
+# model until then): `railway ssh`, then `python scripts/rebuild_index.py` (--dry-run first).
 # Pin the weights to a Hub commit (audit FSA-110): the revision is part of the index identity,
 # so changing it builds and promotes a new index rather than silently re-reading the live one.
 # AURA_KNOWLEDGE_RERANK_MODEL_REVISION and AURA_VOICE_STT_MODEL_REVISION pin the cross-encoder
@@ -193,6 +202,75 @@ AURA_PROVIDER_HOSTED1_TOKENS_PER_SECOND=200          # lets the planner use 1200
 AURA_PROVIDER_HOSTED1_EXTRA_BODY={"reasoning_effort": "low"}   # reasoning models only
 ```
 
+### Claude for the Engineer (module readiness WP6; ADR-033, D-02)
+
+This turns on Engineer turns for operators. Its gate: the consent route (WP1), the per-user
+allowance (WP2) and the workload fence (WP6a) must already be **live**. They shipped in PR #251;
+check `/health/ready` shows `schema.revision` `0023` and `release.git_sha` at or after that merge
+before going on. (Met on 2026-11-18 08:46 UTC: `d47e064`, schema `0023`, healthy.) Otherwise Engineer code would reach Anthropic without consent, without a cap, or
+for work that is not the Engineer's.
+
+Set these in the Railway dashboard (Variables). The slot name `claude1` is free on Railway; the
+VPS has to use a pre-wired slot instead (`hosted3` in `deploy/.env.example`'s Engineer block),
+because Compose forwards only `HOSTED1..3`.
+
+```
+AURA_ALLOW_CLAUDE_INFERENCE=true
+AURA_LLM_PROVIDERS=hosted1,hfspace,claude1      # append claude1 to whatever is there now
+AURA_PROVIDER_CLAUDE1_KIND=claude                # no BASE_URL: the claude kind refuses one
+AURA_PROVIDER_CLAUDE1_MODEL=claude-opus-5-5      # exactly as Anthropic's API names it
+AURA_PROVIDER_CLAUDE1_API_KEY_ENV=AURA_PROVIDER_CLAUDE1_API_KEY
+AURA_PROVIDER_CLAUDE1_IS_LOCAL=false
+AURA_PROVIDER_CLAUDE1_MAX_DATA_CLASSIFICATION=sensitive   # Engineer workspaces are SENSITIVE
+AURA_PROVIDER_CLAUDE1_WORKLOADS=engineer         # the fence: never omit with a sensitive ceiling
+AURA_PROVIDER_CLAUDE1_POOLS=coder                # the pool Engineer turns ask for
+AURA_PROVIDER_CLAUDE1_SUPPORTS_TOOLS=true
+AURA_PROVIDER_CLAUDE1_SUPPORTS_REASONING=true
+AURA_PROVIDER_CLAUDE1_QUALITY_TIER=3
+AURA_PROVIDER_CLAUDE1_CONTEXT_WINDOW=200000
+AURA_PROVIDER_CLAUDE1_MAX_OUTPUT_TOKENS=32000    # thinking counts against it (+8000 headroom)
+AURA_PROVIDER_CLAUDE1_TIMEOUT_S=300
+AURA_PROVIDER_CLAUDE1_TOKENS_PER_SECOND=60
+AURA_PROVIDER_CLAUDE1_COST_INPUT=0.004           # USD per 1k tokens ($4 / MTok)
+AURA_PROVIDER_CLAUDE1_COST_OUTPUT=0.02           # USD per 1k tokens ($20 / MTok)
+AURA_PROVIDER_CLAUDE1_RPM=50                     # your Anthropic tier's limits, or lower
+AURA_PROVIDER_CLAUDE1_TPD=5000000                # the deployment's hard daily ceiling
+AURA_PROVIDER_CLAUDE1_USER_TPD=400000            # D-05: one person's daily allowance
+AURA_ENGINEER_AGENT_ROLES=Developer,Admin,SuperAdmin   # D-04
+```
+
+The numbers for `RPM`, `TPD` and `USER_TPD` are starting points, not measurements: size `TPD` to
+the monthly spend you accept (`TPD × 30 × blended $/token`), and `USER_TPD` so a handful of
+operators cannot exhaust it between them.
+
+The key itself, `AURA_PROVIDER_CLAUDE1_API_KEY`, is a **sensitive** variable (§4), created in the
+Claude Console (Settings → API keys). Never name it `ANTHROPIC_API_KEY`: that name is on
+`BANNED_CREDENTIAL_NAMES`, and the adapter never uses the SDK's ambient lookup anyway.
+
+Two things already set on this target that the Engineer depends on:
+
+- **`AURA_REDIS_URL`** and **`AURA_CACHE_BACKEND=redis`.** The per-user allowance is counted in
+  the shared cache, so without Redis each worker counts on its own and the cap multiplies by the
+  worker count. Redis also carries the host-agent relay: a desktop's daemon socket lives on one
+  worker, and the relay lets a turn on another worker reach it. The boot log must not show
+  `host-agent relay off`.
+- **One more boot line to look for:** with the slot set as above, the log shows
+  `Claude inference permitted by AURA_ALLOW_CLAUDE_INFERENCE` and `Claude provider may receive
+  SENSITIVE content`. If it also shows `Claude provider at the sensitive ceiling serves every
+  workload`, the fence did not apply: stop and fix `WORKLOADS` before anyone uses the gateway.
+
+**Accept** (each is evidence for WP10a, not something a green test shows):
+
+1. `/health/ready` lists `claude1` with `healthy: true` and `is_local: false`.
+2. `GET /api/v3/agents` as a Developer shows the Engineer `usable: true` and `consent_required`
+   until that person accepts; as a plain user it is not usable.
+3. An operator accepts the notice (`POST /api/v3/engineering/consent`) and one Engineer turn
+   completes; an `llm.third_party_generation` audit row names `claude1`.
+4. An ordinary chat turn after that still routes to `hosted1` or `hfspace`, never `claude1`.
+
+**Rollback:** take `claude1` out of `AURA_LLM_PROVIDERS` and redeploy. Engineer turns go back to
+`capability_unavailable`; nothing else changes. Consents and usage counters stay where they are.
+
 ### Capacity and latency settings (provider performance audit, 2026-11-08)
 
 Without these, the code defaults apply on Railway:
@@ -270,7 +348,10 @@ Why each value:
   deployment with a CPU model would need a per-provider cap, which does not exist yet.
 
 What these do not fix: sensitive turns (memory, documents, tools, images, Engineer) still have
-no eligible model while only `hosted1` is healthy, because its ceiling is `internal`. The owner
+no eligible model while only `hosted1` is healthy, because its ceiling is `internal`. For the
+Engineer, the owner's decision (D-02, ADR-033 amendment 2026-11-17) is a Claude slot fenced to
+the Engineer workload; the settings are in `deploy/.env.example`'s Claude block and must not be
+switched on before the consent route and the per-user allowance (`USER_TPD`) are deployed. The owner
 accepted this as the chat-only launch limitation on 2026-11-08. Those turns now end with
 `capability_unavailable` ("This needs a feature that isn't available yet") instead of a
 retryable "model not answering".
@@ -290,7 +371,8 @@ Set as Railway environment variables marked "sensitive" in the dashboard, never 
 
 `AURA_DATABASE_URL`, `AURA_REDIS_URL`, `AURA_QDRANT_API_KEY`, `AURA_JWT_SECRET`,
 `AURA_SECRETS_ENCRYPTION_KEY`, `AURA_PROVIDER_HFSPACE_API_KEY`, `AURA_PROVIDER_HOSTED<n>_API_KEY`
-(per enabled hosted slot), `AURA_GITHUB_OAUTH_CLIENT_SECRET`
+(per enabled hosted slot), `AURA_PROVIDER_CLAUDE1_API_KEY` (once the Engineer's Claude slot
+is on), `AURA_GITHUB_OAUTH_CLIENT_SECRET`
 (if GitHub OAuth connect is enabled), `HF_TOKEN` (only if the embedding model or a gated model
 repo needs authenticated download — this authenticates a weight *download*, never inference,
 per `deploy/spaces/inference-vllm/README.md`).

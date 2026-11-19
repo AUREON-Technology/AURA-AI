@@ -3,10 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import 'package:aura_client/core/database/database.dart';
-import 'package:aura_client/core/theme/theme.dart';
+import 'package:aura_client/core/design_system/design_system.dart';
 import '../finance_view_model.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class FinanceTransactionHistory extends ConsumerWidget {
   final AsyncValue<List<FinanceRecord>> transactionsAsync;
@@ -14,7 +15,8 @@ class FinanceTransactionHistory extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final formatCurrency = NumberFormat.simpleCurrency(decimalDigits: 2);
+    final formatCurrency = NumberFormat.simpleCurrency(locale: 'en_US', decimalDigits: 2);
+    final palette = AuraPalette.of(context);
 
     return Card(
       child: Padding(
@@ -26,8 +28,8 @@ class FinanceTransactionHistory extends ConsumerWidget {
               mainAxisSize: bounded ? MainAxisSize.max : MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('Recent Activities', style: Theme.of(context).textTheme.titleMedium),
-                const Divider(color: Color(0x1F94A3B8), height: 20),
+                Text(context.l10n.financeRecentActivities, style: Theme.of(context).textTheme.titleMedium),
+                Divider(color: palette.border, height: 20),
                 if (bounded)
                   Expanded(
                     child: _HistoryBody(
@@ -64,10 +66,11 @@ class _HistoryBody extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final palette = AuraPalette.of(context);
     return transactionsAsync.when(
-      loading: () => const Padding(
-        padding: EdgeInsets.symmetric(vertical: 24),
-        child: Center(child: CircularProgressIndicator(color: AuraTheme.accentIndigo)),
+      loading: () => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        child: Center(child: CircularProgressIndicator(color: palette.brand)),
       ),
       error: (err, stack) => AuraFailureView(
         failure: AuraFailure.from(err),
@@ -79,8 +82,8 @@ class _HistoryBody extends ConsumerWidget {
             padding: const EdgeInsets.symmetric(vertical: 24),
             child: Center(
               child: Text(
-                'No activities recorded yet',
-                style: TextStyle(color: AuraTheme.textSecondary.withValues(alpha: 0.5)),
+                context.l10n.financeNoActivities,
+                style: TextStyle(color: palette.textSecondary),
               ),
             ),
           );
@@ -92,7 +95,7 @@ class _HistoryBody extends ConsumerWidget {
           itemBuilder: (context, index) {
             final tx = txs[index];
             final isExpense = tx.type == 'expense';
-            final color = isExpense ? Colors.redAccent : AuraTheme.accentTeal;
+            final color = isExpense ? palette.danger : palette.success;
             return Dismissible(
               key: Key(tx.id),
               direction: DismissDirection.endToStart,
@@ -100,25 +103,25 @@ class _HistoryBody extends ConsumerWidget {
                 alignment: AlignmentDirectional.centerEnd,
                 padding: const EdgeInsetsDirectional.only(end: 20),
                 decoration: BoxDecoration(
-                  color: Colors.redAccent.withValues(alpha: 0.2),
+                  color: palette.danger.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(Icons.delete, color: Colors.redAccent),
+                child: Icon(Icons.delete, color: palette.danger),
               ),
               onDismissed: (direction) async {
                 await ref.read(financeViewModelProvider.notifier).deleteTransaction(tx.id);
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Deleted entry: ${tx.description ?? tx.category}')),
+                  SnackBar(content: Text(context.l10n.financeDeletedEntry(tx.description ?? financeCategoryLabel(context.l10n, tx.category)))),
                 );
               },
               child: Container(
                 margin: const EdgeInsets.only(bottom: 12),
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: const Color(0x0DFFFFFF),
+                  color: palette.surfaceVariant,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0x0F94A3B8)),
+                  border: Border.all(color: palette.border),
                 ),
                 child: Row(
                   children: [
@@ -132,11 +135,11 @@ class _HistoryBody extends ConsumerWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(tx.description ?? tx.category, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                          Text(tx.description ?? financeCategoryLabel(context.l10n, tx.category), style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
                           const SizedBox(height: 2),
                           Text(
-                            '${tx.category} • ${DateFormat('yyyy-MM-dd').format(tx.date)}',
-                            style: const TextStyle(color: AuraTheme.textSecondary, fontSize: 11),
+                            '${financeCategoryLabel(context.l10n, tx.category)} • ${DateFormat('yyyy-MM-dd').format(tx.date)}',
+                            style: TextStyle(color: palette.textSecondary, fontSize: 11),
                           ),
                         ],
                       ),

@@ -261,6 +261,14 @@ void main() {
     });
   });
 
+  test('a plan refusal says a Pro or Team plan is needed, not just "refused" (WP11)', () {
+    final failure = AuraFailure.from(const SignInRefused('needs a plan', true));
+    expect(failure.kind, AuraFailureKind.forbidden);
+    expect(failure.title, 'The desktop app needs a Pro or Team plan');
+    expect(failure.message, contains('Upgrade your plan'));
+    expect(failure.canRetry, isFalse);
+  });
+
   test('a refused sign-in reads as a refusal, with no retry offered', () {
     final failure = AuraFailure.from(const SignInRefused());
     expect(failure.kind, AuraFailureKind.forbidden);

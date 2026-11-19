@@ -2,6 +2,8 @@
 /// on web for this to talk to.
 library;
 
+import 'package:aura_client/l10n/l10n.dart';
+
 class HostdControlUnavailable implements Exception {
   HostdControlUnavailable(this.message);
 
@@ -12,10 +14,17 @@ class HostdControlUnavailable implements Exception {
 }
 
 class HostdControlError implements Exception {
-  HostdControlError(this.statusCode, this.message);
+  HostdControlError(this.statusCode, this.message, {this.code});
 
   final int statusCode;
+
+  /// Text for a person, in the language on screen when the daemon sent a [code] this app knows;
+  /// otherwise the daemon's own English.
   final String message;
+
+  /// The daemon's stable machine code for this error (`hostd_error_codes.dart`), or null for a
+  /// daemon that predates codes.
+  final String? code;
 
   @override
   String toString() => 'HTTP $statusCode: $message';
@@ -25,7 +34,7 @@ class HostdControlClient {
   HostdControlClient();
 
   Never _unavailable() =>
-      throw HostdControlUnavailable('The desktop Engineer daemon is not available on web.');
+      throw HostdControlUnavailable(currentL10n.coreHostdNotOnWeb);
 
   Future<Map<String, dynamic>> status() async => _unavailable();
   Future<List<Map<String, dynamic>>> roots() async => _unavailable();
@@ -51,11 +60,15 @@ class HostdControlClient {
   Future<Map<String, dynamic>> gitCheckout({required String root, required String branch, bool create = false}) async =>
       _unavailable();
   Future<Map<String, dynamic>> gitMerge({required String root, required String branch}) async => _unavailable();
+  Future<Map<String, dynamic>> initGit({required String root}) async => _unavailable();
   Future<Map<String, dynamic>> gitMergeAbort({required String root}) async => _unavailable();
   Future<Map<String, dynamic>> gitBranches({required String root}) async => _unavailable();
   Future<Map<String, dynamic>> gitFetch({required String root}) async => _unavailable();
   Future<Map<String, dynamic>> gitPull({required String root}) async => _unavailable();
   Future<Map<String, dynamic>> gitPush({required String root}) async => _unavailable();
+  Future<Map<String, dynamic>> gitRemotes({required String root}) async => _unavailable();
+  Future<Map<String, dynamic>> gitPublish({required String root, required String remote}) async =>
+      _unavailable();
   Future<Map<String, dynamic>> diagnosticsDetect({required String root}) async => _unavailable();
   Future<Map<String, dynamic>> diagnosticsRun({required String root, required String tool}) async =>
       _unavailable();
@@ -71,6 +84,7 @@ class HostdControlClient {
   }) async =>
       _unavailable();
   Future<Map<String, dynamic>> gitDiscardTask({required String taskKey}) async => _unavailable();
+  Future<bool> setRemoteControl(bool enabled) async => _unavailable();
   Future<Map<String, dynamic>> startPairing({String? backendUrl}) async => _unavailable();
   Future<Map<String, dynamic>> pairingStatus() async => _unavailable();
   Future<void> shutdown() async => _unavailable();

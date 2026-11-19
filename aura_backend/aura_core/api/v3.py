@@ -17,7 +17,10 @@ a time behind a flag.
 import asyncio
 import base64
 import binascii
+import hashlib
+from dataclasses import replace
 import json
+import os
 from datetime import datetime, timedelta
 from typing import Any, AsyncIterator, Mapping
 
@@ -26,6 +29,7 @@ from ..domain.errors import (
     AuthenticationError,
     AuthorizationError,
     DependencyUnavailableError,
+    NotFoundError,
     OverloadedError,
     RateLimitedError,
     ValidationError,
@@ -33,7 +37,10 @@ from ..domain.errors import (
 from ..domain.caller_context import MAX_CALLER_CONTEXT, CallerContext
 from ..domain.connectors import CONNECTOR_ID_PATTERN, Credential
 from ..domain.identifiers import CorrelationId, DocumentId, SessionId, UserId
-from ..domain.llm import RoutingPolicy
+from ..domain.engineering import ENGINEER_CONSENT_NOTICE_VERSION
+from ..domain.llm import RoutingPolicy, WorkloadClass
+from ..llm.workload import workload_class_for_turn
+from ..text.language import CLIENT_LANGUAGE_HEADER, normalize_language
 from ..domain.memory import MemoryKind, MemoryQuery
 from ..domain.output_schema import check_output_schema
 from ..domain.reasoning import ReasoningStrategy
@@ -43,6 +50,7 @@ from ..domain.untrusted import MAX_UNTRUSTED_CHARS
 from ..kernel.kernel import TurnRequest
 from ..observability.logging import get_logger
 from ..ports.runtime import AuditEvent
+from ..prompts import PIN_SYNC_INTERVAL_S
 from ..security.rate_limit import extract_client_ip
 from .admin import register_admin_ops
 
@@ -63,6 +71,11 @@ _MAX_RESPONSE_SCHEMA_CHARS = 8000
 CONNECTOR_TOKEN_HEADER = "x-aura-connector-token"
 _MAX_CONNECTOR_TOKENS = 8
 _MAX_CONNECTOR_TOKEN_CHARS = 8192
+
+
+def _client_language(request: Any) -> str | None:
+    """The app's display language from ``X-Client-Language`` (``"ar"``/``"en"``), or ``None``."""
+    return normalize_language(request.headers.get(CLIENT_LANGUAGE_HEADER))
 
 
 def _connector_tokens(request: Any) -> dict[str, Credential]:
@@ -86,6 +99,13 @@ def _connector_tokens(request: Any) -> dict[str, Credential]:
             if len(tokens) > _MAX_CONNECTOR_TOKENS:
                 raise ValidationError("too many connector tokens", details={"limit": _MAX_CONNECTOR_TOKENS})
     return tokens
+
+
+#: The largest audio ``/voice/transcribe`` accepts. A voice note is short by nature; this is
+#: generous headroom, not a target -- unlike ``knowledge.max_document_bytes`` there is no
+#: per-deployment setting for it yet. The gateway's body cap for the route is derived from it
+#: (``aura_service._apply_http_limits``, INT-112).
+MAX_AUDIO_BYTES = 25 * 1024 * 1024
 
 
 #: How often a quiet stream sends an SSE comment. nginx closes a proxied response after 300 s
@@ -135,7 +155,10 @@ class Principal:
     touches only the authenticator.
     """
 
-    __slots__ = ("user_id", "email", "role", "capabilities", "service_key", "workspace")
+    __slots__ = (
+        "user_id", "email", "role", "capabilities", "service_key", "workspace", "client_platform",
+        "email_verified",
+    )
 
     def __init__(
         self,
@@ -146,6 +169,8 @@ class Principal:
         capabilities: tuple[str, ...] = (),
         service_key: Any = None,
         workspace: WorkspaceContext | None = None,
+        client_platform: str | None = None,
+        email_verified: bool = False,
     ) -> None:
         self.user_id = user_id
         self.email = email
@@ -158,6 +183,18 @@ class Principal:
         # store by the authenticator. ``None`` is the caller's personal scope. It carries a
         # *workspace* role only -- never a platform role or a capability.
         self.workspace = workspace
+        # Whether the identity provider vouched for ``email`` (SaaS P1-B). Creating or joining a
+        # team requires it; personal use does not.
+        self.email_verified = email_verified
+        # WP8: ``"desktop"`` only when the access token was issued to the desktop app (a signed
+        # claim the authenticator copies); ``None`` for phone, web and every other caller.
+        self.client_platform = client_platform
+
+    @property
+    def origin(self) -> str:
+        """``"desktop"`` for the desktop app, ``"remote"`` for anything else (WP8, D-10). Derived
+        only from the signed token, so a phone cannot claim to be the desktop in a request body."""
+        return "desktop" if self.client_platform == "desktop" else "remote"
 
     @property
     def knowledge_owner(self) -> UserId:
@@ -269,7 +306,10 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     class IngestRequest(BaseModel):
         title: str = Field(min_length=1, max_length=500)
-        content: str = Field(min_length=1)
+        #: INT-112: no more characters than the engine's byte ceiling (a character is at least a
+        #: byte of UTF-8), so text no engine would store is refused before it is hashed or
+        #: reserved against the plan. The engine still checks the exact UTF-8 size.
+        content: str = Field(min_length=1, max_length=settings.knowledge.max_document_bytes)
         document_id: str | None = None
         metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -364,6 +404,94 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 status_code=403,
                 detail=AuthorizationError("only a workspace owner or admin can change its knowledge").to_dict(),
             )
+
+    plans = getattr(container, "plans", None)
+
+    async def admit_turn(caller: Principal, agent: str | None, turn: Any) -> tuple[Any, Any]:
+        """SaaS P1-C: reserve one message against the workspace's plan. Returns the reservation
+        to give back if the turn fails (None when unmetered) and the turn to run.
+
+        Engineer is decided by the workspace's plan, not the persona name: an Engineer turn on a
+        plan without it is refused, and any other turn loses the ``engineer_agent`` capability,
+        so neither the orchestrator's coding tools nor a delegation to the Engineer can reach it
+        (review C#2). Raises PlanLimitError (402)."""
+        if plans is None:
+            return None, turn
+        workspace_id = await plans.metered_workspace(caller)
+        if workspace_id is None:
+            return None, turn
+        plan, _seats = await plans.entitlement(workspace_id)
+        if plan.engineer and container.settings.security.engineer_for_customers \
+                and "engineer_agent" not in turn.capabilities:
+            # SaaS P1-E: a customer's Engineer comes from their workspace's plan, not a role.
+            turn = replace(turn, capabilities=(*turn.capabilities, "engineer_agent"))
+        if not plan.engineer:
+            if agent == "engineer":
+                await plans.require_engineer(workspace_id)
+            if "engineer_agent" in turn.capabilities:
+                turn = replace(turn, capabilities=tuple(c for c in turn.capabilities if c != "engineer_agent"))
+        return await plans.admit_message(workspace_id), turn
+
+    async def engineer_granted(caller: Principal) -> bool:
+        """Whether the caller has the Engineer outside a turn: by role (``granted``) or, with
+        ``AURA_ENGINEER_FOR_CUSTOMERS``, by the active workspace's plan -- the same rule
+        ``admit_turn`` applies to a turn. Routes that are not turns (``/agents``, ``/host/folders``,
+        ``git-init``) need it, or a paying customer sees the Engineer greyed out and their phone
+        refused (module readiness WP11). A plan lookup failure is 503, never "not entitled"."""
+        if "engineer_agent" in granted(caller):
+            return True
+        if plans is None or not container.settings.security.engineer_for_customers:
+            return False
+        try:
+            workspace_id = await plans.metered_workspace(caller)
+            if workspace_id is None:
+                return False
+            plan, _seats = await plans.entitlement(workspace_id)
+        except Exception as exc:
+            logger.warning("could not read a customer's plan for the Engineer", exc_info=True)
+            raise HTTPException(
+                status_code=503,
+                detail=DependencyUnavailableError(
+                    "could not check your plan just now", dependency="plans"
+                ).to_dict(),
+            ) from exc
+        return bool(plan.engineer)
+
+    async def release_turn(reservation: Any) -> None:
+        if reservation is not None:
+            try:
+                await plans.release(reservation)
+            except Exception:
+                logger.warning("could not give back a reserved message", exc_info=True)
+
+    async def storage_workspace(caller: Principal) -> str | None:
+        return None if plans is None else await plans.metered_workspace(caller)
+
+    async def storage_to_reserve(caller: Principal, text: str) -> int:
+        """Bytes an ingest may add: none when this exact content is already stored for this
+        owner (the engine dedupes on the same hash, so a re-upload stores nothing new)."""
+        stripped = text.strip()
+        digest = hashlib.sha256(stripped.encode("utf-8")).hexdigest()
+        if await container.documents.get_by_hash(digest, owner_id=caller.knowledge_owner) is not None:
+            return 0
+        return len(stripped.encode("utf-8"))
+
+    async def settle_storage(workspace_id: str | None, reserved: int, result: Any) -> None:
+        """Correct the reserved estimate to what the store kept: nothing for a duplicate, the
+        stored content's length otherwise -- so a delete later gives back exactly this much."""
+        if workspace_id is None:
+            return
+        kept = 0
+        if result is not None and getattr(result, "created", False) and result.document is not None:
+            kept = len(result.document.content.encode("utf-8"))
+            if result.document.version > 1:
+                # A new version replaces the previous one: only the difference is new storage,
+                # and deleting the document later frees the latest version's size (review C#1).
+                previous = await container.documents.get(result.document.id, version=result.document.version - 1)
+                if previous is not None:
+                    kept -= len(previous.content.encode("utf-8"))
+        if kept != reserved:
+            await plans.meter.add(workspace_id, "storage_bytes", "all", kept - reserved)
 
     # Optional `Idempotency-Key` support (roadmap P1.4; see api/idempotency.py). Set before any
     # route is declared: APIRouter reads `route_class` at decoration time. A route opts in with
@@ -489,15 +617,27 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         if len({e.id for e in caller_context}) != len(caller_context):
             raise ValidationError("context ids must be unique within a turn")
         images = await normalize_images(payload.images, caller) if payload.images else ()
+        # F43: both are client-supplied; an identifier that fails its own validation is a bad
+        # request (422), not a server error.
+        try:
+            session_id = SessionId(payload.session_id) if payload.session_id else None
+        except ValueError as exc:
+            raise ValidationError("session_id is not a valid identifier",
+                                  details={"field": "session_id"}) from exc
+        try:
+            correlation_id = CorrelationId(
+                request.headers.get("x-correlation-id") or CorrelationId.new().value
+            )
+        except ValueError as exc:
+            raise ValidationError("X-Correlation-Id is not a valid identifier",
+                                  details={"field": "x-correlation-id"}) from exc
         return TurnRequest(
             message=message,
             user_id=caller.user_id,
             knowledge_owner=caller.knowledge_owner,
-            session_id=SessionId(payload.session_id) if payload.session_id else None,
+            session_id=session_id,
             agent=payload.agent,
-            correlation_id=CorrelationId(
-                request.headers.get("x-correlation-id") or CorrelationId.new().value
-            ),
+            correlation_id=correlation_id,
             use_knowledge=payload.use_knowledge,
             # Spec §5.2 / ADR-034: a team turn draws on the team's corpus, never on the person's
             # private memory, which a teammate reading the answer must not see.
@@ -513,12 +653,17 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             temperature=payload.temperature,
             desktop_task_isolation=payload.desktop_task_isolation,
             workspace_root=payload.workspace_root,
+            # WP8: from the token's signed claim, never from the request body.
+            origin=caller.origin,
             # Defence in depth behind use_tools=False: an empty grant intersects to no tools.
             delegated_tool_grant=frozenset() if caller.is_service else None,
             caller_context=caller_context,
             response_schema=payload.response_schema,
             connector_tokens=connector_tokens or None,
             images=images,
+            # The app's display language (X-Client-Language), the fallback for a message with no
+            # clear language of its own (prompts/language.py). A service key has no app.
+            preferred_language=None if caller.is_service else _client_language(request),
         )
 
     def vision_status() -> dict[str, bool]:
@@ -585,7 +730,17 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         """One complete turn. Use ``/chat/stream`` for incremental output."""
         await enforce_rate_limit(request, caller, "chat")
         turn = await to_turn(payload, caller, request)
-        result = await container.kernel.run(turn)
+        reservation, turn = await admit_turn(caller, payload.agent, turn)
+        try:
+            result = await container.kernel.run(turn)
+        except BaseException:
+            await release_turn(reservation)
+            raise
+        if result.telemetry.outcome.value != "success":
+            # A failed turn does not use up the month: the same rule as /chat/stream, where a
+            # message counts once its first token is sent -- a failed turn sends this caller
+            # no answer text at all (F6).
+            await release_turn(reservation)
         if caller.is_service:
             # Chat turns are not audited for people; a service's are, so one interpretation can be
             # traced from the calling system's correlation id to the turn that produced it.
@@ -616,6 +771,21 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 # F-04: a confirmation naming no pending call this caller may resume. One-shot,
                 # so not retryable as sent -- the turn has to be asked again.
                 status = 409
+            if result.telemetry.error_kind in ("consent_required", "user_quota_exhausted"):
+                # D-03 / D-05: refused before anything was sent. Neither clears by retrying the
+                # same request -- one needs the person to agree in the app, the other the next
+                # UTC day (details.reset_at) -- so neither is offered as retryable.
+                error_status = {"consent_required": 403, "user_quota_exhausted": 429}
+                return JSONResponse(
+                    status_code=error_status[result.telemetry.error_kind],
+                    content={
+                        "error": result.telemetry.error_kind,
+                        "message": "The turn did not run.",
+                        "retryable": False,
+                        "details": dict(result.error_details or {}),
+                        "correlation_id": result.telemetry.correlation_id.value,
+                    },
+                )
             # Admission refusals (P2.4) carry a Retry-After: 503 for a saturated pool, 429 for
             # a user over their concurrent-generation quota (outcome rate_limited above).
             retry_after = result.retry_after_s
@@ -666,10 +836,25 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         """What optional features this deployment can serve right now, for any signed-in
         caller -- the client hides an attach-image button rather than offering one that 503s
         (ADR-031). ``available`` reflects configuration and provider declarations, not a probe.
+
+        ``max_request_image_bytes`` is the decoded total ``/chat`` enforces across one turn's
+        images (INT-026); without it a client checking only the per-image limit could build a
+        turn of individually-fine images that the server refuses as a whole.
+
+        ``knowledge.max_upload_bytes`` is the size ``/knowledge/documents/upload`` refuses above
+        (its 422 reports the same number as ``limit_bytes``), read from the same setting so a
+        client can check a file before sending it.
         """
-        return JSONResponse(content={"vision": {**vision_status(),
-                                                "max_images": settings.vision.max_images,
-                                                "max_image_bytes": settings.vision.max_image_bytes}})
+        vision = settings.vision
+        return JSONResponse(content={
+            "vision": {
+                **vision_status(),
+                "max_images": vision.max_images,
+                "max_image_bytes": vision.max_image_bytes,
+                "max_request_image_bytes": vision.max_request_image_bytes,
+            },
+            "knowledge": {"max_upload_bytes": settings.knowledge.max_document_bytes},
+        })
 
     @router.post("/chat/stream")
     async def chat_stream(
@@ -688,16 +873,27 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             raise ValidationError("response_schema is supported on POST /api/v3/chat only, not on the stream")
         await enforce_rate_limit(request, caller, "chat")
         turn = await to_turn(payload, caller, request)
+        reservation, turn = await admit_turn(caller, payload.agent, turn)
 
         async def events() -> AsyncIterator[bytes]:
+            counted = False
             try:
                 async for frame in container.kernel.stream(turn):
                     event = frame.get("type", "message")
+                    if event in ("token", "done"):
+                        counted = True
                     yield f"event: {event}\ndata: {json.dumps(frame)}\n\n".encode()
             except Exception as exc:  # pragma: no cover - defensive
                 logger.exception("stream failed")
                 payload_ = {"type": "error", "error": "internal_error", "message": type(exc).__name__}
                 yield f"event: error\ndata: {json.dumps(payload_)}\n\n".encode()
+            finally:
+                # The message counts once the first token frame is sent (or the turn reaches
+                # `done` without one): the person has had an answer, so a failure or a client
+                # gone after that point keeps it counted (F6). Only a turn that fails, errors or
+                # loses its client before any token gives the message back.
+                if not counted:
+                    await release_turn(reservation)
 
         return StreamingResponse(
             with_keepalive(events(), interval_s=SSE_KEEPALIVE_S),
@@ -789,13 +985,21 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
     ) -> JSONResponse:
         await enforce_rate_limit(request, caller, "ingest")
         require_knowledge_write(caller)
-        result = await container.knowledge.ingest(
-            content=payload.content,
-            title=payload.title,
-            document_id=DocumentId(payload.document_id) if payload.document_id else None,
-            owner_id=caller.knowledge_owner,
-            metadata=payload.metadata,
-        )
+        storage_ws = await storage_workspace(caller)
+        reserved = await storage_to_reserve(caller, payload.content) if storage_ws is not None else 0
+        if storage_ws is not None:
+            await plans.admit_storage(storage_ws, reserved)
+        result = None
+        try:
+            result = await container.knowledge.ingest(
+                content=payload.content,
+                title=payload.title,
+                document_id=DocumentId(payload.document_id) if payload.document_id else None,
+                owner_id=caller.knowledge_owner,
+                metadata=payload.metadata,
+            )
+        finally:
+            await settle_storage(storage_ws, reserved, result)
         if container.cag is not None and result.document is not None:
             await container.cag.on_document_changed(
                 result.document.id, owner_id=caller.knowledge_owner
@@ -837,15 +1041,28 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 details={"limit_bytes": settings.knowledge.max_document_bytes},
             )
 
-        from ..knowledge.documents import apply_ocr, extract_pdf, image_extraction_available
+        from ..knowledge.documents import apply_ocr, extract_pdf_async, image_extraction_available
 
-        extraction = extract_pdf(data, title=title, keep_images=image_extraction_available())
+        # In a worker thread (F40): parsing a long PDF held this worker's event loop. A PDF over
+        # the page cap raises DocumentTooLargeError, which answers 413 naming the limit.
+        extraction = await extract_pdf_async(
+            data, title=title, keep_images=image_extraction_available()
+        )
         if extraction.unreadable_pages and container.ocr_engine is not None:
             extraction = await apply_ocr(extraction, container.ocr_engine)
 
-        result = await container.knowledge.ingest(
-            title=title, owner_id=caller.knowledge_owner, segments=extraction.blocks,
-        )
+        storage_ws = await storage_workspace(caller)
+        joined = "\n\n".join(block.text for block in extraction.blocks if block.text)
+        reserved = await storage_to_reserve(caller, joined) if storage_ws is not None else 0
+        if storage_ws is not None:
+            await plans.admit_storage(storage_ws, reserved)
+        result = None
+        try:
+            result = await container.knowledge.ingest(
+                title=title, owner_id=caller.knowledge_owner, segments=extraction.blocks,
+            )
+        finally:
+            await settle_storage(storage_ws, reserved, result)
         if container.cag is not None and result.document is not None:
             await container.cag.on_document_changed(
                 result.document.id, owner_id=caller.knowledge_owner
@@ -901,9 +1118,20 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         await enforce_rate_limit(request, caller, "ingest")
         require_knowledge_write(caller)
         doc_id = DocumentId(document_id)
+        stored = await container.documents.get(doc_id)
+        if stored is None or stored.owner_id != caller.knowledge_owner:
+            # INT-111: someone else's, a global or an unknown document is "not found" -- never a
+            # 200 "deleted" for a document that is still there. Checked on the stored owner, not
+            # on "0 chunks removed", which a fully quarantined document of one's own reports.
+            raise NotFoundError(f"document {document_id!r} not found",
+                                details={"document_id": document_id})
         removed = await container.knowledge.delete_document(
             doc_id, owner_id=caller.knowledge_owner
         )
+        storage_ws = await storage_workspace(caller)
+        if removed and storage_ws is not None:
+            # Gives back what settle_storage counted for it (spec 5.3); never below 0.
+            await plans.free_storage(storage_ws, len(stored.content.encode("utf-8")))
         if container.cag is not None:
             await container.cag.on_document_changed(doc_id, owner_id=caller.knowledge_owner)
         return JSONResponse(content={"deleted": True, "chunks_removed": removed})
@@ -1115,30 +1343,65 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     # -- voice (Phase F2) ----------------------------------------------------------------
 
-    #: A voice note is short by nature; this is generous headroom, not a target -- unlike
-    #: `knowledge.max_document_bytes` there is no per-deployment setting for it yet.
-    MAX_AUDIO_BYTES = 25 * 1024 * 1024
-
     @router.post("/voice/transcribe")
     async def transcribe_audio(
-        request: Request, file: UploadFile = File(...), caller: Principal = Depends(principal),
+        request: Request,
+        file: UploadFile = File(...),
+        language: str | None = Form(default=None, max_length=40),
+        caller: Principal = Depends(principal),
     ) -> JSONResponse:
         """Speech to text via the container's `SpeechToText` engine (self-hosted
         `faster-whisper`, Phase F2). 503s with a clear `dependency_unavailable` body when no
-        engine is configured, rather than pretending an empty transcript is a real answer."""
+        engine is configured, rather than pretending an empty transcript is a real answer.
+
+        ``language`` (optional, ISO-639-1 such as ``ar``; ``AR-eg`` folds to ``ar``) is a hint
+        for a multilingual model, validated exactly as a live-voice start frame is; an unknown
+        code is a 422. Without it the model detects the language itself. An English-only
+        (``*.en``) model ignores the hint, exactly as before the field existed: clients already
+        in use send ``ar`` whenever the app is in Arabic, and must keep getting a transcript
+        (docs/plans/arabic-language_plan.md, stage 4).
+
+        The response's ``language`` (Phase V, additive) is the language the engine used --
+        the hint it honoured, or the one it detected -- or ``null`` when it cannot say.
+        """
+        from ..ports.speech import LanguageAwareSpeechToText
+        from ..voice.session import normalise_language
+
         await enforce_rate_limit(request, caller, "voice")
-        if container.stt_engine is None:
+        engine = container.stt_engine
+        if engine is None:
             raise DependencyUnavailableError(
                 "no speech-to-text engine is configured on this deployment",
                 dependency="faster-whisper",
             )
+        hint: str | None = None
+        if language is not None and language.strip():
+            hint = normalise_language(language)
+            if hint is None:
+                raise ValidationError(
+                    "language is not a supported language code; send an ISO-639-1 code such "
+                    "as en or ar",
+                    details={"field": "language", "reason": "language_unsupported"},
+                )
+        language_aware = isinstance(engine, LanguageAwareSpeechToText)
+        english_only = (
+            not engine.multilingual if language_aware
+            else settings.voice.stt_model.endswith(".en")
+        )
+        if english_only:
+            hint = None
         data = await file.read()
         if len(data) > MAX_AUDIO_BYTES:
             raise ValidationError(
                 "uploaded audio exceeds the size limit", details={"limit_bytes": MAX_AUDIO_BYTES}
             )
-        text = await container.stt_engine.transcribe(data)
-        return JSONResponse(content={"text": text, "engine": container.stt_engine.name})
+        if language_aware:
+            text, used = await engine.transcribe_detect(data, language=hint)
+        else:
+            text, used = await engine.transcribe(data, language=hint), hint
+        if english_only:
+            used = "en"
+        return JSONResponse(content={"text": text, "engine": engine.name, "language": used})
 
     @router.post("/voice/speak")
     async def synthesize_speech(
@@ -1170,17 +1433,24 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         caller: Principal = Depends(principal),
         query: str = Query(default="", max_length=500),
         limit: int = Query(default=20, ge=1, le=100),
+        # The client pages with ``offset`` (INT-043); it used to be dropped, so every page was
+        # page one. Bounded so a ranked search cannot be asked to over-fetch without limit.
+        offset: int = Query(default=0, ge=0, le=1000),
     ) -> JSONResponse:
         await enforce_rate_limit(request, caller, "read")
         if container.memory is None:
             return JSONResponse(content={"memories": [], "enabled": False})
         if query:
+            # Recall ranks rather than pages, so take the first ``offset + limit`` by rank and
+            # drop the ones already shown: the same ordering as the page before it.
             hits = await container.memory.recall(
-                MemoryQuery(owner_id=caller.user_id, text=query, limit=limit)
+                MemoryQuery(owner_id=caller.user_id, text=query, limit=offset + limit)
             )
-            records = [h.record for h in hits]
+            records = [h.record for h in hits][offset:offset + limit]
         else:
-            records = await container.memory_store.list_for_owner(caller.user_id, limit=limit)
+            records = await container.memory_store.list_for_owner(
+                caller.user_id, limit=limit, offset=offset
+            )
         return JSONResponse(
             content={
                 "enabled": True,
@@ -1382,9 +1652,34 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             }
         )
 
+    async def _engineer_consent_current(caller: Principal) -> bool:
+        store = getattr(container, "engineer_consent", None)
+        if store is None:
+            return True
+        consent = await store.get(caller.user_id)
+        return consent is not None and consent.is_current(ENGINEER_CONSENT_NOTICE_VERSION)
+
     @router.get("/agents")
     async def list_agents(caller: Principal = Depends(principal)) -> JSONResponse:
         caps = frozenset(granted(caller))
+        if "engineer_agent" not in caps and await engineer_granted(caller):
+            caps = caps | {"engineer_agent"}  # a customer's Engineer comes from their plan (WP11)
+        # Not here, but in another of the caller's workspaces: name them, so the app can offer to
+        # switch (a turn uses the active workspace; sign-in and pairing accept any of them).
+        engineer_elsewhere: list[dict[str, Any]] = []
+        if ("engineer_agent" not in caps and plans is not None
+                and container.settings.security.engineer_for_customers):
+            try:
+                engineer_elsewhere = [
+                    {"id": ws.id, "kind": ws.kind.value, "name": ws.name, "role": m.role.value}
+                    for ws, m in await plans.engineer_workspaces(caller.user_id.value)
+                ]
+            except Exception:
+                # A pointer, not a gate: the list still loads without it.
+                logger.warning("could not list the caller's Engineer workspaces", exc_info=True)
+        # D-03: whether this caller must agree to the Anthropic notice before the persona runs,
+        # so a client can show the notice before the first send instead of after a refusal.
+        consent_current = await _engineer_consent_current(caller)
         return JSONResponse(
             content={
                 "agents": [
@@ -1408,9 +1703,14 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                         # at turn time (AgentRegistry.resolve), so surfacing it here lets a client
                         # grey it out instead of offering a choice that quietly does something else.
                         "usable": spec.required_capabilities.issubset(caps),
+                        "consent_required": (
+                            workload_class_for_turn("chat", spec.id) is WorkloadClass.ENGINEER
+                            and not consent_current
+                        ),
                     }
                     for spec in container.agents
-                ]
+                ],
+                "engineer_workspaces": engineer_elsewhere,
             }
         )
 
@@ -1467,6 +1767,158 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             raise HTTPException(status_code=404, detail="workspace not found")
         await container.workspace_manager.destroy(target)
         return JSONResponse(content={"deleted": workspace_id, "repo": target.repo})
+
+    class EngineerConsentRequest(BaseModel):
+        notice_version: str = Field(min_length=1, max_length=64)
+
+    def _consent_body(consent: Any) -> dict[str, Any]:
+        current = consent is not None and consent.is_current(ENGINEER_CONSENT_NOTICE_VERSION)
+        return {
+            "accepted": current,
+            "notice_version": consent.notice_version if current else None,
+            "current_version": ENGINEER_CONSENT_NOTICE_VERSION,
+            "accepted_at": consent.accepted_at.isoformat() if current else None,
+        }
+
+    def _consent_store_or_refuse(caller: Principal) -> Any:
+        if caller.is_service:
+            # A service key is not a person; it cannot agree to anything on someone's behalf.
+            raise HTTPException(
+                status_code=403,
+                detail=AuthorizationError("a service key cannot give consent").to_dict(),
+            )
+        store = getattr(container, "engineer_consent", None)
+        if store is None:
+            raise HTTPException(
+                status_code=503,
+                detail=DependencyUnavailableError("consent store is not configured").to_dict(),
+            )
+        return store
+
+    @router.get("/engineering/consent")
+    async def get_engineer_consent(caller: Principal = Depends(principal)) -> JSONResponse:
+        """Whether the caller agreed to the current Engineer notice (D-03, WP1)."""
+        store = _consent_store_or_refuse(caller)
+        return JSONResponse(content=_consent_body(await store.get(caller.user_id)))
+
+    @router.post("/engineering/consent")
+    async def accept_engineer_consent(
+        payload: EngineerConsentRequest, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Record agreement to the notice the client showed. Only the current version counts: an
+        out-of-date client must not record agreement to text the server no longer presents."""
+        store = _consent_store_or_refuse(caller)
+        if payload.notice_version != ENGINEER_CONSENT_NOTICE_VERSION:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "consent_version_mismatch",
+                    "message": "This app shows an older Engineer notice; update the app.",
+                    "retryable": False,
+                    "details": {"current_version": ENGINEER_CONSENT_NOTICE_VERSION},
+                },
+            )
+        consent = await store.accept(
+            caller.user_id, payload.notice_version, at=container.clock.now()
+        )
+        return JSONResponse(content=_consent_body(consent))
+
+    @router.delete("/engineering/consent")
+    async def withdraw_engineer_consent(caller: Principal = Depends(principal)) -> JSONResponse:
+        """Withdraw agreement. Idempotent; the next Engineer turn is refused until agreed again."""
+        store = _consent_store_or_refuse(caller)
+        consent = await store.withdraw(caller.user_id, at=container.clock.now())
+        return JSONResponse(content=_consent_body(consent))
+
+    @router.get("/host/folders")
+    async def host_folders(caller: Principal = Depends(principal)) -> JSONResponse:
+        """The paired computer's granted folders, for the phone and web folder picker (WP8).
+
+        Asked of the daemon itself (``list_roots``), through the cross-worker relay like every
+        other desktop call, so it is what the computer currently allows -- not a copy that could
+        go stale. ``connected: false`` when no paired desktop is online; ``remote_control`` is
+        whether the person allowed control from other devices *on the computer*.
+        """
+        if not await engineer_granted(caller):
+            raise HTTPException(
+                status_code=403,
+                detail=AuthorizationError("the Engineer is not available to this account").to_dict(),
+            )
+        offline = {"connected": False, "remote_control": None, "roots": []}
+        registry = getattr(container, "host_agent_registry", None)
+        session = await registry.resolve(caller.user_id) if registry is not None else None
+        if session is None:
+            return JSONResponse(content=offline)
+        try:
+            result = await session.call("list_roots", {}, timeout_s=10.0)
+        except Exception:
+            # An older daemon without list_roots, or one that went away mid-call: the picker
+            # shows "not connected" rather than an error the person cannot act on.
+            logger.info("desktop did not answer list_roots", exc_info=True)
+            return JSONResponse(content=offline)
+        payload = result if isinstance(result, dict) else {}
+        roots = [
+            {
+                "path": str(r.get("path")),
+                "trusted": bool(r.get("trusted")),
+                # WP4 / D-13: isolation needs git, so the picker offers "Initialize git here" for
+                # a folder that is not a repository. None from a daemon that predates the field.
+                "is_git": r.get("is_git") if isinstance(r.get("is_git"), bool) else None,
+            }
+            for r in payload.get("roots") or []
+            if isinstance(r, dict) and r.get("path")
+        ]
+        return JSONResponse(content={
+            "connected": True,
+            "remote_control": bool(payload.get("remote_control", False)),
+            "roots": roots,
+        })
+
+    class GitInitRequest(BaseModel):
+        path: str = Field(min_length=1, max_length=1024)
+
+    @router.post("/host/folders/git-init")
+    async def host_folder_git_init(
+        payload: GitInitRequest, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Ask the paired computer to make a granted folder a git repository (WP4, D-13).
+
+        Isolation needs git, so the Engineer will not work in a folder that is not a repository;
+        this is the one-tap way out from the phone or the web. It is the person's own explicit
+        action, so it reaches the daemon as confirmed. The daemon still decides: the path must be
+        a granted folder, not already a repository, and -- from a phone or the web -- remote
+        control must be on at the computer. Its refusal comes back as ``desktop_refused``.
+        """
+        if not await engineer_granted(caller):
+            raise HTTPException(
+                status_code=403,
+                detail=AuthorizationError("the Engineer is not available to this account").to_dict(),
+            )
+        registry = getattr(container, "host_agent_registry", None)
+        session = await registry.resolve(caller.user_id) if registry is not None else None
+        if session is None:
+            raise HTTPException(
+                status_code=503,
+                detail=DependencyUnavailableError(
+                    "your computer is not connected", dependency="host_agent"
+                ).to_dict(),
+            )
+        params: dict[str, Any] = {"path": payload.path, "confirmed": True}
+        try:
+            # The daemon bounds each step (init, add, commit) at 45 s; a large folder's `git add -A`
+            # needs most of that, so this waits for all three rather than giving up first.
+            result = await session.call("init_git", params, timeout_s=150.0)
+        except Exception as exc:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "desktop_refused",
+                    "message": str(exc)[:500],
+                    "retryable": False,
+                    "details": {},
+                },
+            )
+        return JSONResponse(content=result if isinstance(result, dict) else {"ok": True})
 
     @router.get("/engineering/runs")
     async def list_engineer_runs(
@@ -1565,6 +2017,16 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     # -- admin -------------------------------------------------------------------------
 
+    async def _shared_prompt_inventory() -> list[dict[str, Any]]:
+        """The prompt inventory with pins re-read from the shared store first, so whichever
+        worker answers reports the same pins (INT-004). A store error degrades to this worker's
+        last synced view rather than failing the whole status page."""
+        try:
+            await container.prompts.refresh_pins()
+        except Exception:
+            logger.warning("prompt pin refresh failed; reporting this worker's last synced pins")
+        return container.prompts.describe()
+
     @router.get("/admin/status")
     async def admin_status(caller: Principal = Depends(principal)) -> JSONResponse:
         require_admin(caller)
@@ -1575,7 +2037,11 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             content={
                 "health": await container.health(),
                 "providers": container.router.stats(),
-                "prompts": container.prompts.describe(),
+                # Circuit-breaker state above is this worker's own (INT-004); pins below are
+                # shared, re-read here so every worker reports the same thing.
+                "providers_scope": "worker",
+                "worker_pid": os.getpid(),
+                "prompts": await _shared_prompt_inventory(),
                 "tools": container.tools.describe(),
                 "settings": container.settings.as_dict(),
                 "learning": extra_payload.get("learning") or {},
@@ -1621,20 +2087,73 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         version: str = Body(embed=True),
         caller: Principal = Depends(principal),
     ) -> JSONResponse:
-        """Pin a prompt version -- the rollback mechanism for a bad prompt change (TD-11)."""
+        """Pin a prompt version -- the rollback mechanism for a bad prompt change (TD-11).
+
+        Written to the shared pin store (INT-004): this worker serves it at once, every other
+        worker within ``PIN_SYNC_INTERVAL_S``, and it survives a restart."""
         require_admin(caller)
-        container.prompts.pin(template_id, version)
+        await container.prompts.set_pin(template_id, version, pinned_by=str(caller.user_id))
         await audit_admin(request, caller, "admin.prompt.pin", f"{template_id}@{version}", "ok")
-        return JSONResponse(content={"pinned": f"{template_id}@{version}"})
+        return JSONResponse(
+            content={
+                "pinned": f"{template_id}@{version}",
+                "shared": container.prompts.pins_shared,
+                "propagation_s": PIN_SYNC_INTERVAL_S,
+            }
+        )
+
+    @router.delete("/admin/prompts/{template_id}/pin")
+    async def unpin_prompt(
+        request: Request, template_id: str, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Release a pin: the template goes back to its highest registered version everywhere.
+
+        Without this, the only way out of a rollback was pinning forward, which freezes the
+        template against the next release."""
+        require_admin(caller)
+        if template_id not in container.prompts:
+            raise HTTPException(status_code=404, detail=f"unknown prompt template {template_id!r}")
+        existed = await container.prompts.clear_pin(template_id)
+        await audit_admin(
+            request, caller, "admin.prompt.unpin", template_id, "ok" if existed else "noop"
+        )
+        return JSONResponse(
+            content={
+                "unpinned": template_id,
+                "was_pinned": existed,
+                "active": container.prompts.get(template_id).version,
+                "propagation_s": PIN_SYNC_INTERVAL_S,
+            }
+        )
 
     @router.post("/admin/providers/{name}/reset-circuit")
     async def reset_circuit(
         request: Request, name: str, caller: Principal = Depends(principal)
     ) -> JSONResponse:
+        """Close one provider's circuit breaker -- **in the worker that serves this request only**.
+
+        Breaker state is per worker by design: each worker opens its breaker from the failures
+        it observed itself, and every breaker half-opens on its own after
+        ``circuit_open_seconds``. A cross-worker reset would need a broadcast channel the router
+        does not have (and Redis is optional), so the response says what it did rather than
+        imply a fleet-wide reset (INT-004). Repeat it, or wait for the half-open probe."""
         require_admin(caller)
         container.router.reset_circuit(name)
-        await audit_admin(request, caller, "admin.provider.reset_circuit", name, "ok")
-        return JSONResponse(content={"reset": name})
+        await audit_admin(
+            request, caller, "admin.provider.reset_circuit", name, "ok",
+            detail={"scope": "worker", "worker_pid": os.getpid()},
+        )
+        return JSONResponse(
+            content={
+                "reset": name,
+                "scope": "worker",
+                "worker_pid": os.getpid(),
+                "note": (
+                    "Reset in this gateway worker only; other workers keep their own breaker "
+                    "state and half-open on their own after the circuit cool-down."
+                ),
+            }
+        )
 
     register_admin_ops(
         router,
@@ -1678,6 +2197,36 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         JSONResponse=JSONResponse,
     )
 
+    from .billing import register_billing_ops
+
+    register_billing_ops(
+        router,
+        container,
+        principal=principal,
+        require_super_admin=require_super_admin,
+        Depends=Depends,
+        JSONResponse=JSONResponse,
+        Request=Request,
+        Response=Response,
+    )
+
+    from .admin_plans import register_plan_ops
+
+    register_plan_ops(
+        router,
+        container,
+        principal=principal,
+        require_super_admin=require_super_admin,
+        idempotent=idempotent,
+        Depends=Depends,
+        JSONResponse=JSONResponse,
+    )
+
+    from .shared_conversations import register_sharing_ops
+
+    register_sharing_ops(router, container, principal=principal, Depends=Depends,
+                         JSONResponse=JSONResponse, Response=Response)
+
     from .workspaces import register_workspace_ops
 
     register_workspace_ops(
@@ -1705,6 +2254,8 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         container,
         authenticator=person_authenticator,
         rate_limiter=rate_limiter,
+        admit_turn=admit_turn,
+        release_turn=release_turn,
     )
 
     from .host_agent import register_host_agent
@@ -1869,6 +2420,7 @@ async def refresh_scrape_gauges(container: Any) -> None:
     container) from the gateway Prometheus scrapes, so a gauge the worker set would not be in
     this process's exposition. The backlog is a fact of the database, so it is read here.
     """
+    await _refresh_billing_gauges(container)
     outbox = getattr(container, "event_outbox", None)
     stats = getattr(outbox, "stats", None)
     if not callable(stats):
@@ -1882,6 +2434,35 @@ async def refresh_scrape_gauges(container: Any) -> None:
         )
     except Exception:
         logger.debug("outbox gauge refresh failed", exc_info=True)
+
+
+async def _refresh_billing_gauges(container: Any) -> None:
+    """The billing cycle's heartbeat, left in the shared cache by the cron process (SaaS P1-H).
+    No heartbeat reads as 0, never as healthy: with billing on, "never ran" must alert."""
+    from ..billing.service import BILLING_HEARTBEAT_KEY
+
+    enabled = bool(container.settings.billing.enabled)
+    try:
+        # The switch first: a cache outage must not read as "billing off", which would silence
+        # every billing rule at once (review H#2).
+        container.metrics.billing_enabled.set(1 if enabled else 0)
+        if not enabled:
+            container.metrics.set_billing(enabled=False, last_run=0, errors=0, email_failures=0)
+            return
+        raw = await asyncio.wait_for(container.cache_backend.get(BILLING_HEARTBEAT_KEY),
+                                     timeout=SCRAPE_REFRESH_TIMEOUT_S)
+    except Exception:
+        # The other gauges keep their last reading; a long outage then shows as a stale cycle.
+        logger.warning("billing heartbeat could not be read", exc_info=True)
+        return
+    try:
+        beat = json.loads(raw) if raw else {}
+        container.metrics.set_billing(
+            enabled=True, last_run=float(beat.get("at") or 0), errors=int(beat.get("errors") or 0),
+            email_failures=int(beat.get("email_failures") or 0),
+        )
+    except Exception:
+        logger.warning("billing heartbeat unreadable", exc_info=True)
 
 
 def _strip_data_url(value: str) -> str:

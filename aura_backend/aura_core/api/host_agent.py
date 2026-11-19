@@ -23,6 +23,7 @@ from typing import Any, Callable, Mapping
 from ..adapters.host_agent import HostAgentSession
 from ..domain.errors import AuthenticationError
 from ..observability.logging import get_logger
+from ..security.role_capabilities import ENGINEER_AGENT
 from . import ws_auth
 from .ws_auth import LiveCredential
 
@@ -30,6 +31,8 @@ logger = get_logger("api.v3.host_agent")
 
 # WebSocket close codes (application-defined 4xxx) -- same numbering convention as voice_live.py.
 _CLOSE_UNAUTHORIZED = 4401
+#: RFC 6455 "internal error": the daemon retries with backoff rather than giving up (WP9).
+_CLOSE_SERVER_ERROR = 1011
 _CLOSE_UNAVAILABLE = 4503
 _CLOSE_BAD_REQUEST = 4400
 
@@ -50,8 +53,37 @@ class _HeaderCarrier:
         self.client = None
 
 
-def _may_host(principal: Any) -> bool:
-    return "engineer_agent" in principal.capabilities
+def may_host(principal: Any) -> bool:
+    """Whether ``principal`` may serve this socket. Also what ``/auth/desktop/pair/approve``
+    checks before pairing a daemon (audit INT-003), so the two can never disagree."""
+    return ENGINEER_AGENT in principal.capabilities
+
+
+def _host_check(container: Any) -> Callable[[Any], Any]:
+    """Who may keep a daemon connected: whoever :func:`may_host` accepts by role, or -- with
+    ``AURA_ENGINEER_FOR_CUSTOMERS`` -- a customer one of whose workspaces' plans includes the
+    Engineer. Re-run on every credential recheck, so a downgrade closes the socket (SaaS P1-E)."""
+
+    admitted = False
+
+    async def check(principal: Any) -> bool:
+        nonlocal admitted
+        if may_host(principal):
+            admitted = True
+            return True
+        plans = getattr(container, "plans", None)
+        if plans is None or not container.settings.security.engineer_for_customers:
+            return False
+        try:
+            admitted = await plans.engineer_entitled(principal.user_id.value)
+        except Exception:
+            # Admission fails closed; a blip at a later recheck keeps a daemon already admitted
+            # until the next recheck answers (Plan E review #1).
+            logger.warning("could not re-check a customer's plan for their daemon", exc_info=True)
+            return admitted
+        return admitted
+
+    return check
 
 
 def register_host_agent(
@@ -69,6 +101,7 @@ def register_host_agent(
             logger.exception("host agent accept failed")
             return
 
+        host_allowed = _host_check(container)
         registry = getattr(container, "host_agent_registry", None)
         if registry is None:
             await websocket.close(code=_CLOSE_UNAVAILABLE)
@@ -79,12 +112,20 @@ def register_host_agent(
         except AuthenticationError:
             await websocket.close(code=_CLOSE_UNAUTHORIZED)
             return
-        except Exception:
+        except Exception as exc:
+            # G-12 (WP9): 4401 makes the daemon stop and ask to be paired again, so it is only
+            # for a rejected credential -- including the 401/403 HTTPException the JWT layer
+            # raises for an expired or revoked token. Anything else is this server failing, and
+            # unpairing someone's computer over a database blip would be wrong: 1011 makes the
+            # daemon reconnect with backoff instead.
+            if getattr(exc, "status_code", None) in (401, 403):
+                await websocket.close(code=_CLOSE_UNAUTHORIZED)
+                return
             logger.exception("host agent auth failed")
-            await websocket.close(code=_CLOSE_UNAUTHORIZED)
+            await websocket.close(code=_CLOSE_SERVER_ERROR)
             return
 
-        if not _may_host(principal):
+        if not await host_allowed(principal):
             # A daemon can only ever be usefully paired to an account the server would actually
             # route engineer-agent tool calls to -- refuse it here rather than registering a
             # session nothing will ever call.
@@ -109,10 +150,21 @@ def register_host_agent(
                     )
                 except asyncio.TimeoutError:
                     message = None
-                if not await credential.still_valid(_may_host):
+                outcome = await credential.recheck(host_allowed)
+                if outcome is ws_auth.Recheck.REVOKED:
                     # Expired, device revoked, or the account no longer may host: the same
                     # answer an HTTP request with this token would now get.
                     await websocket.close(code=_CLOSE_UNAUTHORIZED)
+                    break
+                if outcome is ws_auth.Recheck.UNAVAILABLE:
+                    # The check could not run (database or Redis blip). 4401 would make the
+                    # daemon unpair for good; 1011 makes it reconnect with backoff, and the
+                    # reconnect's first authentication decides -- as at connect (INT-104).
+                    logger.warning(
+                        "host agent credential recheck unavailable; closing for retry",
+                        extra={"user_id": principal.user_id.value},
+                    )
+                    await websocket.close(code=_CLOSE_SERVER_ERROR)
                     break
                 if message is None:
                     continue
@@ -144,7 +196,7 @@ def register_host_agent(
                         # The session is registered under the original user; a token for anyone
                         # else must end it, not quietly extend it (same rule as voice_live.py).
                         break
-                    if not _may_host(renewed):
+                    if not await host_allowed(renewed):
                         break
                     credential.renew(str(frame.get("token") or ""), renewed)
                 # Any other frame type is ignored -- forward compatible with a newer daemon that

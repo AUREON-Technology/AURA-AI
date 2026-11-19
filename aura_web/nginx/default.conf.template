@@ -1,0 +1,68 @@
+# AURA web service: the public install page for the Desktop IDE.
+#
+# nginx-unprivileged renders this file through envsubst at start-up (docker-entrypoint), which
+# substitutes only variables that exist in the environment: ${PORT} comes from Railway; nginx's
+# own $uri etc. are left alone. Locally: `docker run -e PORT=8080 -p 8080:8080 <image>`.
+
+server {
+    listen ${PORT};
+    listen [::]:${PORT};
+    server_name _;
+
+    root /usr/share/nginx/html;
+    charset utf-8;
+    server_tokens off;
+    # Railway's edge terminates TLS and proxies to the container: a redirect must not carry the
+    # container's internal port or scheme.
+    absolute_redirect off;
+
+    gzip on;
+    gzip_types text/css application/javascript image/svg+xml;
+
+    include /etc/nginx/snippets/security-headers.conf;
+
+    location = / { return 302 /desktop-ide/install; }
+    location = /desktop-ide { return 302 /desktop-ide/install; }
+    location = /desktop-ide/ { return 302 /desktop-ide/install; }
+    location = /desktop-ide/install/ { return 301 /desktop-ide/install; }
+
+    # Railway's health check; deliberately not under /desktop-ide.
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # The page itself. Never cached for long: the checksum on it changes with the setup file.
+    location = /desktop-ide/install {
+        default_type text/html;
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-cache" always;
+        try_files /desktop-ide/install.html =404;
+    }
+
+    location /desktop-ide/assets/ {
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "public, max-age=3600" always;
+        try_files $uri =404;
+    }
+
+    # The setup file. Served as a download, never rendered, and never cached: a stale copy would
+    # not match the checksum shown on the page.
+    location = /desktop-ide/download/AURA-Desktop-Setup.cmd {
+        default_type application/octet-stream;
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-cache" always;
+        add_header Content-Disposition 'attachment; filename="AURA-Desktop-Setup.cmd"' always;
+        try_files $uri =404;
+    }
+
+    error_page 404 /404.html;
+    location = /404.html {
+        internal;
+        include /etc/nginx/snippets/security-headers.conf;
+    }
+
+    # Nothing else is served: no directory listings, no stray files.
+    location / { return 404; }
+}

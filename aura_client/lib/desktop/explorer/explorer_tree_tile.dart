@@ -6,6 +6,7 @@ library;
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,7 +15,9 @@ import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/desktop/explorer/explorer_access.dart';
 import 'package:aura_client/desktop/explorer/explorer_mutations.dart';
 import 'package:aura_client/desktop/explorer/explorer_service.dart';
+import 'package:aura_client/desktop/shell/ide_platform_commands.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class ExplorerTreeTile extends ConsumerWidget {
   const ExplorerTreeTile({
@@ -143,13 +146,13 @@ class _FileTile extends ConsumerWidget {
       context: context,
       position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
       items: [
-        _menuItem('open', Icons.open_in_new, 'Open'),
-        _menuItem('rename', Icons.drive_file_rename_outline, 'Rename'),
-        _menuItem('delete', Icons.delete_outline, 'Delete'),
-        _menuItem('copy-path', Icons.content_copy, 'Copy path'),
-        _menuItem('copy-relative-path', Icons.content_copy, 'Copy relative path'),
-        _menuItem('reveal', Icons.folder_open, 'Reveal in filesystem'),
-        _menuItem('open-terminal', Icons.terminal, 'Open in Terminal'),
+        _menuItem('open', Icons.open_in_new, context.l10n.explorerMenuOpen),
+        _menuItem('rename', Icons.drive_file_rename_outline, context.l10n.explorerRename),
+        _menuItem('delete', Icons.delete_outline, context.l10n.commonDelete),
+        _menuItem('copy-path', Icons.content_copy, context.l10n.explorerMenuCopyPath),
+        _menuItem('copy-relative-path', Icons.content_copy, context.l10n.explorerMenuCopyRelativePath),
+        _menuItem('reveal', Icons.folder_open, context.l10n.explorerMenuReveal),
+        _menuItem('open-terminal', Icons.terminal, context.l10n.explorerMenuOpenInTerminal),
       ],
     );
     if (!context.mounted) return;
@@ -335,16 +338,16 @@ class _DirectoryTileState extends ConsumerState<_DirectoryTile> {
       position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
       items: [
         _menuItem(_expanded ? 'collapse' : 'expand', _expanded ? Icons.expand_less : Icons.expand_more,
-            _expanded ? 'Collapse' : 'Expand'),
-        _menuItem('new-file', Icons.note_add_outlined, 'New File'),
-        _menuItem('new-folder', Icons.create_new_folder_outlined, 'New Folder'),
-        _menuItem('rename', Icons.drive_file_rename_outline, 'Rename'),
-        _menuItem('delete', Icons.delete_outline, 'Delete'),
-        _menuItem('refresh', Icons.refresh, 'Refresh'),
-        _menuItem('copy-path', Icons.content_copy, 'Copy path'),
-        _menuItem('copy-relative-path', Icons.content_copy, 'Copy relative path'),
-        _menuItem('reveal', Icons.folder_open, 'Reveal in filesystem'),
-        _menuItem('open-terminal', Icons.terminal, 'Open in Terminal'),
+            _expanded ? context.l10n.explorerMenuCollapse : context.l10n.explorerMenuExpand),
+        _menuItem('new-file', Icons.note_add_outlined, context.l10n.explorerMenuNewFile),
+        _menuItem('new-folder', Icons.create_new_folder_outlined, context.l10n.explorerMenuNewFolder),
+        _menuItem('rename', Icons.drive_file_rename_outline, context.l10n.explorerRename),
+        _menuItem('delete', Icons.delete_outline, context.l10n.commonDelete),
+        _menuItem('refresh', Icons.refresh, context.l10n.commonRefresh),
+        _menuItem('copy-path', Icons.content_copy, context.l10n.explorerMenuCopyPath),
+        _menuItem('copy-relative-path', Icons.content_copy, context.l10n.explorerMenuCopyRelativePath),
+        _menuItem('reveal', Icons.folder_open, context.l10n.explorerMenuReveal),
+        _menuItem('open-terminal', Icons.terminal, context.l10n.explorerMenuOpenInTerminal),
       ],
     );
     if (!context.mounted) return;
@@ -458,7 +461,7 @@ class _DirectoryTileState extends ConsumerState<_DirectoryTile> {
             const SizedBox(width: AuraSpacing.xs),
             Expanded(
               child: Text(
-                children.isAccessDenied ? 'Access required' : 'Failed to load',
+                children.isAccessDenied ? context.l10n.explorerAccessRequired : context.l10n.explorerLoadFailed,
                 style: TextStyle(fontSize: 11, color: palette.textDisabled),
                 overflow: TextOverflow.ellipsis,
               ),
@@ -469,7 +472,7 @@ class _DirectoryTileState extends ConsumerState<_DirectoryTile> {
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
                   child: Text(
-                    'Grant',
+                    context.l10n.explorerGrant,
                     style: TextStyle(fontSize: 11, color: palette.brand, fontWeight: FontWeight.w600),
                   ),
                 ),
@@ -485,7 +488,7 @@ class _DirectoryTileState extends ConsumerState<_DirectoryTile> {
         child: SizedBox(
           height: ideDensity.treeRowHeight,
           child: Text(
-            'Empty',
+            context.l10n.explorerEmpty,
             style: TextStyle(fontSize: 11, color: palette.textDisabled),
           ),
         ),
@@ -525,7 +528,7 @@ PopupMenuItem<String> _menuItem(String value, IconData icon, String label) {
 Future<void> _copyToClipboard(BuildContext context, String text) async {
   await Clipboard.setData(ClipboardData(text: text));
   if (context.mounted) {
-    AuraSnackbar.show(context, message: 'Path copied', kind: AuraSnackbarKind.success);
+    AuraSnackbar.show(context, message: context.l10n.explorerPathCopied, kind: AuraSnackbarKind.success);
   }
 }
 
@@ -548,25 +551,23 @@ String _relativePathOf(String workspaceRoot, String entryPath) {
 
 Future<void> _revealInFilesystem(BuildContext context, String absolutePath,
     {required bool isDirectory}) async {
-  if (!Platform.isWindows) {
+  // Explorer on Windows, xdg-open on Linux (D-08b); nothing elsewhere, where the IDE never runs.
+  final command = ideRevealCommand(absolutePath, isDirectory: isDirectory, platform: defaultTargetPlatform);
+  if (command == null) {
     AuraSnackbar.show(
       context,
-      message: 'Reveal in filesystem is only supported on Windows for now',
+      message: context.l10n.explorerRevealUnsupported,
       kind: AuraSnackbarKind.info,
     );
     return;
   }
   try {
-    // `explorer <dir>` opens the folder; `explorer /select,<file>` opens the
-    // parent with the file highlighted. Pure argv list, no shell interpolation.
-    await Process.start(
-      'explorer',
-      isDirectory ? [absolutePath] : ['/select,', absolutePath],
-      runInShell: true,
-    );
+    // Pure argv list, no shell interpolation. `explorer` is a shell built-in lookup on Windows
+    // (hence runInShell there); xdg-open is a plain executable.
+    await Process.start(command.$1, command.$2, runInShell: Platform.isWindows);
   } catch (e) {
     if (context.mounted) {
-      AuraSnackbar.show(context, message: 'Could not open filesystem: $e', kind: AuraSnackbarKind.error);
+      AuraSnackbar.show(context, message: context.l10n.explorerRevealFailed(e.toString()), kind: AuraSnackbarKind.error);
     }
   }
 }

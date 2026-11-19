@@ -87,6 +87,9 @@ dependencies:
 
   crypto: any
   pointycastle: any
+  # Ed25519 verification of the desktop update manifest (F18): pointycastle has no Ed25519.
+  # Pure Dart (DartEd25519); nothing native.
+  cryptography: ^2.9.0
   meta: ^1.15.0
   # Desktop IDE dependencies
   flutter_code_editor: ^0.3.5
@@ -97,6 +100,12 @@ dependencies:
   # abbreviation or an offset). Sent as X-Client-Timezone so the backend computes "today" for
   # insights and the daily briefing in the user's day, not UTC's (audit F-17).
   flutter_timezone: ^5.1.1
+  firebase_auth: ^6.7.1
+  # In-app subscriptions on iOS and Android (SaaS P1-F2b). The store packages are imported
+  # directly for the base-plan choice (Play) and the manage-subscriptions sheet (StoreKit 2).
+  in_app_purchase: ^3.3.1
+  in_app_purchase_android: ^0.5.5
+  in_app_purchase_storekit: ^0.4.17
 dev_dependencies:
   flutter_launcher_icons: ^0.13.1
   flutter_test:
@@ -130,6 +139,21 @@ flutter:
 
   assets:
     - assets/app_icon.png
+
+  # Arabic glyphs (docs/plans/arabic-language_plan.md, decision 13). Outfit, fetched by
+  # google_fonts, has no Arabic; the themes list Cairo in fontFamilyFallback so Arabic text
+  # renders the same on every platform and offline. SIL OFL 1.1, assets/fonts/cairo/OFL.txt.
+  fonts:
+    - family: Cairo
+      fonts:
+        - asset: assets/fonts/cairo/Cairo-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/cairo/Cairo-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/cairo/Cairo-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/cairo/Cairo-Bold.ttf
+          weight: 700
     # The Qwen2-1.5B GGUF asset was removed. It was a Git LFS pointer to 986 MB of model weights
     # bundled into the APK and extracted at first launch by LocalModelSeeder, so every install
     # carried a gigabyte of weights for inference that now happens on the server.

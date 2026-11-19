@@ -17,8 +17,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'source_scan.dart';
 
-// RTL readiness (audit F-36 / R4.6). Arabic TTS ships (GAP-020) but there is no Arabic UI yet;
-// this is the groundwork that has to hold before one is added:
+// RTL readiness (audit F-36 / R4.6), now with the Egyptian Arabic UI (arabic-language_plan.md):
 //
 //  1. a source guard: layout code under lib/ uses the directional APIs (EdgeInsetsDirectional,
 //     AlignmentDirectional, PositionedDirectional, BorderRadiusDirectional), so a right-to-left
@@ -64,9 +63,15 @@ List<String> _physicalLayoutUses() {
   return found;
 }
 
+/// The Arabic strings the screens below render.
+final AppLocalizations _ar = lookupAppLocalizations(const Locale('ar'));
+
 /// The real app's localization wiring, forced right-to-left at a phone-sized surface.
 Widget _rtlApp(Widget home) => MaterialApp(
       theme: AuraThemeV2.light,
+      // The real Arabic strings, not English laid out right-to-left: Arabic copy is often longer,
+      // which is what an overflow check needs to see (docs/plans/arabic-language_plan.md).
+      locale: const Locale('ar'),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       builder: (context, child) => Directionality(
@@ -135,7 +140,7 @@ void main() {
       await tester.pump();
 
       expect(tester.takeException(), isNull);
-      final send = find.byTooltip('Send');
+      final send = find.byTooltip(_ar.chatSend);
       expect(send, findsOneWidget);
       // The Row mirrors: Send, the last child, now sits left of the text field.
       final sendX = tester.getCenter(send).dx;
@@ -155,7 +160,7 @@ void main() {
       await tester.pump();
 
       expect(tester.takeException(), isNull);
-      expect(find.text('Ask Copilot Anything'), findsOneWidget);
+      expect(find.text(_ar.chatEmptyTitle), findsOneWidget);
     });
 
     testWidgets('the You screen renders without overflow', (tester) async {
@@ -164,10 +169,10 @@ void main() {
       await tester.pump();
 
       expect(tester.takeException(), isNull);
-      expect(find.text('Profile'), findsOneWidget);
+      expect(find.text(_ar.settingsProfileTitle), findsOneWidget);
       // List tiles mirror: the leading icon is now on the right of its title.
       final iconX = tester.getCenter(find.byIcon(Icons.person_outline)).dx;
-      final titleX = tester.getCenter(find.text('Profile')).dx;
+      final titleX = tester.getCenter(find.text(_ar.settingsProfileTitle)).dx;
       expect(iconX, greaterThan(titleX));
     });
 
@@ -183,7 +188,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(tester.takeException(), isNull);
-      expect(find.text('Welcome back'), findsOneWidget);
+      expect(find.text(_ar.loginWelcomeBack), findsOneWidget);
     });
   });
 }

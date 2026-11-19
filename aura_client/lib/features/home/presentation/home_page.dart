@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/insights/insights_client.dart';
-import '../../../l10n/generated/app_localizations.dart';
+import 'package:aura_client/l10n/l10n.dart';
 import '../../notifications/notification_center.dart';
 import 'package:aura_client/core/ai/ai_router/aura_ai_router.dart';
 import '../../tasks/data/task_repository.dart';
@@ -52,7 +52,10 @@ class _TodayScaffold extends ConsumerWidget {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: Text(_greeting(context), style: Theme.of(context).textTheme.headlineMedium),
+        title: Text(
+          _greeting(context),
+          style: Theme.of(context).textTheme.headlineMedium,
+        ),
         actions: [
           const NotificationBellIcon(),
           IconButton(
@@ -74,20 +77,42 @@ class _TodayScaffold extends ConsumerWidget {
         },
         child: ListView(
           padding: const EdgeInsets.all(AuraSpacing.lg),
+          // Today's sections arrive one after another rather than all at
+          // once, so the eye lands on the date and capture bar first.
           children: [
-            Text(
-              DateFormat('EEEE, MMMM d').format(DateTime.now()),
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-            const SizedBox(height: AuraSpacing.xl),
-            _CaptureBar(),
-            const SizedBox(height: AuraSpacing.xl),
-            const _InsightsSection(),
-            _DueTodayCard(tasksAsync: tasksAsync, calendarAsync: calendarAsync),
-            const SizedBox(height: AuraSpacing.lg),
-            _QuickStatsRow(tasksAsync: tasksAsync, financeAsync: financeAsync, healthAsync: healthAsync),
-            const SizedBox(height: AuraSpacing.lg),
-            _SystemHealthCard(aiStatus: aiStatus),
+            for (final (i, section) in <Widget>[
+              Text(
+                DateFormat.MMMMEEEEd().format(DateTime.now()).toUpperCase(),
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: palette.brandOnSurfaceText,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              const SizedBox(height: AuraSpacing.xl),
+              _CaptureBar(),
+              const SizedBox(height: AuraSpacing.xl),
+              const _InsightsSection(),
+              _DueTodayCard(
+                tasksAsync: tasksAsync,
+                calendarAsync: calendarAsync,
+              ),
+              const SizedBox(height: AuraSpacing.lg),
+              _QuickStatsRow(
+                tasksAsync: tasksAsync,
+                financeAsync: financeAsync,
+                healthAsync: healthAsync,
+              ),
+              const SizedBox(height: AuraSpacing.lg),
+              _SystemHealthCard(aiStatus: aiStatus),
+            ].indexed)
+              AuraEntrance(
+                delay: AuraEntrance.stagger(
+                  i,
+                  step: const Duration(milliseconds: 40),
+                ),
+                child: section,
+              ),
             const SizedBox(height: AuraSpacing.xxl),
           ],
         ),
@@ -132,7 +157,7 @@ class _CaptureBarState extends ConsumerState<_CaptureBar> {
     final palette = AuraPalette.of(context);
     return AuraCard(
       glass: true,
-      semanticLabel: 'Ask AURA anything',
+      semanticLabel: context.l10n.homeAskAuraLabel,
       child: Row(
         children: [
           Icon(Icons.auto_awesome, color: palette.brandOnSurfaceText, size: 20),
@@ -152,15 +177,29 @@ class _CaptureBarState extends ConsumerState<_CaptureBar> {
           const SizedBox(width: AuraSpacing.sm),
           Semantics(
             button: true,
-            label: 'Send to AURA',
+            label: context.l10n.homeSendToAura,
             child: InkWell(
               borderRadius: BorderRadius.circular(AuraRadius.pill),
               onTap: _submit,
               child: Container(
                 width: 40,
                 height: 40,
-                decoration: BoxDecoration(color: palette.brand, shape: BoxShape.circle),
-                child: const Icon(Icons.arrow_upward_rounded, color: Colors.white, size: 20),
+                decoration: BoxDecoration(
+                  gradient: palette.brandGradient,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: palette.brand.withValues(alpha: 0.35),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Icon(
+                  Icons.arrow_upward_rounded,
+                  color: palette.onBrand,
+                  size: 20,
+                ),
               ),
             ),
           ),
@@ -207,8 +246,8 @@ class _InsightsSection extends ConsumerWidget {
         padding: const EdgeInsets.only(bottom: AuraSpacing.lg),
         child: AuraEmptyState(
           icon: Icons.cloud_off_outlined,
-          title: 'Could not load insights',
-          message: 'Pull to refresh when you are back online.',
+          title: context.l10n.homeInsightsLoadFailed,
+          message: context.l10n.homeInsightsLoadFailedMessage,
         ),
       ),
     );
@@ -228,7 +267,11 @@ class _InsightCard extends ConsumerWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.tips_and_updates_outlined, size: 18, color: palette.warning),
+          Icon(
+            Icons.tips_and_updates_outlined,
+            size: 18,
+            color: palette.warning,
+          ),
           const SizedBox(width: AuraSpacing.md),
           Expanded(
             child: Column(
@@ -236,19 +279,32 @@ class _InsightCard extends ConsumerWidget {
               children: [
                 Text(
                   insight.message,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: palette.textPrimary, fontWeight: FontWeight.w600),
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: palette.textPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 const SizedBox(height: 2),
-                Text(insight.explanation, style: Theme.of(context).textTheme.bodySmall),
+                Text(
+                  insight.explanation,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
               ],
             ),
           ),
           Semantics(
             button: true,
-            label: 'Dismiss insight',
+            label: context.l10n.homeDismissInsight,
             child: InkWell(
               onTap: () async {
-                await ref.read(insightsClientProvider).dismiss(insight.id);
+                final dismissed = await ref.read(insightsClientProvider).dismiss(insight.id);
+                if (!dismissed && context.mounted) {
+                  AuraSnackbar.show(
+                    context,
+                    message: context.l10n.homeInsightDismissFailed,
+                    kind: AuraSnackbarKind.error,
+                  );
+                }
                 ref.invalidate(insightsProvider);
               },
               borderRadius: BorderRadius.circular(AuraRadius.pill),
@@ -271,7 +327,12 @@ class _DueItem {
   final String title;
   final DateTime? time;
   final bool overdue;
-  const _DueItem({required this.kind, required this.title, this.time, this.overdue = false});
+  const _DueItem({
+    required this.kind,
+    required this.title,
+    this.time,
+    this.overdue = false,
+  });
 }
 
 /// Unified "what's due" list — merges tasks + calendar events into one
@@ -302,9 +363,20 @@ class _DueTodayCard extends StatelessWidget {
           ),
           const SizedBox(height: AuraSpacing.md),
           if (loading)
-            const Column(children: [AuraSkeleton(height: 18), SizedBox(height: 10), AuraSkeleton(height: 18), SizedBox(height: 10), AuraSkeleton(height: 18)])
+            const Column(
+              children: [
+                AuraSkeleton(height: 18),
+                SizedBox(height: 10),
+                AuraSkeleton(height: 18),
+                SizedBox(height: 10),
+                AuraSkeleton(height: 18),
+              ],
+            )
           else if (hasError)
-            AuraEmptyState(icon: Icons.error_outline, title: l10n.couldNotLoadDueToday)
+            AuraEmptyState(
+              icon: Icons.error_outline,
+              title: l10n.couldNotLoadDueToday,
+            )
           else
             _buildList(context, palette),
         ],
@@ -319,23 +391,33 @@ class _DueTodayCard extends StatelessWidget {
     final tasks = tasksAsync.value ?? [];
     final events = calendarAsync.value ?? [];
 
-    final items = <_DueItem>[
-      for (final t in tasks)
-        if (!t.isCompleted)
-          _DueItem(
-            kind: _DueItemKind.task,
-            title: t.title as String,
-            time: t.dueDate as DateTime?,
-            overdue: t.dueDate != null && (t.dueDate as DateTime).isBefore(today),
-          ),
-      for (final e in events)
-        if ((e.startTime as DateTime).isAfter(today) && (e.startTime as DateTime).isBefore(today.add(const Duration(days: 1))))
-          _DueItem(kind: _DueItemKind.event, title: e.title as String, time: e.startTime as DateTime),
-    ]..sort((a, b) {
-        if (a.time == null) return 1;
-        if (b.time == null) return -1;
-        return a.time!.compareTo(b.time!);
-      });
+    final items =
+        <_DueItem>[
+          for (final t in tasks)
+            if (!t.isCompleted)
+              _DueItem(
+                kind: _DueItemKind.task,
+                title: t.title as String,
+                time: t.dueDate as DateTime?,
+                overdue:
+                    t.dueDate != null &&
+                    (t.dueDate as DateTime).isBefore(today),
+              ),
+          for (final e in events)
+            if ((e.startTime as DateTime).isAfter(today) &&
+                (e.startTime as DateTime).isBefore(
+                  today.add(const Duration(days: 1)),
+                ))
+              _DueItem(
+                kind: _DueItemKind.event,
+                title: e.title as String,
+                time: e.startTime as DateTime,
+              ),
+        ]..sort((a, b) {
+          if (a.time == null) return 1;
+          if (b.time == null) return -1;
+          return a.time!.compareTo(b.time!);
+        });
 
     final visible = items.take(5).toList();
 
@@ -366,22 +448,41 @@ class _DueRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
-    final icon = item.kind == _DueItemKind.task ? Icons.circle_outlined : Icons.event_outlined;
-    final color = item.overdue ? palette.danger : (item.kind == _DueItemKind.task ? palette.brandOnSurfaceText : palette.warning);
+    final icon = item.kind == _DueItemKind.task
+        ? Icons.circle_outlined
+        : Icons.event_outlined;
+    final color = item.overdue
+        ? palette.danger
+        : (item.kind == _DueItemKind.task
+              ? palette.brandOnSurfaceText
+              : palette.warning);
 
+    final dueLabel = item.kind == _DueItemKind.task
+        ? context.l10n.homeDueTask(item.title)
+        : context.l10n.homeDueEvent(item.title);
     return Semantics(
-      label: '${item.kind == _DueItemKind.task ? "Task" : "Event"}: ${item.title}${item.overdue ? ", overdue" : ""}',
+      label: item.overdue ? context.l10n.homeDueOverdue(dueLabel) : dueLabel,
       child: Row(
         children: [
           Icon(icon, size: 16, color: color),
           const SizedBox(width: AuraSpacing.sm),
           Expanded(
-            child: Text(item.title, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: palette.textPrimary), overflow: TextOverflow.ellipsis),
+            child: Text(
+              item.title,
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: palette.textPrimary),
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
           if (item.time != null)
             Text(
-              DateFormat('h:mm a').format(item.time!),
-              style: TextStyle(color: item.overdue ? palette.danger : palette.textSecondary, fontSize: 12, fontWeight: item.overdue ? FontWeight.w600 : FontWeight.w400),
+              DateFormat.jm().format(item.time!),
+              style: TextStyle(
+                color: item.overdue ? palette.danger : palette.textSecondary,
+                fontSize: 12,
+                fontWeight: item.overdue ? FontWeight.w600 : FontWeight.w400,
+              ),
             ),
         ],
       ),
@@ -393,11 +494,16 @@ class _QuickStatsRow extends StatelessWidget {
   final AsyncValue<List<dynamic>> tasksAsync;
   final AsyncValue<List<dynamic>> financeAsync;
   final AsyncValue<dynamic> healthAsync;
-  const _QuickStatsRow({required this.tasksAsync, required this.financeAsync, required this.healthAsync});
+  const _QuickStatsRow({
+    required this.tasksAsync,
+    required this.financeAsync,
+    required this.healthAsync,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final activeTasks = tasksAsync.value?.where((t) => !t.isCompleted).length ?? 0;
+    final activeTasks =
+        tasksAsync.value?.where((t) => !t.isCompleted).length ?? 0;
 
     double expenses = 0;
     for (final r in financeAsync.value ?? []) {
@@ -409,13 +515,19 @@ class _QuickStatsRow extends StatelessWidget {
     final stats = [
       (Icons.playlist_add_check, l10n.activeTasks, '$activeTasks'),
       (Icons.water_drop_outlined, l10n.waterToday, '$waterMl mL'),
-      (Icons.monetization_on_outlined, l10n.spentThisPeriod, '\$${expenses.toStringAsFixed(0)}'),
+      (
+        Icons.monetization_on_outlined,
+        l10n.spentThisPeriod,
+        '\$${expenses.toStringAsFixed(0)}',
+      ),
     ];
 
     return Row(
       children: [
         for (final s in stats) ...[
-          Expanded(child: _StatTile(icon: s.$1, label: s.$2, value: s.$3)),
+          Expanded(
+            child: _StatTile(icon: s.$1, label: s.$2, value: s.$3),
+          ),
           if (s != stats.last) const SizedBox(width: AuraSpacing.md),
         ],
       ],
@@ -427,7 +539,11 @@ class _StatTile extends StatelessWidget {
   final IconData icon;
   final String label;
   final String value;
-  const _StatTile({required this.icon, required this.label, required this.value});
+  const _StatTile({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -440,8 +556,16 @@ class _StatTile extends StatelessWidget {
         children: [
           Icon(icon, size: 18, color: palette.brandOnSurfaceText),
           const SizedBox(height: AuraSpacing.sm),
-          Text(value, style: Theme.of(context).textTheme.titleMedium, overflow: TextOverflow.ellipsis),
-          Text(label, style: Theme.of(context).textTheme.labelSmall, overflow: TextOverflow.ellipsis),
+          Text(
+            value,
+            style: Theme.of(context).textTheme.titleMedium,
+            overflow: TextOverflow.ellipsis,
+          ),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelSmall,
+            overflow: TextOverflow.ellipsis,
+          ),
         ],
       ),
     );
@@ -472,7 +596,11 @@ class _SystemHealthCard extends StatelessWidget {
             color: reachable ? palette.success : palette.danger,
           ),
           const SizedBox(height: AuraSpacing.sm),
-          _StatusRow(label: l10n.localData, value: l10n.encryptedAesGcm, color: palette.textSecondary),
+          _StatusRow(
+            label: l10n.localData,
+            value: l10n.encryptedAesGcm,
+            color: palette.textSecondary,
+          ),
         ],
       ),
     );
@@ -483,7 +611,11 @@ class _StatusRow extends StatelessWidget {
   final String label;
   final String value;
   final Color color;
-  const _StatusRow({required this.label, required this.value, required this.color});
+  const _StatusRow({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -505,7 +637,11 @@ class _StatusRow extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.end,
-            style: TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 12),
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w600,
+              fontSize: 12,
+            ),
           ),
         ),
       ],

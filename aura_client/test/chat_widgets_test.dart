@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:aura_client/core/database/database.dart';
+import 'package:aura_client/features/chat/data/chat_repository.dart';
 import 'package:aura_client/features/chat/data/turn_meta.dart';
 import 'package:aura_client/features/chat/presentation/widgets/citation_chip.dart';
 import 'package:aura_client/features/chat/presentation/widgets/message_bubble.dart';
@@ -12,6 +14,11 @@ import 'package:aura_client/features/chat/presentation/widgets/streaming_message
 import 'package:aura_client/features/chat/presentation/widgets/turn_status_row.dart';
 import 'package:aura_client/features/chat/presentation/widgets/user_facing_citations.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+
+/// The bubble's "is this the latest turn" lookup, answered without a database (F2): unknown, so
+/// a failed turn keeps its Retry.
+Override _latestTurnUnknown() =>
+    latestAssistantMessageIdProvider.overrideWith((ref, _) => Stream<String?>.value(null));
 
 Widget _wrap(Widget child) {
   return MaterialApp(
@@ -118,6 +125,7 @@ void main() {
       );
       await tester.pumpWidget(
         ProviderScope(
+          overrides: [_latestTurnUnknown()],
           child: _wrap(MessageBubble(message: message, isUser: false)),
         ),
       );
@@ -141,12 +149,19 @@ void main() {
         );
         await tester.pumpWidget(
           ProviderScope(
+            overrides: [
+              // The held call is on offer for this turn (the bubble's id stands in for its turn id).
+              pendingConfirmationProvider.overrideWith(() => _SeededPending(const [
+                    PendingToolCall(tool: 'propose_health_log', turnId: 'asst-confirm', approvalId: 'apr.1'),
+                  ])),
+            ],
             child: _wrap(MessageBubble(message: message, isUser: false)),
           ),
         );
         expect(find.text('No reply this turn'), findsNothing);
         expect(find.text('Retry'), findsNothing);
-        expect(find.text('Confirm the action above to continue.'), findsOneWidget);
+        // The card is below the hint, so the hint says "below" (G-14a).
+        expect(find.text('Confirm the action below to continue.'), findsOneWidget);
         expect(find.byType(ToolCallChips), findsOneWidget);
         expect(find.byType(CitationChips), findsOneWidget);
       },
@@ -165,6 +180,7 @@ void main() {
         );
         await tester.pumpWidget(
           ProviderScope(
+            overrides: [_latestTurnUnknown()],
             child: _wrap(MessageBubble(message: message, isUser: false)),
           ),
         );
@@ -227,4 +243,12 @@ void main() {
       expect(find.byType(AuraSkeleton), findsNWidgets(2));
     });
   });
+}
+
+class _SeededPending extends PendingConfirmation {
+  _SeededPending(this._seed);
+  final List<PendingToolCall> _seed;
+
+  @override
+  List<PendingToolCall> build() => _seed;
 }

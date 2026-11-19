@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'package:aura_client/core/theme/theme.dart';
+import 'package:aura_client/core/design_system/design_system.dart';
 import '../../data/automation_repository.dart';
 import '../github_view_model.dart';
 import 'package:aura_client/l10n/l10n.dart';
@@ -33,6 +33,7 @@ class _GitHubTabState extends ConsumerState<GitHubTab> {
       _appliedSavedPat = true;
     }
     final vm = ref.read(gitHubViewModelProvider.notifier);
+    final palette = AuraPalette.of(context);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -43,7 +44,7 @@ class _GitHubTabState extends ConsumerState<GitHubTab> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Text('GitHub Integration Setup', style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(context.l10n.automationsGithubSetup, style: const TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 12),
                 Row(
                   children: [
@@ -52,11 +53,11 @@ class _GitHubTabState extends ConsumerState<GitHubTab> {
                       child: TextField(
                         controller: _patController,
                         obscureText: true,
-                        decoration: const InputDecoration(
-                          labelText: 'GitHub PAT (Personal Access Token)',
+                        decoration: InputDecoration(
+                          labelText: context.l10n.automationsGithubPatLabel,
                           hintText: 'ghp_...',
                         ),
-                        style: const TextStyle(color: Colors.white),
+                        style: TextStyle(color: palette.textPrimary),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -64,11 +65,11 @@ class _GitHubTabState extends ConsumerState<GitHubTab> {
                       flex: 2,
                       child: TextField(
                         controller: _repoController,
-                        decoration: const InputDecoration(
-                          labelText: 'Repository Path',
+                        decoration: InputDecoration(
+                          labelText: context.l10n.automationsGithubRepoLabel,
                           hintText: 'owner/repo',
                         ),
-                        style: const TextStyle(color: Colors.white),
+                        style: TextStyle(color: palette.textPrimary),
                       ),
                     ),
                   ],
@@ -83,14 +84,14 @@ class _GitHubTabState extends ConsumerState<GitHubTab> {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: Text(error),
-                          backgroundColor: error.contains('owner/repo') ? Colors.orangeAccent : Colors.redAccent,
+                          backgroundColor: error.contains('owner/repo') ? palette.warning : palette.danger,
                         ),
                       );
                     }
                   },
                   icon: const Icon(Icons.search),
-                  label: const Text('Load Repo Issues'),
-                  style: ElevatedButton.styleFrom(backgroundColor: AuraTheme.accentIndigo),
+                  label: Text(context.l10n.automationsGithubLoadIssues),
+                  style: ElevatedButton.styleFrom(backgroundColor: palette.brand, foregroundColor: palette.onBrand),
                 ),
               ],
             ),
@@ -101,8 +102,8 @@ class _GitHubTabState extends ConsumerState<GitHubTab> {
           child: ui.issues.isEmpty
               ? Center(
                   child: Text(
-                    ui.loading ? 'Loading GitHub Board...' : 'No open issues loaded.',
-                    style: const TextStyle(color: AuraTheme.textSecondary),
+                    ui.loading ? context.l10n.automationsGithubLoading : context.l10n.automationsGithubEmpty,
+                    style: TextStyle(color: palette.textSecondary),
                   ),
                 )
               : ListView.builder(
@@ -119,7 +120,7 @@ class _GitHubTabState extends ConsumerState<GitHubTab> {
                         final error = await vm.analyzeIssue(issue);
                         if (error != null && context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text(error), backgroundColor: Colors.redAccent),
+                            SnackBar(content: Text(error), backgroundColor: palette.danger),
                           );
                         }
                       },
@@ -147,6 +148,7 @@ class _IssueCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final palette = AuraPalette.of(context);
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       child: Padding(
@@ -164,19 +166,19 @@ class _IssueCard extends ConsumerWidget {
                 ),
                 if (analysis == null)
                   isAnalyzing
-                      ? const CircularProgressIndicator(color: AuraTheme.accentIndigo)
+                      ? CircularProgressIndicator(color: palette.brand)
                       : OutlinedButton.icon(
                           onPressed: onAnalyze,
                           icon: const Icon(Icons.analytics_outlined, size: 14),
-                          label: const Text('Extract Subtasks'),
+                          label: Text(context.l10n.automationsGithubExtractSubtasks),
                         ),
               ],
             ),
-            const Divider(color: Color(0x1F94A3B8), height: 20),
+            Divider(color: palette.border, height: 20),
             if (analysis == null)
               Text(
                 issue.body.length > 180 ? '${issue.body.substring(0, 180)}...' : issue.body,
-                style: const TextStyle(color: AuraTheme.textSecondary, fontSize: 13),
+                style: TextStyle(color: palette.textSecondary, fontSize: 13),
               )
             else
               GitHubAnalysisPanel(issue: issue, analysis: analysis!),
@@ -195,6 +197,7 @@ class GitHubAnalysisPanel extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final vm = ref.read(gitHubViewModelProvider.notifier);
+    final palette = AuraPalette.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -203,42 +206,42 @@ class GitHubAnalysisPanel extends ConsumerWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: AuraTheme.accentAmber.withValues(alpha: 0.15),
+                color: palette.warning.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
-                'Complexity: ${analysis.complexity}',
-                style: const TextStyle(color: AuraTheme.accentAmber, fontSize: 11, fontWeight: FontWeight.bold),
+                context.l10n.automationsGithubComplexity(analysis.complexity),
+                style: TextStyle(color: palette.warning, fontSize: 11, fontWeight: FontWeight.bold),
               ),
             ),
             const SizedBox(width: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: AuraTheme.accentTeal.withValues(alpha: 0.15),
+                color: palette.success.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
-                'Priority: ${analysis.suggestedPriority}',
-                style: const TextStyle(color: AuraTheme.accentTeal, fontSize: 11, fontWeight: FontWeight.bold),
+                context.l10n.automationsGithubPriority(analysis.suggestedPriority),
+                style: TextStyle(color: palette.success, fontSize: 11, fontWeight: FontWeight.bold),
               ),
             ),
           ],
         ),
         const SizedBox(height: 12),
-        const Text('Issue Summary', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+        Text(context.l10n.automationsGithubIssueSummary, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
         const SizedBox(height: 4),
-        Text(analysis.summary, style: const TextStyle(color: AuraTheme.textSecondary, fontSize: 13)),
+        Text(analysis.summary, style: TextStyle(color: palette.textSecondary, fontSize: 13)),
         const SizedBox(height: 16),
         if (analysis.subtasks.isNotEmpty) ...[
-          const Text('Extracted Coding Tasks', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+          Text(context.l10n.automationsGithubCodingTasks, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
           const SizedBox(height: 8),
           ...analysis.subtasks.map((task) {
             return Container(
               margin: const EdgeInsets.only(bottom: 8),
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: const Color(0x0AFFFFFF),
+                color: palette.surfaceVariant,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Row(
@@ -246,11 +249,12 @@ class GitHubAnalysisPanel extends ConsumerWidget {
                   Expanded(child: Text(task, style: const TextStyle(fontSize: 13))),
                   IconButton(
                     tooltip: context.l10n.githubImportSubtask,
-                    icon: const Icon(Icons.add_task, color: AuraTheme.accentTeal),
+                    icon: Icon(Icons.add_task, color: palette.success),
                     onPressed: () async {
                       final messenger = ScaffoldMessenger.of(context);
+                      final l10n = context.l10n;
                       await vm.importSubtask(issue, analysis, task);
-                      messenger.showSnackBar(const SnackBar(content: Text('Imported coding task!')));
+                      messenger.showSnackBar(SnackBar(content: Text(l10n.automationsGithubImported)));
                     },
                   ),
                 ],

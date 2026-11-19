@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -131,6 +132,26 @@ void main() {
     expect(recorded!.bodyBytes, isNotEmpty);
   });
 
+  // Phase V: the note's language travels as the `language` form field; omitted, the server
+  // detects it (what clients before this change sent).
+  test('transcribe() sends the language form field only when one is given', () async {
+    final bodies = <String>[];
+    final httpClient = MockClient((request) async {
+      bodies.add(latin1.decode(request.bodyBytes));
+      return http.Response(jsonEncode({'text': 'marhaba', 'language': 'ar'}), 200);
+    });
+
+    final container = _containerFor(httpClient);
+    addTearDown(container.dispose);
+    final client = container.read(voiceClientProvider);
+
+    await client.transcribe([1, 2, 3], language: 'ar');
+    await client.transcribe([1, 2, 3]);
+
+    expect(bodies[0], contains('name="language"\r\n\r\nar\r\n'));
+    expect(bodies[1], isNot(contains('name="language"')));
+  });
+
   test('transcribe() returns null for an empty transcript', () async {
     final httpClient = MockClient((request) async {
       return http.Response(jsonEncode({'text': '', 'engine': 'faster-whisper'}), 200);
@@ -141,5 +162,67 @@ void main() {
 
     final text = await container.read(voiceClientProvider).transcribe([1, 2, 3]);
     expect(text, isNull);
+  });
+
+  // INT-022: the gateway answers 422 both for "nothing speakable" (a domain ValidationError)
+  // and for text over its 4000-character limit (request validation); only the latter is "too
+  // long".
+  test('speak() reads a 422 body: nothing speakable is not "too long"', () async {
+    final httpClient = MockClient((request) async => http.Response(
+          jsonEncode({
+            'error': 'validation_error',
+            'message': 'text contains nothing speakable',
+            'retryable': false,
+            'details': {},
+          }),
+          422,
+        ));
+    final container = _containerFor(httpClient);
+    addTearDown(container.dispose);
+
+    final result = await container.read(voiceClientProvider).speak('hello');
+    expect(result.ok, isFalse);
+    expect(result.errorMessage, isNot(contains('too long')));
+    expect(result.errorMessage, contains('Nothing'));
+  });
+
+  test('speak() reports a 422 string_too_long as too long', () async {
+    final httpClient = MockClient((request) async => http.Response(
+          jsonEncode({
+            'detail': [
+              {'type': 'string_too_long', 'loc': ['body', 'text'], 'msg': 'too long'},
+            ],
+          }),
+          422,
+        ));
+    final container = _containerFor(httpClient);
+    addTearDown(container.dispose);
+
+    final result = await container.read(voiceClientProvider).speak('hello');
+    expect(result.errorMessage, contains('too long'));
+  });
+
+  // INT-017: transcribe had no timeout; a stalled server left the caller waiting forever.
+  test('transcribe() gives up after its timeout instead of hanging', () async {
+    final never = Completer<http.Response>();
+    final httpClient = MockClient((request) => never.future);
+    final container = ProviderContainer(
+      overrides: [
+        tokenManagerProvider.overrideWith((ref) => _StubTokenManager(ref)),
+        voiceClientProvider.overrideWith((ref) => VoiceClient(
+              ref,
+              httpClient: httpClient,
+              transcribeTimeout: const Duration(milliseconds: 50),
+            )),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final text = await container
+        .read(voiceClientProvider)
+        .transcribe([1, 2, 3])
+        .timeout(const Duration(seconds: 5));
+    expect(text, isNull);
+    expect(VoiceClient.defaultTranscribeTimeout, greaterThanOrEqualTo(const Duration(seconds: 30)));
   });
 }

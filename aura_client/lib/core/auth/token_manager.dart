@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
@@ -6,6 +7,7 @@ import '../config/backend_url_policy.dart';
 import '../config/backend_url_provider.dart';
 import '../security/device_validation_service.dart';
 import '../../features/auth/presentation/auth_provider.dart';
+import 'platform_login_support.dart';
 import 'refresh_token_store.dart';
 
 /// Why the most recent token exchange failed, so the UI can distinguish "this
@@ -57,16 +59,76 @@ class DesktopDeviceToken {
 /// §9), shared by every v3 API client (SyncClient, InsightsClient,
 /// SseAgentClient) so token exchange/caching/refresh logic lives in one
 /// place instead of being duplicated three times.
+/// The attestation headers for one `/token` call. Injectable so tests can watch what each
+/// exchange sends; the default never reuses an attestation (INT-011).
+typedef TokenExchangeAttestation = Future<Map<String, String>> Function(String backendUrl);
+
+Future<Map<String, String>> _freshAttestationHeaders(String backendUrl) =>
+    DeviceValidationService.getAttestationHeaders(backendUrl: backendUrl, singleUse: true);
+
+/// Sent on `/token` when a person has just signed in, as opposed to a silent re-exchange
+/// (`api/v2/auth.py`'s `SIGN_IN_HEADER`). Only the former may start a fresh account under a
+/// subject that was deleted (INT-010).
+const signInHeader = 'X-Aura-Sign-In';
+
 class TokenManager {
   final Ref _ref;
   final http.Client? _http;
   final RefreshTokenStore _store;
+  final TokenExchangeAttestation _attestationHeaders;
   TokenManager(
     this._ref, {
     http.Client? httpClient,
     RefreshTokenStore? store,
+    TokenExchangeAttestation? attestationHeaders,
+    bool? isWeb,
   })  : _http = httpClient,
-        _store = store ?? const SecureRefreshTokenStore();
+        _store = store ?? const SecureRefreshTokenStore(),
+        _attestationHeaders = attestationHeaders ?? _freshAttestationHeaders,
+        _attested = platformHasDeviceAttestation(isWeb: isWeb ?? kIsWeb);
+
+  /// Whether this device signs in at the attested `/token`. A browser has no device attestation,
+  /// and neither has a macOS (or any other non-phone) build: the backend verifies Play Integrity
+  /// and App Attest only, so `/token` refused every macOS sign-in (INT-103). Those sign in through
+  /// the customer route, whose sessions the backend caps at the `User` role (SaaS P1-B). Phones
+  /// keep the attested route.
+  final bool _attested;
+
+  static String exchangePathFor({required bool isWeb, TargetPlatform? platform}) =>
+      platformHasDeviceAttestation(isWeb: isWeb, platform: platform) ? '/token' : '/consumer/token';
+
+  /// Bumped whenever the session this manager holds is replaced or ended ([clear],
+  /// [startSession]). A refresh or exchange still in flight from before compares it when its
+  /// answer arrives and drops that answer, instead of writing a token into a session that was
+  /// signed out meanwhile (audit INT-027).
+  int _generation = 0;
+
+  /// The current session's generation: changes whenever the session is replaced or ended. A
+  /// caller holding results fetched under one session compares it before writing them, so a sync
+  /// pull still in flight at sign-out cannot refill the wiped database (F56).
+  int get sessionGeneration => _generation;
+
+  /// The `retry_key` of a `/refresh` that got no answer, with the token it was for. The next
+  /// refresh of that same token re-sends it, so the server can tell a retry after a lost response
+  /// from a replay of a rotated token (INT-012, `services/jwt_auth.REFRESH_RETRY_GRACE`).
+  ///
+  /// Persisted with the refresh token when the store supports it (INT-105), so a retry after the
+  /// app was killed still carries the same key.
+  UnansweredRefresh? _unansweredRefresh;
+
+  /// Whether [_unansweredRefresh] has been read back from the store (once per process), or must
+  /// no longer be (a session was started or ended since).
+  bool _unansweredLoaded = false;
+
+  /// Set when the backend answered `account_deleted`: the account no longer exists, and nothing
+  /// may silently re-exchange its way back into it (INT-010).
+  bool _accountDeleted = false;
+
+  /// Set when `/refresh` refused with `X-Aura-Refusal: plan_required`: a desktop customer's plan
+  /// no longer includes the Engineer (module readiness WP11). Like [_accountDeleted] it ends the
+  /// session at once, with its reason, instead of falling back to `/token` -- which a desktop
+  /// session has nothing to exchange with, and which would not change the plan.
+  bool _planRequired = false;
 
   String get _authUrl => '${_ref.read(backendUrlProvider)}/api/v3/auth';
   String get _backendUrl => _ref.read(backendUrlProvider);
@@ -90,6 +152,34 @@ class TokenManager {
 
   Future<void> _loadCachedRefreshToken() async {
     _refreshToken ??= await _store.read();
+    if (_unansweredLoaded) return;
+    _unansweredLoaded = true;
+    final Object store = _store; // Object: a RefreshRetryKeyStore is not a RefreshTokenStore subtype
+    if (_unansweredRefresh == null && store is RefreshRetryKeyStore) {
+      try {
+        _unansweredRefresh = await store.readUnanswered();
+      } catch (e) {
+        debugPrint("[TokenManager] could not read the pending refresh retry key: $e");
+      }
+    }
+  }
+
+  Future<void> _rememberUnanswered(UnansweredRefresh pending) async {
+    final Object store = _store;
+    if (store is! RefreshRetryKeyStore) return;
+    try {
+      await store.writeUnanswered(pending);
+    } catch (e) {
+      debugPrint("[TokenManager] could not persist the refresh retry key: $e");
+    }
+  }
+
+  Future<void> _forgetUnanswered() async {
+    final Object store = _store;
+    if (store is! RefreshRetryKeyStore) return;
+    try {
+      await store.deleteUnanswered();
+    } catch (_) {}
   }
 
   /// True when a refresh token is on disk. Does not hit the network;
@@ -165,18 +255,26 @@ class TokenManager {
     final afterRejection = _renewingAfterRejection;
     _renewingAfterRejection = false;
     _renewalRefused = false;
+    _accountDeleted = false;
+    _planRequired = false;
+    final generation = _generation;
 
     // A refresh that failed without being refused (network, 5xx) leaves the
     // session's fate unknown, whatever the exchange after it says.
     var refreshInconclusive = false;
     await _loadCachedRefreshToken();
     if (_refreshToken != null) {
-      final refreshed = await _tryRefresh();
+      final refreshed = await _tryRefresh(generation);
+      if (generation != _generation) return null; // signed out meanwhile (INT-027)
       if (refreshed) return _accessToken;
+      if (_accountDeleted) return _endDeletedAccount();
+      if (_planRequired) return _endForPlan();
       refreshInconclusive = !_renewalRefused;
     }
 
-    final token = await _tryExchange();
+    final token = await _tryExchange(generation: generation);
+    if (generation != _generation) return null;
+    if (_accountDeleted) return _endDeletedAccount();
     // A 401, then a renewal the server refused: this session is over, and no
     // retry from here will bring it back. End it, so the router shows the
     // login page instead of every screen saying "Sign in again" with nothing
@@ -187,6 +285,37 @@ class TokenManager {
       await _ref.read(authProvider.notifier).expireSession();
     }
     return token;
+  }
+
+  /// The backend said `account_deleted` (INT-010): wipe this device's copy of the account and
+  /// end the session, rather than re-exchanging into a recreated account.
+  Future<String?> _endDeletedAccount() async {
+    debugPrint("[TokenManager] the account was deleted -- ending the session and its local data");
+    await _ref.read(authProvider.notifier).endDeletedAccount();
+    return null;
+  }
+
+  /// The plan no longer includes the desktop Engineer: end the session now and say why on the
+  /// login page, rather than a generic "session expired" (WP11, "refused with a plain reason").
+  Future<String?> _endForPlan() async {
+    debugPrint("[TokenManager] refresh refused: the plan no longer includes the desktop Engineer");
+    await _ref.read(authProvider.notifier).expireSession(planRequired: true);
+    return null;
+  }
+
+  static bool _isAccountDeleted(http.Response response) {
+    if (response.statusCode != 401) return false;
+    try {
+      final detail = (jsonDecode(response.body) as Map<String, dynamic>)['detail'];
+      return detail is Map && detail['error'] == 'account_deleted';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static String _newRetryKey() {
+    final random = Random.secure();
+    return base64UrlEncode(List<int>.generate(24, (_) => random.nextInt(256)));
   }
 
   /// Drop the in-memory access token so the next [getValidAccessToken]
@@ -213,13 +342,32 @@ class TokenManager {
     return sent.timeout(const Duration(seconds: 10));
   }
 
-  Future<bool> _tryRefresh() async {
+  Future<bool> _tryRefresh(int generation) async {
+    final token = _refreshToken!;
+    // INT-012: one random key per refresh attempt, re-sent unchanged if this attempt goes
+    // unanswered -- a timeout cannot tell "not received" from "rotated, answer lost", and the
+    // server accepts the same token again only together with the same key.
+    final pending = _unansweredRefresh;
+    final reuse = pending != null && pending.token == token;
+    final retryKey = reuse ? pending.key : _newRetryKey();
+    _unansweredRefresh = (token: token, key: retryKey);
+    // On disk before the request leaves (INT-105): the process may not live to see the answer.
+    if (!reuse) await _rememberUnanswered((token: token, key: retryKey));
     try {
       final response = await _post(
         "$_authUrl/refresh",
         headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"refresh_token": _refreshToken}),
+        body: jsonEncode({"refresh_token": token, "retry_key": retryKey}),
       );
+      if (generation != _generation) {
+        // Signed out (or into another session) while this was in flight (INT-027): its answer
+        // belongs to a session that no longer exists here. A successor it minted is revoked so
+        // it is not left live on the server.
+        if (response.statusCode == 200) await _revokeIssued(response.body);
+        return false;
+      }
+      final answered = response.statusCode != 429 && response.statusCode < 500;
+      if (answered) _unansweredRefresh = null;
 
       if (response.statusCode != 200) {
         debugPrint(
@@ -231,16 +379,36 @@ class TokenManager {
         // server failing to answer, not a verdict on the token: keep it, or
         // one bad minute upstream would cost the user their session.
         _renewalRefused = _isRefusal(response.statusCode);
-        if (_renewalRefused) await _clearRefreshToken();
+        _accountDeleted = _isAccountDeleted(response);
+        _planRequired =
+            _renewalRefused && response.headers['x-aura-refusal'] == 'plan_required';
+        if (_renewalRefused) {
+          await _clearRefreshToken();
+        } else if (answered) {
+          await _forgetUnanswered();
+        }
         return false;
       }
       await _applyTokenResponse(jsonDecode(response.body) as Map<String, dynamic>);
+      // Only once the successor is stored: forgotten first, a crash in between would leave the
+      // spent token on disk with no key to retry it by.
+      await _forgetUnanswered();
       debugPrint("[TokenManager] refresh succeeded");
       return true;
     } catch (e) {
+      // No answer: the token is kept with its retry key (INT-012).
       debugPrint("[TokenManager] refresh failed: $e");
       return false;
     }
+  }
+
+  /// Best effort: revoke the refresh token in a response that arrived for a session this
+  /// manager no longer holds.
+  Future<void> _revokeIssued(String body) async {
+    try {
+      final issued = (jsonDecode(body) as Map<String, dynamic>)['refresh_token'];
+      if (issued is String && issued.isNotEmpty) await _revoke(issued);
+    } catch (_) {}
   }
 
   /// Exchanges the Google ID token a sign-in just produced for a backend session, at sign-in
@@ -256,11 +424,19 @@ class TokenManager {
   /// forgotten locally). On [SessionStart.refused] the sign-in is abandoned and the old
   /// session is left exactly as it was.
   Future<SessionStart> startSession(String idToken) async {
+    // A renewal of the previous session still in flight must not land on top of this one.
+    final generation = ++_generation;
+    _inFlightAccessToken = null;
+    _unansweredRefresh = null;
+    _unansweredLoaded = true;
     await _loadCachedRefreshToken();
     final cached = _refreshToken;
     final previous = (cached != null && cached.isNotEmpty) ? cached : null;
 
-    final token = await _tryExchange(idToken: idToken);
+    final token = await _tryExchange(idToken: idToken, interactive: true, generation: generation);
+    // Signed out again before the answer came: report it as not reaching the server, and touch
+    // nothing (INT-027).
+    if (generation != _generation) return SessionStart.unreachable;
     if (token != null) {
       if (previous != null && previous != _refreshToken) await _revoke(previous);
       return SessionStart.started;
@@ -281,7 +457,7 @@ class TokenManager {
     return unverified ? SessionStart.deviceUnverified : SessionStart.unreachable;
   }
 
-  Future<String?> _tryExchange({String? idToken}) async {
+  Future<String?> _tryExchange({required int generation, String? idToken, bool interactive = false}) async {
     try {
       idToken ??= await _ref.read(authProvider.notifier).getIdToken();
       if (idToken == null) {
@@ -293,19 +469,30 @@ class TokenManager {
       }
 
       final headers = {"Authorization": "Bearer $idToken"};
-      headers.addAll(
-        await DeviceValidationService.getAttestationHeaders(backendUrl: _backendUrl),
-      );
+      if (interactive) headers[signInHeader] = 'interactive';
+      // Fresh every time: the server consumes the attestation's nonce here (INT-011). A browser
+      // or a macOS build has none, and uses the customer route instead (SaaS P1-B, INT-103).
+      if (_attested) headers.addAll(await _attestationHeaders(_backendUrl));
 
-      final response = await _post("$_authUrl/token", headers: headers);
+      final response = await _post("$_authUrl${_attested ? '/token' : '/consumer/token'}", headers: headers);
+      if (generation != _generation) {
+        // Signed out while this was in flight (INT-027).
+        if (response.statusCode == 200) await _revokeIssued(response.body);
+        return null;
+      }
       if (response.statusCode != 200) {
         debugPrint(
           "[TokenManager] token exchange failed: ${response.statusCode} ${response.body}",
         );
         DeviceValidationService.clearCache();
+        if (_isAccountDeleted(response)) {
+          _accountDeleted = true;
+          _renewalRefused = true;
+          return null;
+        }
         final failure = classifyExchangeFailure(response.statusCode, response.body);
         if (failure == AuthExchangeFailure.deviceAttestationRejected) {
-          final fallback = await _tryDebugOperatorExchange(idToken);
+          final fallback = await _tryDebugOperatorExchange(idToken, generation);
           if (fallback != null) return fallback;
         }
         // A device-attestation 403 won't self-resolve on retry the way a
@@ -335,7 +522,7 @@ class TokenManager {
 
   /// Debug APKs are debug-signed and cannot satisfy production Play Integrity.
   /// Operators can still mint a session via `/web/token` (role-gated).
-  Future<String?> _tryDebugOperatorExchange(String idToken) async {
+  Future<String?> _tryDebugOperatorExchange(String idToken, int generation) async {
     if (!kDebugMode) return null;
     if (!BackendUrlPolicy.isSafeForRelease(_backendUrl)) return null;
     try {
@@ -343,6 +530,10 @@ class TokenManager {
         "$_authUrl/web/token",
         headers: {"Authorization": "Bearer $idToken"},
       );
+      if (generation != _generation) {
+        if (response.statusCode == 200) await _revokeIssued(response.body);
+        return null;
+      }
       if (response.statusCode != 200) return null;
       await _applyTokenResponse(jsonDecode(response.body) as Map<String, dynamic>);
       _ref.read(authExchangeFailureProvider.notifier).set(AuthExchangeFailure.none);
@@ -369,6 +560,7 @@ class TokenManager {
     String? deviceName,
   }) async {
     lastDesktopLoginRefusal = null;
+    lastDesktopLoginPlanRequired = false;
     try {
       final response = await _post(
         "$_authUrl/desktop/login",
@@ -384,6 +576,7 @@ class TokenManager {
         );
         if (_isRefusal(response.statusCode)) {
           lastDesktopLoginRefusal = _serverDetail(response.body) ?? 'HTTP ${response.statusCode}';
+          lastDesktopLoginPlanRequired = response.headers['x-aura-refusal'] == 'plan_required';
         }
         _ref.read(authExchangeFailureProvider.notifier).set(AuthExchangeFailure.other);
         return null;
@@ -406,10 +599,41 @@ class TokenManager {
     }
   }
 
+  /// Takes the desktop session the browser hand-off produced (`POST
+  /// /api/v3/auth/desktop/firebase-exchange`, `core/auth/desktop_oauth_client.dart`'s
+  /// `signInWithBrowserHandoff`, module readiness WP12) and makes it this manager's session,
+  /// through the same [_applyTokenResponse] path [exchangeDesktopLogin] uses: the refresh token is
+  /// persisted, so [getValidAccessToken] keeps the session alive across launches.
+  ///
+  /// The exchange already happened (the code is single-use and the verifier lives in that flow),
+  /// so this makes no call of its own except, like [startSession], revoking a refresh token an
+  /// earlier session left on this device -- otherwise a different account signing in here would
+  /// leave the old account's session renewable on the server. A renewal of that earlier session
+  /// still in flight is dropped rather than written over this one (INT-027).
+  Future<DesktopDeviceToken> applyDesktopSession(Map<String, dynamic> tokenResponse) async {
+    _generation++;
+    _inFlightAccessToken = null;
+    _unansweredRefresh = null;
+    _unansweredLoaded = true;
+    await _loadCachedRefreshToken();
+    final previous = _refreshToken;
+    await _applyTokenResponse(tokenResponse);
+    if (previous != null && previous.isNotEmpty && previous != _refreshToken) {
+      await _revoke(previous);
+    }
+    lastDesktopLoginRefusal = null;
+    _ref.read(authExchangeFailureProvider.notifier).set(AuthExchangeFailure.none);
+    return DesktopDeviceToken(accessToken: _accessToken!, expiry: _accessTokenExpiry!);
+  }
+
   /// Why the server refused the last [exchangeDesktopLogin] (its `detail`), when it answered
   /// 400/401/403 -- for instance desktop sign-in being limited to operators (F-09). Null when
   /// that call succeeded or failed without an answer.
   String? lastDesktopLoginRefusal;
+
+  /// Whether that refusal was marked `X-Aura-Refusal: plan_required` (a Pro or Team plan would
+  /// let this account in; module readiness WP11).
+  bool lastDesktopLoginPlanRequired = false;
 
   static String? _serverDetail(String body) {
     try {
@@ -455,7 +679,9 @@ class TokenManager {
 
   Future<void> _clearRefreshToken() async {
     _refreshToken = null;
+    _unansweredRefresh = null;
     await _store.delete();
+    await _forgetUnanswered();
   }
 
   /// Call from AuthNotifier.signOut() so a signed-out session's refresh
@@ -466,7 +692,17 @@ class TokenManager {
   /// backend for its full 30-day lifetime, so a copy taken from this
   /// device before sign-out would keep working. A failed or offline
   /// revoke never blocks sign-out.
+  ///
+  /// It also ends this session for anything still in flight: a refresh or exchange answered
+  /// after this point is discarded (and what it issued revoked) rather than written back
+  /// (INT-027), and the cached device attestation is dropped (INT-011).
   Future<void> clear({bool revoke = false}) async {
+    // Synchronously, before the first await, so a response already on its way sees it.
+    _generation++;
+    _inFlightAccessToken = null;
+    _unansweredRefresh = null;
+    _unansweredLoaded = true;
+    DeviceValidationService.clearCache();
     if (revoke) {
       await _loadCachedRefreshToken();
       final token = _refreshToken;

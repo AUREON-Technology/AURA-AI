@@ -7,6 +7,7 @@ import 'package:aura_client/core/security/device_validation_service.dart';
 import 'package:aura_client/core/theme/theme.dart';
 import 'auth_provider.dart';
 import 'sign_out_confirmation.dart';
+import 'verify_email_banner.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
 import 'package:aura_client/l10n/l10n.dart';
@@ -24,6 +25,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
   List<String> _validationLogs = [];
 
   Future<void> _runDeviceCheck() async {
+    final l10n = context.l10n;
     setState(() {
       _isValidating = true;
       _validationStatus = null;
@@ -40,15 +42,15 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
       if (attestation.isDebugBypass) {
         _validationLogs.add('Debug build: sending explicit aura_dev_attestation marker.');
         _validationLogs.add('This is not a Play Integrity or App Attest token.');
-        _validationStatus = 'Debug marker only — hardware attestation is not enabled in this app';
+        _validationStatus = l10n.authAttestationDebugOnly;
       } else if (attestation.isHardwareAttestation) {
         _validationLogs.add('Release build: Play Integrity / App Attest SDK produced a token.');
         _validationLogs.add('Header carries the hardware attestation token for server verify.');
-        _validationStatus = 'Hardware attestation token ready';
+        _validationStatus = l10n.authAttestationReady;
       } else {
         _validationLogs.add('Release build: SDK could not produce a Play Integrity / App Attest token.');
         _validationLogs.add('Header uses aura_attestation_unsupported so the server will not treat it as real.');
-        _validationStatus = 'Hardware attestation unavailable on this device';
+        _validationStatus = l10n.authAttestationUnavailable;
       }
       _isValidating = false;
     });
@@ -84,6 +86,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                 children: [
                   _buildProfileHeader(profile, avatarUrl),
                   const SizedBox(height: 24),
+                  const VerifyEmailBanner(),
                   _buildDeviceValidationCard(),
                   const SizedBox(height: 24),
                   _buildSignOutCard(),
@@ -131,9 +134,9 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                 color: AuraTheme.accentIndigo.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(20),
               ),
-              child: const Text(
-                'Authorized User',
-                style: TextStyle(color: AuraTheme.accentIndigo, fontSize: 11, fontWeight: FontWeight.bold),
+              child: Text(
+                context.l10n.authAuthorizedUser,
+                style: const TextStyle(color: AuraTheme.accentIndigo, fontSize: 11, fontWeight: FontWeight.bold),
               ),
             )
           ],
@@ -150,22 +153,22 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Row(
+            Row(
               children: [
-                Icon(Icons.security, color: AuraTheme.accentTeal, size: 24),
-                SizedBox(width: 12),
+                const Icon(Icons.security, color: AuraTheme.accentTeal, size: 24),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Device Attestation Status',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
+                    context.l10n.authAttestationHeading,
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 10),
-            const Text(
-              'This client does not request Google Play Integrity or Apple App Attest tokens. Debug builds send an explicit development marker; release builds advertise that hardware attestation is unsupported. Backend verification of real Play Integrity tokens exists, but this app cannot produce them without a vendor SDK and Play Console keys.',
-              style: TextStyle(fontSize: 12, color: AuraTheme.textSecondary, height: 1.4),
+            Text(
+              context.l10n.authAttestationExplainer,
+              style: const TextStyle(fontSize: 12, color: AuraTheme.textSecondary, height: 1.4),
             ),
             const SizedBox(height: 20),
             Row(
@@ -243,10 +246,10 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
         padding: const EdgeInsets.all(16.0),
         child: Row(
           children: [
-            const Expanded(
+            Expanded(
               child: Text(
-                'Session Operations',
-                style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14),
+                context.l10n.authSessionOperations,
+                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14),
               ),
             ),
             TextButton.icon(

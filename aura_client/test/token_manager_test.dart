@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:aura_client/core/auth/refresh_token_store.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
+import 'package:aura_client/features/auth/presentation/auth_provider.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -19,6 +21,45 @@ class _MemoryRefreshTokenStore implements RefreshTokenStore {
 
   @override
   Future<void> delete() async => token = null;
+}
+
+/// A store that also keeps the unanswered refresh's retry key, as the secure store does (INT-105).
+class _PersistentRefreshStore implements RefreshTokenStore, RefreshRetryKeyStore {
+  String? token;
+  UnansweredRefresh? unanswered;
+  _PersistentRefreshStore([this.token]);
+
+  @override
+  Future<String?> read() async => token;
+
+  @override
+  Future<void> write(String value) async => token = value;
+
+  @override
+  Future<void> delete() async => token = null;
+
+  @override
+  Future<UnansweredRefresh?> readUnanswered() async => unanswered;
+
+  @override
+  Future<void> writeUnanswered(UnansweredRefresh pending) async => unanswered = pending;
+
+  @override
+  Future<void> deleteUnanswered() async => unanswered = null;
+}
+
+/// Signed in with an identity token available for `/token`; records whether the session was ended.
+class _SignedInAuth extends AuthNotifier {
+  int expiries = 0;
+
+  @override
+  Future<UserProfile?> build() async => UserProfile(id: 'u', email: 'u@example.com', displayName: 'U');
+
+  @override
+  Future<String?> getIdToken() async => 'google-id-token';
+
+  @override
+  Future<void> expireSession({bool planRequired = false}) async => expiries++;
 }
 
 void main() {
@@ -199,6 +240,26 @@ void main() {
       expect(await tm.getValidAccessToken(), 'device-access-1');
     });
 
+    test('remembers that a refusal was marked plan_required (WP11)', () async {
+      final httpClient = MockClient((request) async => http.Response(
+            '{"detail":"The desktop Engineer needs a Pro or Team plan."}',
+            403,
+            headers: {'x-aura-refusal': 'plan_required'},
+          ));
+      final container = ProviderContainer(
+        overrides: [
+          tokenManagerProvider.overrideWith(
+            (ref) => TokenManager(ref, httpClient: httpClient, store: _MemoryRefreshTokenStore()),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final tm = container.read(tokenManagerProvider);
+      expect(await tm.exchangeDesktopLogin('google-id-token'), isNull);
+      expect(tm.lastDesktopLoginPlanRequired, isTrue);
+    });
+
     test('returns null and does not cache anything on a non-200 response', () async {
       final httpClient = MockClient((request) async {
         return http.Response('{"detail":"Invalid or expired credentials."}', 401);
@@ -220,6 +281,7 @@ void main() {
         AuthExchangeFailure.other,
       );
       expect(tm.lastDesktopLoginRefusal, 'Invalid or expired credentials.');
+      expect(tm.lastDesktopLoginPlanRequired, isFalse);
     });
 
     test('records the server\'s reason when desktop sign-in is refused (F-09)', () async {
@@ -243,6 +305,67 @@ void main() {
       answer = http.Response('bad gateway', 502);
       expect(await tm.exchangeDesktopLogin('google-id'), isNull);
       expect(tm.lastDesktopLoginRefusal, isNull);
+    });
+  });
+
+  group('TokenManager.applyDesktopSession (browser hand-off, WP12)', () {
+    const session = {
+      'access_token': 'device-access-2',
+      'refresh_token': 'device-refresh-2',
+      'token_type': 'bearer',
+      'expires_in': 900,
+      'device_id': 'dev-2',
+    };
+
+    test('makes the hand-off session this device\'s, refresh token persisted', () async {
+      final store = _MemoryRefreshTokenStore();
+      final httpClient = MockClient((request) async {
+        fail('unexpected ${request.method} ${request.url}');
+      });
+      final container = ProviderContainer(
+        overrides: [
+          tokenManagerProvider.overrideWith(
+            (ref) => TokenManager(ref, httpClient: httpClient, store: store),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      final tm = container.read(tokenManagerProvider);
+
+      final token = await tm.applyDesktopSession(Map<String, dynamic>.from(session));
+
+      expect(token.accessToken, 'device-access-2');
+      expect(token.expiry.isAfter(DateTime.now().add(const Duration(minutes: 14))), isTrue);
+      expect(store.token, 'device-refresh-2');
+      expect(await tm.hasCachedRefreshToken(), isTrue);
+      expect(await tm.getValidAccessToken(), 'device-access-2');
+    });
+
+    test('revokes a refresh token an earlier session left on this device', () async {
+      final store = _MemoryRefreshTokenStore('old-account-refresh');
+      final revoked = <String>[];
+      final httpClient = MockClient((request) async {
+        if (request.url.path.endsWith('/revoke')) {
+          revoked.add(jsonDecode(request.body)['refresh_token'] as String);
+          return http.Response('{}', 200);
+        }
+        fail('unexpected ${request.method} ${request.url}');
+      });
+      final container = ProviderContainer(
+        overrides: [
+          tokenManagerProvider.overrideWith(
+            (ref) => TokenManager(ref, httpClient: httpClient, store: store),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await container
+          .read(tokenManagerProvider)
+          .applyDesktopSession(Map<String, dynamic>.from(session));
+
+      expect(revoked, ['old-account-refresh']);
+      expect(store.token, 'device-refresh-2');
     });
   });
 
@@ -337,5 +460,174 @@ void main() {
 
       expect(store.token, isNull);
     });
+  });
+
+  // INT-105: the retry key of a /refresh that got no answer lived only in memory. The app killed
+  // before the retry came back with a new key, the server saw a replay of a rotated token, and
+  // revoked the whole family -- signing the user out everywhere.
+  group('INT-105: an unanswered refresh survives a restart', () {
+    ProviderContainer launch(_PersistentRefreshStore store, MockClient client) {
+      final container = ProviderContainer(overrides: [
+        tokenManagerProvider.overrideWith((ref) => TokenManager(ref, httpClient: client, store: store)),
+      ]);
+      addTearDown(container.dispose);
+      return container;
+    }
+
+    test('the next launch re-sends the same token with the same retry key', () async {
+      final store = _PersistentRefreshStore('refresh-1');
+      final keys = <String>[];
+      var answer = false;
+      final client = MockClient((request) async {
+        if (!request.url.path.endsWith('/auth/refresh')) throw http.ClientException('offline');
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(body['refresh_token'], 'refresh-1');
+        keys.add(body['retry_key'] as String);
+        if (!answer) throw http.ClientException('timed out'); // rotated server-side; answer lost
+        return http.Response(
+          jsonEncode({'access_token': 'access-2', 'refresh_token': 'refresh-2', 'expires_in': 900}),
+          200,
+        );
+      });
+
+      expect(await launch(store, client).read(tokenManagerProvider).getValidAccessToken(), isNull);
+      expect(store.unanswered, isNotNull, reason: 'kept on disk, not only in memory');
+
+      // The app is killed and started again: a new TokenManager, the same store.
+      answer = true;
+      expect(await launch(store, client).read(tokenManagerProvider).getValidAccessToken(), 'access-2');
+
+      expect(keys, hasLength(2));
+      expect(keys[1], keys[0], reason: 'the server tells a retry from a replay by this key');
+      expect(store.unanswered, isNull, reason: 'an answered refresh clears it');
+      expect(store.token, 'refresh-2');
+    });
+
+    test('a pending key for another token is not reused', () async {
+      final store = _PersistentRefreshStore('refresh-9')
+        ..unanswered = (token: 'refresh-old', key: 'stale-key');
+      String? sent;
+      final client = MockClient((request) async {
+        sent = (jsonDecode(request.body) as Map<String, dynamic>)['retry_key'] as String;
+        return http.Response(
+          jsonEncode({'access_token': 'a', 'refresh_token': 'refresh-10', 'expires_in': 900}),
+          200,
+        );
+      });
+
+      await launch(store, client).read(tokenManagerProvider).getValidAccessToken();
+
+      expect(sent, isNot('stale-key'));
+      expect(store.unanswered, isNull);
+    });
+
+    test('signing out forgets it with the refresh token', () async {
+      final store = _PersistentRefreshStore('refresh-1')..unanswered = (token: 'refresh-1', key: 'k');
+      final client = MockClient((_) async => throw http.ClientException('offline'));
+
+      await launch(store, client).read(tokenManagerProvider).clear();
+
+      expect(store.token, isNull);
+      expect(store.unanswered, isNull);
+    });
+  });
+
+  // INT-103: macOS has no device attestation the backend accepts (it verifies Android Play
+  // Integrity and iOS App Attest only), so its native sign-in at the attested `/token` failed
+  // every time. It signs in at the customer route, as the web does.
+  group('INT-103: the sign-in route follows device attestation', () {
+    tearDown(() => debugDefaultTargetPlatformOverride = null);
+
+    test('Android and iOS use the attested route; macOS, Linux, Windows and the web do not', () {
+      expect(TokenManager.exchangePathFor(isWeb: false, platform: TargetPlatform.android), '/token');
+      expect(TokenManager.exchangePathFor(isWeb: false, platform: TargetPlatform.iOS), '/token');
+      for (final platform in [TargetPlatform.macOS, TargetPlatform.linux, TargetPlatform.windows]) {
+        expect(TokenManager.exchangePathFor(isWeb: false, platform: platform), '/consumer/token',
+            reason: '$platform');
+      }
+      expect(TokenManager.exchangePathFor(isWeb: true, platform: TargetPlatform.iOS), '/consumer/token');
+    });
+
+    test('a macOS sign-in goes to the customer route without attestation', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      final requests = <http.Request>[];
+      var attestations = 0;
+      final client = MockClient((request) async {
+        requests.add(request);
+        return http.Response(
+          jsonEncode({'access_token': 'a', 'refresh_token': 'r', 'expires_in': 900}),
+          200,
+        );
+      });
+      final container = ProviderContainer(overrides: [
+        tokenManagerProvider.overrideWith((ref) => TokenManager(
+              ref,
+              httpClient: client,
+              store: _MemoryRefreshTokenStore(),
+              isWeb: false,
+              attestationHeaders: (_) async {
+                attestations++;
+                return {'X-Device-Attestation': 'x'};
+              },
+            )),
+      ]);
+      addTearDown(container.dispose);
+
+      expect(await container.read(tokenManagerProvider).startSession('firebase-mac'), SessionStart.started);
+      expect(requests.single.url.path, endsWith('/api/v3/auth/consumer/token'));
+      expect(requests.single.headers['Authorization'], 'Bearer firebase-mac');
+      expect(attestations, 0, reason: 'macOS has no attestation the backend could verify');
+    });
+  });
+
+  // Backend B3: with its auth state unreadable, every sign-in route and `/refresh` answer a
+  // retryable 503 `auth_state_unavailable` instead of issuing or failing open (a desktop device
+  // session's spent refresh token is put back). That is "try again later", never a sign-out: the
+  // refresh token stays, the session stays, and the retry carries the same retry_key.
+  test('a 503 auth_state_unavailable keeps the session and retries with the same key', () async {
+    final store = _PersistentRefreshStore('refresh-1');
+    const unavailable = '{"error": "auth_state_unavailable", "retryable": true}';
+    var down = true;
+    final refreshKeys = <String>[];
+    final client = MockClient((request) async {
+      if (request.url.path.endsWith('/auth/refresh')) {
+        refreshKeys.add((jsonDecode(request.body) as Map<String, dynamic>)['retry_key'] as String);
+        if (down) return http.Response(unavailable, 503);
+        return http.Response(
+          jsonEncode({'access_token': 'access-2', 'refresh_token': 'refresh-2', 'expires_in': 900}),
+          200,
+        );
+      }
+      if (request.url.path.endsWith('/auth/token')) return http.Response(unavailable, 503);
+      fail('unexpected ${request.url}');
+    });
+    late _SignedInAuth auth;
+    final container = ProviderContainer(overrides: [
+      authProvider.overrideWith(() => auth = _SignedInAuth()),
+      tokenManagerProvider.overrideWith((ref) => TokenManager(
+            ref,
+            httpClient: client,
+            store: store,
+            attestationHeaders: (_) async => const {'X-Device-Attestation': 'a'},
+          )),
+    ]);
+    addTearDown(container.dispose);
+    await container.read(authProvider.future);
+    final tm = container.read(tokenManagerProvider);
+
+    // A request was just answered 401, so this renewal decides whether the session lives.
+    tm.invalidateAccessToken();
+    expect(await tm.getValidAccessToken(), isNull);
+    expect(auth.expiries, 0, reason: 'a server that cannot answer has not refused the session');
+    expect(store.token, 'refresh-1');
+    expect(store.unanswered?.key, refreshKeys.single, reason: 'kept for the retry, on disk');
+    expect(container.read(authExchangeFailureProvider), isNot(AuthExchangeFailure.deviceAttestationRejected));
+
+    down = false;
+    expect(await tm.getValidAccessToken(), 'access-2');
+    expect(refreshKeys, hasLength(2));
+    expect(refreshKeys[1], refreshKeys[0]);
+    expect(store.token, 'refresh-2');
+    expect(store.unanswered, isNull);
   });
 }

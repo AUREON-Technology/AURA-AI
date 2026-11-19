@@ -43,7 +43,7 @@ def _app(container):
         header = request.headers.get("authorization", "")
         if not header.startswith("Bearer ") or header[7:] not in (ALICE, BOB):
             raise AuthenticationError("unknown principal")
-        return Principal(user_id=UserId(header[7:]), email=f"{header[7:]}@example.com")
+        return Principal(user_id=UserId(header[7:]), email=f"{header[7:]}@example.com", email_verified=True)
 
     return build_app(container, authenticator=authenticator)
 
@@ -118,6 +118,24 @@ COVERED = {
         "TestWorkspaces::test_bob_cannot_list_alices_invites",
     ("DELETE", "/api/v3/workspaces/{workspace_id}/invites/{invite_id}"):
         "TestWorkspaces::test_bob_cannot_revoke_alices_invite",
+    ("GET", "/api/v3/workspaces/{workspace_id}/plan"):
+        "TestWorkspaces::test_bob_cannot_read_alices_plan_or_usage",
+    ("GET", "/api/v3/workspaces/{workspace_id}/billing"):
+        "TestWorkspaces::test_bob_cannot_read_alices_billing",
+    ("POST", "/api/v3/workspaces/{workspace_id}/billing/checkout"):
+        "TestWorkspaces::test_bob_cannot_buy_for_alices_team",
+    ("POST", "/api/v3/workspaces/{workspace_id}/billing/cancel"):
+        "TestWorkspaces::test_bob_cannot_cancel_alices_billing",
+    ("POST", "/api/v3/workspaces/{workspace_id}/shared-conversations"):
+        "TestWorkspaces::test_bob_cannot_share_into_alices_team",
+    ("GET", "/api/v3/workspaces/{workspace_id}/shared-conversations"):
+        "TestWorkspaces::test_bob_cannot_read_alices_shared_chats",
+    ("GET", "/api/v3/workspaces/{workspace_id}/shared-conversations/{conversation_id}"):
+        "TestWorkspaces::test_bob_cannot_read_alices_shared_chats",
+    ("DELETE", "/api/v3/workspaces/{workspace_id}/shared-conversations/{conversation_id}"):
+        "TestWorkspaces::test_bob_cannot_unshare_alices_shared_chat",
+    ("POST", "/api/v3/workspaces/{workspace_id}/billing/store-token"):
+        "TestWorkspaces::test_bob_cannot_bind_a_purchase_to_alices_workspace",
     ("POST", "/api/v3/insights/{insight_id}/dismiss"):
         "Postgres-only route (api/v2/insights.py): `row.user_id != user.id` -> 404; exercised "
         "against a real database by test_insights_integration.py in the legacy suite",
@@ -193,9 +211,10 @@ class TestKnowledgeDocuments:
 
         response = client.delete(f"/api/v3/knowledge/documents/{document_id}", headers=AUTH_B)
 
-        # Same answer as for a document that does not exist: nothing to tell Bob.
-        assert response.status_code == 200
-        assert response.json()["chunks_removed"] == 0
+        # Same answer as for a document that does not exist (404, INT-111): nothing to tell Bob,
+        # and no 200 "deleted" for a document that is still there.
+        assert response.status_code == 404
+        assert response.json()["error"] == "not_found"
         listing = client.get("/api/v3/knowledge/documents", headers=AUTH_A).json()["documents"]
         assert [d["document_id"] for d in listing] == [document_id]
         assert _alice_can_still_find_her_document(client), (
@@ -585,6 +604,53 @@ class TestWorkspaces:
         response = client.get(f"/api/v3/workspaces/{team[0]}/invites", headers=AUTH_B)
         self._refused(response)
         assert "dan@example.com" not in response.text
+
+    def test_bob_cannot_read_alices_plan_or_usage(self, client, team) -> None:
+        response = client.get(f"/api/v3/workspaces/{team[0]}/plan", headers=AUTH_B)
+        self._refused(response)
+        assert "messages_used" not in response.text
+
+    @pytest.fixture
+    def billing_on(self, container):
+        from dataclasses import replace
+
+        container.billing.settings = replace(container.billing.settings, enabled=True)
+
+    def test_bob_cannot_read_alices_billing(self, client, team, billing_on) -> None:
+        self._refused(client.get(f"/api/v3/workspaces/{team[0]}/billing", headers=AUTH_B))
+
+    def test_bob_cannot_buy_for_alices_team(self, client, team, billing_on) -> None:
+        self._refused(client.post(f"/api/v3/workspaces/{team[0]}/billing/checkout",
+                                  json={"plan": "team", "seats": 2}, headers=AUTH_B))
+
+    def test_bob_cannot_cancel_alices_billing(self, client, team, billing_on) -> None:
+        self._refused(client.post(f"/api/v3/workspaces/{team[0]}/billing/cancel", headers=AUTH_B))
+
+    def _shared(self, client, team) -> str:
+        created = client.post(f"/api/v3/workspaces/{team[0]}/shared-conversations", headers=AUTH_A,
+                              json={"source_id": "c1", "title": "t", "messages": [{"role": "user", "text": "secret"}]})
+        assert created.status_code == 201, created.text
+        return created.json()["id"]
+
+    def test_bob_cannot_share_into_alices_team(self, client, team) -> None:
+        self._refused(client.post(f"/api/v3/workspaces/{team[0]}/shared-conversations", headers=AUTH_B,
+                                  json={"source_id": "c", "title": "t", "messages": [{"role": "user", "text": "x"}]}))
+        assert client.get(f"/api/v3/workspaces/{team[0]}/shared-conversations", headers=AUTH_A).json()["conversations"] == []
+
+    def test_bob_cannot_read_alices_shared_chats(self, client, team) -> None:
+        sid = self._shared(client, team)
+        self._refused(client.get(f"/api/v3/workspaces/{team[0]}/shared-conversations", headers=AUTH_B))
+        response = client.get(f"/api/v3/workspaces/{team[0]}/shared-conversations/{sid}", headers=AUTH_B)
+        self._refused(response)
+        assert "secret" not in response.text
+
+    def test_bob_cannot_unshare_alices_shared_chat(self, client, team) -> None:
+        sid = self._shared(client, team)
+        self._refused(client.delete(f"/api/v3/workspaces/{team[0]}/shared-conversations/{sid}", headers=AUTH_B))
+        assert client.get(f"/api/v3/workspaces/{team[0]}/shared-conversations/{sid}", headers=AUTH_A).status_code == 200
+
+    def test_bob_cannot_bind_a_purchase_to_alices_workspace(self, client, team, billing_on) -> None:
+        self._refused(client.post(f"/api/v3/workspaces/{team[0]}/billing/store-token", headers=AUTH_B))
 
     def test_bob_cannot_revoke_alices_invite(self, client, team) -> None:
         self._refused(client.delete(f"/api/v3/workspaces/{team[0]}/invites/{team[1]}", headers=AUTH_B))

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
-import 'package:aura_client/core/theme/theme.dart';
+import 'package:aura_client/core/design_system/design_system.dart';
 import '../../data/calendar_repository.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
@@ -33,16 +33,17 @@ void showAddEventDialog(
     builder: (context) {
       return StatefulBuilder(
         builder: (context, setDialogState) {
+          final palette = AuraPalette.of(context);
           return AlertDialog(
-            backgroundColor: const Color(0xFF0F0C1B),
+            backgroundColor: palette.surface,
             surfaceTintColor: Colors.transparent,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(20),
-              side: const BorderSide(color: Color(0x1F94A3B8)),
+              side: BorderSide(color: palette.border),
             ),
-            title: const Text(
-              'Create Calendar Event',
-              style: TextStyle(color: Colors.white),
+            title: Text(
+              context.l10n.calendarCreateEventTitle,
+              style: TextStyle(color: palette.textPrimary),
             ),
             content: SingleChildScrollView(
               child: SizedBox(
@@ -52,47 +53,47 @@ void showAddEventDialog(
                   children: [
                     TextField(
                       controller: titleController,
-                      decoration: const InputDecoration(
-                        labelText: 'Event Title',
-                        hintText: 'e.g. Team Standup',
+                      decoration: InputDecoration(
+                        labelText: context.l10n.calendarEventTitleLabel,
+                        hintText: context.l10n.calendarEventTitleHint,
                       ),
-                      style: const TextStyle(color: Colors.white),
+                      style: TextStyle(color: palette.textPrimary),
                     ),
                     const SizedBox(height: 16),
                     TextField(
                       controller: descController,
                       maxLines: 3,
-                      decoration: const InputDecoration(
-                        labelText: 'Description (Optional)',
-                        hintText: 'Enter event details',
+                      decoration: InputDecoration(
+                        labelText: context.l10n.calendarEventDescriptionLabel,
+                        hintText: context.l10n.calendarEventDescriptionHint,
                       ),
-                      style: const TextStyle(color: Colors.white),
+                      style: TextStyle(color: palette.textPrimary),
                     ),
                     const SizedBox(height: 16),
                     Material(
                       type: MaterialType.transparency,
                       child: ListTile(
                         contentPadding: EdgeInsets.zero,
-                        leading: const Icon(
+                        leading: Icon(
                           Icons.access_time,
-                          color: AuraTheme.accentIndigo,
+                          color: palette.brandOnSurfaceText,
                         ),
-                        title: const Text(
-                          'Start Time',
-                          style: TextStyle(fontSize: 14),
+                        title: Text(
+                          context.l10n.calendarStartTime,
+                          style: const TextStyle(fontSize: 14),
                         ),
                         subtitle: Text(
                           DateFormat('yyyy-MM-dd HH:mm').format(startDate),
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: palette.textPrimary,
                             fontSize: 13,
                           ),
                         ),
                         trailing: IconButton(
                           tooltip: context.l10n.eventChangeStart,
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.edit,
-                            color: AuraTheme.textSecondary,
+                            color: palette.textSecondary,
                           ),
                           onPressed: () async {
                             final date = await showDatePicker(
@@ -135,26 +136,26 @@ void showAddEventDialog(
                       type: MaterialType.transparency,
                       child: ListTile(
                         contentPadding: EdgeInsets.zero,
-                        leading: const Icon(
+                        leading: Icon(
                           Icons.access_time_filled,
-                          color: AuraTheme.accentAmber,
+                          color: palette.warning,
                         ),
-                        title: const Text(
-                          'End Time',
-                          style: TextStyle(fontSize: 14),
+                        title: Text(
+                          context.l10n.calendarEndTime,
+                          style: const TextStyle(fontSize: 14),
                         ),
                         subtitle: Text(
                           DateFormat('yyyy-MM-dd HH:mm').format(endDate),
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: palette.textPrimary,
                             fontSize: 13,
                           ),
                         ),
                         trailing: IconButton(
                           tooltip: context.l10n.eventChangeEnd,
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.edit,
-                            color: AuraTheme.textSecondary,
+                            color: palette.textSecondary,
                           ),
                           onPressed: () async {
                             final date = await showDatePicker(
@@ -195,9 +196,9 @@ void showAddEventDialog(
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text(
-                  'Cancel',
-                  style: TextStyle(color: AuraTheme.textSecondary),
+                child: Text(
+                  context.l10n.cancel,
+                  style: TextStyle(color: palette.textSecondary),
                 ),
               ),
               ElevatedButton(
@@ -216,14 +217,14 @@ void showAddEventDialog(
                   if (context.mounted) {
                     Navigator.pop(context);
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Event created successfully!'),
-                        backgroundColor: AuraTheme.accentTeal,
+                      SnackBar(
+                        content: Text(context.l10n.calendarEventCreated),
+                        backgroundColor: palette.success,
                       ),
                     );
                   }
                 },
-                child: const Text('Create'),
+                child: Text(context.l10n.calendarCreate),
               ),
             ],
           );

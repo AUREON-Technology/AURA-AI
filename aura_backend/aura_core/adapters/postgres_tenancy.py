@@ -22,7 +22,7 @@ from .postgres_store import PostgresPool
 __all__ = ["PostgresTenancyStore"]
 
 _WS = "id, kind, name, created_by, created_at"
-_MEMBER = "workspace_id, user_id, role, invited_by, joined_at"
+_MEMBER = "workspace_id, user_id, role, invited_by, joined_at, email"
 _INVITE = (
     "invite_id, workspace_id, email, role, digest, created_by, created_at, expires_at, "
     "accepted_at, accepted_by"
@@ -45,7 +45,7 @@ def _workspace(row: Mapping[str, Any]) -> Workspace:
 def _member(row: Mapping[str, Any]) -> Membership:
     return Membership(
         workspace_id=row["workspace_id"], user_id=row["user_id"], role=WorkspaceRole(row["role"]),
-        joined_at=_utc(row["joined_at"]), invited_by=row["invited_by"],
+        joined_at=_utc(row["joined_at"]), invited_by=row["invited_by"], email=row["email"],
     )
 
 
@@ -80,8 +80,9 @@ class PostgresTenancyStore:
                         ws.id, ws.kind.value, ws.name, ws.created_by, ws.created_at, personal_owner,
                     )
                     await conn.execute(
-                        f"INSERT INTO aura_workspace_members ({_MEMBER}) VALUES ($1, $2, $3, $4, $5)",
+                        f"INSERT INTO aura_workspace_members ({_MEMBER}) VALUES ($1, $2, $3, $4, $5, $6)",
                         owner.workspace_id, owner.user_id, owner.role.value, owner.invited_by, owner.joined_at,
+                        owner.email,
                     )
             except asyncpg.UniqueViolationError as exc:
                 raise ConflictError("this workspace already exists, or this person already has a personal one") from exc
@@ -111,7 +112,7 @@ class PostgresTenancyStore:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT w.id, w.kind, w.name, w.created_by, w.created_at, "
-                "m.workspace_id, m.user_id, m.role, m.invited_by, m.joined_at "
+                "m.workspace_id, m.user_id, m.role, m.invited_by, m.joined_at, m.email "
                 "FROM aura_workspace_members m JOIN aura_workspaces w ON w.id = m.workspace_id "
                 "WHERE m.user_id = $1 ORDER BY w.created_at, w.id",
                 user_id,
@@ -142,9 +143,9 @@ class PostgresTenancyStore:
         async with pool.acquire() as conn:
             await ensure_user_id(conn, m.user_id)
             status = await conn.execute(
-                f"INSERT INTO aura_workspace_members ({_MEMBER}) VALUES ($1, $2, $3, $4, $5) "
+                f"INSERT INTO aura_workspace_members ({_MEMBER}) VALUES ($1, $2, $3, $4, $5, $6) "
                 "ON CONFLICT (workspace_id, user_id) DO NOTHING",
-                m.workspace_id, m.user_id, m.role.value, m.invited_by, m.joined_at,
+                m.workspace_id, m.user_id, m.role.value, m.invited_by, m.joined_at, m.email,
             )
         if status.rsplit(" ", 1)[-1] != "1":
             raise ConflictError("already a member of this workspace")
@@ -237,7 +238,7 @@ class PostgresTenancyStore:
         return status.rsplit(" ", 1)[-1] == "1"
 
     async def accept_invite(
-        self, invite_id: str, *, user_id: str, at: datetime, seat_limit: int
+        self, invite_id: str, *, user_id: str, at: datetime, seat_limit: int, email: str | None = None
     ) -> Membership:
         pool = await self._conn()
         async with pool.acquire() as conn:
@@ -266,11 +267,13 @@ class PostgresTenancyStore:
                 )
                 if seats >= seat_limit:
                     raise ConflictError("this workspace has no free seats")
-                member = Membership(invite.workspace_id, user_id, invite.role, at, invited_by=invite.created_by)
+                member = Membership(invite.workspace_id, user_id, invite.role, at, invited_by=invite.created_by,
+                                    email=email or invite.email)
                 await ensure_user_id(conn, user_id)
                 await conn.execute(
-                    f"INSERT INTO aura_workspace_members ({_MEMBER}) VALUES ($1, $2, $3, $4, $5)",
+                    f"INSERT INTO aura_workspace_members ({_MEMBER}) VALUES ($1, $2, $3, $4, $5, $6)",
                     member.workspace_id, member.user_id, member.role.value, member.invited_by, member.joined_at,
+                    member.email,
                 )
                 await conn.execute(
                     "UPDATE aura_workspace_invites SET accepted_at = $2, accepted_by = $3 WHERE invite_id = $1",

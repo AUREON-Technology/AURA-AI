@@ -34,6 +34,9 @@ class HostdStatusSnapshot {
     this.backendUrl,
     this.roots = const [],
     this.error,
+    this.credentialsRejected = false,
+    this.lastCloseCode,
+    this.remoteControl = false,
   });
 
   /// Whether the control server answered at all -- false means `aura_hostd run` isn't up (or
@@ -57,6 +60,61 @@ class HostdStatusSnapshot {
   final String? backendUrl;
   final List<HostdRoot> roots;
   final String? error;
+
+  /// The backend refused the daemon's stored token (WebSocket close 4401: expired, revoked, or
+  /// the account lacks the Engineer role) and the daemon stopped reconnecting (audit INT-003).
+  /// `authenticated` stays true -- a token is still stored -- so without this the UI showed
+  /// "reconnecting..." forever and hid the Pair button. An older daemon that does not report the
+  /// field reads as `false`.
+  final bool credentialsRejected;
+
+  /// The close code of the daemon's most recent backend connection, when it reports one.
+  final int? lastCloseCode;
+
+  /// WP8 (D-10b): whether phone and web Engineer turns may use this computer. Off until the
+  /// person turns it on here; an `aura_hostd` too old to report the field has no remote control
+  /// at all, so it reads as off.
+  final bool remoteControl;
+
+  /// Running and holding a token the backend will no longer accept: only pairing again helps.
+  bool get needsRepair => reachable && credentialsRejected;
+
+  /// Whether a Pair action should be offered: never paired, or paired with a refused token.
+  bool get canPair => reachable && (!authenticated || credentialsRejected);
+
+  /// Whether the daemon holds a pairing for a *different* server than [appBackendUrl], the one
+  /// this app is signed in to.
+  ///
+  /// The daemon keeps its own `config.json` (backend URL plus device token), written when it was
+  /// last paired, and keeps dialling that URL for as long as it runs. When the backend moves --
+  /// found live 2026-11-17, after the production backend moved to `api.aureon-ai.tech` -- a
+  /// daemon paired to the old host retries a dead address forever: the status bar said
+  /// "Reconnecting to server..." indefinitely and the Engineer reported it could not touch any
+  /// file. Nothing offered a way out, because Pair was only shown to an *unpaired* daemon. This is
+  /// the check that makes the difference visible, and re-pairing the way out.
+  ///
+  /// False when the daemon is not paired (nothing to be stale) or did not report its URL (an
+  /// older aura_hostd), so neither case raises a false alarm.
+  bool pairedToDifferentServer(String appBackendUrl) {
+    final daemonUrl = backendUrl;
+    if (!authenticated || daemonUrl == null || daemonUrl.trim().isEmpty) return false;
+    return !sameBackendServer(daemonUrl, appBackendUrl);
+  }
+}
+
+/// Whether two backend base URLs name the same server: same scheme, host and port, ignoring case,
+/// a trailing slash and an explicit default port. Anything that does not parse as a URL falls back
+/// to a trimmed, case-insensitive comparison rather than reporting a difference it cannot prove.
+bool sameBackendServer(String a, String b) {
+  final left = Uri.tryParse(a.trim());
+  final right = Uri.tryParse(b.trim());
+  if (left == null || right == null || !left.hasAuthority || !right.hasAuthority) {
+    String bare(String value) => value.trim().toLowerCase().replaceAll(RegExp(r'/+$'), '');
+    return bare(a) == bare(b);
+  }
+  return left.scheme.toLowerCase() == right.scheme.toLowerCase() &&
+      left.host.toLowerCase() == right.host.toLowerCase() &&
+      left.port == right.port;
 }
 
 final hostdControlClientProvider = Provider<HostdControlClient>((ref) {
@@ -106,6 +164,9 @@ HostdStatusSnapshot parseHostdStatusBody(Map<String, dynamic> body) {
     backendConnected: body['backend_connected'] as bool?,
     backendUrl: body['backend_url'] as String?,
     roots: roots,
+    credentialsRejected: body['credentials_rejected'] as bool? ?? false,
+    lastCloseCode: (body['last_close_code'] as num?)?.toInt(),
+    remoteControl: body['remote_control'] == true,
   );
 }
 

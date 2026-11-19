@@ -46,6 +46,9 @@ _REQUIRED_SUFFIXES = (
     "ALLOW_PROMPT_TRAINING",
     # ADR-033: what a slot needs to serve as the complexity-routed Claude provider.
     "POOLS", "SUPPORTS_REASONING", "COST_INPUT", "COST_OUTPUT",
+    # Module readiness WP6: the Engineer Claude slot's workload fence and per-user daily cap.
+    # Without these forwarded, a sensitive Claude slot boots unfenced and uncapped on the VPS.
+    "WORKLOADS", "USER_TPD",
 )
 _DEFAULT = re.compile(r"^\$\{[A-Z0-9_]+:-(.*)\}$")
 
@@ -149,10 +152,13 @@ def test_prod_and_dev_wire_the_slots_identically() -> None:
 def test_bootstrap_creates_every_slot_secret() -> None:
     script = _BOOTSTRAP.read_text(encoding="utf-8")
     for n in _SLOTS:
-        assert re.search(rf"^generate hosted{n}_api_key\b", script, re.M), (
-            f"bootstrap-secrets.sh does not create hosted{n}_api_key; docker compose would refuse "
-            "to start every service that mounts it"
-        )
+        # dev_ backs the same compose secret name in the dev stack (F46; pinned in
+        # test_dev_prod_secret_separation.py), so both files must exist.
+        for prefix in ("", "dev_"):
+            assert re.search(rf"^generate {prefix}hosted{n}_api_key\b", script, re.M), (
+                f"bootstrap-secrets.sh does not create {prefix}hosted{n}_api_key; docker compose "
+                "would refuse to start every service that mounts it"
+            )
 
 
 @pytest.mark.parametrize("n", _SLOTS)
@@ -209,3 +215,36 @@ def test_a_slot_can_be_the_complexity_routed_claude_provider(n: int, monkeypatch
     assert caps.third_party and not caps.is_local
     assert caps.pools == (ModelPool.REASONING,)
     assert caps.max_data_classification is DataClassification.INTERNAL
+
+
+@pytest.mark.parametrize("n", _SLOTS)
+def test_a_slot_can_be_the_engineer_claude_provider(n: int, monkeypatch) -> None:
+    """WP6 on the VPS: the runbook's Engineer lines reach the provider, fence and cap included."""
+    from aura_core.config.settings import ProviderConfig
+    from aura_core.domain.llm import DataClassification, ModelPool, WorkloadClass
+    from aura_core.llm import capabilities_from_config
+
+    env = _provider_services(_load(_COMPOSE["prod"]))["gateway"]["environment"]
+    dotenv = {
+        "KIND": "claude", "MODEL": "claude-opus-5-5", "POOLS": "coder",
+        "MAX_DATA_CLASSIFICATION": "sensitive", "WORKLOADS": "engineer", "USER_TPD": "400000",
+    }
+    for key, raw in env.items():
+        if not key.startswith(f"AURA_PROVIDER_HOSTED{n}_"):
+            continue
+        match = _DEFAULT.match(str(raw))
+        suffix = key.removeprefix(f"AURA_PROVIDER_HOSTED{n}_")
+        if suffix in dotenv:
+            # Forwarded from .env, not hard-coded: otherwise the operator's value is ignored.
+            assert match, f"{key} is not forwarded from .env: {raw!r}"
+            monkeypatch.setenv(key, dotenv[suffix])
+        else:
+            monkeypatch.setenv(key, match.group(1) if match else str(raw))
+    monkeypatch.setenv("AURA_ALLOW_CLAUDE_INFERENCE", "true")
+
+    config = ProviderConfig.from_env(f"hosted{n}")
+    caps = capabilities_from_config(config)
+    assert caps.workloads == frozenset({WorkloadClass.ENGINEER})
+    assert caps.max_data_classification is DataClassification.SENSITIVE
+    assert caps.pools == (ModelPool.CODER,)
+    assert config.user_tpd == 400_000
