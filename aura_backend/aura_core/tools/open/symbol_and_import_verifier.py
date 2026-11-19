@@ -1,6 +1,8 @@
 import ast
+import builtins
 import importlib
 import importlib.util
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
@@ -100,6 +102,7 @@ class SymbolAndImportVerifier:
                     "has_kwarg": node.args.kwarg is not None,
                     "defaults_count": len(node.args.defaults),
                 })
+                assigned.add(node.name)
             elif isinstance(node, ast.ClassDef):
                 methods = [
                     item.name
@@ -112,6 +115,7 @@ class SymbolAndImportVerifier:
                     "bases": [ast.unparse(b) for b in node.bases],
                     "methods": methods,
                 })
+                assigned.add(node.name)
             elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
                 assigned.add(node.id)
 
@@ -158,6 +162,75 @@ class SymbolAndImportVerifier:
             "attributes": attributes,
         }
 
+    @classmethod
+    def verify_undefined_names(cls, source_code: str) -> Dict[str, Any]:
+        """Detect referenced names that are neither built-in, imported, nor locally defined/bound."""
+        parsed = cls.parse_ast(source_code)
+        if not parsed["valid_syntax"]:
+            return {
+                "valid": False,
+                "error": parsed["error"],
+                "undefined_names": [],
+            }
+
+        tree: ast.AST = parsed["tree"]
+        builtin_names: Set[str] = set(dir(builtins))
+        known_names: Set[str] = set(builtin_names)
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    known_names.add(alias.asname or alias.name.split(".")[0])
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    known_names.add(alias.asname or alias.name)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                known_names.add(node.name)
+                for a in node.args.posonlyargs + node.args.args + node.args.kwonlyargs:
+                    known_names.add(a.arg)
+                if node.args.vararg:
+                    known_names.add(node.args.vararg.arg)
+                if node.args.kwarg:
+                    known_names.add(node.args.kwarg.arg)
+            elif isinstance(node, ast.ClassDef):
+                known_names.add(node.name)
+            elif isinstance(node, ast.ExceptHandler) and node.name:
+                known_names.add(node.name)
+            elif isinstance(node, (ast.For, ast.AsyncFor)):
+                for n in ast.walk(node.target):
+                    if isinstance(n, ast.Name):
+                        known_names.add(n.id)
+            elif isinstance(node, (ast.With, ast.AsyncWith)):
+                for item in node.items:
+                    if item.optional_vars:
+                        for n in ast.walk(item.optional_vars):
+                            if isinstance(n, ast.Name):
+                                known_names.add(n.id)
+            elif isinstance(node, ast.comprehension):
+                for n in ast.walk(node.target):
+                    if isinstance(n, ast.Name):
+                        known_names.add(n.id)
+            elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+                known_names.add(node.id)
+
+        undefined: List[Dict[str, Any]] = []
+        seen = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                if node.id not in known_names:
+                    key = (node.id, getattr(node, "lineno", 0))
+                    if key not in seen:
+                        seen.add(key)
+                        undefined.append({
+                            "name": node.id,
+                            "line": getattr(node, "lineno", 0),
+                        })
+
+        return {
+            "valid": len(undefined) == 0,
+            "undefined_names": undefined,
+        }
+
     @staticmethod
     def _extract_root_name(node: ast.AST) -> Optional[str]:
         """Resolve the base identifier of a chained attribute expression."""
@@ -201,7 +274,7 @@ class SymbolAndImportVerifier:
         source_code: str,
         search_paths: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Verify imported modules and imported attributes actually exist in the runtime environment."""
+        """Verify imported modules and imported attributes/submodules actually exist in runtime."""
         imp_data = cls.extract_imports(source_code)
         if not imp_data["valid_syntax"]:
             return {
@@ -214,43 +287,58 @@ class SymbolAndImportVerifier:
         missing_modules: List[Dict[str, Any]] = []
         missing_symbols: List[Dict[str, Any]] = []
 
-        for item in imp_data["imports"]:
-            mod_name = item["module"]
-            res = cls.check_module_resolvable(mod_name, search_paths=search_paths)
-            if not res["resolvable"]:
-                missing_modules.append({
-                    "module": mod_name,
-                    "line": item["line"],
-                })
+        extra_paths = [p for p in (search_paths or []) if p not in sys.path]
+        sys.path[:0] = extra_paths
 
-        for item in imp_data["from_imports"]:
-            if item["level"] > 0 or item["name"] == "*":
-                continue
-            mod_name = item["module"]
-            sym_name = item["name"]
-            res = cls.check_module_resolvable(mod_name, search_paths=search_paths)
-            if not res["resolvable"]:
-                missing_modules.append({
-                    "module": mod_name,
-                    "line": item["line"],
-                })
-                continue
+        try:
+            for item in imp_data["imports"]:
+                mod_name = item["module"]
+                res = cls.check_module_resolvable(mod_name, search_paths=search_paths)
+                if not res["resolvable"]:
+                    missing_modules.append({
+                        "module": mod_name,
+                        "line": item["line"],
+                    })
 
-            try:
-                mod_obj = importlib.import_module(mod_name)
-                if not hasattr(mod_obj, sym_name):
+            for item in imp_data["from_imports"]:
+                if item["level"] > 0 or item["name"] == "*":
+                    continue
+                mod_name = item["module"]
+                sym_name = item["name"]
+                res = cls.check_module_resolvable(mod_name, search_paths=search_paths)
+                if not res["resolvable"]:
+                    missing_modules.append({
+                        "module": mod_name,
+                        "line": item["line"],
+                    })
+                    continue
+
+                submod_res = cls.check_module_resolvable(
+                    f"{mod_name}.{sym_name}",
+                    search_paths=search_paths,
+                )
+                if submod_res["resolvable"]:
+                    continue
+
+                try:
+                    mod_obj = importlib.import_module(mod_name)
+                    if not hasattr(mod_obj, sym_name):
+                        missing_symbols.append({
+                            "module": mod_name,
+                            "symbol": sym_name,
+                            "line": item["line"],
+                        })
+                except Exception as exc:
                     missing_symbols.append({
                         "module": mod_name,
                         "symbol": sym_name,
                         "line": item["line"],
+                        "import_error": str(exc),
                     })
-            except Exception as exc:
-                missing_symbols.append({
-                    "module": mod_name,
-                    "symbol": sym_name,
-                    "line": item["line"],
-                    "import_error": str(exc),
-                })
+        finally:
+            for p in reversed(extra_paths):
+                if p in sys.path:
+                    sys.path.remove(p)
 
         return {
             "valid": len(missing_modules) == 0 and len(missing_symbols) == 0,
@@ -306,6 +394,7 @@ class SymbolAndImportVerifier:
         check_runtime_imports: bool = False,
         search_paths: Optional[List[str]] = None,
         expected_arities: Optional[Dict[str, Dict[str, int]]] = None,
+        check_undefined_names: bool = True,
     ) -> Dict[str, Any]:
         """Unified verification entry point for syntax, symbols, imports, and call arities."""
         defs = cls.extract_defined_symbols(source_code)
@@ -317,6 +406,7 @@ class SymbolAndImportVerifier:
                 "defined_classes": [],
                 "runtime_imports": None,
                 "arity_check": None,
+                "undefined_names_check": None,
             }
 
         runtime_res = None
@@ -333,10 +423,16 @@ class SymbolAndImportVerifier:
                 expected_arities=expected_arities,
             )
 
+        undef_res = None
+        if check_undefined_names:
+            undef_res = cls.verify_undefined_names(source_code)
+
         is_valid = True
         if runtime_res is not None and not runtime_res["valid"]:
             is_valid = False
         if arity_res is not None and not arity_res["valid"]:
+            is_valid = False
+        if undef_res is not None and not undef_res["valid"]:
             is_valid = False
 
         return {
@@ -345,4 +441,5 @@ class SymbolAndImportVerifier:
             "defined_classes": [c["name"] for c in defs["classes"]],
             "runtime_imports": runtime_res,
             "arity_check": arity_res,
+            "undefined_names_check": undef_res,
         }

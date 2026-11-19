@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Union
 
 
 class ASTCodeAnalyzer:
-    
+    """AST-based static analyzer for extracting Python module structure and metadata."""
 
     @staticmethod
     def _format_node(node: Optional[ast.AST]) -> Optional[str]:
@@ -126,6 +126,13 @@ class ASTCodeAnalyzer:
                 "annotation": cls._format_node(args.vararg.annotation),
                 "default": None,
             })
+        elif args.kwonlyargs:
+            params.append({
+                "name": "*",
+                "kind": "keyword_only_separator",
+                "annotation": None,
+                "default": None,
+            })
 
         for idx, kw_arg in enumerate(args.kwonlyargs):
             kw_default_node = args.kw_defaults[idx] if idx < len(args.kw_defaults) else None
@@ -145,13 +152,21 @@ class ASTCodeAnalyzer:
             })
 
         formatted_params: List[str] = []
-        for p in params:
+        posonly_count = len(args.posonlyargs)
+        for idx, p in enumerate(params):
+            if p["kind"] == "keyword_only_separator":
+                formatted_params.append("*")
+                continue
+
             part = p["name"]
             if p["annotation"]:
                 part += f": {p['annotation']}"
             if p["default"] is not None and p["kind"] not in ("var_positional", "var_keyword"):
                 part += f" = {p['default']}"
             formatted_params.append(part)
+
+            if posonly_count > 0 and idx == posonly_count - 1:
+                formatted_params.append("/")
 
         return_annotation = cls._format_node(node.returns)
         prefix = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
@@ -182,7 +197,7 @@ class ASTCodeAnalyzer:
 
     @classmethod
     def extract_classes(cls, tree: ast.Module, include_calls: bool = True) -> List[Dict[str, Any]]:
-        """استخراج الكلاسات، الوراثة، والـ methods والـ attributes الخاصة بكل كلاس."""
+        """Extract classes, inheritance, methods, and class attributes from a module AST."""
         classes: List[Dict[str, Any]] = []
 
         for node in tree.body:

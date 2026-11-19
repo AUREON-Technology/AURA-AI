@@ -7,11 +7,14 @@ class MermaidDiagramGenerator:
     """Mermaid diagram generator for code architecture, classes, flows, sequences, and schemas."""
 
     @staticmethod
-    def sanitize_identifier(name: str) -> str:
-        """Normalize an identifier so it is safe inside Mermaid diagrams."""
-        cleaned = re.sub(r"[^A-Za-z0-9_]", "_", name.strip())
+    def sanitize_identifier(name: Optional[str]) -> str:
+        """Normalize an identifier so it is safe inside Mermaid diagrams; returns '' if empty."""
+        if not name or not str(name).strip():
+            return ""
+        cleaned = re.sub(r"[^A-Za-z0-9_]", "_", str(name).strip())
+        cleaned = re.sub(r"_+", "_", cleaned).strip("_")
         if not cleaned:
-            return "Node"
+            return ""
         if cleaned[0].isdigit():
             cleaned = f"N_{cleaned}"
         return cleaned
@@ -19,7 +22,17 @@ class MermaidDiagramGenerator:
     @staticmethod
     def escape_label(text: str) -> str:
         """Escape quotes and line breaks for safe Mermaid labels."""
-        return text.replace('"', "'").replace("\n", " ").strip()
+        return text.replace('"', "'").replace("\r", " ").replace("\n", " ").strip()
+
+    @staticmethod
+    def _sanitize_token(value: Optional[str], allowed_pattern: str, fallback: str) -> str:
+        """Sanitize structural tokens like arrows or cardinalities to prevent line injection."""
+        if not value:
+            return fallback
+        cleaned = str(value).replace("\r", "").replace("\n", "").strip()
+        if re.fullmatch(allowed_pattern, cleaned):
+            return cleaned
+        return fallback
 
     @classmethod
     def extract_structure_from_source(cls, source_code: str) -> Dict[str, Any]:
@@ -94,15 +107,15 @@ class MermaidDiagramGenerator:
 
         for cname in class_names or []:
             safe_name = cls.sanitize_identifier(cname)
-            if safe_name not in seen_classes:
+            if safe_name and safe_name not in seen_classes:
                 lines.append(f"    class {safe_name}")
                 seen_classes.add(safe_name)
 
         for detail in class_details or []:
             raw_name = detail.get("name", "")
-            if not raw_name:
-                continue
             safe_name = cls.sanitize_identifier(raw_name)
+            if not safe_name:
+                continue
             seen_classes.add(safe_name)
             members: List[str] = []
             for attr in detail.get("attributes", []):
@@ -121,7 +134,7 @@ class MermaidDiagramGenerator:
             tgt = cls.sanitize_identifier(rel.get("target", ""))
             if not src or not tgt:
                 continue
-            rel_type = rel.get("type", "-->")
+            rel_type = cls._sanitize_token(rel.get("type"), r"[<>|\-o.*()]+", "-->")
             label = rel.get("label")
             if label:
                 lines.append(f"    {src} {rel_type} {tgt} : {cls.escape_label(str(label))}")
@@ -166,6 +179,8 @@ class MermaidDiagramGenerator:
 
         for node in nodes:
             node_id = cls.sanitize_identifier(node.get("id", ""))
+            if not node_id:
+                continue
             label = cls.escape_label(node.get("label", node_id))
             shape = node.get("shape", "rect")
             if shape == "round":
@@ -200,15 +215,17 @@ class MermaidDiagramGenerator:
         lines: List[str] = ["sequenceDiagram"]
         for p in participants:
             safe_p = cls.sanitize_identifier(p)
-            lines.append(f"    participant {safe_p}")
+            if safe_p:
+                lines.append(f"    participant {safe_p}")
 
         for msg in messages:
             sender = cls.sanitize_identifier(msg.get("from", ""))
             receiver = cls.sanitize_identifier(msg.get("to", ""))
+            if not sender or not receiver:
+                continue
             text = cls.escape_label(msg.get("text", ""))
-            arrow = msg.get("arrow", "->>")
-            if sender and receiver:
-                lines.append(f"    {sender}{arrow}{receiver}: {text}")
+            arrow = cls._sanitize_token(msg.get("arrow"), r"[-x<>o]+", "->>")
+            lines.append(f"    {sender}{arrow}{receiver}: {text}")
 
         return "\n".join(lines)
 
@@ -223,11 +240,13 @@ class MermaidDiagramGenerator:
 
         for entity_name, fields in entities.items():
             safe_entity = cls.sanitize_identifier(entity_name)
+            if not safe_entity:
+                continue
             lines.append(f"    {safe_entity} {{")
             for field in fields:
-                f_type = cls.sanitize_identifier(field.get("type", "string"))
-                f_name = cls.sanitize_identifier(field.get("name", "id"))
-                key = field.get("key", "")
+                f_type = cls.sanitize_identifier(field.get("type", "string")) or "string"
+                f_name = cls.sanitize_identifier(field.get("name", "id")) or "id"
+                key = cls._sanitize_token(field.get("key"), r"(?:PK|FK|UK)", "")
                 if key:
                     lines.append(f"        {f_type} {f_name} {key}")
                 else:
@@ -237,21 +256,23 @@ class MermaidDiagramGenerator:
         for rel in relationships or []:
             e1 = cls.sanitize_identifier(rel.get("left", ""))
             e2 = cls.sanitize_identifier(rel.get("right", ""))
-            card = rel.get("cardinality", "||--o{")
+            if not e1 or not e2:
+                continue
+            card = cls._sanitize_token(rel.get("cardinality"), r"[|o}{.\-]{2,5}", "||--o{")
             label = cls.escape_label(rel.get("label", "relates"))
-            if e1 and e2:
-                lines.append(f'    {e1} {card} {e2} : "{label}"')
+            lines.append(f'    {e1} {card} {e2} : "{label}"')
 
         return "\n".join(lines)
 
     @staticmethod
     def validate_mermaid_syntax(diagram_code: str) -> Dict[str, Any]:
-        """Basic structural syntax validation for generated Mermaid diagrams."""
+        """Structural syntax validation for generated Mermaid diagrams."""
         stripped = diagram_code.strip()
         if not stripped:
             return {"valid": False, "error": "Empty Mermaid diagram."}
 
-        first_line = stripped.splitlines()[0].strip()
+        lines = stripped.splitlines()
+        first_line = lines[0].strip()
         valid_headers = (
             "classDiagram",
             "sequenceDiagram",
@@ -266,11 +287,23 @@ class MermaidDiagramGenerator:
                 "error": f"Unsupported or missing Mermaid diagram header: '{first_line}'",
             }
 
-        brace_balance = stripped.count("{") - stripped.count("}")
-        if brace_balance != 0:
+        block_depth = 0
+        for line in lines[1:]:
+            s = line.strip()
+            if s.endswith("{"):
+                block_depth += 1
+            elif s == "}":
+                block_depth -= 1
+                if block_depth < 0:
+                    return {
+                        "valid": False,
+                        "error": f"Unbalanced closing brace in diagram (depth={block_depth}).",
+                    }
+
+        if block_depth != 0:
             return {
                 "valid": False,
-                "error": f"Unbalanced curly braces in diagram (balance={brace_balance}).",
+                "error": f"Unbalanced curly braces in diagram (depth={block_depth}).",
             }
 
-        return {"valid": True, "header": first_line, "line_count": len(stripped.splitlines())}
+        return {"valid": True, "header": first_line, "line_count": len(lines)}
