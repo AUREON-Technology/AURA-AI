@@ -1733,6 +1733,28 @@ class AppLocalizationsAr extends AppLocalizations {
   String get editorDiscard => 'تجاهل';
 
   @override
+  String get editorDiskChangedTitle => 'الملف اتغيّر على الجهاز';
+
+  @override
+  String editorDiskChangedBody(String title) {
+    return '\"$title\" اتغيّر برّه المحرر من ساعة ما فتحته. لو حفظت دلوقتي هتكتب فوق التغييرات دي.';
+  }
+
+  @override
+  String get editorOverwrite => 'اكتب فوقه';
+
+  @override
+  String get editorReloadFromDisk => 'حمّله تاني من الجهاز';
+
+  @override
+  String editorSaveFailed(String title, String error) {
+    return 'مقدرناش نحفظ $title: $error';
+  }
+
+  @override
+  String get editorNotEditable => 'الملف ده مينفعش يتعدّل لأنه معرفناش نفتحه.';
+
+  @override
   String get editorQuickOpenHint => 'اكتب عشان تدوّر على ملفات...';
 
   @override
@@ -2852,7 +2874,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get gitPullTooltip => 'Pull (fast-forward بس)';
 
   @override
-  String get gitPushTooltip => 'Push للـ Branch الحالي على الـ upstream بتاعه';
+  String get gitPushTooltip => 'Push (حسب إعدادات الـ git بتاعتك)';
 
   @override
   String get gitMerge => 'Merge';
@@ -2924,6 +2946,11 @@ class AppLocalizationsAr extends AppLocalizations {
   String get gitNothingStaged => 'مفيش حاجة متعملها Stage علشان تعمل Commit.';
 
   @override
+  String gitBranchExists(String branch) {
+    return 'فيه Branch اسمه \"$branch\" بالفعل. اختار اسم تاني، أو بدّل عليه من قايمة الـ Branches.';
+  }
+
+  @override
   String get gitCheckoutOverwrite => 'تغيير الـ Branch هيمسح تغييراتك المحلية.';
 
   @override
@@ -2932,7 +2959,8 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
-  String get gitNoUpstream => 'الـ Branch الحالي ملوش upstream.';
+  String get gitNoUpstream =>
+      'الـ Branch الحالي ملوش upstream. استخدم Publish Branch عشان تعمله Push.';
 
   @override
   String get gitDiverged =>
@@ -2948,6 +2976,52 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get gitRemoteSyncFailed => 'فشلت المزامنة مع الـ remote.';
+
+  @override
+  String get gitAuthFailed =>
+      'تسجيل الدخول للـ remote فشل. سجّل دخولك للـ remote ده من الـ terminal أو من مدير بيانات الاعتماد، وبعدين جرّب تاني.';
+
+  @override
+  String get gitPublishBranch => 'Publish Branch';
+
+  @override
+  String get gitPublishTooltip =>
+      'اعمل Push للـ Branch ده على remote وخليه الـ upstream بتاعه';
+
+  @override
+  String get gitPublishDialogTitle => 'Publish Branch';
+
+  @override
+  String gitPublishConfirm(String branch, String remote) {
+    return 'تنشر \"$branch\" على \"$remote\" وتخليه الـ upstream بتاع الـ Branch ده؟';
+  }
+
+  @override
+  String gitPublishChooseRemote(String branch) {
+    return 'تنشر \"$branch\" على أنهي remote؟ هيبقى هو الـ upstream بتاع الـ Branch ده.';
+  }
+
+  @override
+  String get gitPublishAction => 'انشر';
+
+  @override
+  String get gitNoRemote =>
+      'المشروع ده معندوش remote تنشر عليه. ضيف واحد الأول (git remote add).';
+
+  @override
+  String get gitPublishUnknownRemote => 'الـ remote ده مبقاش متظبط.';
+
+  @override
+  String get gitPublishDetachedHead =>
+      'اعمل Checkout لـ Branch الأول، الـ HEAD المنفصل مينفعش يتنشر.';
+
+  @override
+  String get gitPublishNoCommits =>
+      'اعمل أول Commit قبل ما تنشر الـ Branch ده.';
+
+  @override
+  String get gitPublishDiverged =>
+      'الـ remote فيه Branch تاني بنفس الاسم ومختلف عن بتاعك.';
 
   @override
   String get workspaceWelcomeSubtitle => 'افتح فولدر وابدأ تكتب كود مع AURA';

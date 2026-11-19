@@ -10,7 +10,7 @@ import 'package:aura_client/desktop/editor/editor_tab.dart';
 import 'package:aura_client/desktop/events/ide_event.dart';
 import 'package:aura_client/desktop/events/ide_event_bus.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
-import 'package:aura_client/desktop/workspace/workspace_file_service.dart';
+import 'package:aura_client/desktop/shell/desktop_actions.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
 class EditorTabBar extends ConsumerWidget {
@@ -88,11 +88,11 @@ class EditorTabBar extends ConsumerWidget {
     if (choice == null) return; // Cancel or dismissed — keep the tab open
 
     if (choice == _UnsavedChoice.save) {
-      final workspace = ref.read(workspaceNotifierProvider).activeWorkspace;
-      final content = notifier.contentFor(tab.id);
-      if (workspace != null && content != null) {
-        await WorkspaceFileService(workspace.rootPath).writeFile(tab.path, content);
-      }
+      // Close only once the text is on disk. A failed or declined save (a locked file, a file
+      // changed underneath, "Cancel") used to close the tab anyway, and the edits with it.
+      if (!context.mounted) return;
+      final saved = await saveEditorTab(ref, tab, context: context);
+      if (!saved) return;
     }
     await notifier.closeTab(tab.id, force: true);
   }

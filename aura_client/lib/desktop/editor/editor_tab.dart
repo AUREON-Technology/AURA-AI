@@ -21,7 +21,12 @@ class EditorTab {
     this.selection,
     required this.lastAccessed,
     this.languageId,
+    this.revision = 0,
   });
+
+  /// Bumped when the buffer is replaced from outside the editor (a reload from disk), so the
+  /// editor view -- keyed on it -- is rebuilt around the new text instead of keeping the old.
+  final int revision;
 
   /// Unique tab identifier.
   final String id;
@@ -64,6 +69,7 @@ class EditorTab {
     EditorSelection? selection,
     DateTime? lastAccessed,
     String? languageId,
+    int? revision,
   }) {
     return EditorTab(
       id: id ?? this.id,
@@ -76,6 +82,7 @@ class EditorTab {
       selection: selection ?? this.selection,
       lastAccessed: lastAccessed ?? this.lastAccessed,
       languageId: languageId ?? this.languageId,
+      revision: revision ?? this.revision,
     );
   }
 
@@ -89,10 +96,11 @@ class EditorTab {
           title == other.title &&
           isDirty == other.isDirty &&
           isPinned == other.isPinned &&
-          lastAccessed == other.lastAccessed;
+          lastAccessed == other.lastAccessed &&
+          revision == other.revision;
 
   @override
-  int get hashCode => Object.hash(id, path, title, isDirty, isPinned, lastAccessed);
+  int get hashCode => Object.hash(id, path, title, isDirty, isPinned, lastAccessed, revision);
 
   @override
   String toString() => 'EditorTab(id: $id, path: $path, title: $title, isDirty: $isDirty, isPinned: $isPinned)';

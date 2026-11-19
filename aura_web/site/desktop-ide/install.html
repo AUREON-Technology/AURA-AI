@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Install AURA Desktop IDE</title>
+  <meta name="description" content="Download the AURA Desktop IDE setup file for Windows. It always installs the newest build.">
+  <meta name="color-scheme" content="dark light">
+  <link rel="icon" href="/desktop-ide/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/desktop-ide/assets/install.css">
+  <script src="/desktop-ide/assets/install.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-row">
+      <a class="brand" href="/desktop-ide/install" aria-label="AURA Desktop IDE">
+        <img src="/desktop-ide/assets/favicon.svg" width="28" height="28" alt="">
+        <span>AURA</span>
+      </a>
+      <span class="tag">Desktop IDE</span>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="hero">
+      <p class="eyebrow">Windows 10 / 11 &middot; 64-bit</p>
+      <h1>Install AURA Desktop IDE</h1>
+      <p class="lede">One small setup file. Every time you run it, it installs the newest build &mdash; so the copy you download today still installs tomorrow&rsquo;s version.</p>
+      <div class="cta">
+        <a class="btn" id="download" href="/desktop-ide/download/AURA-Desktop-Setup.cmd" download>
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M4 20h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Download setup file
+        </a>
+        <span class="file">AURA-Desktop-Setup.cmd</span>
+      </div>
+      <p class="platform-note" id="platform-note" hidden>This device does not look like Windows. AURA Desktop IDE is Windows-only for now &mdash; open this page on your Windows PC.</p>
+    </section>
+
+    <section aria-labelledby="steps">
+      <h2 id="steps">How it works</h2>
+      <ol class="steps">
+        <li>
+          <h3>Download</h3>
+          <p>Save <code>AURA-Desktop-Setup.cmd</code>. Your browser may ask you to confirm keeping it &mdash; that is normal for script files.</p>
+        </li>
+        <li>
+          <h3>Run it</h3>
+          <p>Double-click the file. If Windows says it protected your PC, choose <strong>More info</strong>, then <strong>Run anyway</strong>: the setup file is not code-signed yet.</p>
+        </li>
+        <li>
+          <h3>Done</h3>
+          <p>It finds the newest build, downloads it, checks its SHA-256 checksum and starts the installer. No administrator rights needed.</p>
+        </li>
+      </ol>
+    </section>
+
+    <section class="callout" aria-labelledby="access">
+      <h2 id="access">Early access</h2>
+      <p>While AURA&rsquo;s source repository is private, setup needs a GitHub account that can read it. Install the <a href="https://cli.github.com/" rel="noopener">GitHub CLI</a> and run <code>gh auth login</code> once &mdash; setup picks the sign-in up by itself. Alternatively set an <code>AURA_GITHUB_TOKEN</code> environment variable.</p>
+    </section>
+
+    <section aria-labelledby="update">
+      <h2 id="update">Updating</h2>
+      <p>Run the same setup file again whenever you want the latest version. If you already have it, setup says so and stops; it only reinstalls when there is something newer (or with <code>-Force</code>).</p>
+    </section>
+
+    <section aria-labelledby="verify">
+      <h2 id="verify">Verify your download</h2>
+      <p>The SHA-256 checksum of the file offered above:</p>
+      <div class="code" data-copy>
+        <code id="sha">__SETUP_SHA256__</code>
+        <button type="button" class="copy" aria-label="Copy checksum">Copy</button>
+      </div>
+      <p>Compare it with your download in PowerShell:</p>
+      <div class="code" data-copy>
+        <code>Get-FileHash .\AURA-Desktop-Setup.cmd -Algorithm SHA256</code>
+        <button type="button" class="copy" aria-label="Copy command">Copy</button>
+      </div>
+    </section>
+
+    <section aria-labelledby="options">
+      <h2 id="options">Command-line options</h2>
+      <p>Run the file from a terminal to use these:</p>
+      <table>
+        <thead><tr><th>Option</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td><code>-Silent</code></td><td>Install without the installer window.</td></tr>
+          <tr><td><code>-Force</code></td><td>Reinstall even if you are already on the newest build.</td></tr>
+          <tr><td><code>-DownloadOnly</code></td><td>Download and verify the installer, but do not run it.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section aria-labelledby="requirements">
+      <h2 id="requirements">Good to know</h2>
+      <ul class="plain">
+        <li>Needs 64-bit Windows 10 or 11 and an internet connection.</li>
+        <li>If the Microsoft Visual C++ runtime is missing, setup installs it first (Windows asks once for permission).</li>
+        <li>The Engineer agent works on Git repositories. If Git is not installed, setup suggests <code>winget install Git.Git</code>.</li>
+        <li>To remove AURA: <strong>Settings &rarr; Apps &rarr; AURA AI &rarr; Uninstall</strong>.</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="wrap foot">
+    <span>AURA AI</span>
+  </footer>
+</body>
+</html>

@@ -102,6 +102,56 @@ class _GitPanelState extends ConsumerState<GitPanel> {
     await ref.read(gitNotifierProvider.notifier).checkout(name, create: true);
   }
 
+  /// "Publish branch" (decision D-01): reads the remotes, has the person confirm which remote the
+  /// checked-out branch goes to (named in the dialog; a choice when there are several), then
+  /// pushes it there and makes it the branch's upstream. Nothing is sent until they confirm.
+  Future<void> _publishBranch() async {
+    final notifier = ref.read(gitNotifierProvider.notifier);
+    final branch = ref.read(gitNotifierProvider).branch;
+    if (branch == null) return;
+    final remotes = await notifier.loadRemotes();
+    if (remotes == null || remotes.isEmpty || !mounted) return;
+    final remote = await _confirmPublish(branch, remotes);
+    if (remote == null || !mounted) return;
+    await notifier.publish(remote);
+  }
+
+  /// The confirmation: one remote is named in the question; several are a radio choice (the first
+  /// pre-selected, `origin` when there is one). Returns the chosen remote, or null on cancel.
+  Future<String?> _confirmPublish(String branch, List<String> remotes) {
+    var selected = remotes.contains('origin') ? 'origin' : remotes.first;
+    return AuraDialog.show<String>(
+      context: context,
+      title: context.l10n.gitPublishDialogTitle,
+      child: remotes.length == 1
+          ? Text(context.l10n.gitPublishConfirm(branch, selected))
+          : StatefulBuilder(
+              builder: (context, setDialogState) => Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(context.l10n.gitPublishChooseRemote(branch)),
+                  RadioGroup<String>(
+                    groupValue: selected,
+                    onChanged: (value) {
+                      if (value != null) setDialogState(() => selected = value);
+                    },
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (final remote in remotes) RadioListTile<String>(value: remote, title: Text(remote)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+      confirmLabel: context.l10n.gitPublishAction,
+      cancelLabel: context.l10n.cancel,
+      onConfirm: () => Navigator.of(context).pop(selected),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
@@ -134,7 +184,10 @@ class _GitPanelState extends ConsumerState<GitPanel> {
     final staged = git.files.where((f) => f.staged).toList();
     final unstaged = git.files.where((f) => !f.staged).toList();
 
-    return Container(
+    // A Material rather than a coloured Container: the History ExpansionTile below paints its
+    // background and ink splashes on the nearest Material, which a ColoredBox would hide (and
+    // Flutter asserts about, in debug builds).
+    return Material(
       color: palette.surface,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -195,6 +248,23 @@ class _GitPanelState extends ConsumerState<GitPanel> {
               ],
             ),
           ),
+          // A branch with no upstream (e.g. one just created here) cannot be pushed as it is; this
+          // is the way to give it one (decision D-01).
+          if (git.branch != null && git.upstream == null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.md),
+              child: Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: Tooltip(
+                  message: context.l10n.gitPublishTooltip,
+                  child: TextButton.icon(
+                    icon: const Icon(Icons.cloud_upload_outlined, size: 16),
+                    label: Text(context.l10n.gitPublishBranch),
+                    onPressed: git.busy ? null : _publishBranch,
+                  ),
+                ),
+              ),
+            ),
           if (git.conflictedFiles.isNotEmpty)
             _ConflictBanner(
               conflictedFiles: git.conflictedFiles,

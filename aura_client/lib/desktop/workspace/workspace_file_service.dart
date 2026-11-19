@@ -24,12 +24,20 @@ class WorkspaceFileService {
     return file.readAsString();
   }
 
+  /// Whether a file exists at [relativePath] within the workspace.
+  bool fileExists(String relativePath) {
+    final resolvedPath = requireContainedClient(workspaceRoot, relativePath);
+    return File(resolvedPath).existsSync();
+  }
+
   /// Writes a file within the workspace.
+  ///
+  /// The parent folder must already exist. Saving used to create it (`recursive: true`), which
+  /// meant a file whose folder had been deleted or renamed outside the editor quietly brought the
+  /// old folder back with one file in it; a missing folder is now an error the caller shows.
   Future<void> writeFile(String relativePath, String content) async {
     final resolvedPath = requireContainedClient(workspaceRoot, relativePath);
-    final file = File(resolvedPath);
-    await file.parent.create(recursive: true);
-    await file.writeAsString(content);
+    await File(resolvedPath).writeAsString(content);
   }
 
   /// Renames or moves a file or directory within the workspace. [isDirectory] picks the right
@@ -39,6 +47,15 @@ class WorkspaceFileService {
   Future<void> rename(String oldRelativePath, String newRelativePath, {required bool isDirectory}) async {
     final oldResolved = requireContainedClient(workspaceRoot, oldRelativePath);
     final newResolved = requireContainedClient(workspaceRoot, newRelativePath);
+    // `File.rename` / `Directory.rename` replace an existing file on both Windows and POSIX, so
+    // renaming `a.txt` to `b.txt` used to delete `b.txt` without a word. Refuse instead. The one
+    // exception is a path that is the same entry once resolved (a case-only rename on Windows
+    // resolves to the existing spelling), which is not a collision.
+    final sameEntry = oldResolved == newResolved ||
+        (Platform.isWindows && oldResolved.toLowerCase() == newResolved.toLowerCase());
+    if (!sameEntry && FileSystemEntity.typeSync(newResolved, followLinks: false) != FileSystemEntityType.notFound) {
+      throw FileSystemException('A file or folder with that name already exists', newResolved);
+    }
     if (isDirectory) {
       await Directory(oldResolved).rename(newResolved);
     } else {

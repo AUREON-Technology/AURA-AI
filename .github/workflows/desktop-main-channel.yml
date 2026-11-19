@@ -1,0 +1,239 @@
+name: Desktop Main Channel
+
+# The "always the latest main" desktop installer. Every push to main that touches the desktop app
+# or its daemon builds the Windows installer (aura_hostd bundled, exactly as desktop-package.yml
+# does) and publishes it to ONE rolling GitHub pre-release, tag `desktop-main`, replacing the
+# previous build. scripts/AURA-Desktop-Setup.cmd looks that release up when a person runs it, so
+# whoever installs after a merge gets that merge.
+#
+# What this is NOT:
+# - It is not the update channel installed apps read. That is desktop-package.yml's signed
+#   desktop-v<version> releases, marked "latest". This release is a pre-release and is never marked
+#   latest, so `releases/latest/download/desktop-update.json` is unaffected. The tag name must not
+#   start with `desktop-v`, or it would trigger that workflow.
+# - It is not gated like a release: no `release` environment, because it holds no signing key and
+#   changes nothing an installed app trusts. A main build is exactly as trustworthy as main (which
+#   the Railway auto-deploy already ships ungated). Authenticode signing is applied when the same
+#   AURA_WINDOWS_SIGNING_* secrets desktop-package.yml uses exist.
+#
+# Published assets (stable names, so a link never changes):
+#   aura-desktop-main.json               commit, version, installer name + SHA-256 (stable name)
+#   AURA-Desktop-Setup.cmd               the setup file itself (stable name)
+#   aura-desktop-windows-x64-main-<sha7>-setup.exe   the full installer; only the current one is kept
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "aura_client/**"
+      - "aura_hostd/**"
+      - "scripts/AURA-Desktop-Setup.cmd"
+      - ".github/workflows/desktop-main-channel.yml"
+  workflow_dispatch:
+    inputs:
+      backend_url:
+        description: "Backend URL to bake into the build"
+        required: false
+        default: "https://api.aureon-ai.tech"
+
+permissions:
+  contents: read
+
+# Queue, never cancel: a run cancelled halfway through publishing could leave the release with a
+# new installer and an old manifest. GitHub keeps only the newest waiting run.
+concurrency:
+  group: desktop-main-channel
+  cancel-in-progress: false
+
+env:
+  BACKEND_URL: ${{ github.event.inputs.backend_url || 'https://api.aureon-ai.tech' }}
+  APP_BASE_URL: ${{ vars.APP_BASE_URL || '' }}
+  UPDATE_MANIFEST_URL: https://github.com/${{ github.repository }}/releases/latest/download/desktop-update.json
+  CHANNEL_TAG: desktop-main
+
+jobs:
+  build-and-publish:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.44.6"
+
+      - name: Read the app version
+        id: version
+        run: |
+          $line = Select-String -Path aura_client/pubspec.yaml -Pattern '^version:\s*(\S+)' | Select-Object -First 1
+          $version = ($line.Matches[0].Groups[1].Value -split '\+')[0]
+          $short = $env:GITHUB_SHA.Substring(0, 7)
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "display=$version-main.$short" >> $env:GITHUB_OUTPUT
+          "installer_base=aura-desktop-windows-x64-main-$short-setup" >> $env:GITHUB_OUTPUT
+
+      - name: Compile aura_hostd
+        working-directory: aura_hostd
+        run: |
+          dart pub get
+          # `dart compile exe` does not create the output directory.
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+          dart compile exe bin/aura_hostd.dart -o build/aura_hostd.exe
+
+      # AURA_APP_VERSION is the plain pubspec version and the manifest URL is the stable channel's:
+      # to the in-app update check this build is that version, so it is offered the next signed
+      # desktop-v release as usual and never a main build.
+      - name: Build the Windows release
+        working-directory: aura_client
+        run: |
+          flutter config --enable-windows-desktop
+          flutter pub get
+          dart run build_runner build --delete-conflicting-outputs
+          flutter build windows --release --dart-define=BACKEND_URL=$env:BACKEND_URL `
+            --dart-define=APP_BASE_URL=$env:APP_BASE_URL `
+            --dart-define=AURA_APP_VERSION=${{ steps.version.outputs.version }} `
+            --dart-define=AURA_UPDATE_MANIFEST_URL=$env:UPDATE_MANIFEST_URL
+
+      - name: Bundle aura_hostd next to the app
+        run: Copy-Item aura_hostd/build/aura_hostd.exe aura_client/build/windows/x64/runner/Release/
+
+      # No arguments prints usage and exits 64 (bin/aura_hostd.dart): proof the bundled binary
+      # starts at all, without connecting anywhere.
+      - name: Check the bundled daemon runs
+        run: |
+          & aura_client/build/windows/x64/runner/Release/aura_hostd.exe *> $null
+          if ($LASTEXITCODE -ne 64) { throw "aura_hostd exited $LASTEXITCODE, expected 64 (usage)" }
+          # Actions ends a pwsh step with `exit $LASTEXITCODE`; the 64 was the expected answer.
+          $global:LASTEXITCODE = 0
+
+      - name: Detect signing secrets
+        id: signing
+        env:
+          CERT_B64: ${{ secrets.AURA_WINDOWS_SIGNING_CERT }}
+          CERT_PASSWORD: ${{ secrets.AURA_WINDOWS_SIGNING_PASSWORD }}
+        run: |
+          if ($env:CERT_B64 -and $env:CERT_PASSWORD) {
+            "enabled=true" >> $env:GITHUB_OUTPUT
+          } else {
+            "enabled=false" >> $env:GITHUB_OUTPUT
+            Write-Host "::notice::No Windows signing certificate configured; building unsigned."
+          }
+
+      - name: Sign the executables
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          CERT_B64: ${{ secrets.AURA_WINDOWS_SIGNING_CERT }}
+          CERT_PASSWORD: ${{ secrets.AURA_WINDOWS_SIGNING_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_B64))
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' | Sort-Object FullName | Select-Object -Last 1
+          $release = 'aura_client/build/windows/x64/runner/Release'
+          foreach ($exe in "$release/aura_client.exe", "$release/aura_hostd.exe") {
+            & $signtool.FullName sign /f $pfx /p $env:CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $exe
+            if ($LASTEXITCODE -ne 0) { throw "signing $exe failed" }
+          }
+          Remove-Item $pfx
+
+      # /F overrides OutputBaseFilename: the installer's name carries the commit, so a new build
+      # is uploaded NEXT TO the previous one and the manifest (which names it) switches over only
+      # afterwards. The version shown in "Apps & features" carries the commit too.
+      - name: Build the installer
+        run: |
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          $release = (Resolve-Path aura_client/build/windows/x64/runner/Release).Path
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $dist = (Resolve-Path dist).Path
+          & $iscc "/DAppVersion=${{ steps.version.outputs.display }}" "/DSourceDir=$release" "/DOutputDir=$dist" "/F${{ steps.version.outputs.installer_base }}" aura_client/windows/installer/aura.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+          if (-not (Test-Path "dist/${{ steps.version.outputs.installer_base }}.exe")) { throw "ISCC did not write dist/${{ steps.version.outputs.installer_base }}.exe" }
+
+      - name: Sign the installer
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          CERT_B64: ${{ secrets.AURA_WINDOWS_SIGNING_CERT }}
+          CERT_PASSWORD: ${{ secrets.AURA_WINDOWS_SIGNING_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_B64))
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' | Sort-Object FullName | Select-Object -Last 1
+          & $signtool.FullName sign /f $pfx /p $env:CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "dist/${{ steps.version.outputs.installer_base }}.exe"
+          if ($LASTEXITCODE -ne 0) { throw "signing the installer failed" }
+          Remove-Item $pfx
+
+      # Computed AFTER signing: signing changes the file's bytes, and the setup file verifies
+      # exactly what is published.
+      - name: Write the build manifest
+        run: |
+          $installer = Get-Item "dist/${{ steps.version.outputs.installer_base }}.exe"
+          $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
+          [ordered]@{
+            schema         = 1
+            channel        = 'main'
+            commit         = $env:GITHUB_SHA
+            version        = '${{ steps.version.outputs.display }}'
+            pubspecVersion = '${{ steps.version.outputs.version }}'
+            builtAt        = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+            installer      = [ordered]@{ name = $installer.Name; sha256 = $hash; size = $installer.Length }
+          } | ConvertTo-Json -Depth 4 | Set-Content -Path dist/aura-desktop-main.json -Encoding utf8
+          Copy-Item scripts/AURA-Desktop-Setup.cmd dist/AURA-Desktop-Setup.cmd
+          Get-Content dist/aura-desktop-main.json
+          Get-ChildItem dist
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aura-desktop-main-windows-x64
+          path: dist/
+          retention-days: 14
+
+      # Move the tag to this commit, make sure the release exists as a pre-release that is NOT
+      # latest, then replace its assets in place (--clobber): the release is never absent, so a
+      # person installing mid-publish gets the previous complete build, not a 404.
+      - name: Publish to the rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git tag -f $env:CHANNEL_TAG $env:GITHUB_SHA
+          git push --force origin "refs/tags/$env:CHANNEL_TAG"
+          if ($LASTEXITCODE -ne 0) { throw "could not move the $env:CHANNEL_TAG tag" }
+
+          $notes = @(
+            "Rolling build of ``main`` -- replaced on every push that changes the desktop app.",
+            "",
+            "- Commit: $env:GITHUB_SHA",
+            "- Version: ${{ steps.version.outputs.display }}",
+            "",
+            "Install: download ``AURA-Desktop-Setup.cmd`` and run it. It always fetches the newest build from this release. See docs/guides/desktop-releases.md."
+          ) -join "`n"
+          Set-Content -Path release-notes.md -Value $notes -Encoding utf8
+
+          gh release view $env:CHANNEL_TAG --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release edit $env:CHANNEL_TAG --repo $env:GITHUB_REPOSITORY --prerelease --latest=false --notes-file release-notes.md
+          } else {
+            gh release create $env:CHANNEL_TAG --repo $env:GITHUB_REPOSITORY --prerelease --latest=false --verify-tag `
+              --title "AURA Desktop (main, rolling)" --notes-file release-notes.md
+          }
+          if ($LASTEXITCODE -ne 0) { throw "could not create or update the $env:CHANNEL_TAG release" }
+
+          # 1. The new installer, beside the old one. Nothing a reader follows points at it yet.
+          gh release upload $env:CHANNEL_TAG --repo $env:GITHUB_REPOSITORY --clobber "dist/${{ steps.version.outputs.installer_base }}.exe"
+          if ($LASTEXITCODE -ne 0) { throw "could not upload the installer" }
+          # 2. The manifest and the setup file: the switch-over, after the installer it names exists.
+          gh release upload $env:CHANNEL_TAG --repo $env:GITHUB_REPOSITORY --clobber dist/aura-desktop-main.json dist/AURA-Desktop-Setup.cmd
+          if ($LASTEXITCODE -ne 0) { throw "could not upload the manifest" }
+          # 3. Old installers, now unreferenced. Best effort: a leftover is harmless clutter.
+          $current = "${{ steps.version.outputs.installer_base }}.exe"
+          $assets = gh release view $env:CHANNEL_TAG --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name'
+          foreach ($name in $assets) {
+            if ($name -like 'aura-desktop-windows-x64-*-setup.exe' -and $name -ne $current) {
+              gh release delete-asset $env:CHANNEL_TAG $name --repo $env:GITHUB_REPOSITORY --yes
+            }
+          }
+          $global:LASTEXITCODE = 0

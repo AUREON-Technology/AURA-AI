@@ -736,6 +736,122 @@ void main() {
     expect((body['commits'] as List).single['subject'], 'initial');
   });
 
+  group('remote sync routes: /git/remotes, fetch, pull, push, publish', () {
+    String rootQuery() => Uri.encodeComponent(workspaceRoot);
+
+    Future<Directory> addBareOrigin() async {
+      final remote = Directory.systemTemp.createTempSync('aura_hostd_control_test_origin_');
+      addTearDown(() => remote.deleteSync(recursive: true));
+      await Process.run('git', ['init', '-q', '--bare', '-b', 'main'], workingDirectory: remote.path);
+      await Process.run('git', ['remote', 'add', 'origin', remote.path], workingDirectory: workspaceDir.path);
+      return remote;
+    }
+
+    test('every one needs the control token', () async {
+      for (final (method, path, body) in [
+        ('GET', '/git/remotes?root=$workspaceRoot', null),
+        ('POST', '/git/fetch', {'root': workspaceRoot}),
+        ('POST', '/git/pull', {'root': workspaceRoot}),
+        ('POST', '/git/push', {'root': workspaceRoot}),
+        ('POST', '/git/publish', {'root': workspaceRoot, 'remote': 'origin'}),
+      ]) {
+        final (status, response) = await client.request(method, path, body: body, withToken: false);
+        expect(status, 401, reason: '$method $path');
+        expect(response['code'], HostdErrorCode.unauthorized, reason: '$method $path');
+      }
+    });
+
+    test('a missing root is a 400, and a folder that was never granted is a 404', () async {
+      for (final path in ['/git/fetch', '/git/pull', '/git/push', '/git/publish']) {
+        final (status, body) = await client.request('POST', path, body: {'remote': 'origin'});
+        expect(status, 400, reason: path);
+        expect(body['code'], HostdErrorCode.missingParameter, reason: path);
+
+        final (notGranted, refused) = await client.request(
+          'POST',
+          path,
+          body: {'root': Directory.systemTemp.path, 'remote': 'origin'},
+        );
+        expect(notGranted, 404, reason: path);
+        expect(refused['code'], HostdErrorCode.rootNotGranted, reason: path);
+      }
+      final (noRoot, _) = await client.request('GET', '/git/remotes');
+      expect(noRoot, 400);
+      final (otherRoot, other) =
+          await client.request('GET', '/git/remotes?root=${Uri.encodeComponent(Directory.systemTemp.path)}');
+      expect(otherRoot, 404);
+      expect(other['code'], HostdErrorCode.rootNotGranted);
+    });
+
+    test('publish needs the name of a remote', () async {
+      await initGitRepo();
+      for (final body in <Map<String, Object?>>[
+        {'root': workspaceRoot},
+        {'root': workspaceRoot, 'remote': ''},
+        {'root': workspaceRoot, 'remote': 7},
+      ]) {
+        final (status, response) = await client.request('POST', '/git/publish', body: body);
+        expect(status, 400, reason: '$body');
+        expect(response['code'], HostdErrorCode.missingParameter, reason: '$body');
+      }
+    });
+
+    test('a folder that is not a git repository is a clean 409 on every one', () async {
+      for (final (method, path, body) in [
+        ('GET', '/git/remotes?root=${rootQuery()}', null),
+        ('POST', '/git/fetch', {'root': workspaceRoot}),
+        ('POST', '/git/pull', {'root': workspaceRoot}),
+        ('POST', '/git/push', {'root': workspaceRoot}),
+        ('POST', '/git/publish', {'root': workspaceRoot, 'remote': 'origin'}),
+      ]) {
+        final (status, response) = await client.request(method, path, body: body);
+        expect(status, 409, reason: '$method $path');
+        expect(response['code'], HostdErrorCode.notAGitRepository, reason: '$method $path');
+      }
+    });
+
+    test('a purely local repository: fetch is a no-op, pull and push say there is no upstream', () async {
+      await initGitRepo();
+
+      final (remotesStatus, remotes) = await client.request('GET', '/git/remotes?root=${rootQuery()}');
+      expect(remotesStatus, 200);
+      expect(remotes['remotes'], isEmpty);
+
+      final (fetchStatus, fetched) = await client.request('POST', '/git/fetch', body: {'root': workspaceRoot});
+      expect(fetchStatus, 200);
+      expect(fetched['ok'], true);
+
+      for (final path in ['/git/pull', '/git/push']) {
+        final (status, body) = await client.request('POST', path, body: {'root': workspaceRoot});
+        expect(status, 409, reason: 'an expected outcome carries its body, not a bare error: $path');
+        expect(body, {'ok': false, 'reason': 'no_upstream'}, reason: path);
+      }
+
+      final (publishStatus, published) =
+          await client.request('POST', '/git/publish', body: {'root': workspaceRoot, 'remote': 'origin'});
+      expect(publishStatus, 409);
+      expect(published, {'ok': false, 'reason': 'unknown_remote'});
+    });
+
+    test('publish pushes the checked-out branch and the remote then has it', () async {
+      await initGitRepo();
+      final origin = await addBareOrigin();
+
+      final (_, remotes) = await client.request('GET', '/git/remotes?root=${rootQuery()}');
+      expect(remotes['remotes'], ['origin']);
+
+      final (status, body) =
+          await client.request('POST', '/git/publish', body: {'root': workspaceRoot, 'remote': 'origin'});
+
+      expect(status, 200);
+      expect(body, {'ok': true, 'branch': 'main', 'remote': 'origin'});
+      final onRemote = await Process.run('git', ['rev-parse', 'refs/heads/main'], workingDirectory: origin.path);
+      expect(onRemote.exitCode, 0);
+      final (_, gitStatus) = await client.request('GET', '/git/status?root=${rootQuery()}');
+      expect(gitStatus['upstream'], 'origin/main');
+    });
+  });
+
   test('POST /git/stage then /git/commit runs a real commit reflecting only what was staged', () async {
     await initGitRepo();
     File('${workspaceDir.path}/hello.txt').writeAsStringSync('staged change');

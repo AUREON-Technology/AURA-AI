@@ -2344,6 +2344,43 @@
   "@editorDiscard": {
     "description": "IDE editor: close the tab without saving"
   },
+  "editorDiskChangedTitle": "File changed on disk",
+  "@editorDiskChangedTitle": {
+    "description": "IDE editor: save dialog title when the file on disk differs from the one that was opened"
+  },
+  "editorDiskChangedBody": "\"{title}\" was changed outside the editor since you opened it. Saving now would overwrite those changes.",
+  "@editorDiskChangedBody": {
+    "description": "IDE editor: save dialog body; title is the file name",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "editorOverwrite": "Overwrite",
+  "@editorOverwrite": {
+    "description": "IDE editor: save my version over the changed file on disk"
+  },
+  "editorReloadFromDisk": "Reload from disk",
+  "@editorReloadFromDisk": {
+    "description": "IDE editor: throw away my edits and load the file as it is on disk"
+  },
+  "editorSaveFailed": "Could not save {title}: {error}",
+  "@editorSaveFailed": {
+    "description": "IDE editor: saving the file failed",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      },
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "editorNotEditable": "This file can't be edited because it could not be opened.",
+  "@editorNotEditable": {
+    "description": "IDE editor: shown instead of the editor when the file failed to load, so nothing typed can overwrite it"
+  },
   "editorQuickOpenHint": "Type to search files...",
   "@editorQuickOpenHint": {
     "description": "IDE quick open (Ctrl+P): search field hint"
@@ -3879,7 +3916,7 @@
   "@gitPullTooltip": {
     "description": "Git panel: pull button tooltip"
   },
-  "gitPushTooltip": "Push current branch to its upstream",
+  "gitPushTooltip": "Push (follows your git configuration)",
   "@gitPushTooltip": {
     "description": "Git panel: push button tooltip"
   },
@@ -3964,6 +4001,15 @@
   "@gitNothingStaged": {
     "description": "Git panel error: commit with nothing staged"
   },
+  "gitBranchExists": "A branch named \"{branch}\" already exists. Choose another name, or switch to it from the branch list.",
+  "@gitBranchExists": {
+    "description": "Git panel error: Create branch refused because a local branch with that name exists",
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      }
+    }
+  },
   "gitCheckoutOverwrite": "Switching branches would overwrite local changes.",
   "@gitCheckoutOverwrite": {
     "description": "Git panel error: checkout blocked by local changes"
@@ -3977,7 +4023,7 @@
       }
     }
   },
-  "gitNoUpstream": "The current branch has no upstream set.",
+  "gitNoUpstream": "The current branch has no upstream set. Use Publish branch to push it.",
   "@gitNoUpstream": {
     "description": "Git panel error (daemon reason no_upstream)"
   },
@@ -4001,6 +4047,67 @@
   "gitRemoteSyncFailed": "Remote sync failed.",
   "@gitRemoteSyncFailed": {
     "description": "Git panel error: any other pull/push failure"
+  },
+  "gitAuthFailed": "Signing in to the remote failed. Sign in to this remote in your terminal or credential manager, then try again.",
+  "@gitAuthFailed": {
+    "description": "Git panel error (daemon reason auth_failed): the remote refused or never received the person's existing git credentials; AURA never asks for or stores them"
+  },
+  "gitPublishBranch": "Publish branch",
+  "@gitPublishBranch": {
+    "description": "Git panel: button shown when the current branch has no upstream"
+  },
+  "gitPublishTooltip": "Push this branch to a remote and set it as the upstream",
+  "@gitPublishTooltip": {
+    "description": "Git panel: Publish branch button tooltip"
+  },
+  "gitPublishDialogTitle": "Publish branch",
+  "@gitPublishDialogTitle": {
+    "description": "Git panel: Publish branch dialog title"
+  },
+  "gitPublishConfirm": "Publish \"{branch}\" to \"{remote}\" and use it as this branch's upstream?",
+  "@gitPublishConfirm": {
+    "description": "Git panel: Publish branch confirmation when the repository has exactly one remote",
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      },
+      "remote": {
+        "type": "String"
+      }
+    }
+  },
+  "gitPublishChooseRemote": "Publish \"{branch}\" to which remote? It will become this branch's upstream.",
+  "@gitPublishChooseRemote": {
+    "description": "Git panel: Publish branch dialog when the repository has several remotes",
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      }
+    }
+  },
+  "gitPublishAction": "Publish",
+  "@gitPublishAction": {
+    "description": "Git panel: Publish branch dialog confirm button"
+  },
+  "gitNoRemote": "This repository has no remote to publish to. Add one first (git remote add).",
+  "@gitNoRemote": {
+    "description": "Git panel error: Publish branch with no configured remote"
+  },
+  "gitPublishUnknownRemote": "That remote is no longer configured.",
+  "@gitPublishUnknownRemote": {
+    "description": "Git panel error (daemon reason unknown_remote)"
+  },
+  "gitPublishDetachedHead": "Check out a branch first; a detached HEAD cannot be published.",
+  "@gitPublishDetachedHead": {
+    "description": "Git panel error (daemon reason detached_head)"
+  },
+  "gitPublishNoCommits": "Make a first commit before publishing this branch.",
+  "@gitPublishNoCommits": {
+    "description": "Git panel error (daemon reason no_commits)"
+  },
+  "gitPublishDiverged": "The remote already has a different branch with this name.",
+  "@gitPublishDiverged": {
+    "description": "Git panel error: Publish branch rejected because the remote already has that branch name with other commits"
   },
   "workspaceWelcomeSubtitle": "Open a folder to start coding with AURA",
   "@workspaceWelcomeSubtitle": {

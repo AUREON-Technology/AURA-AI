@@ -1,0 +1,5 @@
+# Build context is the repository root (see Dockerfile). Send only what the image copies.
+*
+!aura_web/site
+!aura_web/nginx
+!scripts/AURA-Desktop-Setup.cmd
