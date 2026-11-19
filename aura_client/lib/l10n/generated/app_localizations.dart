@@ -5045,7 +5045,7 @@ abstract class AppLocalizations {
   /// Git panel: push button tooltip
   ///
   /// In en, this message translates to:
-  /// **'Push current branch to its upstream'**
+  /// **'Push (follows your git configuration)'**
   String get gitPushTooltip;
 
   /// Git panel: merge button
@@ -5177,7 +5177,7 @@ abstract class AppLocalizations {
   /// Git panel error (daemon reason no_upstream)
   ///
   /// In en, this message translates to:
-  /// **'The current branch has no upstream set.'**
+  /// **'The current branch has no upstream set. Use Publish branch to push it.'**
   String get gitNoUpstream;
 
   /// Git panel error (daemon reason diverged)
@@ -5203,6 +5203,78 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Remote sync failed.'**
   String get gitRemoteSyncFailed;
+
+  /// Git panel error (daemon reason auth_failed): the remote refused or never received the person's existing git credentials; AURA never asks for or stores them
+  ///
+  /// In en, this message translates to:
+  /// **'Signing in to the remote failed. Sign in to this remote in your terminal or credential manager, then try again.'**
+  String get gitAuthFailed;
+
+  /// Git panel: button shown when the current branch has no upstream
+  ///
+  /// In en, this message translates to:
+  /// **'Publish branch'**
+  String get gitPublishBranch;
+
+  /// Git panel: Publish branch button tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Push this branch to a remote and set it as the upstream'**
+  String get gitPublishTooltip;
+
+  /// Git panel: Publish branch dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'Publish branch'**
+  String get gitPublishDialogTitle;
+
+  /// Git panel: Publish branch confirmation when the repository has exactly one remote
+  ///
+  /// In en, this message translates to:
+  /// **'Publish \"{branch}\" to \"{remote}\" and use it as this branch\'s upstream?'**
+  String gitPublishConfirm(String branch, String remote);
+
+  /// Git panel: Publish branch dialog when the repository has several remotes
+  ///
+  /// In en, this message translates to:
+  /// **'Publish \"{branch}\" to which remote? It will become this branch\'s upstream.'**
+  String gitPublishChooseRemote(String branch);
+
+  /// Git panel: Publish branch dialog confirm button
+  ///
+  /// In en, this message translates to:
+  /// **'Publish'**
+  String get gitPublishAction;
+
+  /// Git panel error: Publish branch with no configured remote
+  ///
+  /// In en, this message translates to:
+  /// **'This repository has no remote to publish to. Add one first (git remote add).'**
+  String get gitNoRemote;
+
+  /// Git panel error (daemon reason unknown_remote)
+  ///
+  /// In en, this message translates to:
+  /// **'That remote is no longer configured.'**
+  String get gitPublishUnknownRemote;
+
+  /// Git panel error (daemon reason detached_head)
+  ///
+  /// In en, this message translates to:
+  /// **'Check out a branch first; a detached HEAD cannot be published.'**
+  String get gitPublishDetachedHead;
+
+  /// Git panel error (daemon reason no_commits)
+  ///
+  /// In en, this message translates to:
+  /// **'Make a first commit before publishing this branch.'**
+  String get gitPublishNoCommits;
+
+  /// Git panel error: Publish branch rejected because the remote already has that branch name with other commits
+  ///
+  /// In en, this message translates to:
+  /// **'The remote already has a different branch with this name.'**
+  String get gitPublishDiverged;
 
   /// Desktop IDE welcome page subtitle
   ///

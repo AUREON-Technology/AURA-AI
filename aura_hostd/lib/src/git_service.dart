@@ -91,10 +91,56 @@ class _GitResult {
   final String stderr;
 }
 
+/// Whether git's [stderr] says the remote refused or never got the person's credentials.
+///
+/// The daemon never prompts for, stores or supplies a credential (decision D-04): it relies on what
+/// the person's own git already has -- a credential helper, Git Credential Manager, an SSH agent --
+/// and when that is missing or rejected the panel says so (`auth_failed`) instead of showing git's
+/// raw message. Matched case-insensitively on the English text git prints; the remote operations
+/// run with [_englishMessages] so this does not depend on the machine's language.
+bool looksLikeGitAuthFailure(String stderr) {
+  final text = stderr.toLowerCase();
+  return const [
+    'authentication failed',
+    'could not read username',
+    'could not read password',
+    'terminal prompts disabled',
+    'permission denied (publickey',
+    'host key verification failed',
+    'returned error: 401',
+    'returned error: 403',
+    'invalid username or password',
+    'invalid credentials',
+    'support for password authentication was removed',
+    'logon failed',
+  ].any(text.contains);
+}
+
+/// [text] with the user-info of any `scheme://user:secret@host` URL replaced by `***`, so a remote
+/// whose URL carries a token never shows it in a message the panel prints.
+String scrubGitUrlCredentials(String text) =>
+    text.replaceAllMapped(RegExp(r'([A-Za-z][A-Za-z0-9+.\-]*://)[^/\s@]+@'), (m) => '${m[1]}***@');
+
+/// Git's own messages in English for every remote operation (decision R-01), whatever language the
+/// machine is set to: `no_upstream`, `diverged`, `would be overwritten` and the sign-in failures are
+/// recognised from that text. `LC_ALL` rather than `LANGUAGE`/`LC_MESSAGES` alone, because an
+/// `LC_ALL` already in the person's environment would otherwise win over both. The file names in
+/// those messages stay readable: the remote operations also run with `core.quotepath=false`.
+const _englishMessages = {'LC_ALL': 'C'};
+
+/// How long [GitService.fetch]/[GitService.pull]/[GitService.push]/[GitService.publish] may run
+/// before git is treated as hung and killed (decision D-02). Five minutes: a first pull of a large
+/// repository or a push over a slow link legitimately takes longer than the 30 seconds this used to
+/// be, and a retry of a killed transfer would only hit the same limit. Matches
+/// `HostGitService`'s 300 s on the server side, and is under the app's 10-minute wait
+/// (`hostdLongRequestTimeout`), so the daemon's own message -- which names the limit -- is what the
+/// person sees.
+const defaultGitNetworkTimeout = Duration(seconds: 300);
+
 class GitService {
-  /// [networkTimeout] bounds [fetch]/[pull]/[push] (see [_runNetwork]'s doc comment) --
-  /// overridable so a test can exercise the timeout-and-kill path deterministically without
-  /// waiting out a real 30-second hang.
+  /// [networkTimeout] bounds [fetch]/[pull]/[push]/[publish] (see [_runNetwork]'s doc comment) --
+  /// [defaultGitNetworkTimeout] unless overridden, so a test can exercise the timeout-and-kill path
+  /// deterministically without waiting out a real five-minute hang.
   ///
   /// [localTimeout] bounds the WP4 git-init steps (`git add -A` of a large folder can take a
   /// while; the backend gives the whole `init_git` call 60 seconds). [environment] is added to
@@ -112,7 +158,7 @@ class GitService {
   /// with it. `IsolatedTaskRegistry` passes nothing: `git worktree add` for an agent task runs no
   /// `post-checkout` hook, trusted folder or not, since no human started it.
   GitService({
-    Duration networkTimeout = const Duration(seconds: 30),
+    Duration networkTimeout = defaultGitNetworkTimeout,
     Duration localTimeout = const Duration(seconds: 45),
     Map<String, String> environment = const {},
     bool Function(String cwd)? runsRepositoryPrograms,
@@ -122,6 +168,9 @@ class GitService {
         _runsRepositoryPrograms = runsRepositoryPrograms ?? _never;
 
   final Duration _networkTimeout;
+
+  /// The limit [fetch]/[pull]/[push]/[publish] run under.
+  Duration get networkTimeout => _networkTimeout;
   final Duration _localTimeout;
   final Map<String, String> _environment;
   final bool Function(String cwd) _runsRepositoryPrograms;
@@ -389,25 +438,39 @@ class GitService {
     };
   }
 
+  /// The names of the configured remotes, in git's order. Throws [GitNotARepositoryError] outside a
+  /// repository.
+  Future<List<String>> _listRemotes(String cwd) async {
+    final result = await _run(cwd, ['remote']);
+    if (result.exitCode != 0) {
+      if (_looksLikeNotARepo(result.stderr)) throw GitNotARepositoryError('not a git repository');
+      throw GitCommandError('git remote failed: ${result.stderr}');
+    }
+    return const LineSplitter()
+        .convert(result.stdout)
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList();
+  }
+
+  /// The configured remotes -- what "Publish branch" offers the person to choose from.
+  Future<Map<String, Object?>> remotes(String cwd) async => {'remotes': await _listRemotes(cwd)};
+
   /// Fetches from every configured remote with pruning -- read-only with
   /// respect to the working tree (only remote-tracking branches move). A repo
   /// with no remotes is a clean no-op rather than an error, so the panel's
   /// Fetch button never fails on a purely local project.
+  ///
+  /// `--all`, not the remote names as arguments: `git fetch a b` fetches the ref `b` from remote
+  /// `a`, so passing every remote's name failed outright in any repository with two remotes (a fork
+  /// with `origin` and `upstream`). A refused sign-in is the structured `auth_failed` result.
   Future<Map<String, Object?>> fetch(String cwd) async {
-    final remotesResult = await _run(cwd, ['remote']);
-    if (remotesResult.exitCode != 0) {
-      if (_looksLikeNotARepo(remotesResult.stderr)) throw GitNotARepositoryError('not a git repository');
-      throw GitCommandError('git remote failed: ${remotesResult.stderr}');
-    }
-    final remotes = const LineSplitter()
-        .convert(remotesResult.stdout)
-        .map((line) => line.trim())
-        .where((line) => line.isNotEmpty)
-        .toList();
+    final remotes = await _listRemotes(cwd);
     if (remotes.isEmpty) return {'ok': true, 'remotes': const <String>[]};
-    final result = await _runNetwork(cwd, ['fetch', '--prune', ...remotes]);
+    final result = await _runNetwork(cwd, ['fetch', '--all', '--prune']);
     if (result.exitCode != 0) {
       if (_looksLikeNotARepo(result.stderr)) throw GitNotARepositoryError('not a git repository');
+      if (looksLikeGitAuthFailure(result.stderr)) return {'ok': false, 'reason': 'auth_failed'};
       throw GitCommandError('git fetch failed: ${result.stderr}');
     }
     return {'ok': true, 'remotes': remotes};
@@ -434,16 +497,20 @@ class GitService {
       if (result.stderr.contains('Not possible to fast-forward')) {
         return {'ok': false, 'reason': 'diverged'};
       }
+      if (looksLikeGitAuthFailure(result.stderr)) return {'ok': false, 'reason': 'auth_failed'};
       throw GitCommandError('git pull failed: ${result.stderr}');
     }
     return {'ok': true};
   }
 
-  /// Pushes the current branch to its upstream with no refspec arguments --
-  /// there is deliberately no way to pass a refspec through this method, so a
-  /// caller can never redirect the push at another branch (the same class of
-  /// guard the server-side `git_push` tool enforces on its own path). Like
-  /// [pull], remote-moved and no-upstream states are structured results.
+  /// Runs the person's own `git push`: no refspec and never `--force`, so what goes where is
+  /// whatever their git configuration says (`push.default`, `remote.<name>.push`), exactly as in a
+  /// terminal (decision D-03). With git's default (`simple`) that is the checked-out branch to its
+  /// own upstream. A non-default configuration such as `push.default=matching` can send other
+  /// branches too -- an accepted, documented risk (AR-01), which is why the panel's tooltip says Push
+  /// follows the git configuration instead of promising "current branch only". The caller can pass
+  /// nothing to steer it. Like [pull], remote-moved, no-upstream and refused-sign-in states are
+  /// structured results; a branch with no upstream is published with [publish].
   Future<Map<String, Object?>> push(String cwd) async {
     final result = await _runNetwork(cwd, ['push']);
     if (result.exitCode != 0) {
@@ -456,9 +523,42 @@ class GitService {
       if (result.stderr.contains('non-fast-forward') || result.stderr.contains('fetch first')) {
         return {'ok': false, 'reason': 'diverged'};
       }
+      if (looksLikeGitAuthFailure(result.stderr)) return {'ok': false, 'reason': 'auth_failed'};
       throw GitCommandError('git push failed: ${result.stderr}');
     }
     return {'ok': true};
+  }
+
+  /// "Publish branch" (decision D-01): pushes the checked-out branch to [remote] under its own name
+  /// and makes that its upstream (`git push --set-upstream`). Both sides of the refspec are derived
+  /// from the current branch here, so the caller names only which remote -- it can never redirect the
+  /// push at another branch -- and [remote] must be one of [_listRemotes], so it can never be read as
+  /// an option or a URL. Never `--force`: a remote that already has a different branch of that name
+  /// is the structured `diverged`. The other expected outcomes are structured too: `unknown_remote`,
+  /// `detached_head`, `no_commits` and `auth_failed`.
+  Future<Map<String, Object?>> publish(String cwd, {required String remote}) async {
+    final remotes = await _listRemotes(cwd);
+    if (!remotes.contains(remote)) return {'ok': false, 'reason': 'unknown_remote'};
+
+    final head = await _run(cwd, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+    final branch = head.stdout.trim();
+    if (head.exitCode != 0 || branch.isEmpty) return {'ok': false, 'reason': 'detached_head'};
+    final commit = await _run(cwd, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
+    if (commit.exitCode != 0) return {'ok': false, 'reason': 'no_commits'};
+
+    final ref = 'refs/heads/$branch';
+    final result = await _runNetwork(cwd, ['push', '--set-upstream', '--', remote, '$ref:$ref']);
+    if (result.exitCode != 0) {
+      if (_looksLikeNotARepo(result.stderr)) throw GitNotARepositoryError('not a git repository');
+      if (result.stderr.contains('non-fast-forward') ||
+          result.stderr.contains('fetch first') ||
+          result.stderr.contains('[rejected]')) {
+        return {'ok': false, 'reason': 'diverged'};
+      }
+      if (looksLikeGitAuthFailure(result.stderr)) return {'ok': false, 'reason': 'auth_failed'};
+      throw GitCommandError('git push failed: ${result.stderr}');
+    }
+    return {'ok': true, 'branch': branch, 'remote': remote};
   }
 
   /// D8 Part B: creates a `git worktree` for one isolated agent task, sharing [cwd]'s object
@@ -682,7 +782,7 @@ class GitService {
     }
   }
 
-  /// [fetch]/[pull]/[push] talk to a remote, so unlike every other command in this file they can
+  /// [fetch]/[pull]/[push]/[publish] talk to a remote, so unlike every other command in this file they can
   /// block on something outside this machine: a slow/unresponsive server, or -- absent
   /// [_gitEnvironment]'s `GIT_TERMINAL_PROMPT=0` -- git itself blocking on a username/password
   /// prompt this headless daemon has no way to answer. [_run]/[Process.run] has no timeout of its
@@ -690,13 +790,42 @@ class GitService {
   /// this uses [Process.start] instead specifically so a timeout can actually [Process.kill] it,
   /// rather than merely giving up on waiting for it while it keeps running (and keeps the repo's
   /// `.git/index.lock`, if any) in the background.
-  Future<_GitResult> _runNetwork(String cwd, List<String> args) => _runBounded(cwd, args, _networkTimeout);
+  ///
+  /// Runs in English ([_englishMessages]) with unquoted file names, so the structured outcomes
+  /// above can be recognised on any machine, and returns output with the user-info of any URL
+  /// masked ([scrubGitUrlCredentials]) -- it ends up in a message the person reads.
+  Future<_GitResult> _runNetwork(String cwd, List<String> args) async {
+    final result = await _runBounded(
+      cwd,
+      args,
+      _networkTimeout,
+      globalArgs: const ['-c', 'core.quotepath=false'],
+      extraEnvironment: _englishMessages,
+    );
+    return _GitResult(
+      exitCode: result.exitCode,
+      stdout: scrubGitUrlCredentials(result.stdout),
+      stderr: scrubGitUrlCredentials(result.stderr),
+    );
+  }
 
   /// [args] run with a [timeout] after which git (and, on Windows, its child) is killed and
   /// [GitCommandError] thrown -- [_runNetwork]'s mechanism, also used for WP4's local steps.
-  Future<_GitResult> _runBounded(String cwd, List<String> args, Duration timeout) async {
-    final process =
-        await Process.start('git', _argv(cwd, args), workingDirectory: cwd, environment: _environment);
+  /// [globalArgs] go before the verb (and stay out of the timeout message); [extraEnvironment] is
+  /// added to every git process's environment for this one call.
+  Future<_GitResult> _runBounded(
+    String cwd,
+    List<String> args,
+    Duration timeout, {
+    List<String> globalArgs = const [],
+    Map<String, String> extraEnvironment = const {},
+  }) async {
+    final process = await Process.start(
+      'git',
+      _argv(cwd, [...globalArgs, ...args]),
+      workingDirectory: cwd,
+      environment: {..._environment, ...extraEnvironment},
+    );
     final stdoutBytes = process.stdout.fold<List<int>>(<int>[], (acc, chunk) => acc..addAll(chunk));
     final stderrBytes = process.stderr.fold<List<int>>(<int>[], (acc, chunk) => acc..addAll(chunk));
     int exitCode;

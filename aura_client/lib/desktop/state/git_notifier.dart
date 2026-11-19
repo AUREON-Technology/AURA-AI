@@ -170,11 +170,15 @@ class GitNotifier extends StateNotifier<GitState> {
   /// once `git status` no longer shows unmerged paths.
   Future<void> abortMerge() => _write(() => _hostdClient.gitMergeAbort(root: _rootPath!));
 
-  /// Human-only remote sync -- fetch is read-only w.r.t. the working tree,
-  /// pull is fast-forward-only, push sends the checked-out branch to its own
-  /// upstream (the daemon takes no refspec). All three refresh status on
-  /// success via [_write]; structured daemon failures become panel errors.
-  Future<void> fetch() => _write(() => _hostdClient.gitFetch(root: _rootPath!));
+  /// Human-only remote sync -- fetch is read-only w.r.t. the working tree (every remote, pruned),
+  /// pull is fast-forward-only, push runs the person's own `git push` (the daemon takes no
+  /// refspec, so what it sends follows their git configuration like a terminal's -- decision D-03).
+  /// All of them refresh status on success via [_write]; structured daemon failures (no upstream,
+  /// diverged, sign-in refused, ...) become panel errors.
+  Future<void> fetch() => _write(() async {
+        final result = await _hostdClient.gitFetch(root: _rootPath!);
+        if (result['ok'] == false) _applySyncFailure(result);
+      });
 
   Future<void> pull() => _write(() async {
         final result = await _hostdClient.gitPull(root: _rootPath!);
@@ -186,15 +190,48 @@ class GitNotifier extends StateNotifier<GitState> {
         if (result['ok'] == false) _applySyncFailure(result);
       });
 
+  /// The configured remotes' names, for "Publish branch" (decision D-01) to offer, or null when they
+  /// could not be read -- the reason is then in [GitState.error]. Empty means the repository has no
+  /// remote: the panel says so ([GitState.error] is set too) rather than opening an empty picker.
+  Future<List<String>?> loadRemotes() async {
+    final root = _rootPath;
+    if (root == null) return null;
+    try {
+      final result = await _hostdClient.gitRemotes(root: root);
+      final remotes = ((result['remotes'] as List?) ?? const []).cast<String>();
+      if (remotes.isEmpty) state = state.copyWith(error: currentL10n.gitNoRemote);
+      return remotes;
+    } on HostdControlError catch (error) {
+      state = state.copyWith(error: error.message);
+    } on HostdControlUnavailable catch (error) {
+      state = state.copyWith(error: error.message);
+    }
+    return null;
+  }
+
+  /// "Publish branch" (decision D-01): pushes the checked-out branch to [remote] under its own name
+  /// and makes it the branch's upstream. The panel has already shown the person which remote and
+  /// branch and had them confirm; this is the one place that runs it. Never forces.
+  Future<void> publish(String remote) => _write(() async {
+        final result = await _hostdClient.gitPublish(root: _rootPath!, remote: remote);
+        if (result['ok'] == false) _applySyncFailure(result, publishing: true);
+      });
+
   /// Maps the daemon's snake_case `reason` code to the panel's message. No BuildContext here, so
-  /// [currentL10n]: the error is shown as soon as it is set.
-  void _applySyncFailure(Map<String, dynamic> result) {
+  /// [currentL10n]: the error is shown as soon as it is set. [publishing] is for "Publish branch",
+  /// where `diverged` means the remote already has a different branch of that name, not that a
+  /// pull or push cannot fast-forward.
+  void _applySyncFailure(Map<String, dynamic> result, {bool publishing = false}) {
     final l10n = currentL10n;
     final affected = ((result['affected_files'] as List?) ?? const []).join(', ');
     state = state.copyWith(
       error: switch (result['reason']) {
         'no_upstream' => l10n.gitNoUpstream,
-        'diverged' => l10n.gitDiverged,
+        'diverged' => publishing ? l10n.gitPublishDiverged : l10n.gitDiverged,
+        'auth_failed' => l10n.gitAuthFailed,
+        'unknown_remote' => l10n.gitPublishUnknownRemote,
+        'detached_head' => l10n.gitPublishDetachedHead,
+        'no_commits' => l10n.gitPublishNoCommits,
         'local_changes_would_be_overwritten' => affected.isEmpty
             ? l10n.gitLocalChangesOverwritten
             : l10n.gitLocalChangesOverwrittenIn(affected),
@@ -211,7 +248,12 @@ class GitNotifier extends StateNotifier<GitState> {
     state = state.copyWith(busy: true, clearError: true);
     try {
       await op();
+      // [refresh] replaces the whole state, so an error [op] just reported (a structured daemon
+      // failure such as no upstream, diverged, or a refused sign-in) would be wiped before the panel
+      // ever showed it. Keep it, unless refreshing failed for a reason of its own.
+      final reported = state.error;
       await refresh(_lastWorkspaceId!, _rootPath!);
+      if (reported != null && state.error == null) state = state.copyWith(error: reported);
     } on HostdControlError catch (error) {
       state = state.copyWith(busy: false, error: error.message);
       return;

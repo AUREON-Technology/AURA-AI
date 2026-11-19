@@ -2843,7 +2843,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get gitPullTooltip => 'Pull (fast-forward only)';
 
   @override
-  String get gitPushTooltip => 'Push current branch to its upstream';
+  String get gitPushTooltip => 'Push (follows your git configuration)';
 
   @override
   String get gitMerge => 'Merge';
@@ -2920,7 +2920,8 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get gitNoUpstream => 'The current branch has no upstream set.';
+  String get gitNoUpstream =>
+      'The current branch has no upstream set. Use Publish branch to push it.';
 
   @override
   String get gitDiverged =>
@@ -2937,6 +2938,52 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get gitRemoteSyncFailed => 'Remote sync failed.';
+
+  @override
+  String get gitAuthFailed =>
+      'Signing in to the remote failed. Sign in to this remote in your terminal or credential manager, then try again.';
+
+  @override
+  String get gitPublishBranch => 'Publish branch';
+
+  @override
+  String get gitPublishTooltip =>
+      'Push this branch to a remote and set it as the upstream';
+
+  @override
+  String get gitPublishDialogTitle => 'Publish branch';
+
+  @override
+  String gitPublishConfirm(String branch, String remote) {
+    return 'Publish \"$branch\" to \"$remote\" and use it as this branch\'s upstream?';
+  }
+
+  @override
+  String gitPublishChooseRemote(String branch) {
+    return 'Publish \"$branch\" to which remote? It will become this branch\'s upstream.';
+  }
+
+  @override
+  String get gitPublishAction => 'Publish';
+
+  @override
+  String get gitNoRemote =>
+      'This repository has no remote to publish to. Add one first (git remote add).';
+
+  @override
+  String get gitPublishUnknownRemote => 'That remote is no longer configured.';
+
+  @override
+  String get gitPublishDetachedHead =>
+      'Check out a branch first; a detached HEAD cannot be published.';
+
+  @override
+  String get gitPublishNoCommits =>
+      'Make a first commit before publishing this branch.';
+
+  @override
+  String get gitPublishDiverged =>
+      'The remote already has a different branch with this name.';
 
   @override
   String get workspaceWelcomeSubtitle =>

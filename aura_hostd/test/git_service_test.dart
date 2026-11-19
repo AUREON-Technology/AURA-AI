@@ -497,5 +497,286 @@ void main() {
       // weaker version of this test pass.
       expect(stopwatch.elapsed, lessThan(const Duration(seconds: 5)));
     }, timeout: const Timeout(Duration(seconds: 15)));
+
+    test('the timeout message names the limit that was exceeded (D-02)', () async {
+      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close());
+      final subscription = server.listen((socket) => socket.listen((_) {}));
+      addTearDown(subscription.cancel);
+      await commitFile('a.txt', 'hello');
+      await _git(repoDir.path, ['remote', 'add', 'origin', 'git://127.0.0.1:${server.port}/unresponsive.git']);
+
+      await expectLater(
+        GitService(networkTimeout: const Duration(seconds: 1)).fetch(repoDir.path),
+        throwsA(isA<GitCommandError>().having((e) => e.message, 'message', contains('timed out after 1s'))),
+      );
+    }, timeout: const Timeout(Duration(seconds: 20)));
+
+    test('fetch, pull and push default to five minutes, not the old 30 seconds (D-02)', () {
+      expect(GitService().networkTimeout, const Duration(seconds: 300));
+      expect(defaultGitNetworkTimeout, const Duration(seconds: 300));
+    });
+  });
+
+  group('remotes, fetch --all, pull and push outcomes, publish', () {
+    Future<String> head(String cwd) async => ((await _git(cwd, ['rev-parse', 'HEAD'])).stdout as String).trim();
+
+    /// Commits [file] on [branch] in a fresh clone of [remote], pushes it, and returns the commit.
+    /// [createBranch] makes the branch first -- a branch the remote does not have yet.
+    Future<String> pushNewCommit(
+      Directory remote,
+      String file, {
+      String branch = 'main',
+      bool createBranch = false,
+    }) async {
+      final dir = Directory.systemTemp.createTempSync('aura_hostd_git_service_test_other_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      await _git(Directory.systemTemp.path, ['clone', '-q', remote.path, dir.path]);
+      await _git(dir.path, ['config', 'user.name', 'Test User']);
+      await _git(dir.path, ['config', 'user.email', 'test@example.com']);
+      await _git(dir.path, ['checkout', '-q', if (createBranch) '-b', branch]);
+      File(p.join(dir.path, file)).writeAsStringSync(file);
+      await _git(dir.path, ['add', '--', file]);
+      await _git(dir.path, ['commit', '-q', '-m', 'add $file']);
+      await _git(dir.path, ['push', '-q', 'origin', branch]);
+      return head(dir.path);
+    }
+
+    Future<Directory> secondBareRemote(Directory clone) async {
+      final remote = Directory.systemTemp.createTempSync('aura_hostd_git_service_test_remote2_');
+      addTearDown(() => remote.deleteSync(recursive: true));
+      await _git(remote.path, ['init', '-q', '--bare', '-b', 'main']);
+      await _git(clone.path, ['remote', 'add', 'upstream', remote.path]);
+      await _git(clone.path, ['push', '-q', 'upstream', 'main']);
+      return remote;
+    }
+
+    test('remotes lists every configured remote, and none for a purely local repo', () async {
+      await commitFile('a.txt', 'hello');
+      expect((await git.remotes(repoDir.path))['remotes'], isEmpty);
+
+      final (_, clone) = await setUpRemoteWithClone();
+      await secondBareRemote(clone);
+      expect((await git.remotes(clone.path))['remotes'], ['origin', 'upstream']);
+    });
+
+    test('fetch updates every remote when a repository has two (F1: it used to fail)', () async {
+      final (origin, clone) = await setUpRemoteWithClone();
+      final upstream = await secondBareRemote(clone);
+      final originTip = await pushNewCommit(origin, 'from-origin.txt');
+      final upstreamTip = await pushNewCommit(upstream, 'from-upstream.txt');
+
+      final result = await git.fetch(clone.path);
+
+      expect(result['ok'], true);
+      expect(result['remotes'], ['origin', 'upstream']);
+      expect(await head(clone.path), isNot(originTip), reason: 'fetch must not move the working tree');
+      expect(((await _git(clone.path, ['rev-parse', 'origin/main'])).stdout as String).trim(), originTip);
+      expect(((await _git(clone.path, ['rev-parse', 'upstream/main'])).stdout as String).trim(), upstreamTip);
+    });
+
+    test('pull reports a diverged branch as a structured failure and changes nothing', () async {
+      final (origin, clone) = await setUpRemoteWithClone();
+      await pushNewCommit(origin, 'remote.txt');
+      File(p.join(clone.path, 'local.txt')).writeAsStringSync('local');
+      await _git(clone.path, ['add', '--', 'local.txt']);
+      await _git(clone.path, ['commit', '-q', '-m', 'local commit']);
+      final before = await head(clone.path);
+
+      final result = await git.pull(clone.path);
+
+      expect(result['ok'], false);
+      expect(result['reason'], 'diverged');
+      expect(await head(clone.path), before);
+    });
+
+    test('pull reports an untracked file it would overwrite, naming the file', () async {
+      final (origin, clone) = await setUpRemoteWithClone();
+      await pushNewCommit(origin, 'clash.txt');
+      File(p.join(clone.path, 'clash.txt')).writeAsStringSync('mine');
+
+      final result = await git.pull(clone.path);
+
+      expect(result['ok'], false);
+      expect(result['reason'], 'local_changes_would_be_overwritten');
+      expect(result['affected_files'], contains('clash.txt'));
+      expect(File(p.join(clone.path, 'clash.txt')).readAsStringSync(), 'mine');
+    });
+
+    test('push reports a branch the remote has moved past as diverged, never forcing', () async {
+      final (origin, clone) = await setUpRemoteWithClone();
+      final remoteTip = await pushNewCommit(origin, 'remote.txt');
+      File(p.join(clone.path, 'local.txt')).writeAsStringSync('local');
+      await _git(clone.path, ['add', '--', 'local.txt']);
+      await _git(clone.path, ['commit', '-q', '-m', 'local commit']);
+
+      final result = await git.push(clone.path);
+
+      expect(result['ok'], false);
+      expect(result['reason'], 'diverged');
+      final remoteHead = (await _git(origin.path, ['rev-parse', 'main'])).stdout as String;
+      expect(remoteHead.trim(), remoteTip, reason: 'the remote branch must be untouched');
+    });
+
+    test('publish pushes the checked-out branch under its own name and sets its upstream (D-01)', () async {
+      final (origin, clone) = await setUpRemoteWithClone();
+      await _git(clone.path, ['checkout', '-q', '-b', 'feature/login']);
+      File(p.join(clone.path, 'f.txt')).writeAsStringSync('f');
+      await _git(clone.path, ['add', '--', 'f.txt']);
+      await _git(clone.path, ['commit', '-q', '-m', 'feature work']);
+      expect((await git.push(clone.path))['reason'], 'no_upstream', reason: 'the situation publish exists for');
+
+      final result = await git.publish(clone.path, remote: 'origin');
+
+      expect(result, {'ok': true, 'branch': 'feature/login', 'remote': 'origin'});
+      final onRemote = (await _git(origin.path, ['rev-parse', 'refs/heads/feature/login'])).stdout as String;
+      expect(onRemote.trim(), await head(clone.path));
+      final status = await git.status(clone.path);
+      expect(status['upstream'], 'origin/feature/login');
+      expect(status['ahead'], 0);
+    });
+
+    test('publish chooses the remote it is told to when there are several', () async {
+      final (origin, clone) = await setUpRemoteWithClone();
+      final upstream = await secondBareRemote(clone);
+      await _git(clone.path, ['checkout', '-q', '-b', 'topic']);
+      File(p.join(clone.path, 't.txt')).writeAsStringSync('t');
+      await _git(clone.path, ['add', '--', 't.txt']);
+      await _git(clone.path, ['commit', '-q', '-m', 'topic']);
+
+      final result = await git.publish(clone.path, remote: 'upstream');
+
+      expect(result['ok'], true);
+      expect((await _git(upstream.path, ['rev-parse', '--verify', '--quiet', 'refs/heads/topic'])).exitCode, 0);
+      expect((await _git(origin.path, ['rev-parse', '--verify', '--quiet', 'refs/heads/topic'])).exitCode, isNot(0));
+      expect((await git.status(clone.path))['upstream'], 'upstream/topic');
+    });
+
+    test('publish refuses a name that is not a configured remote, so it can never be an option or URL', () async {
+      final (origin, clone) = await setUpRemoteWithClone();
+      await _git(clone.path, ['checkout', '-q', '-b', 'topic']);
+      File(p.join(clone.path, 't.txt')).writeAsStringSync('t');
+      await _git(clone.path, ['add', '--', 't.txt']);
+      await _git(clone.path, ['commit', '-q', '-m', 'topic']);
+
+      for (final name in ['nope', '--force', '--mirror', origin.path]) {
+        final result = await git.publish(clone.path, remote: name);
+        expect(result, {'ok': false, 'reason': 'unknown_remote'}, reason: name);
+      }
+      expect((await _git(origin.path, ['rev-parse', '--verify', '--quiet', 'refs/heads/topic'])).exitCode, isNot(0));
+    });
+
+    test('publish on a detached HEAD and on a branch with no commit are structured failures', () async {
+      final (_, clone) = await setUpRemoteWithClone();
+      await _git(clone.path, ['checkout', '-q', '--detach']);
+      expect(await git.publish(clone.path, remote: 'origin'), {'ok': false, 'reason': 'detached_head'});
+
+      await _git(repoDir.path, ['remote', 'add', 'origin', clone.path]);
+      expect(await git.publish(repoDir.path, remote: 'origin'), {'ok': false, 'reason': 'no_commits'});
+    });
+
+    test('publish reports a remote that already has a different branch of that name as diverged', () async {
+      final (origin, clone) = await setUpRemoteWithClone();
+      final theirs = await pushNewCommit(origin, 'theirs.txt', branch: 'shared', createBranch: true);
+      await _git(clone.path, ['checkout', '-q', '-b', 'shared']);
+      File(p.join(clone.path, 'mine.txt')).writeAsStringSync('mine');
+      await _git(clone.path, ['add', '--', 'mine.txt']);
+      await _git(clone.path, ['commit', '-q', '-m', 'mine']);
+
+      final result = await git.publish(clone.path, remote: 'origin');
+
+      expect(result, {'ok': false, 'reason': 'diverged'});
+      final remoteTip = (await _git(origin.path, ['rev-parse', 'refs/heads/shared'])).stdout as String;
+      expect(remoteTip.trim(), theirs, reason: 'never forced');
+    });
+
+    test('publish and the other remote operations are not reachable outside a repository', () async {
+      final plainDir = Directory.systemTemp.createTempSync('aura_hostd_not_a_repo_publish_');
+      addTearDown(() => plainDir.deleteSync(recursive: true));
+      expect(() => git.publish(plainDir.path, remote: 'origin'), throwsA(isA<GitNotARepositoryError>()));
+      expect(() => git.remotes(plainDir.path), throwsA(isA<GitNotARepositoryError>()));
+    });
+  });
+
+  group('sign-in failures and message language (D-04, R-01, R-02)', () {
+    test('git\'s sign-in refusals are recognised, and ordinary failures are not', () {
+      for (final refused in [
+        "fatal: Authentication failed for 'https://github.com/a/b.git/'",
+        "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+        "fatal: could not read Password for 'https://x@github.com': terminal prompts disabled",
+        'git@github.com: Permission denied (publickey).',
+        'Host key verification failed.',
+        "fatal: unable to access 'https://h/r.git/': The requested URL returned error: 403",
+        "fatal: unable to access 'https://h/r.git/': The requested URL returned error: 401",
+        'remote: Invalid username or password.',
+        'remote: Support for password authentication was removed on August 13, 2021.',
+        'fatal: Logon failed, use ctrl+c to cancel basic credential prompt.',
+      ]) {
+        expect(looksLikeGitAuthFailure(refused), isTrue, reason: refused);
+      }
+      for (final other in [
+        '',
+        'fatal: not a git repository',
+        '! [rejected]        main -> main (non-fast-forward)',
+        "fatal: unable to access 'https://h/r.git/': Could not resolve host: h",
+        "fatal: unable to access 'https://h/r.git/': The requested URL returned error: 404",
+        'error: failed to push some refs',
+      ]) {
+        expect(looksLikeGitAuthFailure(other), isFalse, reason: other);
+      }
+    });
+
+    test('a URL\'s embedded credential is masked in what is shown, other text is untouched', () {
+      expect(
+        scrubGitUrlCredentials("fatal: unable to access 'https://octo:ghp_SECRET123@github.com/a/b.git/': 403"),
+        "fatal: unable to access 'https://***@github.com/a/b.git/': 403",
+      );
+      expect(scrubGitUrlCredentials('http://ghp_ONLYTOKEN@host/r.git'), 'http://***@host/r.git');
+      expect(scrubGitUrlCredentials('https://github.com/a/b.git and git@github.com:a/b.git'),
+          'https://github.com/a/b.git and git@github.com:a/b.git');
+      expect(scrubGitUrlCredentials('ssh://git@host/r.git'), 'ssh://***@host/r.git');
+    });
+
+    /// A real HTTP remote that answers every request with 401, and a service whose git sees no
+    /// credential helper at all (the machine's own -- Git Credential Manager on Windows -- must not
+    /// be asked), so a refused sign-in is what git reports.
+    Future<(GitService, String url)> refusingRemote() async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) async {
+        request.response
+          ..statusCode = HttpStatus.unauthorized
+          ..headers.set(HttpHeaders.wwwAuthenticateHeader, 'Basic realm="aura-test"');
+        await request.response.close();
+      });
+      final emptyConfig = File(p.join(repoDir.path, '.empty-gitconfig'))..writeAsStringSync('');
+      final service = GitService(environment: {
+        'GIT_CONFIG_NOSYSTEM': '1',
+        'GIT_CONFIG_GLOBAL': emptyConfig.path,
+      });
+      return (service, 'http://127.0.0.1:${server.port}/private/repo.git');
+    }
+
+    test('fetch, pull, push and publish report a refused sign-in as auth_failed, not a git error', () async {
+      final (service, url) = await refusingRemote();
+      await commitFile('a.txt', 'hello');
+      await _git(repoDir.path, ['remote', 'add', 'origin', url]);
+      await _git(repoDir.path, ['config', 'branch.main.remote', 'origin']);
+      await _git(repoDir.path, ['config', 'branch.main.merge', 'refs/heads/main']);
+
+      expect(await service.fetch(repoDir.path), {'ok': false, 'reason': 'auth_failed'});
+      expect(await service.pull(repoDir.path), {'ok': false, 'reason': 'auth_failed'});
+      expect(await service.push(repoDir.path), {'ok': false, 'reason': 'auth_failed'});
+      expect(await service.publish(repoDir.path, remote: 'origin'), {'ok': false, 'reason': 'auth_failed'});
+    }, timeout: const Timeout(Duration(seconds: 60)));
+
+    test('the structured outcomes do not depend on the machine\'s language', () async {
+      // The person's environment asks for German; the remote operations pin English themselves.
+      // (Without German catalogs installed this passes trivially; with them it is the proof.)
+      final german = GitService(environment: {'LC_ALL': 'de_DE.UTF-8', 'LANG': 'de_DE.UTF-8', 'LANGUAGE': 'de'});
+      await commitFile('a.txt', 'hello');
+      expect(await german.pull(repoDir.path), {'ok': false, 'reason': 'no_upstream'});
+      expect(await german.push(repoDir.path), {'ok': false, 'reason': 'no_upstream'});
+    });
   });
 }

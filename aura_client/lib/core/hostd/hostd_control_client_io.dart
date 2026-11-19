@@ -248,9 +248,12 @@ class HostdControlClient {
   Future<Map<String, dynamic>> gitMergeAbort({required String root}) =>
       _request('POST', '/git/merge-abort', body: {'root': root});
 
-  /// Human-only remote-sync routes (`git_service.dart` branches/fetch/pull/push) --
-  /// same boundary as the git routes above. `push` takes no refspec server-side:
-  /// only the checked-out branch can ever go to its own upstream.
+  /// Human-only remote-sync routes (`git_service.dart` branches/fetch/pull/push/publish) --
+  /// same boundary as the git routes above. `push` takes no refspec server-side: it runs the
+  /// person's own `git push`, so what it sends follows their git configuration like a terminal's
+  /// (decision D-03). They wait [hostdLongRequestTimeout], which is longer than the daemon's own
+  /// five-minute limit on a remote operation (`defaultGitNetworkTimeout`), so a hung git is reported
+  /// by the daemon's message, which names the limit, not by this client giving up first.
   Future<Map<String, dynamic>> gitBranches({required String root}) =>
       _request('GET', '/git/branches?root=${Uri.encodeQueryComponent(root)}');
 
@@ -262,6 +265,17 @@ class HostdControlClient {
 
   Future<Map<String, dynamic>> gitPush({required String root}) =>
       _request('POST', '/git/push', body: {'root': root}, timeout: hostdLongRequestTimeout);
+
+  /// The configured remotes (`{remotes: [name, ...]}`), for "Publish branch" to offer.
+  Future<Map<String, dynamic>> gitRemotes({required String root}) =>
+      _request('GET', '/git/remotes?root=${Uri.encodeQueryComponent(root)}');
+
+  /// "Publish branch" (decision D-01): pushes the checked-out branch to [remote] under its own name
+  /// and sets it as the branch's upstream. Answers `{ok, branch, remote}`, or an `ok: false` body
+  /// with a `reason` (`unknown_remote`, `detached_head`, `no_commits`, `diverged`, `auth_failed`).
+  Future<Map<String, dynamic>> gitPublish({required String root, required String remote}) =>
+      _request('POST', '/git/publish',
+          body: {'root': root, 'remote': remote}, timeout: hostdLongRequestTimeout);
 
   /// D7 Part A.2's diagnostics routes (`aura_hostd/lib/src/diagnostics_service.dart`) -- direct,
   /// human-only batch linting, entirely independent of the agent-facing RPC surface (same
