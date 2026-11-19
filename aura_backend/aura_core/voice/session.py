@@ -11,7 +11,7 @@ import re
 import asyncio
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, AsyncIterator, Mapping, Protocol, Sequence
+from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Protocol, Sequence
 
 from ..domain.identifiers import CorrelationId, SessionId, UserId
 from ..kernel.kernel import TurnRequest
@@ -26,6 +26,7 @@ __all__ = [
     "LiveVoiceConfig",
     "LiveVoiceSession",
     "SessionState",
+    "TurnRefused",
 ]
 
 
@@ -33,6 +34,21 @@ class TurnStreamer(Protocol):
     """Narrow protocol over ``AIKernel.stream`` for the voice engine."""
 
     def stream(self, request: TurnRequest) -> AsyncIterator[Mapping[str, Any]]: ...
+
+
+class TurnRefused(Exception):
+    """An admission hook declined a turn (rate limit, plan quota). ``frame`` is the ``error``
+    frame to send instead of running it -- the same body the HTTP routes return (F7)."""
+
+    def __init__(self, frame: Mapping[str, Any]) -> None:
+        super().__init__(str(frame.get("error") or "refused"))
+        self.frame: dict[str, Any] = {**frame, "type": "error"}
+
+
+#: Admits one turn before it runs: returns the reservation to give back if it produces nothing
+#: (``None`` when unmetered) and the turn to run, which it may narrow (a plan's capabilities).
+#: Raises :class:`TurnRefused` to decline.
+TurnAdmission = Callable[[TurnRequest], Awaitable[tuple[Any, TurnRequest]]]
 
 
 class SessionState(str, Enum):
@@ -114,6 +130,17 @@ class LiveVoiceSession:
     #: This session's own detector (one per session: detectors are stateful). ``None`` uses
     #: :class:`EnergyVad`; the container passes a neural one when ``AURA_VOICE_LIVE_VAD`` asks.
     vad: VoiceActivityDetector | None = None
+    #: The turn's scope, as ``to_turn`` sets it for a typed turn (ADR-034): the team's corpus
+    #: inside a team workspace (``None`` means ``user_id``), no personal memory there, and the
+    #: signed token's origin (WP8).
+    knowledge_owner: UserId | None = None
+    use_memory: bool = True
+    origin: str | None = None
+    #: Run before every turn -- a committed utterance or a confirmation -- to rate-limit it and
+    #: reserve it against the workspace's plan. ``release`` gives the reservation back when the
+    #: turn fails, is cancelled or is refused before its first token (F7, the /chat/stream rule).
+    admit: TurnAdmission | None = None
+    release: Callable[[Any], Awaitable[None]] | None = None
 
     def __post_init__(self) -> None:
         vad_cfg = VadConfig(
@@ -239,7 +266,7 @@ class LiveVoiceSession:
         """
         if self.state is not SessionState.AWAITING_CONFIRMATION:
             return
-        held = self._pending_approval_ids
+        pending = held = self._pending_approval_ids
         if approval_ids is not None:
             wanted = {str(i) for i in approval_ids}
             held = tuple(i for i in held if i in wanted)
@@ -252,7 +279,9 @@ class LiveVoiceSession:
             )
             await self._emit_state()
             return
-        await self._run_kernel_turn(message="continue", approval_ids=held)
+        if not await self._run_kernel_turn(message="continue", approval_ids=held):
+            # Refused before it ran (rate limit, plan): the calls stay held, to confirm later.
+            self._pending_approval_ids = pending
 
     async def reject(self) -> None:
         if self.state is not SessionState.AWAITING_CONFIRMATION:
@@ -307,23 +336,46 @@ class LiveVoiceSession:
         *,
         message: str = "",
         approval_ids: tuple[str, ...] = (),
-    ) -> None:
+    ) -> bool:
+        """Run one turn. ``False`` when admission refused it (its error frame already sent)."""
+        req = TurnRequest(
+            message=message or "continue",
+            user_id=self.user_id,
+            knowledge_owner=self.knowledge_owner,
+            session_id=self.session_id,
+            correlation_id=CorrelationId.new(),
+            use_memory=self.use_memory,
+            capabilities=self.capabilities,
+            approval_ids=approval_ids,
+            max_output_tokens=self.config.max_output_tokens,
+            route="voice_live",
+            origin=self.origin,
+        )
+        reservation: Any = None
+        if self.admit is not None:
+            try:
+                reservation, req = await self.admit(req)
+            except TurnRefused as refused:
+                await self._emit(refused.frame)
+                return False
         await self._cancel_turn()
         self.state = SessionState.THINKING
         await self._emit_state()
 
         async def _runner() -> None:
-            req = TurnRequest(
-                message=message or "continue",
-                user_id=self.user_id,
-                session_id=self.session_id,
-                correlation_id=CorrelationId.new(),
-                capabilities=self.capabilities,
-                approval_ids=approval_ids,
-                max_output_tokens=self.config.max_output_tokens,
-                route="voice_live",
-            )
-            await self._consume_stream(req)
+            answered = False
+
+            def on_answer() -> None:
+                nonlocal answered
+                answered = True
+
+            try:
+                await self._consume_stream(req, on_answer=on_answer)
+            finally:
+                # Counted once the first token reached the session (or the turn finished): a
+                # turn that fails, is cancelled or barged in on before that gives it back.
+                if not answered and reservation is not None and self.release is not None:
+                    await self.release(reservation)
 
         self._turn_task = asyncio.create_task(_runner())
         try:
@@ -335,14 +387,19 @@ class LiveVoiceSession:
             if self.state is not SessionState.AWAITING_CONFIRMATION:
                 self.state = SessionState.LISTENING
                 await self._emit_state()
+        return True
 
-    async def _consume_stream(self, request: TurnRequest) -> None:
+    async def _consume_stream(
+        self, request: TurnRequest, *, on_answer: Callable[[], None] | None = None
+    ) -> None:
         accumulator = SentenceAccumulator()
         token_buf: list[str] = []
         hold_tts = self.safety_guards_enabled and self.config.hold_tts_until_done
 
         async for frame in self.turn_streamer.stream(request):
             ftype = frame.get("type")
+            if on_answer is not None and ftype in ("token", "done"):
+                on_answer()
             if ftype == "token":
                 token = str(frame.get("text") or frame.get("token") or "")
                 token_buf.append(token)

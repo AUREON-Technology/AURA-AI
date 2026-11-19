@@ -211,9 +211,10 @@ class TestKnowledgeDocuments:
 
         response = client.delete(f"/api/v3/knowledge/documents/{document_id}", headers=AUTH_B)
 
-        # Same answer as for a document that does not exist: nothing to tell Bob.
-        assert response.status_code == 200
-        assert response.json()["chunks_removed"] == 0
+        # Same answer as for a document that does not exist (404, INT-111): nothing to tell Bob,
+        # and no 200 "deleted" for a document that is still there.
+        assert response.status_code == 404
+        assert response.json()["error"] == "not_found"
         listing = client.get("/api/v3/knowledge/documents", headers=AUTH_A).json()["documents"]
         assert [d["document_id"] for d in listing] == [document_id]
         assert _alice_can_still_find_her_document(client), (

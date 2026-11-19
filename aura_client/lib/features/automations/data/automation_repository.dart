@@ -257,15 +257,29 @@ class AutomationRepository {
   /// rather than the shared client's default, so a slow CPU model is not cut off at 30 s.
   static const _analysisTimeout = Duration(seconds: 200);
 
+  /// The server's field caps on the analysis routes (F36, `api/automation.py`): a longer value is
+  /// refused with 422, so a long email or issue is cut to fit instead of failing outright.
+  static const maxEmailBody = 50000;
+  static const maxEmailSubject = 2000;
+  static const maxEmailSender = 512;
+  static const maxIssueBody = 65536;
+  static const maxIssueTitle = 1024;
+
+  /// [text] cut to at most [max] characters, counted as the server counts them (code points).
+  static String clip(String text, int max) {
+    final runes = text.runes;
+    return runes.length <= max ? text : String.fromCharCodes(runes.take(max));
+  }
+
   Future<EmailAnalysisResult> analyzeEmail(GmailMessageHeader email) async {
     final data = await _ref.read(auraApiClientProvider).json(
       method: 'POST',
       timeout: _analysisTimeout,
       path: '/api/v3/automation/analyze-email',
       body: {
-        'subject': email.subject,
-        'sender': email.sender,
-        'body': email.body,
+        'subject': clip(email.subject, maxEmailSubject),
+        'sender': clip(email.sender, maxEmailSender),
+        'body': clip(email.body, maxEmailBody),
       },
     );
     return EmailAnalysisResult.fromMap(data);
@@ -302,8 +316,8 @@ class AutomationRepository {
       timeout: _analysisTimeout,
       path: '/api/v3/automation/analyze-issue',
       body: {
-        'title': issue.title,
-        'body': issue.body,
+        'title': clip(issue.title, maxIssueTitle),
+        'body': clip(issue.body, maxIssueBody),
       },
     );
     return GitHubIssueResult.fromMap(data);

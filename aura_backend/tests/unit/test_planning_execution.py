@@ -614,6 +614,32 @@ class TestReplanning:
         assert revised.steps[2].depends_on == (StepId("s2"),)
         assert revised.revisions[-1].reason == "step_failed"
 
+    async def test_new_steps_never_collide_with_a_preserved_step_after_a_gap(self) -> None:
+        """F12: s1 and s3 succeeded, s2 failed. Numbering from ``len(completed)`` made the first
+        new step s3 again, the duplicate id made ``Plan`` raise, and the agent loop stopped with
+        ``replan_failed`` instead of retrying the failed work."""
+        s1 = PlanStep(kind=StepKind.GENERATE, id=StepId("s1"), description="A").started().succeeded("a", 1.0)
+        s2 = PlanStep(kind=StepKind.GENERATE, id=StepId("s2"), description="B").started().failed("Timeout", 1.0)
+        s3 = PlanStep(kind=StepKind.GENERATE, id=StepId("s3"), description="C").started().succeeded("c", 1.0)
+        plan = self._plan_with(s1, s2, s3)
+
+        body = json.dumps({"steps": [
+            {"id": "s1", "kind": "tool", "tool": "search_knowledge", "description": "Retry B",
+             "arguments": {"query": "b"}},
+            {"id": "s2", "kind": "tool", "tool": "calculator", "description": "Use it",
+             "arguments": {"expression": "${s1.output} + 1", "note": "from ${ s1.output }"}},
+        ]})
+        revised = await _engine(body).replan(plan, reason="step_failed", available_tools=TOOLS)
+
+        assert [s.id.value for s in revised.steps] == ["s1", "s3", "s4", "s5"]
+        retry, use = revised.steps[2], revised.steps[3]
+        assert use.depends_on == (retry.id,)
+        # The data-flow token follows the renumbering: it must name the new retry step, not
+        # the preserved s1 whose (different) output would otherwise be substituted.
+        assert use.arguments["expression"] == "${s4.output} + 1"
+        assert use.arguments["note"] == "from ${s4.output}"
+        assert retry.arguments == {"query": "b"}
+
     async def test_the_replan_prompt_carries_the_progress_so_far(self) -> None:
         done = PlanStep(kind=StepKind.GENERATE, id=StepId("s1"), description="Fetched the policy").started().succeeded(
             "ok", 1.0

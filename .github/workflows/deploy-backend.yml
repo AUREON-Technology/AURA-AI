@@ -21,6 +21,11 @@
 # ci-deploy.sh sets AURA_STASH_DIRTY=1 so those tracked files are stashed
 # rather than failing the job. Untracked files are ignored. The scripts
 # executed on the host are taken from AURA_SHA, not from the stale tree.
+#
+# AURA_SHA (audit F47) must be a full 40-character hex SHA on origin/main --
+# checked on the runner, then again on the host before any script is taken
+# from it -- and reaches the host as data on stdin, never on the ssh command
+# line, which the remote shell would re-parse.
 
 on:
   workflow_run:
@@ -64,6 +69,9 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Full history: "Verify the SHA is on main" needs main's ancestry, not one commit.
+          fetch-depth: 0
 
       - name: Resolve target SHA
         id: target
@@ -78,9 +86,29 @@ jobs:
           else
             SHA="$WORKFLOW_SHA"
           fi
-          test -n "$SHA"
+          # F47: a full lowercase hex SHA, nothing else. The dispatch input is free text and this
+          # value selects the scripts the host runs as root; a branch name, a short SHA or anything
+          # carrying shell syntax stops here. The value itself is not echoed back: printed, it
+          # could forge workflow commands in the log.
+          if ! [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Refusing to deploy: the target is not a full 40-character commit SHA." >&2
+            exit 1
+          fi
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "Deploying $SHA"
+
+      # A dispatched SHA can name any commit the repository holds, including one only on a
+      # branch nobody reviewed. vps-update.sh checks ancestry too, but only after ci-deploy.sh has
+      # already been taken from that commit and run -- so it is checked here first.
+      - name: Verify the SHA is on main
+        env:
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$TARGET_SHA" origin/main; then
+            echo "::error::Refusing to deploy $TARGET_SHA: it is not on origin/main." >&2
+            exit 1
+          fi
 
       - name: Install SSH key
         env:
@@ -104,28 +132,43 @@ jobs:
           DEPLOYMENT_ID: gha-${{ github.run_id }}
         run: |
           test -n "$VPS_HOST" && test -n "$VPS_USER" && test -n "$TARGET_SHA"
-          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes \
-            -o UserKnownHostsFile=~/.ssh/known_hosts \
-            "${VPS_USER}@${VPS_HOST}" \
-            env AURA_SHA="$TARGET_SHA" \
-                AURA_DEV_OPS="$([ "$DEV_OPS" = "true" ] && echo 1 || echo 0)" \
-                AURA_REPO=/opt/aura-stack \
-                AURA_COMPOSE=/opt/aura-stack/deploy/docker-compose.prod.yml \
-                AURA_PROJECT=aura \
-                AURA_BACKEND_SERVICE=gateway \
-                AURA_STASH_DIRTY=1 \
-                AURA_DEPLOYMENT_ID="$DEPLOYMENT_ID" \
-                AURA_GIT_REF=refs/heads/main \
-                bash -s <<'REMOTE'
+          dev_ops=0
+          if [ "$DEV_OPS" = "true" ]; then dev_ops=1; fi
+          # F47: the remote command line is the literal `bash -s`. The per-run values travel on
+          # stdin as %q-quoted exports ahead of the fixed script, so the remote shell never
+          # re-parses anything that came from an input.
+          {
+            printf 'export AURA_SHA=%q\n' "$TARGET_SHA"
+            printf 'export AURA_DEV_OPS=%q\n' "$dev_ops"
+            printf 'export AURA_DEPLOYMENT_ID=%q\n' "$DEPLOYMENT_ID"
+            cat <<'REMOTE'
           set -euo pipefail
-          git -C /opt/aura-stack fetch origin main
+          export AURA_REPO=/opt/aura-stack
+          export AURA_COMPOSE=/opt/aura-stack/deploy/docker-compose.prod.yml
+          export AURA_PROJECT=aura
+          export AURA_BACKEND_SERVICE=gateway
+          export AURA_STASH_DIRTY=1
+          export AURA_GIT_REF=refs/heads/main
+          if ! [[ "$AURA_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "AURA_SHA is not a full commit SHA" >&2
+            exit 1
+          fi
+          git -C /opt/aura-stack fetch origin main </dev/null
+          # Before any script is taken from that commit, not after (vps-update.sh's own check).
+          git -C /opt/aura-stack merge-base --is-ancestor "$AURA_SHA" origin/main \
+            || { echo "refusing $AURA_SHA: not on origin/main" >&2; exit 1; }
           if git -C /opt/aura-stack cat-file -e "${AURA_SHA}:deploy/scripts/ci-deploy.sh"; then
-            git -C /opt/aura-stack show "${AURA_SHA}:deploy/scripts/ci-deploy.sh" > /tmp/ci-deploy.sh
-            bash /tmp/ci-deploy.sh
+            work=$(mktemp -d)
+            trap 'rm -rf "$work"' EXIT
+            git -C /opt/aura-stack show "${AURA_SHA}:deploy/scripts/ci-deploy.sh" > "$work/ci-deploy.sh"
+            bash "$work/ci-deploy.sh" </dev/null
           else
-            bash /opt/aura-stack/deploy/scripts/vps-update.sh
+            bash /opt/aura-stack/deploy/scripts/vps-update.sh </dev/null
           fi
           REMOTE
+          } | ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o UserKnownHostsFile=~/.ssh/known_hosts \
+            "${VPS_USER}@${VPS_HOST}" bash -s
 
   # A deploy that did not happen has to be visible.
   #

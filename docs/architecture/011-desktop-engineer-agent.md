@@ -58,7 +58,11 @@ workspace" mode — is allowed to lift. A path outside every granted root is ref
 confirmable; the user adds a root instead of the agent working around the boundary.
 
 Containment is a `cwd`-level control for `run_command`, so a shell command's own arguments can
-name a path elsewhere. In an untrusted root the read-only tier already refuses such arguments; in
+name a path elsewhere. In an untrusted root the read-only tier already refuses such arguments,
+and since 2026-11-18 (audit F16) it judges what a command would actually open rather than how
+an argument is spelled: arguments are resolved through symlinks, and an unquoted glob or a
+recursive read (`grep -R`, `ls -RL`) scans the folders it names for a symlink leaving the root,
+asking for approval if one does (`command_policy.dart::_mayFollowLinkOutside`). In
 a *trusted* root, since the 2026-10-31 audit (FSA-006), the daemon applies the same argument
 containment to a documented set of destructive verbs (remove, move, copy, find, chmod,
 `git clean`/`reset`/`checkout`, … — `command_policy.dart::destructiveVerbPattern`), including

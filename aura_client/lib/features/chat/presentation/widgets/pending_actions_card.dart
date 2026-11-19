@@ -16,6 +16,7 @@ class PendingActionsCard extends ConsumerWidget {
     final palette = AuraPalette.of(context);
     final actions = ref.watch(pendingActionsProvider);
     if (actions.isEmpty) return const SizedBox();
+    final approving = ref.watch(chatViewModelProvider.select((s) => s.approvingActions));
 
     return Padding(
       padding: const EdgeInsets.symmetric(
@@ -77,19 +78,22 @@ class PendingActionsCard extends ConsumerWidget {
                 AuraButton(
                   label: context.l10n.pendingActionsReject,
                   variant: AuraButtonVariant.ghost,
-                  onPressed: () => ref
-                      .read(chatViewModelProvider.notifier)
-                      .rejectPendingActions(),
+                  onPressed: approving
+                      ? null
+                      : () => ref.read(chatViewModelProvider.notifier).rejectPendingActions(),
                 ),
                 AuraButton(
                   label: context.l10n.pendingActionsApprove,
                   variant: AuraButtonVariant.primary,
+                  // F20: disabled with a spinner while the actions run, so a second tap cannot
+                  // create them again (the view model ignores one that slips through).
+                  loading: approving,
                   onPressed: () async {
                     final messenger = ScaffoldMessenger.of(context);
                     final outcome = await ref
                         .read(chatViewModelProvider.notifier)
                         .approvePendingActions();
-                    if (!context.mounted) return;
+                    if (outcome == null || !context.mounted) return;
                     messenger.showSnackBar(_snackBarFor(outcome, palette, context.l10n));
                   },
                 ),

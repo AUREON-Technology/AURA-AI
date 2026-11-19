@@ -189,6 +189,53 @@ class TestRun:
         assert executor.execute_calls == 1
 
 
+class TestReplanAfterAGap:
+    """F12 through the loop, with the real ``PlanningEngine``: a plan whose succeeded steps are
+    not a prefix (s1 and s3 succeeded, s2 failed) used to make ``replan`` renumber a new step
+    onto s3, ``Plan`` raised on the duplicate id, ``_next_plan`` swallowed it and the loop
+    stopped with ``replan_failed`` instead of retrying."""
+
+    async def test_the_loop_retries_instead_of_stopping(self, ctx) -> None:
+        from aura_core.planning import PlanningEngine
+        from aura_core.prompts import build_default_registry
+        from tests.unit.test_planning_execution import _StubRouter
+
+        planner = PlanningEngine(
+            router=_StubRouter('{"steps": [{"id": "s1", "description": "Retry the middle"}]}'),
+            prompts=build_default_registry(),
+        )
+        goal = Goal(description="do the thing")
+        plan = Plan(id=PlanId.new(), goal=goal, steps=(
+            PlanStep(id=StepId("s1"), kind=StepKind.GENERATE, description="first"),
+            PlanStep(id=StepId("s2"), kind=StepKind.GENERATE, description="middle"),
+            PlanStep(id=StepId("s3"), kind=StepKind.GENERATE, description="last"),
+        ))
+        seen: list[list[str]] = []
+
+        class _Executor:
+            async def execute(self, plan, *, context, capabilities=(), confirmations=None,
+                              on_event=None) -> ExecutionOutcome:
+                seen.append([s.id.value for s in plan.steps])
+                if len(seen) == 1:
+                    steps = tuple(
+                        s.failed("Timeout", 1.0) if s.id.value == "s2" else s.succeeded("ok", 1.0)
+                        for s in plan.steps
+                    )
+                    return ExecutionOutcome(plan=plan.with_steps(steps), results={},
+                                            succeeded=False, blocked_reason="step_failed")
+                steps = tuple(
+                    s if s.status.value == "succeeded" else s.succeeded("ok", 1.0)
+                    for s in plan.steps
+                )
+                return ExecutionOutcome(plan=plan.with_steps(steps), results={}, succeeded=True)
+
+        agentic = AgenticExecutor(planner=planner, executor=_Executor())
+        outcome = await agentic.run(plan, context=ctx, max_iterations=3, deadline_s=10.0)
+
+        assert outcome.succeeded
+        assert seen == [["s1", "s2", "s3"], ["s1", "s3", "s4"]]
+
+
 class TestStream:
     async def test_yields_step_events_then_the_final_outcome(self, ctx) -> None:
         plan = _plan()

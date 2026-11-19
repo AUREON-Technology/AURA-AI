@@ -47,6 +47,15 @@ class _CountingDb extends AppDatabase {
 
 class FakeIdentityService implements IdentityService {
   @override
+  Future<List<SecondFactor>> secondFactors() async => const [];
+  @override
+  Future<TotpEnrollment> startTotpEnrollment() async =>
+      const TotpEnrollment(secretKey: 'KEY', otpauthUrl: 'otpauth://totp/AURA:x?secret=KEY');
+  @override
+  Future<void> finishTotpEnrollment(TotpEnrollment enrollment, String code) async {}
+  @override
+  Future<void> removeSecondFactor(String uid) async {}
+  @override
   List<String> linkedProviders() => const [];
   @override
   Future<void> linkGoogle() async {}
@@ -59,12 +68,16 @@ class FakeIdentityService implements IdentityService {
 
   IdentityUser? user;
   IdentityError? error;
+
+  /// The account has a second step (SaaS P1-I): sign-in throws this instead of signing in.
+  SecondFactorRequired? secondFactor;
   String? token;
   final List<String> calls = [];
 
   Future<IdentityUser> _signIn(String how) async {
     calls.add(how);
     if (error != null) throw error!;
+    if (secondFactor != null) throw secondFactor!;
     return current = user!;
   }
 
@@ -355,5 +368,58 @@ void main() {
     expect(await c.read(tokenManagerProvider).startSession('firebase-web'), SessionStart.started);
     expect(requests.single.url.path, '/api/v3/auth/consumer/token');
     expect(requests.single.headers.keys.map((k) => k.toLowerCase()), isNot(contains('x-device-attestation')));
+  });
+
+  group('two-step verification (SaaS P1-I)', () {
+    SecondFactorRequired challengeFor(FakeIdentityService identity, {bool totp = true}) => SecondFactorRequired(
+          totp: totp,
+          resolve: (code) async {
+            identity.calls.add('code:$code');
+            if (code != '123456') throw const IdentityError(IdentityErrorKind.wrongCode, 'no');
+            return identity.current = _ann;
+          },
+        );
+
+    test('a second step: no session until the code, a wrong code can be retried, then one session', () async {
+      final identity = FakeIdentityService(user: _ann);
+      identity.secondFactor = challengeFor(identity);
+      final c = container(identity);
+      await c.read(authProvider.future);
+
+      await c.read(authProvider.notifier).signInWithEmail('ann@example.com', 'correct horse');
+      final state = c.read(authProvider);
+      expect(state.error, isA<SecondFactorRequired>());
+      expect(exchanges, isEmpty, reason: 'no backend session before the second step');
+
+      final challenge = state.error! as SecondFactorRequired;
+      await expectLater(challenge.resolve('000000'),
+          throwsA(isA<IdentityError>().having((e) => e.kind, 'kind', IdentityErrorKind.wrongCode)));
+      final user = await challenge.resolve('123456');
+      await c.read(authProvider.notifier).completeSecondFactor(user);
+
+      expect(exchanges.single.url.path, '/api/v3/auth/token');
+      expect(c.read(authProvider).value!.id, _ann.uid);
+      expect(identity.calls, ['email:ann@example.com', 'code:000000', 'code:123456']);
+    });
+
+    test('cancelling the second step leaves the person signed out with no session', () async {
+      final identity = FakeIdentityService(user: _ann);
+      identity.secondFactor = challengeFor(identity);
+      final c = container(identity);
+      await c.read(authProvider.future);
+
+      await c.read(authProvider.notifier).signInWithGoogle();
+      await c.read(authProvider.notifier).cancelSecondFactor();
+
+      expect(c.read(authProvider).value, isNull);
+      expect(c.read(authProvider).hasError, isFalse);
+      expect(exchanges, isEmpty);
+      expect(identity.calls, contains('signOut'));
+    });
+
+    test('Firebase error codes for the second step', () {
+      expect(identityErrorKindFor('invalid-verification-code'), IdentityErrorKind.wrongCode);
+      expect(identityErrorKindFor('requires-recent-login'), IdentityErrorKind.reauthRequired);
+    });
   });
 }

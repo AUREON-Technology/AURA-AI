@@ -34,6 +34,7 @@ from ..domain.events import MemoryConsolidated, MemoryWritten
 from ..domain.identifiers import MemoryId, SessionId, UserId
 from ..domain.knowledge import IndexIdentity
 from ..domain.memory import (
+    BASE_CONFIDENCE_METADATA_KEY,
     MEMORY_POLICIES,
     SCOPE_METADATA_KEY,
     SHARED_MEMORY_SCOPE,
@@ -138,9 +139,12 @@ class MemoryEngine:
         if duplicate is not None:
             # Restating a fact is reinforcement, not a second fact. Bumping access_count and
             # confidence is what makes repeated preferences outrank one-off mentions.
+            touched = duplicate.touched(now=now)
+            raised = round(min(1.0, max(touched.confidence, confidence) + 0.05), 6)
             merged = replace(
-                duplicate.touched(now=now),
-                confidence=min(1.0, max(duplicate.confidence, confidence) + 0.05),
+                touched,
+                confidence=raised,
+                metadata={**touched.metadata, BASE_CONFIDENCE_METADATA_KEY: raised},
             )
             await self._store.update(merged)
             logger.info("memory reinforced", extra={"kind": str(kind), "memory_id": merged.id.value})
@@ -416,10 +420,18 @@ class MemoryEngine:
     # -- deletion ----------------------------------------------------------------------
 
     async def forget(self, memory_id: MemoryId, *, owner_id: UserId) -> bool:
-        deleted = await self._store.delete(memory_id, owner_id=owner_id)
-        if deleted:
-            await self._vectors.delete(self._identity, point_ids=[memory_id.value])
-        return deleted
+        """Delete one memory: its vector point first, then its row (F27).
+
+        In that order so a failure part-way leaves the row, which a retry can still find and
+        delete, rather than a vector point no API can reach any more. Ownership is checked
+        before anything is deleted -- a memory id is not a capability, and the vector delete
+        has no owner predicate of its own.
+        """
+        current = await self._store.get(memory_id)
+        if current is None or current.owner_id != owner_id:
+            return False
+        await self._vectors.delete(self._identity, point_ids=[memory_id.value])
+        return await self._store.delete(memory_id, owner_id=owner_id)
 
     async def forget_owner(self, owner_id: UserId) -> int:
         """Erasure: every memory ``owner_id`` has, superseded ones included, from the store and
@@ -445,18 +457,21 @@ class MemoryEngine:
         Only possible because every write records provenance. The vector points are removed via
         the same filter so the index does not retain orphans that would still be retrievable.
         """
+        # Vectors first, for the same reason as ``forget``: a failure in between leaves rows a
+        # retry can still match, never points nothing can reach.
+        await self._ensure_index()
+        await self._vectors.delete_by_filter(
+            self._identity, filters={"source": source}, owner_id=owner_id
+        )
         count = await self._store.delete_by_provenance(owner_id=owner_id, source=source)
-        if count:
-            await self._vectors.delete_by_filter(
-                self._identity, filters={"source": source}, owner_id=owner_id
-            )
         logger.info("memories forgotten by source", extra={"source": source, "count": count})
         return count
 
     async def _forget(self, record: MemoryRecord) -> None:
         try:
-            await self._store.delete(record.id, owner_id=record.owner_id)
+            # Vector point before row: see ``forget``.
             await self._vectors.delete(self._identity, point_ids=[record.id.value])
+            await self._store.delete(record.id, owner_id=record.owner_id)
         except Exception:
             logger.debug("memory deletion failed", exc_info=True)
 

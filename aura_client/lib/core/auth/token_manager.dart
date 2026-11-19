@@ -7,6 +7,7 @@ import '../config/backend_url_policy.dart';
 import '../config/backend_url_provider.dart';
 import '../security/device_validation_service.dart';
 import '../../features/auth/presentation/auth_provider.dart';
+import 'platform_login_support.dart';
 import 'refresh_token_store.dart';
 
 /// Why the most recent token exchange failed, so the UI can distinguish "this
@@ -84,13 +85,17 @@ class TokenManager {
   })  : _http = httpClient,
         _store = store ?? const SecureRefreshTokenStore(),
         _attestationHeaders = attestationHeaders ?? _freshAttestationHeaders,
-        _isWeb = isWeb ?? kIsWeb;
+        _attested = platformHasDeviceAttestation(isWeb: isWeb ?? kIsWeb);
 
-  /// A browser has no device attestation, so it signs in through the customer route, whose
-  /// sessions the backend caps at the `User` role (SaaS P1-B). Phones keep the attested route.
-  final bool _isWeb;
+  /// Whether this device signs in at the attested `/token`. A browser has no device attestation,
+  /// and neither has a macOS (or any other non-phone) build: the backend verifies Play Integrity
+  /// and App Attest only, so `/token` refused every macOS sign-in (INT-103). Those sign in through
+  /// the customer route, whose sessions the backend caps at the `User` role (SaaS P1-B). Phones
+  /// keep the attested route.
+  final bool _attested;
 
-  static String exchangePathFor({required bool isWeb}) => isWeb ? '/consumer/token' : '/token';
+  static String exchangePathFor({required bool isWeb, TargetPlatform? platform}) =>
+      platformHasDeviceAttestation(isWeb: isWeb, platform: platform) ? '/token' : '/consumer/token';
 
   /// Bumped whenever the session this manager holds is replaced or ended ([clear],
   /// [startSession]). A refresh or exchange still in flight from before compares it when its
@@ -98,10 +103,22 @@ class TokenManager {
   /// signed out meanwhile (audit INT-027).
   int _generation = 0;
 
+  /// The current session's generation: changes whenever the session is replaced or ended. A
+  /// caller holding results fetched under one session compares it before writing them, so a sync
+  /// pull still in flight at sign-out cannot refill the wiped database (F56).
+  int get sessionGeneration => _generation;
+
   /// The `retry_key` of a `/refresh` that got no answer, with the token it was for. The next
   /// refresh of that same token re-sends it, so the server can tell a retry after a lost response
   /// from a replay of a rotated token (INT-012, `services/jwt_auth.REFRESH_RETRY_GRACE`).
-  ({String token, String key})? _unansweredRefresh;
+  ///
+  /// Persisted with the refresh token when the store supports it (INT-105), so a retry after the
+  /// app was killed still carries the same key.
+  UnansweredRefresh? _unansweredRefresh;
+
+  /// Whether [_unansweredRefresh] has been read back from the store (once per process), or must
+  /// no longer be (a session was started or ended since).
+  bool _unansweredLoaded = false;
 
   /// Set when the backend answered `account_deleted`: the account no longer exists, and nothing
   /// may silently re-exchange its way back into it (INT-010).
@@ -135,6 +152,34 @@ class TokenManager {
 
   Future<void> _loadCachedRefreshToken() async {
     _refreshToken ??= await _store.read();
+    if (_unansweredLoaded) return;
+    _unansweredLoaded = true;
+    final Object store = _store; // Object: a RefreshRetryKeyStore is not a RefreshTokenStore subtype
+    if (_unansweredRefresh == null && store is RefreshRetryKeyStore) {
+      try {
+        _unansweredRefresh = await store.readUnanswered();
+      } catch (e) {
+        debugPrint("[TokenManager] could not read the pending refresh retry key: $e");
+      }
+    }
+  }
+
+  Future<void> _rememberUnanswered(UnansweredRefresh pending) async {
+    final Object store = _store;
+    if (store is! RefreshRetryKeyStore) return;
+    try {
+      await store.writeUnanswered(pending);
+    } catch (e) {
+      debugPrint("[TokenManager] could not persist the refresh retry key: $e");
+    }
+  }
+
+  Future<void> _forgetUnanswered() async {
+    final Object store = _store;
+    if (store is! RefreshRetryKeyStore) return;
+    try {
+      await store.deleteUnanswered();
+    } catch (_) {}
   }
 
   /// True when a refresh token is on disk. Does not hit the network;
@@ -303,8 +348,11 @@ class TokenManager {
     // unanswered -- a timeout cannot tell "not received" from "rotated, answer lost", and the
     // server accepts the same token again only together with the same key.
     final pending = _unansweredRefresh;
-    final retryKey = (pending != null && pending.token == token) ? pending.key : _newRetryKey();
+    final reuse = pending != null && pending.token == token;
+    final retryKey = reuse ? pending.key : _newRetryKey();
     _unansweredRefresh = (token: token, key: retryKey);
+    // On disk before the request leaves (INT-105): the process may not live to see the answer.
+    if (!reuse) await _rememberUnanswered((token: token, key: retryKey));
     try {
       final response = await _post(
         "$_authUrl/refresh",
@@ -318,7 +366,8 @@ class TokenManager {
         if (response.statusCode == 200) await _revokeIssued(response.body);
         return false;
       }
-      if (response.statusCode != 429 && response.statusCode < 500) _unansweredRefresh = null;
+      final answered = response.statusCode != 429 && response.statusCode < 500;
+      if (answered) _unansweredRefresh = null;
 
       if (response.statusCode != 200) {
         debugPrint(
@@ -333,10 +382,17 @@ class TokenManager {
         _accountDeleted = _isAccountDeleted(response);
         _planRequired =
             _renewalRefused && response.headers['x-aura-refusal'] == 'plan_required';
-        if (_renewalRefused) await _clearRefreshToken();
+        if (_renewalRefused) {
+          await _clearRefreshToken();
+        } else if (answered) {
+          await _forgetUnanswered();
+        }
         return false;
       }
       await _applyTokenResponse(jsonDecode(response.body) as Map<String, dynamic>);
+      // Only once the successor is stored: forgotten first, a crash in between would leave the
+      // spent token on disk with no key to retry it by.
+      await _forgetUnanswered();
       debugPrint("[TokenManager] refresh succeeded");
       return true;
     } catch (e) {
@@ -372,6 +428,7 @@ class TokenManager {
     final generation = ++_generation;
     _inFlightAccessToken = null;
     _unansweredRefresh = null;
+    _unansweredLoaded = true;
     await _loadCachedRefreshToken();
     final cached = _refreshToken;
     final previous = (cached != null && cached.isNotEmpty) ? cached : null;
@@ -414,10 +471,10 @@ class TokenManager {
       final headers = {"Authorization": "Bearer $idToken"};
       if (interactive) headers[signInHeader] = 'interactive';
       // Fresh every time: the server consumes the attestation's nonce here (INT-011). A browser
-      // has none, and uses the customer route instead (SaaS P1-B).
-      if (!_isWeb) headers.addAll(await _attestationHeaders(_backendUrl));
+      // or a macOS build has none, and uses the customer route instead (SaaS P1-B, INT-103).
+      if (_attested) headers.addAll(await _attestationHeaders(_backendUrl));
 
-      final response = await _post("$_authUrl${exchangePathFor(isWeb: _isWeb)}", headers: headers);
+      final response = await _post("$_authUrl${_attested ? '/token' : '/consumer/token'}", headers: headers);
       if (generation != _generation) {
         // Signed out while this was in flight (INT-027).
         if (response.statusCode == 200) await _revokeIssued(response.body);
@@ -557,6 +614,7 @@ class TokenManager {
     _generation++;
     _inFlightAccessToken = null;
     _unansweredRefresh = null;
+    _unansweredLoaded = true;
     await _loadCachedRefreshToken();
     final previous = _refreshToken;
     await _applyTokenResponse(tokenResponse);
@@ -621,7 +679,9 @@ class TokenManager {
 
   Future<void> _clearRefreshToken() async {
     _refreshToken = null;
+    _unansweredRefresh = null;
     await _store.delete();
+    await _forgetUnanswered();
   }
 
   /// Call from AuthNotifier.signOut() so a signed-out session's refresh
@@ -641,6 +701,7 @@ class TokenManager {
     _generation++;
     _inFlightAccessToken = null;
     _unansweredRefresh = null;
+    _unansweredLoaded = true;
     DeviceValidationService.clearCache();
     if (revoke) {
       await _loadCachedRefreshToken();

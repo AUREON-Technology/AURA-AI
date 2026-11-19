@@ -227,16 +227,19 @@ class StoreBillingService:
         if change.stale_check and change.expires_at is not None and change.expires_at < sub.period_end:
             return "stale"  # about a transaction that ended before the period we already hold
         if change.action == REVOKE:
-            await self.subscriptions.put(replace(sub, status=SubscriptionStatus.EXPIRED, updated_at=now))
+            # Free before the status throughout: the event is recorded only once this returns, so
+            # a failure half-way is retried by the store and finished, never skipped (F8).
             await self._downgrade(ws)
+            await self.subscriptions.put(replace(sub, status=SubscriptionStatus.EXPIRED, updated_at=now))
             await self._audit("billing.store_revoked", change.provider, ws, {})
             return "applied"
         if sub.status is SubscriptionStatus.EXPIRED and change.action != EXPIRE:
             return "ignored"
         if change.action == EXPIRE:
+            # Also when already expired: a retry after a downgrade that failed finishes it (F8).
+            await self._downgrade(ws)
             if sub.status is not SubscriptionStatus.EXPIRED:
                 await self.subscriptions.put(replace(sub, status=SubscriptionStatus.EXPIRED, updated_at=now))
-                await self._downgrade(ws)
                 await self._audit("billing.expired", change.provider, ws, {"plan": sub.plan_id})
             return "applied"
         if change.action == GRACE:
@@ -246,8 +249,8 @@ class StoreBillingService:
         elif change.action == PAST_DUE:
             # The store suspended access (Play on hold or paused, Apple billing failure without a
             # grace period): so does AURA; the store's recovery re-activates (D2 review #2).
-            await self.subscriptions.put(replace(sub, status=SubscriptionStatus.PAST_DUE, updated_at=now))
             await self._downgrade(ws)
+            await self.subscriptions.put(replace(sub, status=SubscriptionStatus.PAST_DUE, updated_at=now))
         elif change.action == CANCEL:
             end = max(sub.period_end, change.expires_at) if change.expires_at else sub.period_end
             await self.subscriptions.put(replace(sub, status=SubscriptionStatus.CANCELED, period_end=end, updated_at=now))
@@ -258,8 +261,9 @@ class StoreBillingService:
         return "applied"
 
     async def _downgrade(self, workspace_id: str) -> None:
+        """Free, unless an operator set the plan by hand. Idempotent: already Free is left alone."""
         current = await self.plans.entitlements.get(workspace_id)
-        if current is not None and current.source == "manual":
+        if current is not None and (current.source == "manual" or current.plan_id == FREE_PLAN):
             return
         await self.plans.set_entitlement("billing", workspace_id, FREE_PLAN, 1, source="subscription")
 

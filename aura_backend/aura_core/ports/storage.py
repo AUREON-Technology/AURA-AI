@@ -273,6 +273,8 @@ class MemoryStore(Protocol):
         ...
 
     async def update(self, record: MemoryRecord) -> None:
+        """Update the existing row of ``record.owner_id``; never insert (F27). ``access_count`` and
+        ``last_accessed_at`` only move forward, and ``superseded_by`` is never cleared."""
         ...
 
     async def touch_many(

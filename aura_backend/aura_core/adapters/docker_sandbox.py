@@ -22,6 +22,13 @@ per-container: turning on ``EXEC`` so a workspace could be entered would equally
 ``postgres`` or ``ollama``, so both compose files set ``EXEC: "0"`` and exec is refused with a
 403. Starting a container needs only ``CONTAINERS``, which is already allowed. See :meth:`run`.
 
+**The settings below are enforced server-side too (audit F19).** The proxy filters endpoints, not
+request bodies, so the deployed gateway's ``DOCKER_HOST`` names ``sandbox-broker``
+(``deploy/sandbox-broker/broker.py``) instead, which refuses any create that is not exactly what
+:meth:`_container_kwargs` builds and any operation on a container without a sandbox label. A
+change to the launch arguments here has to be matched there, or every command is refused;
+``tests/unit/test_sandbox_broker_policy.py`` drives this adapter through the broker to catch it.
+
 Network isolation is split between this adapter and the compose stack, and neither half works
 alone. This adapter attaches containers to the network name it is given (or disables networking
 outright when given none) and sets ``HTTP(S)_PROXY`` when a proxy is configured. The compose file

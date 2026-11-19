@@ -4,8 +4,8 @@ Opt-in (``-m load``); skips unless ``AURA_TEST_DATABASE_URL`` names a superuser 
 auth (see ``test_adaptation_postgres.py``).
 
 What the unit tests (in-memory document store) cannot show and this does: the PostgreSQL store's
-``list_active(owner)`` returns the owner's documents *and* global ones, and the sync's document
-metadata (which source element a document came from) round-trips through JSONB. Sync still
+``list_active(owner)`` returns the owner's documents only (INT-111; it used to add global ones),
+and the sync's document metadata (which source element a document came from) round-trips through JSONB. Sync still
 converges on the blueprint's sources and never touches a global document.
 """
 
@@ -62,7 +62,8 @@ async def test_sync_converges_and_leaves_global_documents_alone(database_url, tm
     assert again.ingested == () and len(again.unchanged) == len(HR_DOCS) and again.removed == ()
 
     listed = await documents.list_active(owner_id=project.owner, limit=100)
-    assert handbook.document.id in {d.id for d in listed}  # the store does list global documents
+    # Owner-only since INT-111: the global handbook is not the project's, so it is not listed.
+    assert handbook.document.id not in {d.id for d in listed}
     elements = {d.metadata.get("element") for d in listed if d.owner_id == project.owner}
     assert elements == {f"{CONNECTOR}:document:{name}" for name in HR_DOCS}
 

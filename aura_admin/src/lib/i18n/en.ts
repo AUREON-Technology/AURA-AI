@@ -240,8 +240,7 @@ export const en = {
   "access.gdprHelp":
     "Returns counts only. Never displays user content. An incomplete erasure keeps the account; run it again once the failed stores are back.",
   "access.forgetPlaceholder": "email or auth subject",
-  "access.forgetTitle": "Forget user",
-  "access.forgetWord": "forget",
+  "access.forgetTitle": "Forget {subject}",
   "access.forget": "Forget",
   "access.erasureComplete": "Erasure complete.",
   "access.erasureFailedFor": "Erasure incomplete: failed for {stores}. The account was kept; run forget again.",

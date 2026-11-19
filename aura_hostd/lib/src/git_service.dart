@@ -32,6 +32,8 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import 'command_policy.dart' show sharedEmptyHooksDir, untrustedGitGlobalArgs;
+
 /// Bounds how much of a diff this service ever holds in memory or returns, matching
 /// `task_handler.dart`'s `_maxOutputCapChars` / `control_server.dart`'s `_maxReadBytes`
 /// discipline -- a very large diff (a vendored-file commit) should not grow this process's
@@ -98,17 +100,46 @@ class GitService {
   /// while; the backend gives the whole `init_git` call 60 seconds). [environment] is added to
   /// every git process's environment -- a test points `GIT_CONFIG_GLOBAL` at a file of its own to
   /// control which identity git sees; `GIT_TERMINAL_PROMPT=0` always wins.
+  ///
+  /// [runsRepositoryPrograms] says, per working directory, whether git may run the programs the
+  /// repository configures: its hooks (`.git/hooks`, or wherever its `core.hooksPath` points) and
+  /// its `core.fsmonitor` command (F45). When it returns false -- and always when it is not given
+  /// -- every git this service starts gets [untrustedGitGlobalArgs] first, the same switch-off
+  /// the untrusted tier's allowlisted git gets (G-17): the hooks path is an empty directory and
+  /// fsmonitor is off. `ControlServer` passes the folder's trust flag, so the person's own
+  /// pre-commit hooks still run when they commit from the Git panel in a folder they trust; in a
+  /// folder they do not, a checkout or a commit no longer runs whatever the repository brought
+  /// with it. `IsolatedTaskRegistry` passes nothing: `git worktree add` for an agent task runs no
+  /// `post-checkout` hook, trusted folder or not, since no human started it.
   GitService({
     Duration networkTimeout = const Duration(seconds: 30),
     Duration localTimeout = const Duration(seconds: 45),
     Map<String, String> environment = const {},
+    bool Function(String cwd)? runsRepositoryPrograms,
   })  : _networkTimeout = networkTimeout,
         _localTimeout = localTimeout,
-        _environment = {...environment, ..._gitEnvironment};
+        _environment = {...environment, ..._gitEnvironment},
+        _runsRepositoryPrograms = runsRepositoryPrograms ?? _never;
 
   final Duration _networkTimeout;
   final Duration _localTimeout;
   final Map<String, String> _environment;
+  final bool Function(String cwd) _runsRepositoryPrograms;
+
+  static bool _never(String cwd) => false;
+
+  /// [args] as git is actually started in [cwd]: behind [untrustedGitGlobalArgs] unless
+  /// [_runsRepositoryPrograms] allows the repository's own programs there. A caller that cannot
+  /// answer counts as "no".
+  List<String> _argv(String cwd, List<String> args) {
+    bool allowed;
+    try {
+      allowed = _runsRepositoryPrograms(cwd);
+    } on Object {
+      allowed = false;
+    }
+    return allowed ? args : [...untrustedGitGlobalArgs(sharedEmptyHooksDir()), ...args];
+  }
 
   /// Bounds the cheap read-only probes of [isolationState].
   static const _probeTimeout = Duration(seconds: 10);
@@ -634,7 +665,7 @@ class GitService {
   Future<_GitResult> _run(String cwd, List<String> args) async {
     final result = await Process.run(
       'git',
-      args,
+      _argv(cwd, args),
       workingDirectory: cwd,
       environment: _environment,
       stdoutEncoding: null,
@@ -664,7 +695,8 @@ class GitService {
   /// [args] run with a [timeout] after which git (and, on Windows, its child) is killed and
   /// [GitCommandError] thrown -- [_runNetwork]'s mechanism, also used for WP4's local steps.
   Future<_GitResult> _runBounded(String cwd, List<String> args, Duration timeout) async {
-    final process = await Process.start('git', args, workingDirectory: cwd, environment: _environment);
+    final process =
+        await Process.start('git', _argv(cwd, args), workingDirectory: cwd, environment: _environment);
     final stdoutBytes = process.stdout.fold<List<int>>(<int>[], (acc, chunk) => acc..addAll(chunk));
     final stderrBytes = process.stderr.fold<List<int>>(<int>[], (acc, chunk) => acc..addAll(chunk));
     int exitCode;

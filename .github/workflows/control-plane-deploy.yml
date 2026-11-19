@@ -111,9 +111,17 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # F48: on workflow_run, the commit Backend CI tested -- not whatever main points at by
+          # the time this runs, which `railway up` would otherwise upload untested. A manual
+          # dispatch has no workflow_run, so it deploys the commit it was dispatched on.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
+      # Exact version (audit F49): this step runs with the production Railway token in the job, so
+      # it must not install whatever the registry serves that minute. Bump deliberately, picking
+      # a release that has been out for a while (5.71.0: 2026-10-19).
       - name: Install Railway CLI
-        run: npm install -g @railway/cli
+        run: npm install -g @railway/cli@5.71.0
 
       - name: Deploy gateway service
         env:

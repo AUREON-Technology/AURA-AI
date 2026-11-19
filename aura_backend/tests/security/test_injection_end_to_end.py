@@ -47,6 +47,15 @@ async def _poison(container) -> None:
                  "chunk_index": 0, "owner_id": VICTIM.value, "content": INJECTION,
                  "heading_path": []},
     )])
+    # The row too, written straight to the store (still no ingestion guard ran): retrieval
+    # checks every dense hit against the document store, and a point with no active document
+    # behind it -- a deleted or erased one -- is dropped (F14).
+    from aura_core.domain.identifiers import DocumentId
+    from aura_core.domain.knowledge import Document, build_chunks
+
+    document = Document(id=DocumentId("evil"), version=1, title="evil", content=INJECTION,
+                        owner_id=VICTIM)
+    await container.documents.put(document, build_chunks(document, [(INJECTION, ())]))
 
 
 def _task_records(container) -> list:

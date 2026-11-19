@@ -40,7 +40,7 @@ from ..domain.knowledge import (
     Relation,
 )
 from ..domain.graph import FactProvenance, normalize_alias, summarise_provenance
-from ..domain.memory import MemoryKind, MemoryRecord
+from ..domain.memory import BASE_CONFIDENCE_METADATA_KEY, MemoryKind, MemoryRecord
 from ..domain.personal_os import PersonalOsRecord, RecordKind
 from dataclasses import replace as _dc_replace
 from ..llm.embeddings import cosine_similarity
@@ -432,8 +432,23 @@ class InMemoryMemoryStore:
         return matches[offset : offset + limit]
 
     async def update(self, record: MemoryRecord) -> None:
+        """Update an existing row; never create one (F27).
+
+        Consolidation writes back records it listed earlier, and a row forgotten in between
+        must stay forgotten. Access bookkeeping only moves forward and supersession is one-way,
+        so a snapshot taken before a concurrent recall or supersede cannot revert either.
+        Mirrors ``PostgresMemoryStore.update``.
+        """
         async with self._lock:
-            self._records[record.id.value] = record
+            current = self._records.get(record.id.value)
+            if current is None or current.owner_id != record.owner_id:
+                return
+            self._records[record.id.value] = _dc_replace(
+                record,
+                access_count=max(current.access_count, record.access_count),
+                last_accessed_at=max(current.last_accessed_at, record.last_accessed_at),
+                superseded_by=record.superseded_by or current.superseded_by,
+            )
 
     async def touch_many(
         self, memory_ids: Sequence[MemoryId], *, owner_id: UserId, at: datetime
@@ -446,10 +461,18 @@ class InMemoryMemoryStore:
                 current = self._records.get(key)
                 if current is None or current.owner_id != owner_id:
                     continue
+                # An access resets the age decay is measured over, so the effective
+                # confidence returns to the base kept in metadata (F11); never lowered. The
+                # same rule as the Postgres statement, which reads only the stored base.
+                base = current.metadata.get(BASE_CONFIDENCE_METADATA_KEY)
+                restored = current.confidence
+                if isinstance(base, (int, float)) and not isinstance(base, bool):
+                    restored = min(1.0, max(restored, float(base)))
                 self._records[key] = _dc_replace(
                     current,
                     access_count=current.access_count + 1,
                     last_accessed_at=max(current.last_accessed_at, at),
+                    confidence=restored,
                 )
                 touched += 1
         return touched

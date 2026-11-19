@@ -19,12 +19,20 @@
 /// reaching its destination in one click.
 ///
 /// The daemon providers are overridden with a fixed "daemon not reachable"
-/// snapshot, so nothing polls a real `aura_hostd`.
+/// snapshot, so nothing polls a real `aura_hostd`. That includes the control
+/// client itself: it reads `control.json` from the real config directory
+/// (`%APPDATA%/aura_hostd` on Windows, `$XDG_CONFIG_HOME/aura_hostd` or
+/// `~/.aura_hostd` elsewhere). On a machine where the daemon has ever run, that
+/// file exists, and its asynchronous read never completes inside the test's
+/// fake-async zone -- Control Center then shows its loading spinner forever and
+/// every test that opens it fails with "pumpAndSettle timed out" (seen on a
+/// developer's Windows machine; reproduced on Linux by planting the file).
 library;
 
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/hostd/hostd_control_client_io.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart';
 import 'package:aura_client/core/platform/aura_platform.dart';
 import 'package:aura_client/core/security/encryption_service.dart';
@@ -100,6 +108,12 @@ void main() {
             (ref) => Stream.value(HostdStatusSnapshot(reachable: false)),
           ),
           pendingApprovalsProvider.overrideWith((ref) => Stream.value(const [])),
+          // No daemon, whatever this machine's own config directory holds. (`dynamic`: the
+          // analyzer resolves the provider's conditional export to the web stub; this test runs
+          // on the VM, where it is this class.)
+          hostdControlClientProvider.overrideWithValue(
+            HostdControlClient(discoverEndpoint: () async => null) as dynamic,
+          ),
           workspaceNotifierProvider.overrideWith((ref) => WorkspaceNotifier(db, bus)),
           layoutNotifierProvider.overrideWith((ref) => LayoutNotifier(db, bus)),
         ],

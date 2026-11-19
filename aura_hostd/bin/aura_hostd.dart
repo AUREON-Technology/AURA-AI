@@ -50,6 +50,13 @@ Future<void> main(List<String> args) async {
       if (flagIndex >= 0 && flagIndex + 1 < args.length) {
         backendUrl = args[flagIndex + 1];
       }
+      // F53: the token is paired over, and later sent to, this URL -- never in clear elsewhere.
+      try {
+        requireSecureBackendUrl(backendUrl);
+      } on InvalidBackendUrlError catch (error) {
+        stderr.writeln(error.message);
+        exit(64);
+      }
       if (args[1] == 'set-token') {
         _requireArgs(args, 3, 'auth set-token <token> [--backend-url <url>]');
         configStore.saveCredentials(backendUrl: backendUrl, authToken: args[2]);

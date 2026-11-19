@@ -34,6 +34,8 @@ __all__ = ["register_billing_ops"]
 
 MAX_NOTIFICATION_BYTES = 16 * 1024
 CHECKOUTS_PER_MINUTE = 5
+#: Cancel holds the workspace's billing lock and a pooled connection while it works (F38).
+CANCELS_PER_MINUTE = 5
 #: Apple's signed payloads carry three certificates twice (notification + transaction).
 MAX_STORE_NOTIFICATION_BYTES = 64 * 1024
 
@@ -136,6 +138,9 @@ def register_billing_ops(
     @router.post("/workspaces/{workspace_id}/billing/cancel")
     async def billing_cancel(workspace_id: str, caller=Depends(principal)) -> Response:
         require_enabled()
+        decision = await limiter.check_limit(key=str(caller.user_id), scope="billing_cancel", limit=CANCELS_PER_MINUTE)
+        if not decision.allowed:
+            raise RateLimitedError("too many cancel requests", retry_after=decision.retry_after_s)
         await billing.cancel(str(caller.user_id), workspace_id)
         return Response(status_code=204)
 
@@ -162,6 +167,11 @@ def register_billing_ops(
         decision = await limiter.check_limit(key=str(caller.user_id), scope="billing_checkout", limit=CHECKOUTS_PER_MINUTE)
         if not decision.allowed:
             raise RateLimitedError("too many checkout requests", retry_after=decision.retry_after_s)
+        # Who is asking first: a stranger must not learn from 409-vs-403 that a payment is
+        # waiting in someone else's workspace (F57).
+        _ws, membership = await container.tenancy.resolve(str(caller.user_id), workspace_id)
+        if membership.role is not WorkspaceRole.OWNER:
+            raise AuthorizationError("only the workspace owner can buy a plan")
         # A Fawry reference that can still be paid would, once paid, turn the store subscription
         # into a Fawry one while the store kept charging (SaaS P1-F2b review #2).
         now = billing.clock.now()

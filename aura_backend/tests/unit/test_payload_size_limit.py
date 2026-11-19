@@ -130,3 +130,90 @@ def test_the_gateway_applies_the_chat_ceiling_only_with_vision_on() -> None:
         six_mb = b"x" * (6 * 1024 * 1024)
         status = TestClient(app).post("/api/v3/chat/stream", content=six_mb).status_code
         assert status == (200 if enabled else 413), enabled
+
+
+# --- INT-112: routes whose advertised limits sit above the flat 5MB cap -----------------------
+
+def _gateway_limited_app():
+    from types import SimpleNamespace
+
+    from aura_core.config.settings import KnowledgeSettings
+    from aura_service import _apply_http_limits
+
+    app = FastAPI()
+
+    for path in ("/api/v3/knowledge/documents", "/api/v3/knowledge/documents/upload",
+                 "/api/v3/knowledge/documents/doc-1/cag-pin", "/api/v3/voice/transcribe"):
+        async def sink(request: Request) -> dict:
+            return {"size": len(await request.body())}
+
+        app.post(path)(sink)
+
+    knowledge = KnowledgeSettings()
+    _apply_http_limits(app, SimpleNamespace(knowledge=knowledge, vision=_vision(False)))
+    return TestClient(app), knowledge
+
+
+def test_a_text_document_the_engine_accepts_is_not_refused_at_the_gateway() -> None:
+    """The JSON ingest route carries up to ``max_document_bytes`` of text; the flat 5MB cap
+    refused 5-8MB documents the knowledge engine would have stored."""
+    import json
+
+    client, knowledge = _gateway_limited_app()
+    content = "a" * (knowledge.max_document_bytes - 16)
+    body = json.dumps({"title": "t", "content": content}).encode()
+    assert client.post("/api/v3/knowledge/documents", content=body).status_code == 200
+    # Still bounded: far past the document ceiling is refused before it is read.
+    huge = b"x" * (3 * knowledge.max_document_bytes)
+    assert client.post("/api/v3/knowledge/documents", content=huge).status_code == 413
+
+
+def test_transcribe_accepts_the_audio_size_it_advertises() -> None:
+    from aura_core.api.v3 import MAX_AUDIO_BYTES
+
+    client, _knowledge = _gateway_limited_app()
+    assert client.post("/api/v3/voice/transcribe", content=b"x" * MAX_AUDIO_BYTES).status_code == 200
+    assert client.post("/api/v3/voice/transcribe", content=b"x" * (MAX_AUDIO_BYTES + 4 * 1024 * 1024)).status_code == 413
+
+
+def test_the_wider_document_ceiling_does_not_leak_to_its_sub_routes() -> None:
+    client, knowledge = _gateway_limited_app()
+    six_mb = b"x" * (6 * 1024 * 1024)
+    assert client.post("/api/v3/knowledge/documents/doc-1/cag-pin", content=six_mb).status_code == 413
+    # The upload route keeps its own (narrower) ceiling, not the JSON route's.
+    over_upload = b"x" * (knowledge.max_document_bytes + 2 * 1024 * 1024)
+    assert client.post("/api/v3/knowledge/documents/upload", content=over_upload).status_code == 413
+
+
+def test_ingest_request_content_is_bounded_like_the_engine(container) -> None:
+    """The JSON model refuses text no engine would store, before hashing or reserving it."""
+    from aura_core.api import build_app
+
+    async def authenticator(request):  # pragma: no cover - not called
+        raise AssertionError
+
+    schema = build_app(container, authenticator=authenticator).openapi()
+    content = schema["components"]["schemas"]["IngestRequest"]["properties"]["content"]
+    assert content["maxLength"] == container.settings.knowledge.max_document_bytes
+
+
+# --- INT-118: a browser may read Retry-After -------------------------------------------------
+
+def test_cors_exposes_retry_after_to_web_clients(monkeypatch) -> None:
+    import config
+    from aura_service import _apply_cors
+
+    monkeypatch.setattr(config.settings, "allowed_origins", "https://app.example")
+    app = FastAPI()
+
+    @app.get("/limited")
+    async def limited():
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse({"error": "rate_limited"}, status_code=429, headers={"Retry-After": "7"})
+
+    _apply_cors(app)
+    response = TestClient(app).get("/limited", headers={"Origin": "https://app.example"})
+    exposed = {h.strip().lower() for h in response.headers["access-control-expose-headers"].split(",")}
+    assert "retry-after" in exposed
+    assert "x-aura-refusal" in exposed

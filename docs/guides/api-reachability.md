@@ -75,28 +75,28 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | GET | `/api/v3/admin/twin/versions/{version}` | — | — | — | none | to wire: Console twin browser and diff are Track AP phase AP9 |
 | POST | `/api/v3/admin/twin/versions/{version}/compile` | — | — | — | none | to wire: Console twin browser and diff are Track AP phase AP9 |
 | GET | `/api/v3/admin/twin/versions/{version}/plan` | — | — | — | none | to wire: Console twin browser and diff are Track AP phase AP9 |
-| POST | `/api/v3/admin/users/{subject}/forget` | — | `aura_admin/app/(console)/access/page.tsx:197` | — | called |  |
+| POST | `/api/v3/admin/users/{subject}/forget` | — | `aura_admin/app/(console)/access/page.tsx:200` | — | called |  |
 | PUT | `/api/v3/admin/workspaces/{workspace_id}/plan` | — | — | — | none | to wire: admin console page missing for this route |
 | GET | `/api/v3/agents` | `aura_client/lib/features/chat/data/agents_repository.dart:9`, `aura_client/lib/features/chat/data/agents_repository.dart:127` (+1) | — | — | called |  |
 | GET | `/api/v3/agents/runs` | — | — | — | none | to wire: agent-run history (wave 2) has no client or admin view yet |
 | GET | `/api/v3/agents/runs/{run_id}` | — | — | — | none | to wire: agent-run history (wave 2) has no client or admin view yet |
-| POST | `/api/v3/auth/consumer/token` | `aura_client/lib/core/auth/token_manager.dart:93` | — | — | called |  |
+| POST | `/api/v3/auth/consumer/token` | `aura_client/lib/core/auth/token_manager.dart:98`, `aura_client/lib/core/auth/token_manager.dart:477` | — | — | called |  |
 | GET | `/api/v3/auth/desktop/devices` | `aura_client/lib/core/auth/desktop_devices_client.dart:41` | — | — | called |  |
 | POST | `/api/v3/auth/desktop/devices/revoke` | `aura_client/lib/core/auth/desktop_devices_client.dart:41` | — | — | called |  |
 | POST | `/api/v3/auth/desktop/exchange` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:17`, `aura_client/lib/core/auth/desktop_oauth_client_io.dart:97` (+1) | — | — | called |  |
 | POST | `/api/v3/auth/desktop/firebase-exchange` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:79`, `aura_client/lib/core/auth/desktop_oauth_client_io.dart:188` (+3) | — | — | called |  |
 | POST | `/api/v3/auth/desktop/handoff` | `aura_client/lib/core/auth/desktop_handoff_client.dart:76`, `aura_client/lib/core/auth/desktop_handoff_client.dart:89` (+2) | — | — | called |  |
-| POST | `/api/v3/auth/desktop/login` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:73`, `aura_client/lib/core/auth/token_manager.dart:48` (+2) | — | — | called |  |
+| POST | `/api/v3/auth/desktop/login` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:73`, `aura_client/lib/core/auth/token_manager.dart:49` (+2) | — | — | called |  |
 | POST | `/api/v3/auth/desktop/pair/approve` | `aura_client/lib/features/engineering/presentation/hostd_pairing_flow.dart:78` | — | — | called |  |
-| POST | `/api/v3/auth/desktop/pair/poll` | — | — | `aura_hostd/lib/src/pairing_client.dart:129` | called |  |
-| POST | `/api/v3/auth/desktop/pair/start` | — | — | `aura_hostd/lib/src/pairing_client.dart:98` | called |  |
+| POST | `/api/v3/auth/desktop/pair/poll` | — | — | `aura_hostd/lib/src/pairing_client.dart:131` | called |  |
+| POST | `/api/v3/auth/desktop/pair/start` | — | — | `aura_hostd/lib/src/pairing_client.dart:100` | called |  |
 | POST | `/api/v3/auth/nonce` | `aura_client/lib/core/security/device_validation_service.dart:162` | — | — | called |  |
-| POST | `/api/v3/auth/refresh` | `aura_client/lib/core/auth/token_manager.dart:101`, `aura_client/lib/core/auth/token_manager.dart:110` (+4) | `aura_admin/src/lib/refresh.ts:76` | — | called |  |
+| POST | `/api/v3/auth/refresh` | `aura_client/lib/core/auth/token_manager.dart:111`, `aura_client/lib/core/auth/token_manager.dart:127` (+4) | `aura_admin/src/lib/refresh.ts:107` | — | called |  |
 | POST | `/api/v3/auth/revoke` | `aura_client/lib/core/auth/desktop_devices_client.dart:41`, `aura_client/lib/core/auth/desktop_devices_client.dart:82` (+1) | `aura_admin/app/api/auth/login/route.ts:10`, `aura_admin/app/api/auth/logout/route.ts:14` | — | called |  |
-| POST | `/api/v3/auth/token` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:91`, `aura_client/lib/core/auth/token_manager.dart:61` (+8) | — | — | called |  |
-| POST | `/api/v3/auth/web/token` | `aura_client/lib/core/auth/token_manager.dart:467`, `aura_client/lib/core/auth/token_manager.dart:473` | `aura_admin/app/api/auth/login/route.ts:38` | — | called |  |
-| POST | `/api/v3/automation/analyze-email` | `aura_client/lib/features/automations/data/automation_repository.dart:264` | — | — | called |  |
-| POST | `/api/v3/automation/analyze-issue` | `aura_client/lib/features/automations/data/automation_repository.dart:303` | — | — | called |  |
+| POST | `/api/v3/auth/token` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:91`, `aura_client/lib/core/auth/platform_login_support.dart:19` (+12) | — | — | called |  |
+| POST | `/api/v3/auth/web/token` | `aura_client/lib/core/auth/token_manager.dart:524`, `aura_client/lib/core/auth/token_manager.dart:530` | `aura_admin/app/api/auth/login/route.ts:38` | — | called |  |
+| POST | `/api/v3/automation/analyze-email` | `aura_client/lib/features/automations/data/automation_repository.dart:278` | — | — | called |  |
+| POST | `/api/v3/automation/analyze-issue` | `aura_client/lib/features/automations/data/automation_repository.dart:317` | — | — | called |  |
 | POST | `/api/v3/billing/apple/notify` | — | — | — | none | server-only: App Store Server Notifications V2 (SaaS P1-D2) |
 | POST | `/api/v3/billing/fawry/notify` | — | — | — | none | server-only: Fawry's server notification (SaaS P1-D1) |
 | POST | `/api/v3/billing/google/notify` | — | — | — | none | server-only: Play RTDN via Pub/Sub push (SaaS P1-D2) |
@@ -111,7 +111,7 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | GET | `/api/v3/engineering/workspaces` | `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:50`, `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:74` (+1) | — | — | called |  |
 | DELETE | `/api/v3/engineering/workspaces/{workspace_id}` | `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:124` | — | — | called |  |
 | POST | `/api/v3/feedback` | `aura_client/lib/features/chat/data/feedback_repository.dart:33` | — | — | called |  |
-| WS | `/api/v3/host/agent` | — | — | `aura_hostd/lib/src/config.dart:36`, `aura_hostd/lib/src/config.dart:41` (+1) | called |  |
+| WS | `/api/v3/host/agent` | — | — | `aura_hostd/lib/src/config.dart:36`, `aura_hostd/lib/src/config.dart:43` (+1) | called |  |
 | GET | `/api/v3/host/folders` | `aura_client/lib/core/ai/engineer/host_folders_client.dart:36`, `aura_client/lib/core/ai/engineer/host_folders_client.dart:80` (+2) | — | — | called |  |
 | POST | `/api/v3/host/folders/git-init` | `aura_client/lib/core/ai/engineer/host_folders_client.dart:103` | — | — | called |  |
 | GET | `/api/v3/insights` | `aura_client/lib/core/insights/insights_client.dart:11`, `aura_client/lib/core/insights/insights_client.dart:48` | — | — | called |  |
@@ -123,28 +123,28 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | POST | `/api/v3/integrations/github/disconnect` | `aura_client/lib/features/engineering/data/github_integration_repository.dart:67`, `aura_client/lib/features/engineering/data/github_integration_repository.dart:73` | — | — | called |  |
 | GET | `/api/v3/integrations/github/status` | `aura_client/lib/features/engineering/data/github_integration_repository.dart:4`, `aura_client/lib/features/engineering/data/github_integration_repository.dart:42` | — | — | called |  |
 | GET | `/api/v3/keys/data` | `aura_client/lib/core/security/data_key_client.dart:12`, `aura_client/lib/core/security/data_key_client.dart:44` (+2) | — | — | called |  |
-| GET | `/api/v3/knowledge/cag` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:457` | — | — | called |  |
+| GET | `/api/v3/knowledge/cag` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:469` | — | — | called |  |
 | GET | `/api/v3/knowledge/documents` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:29`, `aura_client/lib/core/ai/knowledge/knowledge_center.dart:50` (+3) | — | — | called |  |
 | POST | `/api/v3/knowledge/documents` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:29`, `aura_client/lib/core/ai/knowledge/knowledge_center.dart:50` (+3) | — | — | called |  |
-| POST | `/api/v3/knowledge/documents/upload` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:340`, `aura_client/lib/core/ai/knowledge/knowledge_center.dart:364` | — | — | called |  |
-| DELETE | `/api/v3/knowledge/documents/{document_id}` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:433` | — | — | called |  |
-| DELETE | `/api/v3/knowledge/documents/{document_id}/cag-pin` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:446` | — | — | called |  |
-| POST | `/api/v3/knowledge/documents/{document_id}/cag-pin` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:446` | — | — | called |  |
+| POST | `/api/v3/knowledge/documents/upload` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:346`, `aura_client/lib/core/ai/knowledge/knowledge_center.dart:370` | — | — | called |  |
+| DELETE | `/api/v3/knowledge/documents/{document_id}` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:441` | — | — | called |  |
+| DELETE | `/api/v3/knowledge/documents/{document_id}/cag-pin` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:458` | — | — | called |  |
+| POST | `/api/v3/knowledge/documents/{document_id}/cag-pin` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:458` | — | — | called |  |
 | GET | `/api/v3/knowledge/graph` | — | — | — | none | to wire: knowledge-graph read API (wave 2) has no view yet |
 | GET | `/api/v3/knowledge/graph/entities/{entity_key}` | — | — | — | none | to wire: knowledge-graph read API (wave 2) has no view yet |
-| POST | `/api/v3/knowledge/search` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:220`, `aura_client/lib/core/ai/knowledge/knowledge_center.dart:321` (+1) | — | — | called |  |
+| POST | `/api/v3/knowledge/search` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:226`, `aura_client/lib/core/ai/knowledge/knowledge_center.dart:327` (+1) | — | — | called |  |
 | POST | `/api/v3/learning/build_dataset` | — | — | — | none | to wire or remove: learning surface with no caller (GAP-013) |
 | GET | `/api/v3/learning/evaluate` | — | — | — | none | to wire or remove: learning surface with no caller (GAP-013) |
 | GET | `/api/v3/learning/export` | — | — | — | none | to wire or remove: learning surface with no caller (GAP-013) |
 | POST | `/api/v3/learning/log` | — | — | — | none | to wire or remove: learning surface with no caller (GAP-013) |
-| GET | `/api/v3/memory` | `aura_client/lib/core/sync/sync_client.dart:27`, `aura_client/lib/features/chat/data/memory_repository.dart:42` | — | — | called |  |
-| POST | `/api/v3/memory` | `aura_client/lib/core/sync/sync_client.dart:27`, `aura_client/lib/features/chat/data/memory_repository.dart:42` | — | — | called |  |
-| DELETE | `/api/v3/memory/{memory_id}` | `aura_client/lib/core/sync/remote_deletes.dart:95`, `aura_client/lib/features/chat/data/memory_repository.dart:187` | — | — | called |  |
+| GET | `/api/v3/memory` | `aura_client/lib/core/sync/sync_client.dart:29`, `aura_client/lib/features/chat/data/memory_repository.dart:81` | — | — | called |  |
+| POST | `/api/v3/memory` | `aura_client/lib/core/sync/sync_client.dart:29`, `aura_client/lib/features/chat/data/memory_repository.dart:81` | — | — | called |  |
+| DELETE | `/api/v3/memory/{memory_id}` | `aura_client/lib/core/sync/remote_deletes.dart:95`, `aura_client/lib/features/chat/data/memory_repository.dart:230` | — | — | called |  |
 | DELETE | `/api/v3/sessions/{session_id}` | `aura_client/lib/core/sync/remote_deletes.dart:96` | — | — | called |  |
-| GET | `/api/v3/sync` | `aura_client/lib/core/database/database.dart:228`, `aura_client/lib/core/database/database.dart:255` (+2) | — | — | called |  |
-| POST | `/api/v3/sync` | `aura_client/lib/core/database/database.dart:228`, `aura_client/lib/core/database/database.dart:255` (+2) | — | — | called |  |
+| GET | `/api/v3/sync` | `aura_client/lib/core/database/database.dart:230`, `aura_client/lib/core/database/database.dart:257` (+2) | — | — | called |  |
+| POST | `/api/v3/sync` | `aura_client/lib/core/database/database.dart:230`, `aura_client/lib/core/database/database.dart:257` (+2) | — | — | called |  |
 | GET | `/api/v3/tools` | — | — | — | none | to wire: tool catalogue is not shown anywhere |
-| WS | `/api/v3/voice/live` | `aura_client/lib/core/ai/voice/live/live_voice_protocol.dart:1`, `aura_client/lib/core/ai/voice/live/live_voice_socket.dart:20` (+1) | — | — | called |  |
+| WS | `/api/v3/voice/live` | `aura_client/lib/core/ai/voice/live/live_voice_protocol.dart:1`, `aura_client/lib/core/ai/voice/live/live_voice_socket.dart:20` (+2) | — | — | called |  |
 | POST | `/api/v3/voice/speak` | `aura_client/lib/core/ai/voice/speech_text.dart:1`, `aura_client/lib/core/ai/voice/voice_client.dart:15` (+1) | — | — | called |  |
 | POST | `/api/v3/voice/transcribe` | `aura_client/lib/core/ai/voice/voice_client.dart:78`, `aura_client/lib/features/chat/presentation/widgets/voice_recorder_button.dart:18` | — | — | called |  |
 | GET | `/api/v3/workspaces` | `aura_client/lib/core/network/aura_api_client.dart:89`, `aura_client/lib/core/network/aura_api_client.dart:129` (+3) | — | — | called |  |

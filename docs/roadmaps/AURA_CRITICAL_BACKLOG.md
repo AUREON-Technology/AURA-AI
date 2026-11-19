@@ -214,6 +214,20 @@ reported beyond BUILT until M0 restores CI evidence.
 | CB-41 | Medium | Personal OS | Personal AURA hardcoded outside any blueprint (GAP-062) | Project 0 parity → shadow → retire coupling | AP13 |
 | CB-42 | High | First integration | Flame AR-1…AR-8 built; Link 2 live run on Railway 2026-10-07 (`flame-link2-live.md`), Link 1 not run (GAP-063) | Run `docs/guides/flame-integration-runbook.md` on the dev stack; write the Link 1 / Link 2 live reports | AP7/AP12a |
 
+## Audit remediation follow-ups (added 2026-11-18)
+
+The two 2026-11-18 audits (F1–F58, INT-101–130) were fixed on `ccr-727f386d-pmrg0l`; per-finding
+status and evidence: [audit-remediation-2026-11-18.md](../reports/audit-remediation-2026-11-18.md).
+These rows are what only the owner can do, or what only a live target can prove.
+
+| ID | Sev | Area | Actual state | Required action | Verification |
+|---|---|---|---|---|---|
+| CB-45 | High | Desktop updates (F18) | Manifest signing and client verification BUILT; the client ships a placeholder key, so **no desktop update is offered** until it is replaced (fails closed). A genuine old signed manifest (including `rollback: true`) stays valid forever | Create the `release` GitHub environment with required reviewers; generate the Ed25519 key (`scripts/desktop_update_manifest.py` docstring), store it as `DESKTOP_UPDATE_SIGNING_KEY`, set `vars.DESKTOP_UPDATE_PUBLIC_KEY`, pin the same key in `aura_client/lib/desktop/update/update_signing_key.dart`. Then add an expiry or version floor to the signed manifest | A signed release offered to an installed app; a tampered or replayed manifest refused |
+| CB-46 | High | Sandbox / dev isolation (F19, F46) | `sandbox-broker` and `ollama-dev-gate` BUILT, never run on Docker. Deploy VPS still blocked by the host-key change | Once Deploy VPS works: start the `sandbox` profile; run `deploy/scripts/verify-engineer-workspaces.sh` (check 11: a privileged create with `/` bound is refused); from dev, inference works and `/api/pull` is 403. Overwrite the dev `dev_*` placeholder secrets with dev credentials; dev GitHub connections must reconnect | Committed report in `docs/reports/` |
+| CB-47 | Medium | Live checks after merge | Fixes TESTED locally only (CB-44: no CI run) | After deploy: `/health/ready` shows `schema.revision 0030` and the pre-deploy log shows `=== MIGRATION OK ===`; `analyze-email` on Railway answers `503 no_local_provider`; live voice plays audio and meters turns on a phone (INT-102, F7); web client reads `Retry-After`; `console.aureon-ai.tech` sends the new headers and Google sign-in works under the CSP; macOS sign-in via `/consumer/token` | Each observed live and noted in the remediation report |
+| CB-48 | Medium | Billing (F58) | Fawry `cards/cardToken` path, signature and response shape assumed from docs | Confirm in Fawry staging | A card token confirmed and saved on a staging payment |
+| CB-49 | Low | Audit coverage | INT-119…130 exist only in the audit's own report file, not in the repository | Add that section to `docs/reports/` and route each item | Each item fixed or recorded |
+
 ## Not in this backlog (deliberately)
 
 Repository split, Kubernetes/microservices, video understanding, macOS desktop certification,

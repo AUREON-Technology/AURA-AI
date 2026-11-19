@@ -65,7 +65,12 @@ class ControlServer {
         isCredentialsRejected = isCredentialsRejected ?? (() => false),
         lastCloseCode = lastCloseCode ?? (() => null),
         _minPairingPollInterval = minPairingPollInterval,
-        gitService = gitService ?? GitService(),
+        // F45: the repository's own hooks and fsmonitor run only in a folder the person trusts.
+        gitService = gitService ??
+            GitService(
+              runsRepositoryPrograms: (cwd) =>
+                  workspaceStore.load().findContainingRoot(cwd)?.trusted ?? false,
+            ),
         diagnosticsService = diagnosticsService ?? DiagnosticsService(),
         _logger = logger ?? _defaultLogger;
 
@@ -968,6 +973,13 @@ class ControlServer {
   Future<void> _handlePairStart(HttpRequest request) async {
     final body = await _readJsonBody(request);
     final backendUrl = body['backend_url'] as String? ?? configStore.load().backendUrl;
+    // F53: a token is never paired over (and later sent to) a plain-http host elsewhere.
+    try {
+      requireSecureBackendUrl(backendUrl);
+    } on InvalidBackendUrlError catch (error) {
+      await _fail(request, 400, HostdErrorCode.invalidRequestBody, error.message);
+      return;
+    }
     try {
       final session = await startPairing(backendUrl);
       _pairingSession = session;

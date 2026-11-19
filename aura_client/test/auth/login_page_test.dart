@@ -68,7 +68,27 @@ class _RecordingAuth extends AuthNotifier {
 
   @override
   Future<void> sendPasswordReset(String email) async => calls.add('reset:$email');
+
+  @override
+  Future<void> completeSecondFactor(IdentityUser user) async {
+    calls.add('complete:${user.uid}');
+    state = const AsyncValue.data(null);
+  }
+
+  @override
+  Future<void> cancelSecondFactor() async {
+    calls.add('cancel-second-factor');
+    state = const AsyncValue.data(null);
+  }
 }
+
+const _ann = IdentityUser(uid: 'u-ann', email: 'ann@example.com', displayName: 'Ann', emailVerified: true, provider: 'password');
+
+SecondFactorRequired _challenge() => SecondFactorRequired(
+      totp: true,
+      resolve: (code) async =>
+          code == '123456' ? _ann : throw const IdentityError(IdentityErrorKind.wrongCode, 'no'),
+    );
 
 Future<_RecordingAuth> _open(WidgetTester tester) async {
   final auth = _RecordingAuth();
@@ -217,5 +237,38 @@ void main() {
     expect(auth.calls, hasLength(1));
     expect(find.byIcon(Icons.error_outline), findsNothing);
     expect(find.textContaining('match an account'), findsNothing);
+  });
+
+  group('the second sign-in step (SaaS P1-I)', () {
+    testWidgets('a sign-in that needs a code opens the dialog once and finishes with the code', (tester) async {
+      final auth = await _open(tester);
+      auth.failWith = _challenge();
+      await _openEmailForm(tester);
+      await _enter(tester, 'Email', 'ann@example.com');
+      await _enter(tester, 'Password', 'correct horse');
+      await _press(tester, 'Sign in');
+      expect(find.byKey(const Key('two-step-code')), findsOneWidget);
+      expect(find.byType(Dialog), findsOneWidget);
+      expect(find.textContaining('two-step'), findsNothing, reason: 'the challenge is not shown as an error');
+
+      await tester.enterText(find.byKey(const Key('two-step-code')), '123456');
+      await tester.tap(find.byKey(const Key('two-step-verify')));
+      await tester.pumpAndSettle();
+      expect(auth.calls.last, 'complete:u-ann');
+      expect(find.byType(Dialog), findsNothing);
+    });
+
+    testWidgets('cancelling the code leaves the person signed out', (tester) async {
+      final auth = await _open(tester);
+      auth.failWith = _challenge();
+      await _openEmailForm(tester);
+      await _enter(tester, 'Email', 'ann@example.com');
+      await _enter(tester, 'Password', 'correct horse');
+      await _press(tester, 'Sign in');
+      await tester.tap(find.byKey(const Key('two-step-cancel')));
+      await tester.pumpAndSettle();
+      expect(auth.calls.last, 'cancel-second-factor');
+      expect(auth.calls.where((c) => c.startsWith('complete:')), isEmpty);
+    });
   });
 }

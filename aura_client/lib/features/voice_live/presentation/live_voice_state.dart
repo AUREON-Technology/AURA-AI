@@ -23,6 +23,9 @@ class LiveVoiceState {
   final String? sessionId;
   final bool supported;
 
+  /// Native audio could not start (INT-102): replies arrive as text only, and the screen says so.
+  final bool audioUnavailable;
+
   const LiveVoiceState({
     this.phase = 'idle',
     this.micAmplitude = 0,
@@ -34,6 +37,7 @@ class LiveVoiceState {
     this.error,
     this.sessionId,
     this.supported = true,
+    this.audioUnavailable = false,
   });
 
   bool get isBusy =>
@@ -51,6 +55,7 @@ class LiveVoiceState {
     bool clearError = false,
     String? sessionId,
     bool? supported,
+    bool? audioUnavailable,
   }) {
     return LiveVoiceState(
       phase: phase ?? this.phase,
@@ -63,6 +68,7 @@ class LiveVoiceState {
       error: clearError ? null : (error ?? this.error),
       sessionId: sessionId ?? this.sessionId,
       supported: supported ?? this.supported,
+      audioUnavailable: audioUnavailable ?? this.audioUnavailable,
     );
   }
 }

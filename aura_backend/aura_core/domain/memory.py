@@ -29,6 +29,8 @@ __all__ = [
     "Provenance",
     "MemoryRecord",
     "MemoryQuery",
+    "DECAYED_AT_METADATA_KEY",
+    "BASE_CONFIDENCE_METADATA_KEY",
     "MemoryHit",
     "ConsolidationOutcome",
 ]
@@ -43,6 +45,10 @@ SCOPE_METADATA_KEY = "memory_scope"
 #: When decay was last applied to ``confidence`` (ISO-8601). Kept in metadata for the same reason
 #: as the scope: no schema change, and every store already round-trips it.
 DECAYED_AT_METADATA_KEY = "decayed_at"
+#: The undecayed confidence that decay is measured from (F11). ``confidence`` holds the
+#: *effective* value -- this base decayed from the last access -- so ranking can keep reading
+#: one column. An access restores ``confidence`` to it; decay never lowers it.
+BASE_CONFIDENCE_METADATA_KEY = "base_confidence"
 
 
 def readable_scopes(scope: str | None) -> tuple[str, ...] | None:
@@ -255,10 +261,41 @@ class MemoryRecord:
             return False
         return (now or _utcnow()) >= self.expires_at
 
+    @property
+    def base_confidence(self) -> float:
+        """The undecayed confidence: what an access restores and what decay is measured from.
+
+        Read from metadata, but never below ``confidence`` -- a write that raised confidence
+        (a restated fact is reinforced) raises the base with it. A row decayed before the base
+        was recorded carries only the decay stamp; within one access period the old decay was
+        exactly ``base * blend(age)``, so the base is recovered from it. Without either, the
+        stored confidence is the base.
+        """
+        stored = self.metadata.get(BASE_CONFIDENCE_METADATA_KEY)
+        if isinstance(stored, (int, float)) and not isinstance(stored, bool):
+            base = float(stored)
+        else:
+            base = self.confidence
+            previous = _parse_instant(self.metadata.get(DECAYED_AT_METADATA_KEY))
+            if previous is not None and previous > self.last_accessed_at:
+                base = self.confidence / self._blend(previous - self.last_accessed_at)
+        return min(1.0, max(self.confidence, base))
+
+    def _blend(self, age: timedelta) -> float:
+        # Blend toward the decayed value rather than replacing it: a high-confidence fact
+        # should not become worthless purely through disuse.
+        return 0.5 + 0.5 * self.policy.recency_factor(age)
+
     def touched(self, *, now: datetime | None = None) -> "MemoryRecord":
-        """Record an access. Reinforcement is what keeps frequently-used memories alive."""
+        """Record an access. Reinforcement is what keeps frequently-used memories alive: it
+        resets the age decay is measured over, so the effective confidence returns to the base."""
         moment = now or _utcnow()
-        return replace(self, last_accessed_at=moment, access_count=self.access_count + 1)
+        return replace(
+            self,
+            last_accessed_at=moment,
+            access_count=self.access_count + 1,
+            confidence=round(self.base_confidence, 6),
+        )
 
     def superseded(self, by: MemoryId) -> "MemoryRecord":
         return replace(self, superseded_by=by)
@@ -269,33 +306,26 @@ class MemoryRecord:
         Decay is applied to *confidence*, not to the retrieval score, so a memory that has gone
         stale eventually falls below ``min_confidence`` and is expired by consolidation rather
         than lingering at the bottom of every result set forever.
+
+        ``confidence = base * blend(now - last_accessed_at)``, always from the base. Consolidation
+        persists the result nightly, and two earlier shapes of this both compounded: multiplying
+        the stored value by the blend for the total age again (a 180-day fact gone in three
+        weeks), then stepping the stored value -- which made each access period's decayed value
+        the next period's base, so a fact used every week died *before* an unused one (F11).
         """
         moment = now or _utcnow()
-
-        # Blend toward the decayed value rather than replacing it: a high-confidence fact
-        # should not become worthless purely through disuse.
-        def blend(age: timedelta) -> float:
-            return 0.5 + 0.5 * self.policy.recency_factor(age)
-
-        # Consolidation persists the result and runs daily, so the stored confidence already
-        # carries the decay up to the previous run. Multiplying it by the blend for the *total*
-        # age again would compound -- a 180-day half-life fact was gone in about three weeks.
-        # Apply only the step since the last decay instead: the steps telescope, so after any
-        # number of runs ``confidence == undecayed * blend(total age)``, exactly what one run at
-        # that age gives. Access resets the age, so a decay stamp older than the last access no
-        # longer counts.
         previous = _parse_instant(self.metadata.get(DECAYED_AT_METADATA_KEY))
         if previous is not None and moment <= previous:
-            # A clock behind the last run (replica skew, an injected clock) would make the ratio
-            # below exceed 1 and *raise* confidence. Nothing has elapsed; nothing to apply.
+            # A clock behind the last run (replica skew, an injected clock) must not undo decay
+            # the stored value already carries. Nothing has elapsed; nothing to apply.
             return self
-        already = (
-            previous - self.last_accessed_at
-            if previous is not None and previous > self.last_accessed_at
-            else timedelta(0)
-        )
-        new_confidence = self.confidence * blend(moment - self.last_accessed_at) / blend(already)
-        metadata = {**self.metadata, DECAYED_AT_METADATA_KEY: moment.isoformat()}
+        base = self.base_confidence
+        new_confidence = base * self._blend(moment - self.last_accessed_at)
+        metadata = {
+            **self.metadata,
+            DECAYED_AT_METADATA_KEY: moment.isoformat(),
+            BASE_CONFIDENCE_METADATA_KEY: round(base, 6),
+        }
         # Clamped rather than trusted: confidence is a validated field, and a decay step must
         # never be able to produce a value the entity would reject.
         return replace(

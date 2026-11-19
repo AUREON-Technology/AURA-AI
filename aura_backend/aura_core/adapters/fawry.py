@@ -11,7 +11,10 @@ account before go-live; ``docs/deployment/billing-fawry.md``):
 * status  ``GET payments/status`` -- ``signature = sha256(merchantCode + merchantRefNumber + secureKey)``.
 * notification V2 (Fawry -> us) -- ``messageSignature = sha256(fawryRefNumber + merchantRefNum +
   paymentAmount(2dp) + orderAmount(2dp) + orderStatus + paymentMethod + paymentRefrenceNumber? +
-  secureKey)`` ("Refrence" is Fawry's spelling).
+  secureKey)`` ("Refrence" is Fawry's spelling). It does **not** cover ``cardToken``.
+* card tokens  ``GET cards/cardToken`` -- ``signature = sha256(merchantCode + customerProfileId +
+  secureKey)``; lists a customer profile's saved cards, which is how an unsigned ``cardToken`` from
+  a notification is confirmed before it is ever charged (F58).
 
 The secure key never leaves this object: it is not logged, not put in an error's details, and not
 sent on the wire (only digests that include it are).
@@ -164,8 +167,30 @@ class FawryPaymentProvider:
             # (review D1#5), so it is compared only when no orderAmount is given.
             amount_piastres=_piastres(note.get("orderAmount", note["paymentAmount"])),
             provider_ref=str(note["fawryRefNumber"]),
+            # Not covered by messageSignature: BillingService keeps it only after
+            # ``confirm_card_token`` finds it on Fawry's own list for the workspace (F58).
             card_token=note.get("cardToken") or None,
         )
+
+    async def confirm_card_token(self, customer_profile_id: str, card_token: str) -> bool:
+        """Whether Fawry lists ``card_token`` among the saved cards of ``customer_profile_id``
+        (``GET cards/cardToken``, ``signature = sha256(merchantCode + customerProfileId +
+        secureKey)``). The notification's ``cardToken`` is not signed, so this signed request is
+        what makes it trustworthy (F58). Never raises: no answer, a refusal or a malformed list is
+        "not confirmed", and the card is simply not saved."""
+        try:
+            data = await self._request("GET", "cards/cardToken", params={
+                "merchantCode": self._merchant,
+                "customerProfileId": customer_profile_id,
+                "signature": _sha256(f"{self._merchant}{customer_profile_id}{self._secret}"),
+            })
+        except DependencyUnavailableError:
+            return False
+        cards = data.get("cards")
+        if not isinstance(cards, list):
+            return False
+        return any(isinstance(card, dict) and hmac.compare_digest(str(card.get("token") or ""), card_token)
+                   for card in cards)
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> dict:
         try:

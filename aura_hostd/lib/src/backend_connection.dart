@@ -72,6 +72,14 @@ class BackendConnection {
     final config = configStore.load();
     final token = config.authToken;
     if (token == null || token.isEmpty) return;
+    final String wsUrl;
+    try {
+      wsUrl = config.hostAgentWsUrl;
+    } on InvalidBackendUrlError catch (error) {
+      // F53: never send the token in clear; pairing again with an https URL fixes it.
+      _logger('Not connecting: ${error.message}');
+      return;
+    }
     final handler = TaskHandler.live(
       workspaceStore,
       approvalQueue: approvalQueue,
@@ -81,7 +89,7 @@ class BackendConnection {
       remoteControlEnabled: configStore.remoteControlEnabled,
     );
     final client = _clientFactory(
-      wsUrl: config.hostAgentWsUrl,
+      wsUrl: wsUrl,
       authToken: token,
       taskHandler: handler,
     );

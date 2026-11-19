@@ -100,23 +100,50 @@ final List<RegExp> readOnlyAllowlistPatterns = [
 /// program (`--ext-diff`, `--textconv`), or read paths outside the repository (`--no-index`).
 const List<String> _gitEscapeFlags = ['--output', '--ext-diff', '--textconv', '--no-index'];
 
-/// Whether an allowlisted command uses an argument that takes it out of the read-only tier: one of
-/// [_gitEscapeFlags], or a path that leaves the workspace (absolute, home-relative, a drive
-/// letter, or a `..` segment) -- `cat ~/.ssh/id_rsa` or `grep -f /etc/x` would otherwise read
-/// anything the user can, including this daemon's own control token.
+/// Complete git flags that begin like one of [_gitEscapeFlags] but do none of those things.
+const Set<String> _gitFlagsSharingAnEscapePrefix = {'--text'};
+
+/// Whether [token] is one of [_gitEscapeFlags], with or without `=value`, or an abbreviation of
+/// one (F44). git's option parser accepts any unambiguous prefix of a long option, so `--ext-d`,
+/// `--outp=/x` and `--textc` mean the full flags. Any `--` word of at least two letters that
+/// starts a banned flag counts, unless it is itself a complete harmless flag
+/// ([_gitFlagsSharingAnEscapePrefix]); an ambiguous prefix git would refuse anyway costs nothing
+/// to refuse here too.
 ///
-/// Containment is checked on the *spelling* of each argument, including the value of a
-/// `--flag=value` or a short flag with an attached value (`-f/etc/x`); it cannot see through a
-/// symlink inside the workspace that points out of it. A command this refuses is not denied -- it
-/// falls through to the approval tier, so a legitimate `grep -r "/api" .` still runs once a human
-/// approves it.
-bool _escapesReadOnlyTier(String command) {
+/// This also covers the hardened form: [hardenUntrustedGitCommand] inserts `--no-ext-diff
+/// --no-textconv` *before* the person's own arguments, so a later `--ext-diff` would win (git's
+/// last flag wins). A command carrying one never reaches that rewrite: it is not allowlisted.
+bool _isGitEscapeFlag(String token) {
+  final name = token.split('=').first;
+  if (!name.startsWith('--') || name.length < 4) return false;
+  if (_gitFlagsSharingAnEscapePrefix.contains(name)) return false;
+  return _gitEscapeFlags.any((flag) => flag.startsWith(name));
+}
+
+/// Whether an allowlisted command uses an argument that takes it out of the read-only tier: one of
+/// [_gitEscapeFlags] (or an abbreviation of one), or a path that leaves the workspace (absolute,
+/// home-relative, a drive letter, or a `..` segment) -- `cat ~/.ssh/id_rsa` or `grep -f /etc/x`
+/// would otherwise read anything the user can, including this daemon's own control token.
+///
+/// Containment is first checked on the *spelling* of each argument, including the value of a
+/// `--flag=value` or a short flag with an attached value (`-f/etc/x`). With [workspaceRoot]
+/// (canonical) and [cwd] -- `task_handler.dart` always passes both -- it then also resolves what
+/// the command would open, symlinks included (F16):
+/// - every argument, as [pathOutsideWorkspace] resolves it for a trusted folder: a symlink inside
+///   the folder whose target is outside (`cat docs/ref.txt`, `ref.txt -> ~/.ssh/id_rsa`), or a
+///   `..` climbing out of one, leaves the read-only tier. On POSIX the same check runs once more
+///   with backslashes removed, since the shell drops them before the path is opened;
+/// - [_mayFollowLinkOutside]: what a glob or a recursive read reaches *beyond* the words written.
+///   `cat docs/*` opens whatever `docs/` holds and `grep -R x .` follows every symlink it finds,
+///   so the folders they cover are scanned (bounded) for a symlink that resolves outside.
+///
+/// A command this refuses is not denied -- it falls through to the approval tier, so a legitimate
+/// `grep -r "/api" .` still runs once a human approves it.
+bool _escapesReadOnlyTier(String command, {String? workspaceRoot, String? cwd}) {
   final tokens = command.split(RegExp(r'\s+')).map((t) => t.replaceAll(RegExp(r'''['"]'''), ''));
   final isGit = command.startsWith('git');
   for (final token in tokens) {
-    if (isGit && _gitEscapeFlags.any((f) => token == f || token.startsWith('$f='))) {
-      return true;
-    }
+    if (isGit && _isGitEscapeFlag(token)) return true;
     final candidates = <String>[token];
     final eq = token.indexOf('=');
     if (token.startsWith('-') && eq > 0) candidates.add(token.substring(eq + 1));
@@ -125,7 +152,236 @@ bool _escapesReadOnlyTier(String command) {
     }
     if (candidates.any(_leavesWorkspace)) return true;
   }
+  if (workspaceRoot == null) return false;
+  final base = cwd ?? workspaceRoot;
+  if (pathOutsideWorkspace(command, workspaceRoot: workspaceRoot, cwd: base) != null) return true;
+  if (!Platform.isWindows && command.contains(r'\')) {
+    final unescaped = command.replaceAll(r'\', '');
+    if (pathOutsideWorkspace(unescaped, workspaceRoot: workspaceRoot, cwd: base) != null) {
+      return true;
+    }
+  }
+  return _mayFollowLinkOutside(command, workspaceRoot, base);
+}
+
+/// How many directory entries [_treeReachesOutside] looks at before giving up. A tree larger than
+/// this (a `node_modules`) cannot be vouched for cheaply, so a recursive read over it is asked
+/// about rather than allowed.
+const int _maxScannedEntries = 20000;
+
+/// `grep` options that take their value as the next word.
+const Set<String> _grepValueOptions = {
+  '-e', '-f', '-m', '-A', '-B', '-C', '-d', '-D', //
+  '--regexp', '--file', '--max-count', '--after-context', '--before-context', '--context',
+  '--directories', '--devices', '--include', '--exclude', '--exclude-from', '--exclude-dir',
+  '--label', '--binary-files',
+};
+
+/// `ls` options that take their value as the next word.
+const Set<String> _lsValueOptions = {
+  '-I', '-T', '-w', //
+  '--ignore', '--hide', '--format', '--sort', '--time', '--time-style', '--block-size',
+  '--width', '--tabsize', '--quoting-style', '--indicator-style',
+};
+
+/// Whether an untrusted-tier command can open something outside [workspaceRoot] that none of its
+/// words names (F16): through a glob, or through a recursive read that follows symlinks.
+///
+/// The rule, for an allowlisted verb other than git (which never follows a working-tree symlink):
+/// - a word holding a glob or brace character (`*`, `?`, `[`, `{`) can expand to any entry of the
+///   folder its fixed prefix names (`docs/*` -> `docs/`, `*` -> the cwd). That folder is checked
+///   for a symlink leading outside -- and every folder below it when the pattern goes deeper
+///   (`*/ref.txt`) or the command recurses. A glob over the cwd itself also leaves the tier when
+///   the cwd holds a name starting with `-`: `grep x *` beside a file named `-R` is `grep x -R`;
+/// - a recursive `grep` (`-r`, `-R`, `--recursive`, `--dereference-recursive`, `-d recurse`) or a
+///   dereferencing recursive `ls` (`-R` with `-L`) has each folder it is given -- or the cwd when
+///   it is given none -- checked to the bottom. `-r` is counted with `-R` although GNU and BSD
+///   grep follow only command-line links with it: the rule stays the same for every `grep`.
+/// A symlink that resolves inside the folder is followed and its target checked as well. The walk
+/// stops at [_maxScannedEntries]; a larger tree counts as reaching outside, so it is asked about.
+bool _mayFollowLinkOutside(String command, String workspaceRoot, String cwd) {
+  final parsed = _wordsWithGlobs(command);
+  if (parsed.isEmpty) return false;
+  final verb = parsed.first.word;
+  if (verb == 'git') return false;
+  final args = parsed.skip(1).map((w) => w.word).toList();
+  final globWords = parsed
+      .skip(1)
+      .where((w) => w.glob && !w.word.startsWith('-'))
+      .map((w) => w.word)
+      .toList();
+
+  final recursive = switch (verb) {
+    'grep' || 'egrep' || 'fgrep' => args.any((a) =>
+        a == '--recursive' ||
+        a == '--dereference-recursive' ||
+        a == 'recurse' ||
+        a == '--directories=recurse' ||
+        (a.startsWith('-') && !a.startsWith('--') && a.contains(RegExp('[rR]')))),
+    'ls' => args.any((a) => a == '--recursive' || (_isShortCluster(a) && a.contains('R'))) &&
+        args.any((a) => a == '--dereference' || (_isShortCluster(a) && a.contains('L'))),
+    _ => false,
+  };
+
+  final scans = <(String, bool)>[];
+  for (final word in globWords) {
+    final parts = p.split(word);
+    final globAt = parts.indexWhere((part) => part.contains(_globCharacter));
+    final folder = p.normalize(p.joinAll([cwd, ...parts.take(globAt < 0 ? 0 : globAt)]));
+    // A bare `*` expands to every name in the cwd -- a file the repository named `-R` or
+    // `--dereference-recursive` would become an option of the command itself.
+    if (globAt <= 0 && _holdsOptionLikeName(folder)) return true;
+    scans.add((folder, recursive || globAt < 0 || globAt < parts.length - 1));
+  }
+
+  if (recursive) {
+    final operands = _operands(args, verb == 'ls' ? _lsValueOptions : _grepValueOptions);
+    final explicitPattern = args.any((a) =>
+        a == '--regexp' ||
+        a.startsWith('--regexp=') ||
+        a == '--file' ||
+        a.startsWith('--file=') ||
+        (_isShortCluster(a) && a.contains(RegExp('[ef]'))));
+    // grep's first operand is its pattern unless -e/-f gave one.
+    final paths = verb != 'ls' && !explicitPattern ? operands.skip(1).toList() : operands;
+    final resolved = [
+      for (final path in paths)
+        if (!globWords.contains(path)) p.isAbsolute(path) ? path : p.normalize(p.join(cwd, path)),
+    ];
+    for (final path in resolved) {
+      scans.add((path, true));
+    }
+    // No folder given -- or none that exists, should a pattern have been mistaken for one --
+    // means the command reads the cwd.
+    if (!paths.any(globWords.contains) &&
+        !resolved.any((path) => FileSystemEntity.typeSync(path) != FileSystemEntityType.notFound)) {
+      scans.add((cwd, true));
+    }
+  }
+
+  var budget = _maxScannedEntries;
+  for (final (folder, deep) in scans) {
+    final (outside, remaining) = _treeReachesOutside(folder, workspaceRoot, deep: deep, budget: budget);
+    if (outside) return true;
+    budget = remaining;
+  }
   return false;
+}
+
+bool _holdsOptionLikeName(String folder) {
+  try {
+    return Directory(folder)
+        .listSync(followLinks: false)
+        .any((entry) => p.basename(entry.path).startsWith('-'));
+  } on FileSystemException {
+    return false;
+  }
+}
+
+bool _isShortCluster(String word) => word.startsWith('-') && !word.startsWith('--') && word.length > 1;
+
+final RegExp _globCharacter = RegExp(r'[*?\[{]');
+
+/// The words of an untrusted-tier [command] (which has no shell operators left by then) as the
+/// shell would pass them -- quotes removed and, on POSIX, a backslash dropping out before the
+/// character it escapes -- each with whether it holds a glob or brace character the shell would
+/// expand: one outside quotes and not escaped. `'*.md'` is a literal; `*.md` is a glob.
+List<({String word, bool glob})> _wordsWithGlobs(String command) {
+  final words = <({String word, bool glob})>[];
+  final current = StringBuffer();
+  var started = false;
+  var glob = false;
+  String? quote;
+  var escaped = false;
+  void flush() {
+    if (started) words.add((word: current.toString(), glob: glob));
+    current.clear();
+    started = false;
+    glob = false;
+  }
+
+  for (final char in command.split('')) {
+    if (escaped) {
+      current.write(char);
+      escaped = false;
+    } else if (quote != null) {
+      if (char == quote) {
+        quote = null;
+      } else {
+        current.write(char);
+      }
+    } else if (char == "'" || char == '"') {
+      quote = char;
+      started = true;
+    } else if (char == r'\' && !Platform.isWindows) {
+      escaped = true;
+      started = true;
+    } else if (char.trim().isEmpty) {
+      flush();
+    } else {
+      if (_globCharacter.hasMatch(char)) glob = true;
+      current.write(char);
+      started = true;
+    }
+  }
+  flush();
+  return words;
+}
+
+/// The non-option words of [args], skipping the value of each option in [valueOptions]; `--` ends
+/// the options.
+List<String> _operands(List<String> args, Set<String> valueOptions) {
+  final operands = <String>[];
+  var optionsEnded = false;
+  for (var i = 0; i < args.length; i++) {
+    final arg = args[i];
+    if (optionsEnded || !arg.startsWith('-') || arg == '-') {
+      operands.add(arg);
+    } else if (arg == '--') {
+      optionsEnded = true;
+    } else if (valueOptions.contains(arg)) {
+      i++;
+    }
+  }
+  return operands;
+}
+
+/// Whether [folder] -- and, with [deep], everything below it -- holds a symlink that resolves
+/// outside [workspaceRoot], following symlinks that stay inside. Returns the verdict and the
+/// unspent [budget] of entries; running out counts as outside. A folder that does not exist or
+/// cannot be listed holds nothing the command could open either.
+(bool, int) _treeReachesOutside(
+  String folder,
+  String workspaceRoot, {
+  required bool deep,
+  required int budget,
+}) {
+  bool inside(String path) => p.equals(path, workspaceRoot) || p.isWithin(workspaceRoot, path);
+  final start = _physicalPath(folder);
+  if (!inside(start)) return (true, budget);
+  final pending = <(String, bool)>[(start, true)];
+  final visited = <String>{};
+  while (pending.isNotEmpty) {
+    final (dir, listChildren) = pending.removeLast();
+    if (!listChildren || !visited.add(dir)) continue;
+    List<FileSystemEntity> entries;
+    try {
+      entries = Directory(dir).listSync(followLinks: false);
+    } on FileSystemException {
+      continue;
+    }
+    for (final entry in entries) {
+      if (--budget < 0) return (true, 0);
+      if (entry is Link) {
+        final target = _physicalPath(entry.path);
+        if (!inside(target)) return (true, budget);
+        if (deep && FileSystemEntity.isDirectorySync(target)) pending.add((target, true));
+      } else if (deep && entry is Directory) {
+        pending.add((entry.path, true));
+      }
+    }
+  }
+  return (false, budget);
 }
 
 /// Verbs that delete, move, overwrite or re-permission files, or run a program on each file
@@ -239,9 +495,10 @@ class CommandVerdict {
 /// `deny` when nobody is -- a future headless-only invocation path can pass `false` to keep the
 /// pre-D5 "refuse outright" behavior instead of queuing something nobody will ever see.
 ///
-/// [workspaceRoot] (canonical) and [cwd] let a trusted workspace's path check resolve arguments
-/// against the real folder, symlinks included; without them it falls back to judging each
-/// argument's spelling, which is stricter (any absolute path counts as outside).
+/// [workspaceRoot] (canonical) and [cwd] let the path checks of both tiers resolve arguments
+/// against the real folder, symlinks included; without them a trusted workspace falls back to
+/// judging each argument's spelling, which is stricter (any absolute path counts as outside), and
+/// an untrusted one to its spelling check alone, which cannot see a symlink (F16).
 CommandVerdict evaluateCommand(
   String command, {
   required bool workspaceTrusted,
@@ -302,7 +559,8 @@ CommandVerdict evaluateCommand(
     return askOrRefuse(_gitPushReason, HostdErrorCode.gitPushNeedsApproval);
   }
   for (final pattern in readOnlyAllowlistPatterns) {
-    if (pattern.hasMatch(trimmed) && !_escapesReadOnlyTier(trimmed)) {
+    if (pattern.hasMatch(trimmed) &&
+        !_escapesReadOnlyTier(trimmed, workspaceRoot: workspaceRoot, cwd: cwd)) {
       return const CommandVerdict(
         CommandDecision.allow,
         'read-only command allowlisted for untrusted workspaces',
@@ -661,6 +919,15 @@ String hardenUntrustedGitCommand(String command, {required String emptyHooksDir}
 /// The global options of [hardenUntrustedGitCommand], one argv element each.
 List<String> untrustedGitGlobalArgs(String emptyHooksDir) =>
     ['-c', 'core.fsmonitor=', '-c', 'core.hooksPath=$emptyHooksDir'];
+
+String? _emptyHooksDirCache;
+
+/// An empty directory, created once per daemon run, for `core.hooksPath` (G-17, F45): pointing git
+/// at it means no hook the repository installed can run. Shared by `task_handler.dart` (the
+/// untrusted tier's allowlisted git) and `git_service.dart` (every git it runs for a folder that
+/// is not trusted, and every git it runs for the agent).
+String sharedEmptyHooksDir() => _emptyHooksDirCache ??=
+    Directory.systemTemp.createTempSync('aura_hostd_no_hooks_').resolveSymbolicLinksSync();
 
 /// The per-verb options of [hardenUntrustedGitCommand].
 List<String> untrustedGitVerbFlags(String verb) => switch (verb) {

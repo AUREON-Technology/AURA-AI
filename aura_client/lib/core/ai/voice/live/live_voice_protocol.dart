@@ -152,9 +152,17 @@ sealed class LiveServerFrame {
       case 'audio_end':
         return const LiveAudioEndFrame();
       case 'error':
+        final retryAfter = (map['retry_after'] as num?) ??
+            ((map['details'] as Map?)?['retry_after'] as num?);
         return LiveErrorFrame(
           error: map['error']?.toString() ?? 'error',
           message: map['message']?.toString() ?? '',
+          details: map['details'] is Map
+              ? Map<String, dynamic>.from(map['details'] as Map)
+              : const {},
+          retryAfter: retryAfter == null
+              ? null
+              : Duration(milliseconds: (retryAfter * 1000).round()),
         );
       case 'playback':
         return LivePlaybackHintFrame(
@@ -237,9 +245,19 @@ final class LiveAudioEndFrame extends LiveServerFrame {
 }
 
 final class LiveErrorFrame extends LiveServerFrame {
-  const LiveErrorFrame({required this.error, required this.message});
+  const LiveErrorFrame({
+    required this.error,
+    required this.message,
+    this.details = const {},
+    this.retryAfter,
+  });
   final String error;
   final String message;
+
+  /// The same `details` the HTTP routes return for this error (e.g. a `plan_limit`'s plan and
+  /// limit, F7), so a refused turn reads the way the HTTP refusal does.
+  final Map<String, dynamic> details;
+  final Duration? retryAfter;
 }
 
 final class LivePlaybackHintFrame extends LiveServerFrame {

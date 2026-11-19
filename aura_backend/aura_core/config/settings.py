@@ -799,6 +799,8 @@ class LLMSettings:
     semantic_cache_enabled: bool = True
     semantic_cache_threshold: float = 0.97
     max_generations_per_turn: int = 8
+    #: USD ceiling on every generation in one turn (F30); 0 disables. Checked before each generation.
+    max_cost_per_turn_usd: float = 0.0
     #: Assembled prompt cap (prefill). Independent of the provider context window so a local
     #: 8k model does not ingest 1k+ token RAG prompts that CPU Ollama cannot evaluate in time.
     max_prompt_tokens: int = 400
@@ -875,6 +877,7 @@ class LLMSettings:
             semantic_cache_enabled=_bool("LLM_SEMANTIC_CACHE_ENABLED", True),
             semantic_cache_threshold=_float("LLM_SEMANTIC_CACHE_THRESHOLD", 0.97, minimum=0.5, maximum=1.0),
             max_generations_per_turn=_int("LLM_MAX_GENERATIONS_PER_TURN", 8, minimum=1, maximum=64),
+            max_cost_per_turn_usd=_float("LLM_MAX_COST_PER_TURN_USD", 0.0, minimum=0.0),
             max_prompt_tokens=_int("LLM_MAX_PROMPT_TOKENS", 400, minimum=64, maximum=32768),
             admission_max_queue=_int("LLM_ADMISSION_MAX_QUEUE", -1, minimum=-1),
             admission_queue_timeout_s=_float("LLM_ADMISSION_QUEUE_TIMEOUT_S", 0.0, minimum=0.0),

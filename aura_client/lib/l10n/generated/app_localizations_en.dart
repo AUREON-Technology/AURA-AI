@@ -9,6 +9,28 @@ class AppLocalizationsEn extends AppLocalizations {
   AppLocalizationsEn([String locale = 'en']) : super(locale);
 
   @override
+  String get chatRetryOnlyLatestTurn =>
+      'Later messages followed this one, so it can\'t be retried here. Send it again if you still need an answer.';
+
+  @override
+  String get chatImageCapabilityCheckFailed =>
+      'Couldn\'t check whether images can be attached. Tap to try again.';
+
+  @override
+  String get memorySaveQueued =>
+      'Saved on this device. AURA will remember it once it can reach the server.';
+
+  @override
+  String memorySaveRefused(String fact) {
+    return 'The server didn\'t accept this memory: $fact';
+  }
+
+  @override
+  String shareTruncatedOlder(int count, int omitted) {
+    return 'Only the latest $count messages fit in a shared chat, so the $omitted older ones won\'t be included.';
+  }
+
+  @override
   String get greetingMorning => 'Good morning';
 
   @override
@@ -3965,6 +3987,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Live voice is available on Android and iOS only';
 
   @override
+  String get voiceLiveAudioUnavailable =>
+      'Audio playback is unavailable on this device. Replies are shown as text only.';
+
+  @override
   String get homeAskAuraLabel => 'Ask AURA anything';
 
   @override
@@ -4858,6 +4884,36 @@ class AppLocalizationsEn extends AppLocalizations {
   String get planSeatsLabel => 'Seats';
 
   @override
+  String get planNameFree => 'Free';
+
+  @override
+  String get planNamePro => 'Pro';
+
+  @override
+  String get planNameTeam => 'Team';
+
+  @override
+  String get planSeatsInvalid => 'Enter a whole number of seats, 1 or more.';
+
+  @override
+  String get subscriptionStatusPending => 'Awaiting payment';
+
+  @override
+  String get subscriptionStatusActive => 'Active';
+
+  @override
+  String get subscriptionStatusPastDue => 'Payment overdue';
+
+  @override
+  String get subscriptionStatusGrace => 'In grace period';
+
+  @override
+  String get subscriptionStatusCanceled => 'Canceled';
+
+  @override
+  String get subscriptionStatusExpired => 'Expired';
+
+  @override
   String get planTeamNotInApp => 'Team plans can\'t be bought in this app.';
 
   @override
@@ -5020,6 +5076,75 @@ class AppLocalizationsEn extends AppLocalizations {
   String shareConfirm(String name) {
     return 'Share a copy of this chat with $name? Everyone in the team can read it.';
   }
+
+  @override
+  String get twoStepTitle => 'Two-step verification';
+
+  @override
+  String get twoStepSignInBody => 'Enter the code from your authenticator app.';
+
+  @override
+  String get twoStepCodeLabel => '6-digit code';
+
+  @override
+  String get twoStepVerify => 'Verify';
+
+  @override
+  String get twoStepWrongCode =>
+      'That code didn\'t match. Use the newest code from your authenticator app.';
+
+  @override
+  String get twoStepUnsupported =>
+      'This account\'s second sign-in step isn\'t supported in this app. Contact support to reset it.';
+
+  @override
+  String get identityReauthRequired =>
+      'For your security, sign out and sign in again, then try once more.';
+
+  @override
+  String get identityWrongCode => 'That code didn\'t match.';
+
+  @override
+  String get twoStepIntro =>
+      'Add a code from an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password…) to every sign-in.';
+
+  @override
+  String get twoStepVerifyEmailFirst =>
+      'Verify your email address first, then come back to turn this on.';
+
+  @override
+  String get twoStepSetUp => 'Set up';
+
+  @override
+  String get twoStepScanOrEnter =>
+      'Add this key to your authenticator app, then type the 6-digit code it shows.';
+
+  @override
+  String get twoStepOpenApp => 'Open in authenticator app';
+
+  @override
+  String get twoStepCopyKey => 'Copy key';
+
+  @override
+  String get twoStepOn =>
+      'On: sign-ins ask for a code from your authenticator app.';
+
+  @override
+  String get twoStepTurnOff => 'Turn off';
+
+  @override
+  String get twoStepTurnOffConfirm =>
+      'Sign-ins will no longer ask for a code. Turn off two-step verification?';
+
+  @override
+  String get twoStepEnabled => 'Two-step verification is on.';
+
+  @override
+  String get twoStepNoApp =>
+      'No authenticator app opened it. Copy the key into your authenticator app instead.';
+
+  @override
+  String get twoStepAuthenticatorApp => 'Authenticator app';
 
   @override
   String get loginBrowserHandoff =>

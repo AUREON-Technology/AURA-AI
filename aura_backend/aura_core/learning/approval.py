@@ -15,12 +15,20 @@ each enforced here rather than by convention:
 from __future__ import annotations
 
 import enum
+import inspect
 import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
-from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
+from typing import Any, Awaitable, Callable, Mapping, Protocol, Sequence, Union, runtime_checkable
 
-from ..domain.errors import ApprovalRequiredError, ConflictError, NotFoundError, ValidationError
+from ..domain.errors import (
+    ApprovalRequiredError,
+    AuthorizationError,
+    ConflictError,
+    DependencyUnavailableError,
+    NotFoundError,
+    ValidationError,
+)
 from ..domain.events import ApprovalDecided, ApprovalRequested
 from ..observability.logging import get_logger
 from ..ports.runtime import AuditEvent
@@ -171,15 +179,52 @@ class InMemoryApprovalStore:
         return matches[:limit]
 
 
+#: ``(requester, kind) -> bool``, sync or async: whether anyone *other than* ``requester`` (the
+#: identity ``request(requested_by=...)`` recorded) may decide an approval of ``kind``. Raises when
+#: it cannot tell. Supplied by whoever knows the operator directory (INT-106).
+OtherApproverCheck = Callable[[str, "ApprovalKind"], Union[bool, Awaitable[bool]]]
+
+
 class ApprovalService:
-    """Creates, decides, and consumes approvals -- all audited."""
+    """Creates, decides, and consumes approvals -- all audited.
+
+    Four eyes where there are four (INT-106): approving your own request is refused while another
+    eligible approver exists, both when it is decided and when it is used. A sole operator may
+    still approve their own request, recorded as a self-approval. Who else could decide comes from
+    ``other_approver_exists``; without one the service cannot tell, and keeps the sole-operator
+    behaviour."""
 
     def __init__(
-        self, *, store: ApprovalStore, audit: Any = None, event_bus: Any = None
+        self, *, store: ApprovalStore, audit: Any = None, event_bus: Any = None,
+        other_approver_exists: OtherApproverCheck | None = None,
     ) -> None:
         self._store = store
         self._audit = audit
         self._events = event_bus
+        self._other_approver_exists = other_approver_exists
+
+    def use_other_approver_check(self, check: OtherApproverCheck | None) -> None:
+        """Attach the operator-directory check after construction (the directory is wired after
+        the container builds this service)."""
+        self._other_approver_exists = check
+
+    async def _another_approver_exists(self, requester: str, kind: ApprovalKind) -> bool:
+        check = self._other_approver_exists
+        if check is None:
+            return False
+        try:
+            answer = check(requester, kind)
+            if inspect.isawaitable(answer):
+                answer = await answer
+        except Exception as exc:
+            # Only a self-approval asks, so failing closed costs a sole operator a retry, never
+            # anyone else's decision.
+            logger.warning("could not tell whether another approver exists", exc_info=True)
+            raise DependencyUnavailableError(
+                "could not check whether another approver exists; try again",
+                dependency="operator_directory", cause=exc,
+            ) from exc
+        return bool(answer)
 
     async def request(
         self,
@@ -192,7 +237,8 @@ class ApprovalService:
         requested_by: str | None = None,
     ) -> ApprovalRequest:
         """``requested_by`` is kept in the payload (no schema change), so a decision by the same
-        person is visible as a self-approval -- allowed, but never silent."""
+        person is a self-approval: refused while another approver exists, otherwise allowed and
+        never silent (INT-106)."""
         if requested_by:
             payload = {**(payload or {}), "requested_by": requested_by}
         request = ApprovalRequest.create(
@@ -240,12 +286,25 @@ class ApprovalService:
                 f"{request.expires_at.isoformat() if request.expires_at else 'unknown'}"
             )
 
+        requested_by = request.payload.get("requested_by")
+        self_approved = bool(requested_by) and requested_by == by
+        if self_approved and approved and await self._another_approver_exists(by, request.kind):
+            # Someone else could decide this, so they must (INT-106). Rejecting one's own request
+            # stays allowed: it only ever makes the system do less.
+            await self._record(
+                action=f"approval.decide.{request.kind}", actor=by, resource=approval_id,
+                outcome="refused_self_approval",
+                detail={"digest": request.artefact_digest, "requested_by": requested_by},
+            )
+            raise AuthorizationError(
+                "you requested this approval; another approver must decide it",
+                details={"approval": approval_id, "requested_by": requested_by},
+            )
+
         decided = request.decided(approved=approved, by=by, note=note)
         await self._store.put(decided)
-        requested_by = request.payload.get("requested_by")
         # A sole operator approving their own request is permitted; it is recorded as such so a
         # reviewer can tell a two-person decision from a self-approval.
-        self_approved = bool(requested_by) and requested_by == by
         logger.info(
             "approval decided",
             extra={"approval": approval_id, "approved": approved, "by": by, "self_approved": self_approved},
@@ -292,6 +351,19 @@ class ApprovalService:
                     "approved_digest": request.artefact_digest,
                     "requested_digest": expected_digest,
                 },
+            )
+        requested_by = request.payload.get("requested_by")
+        if (
+            requested_by
+            and requested_by == request.decided_by
+            and await self._another_approver_exists(str(requested_by), request.kind)
+        ):
+            # A self-approval granted while its requester was the only approver (or before this
+            # rule): someone else could decide it now, so it no longer stands on its own (INT-106).
+            raise ApprovalRequiredError(
+                f"approval {approval_id} was approved by its own requester while another approver "
+                "exists; request it again for someone else to decide",
+                details={"status": str(request.status), "self_approved": True},
             )
         return request
 

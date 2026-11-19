@@ -10,10 +10,15 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:aura_hostd/src/approval_queue.dart';
+import 'package:aura_hostd/src/backend_connection.dart';
+import 'package:aura_hostd/src/config.dart';
 import 'package:aura_hostd/src/containment.dart';
 import 'package:aura_hostd/src/error_codes.dart';
+import 'package:aura_hostd/src/isolated_task_registry.dart';
 import 'package:aura_hostd/src/rpc_client.dart';
 import 'package:aura_hostd/src/task_handler.dart';
+import 'package:aura_hostd/src/workspace_store.dart';
 import 'package:test/test.dart';
 
 class _FakeServer {
@@ -440,6 +445,85 @@ void main() {
       client.stop();
       expect(client.isConnected, isFalse);
     });
+  });
+
+  // INT-104: the backend closes with 4401 only for a credential it refuses; a failure of its own
+  // (1011) or a missing registry (4503) is something to wait out, not a reason to unpair.
+  for (final code in [1011, 4503, 1001]) {
+    test('reconnects with backoff after close code $code, credentials still accepted (INT-104)',
+        () async {
+      var connections = 0;
+      final reconnected = Completer<void>();
+      final httpServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => httpServer.close(force: true));
+      httpServer.listen((request) async {
+        connections++;
+        final socket = await WebSocketTransformer.upgrade(request);
+        await socket.first; // the auth frame
+        if (connections < 3) {
+          await socket.close(code);
+        } else if (!reconnected.isCompleted) {
+          reconnected.complete();
+        }
+      });
+      final client = HostAgentClient(
+        wsUrl: 'ws://127.0.0.1:${httpServer.port}/api/v3/host/agent',
+        authToken: 't',
+        taskHandler: TaskHandler(WorkspaceRoots(const [])),
+        logger: (_) {},
+        minBackoff: const Duration(milliseconds: 10),
+      );
+      unawaited(client.run());
+      addTearDown(client.stop);
+
+      await reconnected.future.timeout(const Duration(seconds: 5));
+      expect(connections, 3);
+      expect(client.credentialsRejected, isFalse);
+      expect(client.isFinished, isFalse);
+      expect(client.lastCloseCode, code);
+    });
+  }
+
+  // F53: the auth frame carries the device token, so it is never sent in clear to another host.
+  test('refuses to connect to a plain ws:// URL that is not loopback (F53)', () async {
+    final logs = <String>[];
+    final client = HostAgentClient(
+      wsUrl: 'ws://a.example/api/v3/host/agent',
+      authToken: 'secret-token',
+      taskHandler: TaskHandler(WorkspaceRoots(const [])),
+      logger: logs.add,
+      minBackoff: const Duration(milliseconds: 10),
+    );
+    await client.run().timeout(const Duration(seconds: 5));
+    expect(client.isFinished, isTrue);
+    expect(client.isConnected, isFalse);
+    expect(logs.join('\n'), contains('wss'));
+    expect(logs.where((l) => l.startsWith('connecting')), isEmpty);
+  });
+
+  test('BackendConnection does not start a client for a stored insecure backend URL (F53)', () {
+    final configDir = Directory.systemTemp.createTempSync('aura_hostd_rpc_f53_');
+    addTearDown(() => configDir.deleteSync(recursive: true));
+    final configStore = ConfigStore.forConfigDir(configDir)
+      ..save(DaemonConfig(backendUrl: 'http://a.example', authToken: 'secret-token'));
+    final workspaceStore = WorkspaceStore.forConfigDir(configDir);
+    final logs = <String>[];
+    var built = 0;
+    final backend = BackendConnection(
+      configStore: configStore,
+      workspaceStore: workspaceStore,
+      approvalQueue: ApprovalQueue(),
+      isolatedTasks: IsolatedTaskRegistry(workspaceStore.live),
+      logger: logs.add,
+      clientFactory: ({required wsUrl, required authToken, required taskHandler}) {
+        built++;
+        return HostAgentClient(wsUrl: wsUrl, authToken: authToken, taskHandler: taskHandler);
+      },
+    );
+    backend.startIfAuthenticated();
+    expect(built, 0);
+    expect(backend.isConnected, isFalse);
+    expect(logs.join('\n'), contains('http://a.example'));
   });
 }
 

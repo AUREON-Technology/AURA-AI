@@ -187,3 +187,135 @@ class TestWorkflowRunTrust:
                 f"{path.name}:{name} can be started by a workflow_run that is not a push to "
                 f"main in this repository; its `if:` lacks {missing}."
             )
+
+
+def _job(workflow: str, job: str) -> dict:
+    spec = yaml.safe_load((_WORKFLOWS / workflow).read_text(encoding="utf-8"))
+    return spec["jobs"][job]
+
+
+def _step(job: dict, name: str) -> dict:
+    matches = [s for s in job["steps"] if s.get("name") == name]
+    assert len(matches) == 1, f"expected exactly one step named {name!r}"
+    return matches[0]
+
+
+def _run_step(script: str, env: dict[str, str], tmp_path: Path) -> tuple[int, str]:
+    """Run a workflow step's `run:` the way the runner does (bash -e), with GITHUB_OUTPUT."""
+    import os
+    import shutil
+    import subprocess
+
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash is not available")
+    output = tmp_path / "github_output"
+    output.write_text("", encoding="utf-8")
+    full_env = {"PATH": os.environ.get("PATH", ""), "GITHUB_OUTPUT": str(output), **env}
+    result = subprocess.run(
+        [bash, "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
+        env=full_env, capture_output=True, text=True, cwd=tmp_path, timeout=60,
+    )
+    return result.returncode, output.read_text(encoding="utf-8")
+
+
+class TestDeployVpsTargetShaIsValidatedAndPassedSafely:
+    """F47. The `sha` dispatch input is free text. It used to reach the host unvalidated, inside an
+    ssh command line the remote shell re-parses (`ssh host env AURA_SHA="$TARGET_SHA" ...`), and
+    then `git show "${AURA_SHA}:..."` -- so a crafted input was remote code execution as root, and
+    any SHA, on main or not, could be shipped. It must be a full SHA, on origin/main, passed as
+    data, and the scripts it selects must land in private temp directories."""
+
+    _VALID = "0123456789abcdef0123456789abcdef01234567"
+
+    def _resolve(self) -> str:
+        return _step(_job("deploy-backend.yml", "deploy"), "Resolve target SHA")["run"]
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "main",
+            "0123456",
+            "x; touch /tmp/pwned",
+            '$(touch /tmp/pwned)',
+            "0123456789ABCDEF0123456789ABCDEF01234567",
+            _VALID + "\n" + _VALID,
+            _VALID + " ",
+        ],
+    )
+    def test_a_dispatched_sha_that_is_not_a_full_hex_sha_fails(self, bad: str, tmp_path: Path) -> None:
+        code, output = _run_step(
+            self._resolve(),
+            {"EVENT_NAME": "workflow_dispatch", "DISPATCH_SHA": bad, "RUN_SHA": self._VALID, "WORKFLOW_SHA": ""},
+            tmp_path,
+        )
+        assert code != 0, f"{bad!r} was accepted"
+        assert "sha=" not in output
+
+    def test_a_full_sha_is_resolved(self, tmp_path: Path) -> None:
+        code, output = _run_step(
+            self._resolve(),
+            {"EVENT_NAME": "workflow_dispatch", "DISPATCH_SHA": self._VALID, "RUN_SHA": "", "WORKFLOW_SHA": ""},
+            tmp_path,
+        )
+        assert code == 0
+        assert output.strip() == f"sha={self._VALID}"
+
+    def test_the_runner_proves_the_sha_is_on_main_before_shipping_it(self) -> None:
+        job = _job("deploy-backend.yml", "deploy")
+        names = [s.get("name") for s in job["steps"]]
+        assert "Verify the SHA is on main" in names
+        assert names.index("Verify the SHA is on main") < names.index("Deploy")
+        run = _step(job, "Verify the SHA is on main")["run"]
+        assert "git merge-base --is-ancestor" in run and "origin/main" in run
+        checkout = job["steps"][0]
+        assert checkout["uses"].startswith("actions/checkout@")
+        assert checkout.get("with", {}).get("fetch-depth") == 0, "ancestry needs main's history"
+
+    def test_nothing_is_interpolated_into_the_remote_command_line(self) -> None:
+        run = _step(_job("deploy-backend.yml", "deploy"), "Deploy")["run"]
+        assert 'AURA_SHA="$TARGET_SHA"' not in run
+        assert "env AURA_SHA" not in run
+        # Values travel as %q-quoted exports on stdin; the remote command is the literal `bash -s`.
+        assert "printf 'export AURA_SHA=%q\\n'" in run
+        ssh_line = next(line for line in run.splitlines() if line.strip().startswith('"${VPS_USER}@${VPS_HOST}"'))
+        assert ssh_line.split() == ['"${VPS_USER}@${VPS_HOST}"', "bash", "-s"]
+
+    def test_the_host_rechecks_ancestry_and_uses_a_private_temp_dir(self) -> None:
+        run = _step(_job("deploy-backend.yml", "deploy"), "Deploy")["run"]
+        assert "/tmp/ci-deploy.sh" not in run
+        assert "mktemp -d" in run
+        assert "merge-base --is-ancestor" in run
+
+    def test_ci_deploy_uses_a_private_temp_dir(self) -> None:
+        script = (_WORKFLOWS.parents[1] / "deploy" / "scripts" / "ci-deploy.sh").read_text(encoding="utf-8")
+        assert "/tmp/vps-update.sh" not in script
+        assert "mktemp -d" in script
+
+    def test_ci_deploy_refuses_a_malformed_sha_before_doing_anything(self, tmp_path: Path) -> None:
+        import shutil
+        import subprocess
+
+        bash = shutil.which("bash")
+        if bash is None:
+            pytest.skip("bash is not available")
+        script = _WORKFLOWS.parents[1] / "deploy" / "scripts" / "ci-deploy.sh"
+        marker = tmp_path / "pwned"
+        result = subprocess.run(
+            [bash, str(script)],
+            env={"PATH": "/usr/bin:/bin", "AURA_SHA": f"x$(touch {marker})", "AURA_REPO": str(tmp_path / "nope")},
+            capture_output=True, text=True, timeout=60,
+        )
+        assert result.returncode != 0
+        assert "AURA_SHA" in result.stderr
+        assert not marker.exists()
+
+
+class TestControlPlaneDeploysTheTestedCommit:
+    """F48. On `workflow_run`, a bare checkout is the default branch's *current* head, not the
+    commit Backend CI tested -- so `railway up` could upload code no CI run ever saw."""
+
+    def test_the_deploy_job_checks_out_the_tested_sha(self) -> None:
+        checkout = _job("control-plane-deploy.yml", "deploy")["steps"][0]
+        assert checkout["uses"].startswith("actions/checkout@")
+        assert checkout["with"]["ref"] == "${{ github.event.workflow_run.head_sha || github.sha }}"

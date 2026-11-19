@@ -25,12 +25,17 @@ class ChatUiState {
   final bool sendInFlight;
   final bool consumedInitialQuery;
 
+  /// Suggested actions are being carried out (F20): Approve shows a spinner and a second tap is
+  /// ignored rather than creating every task and expense twice.
+  final bool approvingActions;
+
   const ChatUiState({
     this.useRag = true,
     this.useMemory = true,
     this.useTools = true,
     this.sendInFlight = false,
     this.consumedInitialQuery = false,
+    this.approvingActions = false,
   });
 
   bool composerLocked({required bool isStreaming}) => sendInFlight || isStreaming;
@@ -53,6 +58,7 @@ class ChatUiState {
     bool? useTools,
     bool? sendInFlight,
     bool? consumedInitialQuery,
+    bool? approvingActions,
   }) {
     return ChatUiState(
       useRag: useRag ?? this.useRag,
@@ -60,6 +66,7 @@ class ChatUiState {
       useTools: useTools ?? this.useTools,
       sendInFlight: sendInFlight ?? this.sendInFlight,
       consumedInitialQuery: consumedInitialQuery ?? this.consumedInitialQuery,
+      approvingActions: approvingActions ?? this.approvingActions,
     );
   }
 }
@@ -185,8 +192,14 @@ class ChatViewModel extends Notifier<ChatUiState> {
     ref.read(pendingActionsProvider.notifier).clear();
   }
 
-  Future<PendingActionsOutcome> approvePendingActions() {
+  /// Carries out the suggested actions once. Returns null, doing nothing, while an approval is
+  /// already running or when there is nothing to approve (F20): the actions are claimed before
+  /// the first one runs, so a double tap cannot run them twice.
+  Future<PendingActionsOutcome?> approvePendingActions() async {
+    if (state.approvingActions) return null;
     final actions = ref.read(pendingActionsProvider);
+    if (actions.isEmpty) return null;
+    state = state.copyWith(approvingActions: true);
     final executor = PendingActionsExecutor(
       addTask: ref.read(taskRepositoryProvider).addTask,
       addEvent: ({
@@ -209,9 +222,15 @@ class ChatViewModel extends Notifier<ChatUiState> {
       logExercise: ref.read(healthRepositoryProvider).logExercise,
       logWeight: ref.read(healthRepositoryProvider).logWeight,
     );
-    return executor.execute(actions).whenComplete(() {
-      ref.read(pendingActionsProvider.notifier).clear();
-    });
+    try {
+      return await executor.execute(actions);
+    } finally {
+      // Only these actions: a turn that arrived meanwhile may have suggested new ones.
+      if (identical(ref.read(pendingActionsProvider), actions)) {
+        ref.read(pendingActionsProvider.notifier).clear();
+      }
+      state = state.copyWith(approvingActions: false);
+    }
   }
 }
 

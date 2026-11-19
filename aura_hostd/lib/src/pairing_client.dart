@@ -23,6 +23,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'config.dart' show InvalidBackendUrlError, requireSecureBackendUrl;
+
 /// Thrown when pairing cannot complete: the session expired before approval, or the backend
 /// returned something this client can't make sense of.
 class PairingFailedError implements Exception {
@@ -192,7 +194,21 @@ Future<Map<String, dynamic>> _postJson(
   String path,
   Map<String, Object?> body,
 ) async {
-  final uri = Uri.parse(backendUrl).replace(path: path);
+  // F53: the approved poll answers with the device token -- refused before anything is sent to a
+  // URL it could travel over in clear.
+  final String checked;
+  try {
+    checked = requireSecureBackendUrl(backendUrl);
+  } on InvalidBackendUrlError catch (error) {
+    throw PairingFailedError(error.message);
+  }
+  final base = Uri.parse(checked.trim());
+  final scheme = switch (base.scheme.toLowerCase()) {
+    'wss' => 'https',
+    'ws' => 'http',
+    final other => other,
+  };
+  final uri = base.replace(scheme: scheme, path: path);
   final request = await client.postUrl(uri);
   request.headers.contentType = ContentType.json;
   request.write(jsonEncode(body));

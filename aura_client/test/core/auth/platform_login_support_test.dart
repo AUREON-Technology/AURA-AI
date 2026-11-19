@@ -20,4 +20,14 @@ void main() {
       expect(supportsNativeGoogleSignIn(), isFalse, reason: '$platform should not be supported');
     }
   });
+
+  // INT-103: only these two have an attestation the backend verifies; a macOS sign-in at the
+  // attested route was refused every time.
+  test('device attestation exists on Android and iOS only', () {
+    for (final platform in TargetPlatform.values) {
+      final attests = platform == TargetPlatform.android || platform == TargetPlatform.iOS;
+      expect(platformHasDeviceAttestation(isWeb: false, platform: platform), attests, reason: '$platform');
+      expect(platformHasDeviceAttestation(isWeb: true, platform: platform), isFalse, reason: 'web on $platform');
+    }
+  });
 }

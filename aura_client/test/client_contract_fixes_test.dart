@@ -131,6 +131,21 @@ void main() {
       );
     });
 
+    // F54 / INT-117: PATCH and PUT returned their pending future directly and skipped the
+    // deadline every other method gets.
+    for (final method in ['PATCH', 'PUT']) {
+      test('a $method that never answers becomes an unreachable error', () async {
+        final container = _scope(_hang, timeout: const Duration(milliseconds: 50));
+        final api = container.read(auraApiClientProvider);
+        await expectLater(
+          api
+              .json(method: method, path: '/api/v3/agents/x', body: const {'a': 1})
+              .timeout(const Duration(seconds: 5), onTimeout: () => fail('$method hung')),
+          throwsA(isA<AuraApiError>().having((e) => e.error, 'error', 'unreachable')),
+        );
+      });
+    }
+
     test('probeGateway reports offline instead of hanging', () async {
       final container = _scope(_hang, timeout: const Duration(milliseconds: 50));
       final ok = await container

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/auth/identity_service.dart';
 import '../../../core/design_system/design_system.dart';
@@ -72,6 +73,15 @@ class _LinkedAccountsPageState extends ConsumerState<LinkedAccountsPage> {
         row('google.com', Icons.g_mobiledata, 'Google', () => _link('google.com', identity.linkGoogle)),
         row('apple.com', Icons.apple, 'Apple', () => _link('apple.com', identity.linkApple)),
         row('password', Icons.mail_outline, l10n.teamInviteEmailLabel, _linkEmail),
+        const SizedBox(height: AuraSpacing.lg),
+        // Optional authenticator code on every sign-in (SaaS P1-I).
+        AuraListTile(
+          key: const Key('two-step-entry'),
+          icon: Icons.verified_user_outlined,
+          title: l10n.twoStepTitle,
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/two-step'),
+        ),
       ]),
     );
   }

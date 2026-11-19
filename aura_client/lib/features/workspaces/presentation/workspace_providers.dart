@@ -42,6 +42,27 @@ String roleLabel(BuildContext context, String role) => switch (role) {
       _ => context.l10n.workspaceRoleMember,
     };
 
+/// A plan's name in the UI language, from the server's slug (F55). An unknown slug (a plan
+/// added on the server later) is shown as sent rather than hidden.
+String planLabel(BuildContext context, String plan) => switch (plan) {
+      'free' => context.l10n.planNameFree,
+      'pro' => context.l10n.planNamePro,
+      'team' => context.l10n.planNameTeam,
+      _ => plan,
+    };
+
+/// A subscription status in the UI language, from the server's slug
+/// (`aura_core/domain/billing.py` `SubscriptionStatus`).
+String subscriptionStatusLabel(BuildContext context, String status) => switch (status) {
+      'pending' => context.l10n.subscriptionStatusPending,
+      'active' => context.l10n.subscriptionStatusActive,
+      'past_due' => context.l10n.subscriptionStatusPastDue,
+      'grace' => context.l10n.subscriptionStatusGrace,
+      'canceled' => context.l10n.subscriptionStatusCanceled,
+      'expired' => context.l10n.subscriptionStatusExpired,
+      _ => status,
+    };
+
 String workspaceName(BuildContext context, WorkspaceSummary ws) =>
     ws.isTeam ? ws.name : context.l10n.workspacePersonal;
 

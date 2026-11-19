@@ -103,7 +103,7 @@ void main() {
       expect(caps.canAttach, isFalse);
     });
 
-    test('GET /api/v3/capabilities with the JWT; any failure means no images', () async {
+    test('GET /api/v3/capabilities with the JWT; a gateway without the route means no images', () async {
       http.Request? recorded;
       final ok = MockClient((request) async {
         recorded = request;
@@ -133,6 +133,96 @@ void main() {
       ]);
       addTearDown(old.dispose);
       expect((await old.read(capabilitiesClientProvider).vision()).canAttach, isFalse);
+    });
+  });
+
+  // F25: a fetch that failed is not the server saying "no images". It used to be cached as
+  // "unavailable" for the whole app session, so one dropped request hid the attach button
+  // until the app was restarted.
+  group('capabilities fetch failures (F25)', () {
+    ProviderContainer scopeWith(http.Client client) {
+      final container = ProviderContainer(overrides: [
+        tokenManagerProvider.overrideWith((ref) => _StubTokenManager(ref)),
+        capabilitiesClientProvider.overrideWith((ref) => CapabilitiesClient(ref, httpClient: client)),
+      ]);
+      addTearDown(container.dispose);
+      return container;
+    }
+
+    final okBody = jsonEncode({
+      'vision': {'enabled': true, 'available': true, 'max_images': 4, 'max_image_bytes': 99},
+    });
+
+    test('a server error or a dropped connection is an error, not "unavailable"', () async {
+      final down = scopeWith(MockClient((_) async => http.Response('{"detail":"busy"}', 503)));
+      await expectLater(down.read(capabilitiesClientProvider).vision(), throwsA(anything));
+
+      final offline = scopeWith(MockClient((_) async => throw http.ClientException('offline')));
+      await expectLater(offline.read(capabilitiesClientProvider).vision(), throwsA(anything));
+    });
+
+    test('a failed check is not cached: the next look asks again', () async {
+      var calls = 0;
+      final c = scopeWith(MockClient((_) async {
+        calls++;
+        return calls == 1 ? http.Response('{"detail":"busy"}', 503) : http.Response(okBody, 200);
+      }));
+
+      final first = c.listen(visionCapabilitiesProvider, (_, _) {});
+      await expectLater(c.read(visionCapabilitiesProvider.future), throwsA(anything));
+      first.close();
+      await Future<void>.delayed(Duration.zero);
+
+      final again = c.listen(visionCapabilitiesProvider, (_, _) {});
+      addTearDown(again.close);
+      expect((await c.read(visionCapabilitiesProvider.future)).canAttach, isTrue);
+      expect(calls, 2);
+    });
+
+    test('a successful answer is kept for the session', () async {
+      var calls = 0;
+      final c = scopeWith(MockClient((_) async {
+        calls++;
+        return http.Response(okBody, 200);
+      }));
+
+      final first = c.listen(visionCapabilitiesProvider, (_, _) {});
+      await c.read(visionCapabilitiesProvider.future);
+      first.close();
+      await Future<void>.delayed(Duration.zero);
+      final again = c.listen(visionCapabilitiesProvider, (_, _) {});
+      addTearDown(again.close);
+      await c.read(visionCapabilitiesProvider.future);
+      expect(calls, 1);
+    });
+
+    testWidgets('after a failed check the button offers to check again, and then attaches',
+        (tester) async {
+      var calls = 0;
+      final container = ProviderContainer(overrides: [
+        tokenManagerProvider.overrideWith((ref) => _StubTokenManager(ref)),
+        capabilitiesClientProvider.overrideWith((ref) => CapabilitiesClient(
+              ref,
+              httpClient: MockClient((_) async {
+                calls++;
+                return calls == 1 ? http.Response('{"detail":"busy"}', 503) : http.Response(okBody, 200);
+              }),
+            )),
+      ]);
+      addTearDown(container.dispose);
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: Scaffold(body: AttachImageButton(enabled: true))),
+      ));
+      await tester.pumpAndSettle();
+
+      final retry = find.byTooltip("Couldn't check whether images can be attached. Tap to try again.");
+      expect(retry, findsOneWidget);
+      await tester.tap(retry);
+      await tester.pumpAndSettle();
+
+      expect(calls, 2);
+      expect(find.byTooltip('Attach image'), findsOneWidget);
     });
   });
 
