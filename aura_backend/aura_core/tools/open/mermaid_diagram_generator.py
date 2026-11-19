@@ -6,14 +6,25 @@ from typing import Any, Dict, List, Optional
 class MermaidDiagramGenerator:
     """Mermaid diagram generator for code architecture, classes, flows, sequences, and schemas."""
 
+    #: Every sequence-diagram arrow Mermaid defines (solid/dotted, open/filled, cross, async,
+    #: bidirectional), matched whole so nothing else can ride along into the diagram.
+    SEQUENCE_ARROW_PATTERN = r"<<-->>|<<->>|-->>|->>|-->|->|--x|-x|--\)|-\)"
+    #: An ER relationship: left cardinality, solid (``--``) or dotted (``..``) line, right
+    #: cardinality -- e.g. ``||--o{``, ``}o..o{``, ``||--||``.
+    ER_CARDINALITY_PATTERN = r"(?:\|o|\|\||\}o|\}\|)(?:--|\.\.)(?:o\||\|\||o\{|\|\{)"
+
     @staticmethod
     def sanitize_identifier(name: Optional[str]) -> str:
-        """Normalize an identifier so it is safe inside Mermaid diagrams; returns '' if empty."""
+        """Normalize an identifier so it is safe inside Mermaid diagrams; returns '' if empty.
+
+        Underscores are kept as written, so distinct Python names (``_Foo`` and ``Foo``,
+        ``__init__`` and ``init``) stay distinct nodes. A name with no letter or digit at all
+        (``"..."``) has nothing to identify it and becomes ''.
+        """
         if not name or not str(name).strip():
             return ""
         cleaned = re.sub(r"[^A-Za-z0-9_]", "_", str(name).strip())
-        cleaned = re.sub(r"_+", "_", cleaned).strip("_")
-        if not cleaned:
+        if not re.search(r"[A-Za-z0-9]", cleaned):
             return ""
         if cleaned[0].isdigit():
             cleaned = f"N_{cleaned}"
@@ -224,7 +235,7 @@ class MermaidDiagramGenerator:
             if not sender or not receiver:
                 continue
             text = cls.escape_label(msg.get("text", ""))
-            arrow = cls._sanitize_token(msg.get("arrow"), r"[-x<>o]+", "->>")
+            arrow = cls._sanitize_token(msg.get("arrow"), cls.SEQUENCE_ARROW_PATTERN, "->>")
             lines.append(f"    {sender}{arrow}{receiver}: {text}")
 
         return "\n".join(lines)
@@ -258,7 +269,7 @@ class MermaidDiagramGenerator:
             e2 = cls.sanitize_identifier(rel.get("right", ""))
             if not e1 or not e2:
                 continue
-            card = cls._sanitize_token(rel.get("cardinality"), r"[|o}{.\-]{2,5}", "||--o{")
+            card = cls._sanitize_token(rel.get("cardinality"), cls.ER_CARDINALITY_PATTERN, "||--o{")
             label = cls.escape_label(rel.get("label", "relates"))
             lines.append(f'    {e1} {card} {e2} : "{label}"')
 

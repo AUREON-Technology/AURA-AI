@@ -236,9 +236,38 @@ class SymbolAndImportVerifier:
 
         return local_bound, has_star_import
 
+    @staticmethod
+    def _type_param_names(node: ast.AST) -> Set[str]:
+        """Names of PEP 695 type parameters (``def f[T]``, ``class C[T]``, ``type A[T] = ...``).
+        Python 3.11's AST has no ``type_params``, so this is empty there."""
+        names: Set[str] = set()
+        for tp in getattr(node, "type_params", None) or []:
+            name = getattr(tp, "name", None)
+            if name:
+                names.add(name)
+        return names
+
+    @staticmethod
+    def _parameter_names(args: ast.arguments) -> Set[str]:
+        names = {a.arg for a in args.posonlyargs + args.args + args.kwonlyargs}
+        if args.vararg:
+            names.add(args.vararg.arg)
+        if args.kwarg:
+            names.add(args.kwarg.arg)
+        return names
+
     @classmethod
     def verify_undefined_names(cls, source_code: str) -> Dict[str, Any]:
-        """Scope-aware check for referenced names not bound in scope, module globals, or builtins."""
+        """Scope-aware check for referenced names that nothing binds.
+
+        Follows Python's resolution rules: a function sees its own names, the names of every
+        enclosing *function* (closures, ``nonlocal``), module globals and builtins. A class body
+        sees the function it is defined in, but its own names are not visible inside its
+        methods -- an unqualified ``LIMIT`` in a method is reported even when the class defines
+        ``LIMIT``. Functions defined in a class get the implicit ``__class__`` cell, and PEP 695
+        type parameters are visible where Python makes them visible. Any ``import *`` in scope
+        disables reporting there, since its names cannot be known statically.
+        """
         parsed = cls.parse_ast(source_code)
         if not parsed["valid_syntax"]:
             return {
@@ -248,94 +277,91 @@ class SymbolAndImportVerifier:
             }
 
         tree: ast.Module = parsed["tree"]
-        base_globals: Set[str] = set(dir(builtins)) | set(cls.MODULE_IMPLICIT_NAMES)
         module_bound, module_star_import = cls._collect_local_bindings(tree.body)
-        visible_module_names = base_globals | module_bound
+        module_names: Set[str] = set(dir(builtins)) | set(cls.MODULE_IMPLICIT_NAMES) | module_bound
 
         undefined: List[Dict[str, Any]] = []
-        seen = set()
+        seen: Set[tuple] = set()
 
-        def record_if_undefined(name: str, lineno: int, scope_names: Set[str], star_imported: bool) -> None:
-            if star_imported:
+        def record(name: str, lineno: int, visible: Set[str], star_imported: bool) -> None:
+            if star_imported or name in visible or name in module_names:
                 return
-            if name not in scope_names and name not in visible_module_names:
-                key = (name, lineno)
-                if key not in seen:
-                    seen.add(key)
-                    undefined.append({"name": name, "line": lineno})
+            key = (name, lineno)
+            if key not in seen:
+                seen.add(key)
+                undefined.append({"name": name, "line": lineno})
 
-        def scan_scope(body_nodes: List[ast.AST], extra_params: Set[str], is_function_scope: bool) -> None:
+        def scan_scope(
+            body_nodes: List[ast.AST],
+            own_names: Set[str],
+            enclosing: Set[str],
+            kind: str,
+            star_above: bool,
+        ) -> None:
+            """``kind`` is ``module``, ``class`` or ``function``; ``enclosing`` holds the names
+            of the enclosing function scopes (never class scopes)."""
             local_names, local_star = cls._collect_local_bindings(body_nodes)
-            scope_names = set(extra_params) | local_names
+            scope_names = own_names | local_names
+            star = star_above or local_star
+            visible = scope_names | enclosing
+            # What a function, lambda or class nested here can see from outside itself: a class
+            # body is not an enclosing scope for closures, a function body is.
+            child_enclosing = enclosing | scope_names if kind == "function" else enclosing
 
-            def walk_in_scope(n: ast.AST) -> None:
+            def walk(n: ast.AST, extra: Set[str]) -> None:
                 if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    type_params = cls._type_param_names(n)
                     for dec in n.decorator_list:
-                        walk_in_scope(dec)
-                    for d in n.args.defaults + [x for x in n.args.kw_defaults if x is not None]:
-                        walk_in_scope(d)
-                    if n.returns:
-                        walk_in_scope(n.returns)
-                    fn_params: Set[str] = set()
-                    for a in n.args.posonlyargs + n.args.args + n.args.kwonlyargs:
-                        fn_params.add(a.arg)
+                        walk(dec, extra)
+                    for default in n.args.defaults + [d for d in n.args.kw_defaults if d is not None]:
+                        walk(default, extra)
+                    annotation_extra = extra | type_params
+                    for a in n.args.posonlyargs + n.args.args + n.args.kwonlyargs + [
+                        x for x in (n.args.vararg, n.args.kwarg) if x is not None
+                    ]:
                         if a.annotation:
-                            walk_in_scope(a.annotation)
-                    if n.args.vararg:
-                        fn_params.add(n.args.vararg.arg)
-                        if n.args.vararg.annotation:
-                            walk_in_scope(n.args.vararg.annotation)
-                    if n.args.kwarg:
-                        fn_params.add(n.args.kwarg.arg)
-                        if n.args.kwarg.annotation:
-                            walk_in_scope(n.args.kwarg.annotation)
-                    scan_scope(n.body, fn_params, is_function_scope=True)
+                            walk(a.annotation, annotation_extra)
+                    if n.returns:
+                        walk(n.returns, annotation_extra)
+                    params = cls._parameter_names(n.args) | type_params
+                    if kind == "class":
+                        params.add("__class__")
+                    scan_scope(n.body, params, child_enclosing | extra, "function", star)
                     return
 
                 if isinstance(n, ast.Lambda):
-                    for d in n.args.defaults + [x for x in n.args.kw_defaults if x is not None]:
-                        walk_in_scope(d)
-                    lam_params: Set[str] = set()
-                    for a in n.args.posonlyargs + n.args.args + n.args.kwonlyargs:
-                        lam_params.add(a.arg)
-                    if n.args.vararg:
-                        lam_params.add(n.args.vararg.arg)
-                    if n.args.kwarg:
-                        lam_params.add(n.args.kwarg.arg)
-                    # Lambda body shares enclosing scope plus lambda parameters
-                    combined = scope_names | lam_params
-                    def walk_lambda_body(sub: ast.AST) -> None:
-                        if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Load):
-                            record_if_undefined(sub.id, getattr(sub, "lineno", 0), combined, local_star or module_star_import)
-                        elif isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
-                            walk_in_scope(sub)
-                        else:
-                            for ch in ast.iter_child_nodes(sub):
-                                walk_lambda_body(ch)
-                    walk_lambda_body(n.body)
+                    for default in n.args.defaults + [d for d in n.args.kw_defaults if d is not None]:
+                        walk(default, extra)
+                    scan_scope([n.body], cls._parameter_names(n.args), child_enclosing | extra, "function", star)
                     return
 
                 if isinstance(n, ast.ClassDef):
+                    type_params = cls._type_param_names(n)
                     for dec in n.decorator_list:
-                        walk_in_scope(dec)
+                        walk(dec, extra)
                     for base in n.bases:
-                        walk_in_scope(base)
+                        walk(base, extra | type_params)
                     for kw in n.keywords:
-                        walk_in_scope(kw.value)
-                    scan_scope(n.body, set(), is_function_scope=False)
+                        walk(kw.value, extra | type_params)
+                    scan_scope(n.body, set(), child_enclosing | extra | type_params, "class", star)
+                    return
+
+                type_alias = getattr(ast, "TypeAlias", None)
+                if type_alias is not None and isinstance(n, type_alias):
+                    walk(n.value, extra | cls._type_param_names(n))
                     return
 
                 if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
-                    record_if_undefined(n.id, getattr(n, "lineno", 0), scope_names, local_star or module_star_import)
+                    record(n.id, getattr(n, "lineno", 0), visible | extra, star)
                     return
 
                 for child in ast.iter_child_nodes(n):
-                    walk_in_scope(child)
+                    walk(child, extra)
 
             for stmt in body_nodes:
-                walk_in_scope(stmt)
+                walk(stmt, set())
 
-        scan_scope(tree.body, set(), is_function_scope=False)
+        scan_scope(tree.body, set(), set(), "module", module_star_import)
 
         return {
             "valid": len(undefined) == 0,
