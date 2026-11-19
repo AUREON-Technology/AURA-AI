@@ -89,7 +89,7 @@ VENDOR_MODULES = frozenset({
     "celery", "kombu", "pymysql", "pytds", "pymongo",
     # HTTP / web / RPC
     "httpx", "httpcore", "requests", "urllib3", "aiohttp", "fastapi", "starlette",
-    "sse_starlette", "uvicorn", "websockets", "grpc", "mcp",
+    "sse_starlette", "uvicorn", "websockets", "grpc", "mcp", "playwright",
     # hosted vendors and cloud SDKs (inference vendors are also banned outright by
     # test_no_external_inference.py; listed here so even a lazy import would be classified)
     "openai", "anthropic", "google", "firebase_admin", "boto3", "botocore", "docker",
