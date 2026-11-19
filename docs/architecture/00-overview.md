@@ -62,6 +62,9 @@ Every stage is a class behind an interface, constructed by `aura_core/container.
 independently testable and independently replaceable. A deployment that wants no planning stage
 simply doesn't configure one.
 
+Rendered diagrams of this pipeline, the layering, the deployment topologies, and the Engineer
+agent are in [`diagrams/`](diagrams/README.md).
+
 ---
 
 ## 3. Package layout
