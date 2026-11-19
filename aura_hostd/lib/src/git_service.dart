@@ -249,27 +249,32 @@ class GitService {
       stderr.contains('no name was given and auto-detection is disabled');
 
   Future<Map<String, Object?>> status(String cwd) async {
-    final result = await _runOk(cwd, ['-c', 'core.quotepath=false', 'status', '--short', '--branch']);
-    final lines = const LineSplitter().convert(result.stdout);
-    if (lines.isEmpty) return {'branch': null, 'ahead': 0, 'behind': 0, 'upstream': null, 'files': const []};
+    // `-z`: entries are NUL-terminated and file names are never quoted or escaped. The short
+    // format wraps a name containing a space (or other unusual character) in double quotes, and
+    // that quoted string was passed on as the path -- so a file named `my file.txt` could not be
+    // staged, unstaged or diffed, and "Stage all" failed for the whole list if one existed.
+    final result = await _runOk(cwd, ['status', '--porcelain=v1', '-z', '--branch']);
+    final entries = result.stdout.split('\u0000').where((entry) => entry.isNotEmpty).toList();
+    if (entries.isEmpty) return {'branch': null, 'ahead': 0, 'behind': 0, 'upstream': null, 'files': const []};
 
-    final header = lines.first.startsWith('## ') ? lines.first.substring(3) : lines.first;
+    final header = entries.first.startsWith('## ') ? entries.first.substring(3) : entries.first;
     final parsed = _parseStatusHeader(header);
 
     final files = <Map<String, Object?>>[];
-    for (final line in lines.skip(1)) {
-      if (line.length < 3) continue;
-      final indexStatus = line[0];
-      final worktreeStatus = line[1];
-      var rest = line.substring(3);
+    for (var i = 1; i < entries.length; i++) {
+      final entry = entries[i];
+      if (entry.length < 3) continue;
+      final indexStatus = entry[0];
+      final worktreeStatus = entry[1];
+      final path = entry.substring(3);
+      // A rename or copy is `XY new\0old\0`: the source path is the next entry.
       String? renamedFrom;
-      final arrow = rest.indexOf(' -> ');
-      if (arrow >= 0) {
-        renamedFrom = rest.substring(0, arrow);
-        rest = rest.substring(arrow + 4);
+      if ((indexStatus == 'R' || indexStatus == 'C' || worktreeStatus == 'R' || worktreeStatus == 'C') &&
+          i + 1 < entries.length) {
+        renamedFrom = entries[++i];
       }
       files.add({
-        'path': rest,
+        'path': path,
         if (renamedFrom != null) 'renamed_from': renamedFrom,
         'index_status': indexStatus,
         'worktree_status': worktreeStatus,
@@ -368,7 +373,14 @@ class GitService {
   }
 
   Future<Map<String, Object?>> checkout(String cwd, String branch, {bool create = false}) async {
-    final result = await _run(cwd, ['checkout', if (create) '-B' else branch, if (create) branch]);
+    // `-b`, not `-B`: `-B` resets a branch that already exists to HEAD, so "create branch develop"
+    // on a repo that has a `develop` silently moved it and orphaned its commits. `-b` refuses.
+    if (create) {
+      // Asked of git directly rather than read from its (translated) error text.
+      final existing = await _run(cwd, ['rev-parse', '--verify', '--quiet', 'refs/heads/$branch']);
+      if (existing.exitCode == 0) return {'ok': false, 'reason': 'branch_exists'};
+    }
+    final result = await _run(cwd, ['checkout', if (create) '-b' else branch, if (create) branch]);
     if (result.exitCode != 0) {
       if (_looksLikeNotARepo(result.stderr)) throw GitNotARepositoryError('not a git repository');
       if (result.stderr.contains('would be overwritten by checkout')) {

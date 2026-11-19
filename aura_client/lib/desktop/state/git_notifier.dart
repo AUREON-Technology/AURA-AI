@@ -146,6 +146,10 @@ class GitNotifier extends StateNotifier<GitState> {
   Future<void> checkout(String branch, {bool create = false}) => _write(() async {
         final result = await _hostdClient.gitCheckout(root: _rootPath!, branch: branch, create: create);
         if (result['ok'] == false) {
+          if (result['reason'] == 'branch_exists') {
+            state = state.copyWith(error: currentL10n.gitBranchExists(branch));
+            return;
+          }
           final affected = ((result['affected_files'] as List?) ?? const []).join(', ');
           state = state.copyWith(
             error: affected.isEmpty
