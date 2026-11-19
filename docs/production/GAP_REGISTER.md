@@ -85,7 +85,7 @@ hygiene and doc accuracy.
 | --- | --- | --- | --- | --- | --- |
 | P0 | 4 | 0 | 2 | 1 | 0 |
 | P1 | 7 | 2 | 9 | 0 | 1 |
-| P2 | 14 | 2 | 13 | 0 | 1 |
+| P2 | 15 | 2 | 13 | 0 | 1 |
 | P3 | 6 | 0 | 1 | 0 | 1 |
 
 ## All gaps
@@ -148,6 +148,7 @@ Sorted by status (`closed_stale` last), then severity. The full text, citations 
 | GAP-061 | P2 | `open` | adaptation/surfaces-and-writes | platform-core | No embeddable widget or public AI API; Flutter routes are hardcoded; no write path to external systems. | AP12a/b/c reports in docs/reports/; AP12c only after SEC-01 is closed. | GAP-060, GAP-013 |
 | GAP-062 | P2 | `open` | adaptation/project-zero | platform-core | Personal AURA's personas and domains are hardcoded (agents/registry.py, tools/records.py, Life Hub panes) and run outside any blueprint. | AP13.1–AP13.5 exit criteria met; docs/reports/ap13-project-zero.md. | GAP-056 |
 | GAP-064 | P2 | `built_not_proven` | llm/hosted-open-weight | platform-core | ADR-030 hosted open-weight inference, Phases 1-5, is built and unit/fitness tested: the gated host category and open-weight model check, quota-aware routing wi… | A docs/reports/phase-6-hosted-inference-*.txt report committed with every scripted check passing and check 10 run (not skipped), and tests/fixtures/provider_wire/ carrying live captures from scripts/capture_provider_wire.py. | — |
+| GAP-065 | P2 | `open` | knowledge/adaptive-updates | platform-core | Designed, not built (ADR-035, docs/plans/adaptive-knowledge-update-system.md). The global corpus changes only through Loop A's nightly refresh from registered… | docs/reports/loop-c-*.md committed showing, on the dev stack, at least one full gap -> research -> proposal -> approve -> apply -> retrieval cites id@vN -> revert cycle (phase C3) and one staleness run producing an unchanged verification and a REFRESH proposal (phase C5). | GAP-023 |
 | GAP-026 | P3 | `built_not_proven` | desktop/hostd | client | aura_hostd Units 1-9 in tree with disclosed cuts (real PTY, live xterm, restart-on-crash, bundled binary, interactive consent tiers per roadmap sec. 5); never… | End-to-end report in docs/reports/. | GAP-010 |
 | GAP-033 | P3 | `open` | supply-chain/dev-tooling | backend | aura_backend/requirements-dev.txt uses ranges (pytest>=8.0, pytest-asyncio>=0.23, pytest-cov>=5.0, testcontainers[postgres]>=4.0.0, pip-tools>=7.4); eval-ci.ym… | requirements-dev.lock generated and used by CI. | — |
 | GAP-035 | P3 | `open` | llm/circuit-breaker | backend | Circuit breaker thresholds are global (AURA_LLM_CIRCUIT_THRESHOLD / _OPEN_S) with no per-provider override (split-inference-deployment.md "The circuit breaker… | Setting + test. | GAP-012 |

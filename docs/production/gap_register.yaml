@@ -1629,3 +1629,36 @@ gaps:
       passing and check 10 run (not skipped), and tests/fixtures/provider_wire/ carrying live
       captures from scripts/capture_provider_wire.py.
     status: built_not_proven
+
+  - gap_id: GAP-065
+    component: knowledge/adaptive-updates
+    severity: P2
+    current_state: >-
+      Designed, not built (ADR-035, docs/plans/adaptive-knowledge-update-system.md). The global
+      corpus changes only through Loop A's nightly refresh from registered sources and through
+      direct REST ingest/delete. searched_but_empty (kernel/kernel.py) reaches the client and is
+      then discarded; a feedback correction feeds only Loop B fine-tune curation; documents carry
+      no freshness fields and nothing detects contradictions between them; memory's
+      near-duplicate check reinforces an old fact and drops its correction (memory/engine.py).
+    target_state: >-
+      Loop C: knowledge gaps (behind the general-knowledge gate), explicit requests, corrections,
+      admin-proposed new versions and nightly staleness are researched from approved sources and
+      a self-hosted SearxNG into cited KnowledgeProposals; each waits for a platform admin's
+      digest-bound knowledge_update approval and is applied to the global corpus through
+      KnowledgeEngine with revert. Off by default (AURA_KNOWLEDGE_ADAPTIVE_ENABLED).
+    owner: platform-core
+    dependencies: [GAP-023]
+    test: >-
+      Default pytest (in-memory ports, gate conditions including a private-entity leakage case,
+      digest/base-version binding, CAS transitions, research-prompt input fitness test);
+      tests/load migration round-trip for 0031; compose parity tests for the searxng service;
+      aura_admin Playwright e2e for the proposals and gaps pages.
+    metric: >-
+      proposals applied and reverted on the dev stack; review-queue age; NO_SOURCES rate;
+      fetch refusals by reason
+    exit_condition: >-
+      docs/reports/loop-c-*.md committed showing, on the dev stack, at least one full
+      gap -> research -> proposal -> approve -> apply -> retrieval cites id@vN -> revert cycle
+      (phase C3) and one staleness run producing an unchanged verification and a REFRESH
+      proposal (phase C5).
+    status: open
