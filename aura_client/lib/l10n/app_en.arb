@@ -2344,6 +2344,43 @@
   "@editorDiscard": {
     "description": "IDE editor: close the tab without saving"
   },
+  "editorDiskChangedTitle": "File changed on disk",
+  "@editorDiskChangedTitle": {
+    "description": "IDE editor: save dialog title when the file on disk differs from the one that was opened"
+  },
+  "editorDiskChangedBody": "\"{title}\" was changed outside the editor since you opened it. Saving now would overwrite those changes.",
+  "@editorDiskChangedBody": {
+    "description": "IDE editor: save dialog body; title is the file name",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "editorOverwrite": "Overwrite",
+  "@editorOverwrite": {
+    "description": "IDE editor: save my version over the changed file on disk"
+  },
+  "editorReloadFromDisk": "Reload from disk",
+  "@editorReloadFromDisk": {
+    "description": "IDE editor: throw away my edits and load the file as it is on disk"
+  },
+  "editorSaveFailed": "Could not save {title}: {error}",
+  "@editorSaveFailed": {
+    "description": "IDE editor: saving the file failed",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      },
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "editorNotEditable": "This file can't be edited because it could not be opened.",
+  "@editorNotEditable": {
+    "description": "IDE editor: shown instead of the editor when the file failed to load, so nothing typed can overwrite it"
+  },
   "editorQuickOpenHint": "Type to search files...",
   "@editorQuickOpenHint": {
     "description": "IDE quick open (Ctrl+P): search field hint"
@@ -3963,6 +4000,15 @@
   "gitNothingStaged": "Nothing is staged to commit.",
   "@gitNothingStaged": {
     "description": "Git panel error: commit with nothing staged"
+  },
+  "gitBranchExists": "A branch named \"{branch}\" already exists. Choose another name, or switch to it from the branch list.",
+  "@gitBranchExists": {
+    "description": "Git panel error: Create branch refused because a local branch with that name exists",
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      }
+    }
   },
   "gitCheckoutOverwrite": "Switching branches would overwrite local changes.",
   "@gitCheckoutOverwrite": {

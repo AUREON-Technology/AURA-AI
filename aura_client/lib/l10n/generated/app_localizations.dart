@@ -3218,6 +3218,42 @@ abstract class AppLocalizations {
   /// **'Discard'**
   String get editorDiscard;
 
+  /// IDE editor: save dialog title when the file on disk differs from the one that was opened
+  ///
+  /// In en, this message translates to:
+  /// **'File changed on disk'**
+  String get editorDiskChangedTitle;
+
+  /// IDE editor: save dialog body; title is the file name
+  ///
+  /// In en, this message translates to:
+  /// **'\"{title}\" was changed outside the editor since you opened it. Saving now would overwrite those changes.'**
+  String editorDiskChangedBody(String title);
+
+  /// IDE editor: save my version over the changed file on disk
+  ///
+  /// In en, this message translates to:
+  /// **'Overwrite'**
+  String get editorOverwrite;
+
+  /// IDE editor: throw away my edits and load the file as it is on disk
+  ///
+  /// In en, this message translates to:
+  /// **'Reload from disk'**
+  String get editorReloadFromDisk;
+
+  /// IDE editor: saving the file failed
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save {title}: {error}'**
+  String editorSaveFailed(String title, String error);
+
+  /// IDE editor: shown instead of the editor when the file failed to load, so nothing typed can overwrite it
+  ///
+  /// In en, this message translates to:
+  /// **'This file can\'t be edited because it could not be opened.'**
+  String get editorNotEditable;
+
   /// IDE quick open (Ctrl+P): search field hint
   ///
   /// In en, this message translates to:
@@ -5161,6 +5197,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Nothing is staged to commit.'**
   String get gitNothingStaged;
+
+  /// Git panel error: Create branch refused because a local branch with that name exists
+  ///
+  /// In en, this message translates to:
+  /// **'A branch named \"{branch}\" already exists. Choose another name, or switch to it from the branch list.'**
+  String gitBranchExists(String branch);
 
   /// Git panel error: checkout blocked by local changes
   ///

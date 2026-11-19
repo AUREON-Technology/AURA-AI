@@ -1738,6 +1738,29 @@ class AppLocalizationsEn extends AppLocalizations {
   String get editorDiscard => 'Discard';
 
   @override
+  String get editorDiskChangedTitle => 'File changed on disk';
+
+  @override
+  String editorDiskChangedBody(String title) {
+    return '\"$title\" was changed outside the editor since you opened it. Saving now would overwrite those changes.';
+  }
+
+  @override
+  String get editorOverwrite => 'Overwrite';
+
+  @override
+  String get editorReloadFromDisk => 'Reload from disk';
+
+  @override
+  String editorSaveFailed(String title, String error) {
+    return 'Could not save $title: $error';
+  }
+
+  @override
+  String get editorNotEditable =>
+      'This file can\'t be edited because it could not be opened.';
+
+  @override
   String get editorQuickOpenHint => 'Type to search files...';
 
   @override
@@ -2909,6 +2932,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get gitNothingStaged => 'Nothing is staged to commit.';
+
+  @override
+  String gitBranchExists(String branch) {
+    return 'A branch named \"$branch\" already exists. Choose another name, or switch to it from the branch list.';
+  }
 
   @override
   String get gitCheckoutOverwrite =>

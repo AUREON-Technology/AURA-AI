@@ -1733,6 +1733,28 @@ class AppLocalizationsAr extends AppLocalizations {
   String get editorDiscard => 'تجاهل';
 
   @override
+  String get editorDiskChangedTitle => 'الملف اتغيّر على الجهاز';
+
+  @override
+  String editorDiskChangedBody(String title) {
+    return '\"$title\" اتغيّر برّه المحرر من ساعة ما فتحته. لو حفظت دلوقتي هتكتب فوق التغييرات دي.';
+  }
+
+  @override
+  String get editorOverwrite => 'اكتب فوقه';
+
+  @override
+  String get editorReloadFromDisk => 'حمّله تاني من الجهاز';
+
+  @override
+  String editorSaveFailed(String title, String error) {
+    return 'مقدرناش نحفظ $title: $error';
+  }
+
+  @override
+  String get editorNotEditable => 'الملف ده مينفعش يتعدّل لأنه معرفناش نفتحه.';
+
+  @override
   String get editorQuickOpenHint => 'اكتب عشان تدوّر على ملفات...';
 
   @override
@@ -2922,6 +2944,11 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get gitNothingStaged => 'مفيش حاجة متعملها Stage علشان تعمل Commit.';
+
+  @override
+  String gitBranchExists(String branch) {
+    return 'فيه Branch اسمه \"$branch\" بالفعل. اختار اسم تاني، أو بدّل عليه من قايمة الـ Branches.';
+  }
 
   @override
   String get gitCheckoutOverwrite => 'تغيير الـ Branch هيمسح تغييراتك المحلية.';
