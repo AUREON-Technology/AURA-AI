@@ -374,6 +374,11 @@ class TestKernelWiring:
             "github_list_repository_files", "github_get_file_contents", "github_get_issue",
             "github_get_pull_request", "github_create_branch", "github_commit_files",
             "github_create_draft_pull_request",
+            # ADR-036 groups B and C: `engineer_agent`-gated like the sandbox tools above, so
+            # absent from a capability-less `available()`; B is also off until an operator enables
+            # `AURA_OPEN_EXEC_TOOLS_ENABLED`.
+            "generate_and_run_tests", "analyze_test_quality",
+            "docker_build", "docker_compose", "profile_python",
         }
         # The sandbox/git tools (minus `clone_repository`, which additionally needs a GitHub
         # resolver this default container does not configure) are unconditionally *registered*
