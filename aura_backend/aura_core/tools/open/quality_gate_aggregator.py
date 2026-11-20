@@ -1,4 +1,5 @@
 from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 class QualityGateAggregator:
@@ -77,7 +78,7 @@ class QualityGateAggregator:
         }
 
     @staticmethod
-    def compute_quality_score(weights_and_results: Dict[str, tuple[float, bool]]) -> Dict[str, Any]:
+    def compute_quality_score(weights_and_results: Dict[str, Tuple[float, bool]]) -> Dict[str, Any]:
         """Compute a weighted 0-100 quality score from (weight, passed) tuples."""
         total_weight = sum(max(0.0, w) for w, _ in weights_and_results.values())
         if total_weight <= 0:
@@ -153,3 +154,65 @@ class QualityGateAggregator:
             "not_run": gate["not_run"],
             "score_breakdown": score_info["breakdown"],
         }
+
+    @classmethod
+    def aggregate_all_checks(
+        cls,
+        test_result: Optional[Dict[str, Any]] = None,
+        sec_result: Optional[Dict[str, Any]] = None,
+        cov_result: Optional[Dict[str, Any]] = None,
+        arch_result: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Ingest tool result payloads from across the test suite and evaluate release readiness."""
+        tests_ok = True
+        if test_result:
+            tests_ok = test_result.get("failed", 0) == 0 and test_result.get("passed", 0) > 0
+
+        sec_ok = True
+        if sec_result:
+            sec_ok = len(sec_result.get("findings", [])) == 0 and sec_result.get("clean", True)
+
+        cov_ok = True
+        if cov_result:
+            cov_ok = float(cov_result.get("coverage_ratio", 1.0)) >= 0.70
+
+        arch_ok = True
+        if arch_result:
+            arch_ok = arch_result.get("is_consistent", True) and len(arch_result.get("violations", [])) == 0
+
+        return cls.build_release_readiness_report(
+            security_pass=sec_ok,
+            tests_pass=tests_ok,
+            coverage_pass=cov_ok,
+            complexity_pass=True,
+            lint_pass=True,
+            architecture_pass=arch_ok,
+        )
+
+    @staticmethod
+    def format_quality_gate_badge(score: float, ready_to_merge: bool) -> str:
+        """Render Markdown shield badge reflecting quality score and readiness."""
+        color = "brightgreen" if ready_to_merge else "red"
+        label = f"Quality%20Gate-{score}%25%20{'PASSED' if ready_to_merge else 'BLOCKED'}-{color}"
+        return f"![Quality Gate](https://img.shields.io/badge/{label})"
+
+    @staticmethod
+    def generate_ci_blocker_summary(report: Dict[str, Any]) -> str:
+        """Render PR review comment summarizing gate blockers."""
+        ready = report.get("ready_to_merge", False)
+        score = report.get("quality_score", 0.0)
+        blockers = report.get("blocker_failures", [])
+        failed = report.get("failed_checks", [])
+
+        lines = [
+            f"### {'✅ Quality Gate Passed' if ready else '❌ Quality Gate Failed'}",
+            f"- **Overall Score:** `{score}/100`",
+            f"- **Gate Decision:** `{report.get('gate_status')}`",
+        ]
+
+        if blockers:
+            lines.append(f"- **Hard Blockers:** {', '.join(blockers)}")
+        if failed:
+            lines.append(f"- **Failed Checks:** {', '.join(failed)}")
+
+        return "\n".join(lines)

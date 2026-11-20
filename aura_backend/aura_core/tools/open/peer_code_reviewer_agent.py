@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 
 class PeerCodeReviewerAgent:
-    """Automated peer code review helper for inspecting diffs, code smells, and review findings."""
+    """Automated peer code review agent for inspecting diffs, code smells, AST conventions, and generating PR reviews."""
 
     SMELL_PATTERNS: List[Dict[str, str]] = [
         {
@@ -24,6 +24,18 @@ class PeerCodeReviewerAgent:
             "severity": "MAJOR",
             "pattern": r"\bexcept\s+Exception\b",
             "message": "Broad 'except Exception' may hide specific failure modes.",
+        },
+        {
+            "code": "REV-INSECURE-EVAL",
+            "severity": "CRITICAL",
+            "pattern": r"\b(eval|exec)\s*\(",
+            "message": "Dynamic code execution (eval/exec) detected.",
+        },
+        {
+            "code": "REV-DISABLED-SSL",
+            "severity": "CRITICAL",
+            "pattern": r"\bverify\s*=\s*False\b",
+            "message": "Disabled TLS/SSL certificate verification detected.",
         },
     ]
 
@@ -54,10 +66,10 @@ class PeerCodeReviewerAgent:
             elif line.startswith("-") and not line.startswith("---"):
                 removed_lines_count += 1
 
-        has_major = any(f["severity"] == "MAJOR" for f in findings)
+        has_major_or_crit = any(f["severity"] in ("MAJOR", "CRITICAL") for f in findings)
         return {
             "reviewed": True,
-            "approved": not has_major,
+            "approved": not has_major_or_crit,
             "added_lines": added_lines_count,
             "removed_lines": removed_lines_count,
             "findings_count": len(findings),
@@ -115,13 +127,73 @@ class PeerCodeReviewerAgent:
             conv_res = cls.review_python_conventions(source_code, filename=filename)
             all_findings.extend(conv_res["findings"])
 
+        critical_count = sum(1 for f in all_findings if f.get("severity") == "CRITICAL")
         major_count = sum(1 for f in all_findings if f.get("severity") == "MAJOR")
+
         return {
             "reviewed": True,
-            "approved": major_count == 0,
+            "approved": (critical_count == 0 and major_count == 0),
+            "critical_issues": critical_count,
             "major_issues": major_count,
             "total_findings": len(all_findings),
             "findings": all_findings,
             "diff_review": diff_res,
             "conventions_review": conv_res,
         }
+
+    @classmethod
+    def suggest_inline_patches(cls, diff_text: str) -> List[Dict[str, Any]]:
+        """Generate concrete code replacement suggestions for identified code smells."""
+        suggestions: List[Dict[str, Any]] = []
+        review = cls.review_diff(diff_text)
+
+        for f in review.get("findings", []):
+            snippet = f.get("snippet", "")
+            code = f.get("code")
+
+            if code == "REV-DEBUG-PRINT":
+                # suggest logger.debug(...)
+                replacement = re.sub(r"\bprint\s*\(", "logger.debug(", snippet)
+                suggestions.append({
+                    "file": f.get("file"),
+                    "original": snippet,
+                    "suggested_patch": replacement,
+                    "explanation": "Replace raw print with logger call.",
+                })
+            elif code == "REV-DISABLED-SSL":
+                replacement = re.sub(r"verify\s*=\s*False", "verify=True", snippet)
+                suggestions.append({
+                    "file": f.get("file"),
+                    "original": snippet,
+                    "suggested_patch": replacement,
+                    "explanation": "Enable TLS verification to prevent Man-in-the-Middle attacks.",
+                })
+
+        return suggestions
+
+    @classmethod
+    def generate_pr_review_comment(cls, review_result: Dict[str, Any]) -> str:
+        """Format an automated GitHub/GitLab PR review summary in Markdown."""
+        approved = review_result.get("approved", False)
+        status_banner = "✅ Approved (Looks Good To Me)" if approved else "❌ Changes Requested (Issues Detected)"
+
+        lines = [
+            f"## Peer Code Review: {status_banner}",
+            "",
+            f"- **Critical Issues:** {review_result.get('critical_issues', 0)}",
+            f"- **Major Issues:** {review_result.get('major_issues', 0)}",
+            f"- **Total Findings:** {review_result.get('total_findings', 0)}",
+            "",
+        ]
+
+        findings = review_result.get("findings", [])
+        if findings:
+            lines.extend([
+                "| Severity | File | Code | Message |",
+                "|---|---|---|---|",
+            ])
+            for f in findings:
+                lines.append(f"| `{f.get('severity')}` | `{f.get('file')}` | `{f.get('code')}` | {f.get('message')} |")
+            lines.append("")
+
+        return "\n".join(lines)

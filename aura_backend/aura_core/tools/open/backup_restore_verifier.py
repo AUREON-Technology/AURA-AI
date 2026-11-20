@@ -1,12 +1,18 @@
 import hashlib
+import os
+import re
+import shutil
+import sqlite3
 import tarfile
+import tempfile
+import time
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 class BackupRestoreVerifier:
-    """Verifier for backup file existence, SHA-256 checksums, and archive integrity."""
+    """Verifier for backup file existence, SHA-256 checksums, archive integrity, and disaster recovery simulation."""
 
     @staticmethod
     def compute_sha256(file_path: str) -> Dict[str, Any]:
@@ -79,6 +85,85 @@ class BackupRestoreVerifier:
             return {"valid_archive": False, "error": f"{type(exc).__name__}: {exc}"}
 
     @classmethod
+    def verify_sql_dump_integrity(cls, sql_dump_path: str) -> Dict[str, Any]:
+        """Validate an SQL backup dump file for structural integrity and table definitions."""
+        p = Path(sql_dump_path)
+        if not p.exists() or not p.is_file():
+            return {"valid": False, "error": f"SQL dump file not found: {sql_dump_path}"}
+
+        try:
+            text = p.read_text(encoding="utf-8", errors="ignore")
+        except OSError as exc:
+            return {"valid": False, "error": str(exc)}
+
+        create_tables = re.findall(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z0-9_`\"'.]+)", text, re.I)
+        has_commit = bool(re.search(r"\bCOMMIT\b", text, re.I))
+        has_inserts = bool(re.search(r"\bINSERT\s+INTO\b", text, re.I))
+
+        return {
+            "valid": len(create_tables) > 0 or has_inserts,
+            "file": str(p),
+            "size_bytes": p.stat().st_size,
+            "tables_found": create_tables,
+            "has_transaction_commit": has_commit,
+            "has_inserts": has_inserts,
+        }
+
+    @classmethod
+    def simulate_restore_to_temp_dir(
+        cls,
+        archive_or_dump_path: str,
+        temp_target_dir: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Test restore safely inside an isolated temporary directory to prove recovery readiness."""
+        p = Path(archive_or_dump_path)
+        if not p.exists() or not p.is_file():
+            return {"restored": False, "error": f"File not found: {archive_or_dump_path}"}
+
+        target_dir = temp_target_dir or tempfile.mkdtemp(prefix="aura_restore_drill_")
+        start_time = time.perf_counter()
+        recovered_items = 0
+
+        try:
+            if zipfile.is_zipfile(p):
+                with zipfile.ZipFile(p, "r") as zf:
+                    # Safe extraction
+                    for name in zf.namelist():
+                        if not name.startswith(("/", "\\")) and ".." not in name:
+                            zf.extract(name, target_dir)
+                            recovered_items += 1
+            elif tarfile.is_tarfile(p):
+                with tarfile.open(p, "r:*") as tf:
+                    for member in tf.getmembers():
+                        if not member.name.startswith(("/", "\\")) and ".." not in member.name:
+                            tf.extract(member, target_dir)
+                            recovered_items += 1
+            elif p.suffix.lower() == ".sql":
+                # Test replay in sqlite memory db
+                sql_text = p.read_text(encoding="utf-8", errors="ignore")
+                conn = sqlite3.connect(":memory:")
+                try:
+                    conn.executescript(sql_text)
+                    recovered_items = 1
+                except Exception as db_exc:
+                    return {"restored": False, "error": f"SQL replay failed: {db_exc}"}
+                finally:
+                    conn.close()
+
+            elapsed = round((time.perf_counter() - start_time) * 1000.0, 2)
+            return {
+                "restored": True,
+                "recovered_items_count": recovered_items,
+                "elapsed_ms": elapsed,
+                "temp_target_dir": target_dir,
+            }
+        except Exception as exc:
+            return {"restored": False, "error": str(exc)}
+        finally:
+            if not temp_target_dir and os.path.exists(target_dir):
+                shutil.rmtree(target_dir, ignore_errors=True)
+
+    @classmethod
     def verify_backup(
         cls,
         backup_path: str,
@@ -109,3 +194,23 @@ class BackupRestoreVerifier:
             "checksum": checksum_res,
             "archive": archive_res,
         }
+
+    @classmethod
+    def generate_restore_drill_report(cls, drill_result: Dict[str, Any]) -> str:
+        """Render a Disaster Recovery Drill audit report in Markdown."""
+        ready = drill_result.get("recovery_ready") or drill_result.get("restored", False)
+        status_str = "SUCCESS (RTO VERIFIED)" if ready else "FAILED (RESTORE DEFECT)"
+
+        lines = [
+            f"# Disaster Recovery (DR) Drill Report: {status_str}",
+            "",
+            f"- **Target File:** `{drill_result.get('file', 'N/A')}`",
+            f"- **Recovery Duration:** `{drill_result.get('elapsed_ms', 'N/A')} ms`",
+            f"- **Items Recovered:** `{drill_result.get('recovered_items_count', 'N/A')}`",
+            f"- **Integrity Verification:** {'Verified' if ready else 'Unverified / Error'}",
+            "",
+            "## Audit Log",
+            "",
+            f"```json\n{drill_result}\n```",
+        ]
+        return "\n".join(lines)

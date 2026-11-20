@@ -24,7 +24,20 @@ def _run_coroutine(coro: Any) -> Any:
 
 
 def _invoke(func: Any, *args: Any, **kwargs: Any) -> Any:
-    """Invoke a callable, resolving a returned coroutine if needed.
+    """Invoke a callable, resolving coroutines if needed.
+
+    Security fix (v2): eval() and exec() have been removed.  The function now
+    only accepts Python callables.  Passing a string raises TypeError with a
+    clear message so callers that relied on the old code-string path get an
+    actionable error rather than silent arbitrary code execution.
+    """
+    if not callable(func):
+        raise TypeError(
+            f"Expected a Python callable, got {type(func).__name__!r}.  "
+            "Code strings are no longer accepted; wrap the code in a function "
+            "and pass the function object instead."
+        )
+    target = func
 
     A string is refused. This used to ``eval`` and then ``exec`` it, so any caller able to pass a
     string could run arbitrary code in this process; profiling a snippet is done by running it
@@ -40,7 +53,11 @@ def _invoke(func: Any, *args: Any, **kwargs: Any) -> Any:
 
 
 class PerformanceProfiler:
-    """Profiler for measuring execution latency, peak memory usage, and CPU hotspots."""
+    """Profiler for measuring execution latency, peak memory usage, and CPU hotspots.
+
+    Security fix (v2): all methods now require Python callables; code strings
+    are no longer accepted (eval/exec removed from _invoke).
+    """
 
     @staticmethod
     def profile_callable(
