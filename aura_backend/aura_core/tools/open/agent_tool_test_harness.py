@@ -1,3 +1,13 @@
+"""Superseded -- deliberately NOT registered as a tool (ADR-036). The platform already has
+`aura_core/evaluation/harness.py` (`AgentEvaluator`), `evaluation/agent_runs.py`, and
+`ToolRegistry.execute` with `tools/schema.py::validate_arguments`. This harness calls a tool
+synchronously and never awaits it, so an `async` tool -- which is every real tool -- is reported
+as passed without having run.
+
+Kept for reference only: nothing under ``aura_core`` may import it
+(``tests/architecture/test_superseded_open_tools_unused.py``).
+"""
+
 import time
 from typing import Any, Callable, Dict, List, Optional
 

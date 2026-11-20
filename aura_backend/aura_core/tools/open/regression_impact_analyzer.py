@@ -59,8 +59,10 @@ class RegressionImpactAnalyzer:
 
         try:
             proc = subprocess.run(
-                # Use ``--`` separator so the ref is never parsed as an option.
-                ["git", "diff", "--name-only", "--", base_ref],
+                # ``base_ref`` was validated above (no leading ``-``, safe characters only), so it
+                # cannot be read as an option. The ``--`` goes *after* it: before it, git treats the
+                # ref as a pathspec and the diff of the working tree against it is always empty.
+                ["git", "diff", "--name-only", base_ref, "--"],
                 cwd=repo_dir,
                 capture_output=True,
                 text=True,

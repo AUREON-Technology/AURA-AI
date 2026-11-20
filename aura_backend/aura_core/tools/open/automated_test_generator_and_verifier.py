@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ._process import PYTEST_ENV, run_bounded
+
 
 class AutomatedTestGeneratorAndVerifier:
     """Generates pytest suites from Python AST and verifies them in a temporary directory.
@@ -438,13 +440,7 @@ class AutomatedTestGeneratorAndVerifier:
 
             cmd = [sys.executable, "-m", "pytest", str(test_file), "-q", "--tb=short", "-p", "no:cacheprovider"]
             try:
-                proc = subprocess.run(
-                    cmd,
-                    cwd=str(tmp_path),
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout_seconds,
-                )
+                proc = run_bounded(cmd, cwd=tmp_path, timeout_s=timeout_seconds, extra_env=PYTEST_ENV)
                 duration_ms = round((time.time() - start_time) * 1000, 2)
                 parsed = cls.parse_pytest_output(proc.stdout, proc.stderr, proc.returncode)
                 parsed["duration_ms"] = duration_ms
@@ -484,13 +480,7 @@ class AutomatedTestGeneratorAndVerifier:
 
         start_time = time.time()
         try:
-            proc = subprocess.run(
-                cmd,
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds,
-            )
+            proc = run_bounded(cmd, cwd=cwd, timeout_s=timeout_seconds, extra_env=PYTEST_ENV)
             duration_ms = round((time.time() - start_time) * 1000, 2)
             parsed = cls.parse_pytest_output(proc.stdout, proc.stderr, proc.returncode)
             parsed["duration_ms"] = duration_ms

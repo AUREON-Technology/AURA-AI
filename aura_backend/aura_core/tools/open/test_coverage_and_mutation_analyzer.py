@@ -2,9 +2,17 @@ import ast
 import json
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from ._process import PYTEST_ENV, run_bounded
+
+#: Not worth copying into the mutation workspace, and a venv or ``.git`` can be gigabytes.
+_COPY_IGNORE = shutil.ignore_patterns(
+    ".git", "__pycache__", ".venv", "venv", "node_modules", ".mypy_cache", ".pytest_cache", "*.pyc"
+)
 
 
 class TestCoverageAndMutationAnalyzer:
@@ -80,21 +88,16 @@ class TestCoverageAndMutationAnalyzer:
         with tempfile.TemporaryDirectory() as tmpdir:
             cov_json = Path(tmpdir) / "coverage.json"
             cov_data = str(Path(tmpdir) / ".coverage")
-            cmd = ["coverage", "run", f"--data-file={cov_data}", "-m", "pytest", test_target, "-q"]
+            coverage_cmd = [sys.executable, "-m", "coverage"]
+            cmd = [*coverage_cmd, "run", f"--data-file={cov_data}", "-m", "pytest", test_target, "-q"]
             if source_package:
                 cmd = [
-                    "coverage", "run", f"--data-file={cov_data}",
+                    *coverage_cmd, "run", f"--data-file={cov_data}",
                     f"--source={source_package}", "-m", "pytest", test_target, "-q",
                 ]
 
             try:
-                proc = subprocess.run(
-                    cmd,
-                    cwd=working_dir,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout_seconds,
-                )
+                proc = run_bounded(cmd, cwd=working_dir, timeout_s=timeout_seconds, extra_env=PYTEST_ENV)
             except FileNotFoundError:
                 return {
                     "available": False,
@@ -108,12 +111,21 @@ class TestCoverageAndMutationAnalyzer:
                     "error": f"Coverage test run timed out after {timeout_seconds}s.",
                 }
 
-            subprocess.run(
-                ["coverage", "json", f"--data-file={cov_data}", "-o", str(cov_json)],
-                cwd=working_dir,
-                capture_output=True,
-                text=True,
-            )
+            if "No module named coverage" in (proc.stderr or ""):
+                return {
+                    "available": False,
+                    "passed": False,
+                    "error": "coverage is not installed for this interpreter.",
+                }
+
+            try:
+                run_bounded(
+                    [*coverage_cmd, "json", f"--data-file={cov_data}", "-o", str(cov_json)],
+                    cwd=working_dir,
+                    timeout_s=timeout_seconds,
+                )
+            except subprocess.TimeoutExpired:
+                pass  # the report is simply missing; parse_coverage_json reports that
             parsed = cls.parse_coverage_json(str(cov_json))
             pct = parsed.get("percent_covered", 0.0) if parsed.get("loaded") else 0.0
 
@@ -163,7 +175,10 @@ class TestCoverageAndMutationAnalyzer:
         All mutations are performed on a temporary copy of the project — the original
         source files are never modified.
         """
-        target_path = Path(working_dir) / source_filename
+        root = Path(working_dir).resolve()
+        target_path = (root / source_filename).resolve()
+        if target_path != root and root not in target_path.parents:
+            return {"evaluated": False, "error": f"source_filename escapes working_dir: {source_filename}"}
         if not target_path.exists():
             return {"evaluated": False, "error": f"Target file not found: {target_path}"}
 
@@ -179,20 +194,29 @@ class TestCoverageAndMutationAnalyzer:
                 "note": "No boolean constants found — mutation testing not applicable.",
             }
 
+        pytest_cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+
         # --- Work on a temporary copy so the original files are never touched ---
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_working = Path(tmpdir) / "workspace"
-            shutil.copytree(working_dir, str(tmp_working))
-            tmp_target = tmp_working / source_filename
+            shutil.copytree(root, str(tmp_working), ignore=_COPY_IGNORE)
+            tmp_target = tmp_working / target_path.relative_to(root)
 
             # --- Validate: tests must pass on the unmodified code first ---
-            baseline = subprocess.run(
-                ["pytest", "-q"],
-                cwd=str(tmp_working),
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds,
-            )
+            try:
+                baseline = run_bounded(
+                    pytest_cmd, cwd=tmp_working, timeout_s=timeout_seconds, extra_env=PYTEST_ENV
+                )
+            except subprocess.TimeoutExpired:
+                return {
+                    "evaluated": False,
+                    "error": (
+                        f"The baseline test run timed out after {timeout_seconds}s. Mutation "
+                        "testing requires a green, reasonably fast test suite."
+                    ),
+                }
+            except FileNotFoundError:
+                return {"evaluated": False, "error": "Python interpreter not found for pytest."}
             if baseline.returncode != 0:
                 reason = (
                     "No tests were collected by pytest."
@@ -238,12 +262,8 @@ class TestCoverageAndMutationAnalyzer:
                 tmp_target.write_text("\n".join(mutated_lines) + "\n", encoding="utf-8")
 
                 try:
-                    proc = subprocess.run(
-                        ["pytest", "-q"],
-                        cwd=str(tmp_working),
-                        capture_output=True,
-                        text=True,
-                        timeout=timeout_seconds,
+                    proc = run_bounded(
+                        pytest_cmd, cwd=tmp_working, timeout_s=timeout_seconds, extra_env=PYTEST_ENV
                     )
                     # Exit code 5 means no tests collected — not a kill
                     if proc.returncode != 0 and proc.returncode != 5:

@@ -8,53 +8,32 @@ from typing import Any, Callable, Dict, List, Optional
 
 
 def _run_coroutine(coro: Any) -> Any:
-    """Drive a coroutine to completion without hanging on Windows socket pairs."""
-    try:
-        coro.send(None)
-    except StopIteration as exc:
-        return exc.value
-    except Exception as exc:
-        raise exc
+    """Run a coroutine to completion on a fresh event loop.
 
-    # If it didn't finish in one step (yielded/awaited), try event loop
+    The coroutine used to be advanced once with ``send(None)`` and then handed to a loop, which
+    resumed a half-run coroutine: anything that actually awaited (I/O, ``asyncio.sleep``) lost a
+    step or hung. A new loop from the start is the whole fix.
+    """
+    import asyncio
+
+    loop = asyncio.new_event_loop()
     try:
-        import asyncio
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(coro)
-        finally:
-            loop.close()
-    except Exception as exc:
-        raise RuntimeError(f"Async coroutine could not be completed: {exc}")
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 
 def _invoke(func: Any, *args: Any, **kwargs: Any) -> Any:
-    """Invoke a callable or executable code string, resolving coroutines if needed."""
-    if callable(func):
-        target = func
-    elif isinstance(func, str):
-        try:
-            val = eval(func, {})
-            if callable(val):
-                target = val
-            else:
-                return val
-        except Exception:
-            local_scope: Dict[str, Any] = {}
-            exec(func, {}, local_scope)
-            callable_found = None
-            for v in local_scope.values():
-                if callable(v):
-                    callable_found = v
-                    break
-            if callable_found:
-                target = callable_found
-            else:
-                return None
-    else:
-        raise TypeError(f"Expected callable or code string, got {type(func).__name__}")
+    """Invoke a callable, resolving a returned coroutine if needed.
 
-    res = target(*args, **kwargs)
+    A string is refused. This used to ``eval`` and then ``exec`` it, so any caller able to pass a
+    string could run arbitrary code in this process; profiling a snippet is done by running it
+    in a sandbox (``tools/desktop_ops.py``), never by evaluating it here.
+    """
+    if not callable(func):
+        raise TypeError(f"Expected a callable, got {type(func).__name__}")
+
+    res = func(*args, **kwargs)
     if inspect.iscoroutine(res):
         return _run_coroutine(res)
     return res
@@ -160,7 +139,7 @@ class PerformanceProfiler:
             "min_ms": round(min(durations_ms), 4) if durations_ms else 0.0,
             "avg_ms": round(sum(durations_ms) / runs, 4) if durations_ms else 0.0,
             "max_ms": round(max(durations_ms), 4) if durations_ms else 0.0,
-            "total_ms": round(sum(durations_ms) / runs, 4) if durations_ms else 0.0,
+            "total_ms": round(sum(durations_ms), 4) if durations_ms else 0.0,
         }
 
     @staticmethod
