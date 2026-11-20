@@ -39,10 +39,6 @@ def _invoke(func: Any, *args: Any, **kwargs: Any) -> Any:
         )
     target = func
 
-    A string is refused. This used to ``eval`` and then ``exec`` it, so any caller able to pass a
-    string could run arbitrary code in this process; profiling a snippet is done by running it
-    in a sandbox (``tools/desktop_ops.py``), never by evaluating it here.
-    """
     if not callable(func):
         raise TypeError(f"Expected a callable, got {type(func).__name__}")
 

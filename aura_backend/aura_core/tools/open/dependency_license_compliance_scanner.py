@@ -169,6 +169,7 @@ class DependencyLicenseComplianceScanner:
             matched_forbidden = [t for t in forbidden_set if t == norm_lic]
             not_in_allowlist = allowed_set is not None and norm_lic not in allowed_set
 
+            ok = not matched_forbidden and not not_in_allowlist
             if ok:
                 compliant_packages.append({"package": pkg, "license": lic})
             else:
@@ -179,9 +180,6 @@ class DependencyLicenseComplianceScanner:
                     "matched_forbidden": matched_forbidden,
                     "not_in_allowlist": not_in_allowlist,
                 })
-            else:
-                compliant_packages.append({"package": pkg, "license": raw_lic})
-
         return {
             "compliant": len(violations) == 0,
             "compliant_count": len(compliant_packages),
