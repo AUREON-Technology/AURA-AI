@@ -100,6 +100,9 @@ Environment variables (see `aura_core/config/settings.py`):
 - `AURA_DATABASE_URL` — Postgres connection string
 - `AURA_JWT_SECRET` — JWT signing secret (file-hydrated in production)
 - `AURA_SANDBOX_ENABLED` — enable persistent engineer workspaces (opt-in)
+- `AURA_ANALYSIS_TOOLS_ENABLED` — the 17 pure code/data analysis tools (default: true; ADR-036)
+- `AURA_OPEN_EXEC_TOOLS_ENABLED` — `generate_and_run_tests` / `analyze_test_quality`, which run pytest in a child of the gateway; `engineer_agent` + confirmation, no container (default: false; ADR-036)
+- `AURA_DESKTOP_OPS_TOOLS_ENABLED` — `docker_build` / `docker_compose` / `profile_python` on a paired desktop only (default: true; ADR-036)
 - `AURA_ALLOW_REMOTE_INFERENCE` — gate remote inference (default: false)
 - `AURA_LEARNING_REFRESH_CRON` — knowledge refresh schedule (default: `0 2 * * *`)
 - `OLLAMA_NUM_PARALLEL` — model concurrency (default: 1)

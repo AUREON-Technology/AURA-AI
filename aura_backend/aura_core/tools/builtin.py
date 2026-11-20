@@ -34,8 +34,10 @@ from ..domain.memory import SHARED_MEMORY_SCOPE, MemoryKind, MemoryQuery, readab
 from ..domain.network import is_internal_address
 from ..domain.tools import ToolCategory, ToolSensitivity
 from ..ports.runtime import Tool, ToolContext
+from .analysis import build_analysis_tools
 from .base import param, tool
 from .coding import build_github_tools, build_sandbox_tools
+from .open_exec import build_open_exec_tools
 from .personal_os import personal_os_tools
 from .planning import find_calendar_slots, prioritize_tasks
 from .records import build_personal_os_crud_tools
@@ -605,6 +607,9 @@ def default_tools(
     host_git: Any = None,
     github_token_resolver: Any = None,
     host_agent_registry: Any = None,
+    enable_analysis_tools: bool = False,
+    enable_open_exec_tools: bool = False,
+    enable_desktop_ops_tools: bool = False,
 ) -> list[Tool]:
     """Assemble the tool set for a deployment.
 
@@ -653,7 +658,16 @@ def default_tools(
             host_git=host_git,
             token_resolver=github_token_resolver,
             host_agent_registry=host_agent_registry,
+            desktop_ops=enable_desktop_ops_tools,
         )
     if github_client_resolver is not None:
         tools += build_github_tools(github_client_resolver, default_repo=github_default_repo)
+    if enable_analysis_tools:
+        # Pure text-in/JSON-out analysis (ADR-036 group A): no I/O, no capability, so unlike the
+        # groups above it needs no resource to be present -- only the operator not turning it off.
+        tools += build_analysis_tools()
+    if enable_open_exec_tools:
+        # ADR-036 group B: runs project code in a child of *this* process. Operator opt-in only,
+        # and each tool still needs `engineer_agent` plus a per-call confirmation.
+        tools += build_open_exec_tools()
     return tools

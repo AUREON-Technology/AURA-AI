@@ -589,3 +589,39 @@ class TestAssembly:
         """Personal-OS tools propose client writes; they do not touch server state."""
         side = {t.spec.name for t in default_tools() if t.spec.side_effecting}
         assert side == PERSONAL_OS_TOOL_NAMES
+
+    def test_the_adr_036_groups_are_opt_in_and_each_adds_exactly_its_own_tools(self) -> None:
+        from aura_core.tools.analysis import ANALYSIS_TOOL_NAMES
+        from aura_core.tools.open_exec import OPEN_EXEC_TOOL_NAMES
+
+        base = {t.spec.name for t in default_tools()}
+        with_analysis = {t.spec.name for t in default_tools(enable_analysis_tools=True)}
+        with_exec = {t.spec.name for t in default_tools(enable_open_exec_tools=True)}
+
+        assert with_analysis - base == ANALYSIS_TOOL_NAMES
+        assert with_exec - base == OPEN_EXEC_TOOL_NAMES
+
+    def test_the_analysis_group_adds_no_side_effecting_tool_and_no_capability(self) -> None:
+        """It is on by default in a deployment, so it must not widen what a plain user can *do*."""
+        added = [t.spec for t in default_tools(enable_analysis_tools=True) if t.spec.name not in {
+            s.spec.name for s in default_tools()
+        }]
+        assert added, "the group should add tools"
+        assert not any(s.side_effecting or s.required_capability for s in added)
+
+    def test_settings_default_to_analysis_on_code_execution_off(self) -> None:
+        from aura_core.config.settings import OpenToolsSettings
+
+        defaults = OpenToolsSettings()
+        assert defaults.analysis_enabled is True
+        assert defaults.exec_enabled is False
+        assert defaults.desktop_ops_enabled is True
+
+    def test_settings_read_the_documented_environment_variables(self, monkeypatch) -> None:
+        from aura_core.config.settings import OpenToolsSettings
+
+        monkeypatch.setenv("AURA_ANALYSIS_TOOLS_ENABLED", "false")
+        monkeypatch.setenv("AURA_OPEN_EXEC_TOOLS_ENABLED", "true")
+        monkeypatch.setenv("AURA_DESKTOP_OPS_TOOLS_ENABLED", "0")
+        parsed = OpenToolsSettings.from_env()
+        assert (parsed.analysis_enabled, parsed.exec_enabled, parsed.desktop_ops_enabled) == (False, True, False)

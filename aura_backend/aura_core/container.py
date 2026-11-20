@@ -1701,6 +1701,9 @@ class Container:
                 host_git=self.host_git,
                 github_token_resolver=self._github_token_resolver,
                 host_agent_registry=self.host_agent_registry,
+                enable_analysis_tools=self.settings.open_tools.analysis_enabled,
+                enable_open_exec_tools=self.settings.open_tools.exec_enabled,
+                enable_desktop_ops_tools=self.settings.open_tools.desktop_ops_enabled,
             )
         )
         return registry

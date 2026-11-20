@@ -48,11 +48,25 @@ _MUST_NOT_BE_WORKSPACE_LOCAL = {
     "github_commit_files",
     "github_create_draft_pull_request",
     "fetch_url",
+    # ADR-036. `docker` and a profiled program act on the user's own machine, and the two
+    # code-running tools execute inside the gateway: none of them is confined to a workspace.
+    "docker_build",
+    "docker_compose",
+    "profile_python",
+    "generate_and_run_tests",
+    "analyze_test_quality",
 }
 
 
 async def _github_client_resolver(user_id):
     return InMemoryGitHubClient()
+
+
+class _PairedDesktop:
+    """Enough of a host-agent registry for `build_sandbox_tools` to offer the desktop tools."""
+
+    async def resolve(self, user_id):
+        return object()
 
 
 @pytest.fixture
@@ -71,6 +85,11 @@ def specs() -> dict:
         sandbox_runner=runner,
         github_client_resolver=_github_client_resolver,
         github_default_repo="acme/widgets",
+        # ADR-036 groups B and C: built too, so the "must not be workspace_local" pin below is not
+        # vacuous for them (`if name not in specs: continue` would otherwise skip every one).
+        host_agent_registry=_PairedDesktop(),
+        enable_open_exec_tools=True,
+        enable_desktop_ops_tools=True,
     )
     tools += build_sandbox_tools(
         runner, code_host_resolver=_github_client_resolver, workspace_manager=manager
@@ -124,3 +143,13 @@ def test_run_command_keeps_its_untrusted_content_tag(specs) -> None:
     next outside the workspace."""
     assert specs["run_command"].workspace_local
     assert "untrusted_content" in specs["run_command"].tags
+
+
+def test_the_adr_036_tools_are_actually_in_the_set_under_test(specs) -> None:
+    """Without this the `_MUST_NOT_BE_WORKSPACE_LOCAL` loop skips a tool that was never built."""
+    for name in (
+        "docker_build", "docker_compose", "profile_python",
+        "generate_and_run_tests", "analyze_test_quality",
+    ):
+        assert name in specs, f"{name!r} was not built, so its workspace_local pin is vacuous"
+        assert specs[name].required_capability == "engineer_agent"

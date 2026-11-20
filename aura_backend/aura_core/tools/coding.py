@@ -47,6 +47,7 @@ from ..observability.logging import get_logger
 from ..ports.coding import FileWriteOp, McpToolDescriptor, SandboxResult, StreamingSandboxRunner
 from ..ports.runtime import Tool, ToolContext
 from .base import FunctionTool, param, tool
+from .desktop_ops import build_desktop_ops_tools
 
 __all__ = [
     "build_sandbox_tools",
@@ -458,8 +459,14 @@ def build_sandbox_tools(
     host_git: Any = None,
     token_resolver: Any = None,
     host_agent_registry: Any = None,
+    desktop_ops: bool = False,
 ) -> list[Tool]:
     """Filesystem, command-execution, and git tools against one shared per-task sandbox.
+
+    ``desktop_ops`` (with a ``host_agent_registry``) additionally registers the ADR-036 group C
+    tools (``tools/desktop_ops.py``: ``docker_build``, ``docker_compose``, ``profile_python``). They
+    are built here, not by ``default_tools``, because they share this function's ``sessions``
+    adapter -- the workspace the agent's own file and command tools just used.
 
     ``code_host_resolver`` -- the same ``(UserId) -> Awaitable[CodeHostClient | None]`` callable
     :func:`build_github_tools` takes -- additionally wires ``clone_repository``. It is built here,
@@ -847,6 +854,8 @@ def build_sandbox_tools(
         tools.append(git_push)
     if workspace_manager is not None:
         tools += [open_workspace, list_workspaces, destroy_workspace]
+    if desktop_ops and host_agent_registry is not None:
+        tools += build_desktop_ops_tools(sandbox_runner, sessions, host_agent_registry)
     if code_host_resolver is None:
         return tools
 

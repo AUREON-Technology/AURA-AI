@@ -1662,3 +1662,39 @@ gaps:
       (phase C3) and one staleness run producing an unchanged verification and a REFRESH
       proposal (phase C5).
     status: open
+
+  - gap_id: GAP-066
+    component: tools/open-analysis
+    severity: P2
+    current_state: >-
+      Built, not proven (ADR-036). The 29 plain classes in aura_core/tools/open/ were unreachable by
+      the kernel; they are now exposed in three groups. Group A (17 pure analysis tools,
+      tools/analysis.py) is on by default. Group B (generate_and_run_tests, analyze_test_quality,
+      tools/open_exec.py) runs pytest, coverage and mutation scoring in a child process of the
+      gateway with no container boundary -- off by default (AURA_OPEN_EXEC_TOOLS_ENABLED), behind
+      engineer_agent and a per-call confirmation, with a scrubbed child environment and inline text
+      only; this is an owner-accepted risk, not an isolation guarantee. Group C (docker_build,
+      docker_compose, profile_python, tools/desktop_ops.py) runs on a paired desktop through
+      aura_hostd. DevServerManager and BrowserSubagent are deferred (they need new hostd RPCs);
+      six duplicate classes are marked superseded and kept unregistered.
+    target_state: >-
+      Group B runs on the SandboxRunner port (Docker) so no project code executes in the gateway
+      process; the dev-server and browser tools exist as aura_hostd RPCs with an SSRF policy; and
+      Groups A and C have live evidence.
+    owner: platform-core
+    dependencies: [GAP-026]
+    test: >-
+      Default pytest: tests/unit/test_analysis_tools.py, test_open_exec_tools.py,
+      test_desktop_ops_tools.py, test_open_tools_fixes.py, plus the architecture pins
+      test_superseded_open_tools_unused.py, test_workspace_local_tools.py and
+      test_untrusted_content_tags.py. Nothing here exercises a real daemon or a deployed gateway.
+    metric: >-
+      Per-tool call, refusal and confirmation counts (aura_tool_calls_total); planner prompt size
+      before and after; Group B runs per day while the flag is on
+    exit_condition: >-
+      docs/reports/open-tools-*.md committed showing (1) GET /api/v3/tools on the live gateway
+      lists the Group A tools for a plain user and neither Group B nor C, (2) one docker_build
+      through a real paired desktop, approved in the daemon's queue, with a refusal for a user
+      with no desktop, and (3) either Group B migrated onto SandboxRunner or a recorded decision
+      to keep it gateway-side with the flag on in a named environment.
+    status: built_not_proven
