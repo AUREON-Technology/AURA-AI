@@ -62,6 +62,7 @@ __all__ = [
     "VisionSettings",
     "McpServerConfig",
     "McpSettings",
+    "OpenToolsSettings",
     "GitHubSettings",
     "SandboxSettings",
     "DATA_ENCRYPTION_KEYS_ENV",
@@ -1641,6 +1642,37 @@ class McpSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class OpenToolsSettings:
+    """Which of the ``tools/open`` code-analysis tool groups the registry exposes (ADR-036).
+
+    ``analysis_enabled`` -- pure analysis over text the caller supplies (AST, complexity, security
+    patterns, licences, SQL linting, ...). No I/O, no capability: on by default.
+
+    ``exec_enabled`` -- ``generate_and_run_tests`` and ``analyze_test_quality`` run project code
+    (pytest, coverage, mutation) in a child process of the *gateway*. They need the
+    ``engineer_agent`` capability and a confirmation on every call, and run with a scrubbed
+    environment, but there is no container boundary under them -- off by default, and a deliberate
+    operator decision to turn on (GAP-066).
+
+    ``desktop_ops_enabled`` -- ``docker_build``/``docker_compose``/``profile_python``, which run on
+    the user's own paired desktop through ``aura_hostd``. Registered whenever a host-agent
+    registry exists; a user without a paired desktop gets a clear refusal, not a gateway-side run.
+    """
+
+    analysis_enabled: bool = True
+    exec_enabled: bool = False
+    desktop_ops_enabled: bool = True
+
+    @classmethod
+    def from_env(cls) -> "OpenToolsSettings":
+        return cls(
+            analysis_enabled=_bool("ANALYSIS_TOOLS_ENABLED", True),
+            exec_enabled=_bool("OPEN_EXEC_TOOLS_ENABLED", False),
+            desktop_ops_enabled=_bool("DESKTOP_OPS_TOOLS_ENABLED", True),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class GitHubSettings:
     """GitHub access for the engineer agent's read/write tools -- two independent paths.
 
@@ -2270,6 +2302,7 @@ class AuraSettings:
     voice: VoiceSettings = field(default_factory=VoiceSettings)
     vision: VisionSettings = field(default_factory=VisionSettings)
     mcp: McpSettings = field(default_factory=McpSettings)
+    open_tools: OpenToolsSettings = field(default_factory=OpenToolsSettings)
     adaptation: AdaptationSettings = field(default_factory=AdaptationSettings)
     github: GitHubSettings = field(default_factory=GitHubSettings)
     sandbox: SandboxSettings = field(default_factory=SandboxSettings)
@@ -2309,6 +2342,7 @@ class AuraSettings:
             voice=VoiceSettings.from_env(),
             vision=VisionSettings.from_env(),
             mcp=McpSettings.from_env(),
+            open_tools=OpenToolsSettings.from_env(),
             adaptation=AdaptationSettings.from_env(),
             github=GitHubSettings.from_env(),
             sandbox=SandboxSettings.from_env(),

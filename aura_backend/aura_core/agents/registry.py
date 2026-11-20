@@ -151,6 +151,26 @@ _READ_TOOLS = frozenset({"current_datetime", "search_knowledge", "recall_memory"
 # on the user's behalf; absent from the ones whose whole point is to not act.
 _MEMORY_WRITE_TOOLS = frozenset({"remember_fact"})
 
+# The ADR-036 analysis tools (`tools/analysis.py`), written out rather than imported: `agents` does
+# not depend on `tools`, and `tests/unit/test_agents.py` pins that every name here is a tool the
+# builder really registers. All are pure text-in/JSON-out computations -- no I/O, no side effects --
+# so granting them widens what a persona can *see*, not what it can *do*. `decision_agent` and the
+# personal-data personas are deliberately left out: nothing here is about their domain.
+_CODE_ANALYSIS_TOOLS = frozenset({
+    "analyze_python_ast", "analyze_code_complexity", "verify_python_symbols", "review_code_diff",
+    "scan_code_security", "analyze_change_impact", "generate_diagram", "check_requirements",
+    "scan_dependency_licenses", "compare_api_specs", "inspect_sql", "evaluate_quality_gate",
+    "plan_rollout",
+})
+_DATA_ANALYSIS_TOOLS = frozenset({"analyze_logs", "validate_data_records", "check_model_drift"})
+
+# ADR-036 groups B and C. Both are `engineer_agent`-gated and side-effecting: B runs project code
+# (`tools/open_exec.py`), C acts on the user's paired desktop (`tools/desktop_ops.py`).
+_ENGINEER_OPEN_TOOLS = frozenset({
+    "generate_and_run_tests", "analyze_test_quality",
+    "docker_build", "docker_compose", "profile_python",
+})
+
 
 def build_default_agent_registry() -> AgentRegistry:
     """The seven personas :data:`AGENT_PROMPT_IDS` used to define, now with real grants.
@@ -208,13 +228,18 @@ def build_default_agent_registry() -> AgentRegistry:
                 prompt_template_id=AGENT_PROMPT_IDS["research_agent"],
                 # fetch_url is CONFIDENTIAL (reaches the network) and opt-in server-side; naming
                 # it here only matters once a deployment configures AURA_HTTP_ALLOWED_HOSTS.
-                allowed_tools=_READ_TOOLS | _MEMORY_WRITE_TOOLS | {"calculator", "fetch_url"},
+                allowed_tools=_READ_TOOLS | _MEMORY_WRITE_TOOLS | {"calculator", "fetch_url"} | {
+                    "synthesize_research", "validate_data_records",
+                },
                 risk_ceiling=ToolSensitivity.CONFIDENTIAL, memory_scope="shared",
             ),
             AgentSpec(
                 id="coding_agent", name="Coding Agent",
                 prompt_template_id=AGENT_PROMPT_IDS["coding_agent"],
-                allowed_tools=_READ_TOOLS | _MEMORY_WRITE_TOOLS | {"calculator"},
+                allowed_tools=(
+                    _READ_TOOLS | _MEMORY_WRITE_TOOLS | {"calculator"}
+                    | _CODE_ANALYSIS_TOOLS | _DATA_ANALYSIS_TOOLS
+                ),
                 risk_ceiling=ToolSensitivity.PERSONAL, memory_scope="shared",
             ),
             AgentSpec(
@@ -251,7 +276,7 @@ def build_default_agent_registry() -> AgentRegistry:
                     "github_get_issue", "github_get_pull_request",
                     "github_create_branch", "github_commit_files",
                     "github_create_draft_pull_request",
-                },
+                } | _CODE_ANALYSIS_TOOLS | _DATA_ANALYSIS_TOOLS | _ENGINEER_OPEN_TOOLS,
                 # Every tool the MCP bridge registers (`build_mcp_bridge_tools`). The prefix only
                 # decides *who* may ask: each such tool still needs the `engineer_agent`
                 # capability, and an unreviewed one stays CONFIDENTIAL + side-effecting, hence

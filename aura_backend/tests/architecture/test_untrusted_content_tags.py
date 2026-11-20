@@ -105,3 +105,32 @@ async def test_mcp_bridged_tools_default_to_tagged_untrusted_content() -> None:
     by_name = {t.spec.name: t.spec for t in tools}
     assert "mcp_fs_read_file" in by_name
     assert "untrusted_content" in by_name["mcp_fs_read_file"].tags
+
+
+class _PairedDesktop:
+    async def resolve(self, user_id):
+        return object()
+
+
+def test_adr_036_tools_that_run_code_are_tagged_untrusted_content() -> None:
+    """pytest output and `docker build` output echo whatever the project prints, so a turn that
+    called one is tainted exactly as one that called `run_command` (ADR-036 groups B and C). The
+    pure analysis group (group A) takes inline text and returns findings about it: not tagged."""
+    from aura_core.tools.analysis import ANALYSIS_TOOL_NAMES
+    from aura_core.tools.desktop_ops import DESKTOP_OPS_TOOL_NAMES
+    from aura_core.tools.open_exec import OPEN_EXEC_TOOL_NAMES
+
+    tools = default_tools(
+        sandbox_runner=InMemorySandboxRunner(),
+        host_agent_registry=_PairedDesktop(),
+        enable_analysis_tools=True,
+        enable_open_exec_tools=True,
+        enable_desktop_ops_tools=True,
+    )
+    by_name = {t.spec.name: t.spec for t in tools}
+
+    for name in OPEN_EXEC_TOOL_NAMES | DESKTOP_OPS_TOOL_NAMES:
+        assert name in by_name, f"{name!r} was not built, so this pin is vacuous"
+        assert "untrusted_content" in by_name[name].tags
+    for name in ANALYSIS_TOOL_NAMES:
+        assert "untrusted_content" not in by_name[name].tags

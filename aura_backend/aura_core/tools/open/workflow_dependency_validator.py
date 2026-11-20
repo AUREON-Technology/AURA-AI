@@ -1,3 +1,12 @@
+"""Superseded -- deliberately NOT registered as a tool (ADR-036). The platform already has
+`aura_core/domain/planning.py` (`Plan._assert_acyclic`, `Plan.ready_steps`), which the planning
+engine already uses to reject cyclic plans and order steps. This class's recursive DFS also raises
+`RecursionError` on a dependency chain a few thousand long.
+
+Kept for reference only: nothing under ``aura_core`` may import it
+(``tests/architecture/test_superseded_open_tools_unused.py``).
+"""
+
 from typing import Any, Dict, List
 
 

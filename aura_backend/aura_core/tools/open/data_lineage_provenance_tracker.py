@@ -1,3 +1,12 @@
+"""Superseded -- deliberately NOT registered as a tool (ADR-036). The platform already has per-fact
+provenance in `aura_core/domain/graph.py` (`FactProvenance`) and `domain/ausm.py` (`Provenance`).
+This tracker keeps its edges in one process-wide in-memory object, so registering it would share
+lineage between users and lose it on restart.
+
+Kept for reference only: nothing under ``aura_core`` may import it
+(``tests/architecture/test_superseded_open_tools_unused.py``).
+"""
+
 from typing import Any, Dict, List, Optional
 
 

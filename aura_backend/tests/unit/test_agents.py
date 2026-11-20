@@ -13,6 +13,26 @@ from aura_core.kernel import TurnRequest
 from aura_core.ports.runtime import ToolContext
 from aura_core.tools import ToolPolicy, ToolRegistry, param, tool
 from aura_core.tools.coding import build_github_tools, build_sandbox_tools
+from aura_core.tools.open_exec import build_open_exec_tools
+
+
+class _PairedDesktop:
+    """Enough of a host-agent registry for `build_sandbox_tools(desktop_ops=True)` to register the
+    ADR-036 group C tools, so the grant pins below cover them too."""
+
+    async def resolve(self, user_id):
+        return object()
+
+
+def _engineer_tool_builders():
+    """Every builder whose tools carry `required_capability == "engineer_agent"` (ADR-036 adds
+    two groups: code-running tools, and desktop-only docker/profiling tools)."""
+    from aura_core.adapters.coding_fakes import InMemorySandboxRunner
+
+    return (
+        build_sandbox_tools(InMemorySandboxRunner(), desktop_ops=True, host_agent_registry=_PairedDesktop())
+        + build_open_exec_tools()
+    )
 
 
 def _request(message: str = "hello", **overrides):
@@ -316,13 +336,14 @@ class TestTheEngineerGrantCoversItsOwnTools:
         assert engineer is not None and engineer.allowed_tools is not None
 
         tools = (
-            build_sandbox_tools(InMemorySandboxRunner()) + build_github_tools(lambda *_: None)
+            _engineer_tool_builders() + build_github_tools(lambda *_: None)
             + await _mcp_tools()
         )
         engineer_tools = {
             t.spec.name for t in tools if t.spec.required_capability == "engineer_agent"
         }
         assert "write_files" in engineer_tools, "the regression this pins would be vacuous"
+        assert {"docker_build", "generate_and_run_tests"} <= engineer_tools, "ADR-036 pin would be vacuous"
         assert {"mcp_fs_list_dir", "mcp_fs_write"} <= engineer_tools, "MCP pin would be vacuous"
         missing = sorted(n for n in engineer_tools if not engineer.permits_tool(n))
         assert missing == [], f"registered for engineer_agent but not granted to the persona: {missing}"
@@ -340,7 +361,7 @@ class TestTheEngineerGrantCoversItsOwnTools:
         )
         assert context.agent_id == "engineer"
         tools = (
-            build_sandbox_tools(InMemorySandboxRunner()) + build_github_tools(lambda *_: None)
+            _engineer_tool_builders() + build_github_tools(lambda *_: None)
             + await _mcp_tools()
         )
         policy = ToolPolicy()

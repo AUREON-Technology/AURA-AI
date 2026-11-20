@@ -479,6 +479,11 @@ services:
       AURA_GITHUB_OAUTH_CALLBACK_URL: ${AURA_GITHUB_OAUTH_CALLBACK_URL:-https://${AURA_DOMAIN}/api/v3/integrations/github/callback}
       AURA_MCP_ENABLED: ${AURA_MCP_ENABLED:-false}
       AURA_MCP_SERVERS_JSON: ${AURA_MCP_SERVERS_JSON:-}
+      # Code-analysis tool groups (ADR-036). The code-running group is off by default: it runs
+      # project code in a child of the gateway, with no container boundary (GAP-066).
+      AURA_ANALYSIS_TOOLS_ENABLED: ${AURA_ANALYSIS_TOOLS_ENABLED:-true}
+      AURA_OPEN_EXEC_TOOLS_ENABLED: ${AURA_OPEN_EXEC_TOOLS_ENABLED:-false}
+      AURA_DESKTOP_OPS_TOOLS_ENABLED: ${AURA_DESKTOP_OPS_TOOLS_ENABLED:-true}
       # Track AP connectors (ADR-021), off by default. Credentials are vaulted under the
       # secrets_encryption_key mounted above; without it a credentialed connector is refused.
       AURA_ADAPTATION_ENABLED: ${AURA_ADAPTATION_ENABLED:-false}

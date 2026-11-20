@@ -1,3 +1,14 @@
+"""Superseded -- deliberately NOT registered as a tool (ADR-036). The platform already has
+`aura_core/mlops/model_registry.py` (`ModelRegistry`): promotion to production there needs a
+recorded human approval (ADR-008) and a duplicate version raises `ConflictError`. This class
+promotes on a metric threshold alone, silently overwrites versions, can leave two versions in
+`production`, and hands callers live references to its stored metrics -- registering it would be a
+second path to production that skips the approval gate.
+
+Kept for reference only: nothing under ``aura_core`` may import it
+(``tests/architecture/test_superseded_open_tools_unused.py``).
+"""
+
 from typing import Any, Dict, List, Optional
 
 

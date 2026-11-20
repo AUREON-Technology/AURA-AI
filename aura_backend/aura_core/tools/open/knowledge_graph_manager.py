@@ -1,3 +1,14 @@
+"""Superseded -- deliberately NOT registered as a tool (ADR-036). The platform already has the
+platform's knowledge graph: `aura_core/knowledge/graph_pipeline.py` (`KnowledgeGraphPipeline`),
+`domain/graph.py` and `adapters/postgres_graph.py` -- owner-scoped, provenance-carrying and
+durable. This in-memory class has no owner scoping and no provenance, and its returned triples
+share their `metadata` dicts with the store, so registering it would create a second, weaker
+source of truth.
+
+Kept for reference only: nothing under ``aura_core`` may import it
+(``tests/architecture/test_superseded_open_tools_unused.py``).
+"""
+
 from typing import Any, Dict, List, Optional
 
 
