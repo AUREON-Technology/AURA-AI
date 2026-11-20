@@ -260,7 +260,7 @@ jobs:
     needs: [package-windows, package-linux]
     runs-on: ubuntu-latest
     # F18: this job decides what every installed desktop downloads next, with contents: write.
-    environment: release
+    environment: "release"
     timeout-minutes: 15
     permissions:
       contents: write
@@ -325,7 +325,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.rollback_to != ''
     runs-on: ubuntu-latest
     # F18: a rollback re-points every installed desktop at an older build; same gate as publishing.
-    environment: release
+    environment: "release"
     timeout-minutes: 10
     permissions:
       contents: write
