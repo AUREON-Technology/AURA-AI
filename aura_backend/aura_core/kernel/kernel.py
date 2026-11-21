@@ -85,7 +85,7 @@ from ..execution.engine import ExecutionOutcome, StepEvent
 from ..llm.cache import InMemoryCache
 from ..llm.deadline import generation_budget, no_generation_budget
 from ..llm.router import TurnBudget, current_turn_budget, no_turn_budget, turn_budget_scope
-from ..llm.sensitivity import DataScope, data_scope, escalate
+from ..llm.sensitivity import DataScope, current_data_scope, data_scope, escalate
 from ..llm.workload import effective_workload, workload_for_turn, workload_scope
 from ..observability.logging import LogContext, get_logger
 from ..observability.tracing import record_span
@@ -1089,6 +1089,9 @@ class AIKernel:
                     degraded_reasons.append("empty_retrieval")
                 if empty_generation_fallback:
                     degraded_reasons.append("empty_generation_fallback")
+                lookups = current_turn_lookups()
+                if lookups is not None and lookups.skipped_private_context:
+                    degraded_reasons.append("private_context_skipped")
                 yield {
                     "type": "done",
                     "tainted": tainted,
@@ -1164,9 +1167,14 @@ class AIKernel:
         # no personas, so every scope (the pre-scope behaviour).
         spec = self._resolve_agent(request)
         scopes = readable_scopes(spec.memory_scope) if spec is not None else None
+        # KAN-112: when nothing could serve this turn once private context made it SENSITIVE,
+        # don't fetch that context only to fail the turn on it.
+        skip_private = self._private_context_unservable(request)
+        if skip_private:
+            self._note_private_context_skipped(request)
 
         async def recall() -> list[MemoryHit]:
-            if not (request.use_memory and deps.memory is not None):
+            if skip_private or not (request.use_memory and deps.memory is not None):
                 return []
             try:
                 return await deps.memory.recall(
@@ -1187,7 +1195,7 @@ class AIKernel:
                 return []
 
         async def retrieve() -> RetrievalResult | None:
-            if not (request.use_knowledge and deps.knowledge is not None):
+            if skip_private or not (request.use_knowledge and deps.knowledge is not None):
                 return None
             try:
                 return await deps.knowledge.retrieve(message, owner_id=request.knowledge_owner or request.user_id)
@@ -1207,7 +1215,7 @@ class AIKernel:
                 return Conversation(), ""
 
         async def load_goals() -> Sequence[GoalSnapshot]:
-            if deps.goals is None:
+            if skip_private or deps.goals is None:
                 return ()
             try:
                 return await deps.goals.active_summaries(request.user_id)
@@ -1216,7 +1224,7 @@ class AIKernel:
                 return ()
 
         async def load_cag() -> Any:
-            if deps.cag is None:
+            if skip_private or deps.cag is None:
                 return None
             try:
                 return await deps.cag.prefix_for(request.knowledge_owner or request.user_id)
@@ -1308,6 +1316,84 @@ class AIKernel:
 
     def _restricts_data(self) -> bool:
         return bool(getattr(self._deps.router, "restricts_data_classification", False))
+
+    def _private_context_unservable(self, request: TurnRequest) -> bool:
+        """Whether fetching this turn's private context could only make it fail (KAN-112).
+
+        Memory, retrieval, goals and pinned documents run before classification, and anything
+        they return makes the turn SENSITIVE. On a deployment whose only reachable providers
+        take INTERNAL content -- the chat-only launch: a hosted open-weight slot, its
+        self-hosted fallback down -- that content is refused, and the turn paid for embedding
+        and search and then failed ``capability_unavailable``.
+
+        The choice, when no provider could serve the turn at SENSITIVE but one could at its
+        current level: skip those sources and answer as a plain chat turn, rather than fail
+        early. Failing early would refuse every turn a document *might* have touched, including
+        the many where retrieval finds nothing; skipping answers them all, and the ``done``
+        frame says ``private_context_skipped`` so the client can say the answer did not use
+        the person's documents or memories.
+
+        The skipped sources are the ones :meth:`_classify_context` escalates on whenever they
+        return anything. Session history is kept: it is the conversation itself, and escalates
+        only when an earlier turn of the session was SENSITIVE (then the turn fails as before).
+        Nothing is weakened: skipped content never enters the prompt, classification still
+        escalates on everything that does (history, tool output), and the router still refuses
+        SENSITIVE content to an INTERNAL provider.
+
+        Asked of the router's own :meth:`plan` (no provider is called), so health, circuit
+        breakers, ``require_local``, workload fences and quotas count exactly as they will for
+        the turn. Only for a turn that starts at INTERNAL: one that is SENSITIVE from the
+        start (Engineer, caller evidence, images) is unchanged. ``False`` whenever the answer
+        is not known.
+        """
+        if not self._restricts_data():
+            return False
+        scope = current_data_scope()
+        if scope is None or scope.level.rank > DataClassification.INTERNAL.rank:
+            return False
+        plan = getattr(self._deps.router, "plan", None)
+        if plan is None:
+            return False
+        probe = CompletionRequest(
+            conversation=Conversation.of([Message.user(request.message)]),
+            sampling=SamplingParams(
+                temperature=request.temperature, max_output_tokens=request.max_output_tokens
+            ),
+            policy=request.routing_policy,
+            require_local=request.require_local,
+            tools=(),
+            data_classification=DataClassification.SENSITIVE,
+        )
+        try:
+            if plan(probe).candidates:
+                return False
+            # Skip only when it changes the outcome: with nothing serving the turn even as it
+            # is, it fails either way, and the failure should be the router's usual one.
+            return bool(plan(replace(probe, data_classification=None)).candidates)
+        except Exception:
+            logger.debug("serviceability probe failed; gathering context as usual", exc_info=True)
+            return False
+
+    def _note_private_context_skipped(self, request: TurnRequest) -> None:
+        skipped = tuple(
+            name for name, wanted in (
+                ("memory", request.use_memory and self._deps.memory is not None),
+                ("documents", request.use_knowledge and self._deps.knowledge is not None),
+                ("pinned_documents", self._deps.cag is not None),
+                ("goals", self._deps.goals is not None),
+            ) if wanted
+        )
+        if not skipped:
+            return
+        lookups = current_turn_lookups()
+        if lookups is not None:
+            lookups.skipped_private_context = skipped
+        logger.info(
+            "private context skipped: no provider can take this turn's content",
+            extra={"skipped": list(skipped)},
+        )
+        if self._metrics is not None:
+            self._metrics.turn_degraded_total.labels(reason="private_context_skipped").inc()
 
     def _session_clean_key(self, request: TurnRequest) -> str | None:
         if request.session_id is None:
