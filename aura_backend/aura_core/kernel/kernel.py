@@ -707,6 +707,7 @@ class AIKernel:
             plan_steps=plan_steps,
             plan_revisions=plan_revisions,
             planning_failed=planning_failed,
+            tool_output_dropped=bool(assembled.dropped_tools),
             confidence=confidence,
             groundedness=groundedness,
         )
@@ -1070,6 +1071,7 @@ class AIKernel:
                     plan_steps=len(outcome.plan.steps) if outcome is not None else 0,
                     plan_revisions=len(outcome.plan.revisions) if outcome is not None else 0,
                     planning_failed=planning_failed,
+                    tool_output_dropped=bool(assembled.dropped_tools),
                 )
                 await self._record(telemetry)
                 degraded_reasons = list(telemetry.degraded_reasons)

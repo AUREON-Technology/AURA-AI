@@ -166,6 +166,9 @@ class TurnTelemetry:
     #: Planning or tool execution raised and the turn answered without tools (CB-14). Without
     #: this the turn reported plain success, and "create a task" read as done when nothing ran.
     planning_failed: bool = False
+    #: A tool ran but its output did not fit the prompt (KAN-102). The model was told so by a
+    #: pinned note; the turn still answered without what the tool returned.
+    tool_output_dropped: bool = False
     confidence: float | None = None
     groundedness: float | None = None
 
@@ -190,6 +193,7 @@ class TurnTelemetry:
             or self.retrieval.returned_nothing
             or any(not t.ok for t in self.tools)
             or self.planning_failed
+            or self.tool_output_dropped
         )
 
     @property
@@ -201,6 +205,7 @@ class TurnTelemetry:
             ("empty_retrieval", self.retrieval.returned_nothing),
             ("tool_failure", any(not t.ok for t in self.tools)),
             ("planning_failed", self.planning_failed),
+            ("tool_output_dropped", self.tool_output_dropped),
         )
         return tuple(reason for reason, hit in reasons if hit)
 

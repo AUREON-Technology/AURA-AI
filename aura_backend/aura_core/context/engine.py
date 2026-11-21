@@ -17,6 +17,7 @@ where retrieved documents are concatenated straight into the system instruction.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, replace
 from typing import Any, Sequence
@@ -64,6 +65,9 @@ _MIN_OUTPUT_TOKENS = 64
 #: Below this, a shortened item is too small to be useful and is dropped instead -- the same
 #: threshold `pack()` uses before it truncates rather than drops.
 _MIN_TRUNCATED_TOKENS = 24
+#: Item-id prefix of the pinned note standing in for a dropped tool result (KAN-102).
+_DROPPED_NOTE_PREFIX = "tool_dropped:"
+_TOOL_NAME_UNSAFE = re.compile(r"[^A-Za-z0-9_.:\-]")
 #: Sections rendered into the leading system message; HISTORY gets its own message.
 _SYSTEM_SECTIONS = (
     ContextSection.INSTRUCTIONS,
@@ -120,6 +124,9 @@ class AssembledContext:
     #: History messages in neither the prompt nor the summary, which the omission marker in
     #: the history message accounts for (KAN-100).
     omitted_messages: int = 0
+    #: Tools whose output was produced but is not in the prompt; each has a pinned scratchpad
+    #: note telling the model so (KAN-102). The kernel reports ``tool_output_dropped``.
+    dropped_tools: tuple[str, ...] = ()
 
     @property
     def utilisation(self) -> float:
@@ -416,9 +423,52 @@ class ContextEngine:
                 tokens=self._tokenizer.count(result),
                 provenance=f"tool:{name}",
                 item_id=f"tool:{name}:{index}",
+                metadata={"tool": name},
             )
             for index, (name, result) in enumerate(request.tool_results)
         ]
+
+    def _with_dropped_tool_notes(self, bundle: ContextBundle) -> ContextBundle:
+        """Pin a note for every tool result that was produced but is not in the prompt (KAN-102).
+
+        Tool output is unpinned and capped, so on a tight budget it can lose the packing fight
+        outright. Without a note the model answers as if the tool never ran -- or worse, guesses
+        what it returned. The note is pinned so it cannot be evicted in turn.
+        """
+        noted = {i.item_id for i in bundle.items if i.item_id.startswith(_DROPPED_NOTE_PREFIX)}
+        notes = []
+        for item in bundle.dropped:
+            if item.section is not ContextSection.TOOL_OUTPUT:
+                continue
+            note_id = f"{_DROPPED_NOTE_PREFIX}{item.item_id}"
+            if note_id in noted:
+                continue
+            tool = _safe_tool_name(str(item.metadata.get("tool") or item.item_id))
+            content = (
+                f"The output of {tool} was produced but did not fit in this context. If the "
+                "answer depends on it, say that you could not show its output."
+            )
+            notes.append(
+                ContextItem(
+                    content=content,
+                    section=ContextSection.SCRATCHPAD,
+                    channel=TrustChannel.SYSTEM,
+                    relevance=1.0,
+                    priority=150,
+                    tokens=self._tokenizer.count(content),
+                    provenance="working_memory",
+                    item_id=note_id,
+                    metadata={"tool": tool},
+                )
+            )
+            noted.add(note_id)
+        if not notes:
+            return bundle
+        return replace(
+            bundle,
+            items=bundle.items + tuple(notes),
+            tokens_used=bundle.tokens_used + sum(n.tokens for n in notes),
+        )
 
     def _scratchpad_items(self, request: ContextRequest) -> list[ContextItem]:
         return [
@@ -565,7 +615,7 @@ class ContextEngine:
             section_caps=budget.section_caps,
         )
 
-        bundle = pack(candidates, packing_budget)
+        bundle = pack(candidates, packing_budget, count=self._tokenizer.count)
         # Carry both nonces onto the packed bundle so rendered fences match the rules text.
         bundle = ContextBundle(
             items=bundle.items,
@@ -576,6 +626,7 @@ class ContextEngine:
             fence_nonce=seed.fence_nonce,
             prefix_nonce=prefix_nonce,
         )
+        bundle = self._with_dropped_tool_notes(bundle)
 
         shape = _HistoryShape(
             omitted=dropped_turns,
@@ -654,6 +705,11 @@ class ContextEngine:
             max_output_tokens=max_output_tokens,
             over_cap=over_cap,
             omitted_messages=omitted,
+            dropped_tools=tuple(
+                str(i.metadata.get("tool") or i.item_id)
+                for i in bundle.dropped
+                if i.section is ContextSection.TOOL_OUTPUT
+            ),
         )
 
     # -- cap enforcement -----------------------------------------------------------------
@@ -716,10 +772,16 @@ class ContextEngine:
                 if section is ContextSection.TOOL_OUTPUT:
                     keep = victim.tokens - (fitted.total - limit)
                     if keep >= _MIN_TRUNCATED_TOKENS:
-                        shortened = victim.truncated_to(keep)
+                        shortened = victim.truncated_to(
+                            keep, keep_tail=True, count=self._tokenizer.count
+                        )
+                        if shortened.tokens >= victim.tokens:
+                            shortened = None  # cannot shrink further: drop it, with a note
                 bundle = _replace_item(bundle, victim, shortened)
                 if shortened is None:
                     removed += 1
+                    # A pinned note replaces a dropped tool result; it is costed by the refit.
+                    bundle = self._with_dropped_tool_notes(bundle)
                 fitted = fit(bundle)
         return bundle, replace(fitted, items_removed=removed)
 
@@ -855,6 +917,12 @@ def _omission_marker(omitted: int, summary_dropped: bool) -> str:
         plural = "s" if omitted != 1 else ""
         return f"[{omitted} earlier message{plural} of this conversation {verb} not shown here.]"
     return "[A summary of the earlier conversation is not shown here.]"
+
+
+def _safe_tool_name(name: str) -> str:
+    """A tool name fit for the SYSTEM channel: registry names are plain identifiers, so anything
+    else (an MCP server's odd naming, say) is reduced to them rather than trusted verbatim."""
+    return _TOOL_NAME_UNSAFE.sub("_", name)[:64] or "a tool"
 
 
 def _replace_item(

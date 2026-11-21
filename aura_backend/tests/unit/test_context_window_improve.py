@@ -515,3 +515,137 @@ class TestSummaryOnTheDataChannel:
                 SessionId("s"), UserId("u"), user_message=f"q{i}", assistant_message=f"a{i}"
             )
         assert state.summary == "MODEL SUMMARY"
+
+
+# -- KAN-102 -----------------------------------------------------------------------------
+
+_DROPPED_NOTE = "was produced but did not fit in this context"
+_ELIDED = re.compile(r"\[… \d+ characters elided …\]")
+
+
+def _tool_output(lines: int) -> str:
+    return "\n".join(f"line {i}: test_case_{i} PASSED in 0.{i % 10}s" for i in range(lines))
+
+
+class TestToolOutputIsNeverDroppedSilently:
+    def test_a_2k_token_result_on_the_400_cap_is_marked_truncated_or_noted(self) -> None:
+        result = _tool_output(250)  # ~2.3K tokens
+        assert HeuristicTokenizer().count(result) > 2000
+        assembled = ContextEngine().assemble(
+            _request(max_prompt_tokens=400, tool_results=(("run_tests", result),))
+        )
+        tool_items = assembled.bundle.by_section(ContextSection.TOOL_OUTPUT)
+        truncated = any(_ELIDED.search(i.content) for i in tool_items)
+        noted = _DROPPED_NOTE in assembled.system_text
+        assert truncated or noted
+        assert truncated != noted or not tool_items  # a kept result is not also "dropped"
+        assert assembled.prompt_tokens <= 400
+        # The truncated text is measured, not guessed at four characters per token: the
+        # prompt actually sent stays within the cap too.
+        actual = HeuristicTokenizer().count_messages(list(assembled.conversation))
+        assert abs(actual - assembled.prompt_tokens) <= 4
+
+    def test_a_dropped_result_leaves_a_pinned_note_and_is_reported(self) -> None:
+        assembled = ContextEngine().assemble(
+            _request(
+                system_prompt=_WORDS * 30,  # leaves the variable tail nothing
+                max_prompt_tokens=200,
+                tool_results=(("read_file", _tool_output(40)),),
+            )
+        )
+        assert assembled.dropped_tools == ("read_file",)
+        assert "The output of read_file " + _DROPPED_NOTE in assembled.system_text
+        (note,) = [
+            i for i in assembled.bundle.by_section(ContextSection.SCRATCHPAD)
+            if _DROPPED_NOTE in i.content
+        ]
+        assert note.is_pinned and note.channel is TrustChannel.SYSTEM
+
+    def test_a_20k_char_result_keeps_its_start_and_its_end(self) -> None:
+        result = _tool_output(600)
+        assert len(result) > 20_000
+        assembled = ContextEngine().assemble(
+            _request(max_prompt_tokens=0, tool_results=(("run_tests", result),))
+        )
+        (item,) = assembled.bundle.by_section(ContextSection.TOOL_OUTPUT)
+        assert item.content.startswith("line 0: test_case_0 PASSED")
+        assert item.content.rstrip().endswith("line 599: test_case_599 PASSED in 0.9s")
+        assert _ELIDED.search(item.content)
+        assert "run_tests" not in assembled.dropped_tools
+
+    def test_the_elision_marker_states_what_was_cut(self) -> None:
+        from aura_core.domain.context import ContextItem
+
+        item = ContextItem(content="a " * 5000, section=ContextSection.TOOL_OUTPUT, tokens=5000)
+        shortened = item.truncated_to(100, keep_tail=True)
+        found = re.search(r"\[… (\d+) characters elided …\]", shortened.content)
+        assert found
+        kept = len(shortened.content) - len(found.group(0)) - 2  # the two newlines around it
+        assert int(found.group(1)) >= 10_000 - kept - 4
+
+    def test_other_sections_still_truncate_head_only(self) -> None:
+        from aura_core.domain.context import ContextItem
+
+        item = ContextItem(content="word " * 1000, section=ContextSection.KNOWLEDGE, tokens=1000)
+        assert item.truncated_to(50).content.endswith("[…truncated]")
+
+    def test_telemetry_names_the_reason(self) -> None:
+        from aura_core.domain.identifiers import CorrelationId, TurnId
+        from aura_core.domain.telemetry import TurnTelemetry
+
+        telemetry = TurnTelemetry(
+            correlation_id=CorrelationId("c"), turn_id=TurnId("t"), tool_output_dropped=True
+        )
+        assert telemetry.degraded
+        assert telemetry.degraded_reasons == ("tool_output_dropped",)
+        assert telemetry.as_dict()["degraded_reasons"] == ["tool_output_dropped"]
+
+
+class TestKernelReportsDroppedToolOutput:
+    async def _kernel_with_a_tight_cap(self, container):
+        from dataclasses import replace as _replace
+
+        from tests.unit.test_kernel_degradation import _FixedPlanner, _tool_plan
+
+        await container.startup()
+        kernel = container.kernel
+        settings = kernel._deps.settings
+        # So small the calculator's output cannot win the packing fight.
+        kernel._deps.settings = _replace(settings, llm=_replace(settings.llm, max_prompt_tokens=64))
+        kernel._deps.planner = _FixedPlanner(_tool_plan("calculator", {"expression": "2+2"}))
+        return kernel
+
+    async def test_the_done_frame_carries_tool_output_dropped(self, container) -> None:
+        kernel = await self._kernel_with_a_tight_cap(container)
+        frames = [
+            frame async for frame in kernel.stream(
+                TurnRequest(message="What is 2+2?", user_id=UserId("test-user"), plan=True)
+            )
+        ]
+        done = frames[-1]
+        assert done["type"] == "done"
+        assert "tool_output_dropped" in done["degraded_reasons"]
+        assert done["degraded"] is True
+        echo = container.router.get("echo")
+        seen = "\n".join(m.content for m in echo.calls[-1].conversation)
+        assert "The output of calculator " + _DROPPED_NOTE in seen
+
+    async def test_run_reports_it_too(self, container) -> None:
+        kernel = await self._kernel_with_a_tight_cap(container)
+        result = await kernel.run(
+            TurnRequest(message="What is 2+2?", user_id=UserId("test-user"), plan=True)
+        )
+        assert result.telemetry.tool_output_dropped is True
+        assert "tool_output_dropped" in result.telemetry.degraded_reasons
+
+    async def test_a_turn_whose_tool_output_fits_is_not_degraded_by_it(self, container) -> None:
+        from tests.unit.test_kernel_degradation import _FixedPlanner, _tool_plan
+
+        await container.startup()
+        container.kernel._deps.planner = _FixedPlanner(
+            _tool_plan("calculator", {"expression": "2+2"})
+        )
+        result = await container.kernel.run(
+            TurnRequest(message="What is 2+2?", user_id=UserId("test-user"), plan=True)
+        )
+        assert result.telemetry.tool_output_dropped is False
