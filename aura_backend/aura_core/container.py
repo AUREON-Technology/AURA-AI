@@ -95,6 +95,10 @@ logger = get_logger("container")
 #: tests/unit/test_deploy_robustness.py, 15 s). A close that takes longer is abandoned and
 #: logged; the process is exiting either way, and the OS reclaims the socket.
 SHUTDOWN_CLOSE_TIMEOUT_S = 5.0
+#: How long ``Container.shutdown()`` lets streamed turns finish what they do after ``done``
+#: (session append, telemetry; KAN-110) before closing the connections that work needs. Plus
+#: the close ceiling above, still inside the 15 s margin.
+POST_TURN_DRAIN_S = 5.0
 
 
 class Container:
@@ -2011,6 +2015,10 @@ class Container:
         if self._shut_down:
             return
         self._shut_down = True
+        try:
+            await self.kernel.wait_for_post_turn(timeout_s=POST_TURN_DRAIN_S)
+        except Exception:  # pragma: no cover - defensive; shutdown never raises
+            logger.warning("post-turn drain failed", exc_info=True)
         closers = self._shutdown_closers()
         await asyncio.gather(*(self._close_quietly(name, close) for name, close in closers))
         mark_dead = getattr(self.metrics, "mark_process_dead", None)

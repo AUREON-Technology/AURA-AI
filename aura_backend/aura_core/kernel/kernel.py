@@ -118,6 +118,11 @@ _SESSION_CLEAN_KEY = "llm:session-clean:v1:{user}:{session}"
 #: it can never expire while a clean mark written alongside it survives.
 _SESSION_SENSITIVE_KEY = "llm:session-sensitive:v1:{user}:{session}"
 _SESSION_CLEAN_TTL_S = 30 * 86400
+#: How long a turn's history load waits for its session's previous turn to finish the work it
+#: does after ``done`` (KAN-110). The exchange itself is written in the first step of that work,
+#: well inside this; only a slow session summary can take longer, and history read without it is
+#: still complete -- the overflow messages are simply not folded yet.
+_PENDING_POST_TURN_WAIT_S = 30.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -424,6 +429,11 @@ class AIKernel:
         #: The one shadow generation allowed in flight (see `_dispatch_shadow`). Holding the
         #: reference also keeps the task from being garbage-collected mid-run.
         self._shadow_task: asyncio.Task[None] | None = None
+        #: Work a streamed turn does after its ``done`` frame (KAN-110), held so it is neither
+        #: garbage-collected nor lost on shutdown, and indexed by session so the session's next
+        #: turn can wait for it before reading history.
+        self._post_turn_tasks: set[asyncio.Task[None]] = set()
+        self._post_turn_by_session: dict[str, set[asyncio.Task[None]]] = {}
 
     # -- public API --------------------------------------------------------------------
 
@@ -665,16 +675,8 @@ class AIKernel:
                 usage = (usage or TokenUsage(prompt_tokens=assembled.prompt_tokens)) + repair_usage
 
         # 10. Persist session state --------------------------------------------------
-        if deps.episodic is not None and request.session_id is not None:
-            try:
-                await deps.episodic.append(
-                    request.session_id, request.user_id,
-                    user_message=self._history_message(request), assistant_message=answer,
-                )
-            except Exception:
-                # Losing session persistence degrades the next turn; failing this one would be
-                # a worse trade.
-                logger.warning("failed to persist session state")
+        # Awaited here: `run` returns one complete result, so nothing is gained by deferring it.
+        await self._persist_exchange(request, answer)
 
         telemetry = TurnTelemetry(
             correlation_id=correlation,
@@ -1020,16 +1022,6 @@ class AIKernel:
                         }
                         return
 
-                if deps.episodic is not None and request.session_id is not None:
-                    try:
-                        await deps.episodic.append(
-                            request.session_id, request.user_id,
-                            user_message=self._history_message(request),
-                            assistant_message=answer,
-                        )
-                    except Exception:
-                        logger.warning("failed to persist session state")
-
                 # Fire-and-forget shadow, off the turn's critical path (PP-04): failures must not
                 # fail the turn, and its latency must not delay the `done` frame.
                 try:
@@ -1040,7 +1032,13 @@ class AIKernel:
                 searched_empty = bool(
                     retrieval is not None and retrieval.is_empty_but_searched
                 )
-                await self._remember_session_classification(request, scope)
+                # Only a SENSITIVE mark is written before `done` (KAN-110, F32): it is what keeps
+                # this answer, now in the session's history, off a hosted provider on the next
+                # turn -- one that may reach another worker before deferred work lands. A clean
+                # mark can wait: until it lands the session reads "not clean", which fails closed.
+                mark_after_done = scope.level.rank <= DataClassification.INTERNAL.rank
+                if not mark_after_done:
+                    await self._remember_session_classification(request, scope)
                 prompt_tokens = last_usage.prompt_tokens if last_usage else assembled.prompt_tokens
                 completion_tokens = (
                     last_usage.completion_tokens if last_usage else len(collected)
@@ -1075,7 +1073,17 @@ class AIKernel:
                     plan_revisions=len(outcome.plan.revisions) if outcome is not None else 0,
                     planning_failed=planning_failed,
                 )
-                await self._record(telemetry)
+                # Metrics and the span are in-process; the sink write, the event, the session
+                # append (which can run a whole summarising generation) and a clean mark go
+                # after `done` (KAN-110). Scheduled before the yield, so a client that stops
+                # reading at `done` cannot cancel them.
+                self._observe_turn(telemetry)
+                self._schedule_post_turn(
+                    request,
+                    self._finish_streamed_turn(
+                        request, answer, scope if mark_after_done else None, telemetry
+                    ),
+                )
                 degraded_reasons = list(telemetry.degraded_reasons)
                 if searched_empty and "empty_retrieval" not in degraded_reasons:
                     degraded_reasons.append("empty_retrieval")
@@ -1190,6 +1198,8 @@ class AIKernel:
         async def load_history() -> tuple[Conversation, str]:
             if deps.episodic is None or request.session_id is None:
                 return Conversation(), ""
+            # The session's previous turn may still be appending after its `done` (KAN-110).
+            await self._await_session_post_turn(request)
             try:
                 return await deps.episodic.history(request.session_id, request.user_id)
             except Exception:
@@ -2592,12 +2602,20 @@ class AIKernel:
         )
 
     async def _record(self, telemetry: TurnTelemetry) -> None:
+        self._observe_turn(telemetry)
+        await self._persist_telemetry(telemetry)
+
+    def _observe_turn(self, telemetry: TurnTelemetry) -> None:
+        """The in-process half of recording a turn: its span and its metrics. No I/O."""
         _trace_turn(telemetry)
         if self._metrics is not None:
             try:
                 self._metrics.observe_turn(telemetry)
             except Exception:  # pragma: no cover - defensive
                 logger.debug("metric observation failed", exc_info=True)
+
+    async def _persist_telemetry(self, telemetry: TurnTelemetry) -> None:
+        """The I/O half: the telemetry sink and the ``TurnCompleted`` event."""
         if self._deps.telemetry_sink is not None:
             try:
                 await self._deps.telemetry_sink.record_turn(telemetry)
@@ -2616,6 +2634,92 @@ class AIKernel:
                 degraded=telemetry.degraded,
             )
         )
+
+    # -- after the answer (KAN-110) -------------------------------------------------------
+
+    async def _persist_exchange(self, request: TurnRequest, answer: str) -> None:
+        """Append the exchange to session history. Never raises."""
+        deps = self._deps
+        if deps.episodic is None or request.session_id is None:
+            return
+        try:
+            await deps.episodic.append(
+                request.session_id, request.user_id,
+                user_message=self._history_message(request), assistant_message=answer,
+            )
+        except Exception:
+            # Losing session persistence degrades the next turn; failing this one would be
+            # a worse trade.
+            logger.warning("failed to persist session state")
+
+    async def _finish_streamed_turn(
+        self,
+        request: TurnRequest,
+        answer: str,
+        clean_scope: DataScope | None,
+        telemetry: TurnTelemetry,
+    ) -> None:
+        """What a streamed turn still owes once its ``done`` frame is out.
+
+        Outside the turn's generation and cost budgets: the person is no longer waiting, and the
+        session summary ``append`` may generate is the session's upkeep, not this answer. The
+        task keeps the turn's data scope (a copy of its context), so that summary of a SENSITIVE
+        session still cannot reach a hosted provider. Order: the clean mark and the telemetry
+        are quick and wait on nothing; the append last, since its summary can take a generation.
+        """
+        with no_generation_budget(), no_turn_budget():
+            if clean_scope is not None:
+                await self._remember_session_classification(request, clean_scope)
+            await self._persist_telemetry(telemetry)
+            await self._persist_exchange(request, answer)
+
+    @staticmethod
+    def _post_turn_key(request: TurnRequest) -> str | None:
+        if request.session_id is None:
+            return None
+        return f"{request.user_id.value}|{len(request.user_id.value)}|{request.session_id.value}"
+
+    def _schedule_post_turn(self, request: TurnRequest, work: Any) -> None:
+        task = asyncio.get_running_loop().create_task(work)
+        self._post_turn_tasks.add(task)
+        key = self._post_turn_key(request)
+        if key is not None:
+            self._post_turn_by_session.setdefault(key, set()).add(task)
+
+        def finished(done: asyncio.Task[None]) -> None:
+            self._post_turn_tasks.discard(done)
+            if key is not None:
+                pending = self._post_turn_by_session.get(key)
+                if pending is not None:
+                    pending.discard(done)
+                    if not pending:
+                        self._post_turn_by_session.pop(key, None)
+            if not done.cancelled() and done.exception() is not None:
+                logger.warning("post-turn work failed", exc_info=done.exception())
+
+        task.add_done_callback(finished)
+
+    async def _await_session_post_turn(self, request: TurnRequest) -> None:
+        """Wait for this session's earlier turns to finish their post-``done`` work.
+
+        So a quick follow-up never reads history (or the session's clean mark) from before the
+        previous answer landed. Bounded by :data:`_PENDING_POST_TURN_WAIT_S`; a turn that waited
+        that long proceeds with what is stored, which already holds the exchange. In-process
+        only: a follow-up reaching another worker reads what is stored, and the exchange is
+        written first and within milliseconds of ``done`` -- well before a person can reply.
+        """
+        key = self._post_turn_key(request)
+        pending = self._post_turn_by_session.get(key) if key is not None else None
+        if not pending:
+            return
+        _, still_running = await asyncio.wait(set(pending), timeout=_PENDING_POST_TURN_WAIT_S)
+        if still_running:
+            logger.warning("previous turn's session update still running; reading history anyway")
+
+    async def wait_for_post_turn(self, timeout_s: float | None = None) -> None:
+        """Wait for every streamed turn's post-``done`` work. For tests and graceful shutdown."""
+        if self._post_turn_tasks:
+            await asyncio.wait(set(self._post_turn_tasks), timeout=timeout_s)
 
     async def _publish(self, event: Any) -> None:
         if self._deps.event_bus is None:
