@@ -7,10 +7,11 @@ import { CornerDownLeft, Search } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Kbd } from "@/components/ui/kbd";
 import { useI18n } from "@/lib/i18n/context";
-import { NAV_GROUPS, OPEN_PALETTE_EVENT, type NavItem } from "@/lib/nav";
+import { OPEN_PALETTE_EVENT, navGroupsFor, type NavItem } from "@/lib/nav";
+import type { Me } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-export function CommandPalette() {
+export function CommandPalette({ me }: { me: Me }) {
   const router = useRouter();
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -37,7 +38,7 @@ export function CommandPalette() {
   }, []);
 
   const needle = query.toLowerCase();
-  const groups = NAV_GROUPS.map((group) => ({
+  const groups = navGroupsFor(me).map((group) => ({
     label: group.label,
     items: group.items.filter((item) => t(item.label).toLowerCase().includes(needle)),
   })).filter((group) => group.items.length > 0);

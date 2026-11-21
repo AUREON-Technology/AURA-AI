@@ -67,7 +67,39 @@ function issuePair(principal) {
 // page cannot lower (api/admin_platform.py assign_role, 409).
 const ENV_GRANTS = { "root@aura.ai": ["SuperAdmin", "SUPERADMIN_EMAILS"] };
 
+const CONTROL_PLATFORMS = ["railway", "hf_space", "grafana", "qdrant", "cloudflare"];
+
+// A slice of what /admin/control/settings returns (aura_core/control/catalog.py): one plain
+// setting, one with bounds, a protected one and two secrets (no value is ever present).
+const CONTROL_CATALOG = [
+  {
+    section: "knowledge",
+    settings: [
+      { section: "knowledge", field: "retrieval_top_k", variable: "AURA_KNOWLEDGE_TOP_K", type: "int", default: 2,
+        description: "How many chunks a turn retrieves.", secret: false, protected: false, set: true, value: 4,
+        minimum: 1, maximum: 50, requires_redeploy: true },
+    ],
+  },
+  {
+    section: "infrastructure",
+    settings: [
+      { section: "infrastructure", field: "database_url", variable: "AURA_DATABASE_URL", type: "str", default: "",
+        description: "Postgres.", secret: true, protected: true, set: true, value: null, minimum: null, maximum: null,
+        requires_redeploy: true },
+    ],
+  },
+  {
+    section: "email",
+    settings: [
+      { section: "email", field: "smtp_password", variable: "AURA_SMTP_PASSWORD", type: "secret", default: null,
+        description: "", secret: true, protected: false, set: false, value: null, minimum: null, maximum: null,
+        requires_redeploy: true },
+    ],
+  },
+];
+
 const state = {
+  control: { platforms: {}, changes: [], nonces: {}, grants: {}, stepUps: 0, receivedTokens: [], vaultReady: true },
   operators: [
     {
       email: "ops@aura.ai",
@@ -152,8 +184,8 @@ function json(response, status, body) {
 
 // AuraError.to_dict() raised as an HTTPException detail: v3's handler puts it at the top level
 // and keeps it under `detail` (aura_core/api/v3.py, wrapped_domain_error_handler).
-function auraError(response, status, error, message, retryable = false) {
-  const body = { error, message, retryable, details: {} };
+function auraError(response, status, error, message, retryable = false, details = {}) {
+  const body = { error, message, retryable, details };
   json(response, status, { ...body, detail: body });
 }
 
@@ -297,6 +329,20 @@ const server = http.createServer(async (request, response) => {
   }
 
   // Puts the customers back as they started, so customers.spec.ts holds against a reused mock.
+  if (method === "GET" && path === "/__test/control") {
+    json(response, 200, {
+      step_ups: state.control.stepUps,
+      tokens_received: state.control.receivedTokens,
+      live_grants: Object.keys(state.control.grants).length,
+    });
+    return;
+  }
+  if (method === "POST" && path === "/__test/reset-control") {
+    const vaultReady = !new URL(request.url, "http://mock").searchParams.has("no-vault");
+    state.control = { platforms: {}, changes: [], nonces: {}, grants: {}, stepUps: 0, receivedTokens: [], vaultReady };
+    json(response, 200, { ok: true });
+    return;
+  }
   if (method === "POST" && path === "/__test/reset-customers") {
     state.customers = JSON.parse(CUSTOMERS_AT_START);
     json(response, 200, { reset: true });
@@ -324,6 +370,138 @@ const server = http.createServer(async (request, response) => {
       is_super_admin: who.role === "SuperAdmin",
     });
     return;
+  }
+
+  // -- control center (aura_core/api/admin_control.py): SuperAdmin only; writes need a step-up
+  // grant (X-Aura-Step-Up) bought with a one-time challenge, and the typed confirmation. Tokens
+  // are write-only: nothing below ever returns one.
+  if (path.startsWith("/api/v3/admin/control/")) {
+    if (!coreGate(response, who, "SuperAdmin")) return;
+    const control = state.control;
+    const sub = who.uid;
+    const now = Date.now();
+    const requireGrant = () => {
+      const grant = request.headers["x-aura-step-up"];
+      const found = grant && control.grants[grant];
+      if (!found || found.sub !== sub || found.expires < now) {
+        auraError(response, 403, "authorization_error", "this change needs a fresh sign-in", false, {
+          reason: "step_up_required",
+        });
+        return false;
+      }
+      return true;
+    };
+    const journal = (platformName, action) => {
+      control.changes.unshift({
+        change_id: `chg_${control.changes.length + 1}`, actor: who.email, platform: platformName,
+        target: control.platforms[platformName]?.target || platformName, action, status: "recorded",
+        detail: {}, deployment_id: null, previous_deployment_id: null, reason: "",
+        created_at: new Date(now).toISOString(), updated_at: new Date(now).toISOString(),
+      });
+    };
+    if (method === "GET" && path === "/api/v3/admin/control/overview") {
+      json(response, 200, {
+        platforms: CONTROL_PLATFORMS.map((name) => {
+          const row = control.platforms[name];
+          return {
+            platform: name, connected: Boolean(row), verified: Boolean(row?.verified),
+            verified_at: row?.verified ? row.at : null, verified_detail: row?.detail || "",
+            target: row?.target || "", configured_by: row?.by || null, configured_at: row?.at || null,
+            token_hint: `A ${name} token.`,
+          };
+        }),
+        open_changes: 0,
+        vault_ready: control.vaultReady,
+        environment: "local",
+        release: { revision: "mock123", git_sha: "mock123" },
+      });
+      return;
+    }
+    if (method === "GET" && path === "/api/v3/admin/control/settings") {
+      json(response, 200, { source: "process", groups: CONTROL_CATALOG });
+      return;
+    }
+    if (method === "GET" && path === "/api/v3/admin/control/changes") {
+      json(response, 200, { changes: control.changes });
+      return;
+    }
+    if (method === "POST" && path === "/api/v3/admin/control/step-up/challenge") {
+      const nonce = `n${now}${Math.random().toString(36).slice(2, 8)}`;
+      control.nonces[nonce] = { sub, expires: now + 300_000 };
+      json(response, 200, { nonce, expires_at: new Date(now + 300_000).toISOString(), max_age_s: 300 });
+      return;
+    }
+    if (method === "POST" && path === "/api/v3/admin/control/step-up/revoke") {
+      let revoked = 0;
+      for (const [grant, row] of Object.entries(control.grants)) {
+        if (row.sub === sub) {
+          delete control.grants[grant];
+          revoked += 1;
+        }
+      }
+      json(response, 200, { revoked });
+      return;
+    }
+    if (method === "POST" && path === "/api/v3/admin/control/step-up") {
+      const body = await readBody(request);
+      const issued = control.nonces[body.nonce];
+      delete control.nonces[body.nonce];
+      if (!issued || issued.sub !== sub || body.id_token !== `mock_step_up:${body.nonce}`) {
+        auraError(response, 403, "authorization_error", "the re-sign-in was refused", false, {
+          reason: "step_up_refused",
+        });
+        return;
+      }
+      const grant = `grant-${now}-${Math.random().toString(36).slice(2, 10)}`;
+      control.grants[grant] = { sub, expires: now + 300_000 };
+      control.stepUps += 1;
+      json(response, 200, { grant, expires_at: new Date(now + 300_000).toISOString() });
+      return;
+    }
+    const connectMatch = path.match(/^\/api\/v3\/admin\/control\/platforms\/([a-z_]+)\/(credential|disconnect)$/);
+    if (method === "POST" && connectMatch) {
+      const [, platformName, op] = connectMatch;
+      if (!CONTROL_PLATFORMS.includes(platformName)) {
+        auraError(response, 422, "validation_error", "unknown platform");
+        return;
+      }
+      if (!requireGrant()) return;
+      const body = await readBody(request);
+      if ((body.confirm || "") !== platformName) {
+        auraError(response, 422, "validation_error", `type '${platformName}' to confirm`, false, {
+          reason: "confirmation_required",
+        });
+        return;
+      }
+      if (op === "disconnect") {
+        if (!control.platforms[platformName]) {
+          auraError(response, 404, "not_found", `${platformName} is not connected`);
+          return;
+        }
+        delete control.platforms[platformName];
+        journal(platformName, "disconnect");
+        json(response, 200, { platform: platformName, connected: false });
+        return;
+      }
+      if (!control.vaultReady) {
+        auraError(response, 422, "validation_error", "the vault key is not set", false, { reason: "vault_not_configured" });
+        return;
+      }
+      if (body.token === "refused-token") {
+        auraError(response, 422, "validation_error", `${platformName} refused the token`);
+        return;
+      }
+      const replaced = Boolean(control.platforms[platformName]);
+      const verified = !["railway", "grafana"].includes(platformName);
+      control.platforms[platformName] = {
+        target: body.target || "", by: who.email, at: new Date(now).toISOString(), verified,
+        detail: verified ? `${platformName} verified` : "",
+      };
+      control.receivedTokens.push(body.token);
+      journal(platformName, replaced ? "replace_token" : "connect");
+      json(response, 200, { platform: platformName, verified, verified_detail: verified ? `${platformName} verified` : "" });
+      return;
+    }
   }
 
   if (method === "GET" && path === "/api/v3/admin/status") {
