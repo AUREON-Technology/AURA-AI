@@ -428,6 +428,12 @@ class ProviderCapabilities:
     #: breaker instead (``AURA_PROVIDER_<NAME>_HEALTH_PROBE=passive``). For a server that wakes
     #: on any request and bills while awake.
     passive_health: bool = False
+    #: Which tokenizer counts this provider's tokens (KAN-103): a family (``qwen2``, ``o200k``,
+    #: ``cl100k``, ``claude``, ``generic``), optionally with ``@<path to tokenizer.json>`` for
+    #: exact counts. Empty = inferred from ``model_id``. Read by ``context/tokenizer.py``'s
+    #: ``tokenizer_for``; the router, the quota and the usage fallback all count with it.
+    #: AURA_PROVIDER_<NAME>_TOKENIZER.
+    tokenizer: str = ""
 
     def __post_init__(self) -> None:
         if self.context_window <= 0:

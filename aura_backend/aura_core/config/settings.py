@@ -354,6 +354,11 @@ class ProviderConfig:
     #: this consent is capped below ``sensitive`` and is named as such in every audit record.
     #: AURA_PROVIDER_<NAME>_ALLOW_PROMPT_TRAINING.
     allow_prompt_training: bool = False
+    #: Which tokenizer counts this provider's tokens (KAN-103): ``qwen2`` | ``o200k`` |
+    #: ``cl100k`` | ``claude`` | ``generic``, optionally ``<family>@<path to tokenizer.json>``
+    #: for exact counts (e.g. the Qwen Space's own file). Empty = inferred from the model id,
+    #: and ``claude`` for the ``claude`` kind. AURA_PROVIDER_<NAME>_TOKENIZER.
+    tokenizer: str = ""
 
     #: Request-body fields an ``extra_body`` may not set. See :attr:`extra_body`.
     _RESERVED_BODY_FIELDS: ClassVar[frozenset[str]] = frozenset({
@@ -769,6 +774,7 @@ class ProviderConfig:
             tokens_per_second=_float(f"{p}_TOKENS_PER_SECOND", 0.0, minimum=0.0),
             extra_body=(_env(f"{p}_EXTRA_BODY", "") or "").strip(),
             allow_prompt_training=_bool(f"{p}_ALLOW_PROMPT_TRAINING", False),
+            tokenizer=(_env(f"{p}_TOKENIZER", "") or "").strip(),
         )
 
 
