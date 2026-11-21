@@ -9,7 +9,7 @@ root (`deploy_client.sh`, `deploy_client.ps1`, etc.).
 | `deploy_client.sh` / `.ps1` | Production Flutter build with `BACKEND_URL` from `deploy/.env` |
 | `deploy_client_desktop.sh` / `.ps1` | Desktop Flutter build (Linux/macOS via `.sh`, Windows via `.ps1`) with the same `BACKEND_URL` resolution; does not build or bundle `aura_hostd` |
 | `run_desktop_stack.sh` / `.ps1` | Build (or `--skip-build`/`-SkipBuild` reuse) `aura_hostd` + the desktop client, then run both together on this machine — the one-shot way to actually use the desktop Engineer agent locally |
-| `AURA-Desktop-Setup.cmd` | The end-user Windows setup file for the Desktop IDE: a single double-clickable file that downloads and installs the newest `main` build from GitHub every time it runs (see `docs/guides/desktop-releases.md`, "Always-latest setup") |
+| `AURA-Desktop-Setup.cmd` | The end-user Windows setup file for the Desktop IDE: a single double-clickable file that downloads and installs the newest `main` build from the install page (web.aureon-ai.tech, no GitHub access needed) every time it runs (see `docs/guides/desktop-releases.md`, "Always-latest setup") |
 | `run_client_device.ps1` | Physical Android debug run against production HTTPS |
 | `deploy_rules.ps1` | Deploy Firebase rules from `firebase/` |
 | `init_infra.ps1` | Legacy GCP/Firebase bootstrap (historical) |

@@ -17,7 +17,7 @@ server {
     absolute_redirect off;
 
     gzip on;
-    gzip_types text/css application/javascript image/svg+xml;
+    gzip_types text/css application/javascript application/json image/svg+xml;
 
     include /etc/nginx/snippets/security-headers.conf;
 
@@ -47,13 +47,37 @@ server {
         try_files $uri =404;
     }
 
-    # The setup file. Served as a download, never rendered, and never cached: a stale copy would
-    # not match the checksum shown on the page.
+    # ---- Downloads. Exactly three names are served; everything else under /download/ is a 404. ----
+    # The installer and its manifest are copied into the image at build time (aura_web/build-assets,
+    # filled by .github/workflows/desktop-main-channel.yml), so they always belong together: one
+    # deploy replaces both. Nothing is cached without revalidation, so a new build is picked up at
+    # once and a stale copy can never disagree with latest.json.
+
+    # The setup file. Served as a download, never rendered.
     location = /desktop-ide/download/AURA-Desktop-Setup.cmd {
         default_type application/octet-stream;
         include /etc/nginx/snippets/security-headers.conf;
         add_header Cache-Control "no-cache" always;
         add_header Content-Disposition 'attachment; filename="AURA-Desktop-Setup.cmd"' always;
+        try_files $uri =404;
+    }
+
+    # What the latest build is: commit, version, installer name, size and SHA-256. Read by the
+    # setup file and by the install page. Absent until the first build has been deployed (404).
+    location = /desktop-ide/download/latest.json {
+        default_type application/json;
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-store" always;
+        try_files $uri =404;
+    }
+
+    # The installer itself (Inno Setup, aura_hostd bundled). nginx serves byte ranges, so a
+    # download can resume.
+    location = /desktop-ide/download/aura-desktop-windows-x64-setup.exe {
+        default_type application/octet-stream;
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-cache" always;
+        add_header Content-Disposition 'attachment; filename="aura-desktop-windows-x64-setup.exe"' always;
         try_files $uri =404;
     }
 

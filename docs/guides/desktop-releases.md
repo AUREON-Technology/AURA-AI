@@ -6,38 +6,54 @@ How AURA Desktop is released, how installed copies update, and how to roll a bad
 
 ## Always-latest setup (the `main` channel)
 
-For people who just want the newest app, not a numbered release. Built by
-`.github/workflows/desktop-main-channel.yml`; the file people run is
-`scripts/AURA-Desktop-Setup.cmd`.
+For people who just want the newest app, not a numbered release, and who should not need any
+access to the repository. Built and published by `.github/workflows/desktop-main-channel.yml`.
 
-- **What people do:** download `AURA-Desktop-Setup.cmd` from the **AURA Desktop (main, rolling)**
-  pre-release and double-click it. The file is a launcher, not a snapshot: each run looks up the
-  newest build, downloads it, checks its SHA-256 and runs the installer. A copy of the file that is
-  months old still installs today's app, and running it again updates an existing install. Options:
-  `-Silent`, `-Force` (reinstall even if current), `-DownloadOnly` (save the installer, do not run it).
-- **What you do:** nothing beyond merging. Every push to `main` that touches `aura_client/` or
-  `aura_hostd/` builds the Windows installer (with `aura_hostd` bundled) and replaces the assets of
-  the single pre-release tagged `desktop-main`. It is never marked *latest*, so the signed
-  `desktop-v*` update channel below is untouched. Builds are queued, not cancelled.
-- **Release assets:** `aura-desktop-main.json` (commit, version, installer name and SHA-256),
-  `aura-desktop-windows-x64-main-<sha7>-setup.exe` (only the current one is kept) and
-  `AURA-Desktop-Setup.cmd`. The manifest switches over only after the installer it names has been
-  uploaded.
+```
+push to main --> Windows runner builds the installer --> railway up (AURA-Web service)
+                                                    --> https://web.aureon-ai.tech/desktop-ide/install
+```
+
+- **What people do:** open the install page, download `AURA-Desktop-Setup.cmd` (or the `.exe`
+  installer directly) and run it. The setup file is a launcher, not a snapshot: each run reads
+  `latest.json` from the website, downloads the newest installer from there, checks its SHA-256
+  and runs it. A copy of the file that is months old still installs today's app, and running it
+  again updates an existing install. Options: `-Silent`, `-Force` (reinstall even if current),
+  `-DownloadOnly` (save the installer, do not run it). No GitHub account is involved.
+- **What you do:** nothing beyond merging. Every push to `main` that touches `aura_client/`,
+  `aura_hostd/` or `aura_web/` builds the installer and deploys it. Builds are queued, not
+  cancelled. A deploy replaces the installer and `latest.json` together, because both are copied
+  into the same image, so the page never offers a manifest and an installer that disagree.
+- **Why the build is not on Railway:** Railway runs Linux containers, and Flutter cannot
+  cross-build a Windows app from Linux. The build runs on a Windows runner (the same packaging as
+  `desktop-package.yml`: `aura_hostd` bundled, Inno Setup installer); Railway only hosts the result.
+  `scripts/deploy_client_desktop.ps1` alone produces a bare app folder, not an installer.
+- **The web service:** Railway service `AURA-Web` (nginx, `aura_web/`), custom domain
+  `web.aureon-ai.tech`. It serves exactly three downloads under `/desktop-ide/download/`:
+  `latest.json` (commit, version, build time, installer name/size/SHA-256),
+  `aura-desktop-windows-x64-setup.exe` and `AURA-Desktop-Setup.cmd`. Before the first build has
+  been deployed the page says no build is published and the setup file stops with the same message.
+- **One-time setup:** a Railway **project token** for the `production` environment, stored as the
+  GitHub repository secret `RAILWAY_WEB_TOKEN`. Without it the `deploy-web` job fails with a message
+  saying so; it never skips silently. The job then waits until the live site reports the pushed
+  commit and the installer's exact size, so a green run means the site really serves that build.
+- **Manual deploy:** stage `aura_web/` and `scripts/AURA-Desktop-Setup.cmd` with the installer and
+  `latest.json` in `aura_web/build-assets/`, then `railway up --service AURA-Web` from that folder.
+  Never run `railway up` from the repository root: it holds credential files.
 - **Versions:** "Apps & features" shows `3.0.1-main.<sha7>`. Inside the app the version is the
   plain pubspec one, so a main build is offered the next signed `desktop-v` release as usual.
-- **Private repository:** an anonymous download only works when the repository (or wherever the
-  release is mirrored) is public. While it is private, the person running the file needs a GitHub
-  account that can read it, signed in through `gh auth login` or `AURA_GITHUB_TOKEN`; the file uses
-  the token only against `api.github.com`, never on the storage redirect.
-- **Trust:** the checksum catches a corrupt or swapped download, not a compromised release (file
-  and hash come from the same place). Authenticode signing is what does that; the workflow signs once
-  the `AURA_WINDOWS_SIGNING_*` secrets exist. Until then Windows shows an "unknown publisher" prompt.
-- **Prerequisite:** if the Microsoft Visual C++ runtime is missing, the file installs it (one UAC
-  prompt), after checking that the download is signed by Microsoft.
+- **Trust:** the checksum catches a corrupt download, not a compromised site (file and hash come
+  from the same place); the setup file only talks https. Authenticode signing is what protects
+  against a bad build, and the workflow signs once the `AURA_WINDOWS_SIGNING_*` secrets exist.
+  Until then Windows shows an "unknown publisher" prompt. A main build is exactly as trustworthy as
+  `main` itself: whoever can merge can publish.
+- **Prerequisite:** if the Microsoft Visual C++ runtime is missing, the setup file installs it
+  (one UAC prompt), after checking that the download is signed by Microsoft.
 - **Windows x64 only.** Linux has the tar.gz from the tagged releases.
-- **Not verified yet:** the workflow has not run (it needs a push to `main`). The setup file was
-  tested against a local mock of the GitHub release API with a stand-in installer, not a real build,
-  and the missing-Visual-C++ path has not run.
+- **Not verified yet:** the workflow has not run, because it needs a push to `main` and the
+  `RAILWAY_WEB_TOKEN` secret. The serving path was tested on a throwaway Railway service with a
+  stand-in installer (setup file end to end over https, page, headers, range requests); a real
+  installer build and the missing-Visual-C++ path have not run.
 
 ## Cutting a release
 
