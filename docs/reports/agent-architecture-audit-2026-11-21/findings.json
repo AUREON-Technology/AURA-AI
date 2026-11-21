@@ -1,0 +1,166 @@
+{
+  "schema_version": "ecc.agent-architecture-audit.report.v1",
+  "generated": "2026-11-21",
+  "commit": "032e47f",
+  "evidence_basis": "code read and line-checked on main; no tests run; no live probe",
+  "executive_verdict": {
+    "overall_health": "medium_high_risk",
+    "primary_failure_mode": "Tool selection is an English-only regex gate and 'no tool ran' is enforced only in prompt text, so the agent can claim actions that never happened.",
+    "most_urgent_fix": "Code-gate unbacked action claims (A1) and add a bilingual/follow-up-aware planning gate (A2)."
+  },
+  "scope": {
+    "target_name": "AURA aura_backend AIKernel turn pipeline (run + stream) and its chat client",
+    "model_stack": ["hosted1 (Groq gpt-oss-120b, ADR-030)", "hfspace (vLLM Space)", "claude1 (ADR-033, Engineer only)", "Ollama qwen2.5:3b on the VPS target"],
+    "layers_to_audit": ["system_prompt", "session_history", "long_term_memory", "distillation", "tool_selection", "tool_execution", "tool_interpretation", "answer_shaping", "platform_rendering", "hidden_repair_loops", "persistence"]
+  },
+  "supersedes_earlier_claims": [
+    {"claim": "semantic answer cache not keyed on retrieved documents or memory", "status": "false since F13 (2026-11-18)", "evidence_refs": ["aura_backend/aura_core/llm/cache.py:196-231", "aura_backend/aura_core/llm/cache.py:406-419"]}
+  ],
+  "findings": [
+    {
+      "id": "A1", "severity": "high",
+      "title": "'No tool ran' is enforced only by prompt text",
+      "mechanism": "When planning is skipped or fails, the only control on the answer claiming an action is prompt prose (PLANNING_FAILED_NOTE, _CORE_IDENTITY); the note is added only when planning raised.",
+      "source_layer": "tool_execution / answer_shaping",
+      "root_cause": "No post-generation check correlates action claims with succeeded side-effecting steps; no degraded reason exists for it.",
+      "evidence_refs": ["aura_backend/aura_core/kernel/kernel.py:322-326", "aura_backend/aura_core/kernel/kernel.py:551-562", "aura_backend/aura_core/prompts/library.py:26-30", "aura_backend/aura_core/domain/telemetry.py:187-205"],
+      "confidence": 0.9,
+      "recommended_fix": "Kernel check in run and stream: action claim without a succeeded side-effecting step or pending confirmation -> revision frame and/or degraded reason 'unbacked_action_claim'.",
+      "acceptance": ["Planning-skipped turn answering 'I've added the task' yields degraded_reasons containing unbacked_action_claim", "A succeeded propose_task turn is not flagged"]
+    },
+    {
+      "id": "A2", "severity": "high",
+      "title": "Planning gate is English-only and the planner sees only the current message",
+      "mechanism": "needs_plan returns False for <40-char messages and messages without English markers; Arabic imperatives and follow-ups never plan, so no tool can run. goal_from_message uses only the current message.",
+      "source_layer": "tool_selection",
+      "root_cause": "Regex heuristics tuned for English; no conversational context passed to the planner.",
+      "evidence_refs": ["aura_backend/aura_core/planning/engine.py:43-50", "aura_backend/aura_core/planning/engine.py:160-179", "aura_backend/aura_core/planning/engine.py:470-471", "aura_backend/aura_core/tools/personal_os.py:45-101", "aura_backend/aura_core/kernel/kernel.py:1624-1643"],
+      "confidence": 0.9,
+      "recommended_fix": "Arabic intent/marker patterns or a cheap classifier when tools are offered; include last assistant turn in the goal; plan after a turn that offered an action.",
+      "acceptance": ["needs_plan True for >=5 Arabic imperatives per propose_* tool", "Follow-up 'yes, add it' plans when prior turn offered an action", "agent_tasks.jsonl cases for both"]
+    },
+    {
+      "id": "A3", "severity": "high",
+      "severity_note": "high on the VPS target (400-token default cap), low on Railway (4096)",
+      "title": "Tool output can be dropped by the prompt budget with no note to the model",
+      "mechanism": "Tool results are non-pinned context items; pack() may drop them; _execution_notes only covers unexecuted/failed steps, so a succeeded-but-dropped result reaches generation as nothing.",
+      "source_layer": "tool_interpretation",
+      "root_cause": "assemble() does not report dropped tool items; no TOOL_OUTPUT reservation.",
+      "evidence_refs": ["aura_backend/aura_core/context/engine.py:349-364", "aura_backend/aura_core/domain/context.py:299-359", "aura_backend/aura_core/config/settings.py:807", "docs/reports/flame-link2-live.md:21"],
+      "confidence": 0.85,
+      "recommended_fix": "Pinned note per dropped tool result, or minimum TOOL_OUTPUT share; degraded reason 'tool_output_dropped'.",
+      "acceptance": ["At 400-token cap with a 2k-token tool result, prompt holds a marked truncation or the pinned note, never neither"]
+    },
+    {
+      "id": "B1", "severity": "high",
+      "title": "History hole: messages 5-20 are neither shown nor summarised",
+      "mechanism": "Prompt keeps last 4 messages; episodic summary starts only after 20 messages and covers only what falls beyond the 12-message window.",
+      "source_layer": "session_history / distillation",
+      "root_cause": "Two independently configured windows (prompt_history_messages=4, episodic_window=12, summarise_after_turns=20) with no omission marker.",
+      "evidence_refs": ["aura_backend/aura_core/config/settings.py:1059-1066", "aura_backend/aura_core/context/engine.py:398-418", "aura_backend/aura_core/memory/session.py:288-312", "aura_backend/aura_core/memory/session.py:358-360"],
+      "confidence": 0.9,
+      "recommended_fix": "Summarise everything older than the prompt window, or add an explicit 'earlier messages omitted' marker.",
+      "acceptance": ["8-exchange test with defaults: every exchange is verbatim, summarised, or covered by an explicit omission marker"]
+    },
+    {
+      "id": "B2", "severity": "medium",
+      "title": "History summary sits on the SYSTEM channel; its fallback is raw unmarked transcript",
+      "mechanism": "Model-written summary of user+assistant text (which may quote DATA) is inserted as SYSTEM; summariser failure inserts the last 4000 chars of raw transcript, unmarked despite the docstring.",
+      "source_layer": "distillation",
+      "root_cause": "Summary treated as operator-trusted; fallback marker never implemented; summaries fold previous summaries.",
+      "evidence_refs": ["aura_backend/aura_core/context/engine.py:461-473", "aura_backend/aura_core/memory/session.py:378-394", "aura_backend/aura_core/memory/session.py:406-417"],
+      "confidence": 0.85,
+      "recommended_fix": "Summary on DATA (fenced) or a described own-notes channel; mark the fallback; carry taint into the summary.",
+      "acceptance": ["Summary item channel is not SYSTEM", "Fallback text starts with an explicit marker"]
+    },
+    {
+      "id": "B3", "severity": "medium",
+      "title": "Guarded input used for one turn; raw message stored and replayed",
+      "mechanism": "guard_input may strip invisible/tag characters or truncate; kernel stores request.message (original) in history, and history is never re-guarded; the reasoner also gets the raw message.",
+      "source_layer": "session_history / input",
+      "root_cause": "_history_message and ReasoningRequest use request.message instead of the guarded message.",
+      "evidence_refs": ["aura_backend/aura_core/kernel/kernel.py:500-510", "aura_backend/aura_core/kernel/kernel.py:670", "aura_backend/aura_core/kernel/kernel.py:1023", "aura_backend/aura_core/kernel/kernel.py:1240-1250", "aura_backend/aura_core/kernel/kernel.py:2434", "aura_backend/aura_core/safety/pipeline.py:154-168"],
+      "confidence": 0.9,
+      "recommended_fix": "Persist and pass the guarded text.",
+      "acceptance": ["Message with Unicode tag-block chars: stored history equals the guarded text"]
+    },
+    {
+      "id": "B4", "severity": "medium",
+      "title": "A corrected fact can be swallowed as a duplicate of the old one",
+      "mechanism": "remember() merges any same-kind memory at cosine >= 0.94 by keeping the old text and raising its confidence.",
+      "source_layer": "long_term_memory",
+      "root_cause": "No contradiction/supersede path; similarity treated as identity.",
+      "evidence_refs": ["aura_backend/aura_core/memory/engine.py:136-151", "aura_backend/aura_core/domain/memory.py:98", "aura_backend/aura_core/memory/engine.py:484-510"],
+      "confidence": 0.6,
+      "confidence_note": "needs an embedding probe on real pairs",
+      "recommended_fix": "Supersede the old record when texts differ; reinforce only on equal/entailed text; recall prefers newer of conflicting records.",
+      "acceptance": ["Opt-in real-embedder test: 'manager is Sara' then 'manager is Omar' recalls Omar"]
+    },
+    {
+      "id": "B5", "severity": "medium",
+      "title": "Model-authored memory writes governed only by a tool description",
+      "mechanism": "remember_fact stores the planner-written fact; 'only user-stated facts' is description text; provenance does not record support in the user message; confirmation only on tainted turns.",
+      "source_layer": "long_term_memory / tool_execution",
+      "root_cause": "No code check of the fact against the user's message; recall ignores provenance.",
+      "evidence_refs": ["aura_backend/aura_core/tools/builtin.py:271-293", "aura_backend/aura_core/kernel/kernel.py:1156-1175"],
+      "confidence": 0.75,
+      "recommended_fix": "Require support in the guarded user message; tag user_stated/model_inferred and rank accordingly.",
+      "acceptance": ["Unsupported fact is refused or stored with confidence < 0.5 and model_inferred"]
+    },
+    {
+      "id": "C1", "severity": "medium",
+      "title": "Empty generation without tool calls ends as a silent success",
+      "mechanism": "Stream substitutes fallback text only when tool calls were seen; otherwise done/SUCCESS with an empty answer persisted to history; run has no check.",
+      "source_layer": "answer_shaping / persistence",
+      "root_cause": "Empty check conditioned on saw_tool_calls.",
+      "evidence_refs": ["aura_backend/aura_core/kernel/kernel.py:958-976", "aura_backend/aura_core/kernel/kernel.py:1019-1027", "aura_backend/aura_core/kernel/kernel.py:618-676"],
+      "confidence": 0.85,
+      "recommended_fix": "Treat any blank answer as empty_generation in both paths; do not persist it.",
+      "acceptance": ["Echo provider returning '' gives non-empty fallback text, a degraded reason, and no empty history message"]
+    },
+    {
+      "id": "C2", "severity": "low",
+      "title": "Provider failover invisible in turn telemetry",
+      "mechanism": "Router counts fallbacks in a metric but CompletionResponse carries no attempts; kernel hard-codes fallbacks=0, so provider_fallback never fires.",
+      "source_layer": "hidden_repair_loops",
+      "root_cause": "Attempt list kept local to the router.",
+      "evidence_refs": ["aura_backend/aura_core/kernel/kernel.py:2386-2472", "aura_backend/aura_core/llm/router.py:901-1024", "aura_backend/aura_core/domain/telemetry.py:187-205"],
+      "confidence": 0.9,
+      "recommended_fix": "Carry attempts on CompletionResponse and the final stream chunk; set fallback_count and providers_attempted.",
+      "acceptance": ["Failing first provider -> fallback_count == 1 and provider_fallback in degraded_reasons"]
+    },
+    {
+      "id": "C3", "severity": "low",
+      "title": "Client keeps only degraded: bool",
+      "mechanism": "done frame sends degraded_reasons; TurnMeta stores only the boolean, so the UI cannot say why, and tainted-only turns are badged degraded.",
+      "source_layer": "platform_rendering",
+      "root_cause": "Field not parsed in turn_meta.dart.",
+      "evidence_refs": ["aura_client/lib/features/chat/data/turn_meta.dart:8", "aura_client/lib/features/chat/data/turn_meta.dart:135-140", "aura_client/lib/features/chat/presentation/widgets/turn_status_row.dart:71-77", "aura_backend/aura_core/kernel/kernel.py:1094-1099"],
+      "confidence": 0.85,
+      "recommended_fix": "Persist degraded_reasons and render per reason.",
+      "acceptance": ["Widget test per reason"]
+    },
+    {
+      "id": "C4", "severity": "low",
+      "title": "/chat and /chat/stream run different pipelines",
+      "mechanism": "run uses the answer cache and the reasoner (possible multi-sample hidden passes); stream (the app's only path) uses neither; eval measures run.",
+      "source_layer": "hidden_repair_loops / platform_rendering",
+      "root_cause": "Two code paths diverged.",
+      "evidence_refs": ["aura_backend/aura_core/kernel/kernel.py:2403-2458", "aura_backend/aura_core/kernel/kernel.py:913-958", "aura_backend/aura_core/api/v3.py:735", "aura_backend/aura_core/api/v3.py:881", "aura_backend/aura_core/evaluation/harness.py:310"],
+      "confidence": 0.8,
+      "recommended_fix": "Run the agent eval gate through stream (or both); document the divergence.",
+      "acceptance": ["Eval harness has a stream mode used by the gate"]
+    }
+  ],
+  "ordered_fix_plan": [
+    {"order": 1, "goal": "A1 code-gate unbacked action claims", "why_now": "most damaging user-visible failure; backstop for A2/A3", "expected_effect": "'done' with no action becomes visible and countable"},
+    {"order": 2, "goal": "A2 bilingual, follow-up-aware planning gate", "why_now": "main cause of A1 for Arabic and conversational users", "expected_effect": "tools run when users expect them"},
+    {"order": 3, "goal": "B3 store guarded text", "why_now": "one-line guard-bypass fix", "expected_effect": "stripped content cannot return via history"},
+    {"order": 4, "goal": "B1 then B2 align history windows; summary off SYSTEM; mark fallback", "why_now": "conversation forgets turns 3-10 today", "expected_effect": "continuity without trust escalation"},
+    {"order": 5, "goal": "A3 dropped-tool-output note or reservation", "why_now": "VPS target first", "expected_effect": "no answering around unseen tool output"},
+    {"order": 6, "goal": "C1, C2, C3 empty-answer handling, failover telemetry, per-reason client display", "why_now": "observability", "expected_effect": "degraded turns stop looking like successes"},
+    {"order": 7, "goal": "B4, B5 supersede on correction; provenance-checked memory writes", "why_now": "memory drift", "expected_effect": "memory reflects what the user actually said"},
+    {"order": 8, "goal": "C4 evaluate the stream path", "why_now": "eval measures the wrong path", "expected_effect": "eval numbers describe the product"}
+  ],
+  "not_covered": ["client retry/idempotency and client vs server timeouts", "delegation sub-turns", "voice text re-shaping", "CAG prefix freshness after edits", "runtime proof of any finding"]
+}
