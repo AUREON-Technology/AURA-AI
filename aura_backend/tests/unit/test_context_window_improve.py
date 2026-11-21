@@ -3,10 +3,11 @@ disappears silently. One class per subtask (KAN-98 ... KAN-102, KAN-105)."""
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from typing import Any, Sequence
 
-from aura_core.config.settings import AuraSettings, LLMSettings, ProviderConfig
+from aura_core.config.settings import AuraSettings, LLMSettings, MemorySettings, ProviderConfig
 from aura_core.context import ContextEngine, ContextRequest, HeuristicTokenizer
 from aura_core.domain import (
     CompletionRequest,
@@ -17,12 +18,14 @@ from aura_core.domain import (
 )
 from aura_core.domain.context import ContextSection
 from aura_core.domain.errors import ProviderError
-from aura_core.domain.identifiers import UserId
+from aura_core.domain.identifiers import SessionId, UserId
 from aura_core.domain.llm import RoutingPolicy, WorkloadClass
+from aura_core.domain.messages import Role
 from aura_core.kernel.kernel import AIKernel, KernelDependencies, TurnRequest
-from aura_core.llm import ProviderRouter
+from aura_core.llm import InMemoryCache, ProviderRouter
 from aura_core.llm.providers.echo import EchoProvider, ScriptedTurn
 from aura_core.llm.workload import workload_scope
+from aura_core.memory.session import EpisodicMemory
 
 
 class CountingTokenizer:
@@ -344,3 +347,95 @@ class TestOutputClampAndCapEnforcement:
         request = TurnRequest(message="m", user_id=UserId("u"), max_output_tokens=1024)
         assert AIKernel._answer_tokens(request, clamped) == clamped.max_output_tokens < 1024
         assert AIKernel._answer_tokens(request, object()) == 1024
+
+
+# -- KAN-100 -----------------------------------------------------------------------------
+
+_MARKER = re.compile(r"\[(\d+) earlier messages? of this conversation")
+
+
+async def _session_after(exchanges: int) -> tuple[Conversation, str]:
+    """A session with the shipped defaults (window 12, summarise after 20, no summariser)."""
+    memory = MemorySettings()
+    episodic = EpisodicMemory(
+        InMemoryCache(), window=memory.episodic_window,
+        summarise_after=memory.summarise_after_turns,
+    )
+    sid, uid = SessionId("s"), UserId("u")
+    for i in range(exchanges):
+        await episodic.append(
+            sid, uid, user_message=f"question {i:02d}?", assistant_message=f"answer {i:02d}."
+        )
+    return await episodic.history(sid, uid)
+
+
+def _coverage(assembled, history: Conversation, summary: str) -> dict[int, str]:
+    """How each exchange reaches the model: verbatim, summarised, or marked as not shown."""
+    verbatim = {m.content for m in assembled.conversation if m.role is not Role.SYSTEM}
+    history_message = next(
+        (m.content for m in list(assembled.conversation)[1:] if m.role is Role.SYSTEM), ""
+    )
+    found = _MARKER.search(history_message)
+    marked = int(found.group(1)) if found else 0
+    unsummarised = [m.content for m in history]
+    covered_by_marker = set(unsummarised[:marked])
+    how: dict[int, str] = {}
+    for i in range(len(unsummarised) // 2 + summary.count("question ")):
+        q, a = f"question {i:02d}?", f"answer {i:02d}."
+        if q in verbatim and a in verbatim:
+            how[i] = "verbatim"
+        elif q in summary and a in summary:
+            how[i] = "summarised"
+        elif q in covered_by_marker and a in covered_by_marker:
+            how[i] = "marked"
+        else:
+            how[i] = "LOST"
+    return how
+
+
+class TestNoHistoryHole:
+    """KAN-100: the prompt keeps 4 messages, the session keeps up to 20 unsummarised, and the
+    summary starts after 20 -- so messages 5..20 back were in neither, silently."""
+
+    def _assemble(self, history: Conversation, summary: str, **overrides: Any):
+        engine = ContextEngine(history_turns=MemorySettings().prompt_history_messages)
+        return engine.assemble(_request(history=history, history_summary=summary, **overrides))
+
+    async def test_eight_exchanges_with_defaults_are_each_accounted_for(self) -> None:
+        history, summary = await _session_after(8)
+        assembled = self._assemble(history, summary)
+
+        how = _coverage(assembled, history, summary)
+        assert len(how) == 8
+        assert "LOST" not in how.values(), how
+        assert how[7] == how[6] == "verbatim"
+        assert assembled.omitted_messages == 12
+        assert assembled.prompt_tokens <= 400
+
+    async def test_after_the_first_summary_every_exchange_is_still_accounted_for(self) -> None:
+        history, summary = await _session_after(12)
+        assert summary  # 24 messages > 20: the first fold happened
+        assembled = self._assemble(history, summary, max_prompt_tokens=0)
+
+        how = _coverage(assembled, history, summary)
+        assert len(how) == 12
+        assert "LOST" not in how.values(), how
+        assert "summarised" in how.values() and "marked" in how.values()
+
+    async def test_messages_the_cap_drops_are_marked_too(self) -> None:
+        history, summary = await _session_after(8)
+        assembled = self._assemble(history, summary, max_prompt_tokens=120)
+
+        how = _coverage(assembled, history, summary)
+        assert "LOST" not in how.values(), how
+        assert assembled.omitted_messages > 12
+
+    async def test_the_session_returns_every_unsummarised_message(self) -> None:
+        history, summary = await _session_after(10)
+        assert not summary
+        assert len(history) == 20
+
+    def test_no_marker_when_nothing_is_missing(self) -> None:
+        assembled = self._assemble(_history(1), "")
+        assert assembled.omitted_messages == 0
+        assert not any("not shown here" in m.content for m in assembled.conversation)

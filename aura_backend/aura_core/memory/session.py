@@ -356,8 +356,15 @@ class EpisodicMemory:
             delay = min(delay * 2, 0.2)
 
     async def history(self, session_id: SessionId, owner_id: UserId) -> tuple[Conversation, str]:
+        """Every message not yet folded into the summary, and the summary.
+
+        All of them, not a tail: anything held here is by definition not in the summary, so a
+        message cut here would be in neither and the context engine could not even say it was
+        missing (KAN-100). The state is bounded by ``summarise_after`` anyway; the engine
+        decides how many reach the prompt and marks the rest.
+        """
         state = await self.load(session_id, owner_id)
-        return Conversation.of(state.messages[-self._window * 2 :]), state.summary
+        return Conversation.of(state.messages), state.summary
 
     async def clear(self, session_id: SessionId, owner_id: UserId) -> None:
         """Forget the owner's state for this session (and any legacy un-namespaced state it
