@@ -58,6 +58,7 @@ from .knowledge.extraction import RuleEntityExtractor
 from .knowledge.index_manager import IndexManager, PromotionGate
 from .knowledge.reranking import build_reranker
 from .kernel.kernel import AIKernel, KernelDependencies
+from .kernel.turn_scope import current_turn_lookups
 from .llm.cache import InMemoryCache, LLMCache, semantic_tier_useful
 from .llm.embeddings import HashEmbeddingProvider
 from .llm.quota import QuotaTracker
@@ -94,6 +95,10 @@ logger = get_logger("container")
 #: tests/unit/test_deploy_robustness.py, 15 s). A close that takes longer is abandoned and
 #: logged; the process is exiting either way, and the OS reclaims the socket.
 SHUTDOWN_CLOSE_TIMEOUT_S = 5.0
+#: How long ``Container.shutdown()`` lets streamed turns finish what they do after ``done``
+#: (session append, telemetry; KAN-110) before closing the connections that work needs. Plus
+#: the close ceiling above, still inside the 15 s margin.
+POST_TURN_DRAIN_S = 5.0
 
 
 class Container:
@@ -1680,8 +1685,22 @@ class Container:
 
     async def _host_routed(self, context) -> bool:
         """Whether this caller's sandbox calls go to their paired desktop: the same predicate
-        ``CompositeSandboxRunner.create_task`` routes on (a live ``aura_hostd`` session)."""
-        return await self.host_agent_registry.resolve(context.user_id) is not None
+        ``CompositeSandboxRunner.create_task`` routes on (a live ``aura_hostd`` session).
+
+        Reuses the turn's own answer only when it was *yes* (KAN-109): a desktop seen this turn
+        means no relay round trip per tool call. A *no* is re-asked live. ``True`` here can only
+        make policy stricter (a tainted or remote-device turn is held for confirmation), so a
+        stale yes costs at most a confirmation; a stale no would let a desktop that connected
+        mid-turn take a side effect under the sandbox's looser rule, so it is never reused.
+        """
+        lookups = current_turn_lookups()
+        key = context.user_id.value if context.user_id is not None else None
+        if lookups is not None and key is not None and lookups.desktop.get(key):
+            return True
+        routed = await self.host_agent_registry.resolve(context.user_id) is not None
+        if routed and lookups is not None and key is not None:
+            lookups.desktop[key] = True
+        return routed
 
     def _build_tools(self) -> ToolRegistry:
         registry = ToolRegistry(
@@ -2006,6 +2025,10 @@ class Container:
         if self._shut_down:
             return
         self._shut_down = True
+        try:
+            await self.kernel.wait_for_post_turn(timeout_s=POST_TURN_DRAIN_S)
+        except Exception:  # pragma: no cover - defensive; shutdown never raises
+            logger.warning("post-turn drain failed", exc_info=True)
         closers = self._shutdown_closers()
         await asyncio.gather(*(self._close_quietly(name, close) for name, close in closers))
         mark_dead = getattr(self.metrics, "mark_process_dead", None)

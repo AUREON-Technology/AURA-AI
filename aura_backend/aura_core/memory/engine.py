@@ -46,6 +46,7 @@ from ..domain.memory import (
     Provenance,
 )
 from ..llm.embeddings import cosine_similarity
+from ..llm.turn_embeddings import embed_query
 from ..observability.logging import get_logger
 from ..ports.llm import EmbeddingProvider
 from ..ports.storage import MemoryStore, VectorPoint, VectorStore
@@ -237,7 +238,8 @@ class MemoryEngine:
 
         try:
             await self._ensure_index()
-            embedding = await self._embed(query.text, for_query=True)
+            # Shared with retrieval and the semantic cache for this turn (KAN-111).
+            embedding = (await embed_query(self._embedder, query.text)).first
         except EmbeddingError as exc:
             # Memory is an enhancement, not a requirement. Losing it degrades answer quality;
             # failing the turn would be a worse trade.
