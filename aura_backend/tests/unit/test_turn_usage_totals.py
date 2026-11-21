@@ -154,8 +154,12 @@ class TestStreamTotals:
         assert usage["estimated"] is False
         assert _breakdown(usage["by_purpose"]) == ledger.by_purpose()
 
+        # A streamed turn writes its telemetry after `done` (KAN-110); the record itself is
+        # built before `done` from the same ledger, so it must be the turn total `done` reported.
+        at_done = ledger.total()
+        await container.kernel.wait_for_post_turn()
         telemetry = sink._turns[-1]
-        assert (telemetry.prompt_tokens, telemetry.completion_tokens) == ledger.total()
+        assert (telemetry.prompt_tokens, telemetry.completion_tokens) == at_done
         assert telemetry.usage_estimated is False
 
 
