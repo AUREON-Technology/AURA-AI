@@ -84,10 +84,15 @@ from .sensitivity import effective_classification
 from .workload import effective_workload
 
 __all__ = [
+    "GENERATION_PURPOSES",
     "ProviderRouter",
+    "PurposeUsage",
     "RoutingDecision",
     "TurnBudget",
+    "TurnUsage",
+    "current_generation_purpose",
     "current_turn_budget",
+    "generation_purpose",
     "no_turn_budget",
     "turn_budget_scope",
 ]
@@ -211,22 +216,127 @@ class RoutingDecision:
         return self.candidates[0] if self.candidates else None
 
 
+#: Why a generation was made: the bounded label on usage breakdowns and on the
+#: ``aura_llm_generation_*`` series (KAN-106/107). ``answer``/``repair`` are the kernel's own
+#: generations (counted against ``max_generations``); the rest are made on the turn's behalf by
+#: other engines (counted against ``max_engine_generations``). ``engine`` is any unlabelled one.
+GENERATION_PURPOSES = frozenset(
+    {"answer", "repair", "planner", "reasoning", "summary", "engine"}
+)
+
+_AMBIENT_PURPOSE: ContextVar[str | None] = ContextVar("aura_generation_purpose", default=None)
+
+
+@contextlib.contextmanager
+def generation_purpose(purpose: str) -> Iterator[None]:
+    """Label every generation in the block (unless its request names its own purpose in
+    ``metadata["purpose"]``). Ambient, like the turn budget, so the planner and the reasoner
+    need no new argument."""
+    token = _AMBIENT_PURPOSE.set(purpose)
+    try:
+        yield
+    finally:
+        try:
+            _AMBIENT_PURPOSE.reset(token)
+        except ValueError:  # pragma: no cover - finalised from another context (see deadline)
+            pass
+
+
+def current_generation_purpose() -> str | None:
+    """The ambient purpose label, if a :func:`generation_purpose` block is active."""
+    return _AMBIENT_PURPOSE.get()
+
+
+def _purpose_of(request: CompletionRequest, explicit: bool) -> str:
+    named = request.metadata.get("purpose") if request.metadata else None
+    purpose = named or _AMBIENT_PURPOSE.get() or ("answer" if explicit else "engine")
+    return purpose if purpose in GENERATION_PURPOSES else "engine"
+
+
+@dataclass
+class PurposeUsage:
+    """Tokens and generations of one purpose within a turn."""
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    generations: int = 0
+    estimated: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "generations": self.generations,
+            "estimated": self.estimated,
+        }
+
+
+@dataclass
+class TurnUsage:
+    """Every generation the turn made, summed, with a per-purpose breakdown (KAN-106).
+
+    ``estimated`` is true when any generation's usage was AURA's own estimate rather than the
+    provider's report, so a total is never presented as a measurement it is not.
+    """
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    generations: int = 0
+    estimated: bool = False
+    by_purpose: dict[str, PurposeUsage] = field(default_factory=dict)
+
+    @property
+    def total_tokens(self) -> int:
+        return self.prompt_tokens + self.completion_tokens
+
+    def add(self, usage: TokenUsage, purpose: str) -> None:
+        self.prompt_tokens += usage.prompt_tokens
+        self.completion_tokens += usage.completion_tokens
+        self.generations += 1
+        self.estimated = self.estimated or usage.estimated
+        part = self.by_purpose.setdefault(purpose, PurposeUsage())
+        part.prompt_tokens += usage.prompt_tokens
+        part.completion_tokens += usage.completion_tokens
+        part.generations += 1
+        part.estimated = part.estimated or usage.estimated
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "total_tokens": self.total_tokens,
+            "generations": self.generations,
+            "estimated": self.estimated,
+            "by_purpose": {k: v.as_dict() for k, v in sorted(self.by_purpose.items())},
+        }
+
+
 @dataclass
 class TurnBudget:
-    """Per-turn generation and cost ceiling.
+    """Per-turn generation and cost ceiling, and the turn's usage ledger.
 
     Replaces the legacy ``services/budget.py``, which caps Gemini calls at **2 per request** via
     a ``ContextVar`` -- making any agentic task needing three tool round-trips structurally
     impossible. Here the ceiling is expressed in generations *and* dollars, is per turn rather
     than global, and is configurable.
+
+    Two generation counts, so neither kind can starve the other (KAN-107): ``max_generations``
+    bounds the kernel's own (the answer, a schema repair); ``max_engine_generations`` bounds
+    those other engines make on the turn's behalf (planning and replanning, reasoning samples
+    and tree-of-thoughts nodes, summaries). Before it, the second kind was charged its cost but
+    never counted, so a turn's generation count had no ceiling at all. 0 = no engine cap.
     """
 
     max_generations: int = 8
     max_cost_usd: float = 0.0  # 0 disables the cost ceiling
     generations_used: int = 0
     cost_used_usd: float = 0.0
+    max_engine_generations: int = 0
+    engine_generations_used: int = 0
+    #: Every generation charged to this turn (and to the turns it was started from), summed.
+    usage: TurnUsage = field(default_factory=TurnUsage)
     #: The budget of the turn this one was started from (a delegated sub-turn), which is
-    #: charged every dollar this one spends: the same person is paying for both.
+    #: charged every dollar and token this one spends: the same person is paying for both.
     parent: "TurnBudget | None" = field(default=None, repr=False, compare=False)
 
     def check(self) -> None:
@@ -236,6 +346,26 @@ class TurnBudget:
                 details={"limit": self.max_generations, "used": self.generations_used},
             )
         self.check_cost()
+
+    def start_engine_generation(self) -> None:
+        """Count one engine generation before it is sent, or refuse it (KAN-107).
+
+        Counted at the start, not on success, so concurrent samples (self-consistency gathers
+        its samples at once) cannot all pass the check and overshoot the cap together.
+        """
+        if (
+            self.max_engine_generations
+            and self.engine_generations_used >= self.max_engine_generations
+        ):
+            raise BudgetExceededError(
+                "turn exceeded its engine generation budget",
+                details={
+                    "limit": self.max_engine_generations,
+                    "used": self.engine_generations_used,
+                    "scope": "engine",
+                },
+            )
+        self.engine_generations_used += 1
 
     def check_cost(self) -> None:
         """The cost ceiling alone, of this turn and of every turn it was started from (F30)."""
@@ -251,19 +381,30 @@ class TurnBudget:
                 )
             budget = budget.parent
 
-    def consume(self, *, cost_usd: float = 0.0, generation: bool = True) -> None:
-        """Charge one generation's cost; count it against ``max_generations`` if ``generation``.
+    def consume(
+        self,
+        *,
+        cost_usd: float = 0.0,
+        generation: bool = True,
+        usage: TokenUsage | None = None,
+        purpose: str = "answer",
+    ) -> None:
+        """Charge one generation's cost and usage; count it against ``max_generations`` if
+        ``generation``.
 
         The count bounds the generations the kernel makes itself (the answer, a schema repair).
-        Generations made on the turn's behalf by other engines -- planning, reasoning samples,
-        an agentic loop -- are charged their cost (``generation=False``) but not counted, so a
-        long tool loop cannot leave the answer with no generation left.
+        Generations made on the turn's behalf by other engines (``generation=False``) are
+        counted against ``max_engine_generations`` instead, when they start
+        (:meth:`start_engine_generation`), so a long tool loop cannot leave the answer with no
+        generation left. Cost and usage go to this turn and every turn it was started from.
         """
         if generation:
             self.generations_used += 1
         budget: TurnBudget | None = self
         while budget is not None:
             budget.cost_used_usd += cost_usd
+            if usage is not None:
+                budget.usage.add(usage, purpose)
             budget = budget.parent
 
     @property
@@ -315,7 +456,8 @@ def no_turn_budget() -> Iterator[None]:
 def _resolve_budget(budget: TurnBudget | None) -> tuple[TurnBudget | None, bool]:
     """The budget a call is charged to, and whether the caller passed it explicitly.
 
-    An explicit budget is checked in full (generations and cost); the ambient one for cost only.
+    An explicit budget is checked in full (generations and cost); the ambient one for cost and
+    for its engine-generation cap, which this call then counts against (KAN-107).
     """
     if budget is not None:
         budget.check()
@@ -323,6 +465,7 @@ def _resolve_budget(budget: TurnBudget | None) -> tuple[TurnBudget | None, bool]
     ambient = _AMBIENT_TURN_BUDGET.get()
     if ambient is not None:
         ambient.check_cost()
+        ambient.start_engine_generation()
     return ambient, False
 
 
@@ -501,6 +644,32 @@ class ProviderRouter:
                 self._prompt_memo.clear()
             self._prompt_memo[key] = (conversation, count)
         return count + _image_tokens(request)
+
+    def _settled_usage(
+        self,
+        request: CompletionRequest,
+        name: str,
+        usage: TokenUsage | None,
+        completion_text: str = "",
+        *,
+        reported_estimated: bool = False,
+    ) -> TokenUsage:
+        """The usage to charge the turn: the provider's, or AURA's marked estimate (KAN-106).
+
+        A provider that reported nothing (no usage, or an all-zero one -- no real generation
+        costs zero prompt tokens) is charged the router's own figure for the prompt and the
+        provider's tokenizer's count of the text it produced, flagged ``estimated``.
+        """
+        if usage is not None and usage.total_tokens > 0:
+            if reported_estimated and not usage.estimated:
+                return replace(usage, estimated=True)
+            return usage
+        tokenizer = self.tokenizer(name)
+        return TokenUsage(
+            prompt_tokens=self.prompt_tokens(request, name),
+            completion_tokens=tokenizer.count(completion_text),
+            estimated=True,
+        )
 
     # -- selection ---------------------------------------------------------------------
 
@@ -853,6 +1022,7 @@ class ProviderRouter:
         decode_ms: float | None = None,
         usage: TokenUsage | None = None,
         model: str | None = None,
+        purpose: str = "engine",
     ) -> GenerationTiming:
         return GenerationTiming(
             provider=name,
@@ -867,6 +1037,8 @@ class ProviderRouter:
             decode_ms=decode_ms,
             prompt_tokens=usage.prompt_tokens if usage else 0,
             completion_tokens=usage.completion_tokens if usage else 0,
+            purpose=purpose,
+            usage_estimated=bool(usage.estimated) if usage else False,
         )
 
     def _record_success(self, name: str, *, latency_ms: float, ttft_ms: float | None,
@@ -951,6 +1123,7 @@ class ProviderRouter:
         attempts: list[dict[str, Any]] = []
         limit = min(len(decision.candidates), self._max_fallbacks + 1)
         hint = effective_workload(request)
+        purpose = _purpose_of(request, explicit)
 
         for index, name in enumerate(decision.candidates[:limit]):
             if self._budget_spent():
@@ -997,7 +1170,17 @@ class ProviderRouter:
                 verdict = True
                 self._record_success(name, latency_ms=elapsed, ttft_ms=None, response=response)
                 if budget is not None:
-                    budget.consume(cost_usd=response.cost_usd, generation=explicit)
+                    budget.consume(
+                        cost_usd=response.cost_usd,
+                        generation=explicit,
+                        usage=self._settled_usage(
+                            request, name, response.usage, response.text,
+                            reported_estimated=bool(
+                                (response.raw_metadata or {}).get("usage_estimated")
+                            ),
+                        ),
+                        purpose=purpose,
+                    )
                 if index > 0:
                     # Attribute the fallback to the provider that actually failed, not to the
                     # one that succeeded -- otherwise the metric points at the healthy node.
@@ -1054,7 +1237,7 @@ class ProviderRouter:
                     self._metrics.llm_inflight.labels(provider=name).set(stats.inflight)
                 self._observe_timing(
                     self._timing(
-                        name, hint, outcome=outcome, streamed=False,
+                        name, hint, outcome=outcome, streamed=False, purpose=purpose,
                         queue_wait_ms=ticket.queue_wait_ms,
                         service_ms=(self._clock() - started) * 1000.0,
                         usage=response.usage if response is not None else None,
@@ -1115,6 +1298,7 @@ class ProviderRouter:
         attempts: list[dict[str, Any]] = []
         limit = min(len(decision.candidates), self._max_fallbacks + 1)
         hint = effective_workload(request)
+        purpose = _purpose_of(request, explicit)
 
         for index, name in enumerate(decision.candidates[:limit]):
             if self._budget_spent():
@@ -1150,6 +1334,9 @@ class ProviderRouter:
             emitted = False
             outcome = "error"
             usage: TokenUsage | None = None
+            #: The streamed text, kept only to estimate completion tokens when the provider
+            #: reports no usage (KAN-106).
+            deltas: list[str] = []
             stats.inflight += 1
             if self._metrics is not None:
                 self._metrics.llm_inflight.labels(provider=name).set(stats.inflight)
@@ -1171,6 +1358,8 @@ class ProviderRouter:
                     first_chunk_at = last_chunk_at = self._clock()
                     emitted = True
                     usage = first.usage
+                    if first.delta:
+                        deltas.append(first.delta)
                     yield first
                     while True:
                         # Bounded per chunk and in total (PP-07). The timeout scopes only the
@@ -1184,6 +1373,8 @@ class ProviderRouter:
                         last_chunk_at = self._clock()
                         if chunk.usage is not None:
                             usage = chunk.usage
+                        if chunk.delta:
+                            deltas.append(chunk.delta)
                         yield chunk
 
                 outcome = "success"
@@ -1209,12 +1400,13 @@ class ProviderRouter:
                     ).inc()
                 if budget is not None:
                     caps = provider.capabilities
-                    cost = (
-                        usage.cost_usd(caps.cost_per_1k_input_usd, caps.cost_per_1k_output_usd)
-                        if usage
-                        else 0.0
+                    charged = self._settled_usage(request, name, usage, "".join(deltas))
+                    cost = charged.cost_usd(
+                        caps.cost_per_1k_input_usd, caps.cost_per_1k_output_usd
                     )
-                    budget.consume(cost_usd=cost, generation=explicit)
+                    budget.consume(
+                        cost_usd=cost, generation=explicit, usage=charged, purpose=purpose
+                    )
                 return
             except asyncio.CancelledError:
                 outcome = "cancelled"
@@ -1275,7 +1467,7 @@ class ProviderRouter:
                     self._metrics.llm_inflight.labels(provider=name).set(stats.inflight)
                 self._observe_timing(
                     self._timing(
-                        name, hint, outcome=outcome, streamed=True,
+                        name, hint, outcome=outcome, streamed=True, purpose=purpose,
                         queue_wait_ms=ticket.queue_wait_ms,
                         service_ms=(self._clock() - started) * 1000.0,
                         ttft_ms=(first_chunk_at - started) * 1000.0 if first_chunk_at else None,

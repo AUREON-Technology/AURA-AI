@@ -356,13 +356,14 @@ class Metrics:
         self.llm_generation_total = self._histogram(
             "llm_generation_total_seconds",
             "Queue wait plus provider time for one attempt.",
-            ("provider", "model", "pool", "outcome"),
+            # ``purpose`` (KAN-107): answer | repair | planner | reasoning | summary | engine.
+            ("provider", "model", "pool", "outcome", "purpose"),
             _GEN_BUCKETS,
         )
         self.llm_generation_tokens_total = self._counter(
             "llm_generation_tokens_total",
             "Tokens per provider attempt, as reported (or estimated) by the provider.",
-            ("provider", "model", "pool", "direction"),
+            ("provider", "model", "pool", "direction", "purpose"),
         )
         self.llm_generation_tokens_per_second = self._histogram(
             "llm_generation_tokens_per_second",
@@ -703,7 +704,11 @@ class Metrics:
                 self.llm_cost_usd_total.labels(**labels).inc(telemetry.cost_usd)
             if telemetry.ttft_ms is not None:
                 self.llm_ttft.labels(**labels).observe(telemetry.ttft_ms / 1000.0)
-        self.llm_prompt_tokens.labels(route=route).observe(telemetry.prompt_tokens)
+        # The assembled prompt's size: ``prompt_tokens`` is turn-wide since KAN-106 (every
+        # generation summed), which is not a prompt size.
+        self.llm_prompt_tokens.labels(route=route).observe(
+            telemetry.context_tokens or telemetry.prompt_tokens
+        )
 
         self.cache_lookups_total.labels(
             cache="llm",
@@ -766,10 +771,11 @@ class Metrics:
         content is available here to leak -- the value carries durations and counts only.
         """
         labels = {"provider": timing.provider, "model": timing.model, "pool": timing.pool}
+        purpose = getattr(timing, "purpose", "engine") or "engine"
         self.llm_generation_queue_wait.labels(**labels).observe(timing.queue_wait_ms / 1000.0)
-        self.llm_generation_total.labels(**labels, outcome=timing.outcome).observe(
-            timing.total_ms / 1000.0
-        )
+        self.llm_generation_total.labels(
+            **labels, outcome=timing.outcome, purpose=purpose
+        ).observe(timing.total_ms / 1000.0)
         if timing.outcome != "success":
             return
         if timing.ttft_ms is not None:
@@ -777,13 +783,13 @@ class Metrics:
         if timing.decode_ms is not None:
             self.llm_generation_decode.labels(**labels).observe(timing.decode_ms / 1000.0)
         if timing.prompt_tokens:
-            self.llm_generation_tokens_total.labels(**labels, direction="input").inc(
-                timing.prompt_tokens
-            )
+            self.llm_generation_tokens_total.labels(
+                **labels, direction="input", purpose=purpose
+            ).inc(timing.prompt_tokens)
         if timing.completion_tokens:
-            self.llm_generation_tokens_total.labels(**labels, direction="output").inc(
-                timing.completion_tokens
-            )
+            self.llm_generation_tokens_total.labels(
+                **labels, direction="output", purpose=purpose
+            ).inc(timing.completion_tokens)
         tps = timing.tokens_per_second
         if tps is not None:
             self.llm_generation_tokens_per_second.labels(**labels).observe(tps)

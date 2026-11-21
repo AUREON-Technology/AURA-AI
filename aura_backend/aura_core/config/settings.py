@@ -806,6 +806,13 @@ class LLMSettings:
     semantic_cache_enabled: bool = True
     semantic_cache_threshold: float = 0.97
     max_generations_per_turn: int = 8
+    #: Ceiling on generations other engines make on a turn's behalf (KAN-107): planning and
+    #: every replan, reasoning samples and tree-of-thoughts nodes, summaries. Counted apart from
+    #: ``max_generations_per_turn`` so neither kind can starve the other. 32 covers the worst
+    #: shipped turn with room: the Engineer's plan plus 8 replans (9), a tree-of-thoughts search
+    #: at the default breadth/depth with its answer and verification (14), a session summary and
+    #: a query expansion. 0 = no cap. AURA_LLM_MAX_ENGINE_GENERATIONS_PER_TURN.
+    max_engine_generations_per_turn: int = 32
     #: USD ceiling on every generation in one turn (F30); 0 disables. Checked before each generation.
     max_cost_per_turn_usd: float = 0.0
     #: Assembled prompt cap (prefill). Independent of the provider context window so a local
@@ -884,6 +891,9 @@ class LLMSettings:
             semantic_cache_enabled=_bool("LLM_SEMANTIC_CACHE_ENABLED", True),
             semantic_cache_threshold=_float("LLM_SEMANTIC_CACHE_THRESHOLD", 0.97, minimum=0.5, maximum=1.0),
             max_generations_per_turn=_int("LLM_MAX_GENERATIONS_PER_TURN", 8, minimum=1, maximum=64),
+            max_engine_generations_per_turn=_int(
+                "LLM_MAX_ENGINE_GENERATIONS_PER_TURN", 32, minimum=0, maximum=512
+            ),
             max_cost_per_turn_usd=_float("LLM_MAX_COST_PER_TURN_USD", 0.0, minimum=0.0),
             max_prompt_tokens=_int("LLM_MAX_PROMPT_TOKENS", 400, minimum=64, maximum=32768),
             admission_max_queue=_int("LLM_ADMISSION_MAX_QUEUE", -1, minimum=-1),

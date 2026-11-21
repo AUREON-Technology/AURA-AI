@@ -140,9 +140,23 @@ class TurnTelemetry:
     providers_attempted: tuple[str, ...] = ()
 
     cache: CacheOutcome = field(default_factory=CacheOutcome)
+    #: Turn-wide totals over every generation the turn made -- planner, reasoning, the answer,
+    #: a repair (KAN-106) -- the same scope as ``cost_usd``. A cache hit made none: 0.
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cost_usd: float = 0.0
+    #: Some generation's usage was AURA's estimate, not the provider's report.
+    usage_estimated: bool = False
+    #: Generations that completed, and engine generations started against the engine cap
+    #: (KAN-107).
+    generations: int = 0
+    engine_generations: int = 0
+    #: ``{purpose: {prompt_tokens, completion_tokens, generations, estimated}}``.
+    usage_by_purpose: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    #: The context engine's tokenizer and whether its counts are exact (KAN-103), so a budget
+    #: overrun can be told apart from estimation error.
+    tokenizer: str | None = None
+    context_tokens_exact: bool = False
 
     total_ms: float = 0.0
     ttft_ms: float | None = None
@@ -230,6 +244,10 @@ class TurnTelemetry:
                 "prompt": self.prompt_tokens,
                 "completion": self.completion_tokens,
                 "total": self.total_tokens,
+                "estimated": self.usage_estimated,
+                "generations": self.generations,
+                "engine_generations": self.engine_generations,
+                "by_purpose": {k: dict(v) for k, v in self.usage_by_purpose.items()},
             },
             "cost_usd": round(self.cost_usd, 6),
             "latency": {"total_ms": round(self.total_ms, 2), "ttft_ms": self.ttft_ms,
@@ -250,7 +268,8 @@ class TurnTelemetry:
                 "identity": self.cag_identity,
                 "cache_hit": self.cag_cache_hit,
             },
-            "context": {"tokens": self.context_tokens, "dropped": self.context_dropped},
+            "context": {"tokens": self.context_tokens, "dropped": self.context_dropped,
+                        "tokenizer": self.tokenizer, "exact": self.context_tokens_exact},
             "guards": list(self.guards),
             "tainted": self.tainted,
             "tools": [

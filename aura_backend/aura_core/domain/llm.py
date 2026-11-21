@@ -269,6 +269,10 @@ class GenerationTiming:
     decode_ms: float | None = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    #: Why the generation was made (``llm.router.GENERATION_PURPOSES``): a bounded label.
+    purpose: str = "engine"
+    #: The token counts are AURA's estimate, not the provider's report (KAN-106).
+    usage_estimated: bool = False
 
     @property
     def total_ms(self) -> float:
