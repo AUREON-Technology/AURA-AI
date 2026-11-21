@@ -73,6 +73,7 @@ from ..domain.llm import (
     TokenUsage,
     WorkloadHint,
 )
+from ..context.tokenizer import Tokenizer, tokenizer_for
 from ..observability.tracing import record_span
 from ..ports.llm import LLMProvider
 from .admission import AdmissionController, AdmissionTicket, PoolLimits
@@ -119,10 +120,15 @@ def _fault_kind(exc: BaseException) -> str:
     return "request"
 
 
-def _prompt_tokens(request: CompletionRequest) -> int:
-    """Text plus a coarse per-image estimate, so an image request is not routed to a provider
-    whose context window the encoded image alone would fill."""
-    return request.conversation.approx_tokens() + sum(i.approx_tokens for i in request.images)
+def _image_tokens(request: CompletionRequest) -> int:
+    """A coarse per-image estimate, so an image request is not routed to a provider whose
+    context window the encoded image alone would fill."""
+    return sum(i.approx_tokens for i in request.images)
+
+
+#: Prompt counts memoised per (conversation, tokenizer): ``plan`` counts one request for every
+#: candidate's filter, score and quota check, and the conversation is immutable.
+_PROMPT_MEMO_LIMIT = 512
 
 # Prior used to rank a provider with no latency history. Deliberately mid-range: a new provider
 # should neither win by default (unknown == 0) nor be excluded (unknown == infinity). Scaled by the
@@ -406,6 +412,13 @@ class ProviderRouter:
         self._admission = admission
         self._quota = quota or QuotaTracker(metrics=metrics)
         self._audit = audit
+        #: Each provider's own tokenizer (KAN-103/104): the context-window check, the routing
+        #: score, the quota reservation and the usage fallback all count with it.
+        self._tokenizers: dict[str, Tokenizer] = {
+            name: tokenizer_for(p.capabilities.tokenizer, model_id=p.capabilities.model_id)
+            for name, p in self._providers.items()
+        }
+        self._prompt_memo: dict[tuple[int, int], tuple[Any, int]] = {}
         self._quota.track(self._providers)
         self._publish_health()
 
@@ -452,6 +465,42 @@ class ProviderRouter:
             return
         for name, stats in self._stats.items():
             self._metrics.provider_healthy.labels(provider=name).set(1 if stats.healthy else 0)
+
+    # -- token estimation (KAN-104) -----------------------------------------------------
+
+    def tokenizer(self, provider: str | LLMProvider | None = None) -> Tokenizer:
+        """``provider``'s tokenizer; the first provider's when none is named."""
+        name = provider.name if provider is not None and not isinstance(provider, str) else provider
+        if name is None:
+            name = next(iter(self._providers))
+        tokenizer = self._tokenizers.get(name)
+        if tokenizer is None:
+            caps = self._providers[name].capabilities
+            tokenizer = tokenizer_for(caps.tokenizer, model_id=caps.model_id)
+        return tokenizer
+
+    def prompt_tokens(
+        self, request: CompletionRequest, provider: str | LLMProvider | None = None
+    ) -> int:
+        """The prompt tokens ``request`` costs ``provider``, images included.
+
+        The one figure the window check, the score and the quota reservation use. Counted with
+        the provider's tokenizer exactly as the context engine counts an assembled prompt
+        (``Tokenizer.count_messages``), so for the provider the context engine was built for the
+        two agree to the token.
+        """
+        tokenizer = self.tokenizer(provider)
+        conversation = request.conversation
+        key = (id(conversation), id(tokenizer))
+        hit = self._prompt_memo.get(key)
+        if hit is not None and hit[0] is conversation:
+            count = hit[1]
+        else:
+            count = tokenizer.count_messages(conversation.messages)
+            if len(self._prompt_memo) >= _PROMPT_MEMO_LIMIT:
+                self._prompt_memo.clear()
+            self._prompt_memo[key] = (conversation, count)
+        return count + _image_tokens(request)
 
     # -- selection ---------------------------------------------------------------------
 
@@ -502,7 +551,7 @@ class ProviderRouter:
             return "no_json_mode"
         if caps.quality_tier < request.min_quality_tier:
             return "quality_tier_too_low"
-        prompt_tokens = _prompt_tokens(request)
+        prompt_tokens = self.prompt_tokens(request, provider)
         needed = prompt_tokens + (request.sampling.max_output_tokens or 512)
         if caps.context_window < needed:
             return "context_window_too_small"
@@ -520,7 +569,7 @@ class ProviderRouter:
         caps = provider.capabilities
         prior = _LATENCY_PRIOR_MS * _SPEED_TIER_PRIOR.get(caps.speed_tier, 1.0)
         latency = stats.latency.estimate_ms(prior)
-        prompt_tokens = _prompt_tokens(request)
+        prompt_tokens = self.prompt_tokens(request, provider)
         cost = caps.projected_cost_usd(prompt_tokens, request.sampling.max_output_tokens or 512)
         resource = caps.resource_cost
         # Saturation matters as much as raw speed: a fast provider with a full queue is slow.
@@ -646,15 +695,16 @@ class ProviderRouter:
             data_classification=classification.value,
         )
 
-    @staticmethod
-    def _estimated_tokens(request: CompletionRequest, provider: LLMProvider) -> int:
+    def _estimated_tokens(self, request: CompletionRequest, provider: LLMProvider) -> int:
         """The most this request can cost ``provider`` in tokens: prompt plus the full output cap.
 
         Matches what the provider will actually be asked for (``BaseProvider``'s effective max
         output), so a budget check never admits a request the provider could then bill past it.
+        The prompt is counted with ``provider``'s tokenizer (:meth:`prompt_tokens`), never
+        ``len/4``: a ``USER_TPD`` allowance must refuse an Arabic request its real cost exceeds.
         """
         caps = provider.capabilities
-        return _prompt_tokens(request) + caps.output_budget(
+        return self.prompt_tokens(request, provider) + caps.output_budget(
             request.sampling.max_output_tokens,
             request.preferred_max_output_tokens,
             request.timeout_s,

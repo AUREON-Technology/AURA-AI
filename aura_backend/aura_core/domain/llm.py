@@ -296,6 +296,10 @@ class ToolChoice(str, enum.Enum):
 class TokenUsage:
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    #: The provider reported nothing and these are AURA's own estimate (KAN-106). A sum is
+    #: estimated when any part of it is: an estimate presented as a measurement is worse than
+    #: no number.
+    estimated: bool = False
 
     @property
     def total_tokens(self) -> int:
@@ -305,6 +309,7 @@ class TokenUsage:
         return TokenUsage(
             self.prompt_tokens + other.prompt_tokens,
             self.completion_tokens + other.completion_tokens,
+            self.estimated or other.estimated,
         )
 
     def cost_usd(self, input_per_1k: float, output_per_1k: float) -> float:
