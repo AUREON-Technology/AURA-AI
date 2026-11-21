@@ -40,7 +40,7 @@ On 2026-10-28, desktop code ran in CI for the first time since 2026-09-11:
 Since then #185 merged fixes for all three red jobs (Windows 8.3-path canonicalization
 `bbc028a`; hostd drive-root denylist and Windows failures `130b58f`; POSIX PTY reader isolate
 stopped on dispose `4b1968e`; `rpc_client` connect wait `e512b4e`). **None of them has run in CI**:
-Actions stopped assigning runners around 19:50 UTC (CB-44), so the CI rows below still describe
+Actions stopped assigning runners around 19:50 UTC (CB-44; a billing block, confirmed 2026-11-21), so the CI rows below still describe
 `dc87beb`.
 
 Open PRs #78 (Linux/Windows loopback login) and #88 (D8 per-task worktrees) were closed as

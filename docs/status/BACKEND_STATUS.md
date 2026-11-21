@@ -55,7 +55,7 @@ the fix lives in the Railway dashboard. On 2026-10-31 the owner set the pre-depl
 (deploy `4afdd9a8` at `9bfaa22`, 2026-10-31 08:40 UTC): `revision before: 0016 (head)`, alembic connected, `revision after: 0016
 (head)`, `=== MIGRATION OK ===`, all before the app started.
 
-**CI stopped executing again** around 19:50 UTC (no runner assigned; CB-44). The last Backend CI
+**CI stopped executing again** around 19:50 UTC (no runner assigned; CB-44). *Cause confirmed 2026-11-21: a GitHub billing block ("recent account payments have failed or your spending limit needs to be increased"), not a runner outage; only the owner can lift it.* The last Backend CI
 that ran was green at `dc87beb` (3848 passed, 56 skipped; unittest 100 OK; pip-audit; docker-build).
 Four PRs merged after that — #187, #185, #188, #143 — and Railway deployed them without CI.
 A local run on `2337577` in this session: pytest 3943 passed, 56 skipped, 0 failed (3999 collected, including the 4 audience tests ported here); legacy `unittest` 106 run, OK (10 skipped); local Postgres 16 `alembic upgrade 0013 → head` clean. That is local evidence, not CI.
@@ -242,7 +242,7 @@ That needs a check in the Firebase console.
    run the personal-OS data move (`--dry-run` first), and confirm in the app that an
    agent-created task appears after a sync.
 1. **Owner:** confirm a real sign-in works on `aureon-ai.tech` now that the schema is `0016` (CB-43 migrated 2026-10-30).
-2. **Owner:** restore Actions (CB-44); re-run Backend CI on `main`; gate Railway deploys on CI.
+2. **Owner:** restore Actions (CB-44: fix GitHub billing / raise the Actions spending limit); re-run Backend CI on `main`; gate Railway deploys on CI.
 3. Enable branch protection with required checks (GAP-005 / CB-02).
 4. Get CI to run the R0/R1 remainder (F-01b, F-02 revocation, F-20, F-21, F-06) and record it.
 5. CI-run F-08 and F-09 (built and tested locally). For F-08, the GitHub callback now shows a

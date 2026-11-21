@@ -78,7 +78,14 @@ from it change how the paragraph above reads (checked live on 2026-10-28, `main`
   - That deploy had nothing to apply. Check `/health/ready`'s `schema` block after the first merge
     that adds a migration.
 - **Railway auto-deploys every `main` push itself, CI or not.** CI stopped getting runners
-  around 19:50 UTC on 2026-10-28 (CB-44: jobs end in 2–4 s with no log). **Runners were seen
+  around 19:50 UTC on 2026-10-28 (CB-44: jobs end in 2–4 s with no log). **Cause confirmed 2026-11-21: a billing
+  block, not a runner outage.** The failed jobs' check-run annotation reads "recent account
+  payments have failed or your spending limit needs to be increased" (`gh api
+  repos/<repo>/check-runs/<job id>/annotations`); only the owner can lift it (GitHub Settings →
+  Billing & plans). It was read on a Desktop Main Channel run (2026-11-19) and on PR #274's checks
+  (2026-11-21); PR #269's CI showed the same no-runner, no-steps signature. The 2026-10-28 outage
+  had that signature too, but its annotation was not read at the time. Read the annotation before treating a 2–4 s failure as a code problem.
+  **Runners were seen
   assigned again on 2026-11-06/07** (Repo Hygiene executed; Admin CI run #3 executed and passed),
   but Backend, Client and Host Daemon CI have had no trigger since 2026-10-31, so no application
   suite has run in CI since `dc87beb`. Until a PR touching `aura_backend/` shows a real run, treat

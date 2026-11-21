@@ -26,8 +26,10 @@ Severity: **Critical** (blocks everything / live exposure) · **High** (blocks a
 **ID:** CB-44 · **Severity:** High · **Area:** CI/CD
 - **Actual state:** CI stopped executing again ~19:50 UTC 2026-10-28 (every job 2–4 s, no log — CB-01's signature). Railway's own GitHub auto-deploy shipped #187, #185, #188 and #143 anyway; Deploy Control Plane never succeeded for them. So the Railway target has no CI gate, and four merges reached production unverified by CI.
 - **Required action:** owner restores Actions (Billing → spending limit / minutes); then either turn off Railway's GitHub auto-deploy so `control-plane-deploy.yml` is the only path, or enable "Wait for CI" on the Railway service. Re-run Backend, Client and Host Daemon CI on `main`.
+- **Root cause (verified 2026-11-21):** an account billing block, not a runner outage. The instantly failing jobs carry the annotation "The job was not started because recent account payments have failed or your spending limit needs to be increased" (read with `gh api repos/<repo>/check-runs/<job id>/annotations`). Code cannot fix it and re-running jobs does nothing; it is the same cause CB-01 suspected.
 - **Verification:** a green run on `main` with every job executing steps; a Railway deploy whose trigger is the workflow.
 - **Roadmap phase:** M0 · **Blocking:** every "TESTED" claim made since `dc87beb`.
+- **Update 2026-11-21:** still blocked. Actions runs from 2026-11-19 to 2026-11-21 failed with no runner and no steps (PR #269's CI, the Desktop Main Channel runs on `main`, PR #274's checks); the billing annotation was read on a Desktop Main Channel run and on PR #274's checks. The new install-page pipeline (`desktop-main-channel.yml`, PR #274) cannot run until the owner fixes billing.
 
 ## Tier 1 — do first (M0/M1/M2)
 

@@ -534,7 +534,7 @@ The table above is the long-run shape; this is the order of work from today's ac
    2026-10-30: migrated to `0016`, `/health/ready` healthy. Cause: no shell for `preDeployCommand`,
    so only its `echo` ran; it now calls `scripts/railway-predeploy.sh`. *Remaining exit:* a real
    sign-in succeeds, and the next migration-carrying deploy logs `=== MIGRATION OK ===`.
-2. CB-44: restore GitHub Actions runners. *Exit:* Backend, Client and Host Daemon CI execute on
+2. CB-44: restore GitHub Actions (a billing block: the owner fixes payment / raises the spending limit). *Exit:* Backend, Client and Host Daemon CI execute on
    `main`; their results replace the "not CI-run" caveats in `docs/status/`.
 3. CB-44: gate Railway on CI (disable its GitHub auto-deploy, or "Wait for CI").
    *Exit:* a Railway deployment triggered by `control-plane-deploy.yml`.
