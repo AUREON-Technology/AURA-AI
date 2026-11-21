@@ -20,6 +20,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
+from ..llm.turn_embeddings import embedding_memo_scope
+
 __all__ = ["TurnLookups", "current_turn_lookups", "turn_lookup_scope"]
 
 
@@ -49,12 +51,17 @@ def current_turn_lookups() -> TurnLookups | None:
 
 @contextlib.contextmanager
 def turn_lookup_scope() -> Iterator[TurnLookups]:
-    """Open a fresh memo for everything awaited inside the block."""
+    """Open a fresh memo for everything awaited inside the block.
+
+    Also the turn's query-embedding memo (KAN-111): memory recall, retrieval and the semantic
+    cache then embed the message once between them.
+    """
     parent = _CURRENT.get()
     lookups = TurnLookups()
     token = _CURRENT.set(lookups)
     try:
-        yield lookups
+        with embedding_memo_scope():
+            yield lookups
     finally:
         try:
             _CURRENT.reset(token)
