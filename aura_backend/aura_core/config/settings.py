@@ -257,6 +257,12 @@ def _redact_url_userinfo(value: str) -> str:
 # --------------------------------------------------------------------------------------
 
 
+#: Largest accepted prompt cap, global or per provider (KAN-98). Was 32768 for the global, which
+#: made a long-context provider (a 200K-window Engineer model) unreachable: the global is the
+#: upper bound of every per-provider cap, and each turn is still bounded by its providers'
+#: context windows, so a large global no longer widens a small model's prompt.
+_MAX_PROMPT_TOKENS_CEILING = 2_000_000
+
 #: How readiness may learn a provider's health (``ProviderConfig.health_probe``).
 HEALTH_PROBE_MODES = frozenset({"active", "passive"})
 
@@ -354,6 +360,17 @@ class ProviderConfig:
     #: this consent is capped below ``sensitive`` and is named as such in every audit record.
     #: AURA_PROVIDER_<NAME>_ALLOW_PROMPT_TRAINING.
     allow_prompt_training: bool = False
+    #: Which tokenizer counts this provider's tokens (KAN-103): ``qwen2`` | ``o200k`` |
+    #: ``cl100k`` | ``claude`` | ``generic``, optionally ``<family>@<path to tokenizer.json>``
+    #: for exact counts (e.g. the Qwen Space's own file). Empty = inferred from the model id,
+    #: and ``claude`` for the ``claude`` kind. AURA_PROVIDER_<NAME>_TOKENIZER.
+    tokenizer: str = ""
+    #: This provider's own assembled-prompt cap (KAN-98). 0 = undeclared: the global
+    #: ``AURA_LLM_MAX_PROMPT_TOKENS`` applies. Never above the global, which stays the upper
+    #: bound, so a per-provider value can only narrow a turn's prompt. A turn is sized to the
+    #: smallest cap among the providers that are healthy and eligible for it.
+    #: AURA_PROVIDER_<NAME>_MAX_PROMPT_TOKENS.
+    max_prompt_tokens: int = 0
 
     #: Request-body fields an ``extra_body`` may not set. See :attr:`extra_body`.
     _RESERVED_BODY_FIELDS: ClassVar[frozenset[str]] = frozenset({
@@ -769,6 +786,10 @@ class ProviderConfig:
             tokens_per_second=_float(f"{p}_TOKENS_PER_SECOND", 0.0, minimum=0.0),
             extra_body=(_env(f"{p}_EXTRA_BODY", "") or "").strip(),
             allow_prompt_training=_bool(f"{p}_ALLOW_PROMPT_TRAINING", False),
+            tokenizer=(_env(f"{p}_TOKENIZER", "") or "").strip(),
+            max_prompt_tokens=_int(
+                f"{p}_MAX_PROMPT_TOKENS", 0, minimum=0, maximum=_MAX_PROMPT_TOKENS_CEILING
+            ),
         )
 
 
@@ -800,6 +821,13 @@ class LLMSettings:
     semantic_cache_enabled: bool = True
     semantic_cache_threshold: float = 0.97
     max_generations_per_turn: int = 8
+    #: Ceiling on generations other engines make on a turn's behalf (KAN-107): planning and
+    #: every replan, reasoning samples and tree-of-thoughts nodes, summaries. Counted apart from
+    #: ``max_generations_per_turn`` so neither kind can starve the other. 32 covers the worst
+    #: shipped turn with room: the Engineer's plan plus 8 replans (9), a tree-of-thoughts search
+    #: at the default breadth/depth with its answer and verification (14), a session summary and
+    #: a query expansion. 0 = no cap. AURA_LLM_MAX_ENGINE_GENERATIONS_PER_TURN.
+    max_engine_generations_per_turn: int = 32
     #: USD ceiling on every generation in one turn (F30); 0 disables. Checked before each generation.
     max_cost_per_turn_usd: float = 0.0
     #: Assembled prompt cap (prefill). Independent of the provider context window so a local
@@ -878,8 +906,13 @@ class LLMSettings:
             semantic_cache_enabled=_bool("LLM_SEMANTIC_CACHE_ENABLED", True),
             semantic_cache_threshold=_float("LLM_SEMANTIC_CACHE_THRESHOLD", 0.97, minimum=0.5, maximum=1.0),
             max_generations_per_turn=_int("LLM_MAX_GENERATIONS_PER_TURN", 8, minimum=1, maximum=64),
+            max_engine_generations_per_turn=_int(
+                "LLM_MAX_ENGINE_GENERATIONS_PER_TURN", 32, minimum=0, maximum=512
+            ),
             max_cost_per_turn_usd=_float("LLM_MAX_COST_PER_TURN_USD", 0.0, minimum=0.0),
-            max_prompt_tokens=_int("LLM_MAX_PROMPT_TOKENS", 400, minimum=64, maximum=32768),
+            max_prompt_tokens=_int(
+                "LLM_MAX_PROMPT_TOKENS", 400, minimum=64, maximum=_MAX_PROMPT_TOKENS_CEILING
+            ),
             admission_max_queue=_int("LLM_ADMISSION_MAX_QUEUE", -1, minimum=-1),
             admission_queue_timeout_s=_float("LLM_ADMISSION_QUEUE_TIMEOUT_S", 0.0, minimum=0.0),
             # Unset, the gateway's own worker count: Railway runs the image's

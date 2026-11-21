@@ -1,3 +1,15 @@
+"""Not exposed (ADR-036, 2026-11-21) -- deliberately NOT registered as a tool. Regex line matching for
+JS/TS/Dart/Go/Rust is imprecise, and its function pattern backtracks quadratically on a long line
+(40K characters of ``a(`` took 1.3 s; the 200K group-A cap would take ~30 s, uncancellable
+under ``asyncio.to_thread``). The Python half duplicates ``analyze_python_ast``. A candidate only
+after a per-line length cap and a better extractor.
+
+Reachable from no persona: nothing under ``aura_core`` imports this module, which
+``tests/architecture/test_open_tools_classification.py`` checks against
+``tools/open/_classification.py``. Kept as reference code; change that classification and
+ADR-036 before wiring it in.
+"""
+
 import ast
 import re
 import textwrap

@@ -1,3 +1,13 @@
+"""Not exposed (ADR-036, 2026-11-21) -- deliberately NOT registered as a tool. ``_to_bytes`` reads any
+existing path on the gateway, image bytes do not travel well as tool JSON, and the "perceptual"
+hash is over raw (compressed) bytes.
+
+Reachable from no persona: nothing under ``aura_core`` imports this module, which
+``tests/architecture/test_open_tools_classification.py`` checks against
+``tools/open/_classification.py``. Kept as reference code; change that classification and
+ADR-036 before wiring it in.
+"""
+
 import hashlib
 import struct
 from pathlib import Path

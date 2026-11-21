@@ -1,3 +1,12 @@
+"""Not exposed (ADR-036, 2026-11-21) -- deliberately NOT registered as a tool. It walks directories on
+the gateway, and indexing and retrieval are the knowledge engine's job (``knowledge/``).
+
+Reachable from no persona: nothing under ``aura_core`` imports this module, which
+``tests/architecture/test_open_tools_classification.py`` checks against
+``tools/open/_classification.py``. Kept as reference code; change that classification and
+ADR-036 before wiring it in.
+"""
+
 import ast
 import re
 from pathlib import Path

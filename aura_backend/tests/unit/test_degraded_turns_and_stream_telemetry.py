@@ -120,6 +120,8 @@ class TestStreamTelemetry:
         before = len(sink)
         frames = [frame async for frame in container.kernel.stream(_request("hello there"))]
         assert frames[-1]["type"] == "done"
+        # The sink write runs after `done` (KAN-110); the record must still land.
+        await container.kernel.wait_for_post_turn()
         assert len(sink) == before + 1
 
     @needs_prometheus
@@ -130,7 +132,9 @@ class TestStreamTelemetry:
         assert _sample(
             container, "aura_turns_total", {"route": "chat", "outcome": "success"}
         ) == 1
-        assert _sample(container, "aura_turn_duration_seconds_count", {"route": "chat"}) == 1
+        assert _sample(
+            container, "aura_turn_duration_seconds_count", {"route": "chat", "planned": "false"}
+        ) == 1
         assert _sample(container, "aura_turns_in_flight") == 0
 
     @needs_prometheus

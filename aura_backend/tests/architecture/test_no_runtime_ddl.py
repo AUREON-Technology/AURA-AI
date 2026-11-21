@@ -67,12 +67,24 @@ def _core_files() -> list[Path]:
     return sorted(p for p in CORE.rglob("*.py") if "__pycache__" not in p.parts)
 
 
+#: DDL-shaped text that is returned to a person and never executed, by exact file and literal.
+#: Each entry needs its reason; anything else that matches is a failure.
+_ADVISORY_TEXT: dict[tuple[str, str], str] = {
+    (
+        "aura_core/tools/open/database_intelligence_tool.py",
+        "CREATE INDEX idx_{x}_{x} ON {x} ({x});",
+    ): "inspect_sql's index *suggestion*, shown to the user as text; the tool has no database "
+       "connection and runs nothing.",
+}
+
+
 def test_no_code_under_aura_core_issues_ddl() -> None:
     offenders = [
         f"{path.relative_to(BACKEND)}:{line}: {_DDL.search(text).group(0)!r}"
         for path in _core_files()
-        for line, text in _sql_literals(path.read_text())
+        for line, text in _sql_literals(path.read_text(encoding="utf-8"))
         if _DDL.search(text)
+        and (path.relative_to(BACKEND).as_posix(), text) not in _ADVISORY_TEXT
     ]
     assert not offenders, (
         "DDL in aura_core -- schema changes belong in an Alembic migration "
@@ -83,14 +95,14 @@ def test_no_code_under_aura_core_issues_ddl() -> None:
 def test_every_aura_table_the_code_queries_is_created_by_a_migration() -> None:
     queried: dict[str, set[str]] = {}
     for path in _core_files():
-        for _line, text in _sql_literals(path.read_text()):
+        for _line, text in _sql_literals(path.read_text(encoding="utf-8")):
             for table in _REFERENCE.findall(text):
                 queried.setdefault(table, set()).add(path.name)
     assert queried, "the scan found no SQL at all -- the pattern is broken"
 
     migrated: set[str] = set()
     for path in VERSIONS.glob("*.py"):
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         migrated.update(re.findall(r"CREATE TABLE(?: IF NOT EXISTS)?\s+\"?(aura_\w+)", text))
         migrated.update(re.findall(r"create_table\(\s*[\"'](aura_\w+)", text))
 

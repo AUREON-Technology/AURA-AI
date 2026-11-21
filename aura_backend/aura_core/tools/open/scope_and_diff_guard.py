@@ -1,3 +1,15 @@
+"""Not exposed (ADR-036, 2026-11-21) -- deliberately NOT registered as a tool. It overlaps
+``scan_code_security`` (secrets in a diff) and ``analyze_change_impact`` (diff parsing), and its
+path normalisation is wrong: ``lstrip("./")`` strips characters, so ``.env`` becomes ``env`` and
+the default ``.env*`` pattern misses a root ``.env`` (and ``credentials.json``). Fix before any
+exposure.
+
+Reachable from no persona: nothing under ``aura_core`` imports this module, which
+``tests/architecture/test_open_tools_classification.py`` checks against
+``tools/open/_classification.py``. Kept as reference code; change that classification and
+ADR-036 before wiring it in.
+"""
+
 import fnmatch
 import re
 from pathlib import Path

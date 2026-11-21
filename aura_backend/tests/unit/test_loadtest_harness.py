@@ -104,6 +104,8 @@ class TestClassification:
         assert classify_stream_error("timeout") == ERR_5XX
         assert classify_stream_error("internal_error") == ERR_5XX
         assert classify_stream_error("safety_violation") == ERR_BLOCKED
+        # A prompt too large for the window is the request's size, not the server failing.
+        assert classify_stream_error("context_overflow") == ERR_4XX
         assert classify_stream_error("something_new") == ERR_5XX
 
     def test_kind_table_matches_the_domain_errors(self) -> None:

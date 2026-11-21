@@ -26,6 +26,7 @@ __all__ = [
     "AuraError",
     "ConfigurationError",
     "ValidationError",
+    "ContextOverflowError",
     "OutputInvalidError",
     "NotFoundError",
     "ConflictError",
@@ -119,6 +120,19 @@ class ConfigurationError(AuraError):
 class ValidationError(AuraError):
     kind = "validation_error"
     http_status = 422
+
+
+class ContextOverflowError(AuraError):
+    """A turn's irreducible prompt -- instructions, fence rules, pinned notes and the user's own
+    message, after every history message, summary, memory, document and tool output that could
+    go has gone -- does not fit the context window with room left to answer (KAN-99).
+
+    Raised instead of sending a prompt the provider would reject or truncate. ``details`` names
+    token counts only, never content.
+    """
+
+    kind = "context_overflow"
+    http_status = 413
 
 
 class OutputInvalidError(AuraError):
