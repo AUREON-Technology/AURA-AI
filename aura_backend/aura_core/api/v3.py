@@ -2186,6 +2186,19 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         Request=Request,
     )
 
+    from .admin_control import register_control_ops
+
+    register_control_ops(
+        router,
+        container,
+        principal=principal,
+        require_super_admin=require_super_admin,
+        audit_admin=audit_admin,
+        Depends=Depends,
+        JSONResponse=JSONResponse,
+        Request=Request,
+    )
+
     from .admin_service_keys import register_service_key_ops
 
     register_service_key_ops(

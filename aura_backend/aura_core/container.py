@@ -568,6 +568,10 @@ class Container:
             allow_cpu=settings.learning.finetune_allow_cpu,
         )
 
+        # The console's Super-Admin control center (ADR-037). Always built: its routes are
+        # SuperAdmin-only, and a platform is reachable only after its token is entered.
+        self._build_control(use_postgres=use_postgres)
+
         # Track AP (ADR-018/021). None unless AURA_ADAPTATION_ENABLED; the admin routes answer 503.
         self.connectors = self._build_adaptation(use_postgres=use_postgres)
         self.discovery = None
@@ -870,6 +874,76 @@ class Container:
             clock=self.clock,
             audit=self.audit,
             metrics=self.metrics,
+        )
+
+    def _build_control(self, *, use_postgres: bool) -> None:
+        """The control center (ADR-037): store, vault, step-up and the platform verifiers.
+
+        Platform tokens are sealed by the same vault as connector credentials, under
+        ``AURA_SECRETS_ENCRYPTION_KEY``; with no key the page still opens and says so, and no
+        token can be saved. Outside production-like environments the step-up and platform
+        checks are the in-process adapters, so tests and a local gateway never call Google or a
+        platform: register a re-sign-in token on ``control_reverifier`` to exercise them.
+        """
+        from .adapters.control_store import InMemoryControlStore, PostgresControlStore
+        from .adapters.credential_vault import (
+            SECRETS_KEYS_ENV,
+            EncryptedCredentialVault,
+            InMemoryCiphertextStore,
+        )
+        from .adapters.field_crypto import FieldCipher
+        from .config.settings import secrets_encryption_keys
+        from .control.service import ControlService, StepUpService
+        from .control.wiring import cloudflare_api_root
+
+        settings = self.settings
+        url = settings.infrastructure.database_url
+        if use_postgres:
+            from .adapters.postgres_adaptation import PostgresCiphertextStore
+
+            store: Any = PostgresControlStore(url, pool=self._postgres_pool())
+            ciphertexts: Any = PostgresCiphertextStore(url, pool=self._postgres_pool())
+        else:
+            store = InMemoryControlStore()
+            ciphertexts = InMemoryCiphertextStore()
+        try:
+            cipher = FieldCipher(secrets_encryption_keys(), setting=SECRETS_KEYS_ENV)
+        except ConfigurationError as exc:
+            # Built on every boot, unlike Track AP's vault (behind AURA_ADAPTATION_ENABLED): a
+            # malformed key must cost the control center, not the gateway. The page then shows
+            # the "set the vault key" warning and nothing can be connected.
+            logger.error(
+                "control center vault disabled: the secrets key is not usable",
+                extra={"setting": SECRETS_KEYS_ENV, "error": str(exc)},
+            )
+            cipher = FieldCipher.disabled()
+        vault = EncryptedCredentialVault(cipher=cipher, store=ciphertexts)
+        control = settings.control
+        if settings.environment.is_production_like:
+            from .adapters.identity_reverify import GoogleReverifier
+            from .adapters.platform_verify import HttpPlatformVerifier
+
+            reverifier: Any = GoogleReverifier(client_ids=control.google_client_ids)
+            verifier: Any = HttpPlatformVerifier(
+                default_qdrant_url=settings.infrastructure.qdrant_url,
+                cloudflare_api_root=cloudflare_api_root(settings.llm.providers),
+            )
+        else:
+            from .adapters.identity_reverify import StaticReverifier
+            from .adapters.platform_verify import StaticPlatformVerifier
+
+            reverifier = StaticReverifier()
+            verifier = StaticPlatformVerifier()
+        self.control_store = store
+        self.control_vault = vault
+        self.control_reverifier = reverifier
+        self.control_verifier = verifier
+        self.step_up = StepUpService(
+            store=store, reverifier=reverifier,
+            max_age_s=control.step_up_max_age_s, ttl_s=control.step_up_ttl_s,
+        )
+        self.control = ControlService(
+            store=store, vault=vault, verifier=verifier, writes_per_hour=control.writes_per_hour,
         )
 
     def _build_adaptation(self, *, use_postgres: bool) -> Any:
