@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 """Superseded -- deliberately NOT registered as a tool (ADR-036). The platform already has the real
 signals: `observability/metrics.py` (`gpu_memory_used_bytes`, `gpu_utilisation`) and
 `adapters/ml/device.py`. This class is a bookkeeping ledger -- it never reads a device, has no
@@ -9,10 +8,7 @@ Kept for reference only: nothing under ``aura_core`` may import it
 (``tests/architecture/test_superseded_open_tools_unused.py``).
 """
 
-from typing import Any, Dict
-=======
 from typing import Any, Dict, List, Optional
->>>>>>> f8b3e927b90821d5152b6e48f081b879bfbb4c3b
 
 
 class GpuResourceScheduler:
