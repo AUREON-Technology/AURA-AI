@@ -66,6 +66,13 @@ class TestAnApiBaseIsRequired:
         )
         assert _whole_path_matches(reach, path, line)
 
+    def test_the_control_center_s_step_up_write_is_a_base(self, reach) -> None:
+        """`stepUp.write` (`aura_admin/src/lib/control.ts`) hands its path to `api(...)`."""
+        route = "/api/v3/admin/control/platforms/{platform}/credential"
+        line = "await stepUp.write(`/admin/control/platforms/${row.platform}/credential`, {"
+        assert _whole_path_matches(reach, route, line)
+        assert not _whole_path_matches(reach, route, "write(`/admin/control/platforms/${p}/credential`)")
+
     def test_a_parameterised_route_still_needs_a_base(self, reach) -> None:
         route = "/api/v3/knowledge/documents/{document_id}"
         assert _whole_path_matches(reach, route, "'$_base/knowledge/documents/$id'")

@@ -100,7 +100,7 @@ def routes() -> list[tuple[str, str]]:
 
 # A wrapper call left open at the end of a line (`await api(` -- the formatter put the argument on
 # the next line) is carried onto that next line, so the matcher sees `api(\`/admin/...\`` as one call.
-_OPEN_WRAPPER = re.compile(r"\bapi(?:<.*>)?\(\s*$")
+_OPEN_WRAPPER = re.compile(r"\b(?:api|stepUp\.write)(?:<.*>)?\(\s*$")
 
 
 def scan_tree(base: Path, exts: tuple[str, ...], *, root: Path = ROOT) -> list[tuple[str, int, str]]:
@@ -147,9 +147,11 @@ _END = r"(?=['\"`?]|$|\$\{?\w*[qQ]uery)"
 _INTERP = r"(?:\$\{[^}]+\}|\$[A-Za-z_]\w*)"
 # A whole path counts only on an API base: the literal `/api/vN`; an interpolated base such as
 # `$_baseUrl` / `${backend}` that the file resolves elsewhere; or the admin console's `api(...)`
-# wrapper (`aura_admin/src/lib/api.ts` prepends `/api/v3` to the path it is given). A bare
+# wrapper (`aura_admin/src/lib/api.ts` prepends `/api/v3` to the path it is given), and its
+# control-center `stepUp.write(...)` (`aura_admin/src/lib/control.ts`), which hands the path to
+# `api(...)` with the step-up header. A bare
 # `'/chat'` is a UI route (go_router, Next.js) and used to credit `/api/v3/chat` (audit FSA-083).
-_WRAPPER = r"\bapi(?:<.*>)?\(\s*[\"'`]"
+_WRAPPER = r"\b(?:api|stepUp\.write)(?:<.*>)?\(\s*[\"'`]"
 _BASE = rf"(?:/api/v\d+|{_INTERP}|{_WRAPPER})"
 
 
