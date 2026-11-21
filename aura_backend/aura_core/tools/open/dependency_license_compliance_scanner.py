@@ -1,5 +1,5 @@
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +171,7 @@ class DependencyLicenseComplianceScanner:
 
             ok = not matched_forbidden and not not_in_allowlist
             if ok:
-                compliant_packages.append({"package": pkg, "license": lic})
+                compliant_packages.append({"package": pkg, "license": raw_lic})
             else:
                 violations.append({
                     "package": pkg,
