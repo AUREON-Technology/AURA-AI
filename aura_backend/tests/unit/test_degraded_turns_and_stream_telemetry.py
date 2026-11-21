@@ -130,7 +130,9 @@ class TestStreamTelemetry:
         assert _sample(
             container, "aura_turns_total", {"route": "chat", "outcome": "success"}
         ) == 1
-        assert _sample(container, "aura_turn_duration_seconds_count", {"route": "chat"}) == 1
+        assert _sample(
+            container, "aura_turn_duration_seconds_count", {"route": "chat", "planned": "false"}
+        ) == 1
         assert _sample(container, "aura_turns_in_flight") == 0
 
     @needs_prometheus

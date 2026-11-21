@@ -90,6 +90,23 @@ class _NoopMetric:
 _NOOP = _NoopMetric()
 
 
+def _planned_label(telemetry: Any) -> str:
+    """``"true"`` when the turn's planning stage ran, else ``"false"`` (KAN-108).
+
+    Read from what the kernel recorded, not re-derived from the message: planning ran when it
+    produced steps, when it failed (``planning_failed``), or when the planning stage has a
+    duration at all -- a plan that came back as a single RESPOND step still cost a generation.
+    Two values only, so the label cannot grow the series count.
+    """
+    timings = getattr(telemetry, "timings", None)
+    ran = (
+        bool(getattr(telemetry, "plan_steps", 0))
+        or bool(getattr(telemetry, "planning_failed", False))
+        or bool(getattr(timings, "planning", 0.0))
+    )
+    return "true" if ran else "false"
+
+
 def _multiproc_dir() -> str | None:
     """Return the multiprocess mmap directory when the operator has opted in.
 
@@ -174,8 +191,12 @@ class Metrics:
         self.turns_total = self._counter(
             "turns_total", "Completed turns by route and outcome.", ("route", "outcome")
         )
+        # ``planned`` ("true"/"false", KAN-108): a planned turn pays one planning generation
+        # (and any tool calls) before its answer, so its latency is a different distribution.
+        # Mixed into one series, a p95 moves with the planned share rather than with speed.
         self.turn_duration = self._histogram(
-            "turn_duration_seconds", "End-to-end turn duration.", ("route",), _TURN_BUCKETS
+            "turn_duration_seconds", "End-to-end turn duration.", ("route", "planned"),
+            _TURN_BUCKETS,
         )
         self.stage_duration = self._histogram(
             "stage_duration_seconds", "Duration of one pipeline stage.", ("stage",), _MS_BUCKETS
@@ -690,7 +711,9 @@ class Metrics:
         """
         route = telemetry.route
         self.turns_total.labels(route=route, outcome=str(telemetry.outcome)).inc()
-        self.turn_duration.labels(route=route).observe(telemetry.total_ms / 1000.0)
+        self.turn_duration.labels(route=route, planned=_planned_label(telemetry)).observe(
+            telemetry.total_ms / 1000.0
+        )
         for stage, ms in telemetry.timings.as_dict().items():
             if ms:
                 self.stage_duration.labels(stage=stage).observe(ms / 1000.0)
