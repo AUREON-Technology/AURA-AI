@@ -82,8 +82,18 @@ class TestOneFigure:
             sampling=SamplingParams(temperature=0.0, max_output_tokens=64),
         )
 
+        # One estimator: the router counts with the routed provider's tokenizer, which is the
+        # one the context engine was built with, and its figure is that tokenizer's count of
+        # the prompt actually sent.
+        assert router.tokenizer("space").name == context.tokenizer_name == "heuristic:qwen2"
         figure = router.prompt_tokens(request, "space")
-        assert figure == assembled.prompt_tokens
+        assert figure == tokenizer_for("qwen2").count_messages(list(assembled.conversation))
+        # The context engine reaches the same figure without recounting the prompt: each part
+        # is counted once and the rendered system block is costed from its items' counts plus
+        # framing (KAN-105), so it can differ by a rounding step per part -- the bound
+        # test_context_window_improve pins for a rendered block -- but never by the 2x a
+        # len/4 count was off on Arabic.
+        assert abs(assembled.prompt_tokens - figure) <= 4, (assembled.prompt_tokens, figure)
         assert router._estimated_tokens(request, provider) == figure + 64
 
         response = await router.complete(request)

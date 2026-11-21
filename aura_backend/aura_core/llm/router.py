@@ -638,10 +638,11 @@ class ProviderRouter:
     ) -> int:
         """The prompt tokens ``request`` costs ``provider``, images included.
 
-        The one figure the window check, the score and the quota reservation use. Counted with
-        the provider's tokenizer exactly as the context engine counts an assembled prompt
-        (``Tokenizer.count_messages``), so for the provider the context engine was built for the
-        two agree to the token.
+        The one figure the window check, the score and the quota reservation use: the
+        provider's tokenizer counting the prompt as sent (``Tokenizer.count_messages``). For the
+        provider the context engine was built for, that is the engine's own tokenizer; the
+        engine's ``prompt_tokens`` sums parts it counted once each (KAN-105), so it agrees with
+        this to within a rounding step per rendered part rather than to the token.
         """
         tokenizer = self.tokenizer(provider)
         conversation = request.conversation
