@@ -1,3 +1,13 @@
+"""Not exposed (ADR-036, 2026-11-21) -- deliberately NOT registered as a tool. Pure, but it needs a
+module-to-imports map the caller must assemble first, and its default layer names are generic.
+AURA's own layering is enforced by ``tests/architecture``. Not worth the planner prompt today.
+
+Reachable from no persona: nothing under ``aura_core`` imports this module, which
+``tests/architecture/test_open_tools_classification.py`` checks against
+``tools/open/_classification.py``. Kept as reference code; change that classification and
+ADR-036 before wiring it in.
+"""
+
 from typing import Any, Dict, List, Optional, Set
 
 

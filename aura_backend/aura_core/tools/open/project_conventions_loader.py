@@ -1,3 +1,13 @@
+"""Not exposed (ADR-036, 2026-11-21) -- deliberately NOT registered as a tool. It reads and walks
+workspace paths on the gateway. The Engineer reads convention files with ``read_file`` in its
+workspace.
+
+Reachable from no persona: nothing under ``aura_core`` imports this module, which
+``tests/architecture/test_open_tools_classification.py`` checks against
+``tools/open/_classification.py``. Kept as reference code; change that classification and
+ADR-036 before wiring it in.
+"""
+
 import os
 import re
 from pathlib import Path
