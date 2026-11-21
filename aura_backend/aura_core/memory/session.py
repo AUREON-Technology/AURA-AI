@@ -31,7 +31,7 @@ from ..domain.messages import Conversation, Message, Role
 from ..observability.logging import get_logger
 from ..ports.storage import Cache
 
-__all__ = ["WorkingMemory", "EpisodicMemory", "SessionState"]
+__all__ = ["WorkingMemory", "EpisodicMemory", "SessionState", "FALLBACK_SUMMARY_MARKER"]
 
 logger = get_logger("memory.session")
 
@@ -387,18 +387,36 @@ class EpisodicMemory:
 
         Falls back to a truncated transcript when no summariser is configured. Losing the
         conversation entirely would be worse than keeping a crude record of it, and the fallback
-        is clearly marked so it is never mistaken for a model-written summary.
+        is clearly marked (:data:`FALLBACK_SUMMARY_MARKER`) so it is never mistaken for a
+        model-written summary.
         """
         transcript = "\n".join(f"{m.role}: {m.content}" for m in overflow)
         if self._summariser is None:
-            merged = f"{previous}\n{transcript}" if previous else transcript
-            return merged[-4000:]
+            return _fallback_summary(previous, transcript)
         try:
             return await self._summariser(transcript, previous)
         except Exception:
             logger.warning("conversation summarisation failed; keeping truncated transcript")
-            merged = f"{previous}\n{transcript}" if previous else transcript
-            return merged[-4000:]
+            return _fallback_summary(previous, transcript)
+
+
+#: Leads every summary that is raw transcript rather than a model's summary (KAN-101). The
+#: docstring above always promised this mark; the text never carried it.
+FALLBACK_SUMMARY_MARKER = "[unsummarised transcript excerpt]"
+_FALLBACK_SUMMARY_MAX_CHARS = 4000
+
+
+def _fallback_summary(previous: str, transcript: str) -> str:
+    """The newest ``_FALLBACK_SUMMARY_MAX_CHARS`` of the transcript so far, marker first.
+
+    The marker is stripped from ``previous`` before merging and put back once, so it survives
+    the tail cut and is never repeated.
+    """
+    if previous.startswith(FALLBACK_SUMMARY_MARKER):
+        previous = previous[len(FALLBACK_SUMMARY_MARKER):].lstrip("\n")
+    merged = f"{previous}\n{transcript}" if previous else transcript
+    room = _FALLBACK_SUMMARY_MAX_CHARS - len(FALLBACK_SUMMARY_MARKER) - 1
+    return f"{FALLBACK_SUMMARY_MARKER}\n{merged[-room:]}"
 
 
 def build_session_summariser(router: Any, prompts: Any, *, model_policy: Any = None):

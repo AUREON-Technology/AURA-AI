@@ -523,7 +523,11 @@ class ContextEngine:
                 ContextItem(
                     content=summary_text,
                     section=ContextSection.HISTORY,
-                    channel=TrustChannel.SYSTEM,
+                    # DATA, fenced with the turn nonce (KAN-101). The summary is a model's
+                    # rewrite of what users and tools said -- or, when no summariser ran, the
+                    # raw transcript -- so text a poisoned document planted in an earlier turn
+                    # must not come back on the instruction channel once it is summarised.
+                    channel=TrustChannel.DATA,
                     relevance=0.8,
                     priority=40,
                     tokens=self._tokenizer.count(summary_text),
