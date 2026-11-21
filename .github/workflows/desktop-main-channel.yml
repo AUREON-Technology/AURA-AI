@@ -15,9 +15,16 @@ name: Desktop Main Channel
 # desktop-package.yml uses (bundled aura_hostd, Inno Setup installer), which
 # scripts/deploy_client_desktop.ps1 alone does not produce. Railway only HOSTS the result.
 #
-# One-time setup (repository settings): the secret RAILWAY_WEB_TOKEN, a Railway PROJECT token for
-# the `production` environment of project `intuitive-adaptation`. Without it deploy-web fails
-# loudly instead of skipping.
+# One-time setup (repository settings):
+#  1. Create the GitHub environment `web-production` and restrict its deployment branches to `main`
+#     (Settings -> Environments -> web-production -> Deployment branches and tags).
+#  2. Store RAILWAY_WEB_TOKEN -- a Railway PROJECT token for the `production` environment of project
+#     `intuitive-adaptation` -- as a secret OF THAT ENVIRONMENT, not a repository secret. A
+#     repository secret is readable by a workflow on any branch; an environment secret only by jobs
+#     that passed the branch rule. Without the token deploy-web fails loudly instead of skipping.
+#  Optional: required reviewers on the environment, if every deploy should be approved by hand.
+#  The `if:` below is only a convenience: whoever can push a branch can edit it, so the environment
+#  rule is the real protection.
 #
 # What this is NOT:
 # - It is not the update channel installed apps read. That is desktop-package.yml's signed
@@ -71,6 +78,15 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # The backend URL is baked into an installer that is then published to the public. A manual
+      # dispatch lets the caller type it, so only an https address on our own domain is accepted:
+      # nobody can ship a build that talks to a different server.
+      - name: Validate the backend URL
+        run: |
+          if ($env:BACKEND_URL -notmatch '^https://([a-z0-9-]+\.)*aureon-ai\.tech/?$') {
+            throw "backend_url must be an https:// address on aureon-ai.tech, got '$env:BACKEND_URL'"
+          }
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
@@ -198,8 +214,13 @@ jobs:
           path: dist/
           retention-days: 14
 
+  # Only main deploys. A manual dispatch from any other branch still builds (to check the build) but
+  # never touches the live site. The `web-production` environment is what actually enforces this:
+  # see "One-time setup" at the top.
   deploy-web:
     needs: build
+    if: github.ref == 'refs/heads/main'
+    environment: web-production
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

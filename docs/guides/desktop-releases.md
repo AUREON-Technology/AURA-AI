@@ -33,10 +33,18 @@ push to main --> Windows runner builds the installer --> railway up (AURA-Web se
   `latest.json` (commit, version, build time, installer name/size/SHA-256),
   `aura-desktop-windows-x64-setup.exe` and `AURA-Desktop-Setup.cmd`. Before the first build has
   been deployed the page says no build is published and the setup file stops with the same message.
-- **One-time setup:** a Railway **project token** for the `production` environment, stored as the
-  GitHub repository secret `RAILWAY_WEB_TOKEN`. Without it the `deploy-web` job fails with a message
-  saying so; it never skips silently. The job then waits until the live site reports the pushed
-  commit and the installer's exact size, so a green run means the site really serves that build.
+- **One-time setup (two parts, both in GitHub Settings):** create the environment `web-production`
+  and restrict its deployment branches to `main`; then store a Railway **project token** for the
+  `production` environment as the secret `RAILWAY_WEB_TOKEN` **of that environment**, not as a
+  repository secret (a repository secret is readable by a workflow on any branch; an environment
+  secret only by jobs that passed the branch rule). Optionally add required reviewers to approve
+  every deploy. Without the token `deploy-web` fails with a message saying so; it never skips
+  silently. The job then waits until the live site reports the pushed commit and the installer's
+  exact size, so a green run means the site really serves that build.
+- **Safeguards:** only `main` deploys (`deploy-web` has `if: github.ref == 'refs/heads/main'`, and the
+  environment rule enforces it, since anyone who can push a branch can edit the `if`). A manual
+  dispatch from another branch builds but never deploys. The `backend_url` input must be an https
+  address on `aureon-ai.tech`, because it is baked into a publicly published installer.
 - **Manual deploy:** stage `aura_web/` and `scripts/AURA-Desktop-Setup.cmd` with the installer and
   `latest.json` in `aura_web/build-assets/`, then `railway up --service AURA-Web` from that folder.
   Never run `railway up` from the repository root: it holds credential files.
