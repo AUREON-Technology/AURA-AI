@@ -417,3 +417,55 @@ class TestAutomaticRollback:
         second = await other.tick()
         assert len(first) == 1 and second == []
         assert railway.rollbacks == [("gateway", "dep-old")]
+
+
+class TestGoogleReSignInClaims:
+    """``GoogleReverifier``'s claim handling, past the signature check (google-auth's job).
+
+    The shape below is what Google really sends: its discovery document has no ``auth_time`` in
+    ``claims_supported``, so a verifier that required it refused every live re-sign-in.
+    """
+
+    def _google_claims(self, **overrides):
+        now = int(datetime.now(timezone.utc).timestamp())
+        claims = {
+            "iss": "https://accounts.google.com", "aud": "console-client", "sub": "1234",
+            "email": ROOT, "email_verified": True, "iat": now, "exp": now + 3600, "nonce": "n-1",
+        }
+        claims.update(overrides)
+        return {k: v for k, v in claims.items() if v is not None}
+
+    async def _verify(self, monkeypatch, claims):
+        from aura_core.adapters.identity_reverify import GoogleReverifier
+
+        monkeypatch.setattr(GoogleReverifier, "_verify_sync", staticmethod(lambda token: claims))
+        return await GoogleReverifier(client_ids=["console-client"]).verify("a-google-id-token")
+
+    async def test_a_real_google_token_without_auth_time_is_dated_by_iat(self, monkeypatch) -> None:
+        claims = self._google_claims()
+        result = await self._verify(monkeypatch, claims)
+        assert result.auth_time == datetime.fromtimestamp(claims["iat"], tz=timezone.utc)
+        assert (result.email, result.nonce) == (ROOT, "n-1")
+
+    async def test_auth_time_wins_when_an_issuer_sends_it(self, monkeypatch) -> None:
+        claims = self._google_claims(auth_time=1_700_000_000)
+        result = await self._verify(monkeypatch, claims)
+        assert result.auth_time == datetime.fromtimestamp(1_700_000_000, tz=timezone.utc)
+
+    async def test_a_token_with_no_time_at_all_is_refused(self, monkeypatch) -> None:
+        from aura_core.domain.errors import AuthenticationError
+
+        with pytest.raises(AuthenticationError):
+            await self._verify(monkeypatch, self._google_claims(iat=None))
+
+    async def test_a_google_token_issued_ten_minutes_ago_buys_no_grant(self) -> None:
+        container = _container()
+        with _client(container) as client:
+            nonce = client.post("/api/v3/admin/control/step-up/challenge").json()["nonce"]
+            container.control_reverifier.register("old", ReauthClaims(
+                subject="1234", email=ROOT, nonce=nonce,
+                auth_time=datetime.now(timezone.utc) - timedelta(minutes=10),
+            ))
+            response = client.post("/api/v3/admin/control/step-up", json={"id_token": "old", "nonce": nonce})
+        assert response.status_code == 403
+        assert response.json()["details"]["reason"] == "step_up_refused"

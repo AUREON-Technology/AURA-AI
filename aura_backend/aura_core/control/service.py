@@ -74,8 +74,8 @@ class StepUpService:
     1. ``challenge`` issues a one-time nonce bound to the caller (stored as a digest).
     2. The console sends the person to Google with that nonce, ``prompt=login`` and ``max_age``.
     3. ``redeem`` checks the returned ID token: our audience, the same verified email as the
-       session, the nonce we issued (taken, so it cannot be replayed), and an ``auth_time`` within
-       ``max_age_s``. It returns an opaque grant, stored only as a digest.
+       session, the nonce we issued (taken, so it cannot be replayed), and a sign-in time within
+       ``max_age_s`` (``auth_time``, or ``iat`` for Google, which never sends ``auth_time``). It returns an opaque grant, stored only as a digest.
     4. ``require`` checks a grant on each write: it must exist, be live and belong to the caller.
 
     A refresh token can never produce a grant, so a stolen session cookie cannot change anything.

@@ -293,8 +293,12 @@ this section wins:
     `ControlStore`, `IdentityReverifier`, `PlatformVerifier` and `DeploymentPlatform`.
 - **Not started yet.** The Reconciler is built and tested but the gateway does not run it. No
   stage-1 action produces a deployment, so stage 2 starts it.
-- **Setup the owner must do.** Add `https://console.aureon-ai.tech/step-up/callback` as an
-  Authorized redirect URI on the console's Google OAuth client, and make sure
+- **Sign-in time.** Google never sends `auth_time` (not in its `claims_supported`), so the
+  freshness check falls back to `iat`. The one-time nonce keeps that sound: a token cannot
+  predate its challenge. What is lost is proof that the password was typed again.
+- **Setup the owner must do.** Add both `https://console.aureon-ai.tech/console/step-up/callback`
+  (while the console still runs under `/console`) and `https://console.aureon-ai.tech/step-up/callback` as
+  Authorized redirect URIs on the console's Google OAuth client, and make sure
   `AURA_SECRETS_ENCRYPTION_KEY` is set on the Railway gateway.
 
 ## Delivery: five stages, each its own PR, each usable on its own

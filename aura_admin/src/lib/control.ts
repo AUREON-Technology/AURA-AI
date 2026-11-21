@@ -2,7 +2,7 @@
 // write helper every control-center change goes through.
 //
 // A write needs a step-up grant, bought with a *fresh* Google sign-in: the gateway issues a
-// one-time challenge, Google re-authenticates the person (prompt=login, max_age) in a popup, and
+// one-time challenge, Google signs the person in again (we ask prompt=login, max_age) in a popup, and
 // the gateway trades the ID token for a five-minute grant. The grant lives in memory only -- never
 // localStorage or a cookie -- so closing the tab drops it, and a stolen session cookie cannot buy
 // one.

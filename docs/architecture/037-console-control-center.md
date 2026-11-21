@@ -31,16 +31,22 @@ It is what has to be true before the gateway agrees to act.
   1. The gateway issues a one-time challenge nonce. It is stored as a digest and consumed by
      `take_grant`, so it can be used once.
   2. The console opens Google in a popup with `prompt=login` and `max_age` (300 s). The
-     redirect goes to `/step-up/callback`, which posts the ID token back to its opener on the
-     same origin only.
+     redirect goes to `<base path>/step-up/callback`, which posts the ID token back to its opener
+     on the same origin only.
   3. The gateway checks the token through `GoogleReverifier`. It needs one of our `aud` values,
-     `email_verified`, an `auth_time` within `max_age`, our nonce, and the same email as the
-     session.
+     `email_verified`, our nonce, the same email as the session, and a sign-in time within
+     `max_age`: `auth_time` when the issuer sends it, otherwise `iat`. Google never sends
+     `auth_time` (its discovery document leaves it out of `claims_supported`), so in practice
+     the check is on `iat`. That is still a freshness proof, because a token cannot be older than
+     the one-time nonce it carries.
   4. It returns an opaque five-minute grant, stored only as SHA-256.
 
   The console holds the grant in memory only (never `localStorage` or a cookie) and sends it in
-  `X-Aura-Step-Up`. A stolen session cookie cannot buy one: buying one needs the person's Google
-  password and second factor *now*. Sign-out calls `POST /admin/control/step-up/revoke`, so a
+  `X-Aura-Step-Up`. A stolen session cookie cannot buy one: buying one needs the person's live Google
+  account *now*. The console asks Google to re-prompt for the password (`prompt=login`), but
+  nothing in a Google token proves it did, so the server-side guarantee is "control of the
+  Google account within the last five minutes", not "password typed again". Found on the first
+  live try (2026-11-21), when the original `auth_time`-only check refused every real sign-in. Sign-out calls `POST /admin/control/step-up/revoke`, so a
   grant never outlives its session.
 - **Every write also needs a typed confirmation**, checked on the server (`_confirm`), so a
   script cannot skip the dialog.
@@ -105,9 +111,12 @@ them. The control center adds a way in; it removes none.
   step-up-gated surface rather than an Admin one.
 - **Google is now part of every write.** If Google sign-in is unavailable, no change can be made
   from the console. The platform dashboards remain the way in.
-- **One manual setup step:** `https://console.aureon-ai.tech/step-up/callback` must be an
-  authorized redirect URI on the console's Google OAuth client. Until it is, the popup fails and
-  no write can be made.
+- **One manual setup step:** the callback must be an authorized redirect URI on the console's
+  Google OAuth client, or the popup ends in `redirect_uri_mismatch` and no write can be made. The
+  console builds it from its base path, so on Railway it is
+  `https://console.aureon-ai.tech/console/step-up/callback` while `NEXT_PUBLIC_BASE_PATH` is still
+  `/console`, and `https://console.aureon-ai.tech/step-up/callback` after the domain move removes
+  it. Register both.
 - **Schema:** migration `0031_control_center` adds four tables (`aura_control_platforms`,
   `aura_control_changes`, `aura_control_step_up`, `aura_control_leases`) with a working
   `downgrade()`. The migration round trip on PG16 covers it, and so does
