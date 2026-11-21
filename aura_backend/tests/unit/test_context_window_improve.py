@@ -230,3 +230,117 @@ class TestPerProviderPromptCapSetting:
     def test_a_long_context_global_is_accepted(self, monkeypatch) -> None:
         monkeypatch.setenv("AURA_LLM_MAX_PROMPT_TOKENS", "150000")
         assert LLMSettings.from_env().max_prompt_tokens == 150_000
+
+
+# -- KAN-99 ------------------------------------------------------------------------------
+
+
+_WORDS = "alpha beta gamma delta epsilon zeta eta theta iota kappa "
+
+
+def _request(**overrides: Any) -> ContextRequest:
+    base: dict[str, Any] = dict(
+        system_prompt="You are AURA. Answer briefly.",
+        user_message="What did the tool find?",
+        context_window=8192,
+        max_output_tokens=1024,
+    )
+    base.update(overrides)
+    return ContextRequest(**base)
+
+
+class TestRouterEligibilityUsesTheClampedOutput:
+    def test_a_provider_whose_answer_is_capped_still_fits_a_long_prompt(self) -> None:
+        """The payload asks for at most the provider's own max_output_tokens; eligibility was
+        checked with the unclamped request, so this provider was excluded for nothing."""
+        small_answers = _provider("small", window=8192, max_output=512)
+        router = ProviderRouter([small_answers])
+        request = CompletionRequest(
+            conversation=Conversation.of([Message.user("x" * 28_000)]),  # ~7004 tokens
+            sampling=SamplingParams(max_output_tokens=2048),
+        )
+        plan = router.plan(request)
+        assert plan.candidates == ("small",)
+
+    def test_a_prompt_that_leaves_no_room_for_the_clamped_answer_is_still_excluded(self) -> None:
+        router = ProviderRouter([_provider("small", window=8192, max_output=512)])
+        request = CompletionRequest(
+            conversation=Conversation.of([Message.user("x" * 31_000)]),  # ~7754 tokens
+            sampling=SamplingParams(max_output_tokens=2048),
+        )
+        assert router.plan(request).excluded["small"] == "context_window_too_small"
+
+
+class TestOutputClampAndCapEnforcement:
+    def test_a_cap_larger_than_the_window_is_bounded_by_it(self) -> None:
+        budget = ContextEngine().budget_for(
+            _request(context_window=8192, max_prompt_tokens=150_000)
+        )
+        assert budget.total < 8192 - 1024
+
+    def test_output_is_clamped_to_what_the_window_leaves(self) -> None:
+        assembled = ContextEngine().assemble(
+            _request(
+                context_window=2048, max_output_tokens=1024, max_prompt_tokens=0,
+                user_message=_WORDS * 80,  # ~1150 tokens: leaves less than 1024 to answer in
+            )
+        )
+        assert assembled.max_output_tokens < 1024
+        assert assembled.max_output_tokens == int(2048 * 0.95) - assembled.prompt_tokens
+        assert assembled.max_output_tokens + assembled.prompt_tokens <= 2048
+
+    def test_output_is_unchanged_when_the_window_has_room(self) -> None:
+        assembled = ContextEngine().assemble(_request(max_output_tokens=1024))
+        assert assembled.max_output_tokens == 1024
+
+    def test_tool_output_and_knowledge_are_trimmed_to_meet_the_cap(self) -> None:
+        engine = ContextEngine(tokenizer=HeuristicTokenizer())
+        assembled = engine.assemble(
+            _request(
+                max_prompt_tokens=400,
+                tool_results=(("read_file", _WORDS * 200), ("search", _WORDS * 200)),
+                caller_context=(),
+            )
+        )
+        assert assembled.prompt_tokens <= 400
+        assert not assembled.over_cap
+
+    def test_an_irreducible_prompt_over_the_window_raises_a_typed_error(self) -> None:
+        from aura_core.domain.errors import ContextOverflowError
+
+        engine = ContextEngine()
+        try:
+            engine.assemble(_request(context_window=2048, user_message=_WORDS * 300))
+        except ContextOverflowError as exc:
+            assert exc.kind == "context_overflow"
+            assert exc.details["context_window"] == 2048
+            assert exc.details["prompt_tokens"] > 2048 * 0.95 - 64
+        else:  # pragma: no cover - the assertion is the point
+            raise AssertionError("an over-window prompt was assembled")
+
+    def test_an_irreducible_prompt_over_only_the_cap_is_sent_not_refused(self) -> None:
+        """The Engineer persona's prompt alone is ~456 tokens against the 400-token CPU cap.
+        Refusing it would turn every such turn into a failure; it fits the window, so it is
+        sent, marked over the cap, with everything removable removed."""
+        assembled = ContextEngine().assemble(
+            _request(
+                system_prompt=_WORDS * 50,
+                max_prompt_tokens=400,
+                history=_history(3),
+            )
+        )
+        assert assembled.over_cap
+        assert assembled.prompt_tokens > 400
+        assert not [m for m in assembled.conversation if m.content.startswith("question number")]
+        assert assembled.prompt_tokens <= int(8192 * 0.95) - 64
+
+    def test_the_kernel_asks_for_the_clamped_size(self) -> None:
+        clamped = ContextEngine().assemble(
+            _request(
+                context_window=2048, max_output_tokens=1024, max_prompt_tokens=0,
+                user_message=_WORDS * 80,
+            )
+        )
+        request = TurnRequest(message="m", user_id=UserId("u"), max_output_tokens=1024)
+        assert AIKernel._answer_tokens(request, clamped) == clamped.max_output_tokens < 1024
+        assert AIKernel._answer_tokens(request, object()) == 1024

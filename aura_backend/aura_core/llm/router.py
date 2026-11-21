@@ -503,7 +503,17 @@ class ProviderRouter:
         if caps.quality_tier < request.min_quality_tier:
             return "quality_tier_too_low"
         prompt_tokens = _prompt_tokens(request)
-        needed = prompt_tokens + (request.sampling.max_output_tokens or 512)
+        # The output size this provider would actually be asked for (KAN-99): the payload is
+        # clamped to its own max_output_tokens (`ProviderCapabilities.output_budget`, the same
+        # call the payload makes), so checking the unclamped request excluded a provider that
+        # could serve it -- a 7K-token prompt asking for 2048 on an 8K window whose model
+        # answers at most 512. An unset size keeps the 512 assumption it always had.
+        output = caps.output_budget(
+            request.sampling.max_output_tokens or 512,
+            request.preferred_max_output_tokens,
+            request.timeout_s,
+        )
+        needed = prompt_tokens + output
         if caps.context_window < needed:
             return "context_window_too_small"
         return None

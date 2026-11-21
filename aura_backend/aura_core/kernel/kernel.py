@@ -626,7 +626,7 @@ class AIKernel:
                 conversation=assembled.conversation,
                 sampling=SamplingParams(
                     temperature=request.temperature,
-                    max_output_tokens=request.max_output_tokens,
+                    max_output_tokens=self._answer_tokens(request, assembled),
                 ),
                 policy=request.routing_policy,
                 require_local=request.require_local,
@@ -922,7 +922,7 @@ class AIKernel:
                     model=assigned,
                     sampling=SamplingParams(
                         temperature=request.temperature,
-                        max_output_tokens=request.max_output_tokens,
+                        max_output_tokens=self._answer_tokens(request, assembled),
                     ),
                     policy=request.routing_policy,
                     require_local=request.require_local,
@@ -2246,6 +2246,13 @@ class AIKernel:
         except Exception:
             return 8192
 
+    @staticmethod
+    def _answer_tokens(request: TurnRequest, assembled: Any) -> int:
+        """The output size to ask for: the request's, clamped to what the window leaves after
+        the assembled prompt (KAN-99). A context without the clamp uses the request's size."""
+        clamped = int(getattr(assembled, "max_output_tokens", 0) or 0)
+        return min(request.max_output_tokens, clamped) if clamped > 0 else request.max_output_tokens
+
     def _max_prompt_tokens(self, request: TurnRequest | None = None) -> int:
         """The assembled-prompt cap for this turn: the global ``max_prompt_tokens``, narrowed
         by any per-provider cap among the turn's eligible providers (KAN-98)."""
@@ -2451,7 +2458,8 @@ class AIKernel:
             conversation=assembled.conversation,
             model=assigned,
             sampling=SamplingParams(
-                temperature=request.temperature, max_output_tokens=request.max_output_tokens
+                temperature=request.temperature,
+                max_output_tokens=self._answer_tokens(request, assembled),
             ),
             policy=request.routing_policy,
             require_local=request.require_local,
@@ -2480,7 +2488,7 @@ class AIKernel:
                     citations=[c.chunk.content for c in (retrieval.chunks if retrieval else ())],
                     retrieval_strength=strength,
                     strategy=request.strategy,
-                    max_output_tokens=request.max_output_tokens,
+                    max_output_tokens=self._answer_tokens(request, assembled),
                     require_local=request.require_local,
                 )
             )

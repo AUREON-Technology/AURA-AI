@@ -18,10 +18,11 @@ where retrieved documents are concatenated straight into the system instruction.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Sequence
 
 from ..domain.cag import CagPrefix
+from ..domain.errors import ContextOverflowError
 from ..domain.caller_context import CallerContext
 from ..domain.context import (
     ContextBudget,
@@ -57,6 +58,12 @@ DEFAULT_HISTORY_TURNS = 4
 DEFAULT_KNOWLEDGE_CHUNK_MAX_CHARS = 280
 DEFAULT_MAX_KNOWLEDGE_ITEMS = 2
 _CLIP_MARKER = " […truncated]"
+#: The smallest answer a turn may be left room for before its prompt counts as overflowing
+#: the window (KAN-99).
+_MIN_OUTPUT_TOKENS = 64
+#: Below this, a shortened item is too small to be useful and is dropped instead -- the same
+#: threshold `pack()` uses before it truncates rather than drops.
+_MIN_TRUNCATED_TOKENS = 24
 #: Sections rendered into the leading system message; HISTORY gets its own message.
 _SYSTEM_SECTIONS = (
     ContextSection.INSTRUCTIONS,
@@ -103,6 +110,13 @@ class AssembledContext:
     duration_ms: float
     dropped: int = 0
     truncated: int = 0
+    #: The answer size to ask for: the request's, clamped to what the context window leaves
+    #: after this prompt (KAN-99). 0 means "not computed" (a hand-built value); callers then
+    #: use the request's own size.
+    max_output_tokens: int = 0
+    #: True when even the irreducible prompt exceeds the prefill cap. It still fits the window,
+    #: so it is sent; telemetry and logs can say why the turn's prefill ran long.
+    over_cap: bool = False
 
     @property
     def utilisation(self) -> float:
@@ -164,11 +178,14 @@ class ContextEngine:
         8k-context local model would still ingest 1k+ token RAG prompts that CPU Ollama cannot
         evaluate before the stream timeout.
         """
-        usable = int(request.context_window * 0.95)
-        reserved = min(request.max_output_tokens, max(256, usable // 4))
+        usable, reserved, window_prompt = self._window_limits(request)
         cap = self._effective_prompt_cap(request)
         if cap is None:
             return ContextBudget(total=usable, reserved_for_output=reserved)
+        # The cap never exceeds what the window leaves after the output reservation (KAN-99):
+        # a large configured cap on a small-window provider used to budget a prompt the model
+        # had no room to answer after.
+        cap = min(cap, window_prompt)
         # Prefill is the assembled prompt. Output reservation must not consume that cap.
         # Hold ~15 % back for fence wrappers, section headers, and per-message framing, which
         # are added at render time and are not in item.token counts.
@@ -182,6 +199,23 @@ class ContextEngine:
         if request.max_prompt_tokens is not None:
             return request.max_prompt_tokens
         return self._max_prompt_tokens or None
+
+    @staticmethod
+    def _window_limits(request: ContextRequest) -> tuple[int, int, int]:
+        """``(usable, reserved_output, window_prompt)`` for the turn's provider window.
+
+        ``usable`` keeps a 5 % margin for tokenizer error; ``window_prompt`` is what is left
+        for the prompt once the output reservation is taken out of it.
+        """
+        usable = int(request.context_window * 0.95)
+        reserved = min(request.max_output_tokens, max(256, usable // 4))
+        return usable, reserved, max(64, usable - reserved)
+
+    def _prompt_limit(self, request: ContextRequest) -> int:
+        """The prompt size assembly aims for: the cap, bounded by the window (KAN-99)."""
+        _, _, window_prompt = self._window_limits(request)
+        cap = self._effective_prompt_cap(request)
+        return min(cap, window_prompt) if cap else window_prompt
 
     # -- candidate construction --------------------------------------------------------
 
@@ -535,47 +569,35 @@ class ContextEngine:
             prefix_nonce=prefix_nonce,
         )
 
-        count = self._tokenizer.count
-        system_sections: tuple[ContextSection, ...] = _SYSTEM_SECTIONS
-        # Rendered costs come from the items' stored counts plus framing (KAN-105): nothing
-        # already counted is tokenised again, and `_fit_to_cap` updates totals by subtraction.
-        system_cost = self._message_cost(
-            bundle.rendered_tokens(count, include_sections=system_sections)
+        bundle, kept_history, keep_block, prompt_tokens, trimmed = self._enforce_limit(
+            request, bundle, history, user_cost
         )
-        history_block_cost = (
-            self._message_cost(
-                bundle.rendered_tokens(count, include_sections=(ContextSection.HISTORY,))
+        usable, _, _ = self._window_limits(request)
+        limit = self._prompt_limit(request)
+        over_cap = prompt_tokens > limit
+        if prompt_tokens > usable - _MIN_OUTPUT_TOKENS:
+            # Nothing left to remove, and the provider would reject (or silently truncate) a
+            # prompt this size: fail the turn with a reason instead of sending it.
+            raise ContextOverflowError(
+                "the message and required instructions do not fit the model's context window",
+                details={
+                    "prompt_tokens": prompt_tokens,
+                    "context_window": request.context_window,
+                    "max_prompt_tokens": limit,
+                },
             )
-            if bundle.by_section(ContextSection.HISTORY)
-            else 0
-        )
+        if over_cap:
+            # Only the irreducible part is left (instructions, fence rules, pinned notes, the
+            # user's message) and it alone exceeds the prefill cap. It fits the window, so it
+            # is sent -- refusing would turn a slow turn into a failed one -- but not silently.
+            logger.warning(
+                "assembled prompt exceeds the prompt cap after trimming",
+                extra={"prompt_tokens": prompt_tokens, "cap": limit},
+            )
+        # Clamp the answer to what the window leaves after this prompt (KAN-99).
+        max_output_tokens = max(1, min(request.max_output_tokens, usable - prompt_tokens))
 
-        cap = self._effective_prompt_cap(request)
-        kept_history, keep_block, prompt_tokens, trimmed = self._fit_to_cap(
-            system_cost=system_cost,
-            history_block_cost=history_block_cost,
-            history=history,
-            user_cost=user_cost,
-            cap=cap,
-        )
-        if cap and prompt_tokens > cap and bundle.by_section(ContextSection.MEMORY):
-            # Memory lost the budget fight: keep instructions + CAG + citations.
-            system_sections = tuple(
-                s for s in _SYSTEM_SECTIONS if s is not ContextSection.MEMORY
-            )
-            system_cost = self._message_cost(
-                bundle.rendered_tokens(count, include_sections=system_sections)
-            )
-            kept_history, keep_block, prompt_tokens, trimmed_more = self._fit_to_cap(
-                system_cost=system_cost,
-                history_block_cost=history_block_cost,
-                history=history,
-                user_cost=user_cost,
-                cap=cap,
-            )
-            trimmed += trimmed_more
-
-        system_text = bundle.render(include_sections=system_sections)
+        system_text = bundle.render(include_sections=_SYSTEM_SECTIONS)
         history_text = (
             bundle.render(include_sections=(ContextSection.HISTORY,)) if keep_block else ""
         )
@@ -605,7 +627,81 @@ class ContextEngine:
             duration_ms=duration_ms,
             dropped=len(bundle.dropped) + dropped_turns + trimmed,
             truncated=len(bundle.truncated),
+            max_output_tokens=max_output_tokens,
+            over_cap=over_cap,
         )
+
+    # -- cap enforcement -----------------------------------------------------------------
+
+    def _enforce_limit(
+        self,
+        request: ContextRequest,
+        bundle: ContextBundle,
+        history: Sequence[tuple[Message, int]],
+        user_cost: int,
+    ) -> tuple[ContextBundle, list[tuple[Message, int]], bool, int, int]:
+        """Bring the assembled prompt within the turn's prompt limit (KAN-99).
+
+        Eviction order, cheapest loss first: the oldest history messages, then the history
+        summary block (both in :meth:`_fit_to_cap`), then recalled memory and goals, then
+        retrieved knowledge and caller evidence, then tool output -- truncated head-and-tail
+        first, dropped only when even that cannot fit -- then unpinned scratchpad notes. After
+        each removal history is refitted, so room an item frees goes back to the conversation.
+
+        What cannot be removed -- pinned items and the user's message -- may still exceed the
+        limit; :meth:`assemble` decides whether that is sendable. Returns
+        ``(bundle, kept_history, keep_block, prompt_tokens, dropped)``.
+        """
+        count = self._tokenizer.count
+        limit = self._prompt_limit(request)
+
+        def system_cost(candidate: ContextBundle) -> int:
+            return self._message_cost(
+                candidate.rendered_tokens(count, include_sections=_SYSTEM_SECTIONS)
+            )
+
+        def fit(candidate: ContextBundle) -> tuple[list[tuple[Message, int]], bool, int, int]:
+            block = (
+                self._message_cost(
+                    candidate.rendered_tokens(count, include_sections=(ContextSection.HISTORY,))
+                )
+                if candidate.by_section(ContextSection.HISTORY)
+                else 0
+            )
+            return self._fit_to_cap(
+                system_cost=system_cost(candidate),
+                history_block_cost=block,
+                history=history,
+                user_cost=user_cost,
+                cap=limit,
+            )
+
+        kept, keep_block, total, trimmed = fit(bundle)
+        if total <= limit:
+            return bundle, kept, keep_block, total, trimmed
+
+        removed = 0
+        for section in (
+            ContextSection.MEMORY,
+            ContextSection.KNOWLEDGE,
+            ContextSection.TOOL_OUTPUT,
+            ContextSection.SCRATCHPAD,
+        ):
+            while total > limit:
+                victims = [i for i in bundle.items if i.section is section and not i.is_pinned]
+                if not victims:
+                    break
+                victim = min(victims, key=lambda i: (i.priority, i.value_density))
+                shortened = None
+                if section is ContextSection.TOOL_OUTPUT:
+                    keep = victim.tokens - (total - limit)
+                    if keep >= _MIN_TRUNCATED_TOKENS:
+                        shortened = victim.truncated_to(keep)
+                bundle = _replace_item(bundle, victim, shortened)
+                if shortened is None:
+                    removed += 1
+                kept, keep_block, total, trimmed = fit(bundle)
+        return bundle, kept, keep_block, total, trimmed + removed
 
     # -- helpers -----------------------------------------------------------------------
 
@@ -655,6 +751,27 @@ class ContextEngine:
     @property
     def counts_are_exact(self) -> bool:
         return self._tokenizer.exact
+
+
+def _replace_item(
+    bundle: ContextBundle, victim: ContextItem, shortened: ContextItem | None
+) -> ContextBundle:
+    """``bundle`` with ``victim`` replaced by ``shortened``, or moved to ``dropped``."""
+    index = next(i for i, item in enumerate(bundle.items) if item is victim)
+    if shortened is None:
+        return replace(
+            bundle,
+            items=bundle.items[:index] + bundle.items[index + 1 :],
+            dropped=bundle.dropped + (victim,),
+            tokens_used=bundle.tokens_used - victim.tokens,
+        )
+    label = victim.item_id or victim.provenance or victim.section.value
+    return replace(
+        bundle,
+        items=bundle.items[:index] + (shortened,) + bundle.items[index + 1 :],
+        truncated=bundle.truncated if label in bundle.truncated else bundle.truncated + (label,),
+        tokens_used=bundle.tokens_used - victim.tokens + shortened.tokens,
+    )
 
 
 def _clip_chars(text: str, max_chars: int) -> str:
