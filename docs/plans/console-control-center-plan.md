@@ -21,7 +21,7 @@ on it.
   `RAILWAY_TOKEN` (`control-plane-deploy.yml`) and `HF_TOKEN` (`inference-plane-deploy.yml`).
 - Reusable pieces: `require_super_admin` and `audit_admin` (`aura_core/api/v3.py:551`), the
   console's `me.is_super_admin` gating and typed-confirm dialog, `EncryptedCredentialVault`
-  (`adapters/credential_vault.py`, `AURA_SECRETS_ENCRYPTION_KEYS`, never plaintext), and
+  (`adapters/credential_vault.py`, `AURA_SECRETS_ENCRYPTION_KEY`, never plaintext), and
   `huggingface-hub` / `httpx` (both already locked).
 
 ## User decisions (do not re-ask)
@@ -106,7 +106,7 @@ Recorded 2026-11-21.
   refused with the validation message, before anything is written.
 - **Protected variables** cannot be changed from the console; their rows say "change in the
   Railway dashboard":
-  - `AURA_SECRETS_ENCRYPTION_KEYS`, which would orphan the vault holding the platform tokens;
+  - `AURA_SECRETS_ENCRYPTION_KEY`, which would orphan the vault holding the platform tokens;
   - `AURA_DATA_ENCRYPTION_KEYS`, which would lose every user's encrypted data;
   - `AURA_DATABASE_URL`, which would cut the control plane off from its own journal.
 
@@ -180,7 +180,7 @@ Hexagonal, as `tests/architecture/` enforces.
 - `aura_control_step_up`: grant hash, subject, session family, expiry.
 - It has a real `downgrade()`, and the round-trip test covers it.
 
-**ADR-035 "Console infrastructure control plane"**: records why the gateway holds infrastructure
+**ADR-037 "Console infrastructure control plane"**: records why the gateway holds infrastructure
 tokens, what the step-up, protected-variable, journal and rollback rules protect against, and the
 break-glass path.
 
@@ -254,11 +254,54 @@ It explains the exact token type and scope to create.
   readers keep working.
 - Behaviour change (decision 1): Admins no longer see the Settings page.
 
+## Stage 1 as built (2026-11-21)
+
+Built and tested locally, not proven (ADR-037, GAP-067). Where it differs from the design above,
+this section wins:
+
+- **Key name.** The vault key is `AURA_SECRETS_ENCRYPTION_KEY` (singular). An earlier draft of
+  this plan said `..._KEYS`.
+- **Routes.** All are `POST` or `GET`, because the console proxy (`app/api/v3/[...path]/route.ts`)
+  exports no `PUT`:
+  - `GET overview`, `GET settings`, `GET changes`;
+  - `POST step-up/challenge`, `POST step-up`, `POST step-up/revoke`;
+  - `POST platforms/{platform}/credential`, `POST platforms/{platform}/disconnect`.
+- **Challenge first.** A step-up starts with a one-time nonce from `step-up/challenge`, which
+  the Google ID token must carry. A token cannot be replayed for a second grant.
+- **Grant binding.** A grant is bound to the subject and its email, not to a refresh-token
+  family: the gateway's Google re-sign-in has no session-family handle. Instead, sign-out calls
+  `step-up/revoke` (from `app/api/auth/logout/route.ts`), and the grant lives only in the tab's
+  memory.
+- **Refusals are 403 with `details.reason`**, never 401, because the console proxy turns a 401
+  into a refresh and a redirect to the login page.
+- **Platform target.** `aura_control_platforms` has a `target` column (the HF Space `owner/name`,
+  the Qdrant cluster URL, the Grafana stack) instead of `scope_note`. It is typed in the Connect
+  form. The Qdrant URL must be on `*.qdrant.io` or be `AURA_QDRANT_URL`'s host.
+- **Tables.** Migration `0031_control_center` adds a fourth table, `aura_control_leases`, so one
+  gateway process runs the reconciler.
+- **Verification.**
+  - HF, Cloudflare and Qdrant tokens are checked against the vendor before they are saved.
+  - Railway and Grafana tokens are saved "not verified yet"; their clients come in stages 2 and 5.
+  - The Cloudflare API root comes from the Workers AI provider's `base_url` (ADR-030: no vendor
+    host in Python source).
+- **File names.**
+  - The engine is `control/catalog.py`, `control/service.py` (StepUpService, ControlService,
+    Reconciler) and `control/wiring.py`.
+  - The adapters are `adapters/control_store.py` (in-memory and Postgres),
+    `adapters/identity_reverify.py` (Google) and `adapters/platform_verify.py`.
+  - The per-platform ports (`SpaceHost`, `KeyIssuer`, …) arrive with their stages. Stage 1 has
+    `ControlStore`, `IdentityReverifier`, `PlatformVerifier` and `DeploymentPlatform`.
+- **Not started yet.** The Reconciler is built and tested but the gateway does not run it. No
+  stage-1 action produces a deployment, so stage 2 starts it.
+- **Setup the owner must do.** Add `https://console.aureon-ai.tech/step-up/callback` as an
+  Authorized redirect URI on the console's Google OAuth client, and make sure
+  `AURA_SECRETS_ENCRYPTION_KEY` is set on the Railway gateway.
+
 ## Delivery: five stages, each its own PR, each usable on its own
 
 | Stage | Contents | Proof needed before calling it done |
 |---|---|---|
-| **S1 Foundation** | Migration 0031; vault-backed platform tokens; step-up; journal, reconciler and audit; Super-Admin-only Settings with Overview, AURA settings (read) and Changes; ADR-035 | Live: Super Admin opens Settings and an Admin is refused; step-up round trip with real Google |
+| **S1 Foundation** | Migration 0031; vault-backed platform tokens; step-up; journal, reconciler and audit; Super-Admin-only Settings with Overview, AURA settings (read) and Changes; ADR-037 | Live: Super Admin opens Settings and an Admin is refused; step-up round trip with real Google |
 | **S2 Railway + AURA settings edit** | Railway adapter; variables with validation; redeploy, restart, rollback; logs; auto-rollback | Live: change a harmless variable on the gateway → redeploy → healthy; change a variable that fails readiness → automatic rollback within 5 min |
 | **S3 GPU Space** | HF adapter and tab | Live: pause/resume the Space; change sleep time |
 | **S4 Keys** | Replace; HF both-sided rotation; Cloudflare create and revoke; provider health check after rotation | Live: rotate the HF key end to end with no downtime |
