@@ -2,4 +2,5 @@
 *
 !aura_web/site
 !aura_web/nginx
+!aura_web/build-assets
 !scripts/AURA-Desktop-Setup.cmd

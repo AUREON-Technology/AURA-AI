@@ -8,6 +8,12 @@
 #
 # On Railway: set RAILWAY_DOCKERFILE_PATH=aura_web/Dockerfile and leave the root directory empty.
 #
+# The finished app is part of the image. aura_web/build-assets/ is empty in git (only .gitkeep);
+# .github/workflows/desktop-main-channel.yml builds the Windows installer on a Windows runner and
+# drops `aura-desktop-windows-x64-setup.exe` and `latest.json` there before deploying, so a deploy
+# replaces the installer and the manifest that describes it in one step. With no build yet the page
+# says so and the downloads answer 404.
+#
 # Static files behind nginx, as the unprivileged user (uid 101). No Node, no database, no secrets.
 # The base is pinned by digest (the 1.28-alpine index); update the tag and digest together.
 
@@ -17,6 +23,7 @@ USER root
 
 COPY aura_web/site/ /usr/share/nginx/html/
 COPY scripts/AURA-Desktop-Setup.cmd /usr/share/nginx/html/desktop-ide/download/AURA-Desktop-Setup.cmd
+COPY aura_web/build-assets/ /usr/share/nginx/html/desktop-ide/download/
 COPY aura_web/nginx/security-headers.conf /etc/nginx/snippets/security-headers.conf
 COPY aura_web/nginx/default.conf.template /etc/nginx/templates/default.conf.template
 

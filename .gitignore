@@ -142,3 +142,8 @@ node_modules/
 
 # Built host daemon binary — build it locally with `dart run bin/aura_hostd.dart` / a release build
 aura_hostd/aura_hostd.exe
+
+# The finished Windows installer + latest.json are dropped here by desktop-main-channel.yml before a
+# deploy of the web service; never commit them (binaries belong in the image, not the tree).
+aura_web/build-assets/*
+!aura_web/build-assets/.gitkeep
