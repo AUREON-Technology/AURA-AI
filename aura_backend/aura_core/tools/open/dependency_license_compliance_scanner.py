@@ -17,23 +17,8 @@ _SPDX_ALIASES: Dict[str, str] = {
     "BOOST": "BSL-1.0",   # Boost Software License – permissive
 }
 
-# Exact SPDX IDs that are forbidden by default.
-# NOTE: BSL-1.0 (Boost) is NOT forbidden; BSL-1.1 / SSPL-1.0 (MariaDB) are.
-_DEFAULT_FORBIDDEN_IDS: frozenset = frozenset({
-    "AGPL-3.0",
-    "AGPL-3.0-ONLY",
-    "AGPL-3.0-OR-LATER",
-    "GPL-3.0",
-    "GPL-3.0-ONLY",
-    "GPL-3.0-OR-LATER",
-    "GPL-2.0",
-    "GPL-2.0-ONLY",
-    "GPL-2.0-OR-LATER",
-    "SSPL-1.0",
-    "BSL-1.1",           # MariaDB Business Source License (restrictive)
-    "PROPRIETARY",
-    "UNKNOWN",           # Unknown license must fail by default
-})
+_UNKNOWN_LABELS = frozenset({"", "UNKNOWN", "NONE", "NOASSERTION", "N/A", "NA", "OTHER"})
+_TOKEN_RE = re.compile(r"[A-Z0-9][A-Z0-9.+\-]*")
 
 
 def _normalise_spdx(raw: str) -> str:
@@ -43,18 +28,35 @@ def _normalise_spdx(raw: str) -> str:
 
 
 class DependencyLicenseComplianceScanner:
-    """Scanner for checking software package licenses against policy allowlists,
-    denylists, and copyleft compatibility.
+    """Scanner for checking software package licenses against policy allowlists and denylists.
 
-    Bugs fixed (v2):
-    - LGPL-3.0 is no longer flagged by a "GPL-3.0" rule (substring matching removed).
-    - BSL-1.0 (Boost, permissive) is NOT forbidden; only BSL-1.1 / SSPL-1.0 are.
-    - UNKNOWN licenses fail by default (instead of passing silently).
-    - GPLv3 and similar aliases are resolved to canonical SPDX IDs before matching.
-    - All forbidden checks use exact SPDX ID membership, not substring search.
+    A licence string is read as a (simplified) SPDX expression: ``OR`` alternatives, ``AND``
+    components, ``WITH`` exceptions and parentheses. A package is compliant when at least one
+    ``OR`` alternative has no forbidden token, passes the allowlist (when one is given) and is not
+    an unknown/blank label. Forbidden tokens match on a *token boundary*, not as a substring, so
+    ``GPL-3.0`` does not flag ``LGPL-3.0`` and ``BUSL`` does not flag ``BSL-1.0`` (Boost).
+
+    ADR-036: this token-boundary behaviour was reverted once by a merge (a0024eae) to exact-ID
+    matching, which let ``GPL-3.0+`` and ``BUSL-1.1`` through and passed ``""`` and
+    ``NOASSERTION``. ``tests/unit/test_open_tools_fixes.py::TestLicenseScanner`` pins it.
     """
 
-    DEFAULT_FORBIDDEN_LICENSES: List[str] = sorted(_DEFAULT_FORBIDDEN_IDS)
+    #: Strong-copyleft and source-available families. ``GPL-3`` / ``GPLV3`` are the spellings
+    #: package metadata uses instead of the SPDX id; ``BSL-1.0`` is the permissive Boost licence,
+    #: so the Business Source License is listed by its own ids only.
+    DEFAULT_FORBIDDEN_LICENSES: List[str] = [
+        "AGPL",
+        "GPL-3.0",
+        "GPL-3",
+        "GPLV3",
+        "GPL-2.0",
+        "GPL-2",
+        "GPLV2",
+        "SSPL",
+        "BUSL",
+        "BSL-1.1",
+        "PROPRIETARY",
+    ]
 
     PERMISSIVE_LICENSES = {
         "MIT",
@@ -136,26 +138,17 @@ class DependencyLicenseComplianceScanner:
         forbidden_tokens: Optional[List[str]] = None,
         allowed_licenses: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Scan a list of {'package': name, 'license': spdx_or_label} items.
-
-        Matching strategy (v2 – exact SPDX IDs):
-        - Each raw license string is normalised via alias resolution and upper-casing.
-        - A package is a violation when its normalised SPDX ID is in the forbidden set,
-          OR when an allowlist is provided and the ID is not in it.
-        - No substring matching is performed – 'LGPL-3.0' cannot be matched by 'GPL-3.0'.
         """
-        # Build the forbidden set (exact normalised SPDX IDs)
-        if forbidden_tokens is not None:
-            forbidden_set: frozenset = frozenset(
-                _normalise_spdx(t) for t in forbidden_tokens
-            )
-        else:
-            forbidden_set = _DEFAULT_FORBIDDEN_IDS
-
+        Scan a list of {'package': name, 'license': spdx_or_label} items.
+        Flags forbidden licenses, licenses not present in allowed_licenses if provided, and
+        unknown/blank licenses (a licence nobody can name is not a licence anybody cleared).
+        """
+        forbidden_list = (
+            forbidden_tokens if forbidden_tokens is not None else cls.DEFAULT_FORBIDDEN_LICENSES
+        )
+        forbidden = {str(x).strip().upper() for x in forbidden_list if str(x).strip()}
         allowed_set = (
-            frozenset(_normalise_spdx(x) for x in allowed_licenses)
-            if allowed_licenses is not None
-            else None
+            {x.strip().upper() for x in allowed_licenses} if allowed_licenses is not None else None
         )
 
         violations: List[Dict[str, Any]] = []
@@ -163,23 +156,35 @@ class DependencyLicenseComplianceScanner:
 
         for item in packages_and_licenses:
             pkg = str(item.get("package", "<unknown>")).strip()
-            raw_lic = str(item.get("license", "UNKNOWN")).strip()
-            norm_lic = _normalise_spdx(raw_lic)
+            lic = str(item.get("license", "UNKNOWN")).strip()
 
-            matched_forbidden = [t for t in forbidden_set if t == norm_lic]
-            not_in_allowlist = allowed_set is not None and norm_lic not in allowed_set
+            matched_all: Set[str] = set()
+            any_not_allowed = False
+            any_unknown = False
+            ok = False
+            for components in cls._alternatives(lic):
+                matched, not_allowed, unknown = cls._evaluate_alternative(
+                    components, forbidden, allowed_set
+                )
+                matched_all.update(matched)
+                any_not_allowed = any_not_allowed or not_allowed
+                any_unknown = any_unknown or unknown
+                if not matched and not not_allowed and not unknown:
+                    ok = True
+                    break
 
-            ok = not matched_forbidden and not not_in_allowlist
             if ok:
-                compliant_packages.append({"package": pkg, "license": raw_lic})
+                compliant_packages.append({"package": pkg, "license": lic})
             else:
                 violations.append({
                     "package": pkg,
-                    "license": raw_lic,
-                    "normalised_license": norm_lic,
-                    "matched_forbidden": matched_forbidden,
-                    "not_in_allowlist": not_in_allowlist,
+                    "license": lic,
+                    "normalised_license": _normalise_spdx(lic),
+                    "matched_forbidden": sorted(matched_all),
+                    "not_in_allowlist": any_not_allowed,
+                    "unknown_license": any_unknown,
                 })
+
         return {
             "compliant": len(violations) == 0,
             "compliant_count": len(compliant_packages),
