@@ -95,6 +95,7 @@ from ..prompts.library import AGENT_PROMPT_IDS
 from ..agents.registry import AgentRegistry, AgentSpec
 from ..reasoning.engine import ReasoningRequest
 from ..tools.personal_os import actions_from_tool_results
+from .turn_scope import current_turn_lookups, turn_lookup_scope
 
 __all__ = ["AIKernel", "TurnRequest", "TurnResult", "KernelDependencies"]
 
@@ -446,7 +447,8 @@ class AIKernel:
                 )
             )
             try:
-                with workload_scope(self._workload_hint(request)), data_scope(
+                # The lookup memo first (KAN-109): the hint, baseline and budget below read it.
+                with turn_lookup_scope(), workload_scope(self._workload_hint(request)), data_scope(
                     *self._baseline_classification(request)
                 ) as scope, generation_budget(
                     self._turn_generation_budget_s(request)
@@ -762,7 +764,9 @@ class AIKernel:
             )
         )
 
-        with LogContext(correlation_id=correlation.value, route=request.route), workload_scope(
+        with LogContext(
+            correlation_id=correlation.value, route=request.route
+        ), turn_lookup_scope(), workload_scope(
             self._workload_hint(request)
         ), data_scope(*self._baseline_classification(request)) as scope, generation_budget(
             self._turn_generation_budget_s(request)
@@ -1365,7 +1369,21 @@ class AIKernel:
 
         Uses the *resolved* persona, so a caller who asked for ``engineer`` without the
         capability (and was silently given the orchestrator) is not queued as Engineer work.
+
+        Computed once per request object per turn (KAN-109): the scope, the baseline
+        classification, the generation budget and the consent check all ask, and each asking
+        re-scored the message's complexity. A resumed confirmation is a new request object, so
+        its restored persona gets its own hint.
         """
+        lookups = current_turn_lookups()
+        if lookups is not None and lookups.workload is not None and lookups.workload[0] is request:
+            return lookups.workload[1]
+        hint = self._compute_workload_hint(request)
+        if lookups is not None:
+            lookups.workload = (request, hint)
+        return hint
+
+    def _compute_workload_hint(self, request: TurnRequest) -> WorkloadHint:
         spec = self._resolve_agent(request)
         llm = getattr(self._deps.settings, "llm", None)
         threshold = (
@@ -1590,10 +1608,24 @@ class AIKernel:
     _DESKTOP_ONLY_UNAVAILABLE = frozenset({"open_workspace", "list_workspaces", "destroy_workspace"})
 
     async def _desktop_active(self, user_id: Any) -> bool:
+        """Whether ``user_id`` has a paired desktop session, resolved once per turn (KAN-109).
+
+        The tool list and the system prompt both ask, and each asking was a relay round trip
+        (Redis, on a multi-worker gateway). Both only shape what the model is told, so one
+        answer per turn is what they should agree on anyway. Where a tool call actually runs is
+        still decided live, per call, by the sandbox runner.
+        """
         registry = self._deps.host_agent_registry
         if registry is None or user_id is None:
             return False
-        return await registry.resolve(user_id) is not None
+        lookups = current_turn_lookups()
+        key = str(getattr(user_id, "value", user_id))
+        if lookups is not None and key in lookups.desktop:
+            return lookups.desktop[key]
+        active = await registry.resolve(user_id) is not None
+        if lookups is not None:
+            lookups.desktop[key] = active
+        return active
 
     async def _tool_declarations(self, request: TurnRequest) -> tuple[Mapping[str, Any], ...]:
         deps = self._deps
@@ -2259,10 +2291,35 @@ class AIKernel:
         return str(getattr(learning, "finetune_model_id", "aura-ft") or "aura-ft")
 
     async def _assigned_model(self, request: TurnRequest) -> str | None:
-        """Resolve a registry canary/production artefact for this user, if any."""
+        """Resolve a registry canary/production artefact for this user, if any.
+
+        Once per turn (KAN-109), and from the registry's short-lived serving snapshot where it
+        has one, so a deployment with nothing registered pays no store read on most turns.
+        """
         deps = self._deps
         if deps.models is None:
             return None
+        lookups = current_turn_lookups()
+        key = request.user_id.value
+        if lookups is not None and key in lookups.assigned_model:
+            return lookups.assigned_model[key]
+        tag = await self._lookup_assigned_model(request)
+        if lookups is not None:
+            lookups.assigned_model[key] = tag
+        return tag
+
+    async def _lookup_assigned_model(self, request: TurnRequest) -> str | None:
+        deps = self._deps
+        serving_version = getattr(deps.models, "serving_version", None)
+        if serving_version is not None:
+            try:
+                version = await serving_version(
+                    self._registry_model_id(), subject=request.user_id.value
+                )
+            except Exception:
+                logger.debug("model registry lookup failed", exc_info=True)
+                return None
+            return self._servable_model_tag(version.artefact_uri) if version is not None else None
         try:
             assignment = await deps.models.assign(
                 self._registry_model_id(), subject=request.user_id.value
