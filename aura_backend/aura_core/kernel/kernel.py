@@ -604,9 +604,9 @@ class AIKernel:
                 tool_results=tool_results,
                 scratchpad=execution_notes,
                 history_summary=history_summary,
-                context_window=self._context_window(),
+                context_window=self._context_window(request),
                 max_output_tokens=request.max_output_tokens,
-                max_prompt_tokens=self._max_prompt_tokens(),
+                max_prompt_tokens=self._max_prompt_tokens(request),
                 caller_context=caller_context,
             )
         )
@@ -896,9 +896,9 @@ class AIKernel:
                         tool_results=tool_results,
                         scratchpad=execution_notes,
                         history_summary=history_summary,
-                        context_window=self._context_window(),
+                        context_window=self._context_window(request),
                         max_output_tokens=request.max_output_tokens,
-                        max_prompt_tokens=self._max_prompt_tokens(),
+                        max_prompt_tokens=self._max_prompt_tokens(request),
                         caller_context=caller_context,
                     )
                 )
@@ -2198,24 +2198,68 @@ class AIKernel:
                 AGENT_PROMPT_IDS["orchestrator"], {"fence_rules": ""}
             ).text
 
-    def _context_window(self) -> int:
-        """Smallest context window among healthy providers.
+    def _turn_providers(self, request: TurnRequest | None = None) -> tuple[str, ...]:
+        """The providers this turn could actually be served by (KAN-98).
+
+        Asks the router's own ``plan`` -- under the turn's ambient workload and data scopes --
+        rather than re-deriving routing here: workload fences, pool tiering, data
+        classification, ``require_local`` and open circuits all exclude a provider exactly as
+        they would for the real generation. Falls back to every provider when the router
+        cannot plan or excludes them all, which sizes to the old all-provider minimum.
+        """
+        router = self._deps.router
+        names = tuple(getattr(router, "provider_names", ()) or ())
+        plan = getattr(router, "plan", None)
+        if plan is None:
+            return names
+        try:
+            probe = CompletionRequest(
+                conversation=Conversation.of([Message.user("")]),
+                sampling=SamplingParams(
+                    max_output_tokens=request.max_output_tokens if request is not None else None
+                ),
+                policy=request.routing_policy if request is not None else None,
+                require_local=bool(request is not None and request.require_local),
+            )
+            candidates = tuple(plan(probe).candidates)
+        except Exception:
+            logger.debug("routing plan for context sizing failed", exc_info=True)
+            return names
+        return candidates or names
+
+    def _context_window(self, request: TurnRequest | None = None) -> int:
+        """Smallest context window among the providers healthy and eligible for this turn.
 
         Sizing to the smallest rather than the largest means a failover to a smaller model does
-        not immediately overflow -- which would turn a latency event into an outage.
+        not immediately overflow -- which would turn a latency event into an outage. Only
+        providers the turn could fail over *to* count: an unhealthy provider, or one fenced to
+        another workload, must not shrink every turn's window.
         """
         router = self._deps.router
         try:
             windows = [
-                router.get(name).capabilities.context_window for name in router.provider_names
+                router.get(name).capabilities.context_window
+                for name in self._turn_providers(request)
+                if router.get(name) is not None
             ]
             return min(windows) if windows else 8192
         except Exception:
             return 8192
 
-    def _max_prompt_tokens(self) -> int:
+    def _max_prompt_tokens(self, request: TurnRequest | None = None) -> int:
+        """The assembled-prompt cap for this turn: the global ``max_prompt_tokens``, narrowed
+        by any per-provider cap among the turn's eligible providers (KAN-98)."""
         llm = getattr(self._deps.settings, "llm", None) if self._deps.settings is not None else None
-        return int(getattr(llm, "max_prompt_tokens", 400) or 400)
+        ceiling = int(getattr(llm, "max_prompt_tokens", 400) or 400)
+        declared = {
+            config.name: int(getattr(config, "max_prompt_tokens", 0) or 0)
+            for config in (getattr(llm, "providers", ()) or ())
+        }
+        caps = [
+            min(declared[name], ceiling) if declared.get(name) else ceiling
+            for name in self._turn_providers(request)
+        ]
+        return min(caps) if caps else ceiling
 
     def _turn_generation_budget_s(self, request: TurnRequest) -> float | None:
         """The generation budget for this turn (PP-06), or ``None`` for no budget.
