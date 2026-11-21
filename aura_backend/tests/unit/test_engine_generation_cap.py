@@ -134,6 +134,29 @@ class TestEngineerReplanHeadroom:
         assert budget.usage.by_purpose["planner"].generations == 9
 
 
+class TestDelegatedSubTurnsShareTheRootCap:
+    """A sub-turn's fresh budget must not reset the root turn's engine ceiling."""
+
+    def test_sub_turn_engine_generations_count_against_the_parent(self) -> None:
+        root = TurnBudget(max_engine_generations=3)
+        root.start_engine_generation()
+        root.start_engine_generation()
+        child = TurnBudget(max_engine_generations=32, parent=root)
+        child.start_engine_generation()
+        assert (root.engine_generations_used, child.engine_generations_used) == (3, 1)
+        with pytest.raises(BudgetExceededError):
+            child.start_engine_generation()
+        # A refused generation is charged nowhere.
+        assert (root.engine_generations_used, child.engine_generations_used) == (3, 1)
+
+    def test_each_new_sub_turn_still_hits_the_root_cap(self) -> None:
+        root = TurnBudget(max_engine_generations=2)
+        for _ in range(2):
+            TurnBudget(max_engine_generations=32, parent=root).start_engine_generation()
+        with pytest.raises(BudgetExceededError):
+            TurnBudget(max_engine_generations=32, parent=root).start_engine_generation()
+
+
 class TestKernelTurn:
     async def test_a_tree_of_thoughts_turn_stays_within_the_total_cap(
         self, container, monkeypatch

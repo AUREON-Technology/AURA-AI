@@ -352,20 +352,31 @@ class TurnBudget:
 
         Counted at the start, not on success, so concurrent samples (self-consistency gathers
         its samples at once) cannot all pass the check and overshoot the cap together.
+
+        Checked and charged on this turn and on every turn it was started from, like cost
+        (F30): a delegated sub-turn gets a fresh budget of its own, so without walking the
+        parent chain each delegation would reset the root turn's engine ceiling.
         """
-        if (
-            self.max_engine_generations
-            and self.engine_generations_used >= self.max_engine_generations
-        ):
-            raise BudgetExceededError(
-                "turn exceeded its engine generation budget",
-                details={
-                    "limit": self.max_engine_generations,
-                    "used": self.engine_generations_used,
-                    "scope": "engine",
-                },
-            )
-        self.engine_generations_used += 1
+        chain: list[TurnBudget] = []
+        budget: TurnBudget | None = self
+        while budget is not None:
+            chain.append(budget)
+            budget = budget.parent
+        for budget in chain:
+            if (
+                budget.max_engine_generations
+                and budget.engine_generations_used >= budget.max_engine_generations
+            ):
+                raise BudgetExceededError(
+                    "turn exceeded its engine generation budget",
+                    details={
+                        "limit": budget.max_engine_generations,
+                        "used": budget.engine_generations_used,
+                        "scope": "engine",
+                    },
+                )
+        for budget in chain:
+            budget.engine_generations_used += 1
 
     def check_cost(self) -> None:
         """The cost ceiling alone, of this turn and of every turn it was started from (F30)."""
