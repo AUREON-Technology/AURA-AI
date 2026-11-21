@@ -167,13 +167,19 @@ class ContextEngine:
         self._max_prompt_tokens = max_prompt_tokens
         self._knowledge_chunk_max_chars = knowledge_chunk_max_chars
         self._max_knowledge_items = max_knowledge_items
-        # The tokenizer's own chat framing, learned from it rather than assumed: what an empty
-        # conversation costs (reply priming) and what one more empty message adds. With these,
-        # a conversation's cost is a sum of per-message costs, each counted once (KAN-105).
-        self._priming = self._tokenizer.count_messages(())
-        self._message_overhead = (
-            self._tokenizer.count_messages((Message.user(""),)) - self._priming
-        )
+        # The tokenizer's own chat framing, learned from it rather than assumed: what one more
+        # empty message adds (per-message overhead) and what is left of a one-message
+        # conversation once that is taken out (reply priming). With these, a conversation's
+        # cost is a sum of per-message costs, each counted once (KAN-105).
+        #
+        # Both are measured on non-empty conversations. An empty one is not a prompt, and the
+        # tokenizers price it at 0 (KAN-103, matching ``Conversation.approx_tokens``); learning
+        # the priming from it read the priming as 0 and folded it into every message's
+        # overhead, so each message past the first was overcounted by the priming.
+        one = self._tokenizer.count_messages((Message.user(""),))
+        two = self._tokenizer.count_messages((Message.user(""), Message.user("")))
+        self._message_overhead = two - one
+        self._priming = one - self._message_overhead
         self._separator = self._tokenizer.count("\n")
 
     def _message_cost(self, content_tokens: int) -> int:
