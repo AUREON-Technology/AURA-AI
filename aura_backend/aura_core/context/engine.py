@@ -57,6 +57,15 @@ DEFAULT_HISTORY_TURNS = 4
 DEFAULT_KNOWLEDGE_CHUNK_MAX_CHARS = 280
 DEFAULT_MAX_KNOWLEDGE_ITEMS = 2
 _CLIP_MARKER = " […truncated]"
+#: Sections rendered into the leading system message; HISTORY gets its own message.
+_SYSTEM_SECTIONS = (
+    ContextSection.INSTRUCTIONS,
+    ContextSection.CAG,
+    ContextSection.MEMORY,
+    ContextSection.KNOWLEDGE,
+    ContextSection.TOOL_OUTPUT,
+    ContextSection.SCRATCHPAD,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +143,16 @@ class ContextEngine:
         self._max_prompt_tokens = max_prompt_tokens
         self._knowledge_chunk_max_chars = knowledge_chunk_max_chars
         self._max_knowledge_items = max_knowledge_items
+        # The tokenizer's own chat framing, learned from it rather than assumed: what an empty
+        # conversation costs (reply priming) and what one more empty message adds. With these,
+        # a conversation's cost is a sum of per-message costs, each counted once (KAN-105).
+        self._priming = self._tokenizer.count_messages(())
+        self._message_overhead = (
+            self._tokenizer.count_messages((Message.user(""),)) - self._priming
+        )
+
+    def _message_cost(self, content_tokens: int) -> int:
+        return content_tokens + self._message_overhead
 
     # -- budgeting ---------------------------------------------------------------------
 
@@ -382,32 +401,34 @@ class ContextEngine:
 
     def _compress_history(
         self, request: ContextRequest, allowance: int
-    ) -> tuple[Conversation, str, int]:
+    ) -> tuple[list[tuple[Message, int]], str, int]:
         """Fit history into ``allowance`` tokens.
 
         Strategy: keep the most recent turns verbatim, fold everything older into the running
         summary. Recent turns carry the actual conversational state (what "it" refers to, what
         was just agreed); older turns carry facts, which survive summarisation.
 
-        Returns ``(kept_conversation, summary_text, dropped_turn_count)``.
+        Returns ``(kept, summary_text, dropped_turn_count)``. ``kept`` pairs each message with
+        its cost (content plus chat framing), counted here once and reused by every later step
+        (KAN-105). Messages outside the window are never counted at all.
         """
         messages = [m for m in request.history if m.role is not Role.SYSTEM]
         if not messages:
-            return Conversation(), request.history_summary, 0
+            return [], request.history_summary, 0
 
         dropped_by_window = 0
         if self._history_turns > 0 and len(messages) > self._history_turns:
             dropped_by_window = len(messages) - self._history_turns
             messages = messages[-self._history_turns :]
 
-        kept: list[Message] = []
+        kept: list[tuple[Message, int]] = []
         used = 0
         # Walk backwards so the newest turns win the budget.
         for message in reversed(messages):
-            cost = self._tokenizer.count(message.content) + 4
+            cost = self._message_cost(self._tokenizer.count(message.content))
             if used + cost > allowance and kept:
                 break
-            kept.append(message)
+            kept.append((message, cost))
             used += cost
         kept.reverse()
 
@@ -415,7 +436,7 @@ class ContextEngine:
         summary = request.history_summary
         # Do not invent an omission notice: it costs a system message and tokens that the
         # CPU prefill budget needs for RAG. An operator-supplied episodic summary still lands.
-        return Conversation.of(kept), summary, dropped
+        return kept, summary, dropped
 
     # -- assembly ----------------------------------------------------------------------
 
@@ -459,14 +480,15 @@ class ContextEngine:
         history, summary, dropped_turns = self._compress_history(request, history_allowance)
 
         if summary:
+            summary_text = f"Earlier in this conversation: {summary}"
             candidates.append(
                 ContextItem(
-                    content=f"Earlier in this conversation: {summary}",
+                    content=summary_text,
                     section=ContextSection.HISTORY,
                     channel=TrustChannel.SYSTEM,
                     relevance=0.8,
                     priority=40,
-                    tokens=self._tokenizer.count(summary),
+                    tokens=self._tokenizer.count(summary_text),
                     provenance="episodic_summary",
                     item_id="history_summary",
                 )
@@ -474,9 +496,9 @@ class ContextEngine:
 
         # Reserve CAG tokens before packing the variable tail so the 400-token cap still holds.
         cag_reserved = sum(i.tokens for i in cag_items)
-        history_tokens = sum(self._tokenizer.count(m.content) + 4 for m in history)
-        user_tokens = self._tokenizer.count(request.user_message) + 4
-        remaining = budget.total - history_tokens - user_tokens - cag_reserved
+        history_tokens = sum(cost for _, cost in history)
+        user_cost = self._message_cost(self._tokenizer.count(request.user_message))
+        remaining = budget.total - history_tokens - user_cost - cag_reserved
         # `pack()` drops -- never truncates -- a pinned item that does not fit ("a pinned item
         # that cannot fit at all is a configuration error", domain/context.py). The flat
         # `+ 64` floor below was sized for "some slack for the variable tail", not for what the
@@ -513,45 +535,58 @@ class ContextEngine:
             prefix_nonce=prefix_nonce,
         )
 
-        system_text = bundle.render(
-            include_sections=(
-                ContextSection.INSTRUCTIONS,
-                ContextSection.CAG,
-                ContextSection.MEMORY,
-                ContextSection.KNOWLEDGE,
-                ContextSection.TOOL_OUTPUT,
-                ContextSection.SCRATCHPAD,
-            )
+        count = self._tokenizer.count
+        system_sections: tuple[ContextSection, ...] = _SYSTEM_SECTIONS
+        # Rendered costs come from the items' stored counts plus framing (KAN-105): nothing
+        # already counted is tokenised again, and `_fit_to_cap` updates totals by subtraction.
+        system_cost = self._message_cost(
+            bundle.rendered_tokens(count, include_sections=system_sections)
         )
-        history_text = bundle.render(include_sections=(ContextSection.HISTORY,))
+        history_block_cost = (
+            self._message_cost(
+                bundle.rendered_tokens(count, include_sections=(ContextSection.HISTORY,))
+            )
+            if bundle.by_section(ContextSection.HISTORY)
+            else 0
+        )
 
         cap = self._effective_prompt_cap(request)
-        conversation, prompt_tokens, trimmed = self._fit_to_cap(
-            system_text=system_text,
-            history_text=history_text,
+        kept_history, keep_block, prompt_tokens, trimmed = self._fit_to_cap(
+            system_cost=system_cost,
+            history_block_cost=history_block_cost,
             history=history,
-            user_message=request.user_message,
+            user_cost=user_cost,
             cap=cap,
         )
         if cap and prompt_tokens > cap and bundle.by_section(ContextSection.MEMORY):
             # Memory lost the budget fight: keep instructions + CAG + citations.
-            system_text = bundle.render(
-                include_sections=(
-                    ContextSection.INSTRUCTIONS,
-                    ContextSection.CAG,
-                    ContextSection.KNOWLEDGE,
-                    ContextSection.TOOL_OUTPUT,
-                    ContextSection.SCRATCHPAD,
-                )
+            system_sections = tuple(
+                s for s in _SYSTEM_SECTIONS if s is not ContextSection.MEMORY
             )
-            conversation, prompt_tokens, trimmed_more = self._fit_to_cap(
-                system_text=system_text,
-                history_text=history_text,
+            system_cost = self._message_cost(
+                bundle.rendered_tokens(count, include_sections=system_sections)
+            )
+            kept_history, keep_block, prompt_tokens, trimmed_more = self._fit_to_cap(
+                system_cost=system_cost,
+                history_block_cost=history_block_cost,
                 history=history,
-                user_message=request.user_message,
+                user_cost=user_cost,
                 cap=cap,
             )
             trimmed += trimmed_more
+
+        system_text = bundle.render(include_sections=system_sections)
+        history_text = (
+            bundle.render(include_sections=(ContextSection.HISTORY,)) if keep_block else ""
+        )
+        conversation = Conversation.of(
+            [
+                Message.system(system_text),
+                *([Message.system(history_text)] if history_text else []),
+                *(message for message, _ in kept_history),
+                Message.user(request.user_message),
+            ]
+        )
         duration_ms = (time.perf_counter() - started) * 1000.0
 
         if self._metrics is not None and bundle.dropped:
@@ -577,44 +612,38 @@ class ContextEngine:
     def _fit_to_cap(
         self,
         *,
-        system_text: str,
-        history_text: str,
-        history: Conversation,
-        user_message: str,
+        system_cost: int,
+        history_block_cost: int,
+        history: Sequence[tuple[Message, int]],
+        user_cost: int,
         cap: int | None,
-    ) -> tuple[Conversation, int, int]:
+    ) -> tuple[list[tuple[Message, int]], bool, int, int]:
         """Drop oldest history until the assembled prompt fits ``cap``.
 
         RAG and instructions stay. History is already in the session store; trimming it here
-        only changes what the model sees this turn.
+        only changes what the model sees this turn. Works on costs alone: each part was counted
+        once, and dropping one subtracts its cost rather than recounting the prompt (KAN-105).
+
+        Returns ``(kept_history, keep_history_block, prompt_tokens, dropped)``.
         """
-        extra_system = [Message.system(history_text)] if history_text else []
         history_msgs = list(history)
+        keep_block = history_block_cost > 0
+        total = (
+            self._priming + system_cost + history_block_cost
+            + sum(cost for _, cost in history_msgs) + user_cost
+        )
         dropped = 0
-
-        def build() -> list[Message]:
-            return [
-                Message.system(system_text),
-                *extra_system,
-                *history_msgs,
-                Message.user(user_message),
-            ]
-
-        messages = build()
-        prompt_tokens = self._tokenizer.count_messages(messages)
         if not cap:
-            return Conversation.of(messages), prompt_tokens, 0
-        while prompt_tokens > cap and history_msgs:
-            history_msgs.pop(0)
+            return history_msgs, keep_block, total, 0
+        while total > cap and history_msgs:
+            _, cost = history_msgs.pop(0)
+            total -= cost
             dropped += 1
-            messages = build()
-            prompt_tokens = self._tokenizer.count_messages(messages)
-        if prompt_tokens > cap and extra_system:
-            extra_system.clear()
+        if total > cap and keep_block:
+            keep_block = False
+            total -= history_block_cost
             dropped += 1
-            messages = build()
-            prompt_tokens = self._tokenizer.count_messages(messages)
-        return Conversation.of(messages), prompt_tokens, dropped
+        return history_msgs, keep_block, total, dropped
 
     def count(self, text: str) -> int:
         return self._tokenizer.count(text)
