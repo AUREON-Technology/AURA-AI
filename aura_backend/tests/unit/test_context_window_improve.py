@@ -253,24 +253,33 @@ def _request(**overrides: Any) -> ContextRequest:
 
 
 class TestRouterEligibilityUsesTheClampedOutput:
+    """Prompt sizes are the router's own count (KAN-104: the provider's tokenizer), checked as
+    a precondition, so each case stays in the band it is about whatever the estimator does."""
+
+    @staticmethod
+    def _request(router: ProviderRouter, repeats: int) -> tuple[CompletionRequest, int]:
+        request = CompletionRequest(
+            conversation=Conversation.of([Message.user(_WORDS * repeats)]),
+            sampling=SamplingParams(max_output_tokens=2048),
+        )
+        return request, router.prompt_tokens(request, "small")
+
     def test_a_provider_whose_answer_is_capped_still_fits_a_long_prompt(self) -> None:
         """The payload asks for at most the provider's own max_output_tokens; eligibility was
         checked with the unclamped request, so this provider was excluded for nothing."""
         small_answers = _provider("small", window=8192, max_output=512)
         router = ProviderRouter([small_answers])
-        request = CompletionRequest(
-            conversation=Conversation.of([Message.user("x" * 28_000)]),  # ~7004 tokens
-            sampling=SamplingParams(max_output_tokens=2048),
-        )
+        request, prompt = self._request(router, 500)  # ~7.1K tokens
+        # Too long for the requested 2048, short enough for the 512 the model answers in.
+        assert prompt + 2048 > 8192 >= prompt + 512, prompt
         plan = router.plan(request)
         assert plan.candidates == ("small",)
 
     def test_a_prompt_that_leaves_no_room_for_the_clamped_answer_is_still_excluded(self) -> None:
         router = ProviderRouter([_provider("small", window=8192, max_output=512)])
-        request = CompletionRequest(
-            conversation=Conversation.of([Message.user("x" * 31_000)]),  # ~7754 tokens
-            sampling=SamplingParams(max_output_tokens=2048),
-        )
+        request, prompt = self._request(router, 550)  # ~7.9K tokens
+        # The prompt alone fits the window; with even the clamped 512-token answer it does not.
+        assert prompt < 8192 < prompt + 512, prompt
         assert router.plan(request).excluded["small"] == "context_window_too_small"
 
 
