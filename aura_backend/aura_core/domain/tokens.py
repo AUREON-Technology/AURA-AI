@@ -119,13 +119,17 @@ _WORD = re.compile(rf"[{_LATIN}]+(?:'[{_LATIN}]+)?")
 _DIGIT_RUN = re.compile(r"\d+")
 _PUNCT = re.compile(r"[^\w\s]|_")
 _CJK = re.compile(rf"[{_CJK_RANGES}]")
-#: Arabic letter runs (main block letters, extended blocks and presentation forms; harakat are
-#: left to ``_PUNCT``, which counts them high). Costed per letter, not per word: vocabularies
-#: trained mostly on English split an Arabic word into far more pieces than an English one
-#: (docs/plans/arabic-language_plan.md, stage 1).
-_ARABIC = re.compile(
-    r"[ؠ-يٮ-ۓۺ-ۿݐ-ݿࢠ-ࣉﭐ-ﷻﹰ-ﻼ]+"
-)
+#: Arabic letter runs: every word character (letters, not digits or underscores) anywhere in
+#: the Arabic blocks -- main, Supplement, Extended-A/B and both presentation-form blocks. The
+#: blocks are exactly the ones ``_OTHER_LETTERS`` excludes, so the two partition the letters
+#: between them: an earlier version covered only some sub-ranges here while excluding the
+#: whole blocks there, and a prompt padded with letters from the gap (U+06D5, U+06EE, most
+#: presentation forms, ...) counted as almost nothing against ``USER_TPD``, the provider TPM
+#: and the context cap. Harakat and other marks are not word characters and fall to
+#: ``_PUNCT``, which counts them high; Arabic-Indic digits fall to ``_DIGIT_RUN``. Costed per
+#: letter, not per word: vocabularies trained mostly on English split an Arabic word into far
+#: more pieces than an English one (docs/plans/arabic-language_plan.md, stage 1).
+_ARABIC = re.compile(rf"(?:(?=[{_ARABIC_BLOCKS}])[^\W\d_])+")
 #: Letters of any other script: word characters that are not digits, underscores, Latin,
 #: Arabic or CJK.
 _OTHER_LETTERS = re.compile(rf"[^\W\d_{_LATIN}{_ARABIC_BLOCKS}{_CJK_RANGES}]+")
@@ -133,7 +137,8 @@ _WHITESPACE_RUN = re.compile(r"[ \t]{2,}")
 
 
 def estimate_tokens(text: str, profile: TokenProfile = GENERIC) -> int:
-    """Estimated BPE tokens in ``text`` under ``profile``. 0 for empty text, otherwise >= 1.
+    """Estimated BPE tokens in ``text`` under ``profile``. 0 for empty text, otherwise at least
+    ``max(1, ceil(len(text) / 4))``.
 
     Counts the units BPE actually produces rather than characters: whitespace-delimited Latin
     words (long ones cost extra sub-word pieces), punctuation and symbols (almost always their
@@ -168,4 +173,7 @@ def estimate_tokens(text: str, profile: TokenProfile = GENERIC) -> int:
     tokens += text.count("\n") * profile.newline
     tokens += len(_WHITESPACE_RUN.findall(text)) * profile.whitespace_run
 
-    return max(1, int(tokens * profile.safety + 0.5))
+    # Never below the flat ``ceil(len/4)`` every caller used before this estimator: whatever a
+    # rule above fails to see (a script, a symbol class, whitespace padding), the figure that
+    # sizes a quota reservation or a context budget cannot be driven under the old one.
+    return max(1, int(tokens * profile.safety + 0.5), -(-len(text) // 4))

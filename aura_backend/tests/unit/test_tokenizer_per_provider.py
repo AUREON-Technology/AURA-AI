@@ -123,8 +123,10 @@ class TestCalibration:
         text = FIXTURES[fixture]
         assert tokenizer_for(family).count(text) >= 1.25 * _len4(text)
 
-    def test_english_count_is_unchanged_for_the_generic_profile(self) -> None:
-        assert HeuristicTokenizer().count("This is a fairly long English sentence") == 9
+    def test_english_count_is_held_at_the_len_over_four_floor(self) -> None:
+        """The rules alone give 9 (unchanged from before profiles); the ceil(len/4) floor
+        (test_token_estimate_floor.py) lifts this 38-character sentence to 10."""
+        assert HeuristicTokenizer().count("This is a fairly long English sentence") == 10
 
     def test_other_scripts_are_no_longer_free(self) -> None:
         """Cyrillic and Hebrew letters used to match no rule and count as zero tokens."""
