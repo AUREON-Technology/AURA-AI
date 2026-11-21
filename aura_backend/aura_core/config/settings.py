@@ -2129,6 +2129,44 @@ class BillingSettings:
         )
 
 
+#: The Google OAuth client the operator console signs in with. Not a secret: it is in every
+#: page the console serves. ``config.py`` (the legacy app) carries the same default.
+DEFAULT_CONSOLE_GOOGLE_CLIENT_ID = (
+    "87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ControlSettings:
+    """The console's Super-Admin control center (docs/plans/console-control-center-plan.md).
+
+    Every write there needs a step-up: a Google sign-in the person completed within
+    ``step_up_max_age_s``, checked against ``google_client_ids``. The grant it buys lasts
+    ``step_up_ttl_s``. ``writes_per_hour`` caps changes per Super Admin, counted from the change
+    journal so every gateway worker sees the same count. ``rollback_watch_s`` is how long a
+    change's deployment may stay unhealthy before it is rolled back.
+    """
+
+    google_client_ids: tuple[str, ...] = (DEFAULT_CONSOLE_GOOGLE_CLIENT_ID,)
+    step_up_max_age_s: int = 300
+    step_up_ttl_s: int = 300
+    writes_per_hour: int = 30
+    rollback_watch_s: int = 300
+
+    @classmethod
+    def from_env(cls) -> "ControlSettings":
+        ids = _list("CONTROL_GOOGLE_CLIENT_IDS") or tuple(
+            filter(None, ((os.environ.get("GOOGLE_CLIENT_ID") or "").strip(),))
+        )
+        return cls(
+            google_client_ids=ids or (DEFAULT_CONSOLE_GOOGLE_CLIENT_ID,),
+            step_up_max_age_s=_int("CONTROL_STEP_UP_MAX_AGE_S", 300, minimum=30, maximum=900),
+            step_up_ttl_s=_int("CONTROL_STEP_UP_TTL_S", 300, minimum=30, maximum=900),
+            writes_per_hour=_int("CONTROL_WRITES_PER_HOUR", 30, minimum=1, maximum=500),
+            rollback_watch_s=_int("CONTROL_ROLLBACK_WATCH_S", 300, minimum=60, maximum=3600),
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class EmailSettings:
     """Customer email over SMTP (SaaS P1-F1): invites, receipts, renewal and past-due notices.
@@ -2310,6 +2348,7 @@ class AuraSettings:
     tenancy: TenancySettings = field(default_factory=TenancySettings)
     billing: BillingSettings = field(default_factory=BillingSettings)
     email: EmailSettings = field(default_factory=EmailSettings)
+    control: ControlSettings = field(default_factory=ControlSettings)
 
     @classmethod
     def from_env(cls) -> "AuraSettings":
@@ -2350,6 +2389,7 @@ class AuraSettings:
             tenancy=TenancySettings.from_env(),
             billing=BillingSettings.from_env(),
             email=EmailSettings.from_env(),
+            control=ControlSettings.from_env(),
         )
 
     # -- validation --------------------------------------------------------------------

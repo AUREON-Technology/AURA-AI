@@ -21,6 +21,25 @@ Plan and user decisions: [`docs/plans/console-subdomain-plan.md`](../plans/conso
 
 **Re-read against commit:** `b2e14c4` (2026-11-08) for every row dated 2026-11-07 or later (their live checks came first; the re-read confirmed that tree holds what they describe); older rows carry the commit they were checked at. Refresh this line whenever a row is re-verified (audit FSA-120).
 
+## Settings becomes the Super-Admin control center (2026-11-21, stage 1)
+
+Plan and user decisions: [`docs/plans/console-control-center-plan.md`](../plans/console-control-center-plan.md);
+design: [ADR-037](../architecture/037-console-control-center.md); gap: GAP-067. Branch
+`anas/laughing-hamilton-glfevj`, unmerged.
+
+| Step | Status | Evidence |
+| --- | --- | --- |
+| Settings is Super-Admin-only: no nav item or command-palette entry below SuperAdmin; the page renders a refusal and makes no control call | TESTED locally 2026-11-21, not CI-run (CB-44) | `src/lib/nav.ts` (`superAdminOnly`), `app/(console)/settings/layout.tsx`; `tests/e2e/control-center.spec.ts` |
+| Overview: release, open changes, one card per platform (Railway, HF Space, Grafana, Qdrant, Cloudflare) with Connect / Replace token / Disconnect | TESTED locally, mock gateway only | `settings/page.tsx`; e2e checks that a typed token never appears in the page or comes back from the gateway |
+| Step-up: a fresh Google sign-in in a popup (`prompt=login`, `max_age`), a five-minute grant held in memory, a typed confirmation on every write; sign-out revokes the grant | TESTED locally against the mock; **real Google not tried** | `src/lib/control.ts`, `app/step-up/callback/page.tsx`, `app/api/auth/logout/route.ts`. Needs `https://console.aureon-ai.tech/step-up/callback` as an Authorized redirect URI (owner) |
+| AURA settings (read-only catalog of every `AURA_*` variable: value, default, range, secret set or not, protected) | TESTED locally, mock gateway only | `settings/aura/page.tsx`; editing is stage 2 |
+| Changes journal | TESTED locally, mock gateway only | `settings/changes/page.tsx` |
+| Egyptian Arabic, right to left | TESTED locally (one e2e) | 58 `settings.*` keys in `src/lib/i18n/{en,ar}.ts`; not reviewed by a native speaker |
+| Live: Super Admin opens Settings, Admin refused; a real step-up; a token saved and verified | OPEN | GAP-067 exit condition |
+
+Local checks on 2026-11-21: `tsc --noEmit`, `npm run lint` and `npm run build` clean; Playwright
+72 passed (9 in `control-center.spec.ts`).
+
 ## Summary
 
 The console is built: 10 pages (11 with the unmerged Customers page, PR #246), Google sign-in for Developer+ roles, and a same-origin proxy that
@@ -41,7 +60,8 @@ and both nginx server blocks. None of it is proven:
 | Login (Google ID token → `POST /api/v3/auth/web/token`, Developer+, httpOnly SameSite=strict cookies) | TESTED (backend side only) | `app/api/auth/login/route.ts`; `tests/unit/test_web_token.py`, `test_console_operator_bootstrap.py` |
 | `/api/v3/*` proxy and refresh rotation | BUILT; F-35 fix TESTED locally (2026-10-30), not CI-run | Single-flight refresh keyed by refresh token (`src/lib/refresh.ts`); `tests/e2e/refresh.spec.ts` against a mock gateway that enforces single-use refresh tokens fails without it (`[200, 401, 401]`); `tests/unit/refresh.spec.ts`. Dedupes within one server process only; the state lives on `globalThis` so the proxy and `middleware.ts` share it |
 | Session gate (layout, plus nginx `auth_request` for Grafana) | BUILT; refresh-on-render TESTED locally (2026-10-30), not CI-run | `middleware.ts` (Node.js runtime) refreshes before a console page renders when the access cookie is missing or its JWT `exp` is within 30 s, through the same single-flight refresh as the proxy, sets the rotated cookies and forwards them to `app/(console)/layout.tsx` on the same request; a failed refresh clears both cookies and redirects to `/login`. `tests/e2e/session-gate.spec.ts` (4 tests: reload and sidebar navigation after expiry, an expired-`exp` cookie, an invalid refresh token, and a page render plus a proxied request sharing one refresh) — the first three fail without the middleware, the fourth fails if the refresh state is module-local. The sharing was also checked against `next build` + `next start`: 0 replays |
-| Overview / Settings | BUILT; heading asserted in e2e | `tests/e2e/admin.spec.ts` |
+| Overview | BUILT; heading asserted in e2e | `tests/e2e/admin.spec.ts` |
+| Settings (Super-Admin control center, ADR-037) | Stage 1 TESTED locally 2026-11-21, not CI-run, unmerged | See "Settings becomes the Super-Admin control center" above |
 | Providers (breaker state, circuit reset) | BUILT; e2e spec, never run in CI | `providers/page.tsx` |
 | Providers: ADR-030 ceiling, `third_party`, `may_train_on_prompts` | OPEN | `router.stats()` emits them, but `src/lib/types.ts` `ProviderRow` lacks the fields |
 | Prompts (pin version) | BUILT; e2e spec | `prompts/page.tsx` |

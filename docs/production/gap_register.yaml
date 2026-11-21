@@ -1698,3 +1698,41 @@ gaps:
       with no desktop, and (3) either Group B migrated onto SandboxRunner or a recorded decision
       to keep it gateway-side with the flag on in a named environment.
     status: built_not_proven
+  - gap_id: GAP-067
+    component: console/control-center
+    severity: P2
+    current_state: >-
+      Stage 1 built, not proven (ADR-037, docs/plans/console-control-center-plan.md). The console's
+      Settings page is Super-Admin-only (nav item hidden, page refuses, every
+      /api/v3/admin/control/* route 403s below SuperAdmin). Platform tokens for Railway, the HF GPU
+      Space, Grafana, Qdrant and Cloudflare are entered in the console, verified where the vendor
+      allows (HF, Cloudflare, Qdrant), encrypted in Postgres with the credential vault and never
+      returned. Every write needs a five-minute step-up grant bought with a fresh Google
+      re-sign-in (prompt=login, max_age 300, one-time nonce) plus a typed confirmation; sign-out
+      revokes the grant. Changes are journaled (migration 0031). The Reconciler (Postgres lease,
+      automatic rollback of unhealthy deployments) is built and tested but not started in the
+      gateway: no stage-1 action produces a deployment, so stage 2 starts it. The AURA settings view is read-only and reads the gateway process's own
+      environment. Railway, Space, key, Grafana and Qdrant operations are stages 2-5, not built.
+    target_state: >-
+      The Super Admin runs every platform operation the plan lists (Railway variables, redeploy,
+      restart, rollback, logs; Space status, restart, hardware; key create, revoke and rotate;
+      Grafana set-up and status; Qdrant status and snapshots) from Settings, each one step-up
+      gated, journaled and, for deployments, rolled back automatically when unhealthy.
+    owner: platform-core
+    dependencies: []
+    test: >-
+      Default pytest: tests/unit/test_control_center.py (role sweep over every control route with
+      an OpenAPI completeness check, step-up refusals, server-side confirmation, canary sweep over
+      responses and audit events, write cap, catalog completeness, reconciler rollback and lease).
+      Opt-in: tests/load/test_control_store_postgres.py and the migration round trip on Postgres.
+      Console: tests/e2e/control-center.spec.ts against the mock gateway. Nothing here exercises
+      real Google, a real platform API or a deployed gateway.
+    metric: >-
+      Control writes per hour (journal), step-up grants issued and refused (audit
+      admin.control.step_up), automatic rollbacks and FAILED changes
+    exit_condition: >-
+      docs/reports/control-center-*.md committed showing, on the live console: (1) the Super Admin
+      opens Settings and an Admin is refused in the UI and at the API; (2) a real Google step-up
+      round trip; (3) a platform token saved and verified with no response containing it; and,
+      from stage 2, (4) one change rolled back automatically after a forced unhealthy deploy.
+    status: built_not_proven

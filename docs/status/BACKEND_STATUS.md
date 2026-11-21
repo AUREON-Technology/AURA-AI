@@ -237,6 +237,25 @@ That needs a check in the Firebase console.
   checks, `backup-fetch.sh`, and the `AuraBackupUnderReplicated` / `AuraBackupOffsiteStale`
   alerts. Deploy-stack only; no backend code. Local checks pass; CI ran with no logs (CB-44).
 
+- 2026-11-21, branch `anas/laughing-hamilton-glfevj`, unmerged: console control center stage 1
+  (ADR-037, GAP-067; plan `docs/plans/console-control-center-plan.md`). It adds:
+  - `/api/v3/admin/control/*`: overview, settings catalog, changes, step-up challenge, redeem
+    and revoke, and platform credential and disconnect. Every route is SuperAdmin-only, and
+    every write is step-up gated and typed-confirmed.
+  - Migration `0031` (four tables); after it merges, `/health/ready`'s `schema.revision` should
+    read `0031`.
+  - Platform tokens are sealed in the vault under `AURA_SECRETS_ENCRYPTION_KEY`. A missing or
+    malformed key disables the control center, not the gateway.
+
+  TESTED locally:
+  - default `pytest`: 6576 passed, 12 failed, 50 skipped. The 12 failures are already on `main`
+    from the `tools/open` work: `test_open_tools_fixes.py` (10), `test_analysis_tools.py` (1),
+    and `test_no_runtime_ddl.py` (`database_intelligence_tool.py:168`);
+  - legacy `unittest`: 148 OK;
+  - `tests/load/test_control_store_postgres.py` and the migration round trip on PG16.
+
+  Not CI-run (CB-44). Not proven: no real Google step-up or platform call has been made.
+
 ## Next steps
 
 0. ~~After the ADR-032 merge deploys: check that `/health/ready` reports `schema.revision 0019`~~ (done: live `0019` on 2026-11-07), then

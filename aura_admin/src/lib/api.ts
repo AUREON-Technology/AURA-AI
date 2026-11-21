@@ -6,6 +6,8 @@ export class AuraApiError extends Error {
     public error: string,
     message: string,
     public retryable = false,
+    /** The envelope's `details` (e.g. `{reason: "step_up_required"}`), when it carried any. */
+    public details: Record<string, unknown> = {},
   ) {
     super(message);
   }
@@ -63,11 +65,13 @@ export function errorFromBody(status: number, body: unknown): AuraApiError {
       (typeof fields.message === "string" && fields.message) ||
       (typeof fields.detail === "string" && fields.detail) ||
       (Object.keys(fields).length ? `${fallback}: ${JSON.stringify(fields).slice(0, 300)}` : fallback);
+    const details = fields.details;
     return new AuraApiError(
       status,
       typeof fields.error === "string" ? fields.error : "request_failed",
       message,
       Boolean(fields.retryable),
+      details && typeof details === "object" && !Array.isArray(details) ? (details as Record<string, unknown>) : {},
     );
   }
   return new AuraApiError(status, "request_failed", fallback);
