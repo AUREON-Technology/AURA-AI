@@ -84,7 +84,13 @@ from ..execution.confirmations import PendingConfirmationStore, ResumedTurn
 from ..execution.engine import ExecutionOutcome, StepEvent
 from ..llm.cache import InMemoryCache
 from ..llm.deadline import generation_budget, no_generation_budget
-from ..llm.router import TurnBudget, current_turn_budget, no_turn_budget, turn_budget_scope
+from ..llm.router import (
+    TurnBudget,
+    current_turn_budget,
+    generation_purpose,
+    no_turn_budget,
+    turn_budget_scope,
+)
 from ..llm.sensitivity import DataScope, data_scope, escalate
 from ..llm.workload import effective_workload, workload_for_turn, workload_scope
 from ..observability.logging import LogContext, get_logger
@@ -551,10 +557,11 @@ class AIKernel:
         if resume is not None or self._should_plan(request, tool_declarations):
             stage_start = time.perf_counter()
             try:
-                outcome = await self._plan_and_execute(
-                    request, message, tool_declarations, tainted,
-                    turn_id=turn_id, correlation=correlation, resume=resume,
-                )
+                with generation_purpose("planner"):
+                    outcome = await self._plan_and_execute(
+                        request, message, tool_declarations, tainted,
+                        turn_id=turn_id, correlation=correlation, resume=resume,
+                    )
             except Exception:
                 logger.warning("planning or execution failed; answering directly", exc_info=True)
                 outcome = None
@@ -686,10 +693,9 @@ class AIKernel:
             model=model,
             fallback_count=fallbacks,
             cache=CacheOutcome(hit=cached, tier=cache_tier),
-            prompt_tokens=usage.prompt_tokens if usage else assembled.prompt_tokens,
-            completion_tokens=usage.completion_tokens if usage else 0,
             # Every generation the turn made -- planning, reasoning, the answer, a repair --
-            # was charged to its budget (F30), not just the last one.
+            # was charged to its budget (F30): its cost and, since KAN-106, its tokens.
+            **self._turn_usage_fields(budget),
             cost_usd=budget.cost_used_usd,
             total_ms=(time.perf_counter() - started) * 1000.0,
             timings=StageTiming(**timings),
@@ -839,14 +845,15 @@ class AIKernel:
                 if resume is not None or self._should_plan(request, tool_declarations):
                     stage_start = time.perf_counter()
                     try:
-                        async for item in self._iter_execution(
-                            request, message, tool_declarations, tainted,
-                            turn_id=turn_id, correlation=correlation, resume=resume,
-                        ):
-                            if isinstance(item, StepEvent):
-                                yield {"type": "step", **item.as_dict()}
-                            elif isinstance(item, ExecutionOutcome):
-                                outcome = item
+                        with generation_purpose("planner"):
+                            async for item in self._iter_execution(
+                                request, message, tool_declarations, tainted,
+                                turn_id=turn_id, correlation=correlation, resume=resume,
+                            ):
+                                if isinstance(item, StepEvent):
+                                    yield {"type": "step", **item.as_dict()}
+                                elif isinstance(item, ExecutionOutcome):
+                                    outcome = item
                     except Exception:
                         logger.warning(
                             "planning or execution failed; answering directly", exc_info=True
@@ -1037,10 +1044,9 @@ class AIKernel:
                     retrieval is not None and retrieval.is_empty_but_searched
                 )
                 await self._remember_session_classification(request, scope)
-                prompt_tokens = last_usage.prompt_tokens if last_usage else assembled.prompt_tokens
-                completion_tokens = (
-                    last_usage.completion_tokens if last_usage else len(collected)
-                )
+                # Turn-wide (KAN-106): every generation the router charged to this turn, the
+                # same scope as cost_usd -- not the answer's last chunk, and never a chunk count.
+                usage_fields = self._turn_usage_fields(budget)
                 telemetry = TurnTelemetry(
                     correlation_id=correlation,
                     turn_id=turn_id,
@@ -1050,8 +1056,7 @@ class AIKernel:
                     outcome=TurnOutcome.SUCCESS,
                     provider=provider,
                     model=model,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
+                    **usage_fields,
                     cost_usd=budget.cost_used_usd,
                     total_ms=(time.perf_counter() - started) * 1000.0,
                     ttft_ms=ttft_ms,
@@ -1099,8 +1104,8 @@ class AIKernel:
                     "empty_generation_fallback": empty_generation_fallback,
                     "vision": perception.as_dict() if perception is not None else None,
                     "usage": {
-                        "prompt_tokens": last_usage.prompt_tokens if last_usage else 0,
-                        "completion_tokens": completion_tokens,
+                        **budget.usage.as_dict(),
+                        "engine_generations": budget.engine_generations_used,
                         "cost_usd": round(budget.cost_used_usd, 6),
                     },
                 }
@@ -2016,6 +2021,7 @@ class AIKernel:
             tools=(),
             timeout_s=self._completion_timeout_s(),
             response_schema=self._json_mode_hint(schema),
+            metadata={"purpose": "repair"},
         )
         response = await deps.router.complete(repair, budget=budget)
         repaired = response.text
@@ -2036,14 +2042,32 @@ class AIKernel:
 
         Charged by every generation made inside the turn, not only the kernel's own: the router
         reads it ambiently. A sub-turn (delegation) also charges the turn it was started from.
-        ``max_cost_per_turn_usd`` of 0 (the default) leaves the cost ceiling off.
+        ``max_cost_per_turn_usd`` of 0 (the default) leaves the cost ceiling off. Engine
+        generations (planner, reasoning, summaries) have their own ceiling (KAN-107).
         """
         llm = getattr(self._deps.settings, "llm", None)
         return TurnBudget(
             max_generations=getattr(llm, "max_generations_per_turn", 8),
             max_cost_usd=float(getattr(llm, "max_cost_per_turn_usd", 0.0) or 0.0),
+            max_engine_generations=int(getattr(llm, "max_engine_generations_per_turn", 32) or 0),
             parent=current_turn_budget(),
         )
+
+    def _turn_usage_fields(self, budget: TurnBudget) -> dict[str, Any]:
+        """``TurnTelemetry`` token fields from the turn's usage ledger (KAN-106), plus which
+        tokenizer the context was counted with (KAN-103)."""
+        usage = budget.usage
+        context = self._deps.context
+        return {
+            "prompt_tokens": usage.prompt_tokens,
+            "completion_tokens": usage.completion_tokens,
+            "usage_estimated": usage.estimated,
+            "generations": usage.generations,
+            "engine_generations": budget.engine_generations_used,
+            "usage_by_purpose": {k: v.as_dict() for k, v in usage.by_purpose.items()},
+            "tokenizer": getattr(context, "tokenizer_name", None),
+            "context_tokens_exact": bool(getattr(context, "counts_are_exact", False)),
+        }
 
     async def _guard_context(
         self,
@@ -2428,18 +2452,31 @@ class AIKernel:
         strength = retrieval.top_score if retrieval and retrieval.chunks else None
 
         # Multi-sample strategies vote over prose; a structured answer is one direct generation.
+        result = None
         if deps.reasoner is not None and request.response_schema is None:
-            result = await deps.reasoner.reason(
-                ReasoningRequest(
-                    question=request.message,
-                    conversation=assembled.conversation,
-                    citations=[c.chunk.content for c in (retrieval.chunks if retrieval else ())],
-                    retrieval_strength=strength,
-                    strategy=request.strategy,
-                    max_output_tokens=request.max_output_tokens,
-                    require_local=request.require_local,
-                )
-            )
+            try:
+                with generation_purpose("reasoning"):
+                    result = await deps.reasoner.reason(
+                        ReasoningRequest(
+                            question=request.message,
+                            conversation=assembled.conversation,
+                            citations=[
+                                c.chunk.content for c in (retrieval.chunks if retrieval else ())
+                            ],
+                            retrieval_strength=strength,
+                            strategy=request.strategy,
+                            max_output_tokens=request.max_output_tokens,
+                            require_local=request.require_local,
+                        )
+                    )
+            except BudgetExceededError as exc:
+                if (exc.details or {}).get("scope") != "engine":
+                    raise
+                # The engine-generation cap ran out mid-reasoning (KAN-107): answer with one
+                # direct generation from the kernel's own budget rather than fail the turn.
+                logger.warning("reasoning hit the engine generation cap; answering directly")
+                result = None
+        if result is not None:
             confidence = result.confidence.score if result.confidence else None
             if cache is not None:
                 await cache.store(

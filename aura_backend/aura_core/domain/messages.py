@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Sequence
 
 from .identifiers import ToolCallId
+from .tokens import MESSAGE_OVERHEAD, REPLY_PRIMING, TokenCounter, estimate_tokens
 
 __all__ = [
     "Role",
@@ -161,14 +162,16 @@ class Message:
     def is_trusted_instruction(self) -> bool:
         return self.channel is TrustChannel.SYSTEM
 
-    def approx_tokens(self) -> int:
-        """Cheap length estimate used before a real tokenizer is available.
+    def approx_tokens(self, counter: TokenCounter | None = None) -> int:
+        """Estimated tokens for this message, framing included.
 
-        Deliberately conservative (rounds up). ``context/tokenizer.py`` supplies exact counts
-        when a tokenizer for the target model is installed; this keeps the domain layer
-        dependency-free while still allowing budget arithmetic.
+        ``counter`` is the routed provider's tokenizer (``Tokenizer.count``), passed in so the
+        domain stays dependency-free; without one this is the generic heuristic of
+        :mod:`aura_core.domain.tokens` -- the same estimator the context engine, the router and
+        the quota use (KAN-104), not the flat ``len/4`` that undercounted Arabic and code.
         """
-        return max(1, (len(self.content) + 3) // 4) + 4  # +4 for role/format framing
+        count = counter(self.content) if counter is not None else estimate_tokens(self.content)
+        return count + MESSAGE_OVERHEAD
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,8 +218,12 @@ class Conversation:
     def without_system(self) -> "Conversation":
         return Conversation(tuple(m for m in self.messages if m.role is not Role.SYSTEM))
 
-    def approx_tokens(self) -> int:
-        return sum(m.approx_tokens() for m in self.messages)
+    def approx_tokens(self, counter: TokenCounter | None = None) -> int:
+        """Estimated prompt tokens: every message plus the reply priming, counted exactly as
+        ``Tokenizer.count_messages`` counts them, so the two figures agree for one counter."""
+        if not self.messages:
+            return 0
+        return sum(m.approx_tokens(counter) for m in self.messages) + REPLY_PRIMING
 
     def tail(self, n: int) -> "Conversation":
         return Conversation(self.messages[-n:] if n > 0 else ())

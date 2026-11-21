@@ -47,7 +47,7 @@ from .config.settings import (
     load_settings,
 )
 from .context.engine import ContextEngine
-from .context.tokenizer import get_tokenizer
+from .context.tokenizer import get_tokenizer, tokenizer_for
 from .domain.errors import ConfigurationError
 from .execution.agentic_loop import AgenticExecutor
 from .execution.confirmations import PendingConfirmationStore
@@ -263,7 +263,7 @@ class Container:
             settings.safety, metrics=self.metrics, event_bus=self.events, audit=self.audit
         )
         self.context = ContextEngine(
-            tokenizer=get_tokenizer(model=self._primary_model()),
+            tokenizer=self._primary_tokenizer(),
             metrics=self.metrics,
             history_turns=settings.memory.prompt_history_messages,
             max_prompt_tokens=settings.llm.max_prompt_tokens,
@@ -328,7 +328,7 @@ class Container:
                 documents=self.documents,
                 cache=self.cache_backend,
                 llm_cache=self.llm_cache,
-                tokenizer=get_tokenizer(model=self._primary_model()),
+                tokenizer=self._primary_tokenizer(),
                 enabled=cag_settings.enabled,
                 max_tokens=cag_settings.max_tokens,
                 global_tokens=cag_settings.global_tokens,
@@ -669,6 +669,16 @@ class Container:
     def _primary_model(self) -> str | None:
         enabled = self.settings.llm.enabled_providers
         return enabled[0].model if enabled else None
+
+    def _primary_tokenizer(self) -> Any:
+        """The primary provider's tokenizer (KAN-103/104): the context engine budgets with the
+        same counter the router and the quota use for that provider, so all three agree."""
+        primary = self._primary_model()
+        for provider in getattr(self, "providers", ()):
+            caps = provider.capabilities
+            if primary is not None and caps.model_id == primary:
+                return tokenizer_for(caps.tokenizer, model_id=caps.model_id)
+        return get_tokenizer(model=primary)
 
     def _ollama_provider(self) -> Any:
         from .llm.providers.ollama import OllamaProvider
