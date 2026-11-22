@@ -1,6 +1,6 @@
 # Plan: Client Web App (the mobile app, in a browser)
 
-Status: DRAFT, awaiting approval. No code written yet.
+Status: APPROVED 2026-11-22; implemented on `anas/hopeful-fermat-sz07xr`; awaiting the manual test (see "As built").
 Scope layers: `aura_client/` (Flutter), `aura_web/` (static host), `.github/workflows/`, docs.
 Backend: no code change; one owner config change (CORS origin).
 
@@ -227,3 +227,29 @@ checkout, Arabic font rendering on every OS, screen-reader output, real-device p
 Web live voice; browser microphone capture; PWA offline mode and push notifications; separate
 React/Next app; marketing landing site; multi-pane for Knowledge, Memory, Automations, Projects,
 Goals, Models; SEO/SSR; bundling the Outfit font; account linking screens.
+
+
+## As built: where it differs from the plan above (2026-11-22)
+
+Found while building and testing; each is a decision, not drift.
+
+- **Build output dir** is `aura_web/app-build/`, not `build-assets/app/`: the Dockerfile copies all of
+  `build-assets/` into `/desktop-ide/download/`, which would have shipped the 48 MB app twice.
+- **Engineer selection is page state, not the URL.** There is no per-run route or fetch-one endpoint;
+  the list is loaded whole. You's pages already have URLs, so refresh and Back work there.
+- **You's split is applied by the shell** (`_WebContentFrame`) to every route that the navigation
+  already treats as part of You (Knowledge, Memory, Automations, Models, ...), not only `/you`'s own
+  pages. Opening them from You replaces the detail pane (`go`) instead of stacking (`push`).
+- **Firebase SDK is loaded by our own page** (`web/firebase-sdk.js` + a custom
+  `web/flutter_bootstrap.js`), not injected by `firebase_core_web`: its inline script is blocked by
+  the CSP, and hashing it would break on every SDK upgrade. A test pins the version.
+- **CSP additions found by running it** (not guessed): `accounts.google.com` (Google Identity
+  Services script, styles), `*.googleusercontent.com` (profile photos). The Google "G" image is
+  fetched from Wikimedia on mobile; on web it is the generic icon (no third-party image host).
+- **Deep links need a fallback** the plan missed: `/app/invite` and `/app/desktop-sign-in` are real
+  paths, so nginx serves `index.html` for exactly those two.
+- **The two-workflow problem** is solved by each deploy carrying the other's half (above), with a
+  shared concurrency group, rather than the plan's "each re-fetches the other's live files": the
+  app cannot be re-fetched from a live site (no file list), so the desktop deploy builds it.
+- Added: `scripts/build-web-app.sh` (one build for CI, the web workflow and the desktop deploy),
+  `scripts/web-app-smoke.js` (headless-browser check), `docs/deployment/web-app.md`.

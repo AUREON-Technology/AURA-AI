@@ -38,6 +38,7 @@ on:
       - "aura_hostd/**"
       - "aura_web/**"
       - "scripts/AURA-Desktop-Setup.cmd"
+      - "scripts/build-web-app.sh"
       - ".github/workflows/desktop-main-channel.yml"
   workflow_dispatch:
     inputs:
@@ -201,15 +202,29 @@ jobs:
   deploy-web:
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
+    # Shared with web-app-main-channel.yml's deploy job: both publish the whole web image, so two
+    # must never run at once. Queue, never cancel.
+    concurrency:
+      group: web-service-deploy
+      cancel-in-progress: false
     permissions:
       contents: read
       actions: read
     env:
       GH_TOKEN: ${{ github.token }}
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_WEB_TOKEN }}
+      FIREBASE_WEB_API_KEY: ${{ vars.FIREBASE_WEB_API_KEY }}
+      FIREBASE_WEB_APP_ID: ${{ vars.FIREBASE_WEB_APP_ID }}
+      FIREBASE_WEB_PROJECT_ID: ${{ vars.FIREBASE_WEB_PROJECT_ID }}
+      FIREBASE_WEB_AUTH_DOMAIN: ${{ vars.FIREBASE_WEB_AUTH_DOMAIN }}
+      FIREBASE_WEB_MESSAGING_SENDER_ID: ${{ vars.FIREBASE_WEB_MESSAGING_SENDER_ID }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.44.6"
 
       - name: Download the built installer
         run: |
@@ -237,6 +252,12 @@ jobs:
           cp scripts/AURA-Desktop-Setup.cmd stage/scripts/
           cp "artifacts/${INSTALLER_BASENAME}.exe" artifacts/latest.json stage/aura_web/build-assets/
           ls -l stage/aura_web/build-assets
+
+      # `railway up` replaces the whole web image, and the web app (/app/) is part of it: building
+      # it here keeps an installer deploy from erasing it. The same script as
+      # web-app-main-channel.yml, so the two cannot disagree about how the app is built.
+      - name: Build the web app so this deploy carries it too
+        run: scripts/build-web-app.sh stage/aura_web/app-build
 
       - name: Deploy to Railway
         working-directory: stage
