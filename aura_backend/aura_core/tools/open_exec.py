@@ -14,7 +14,10 @@ code execution with no container boundary under it, which is why this group is t
   these is tainted exactly as one that called ``run_command``.
 * **Inline text only.** No parameter is a path, so a caller cannot point the runner at a file on
   the gateway, and the child's working directory is a fresh temp dir. The environment the child
-  sees is a short allowlist (``tools/open/_process.py``) -- not the gateway's keys.
+  sees is a short allowlist (``tools/open/_process.py``), so the keys are not *handed* to it. That
+  is hygiene, not a boundary: the child runs as the gateway's own user with no filesystem or
+  network confinement, so code it runs can still read ``/proc/<gateway pid>/environ`` or the
+  gateway's files. Enable the group only where that is an accepted risk.
 * **At most two children at once**, so a burst of calls cannot exhaust the host.
 
 The honest summary is in the ADR: this is containment by hygiene, not isolation. A Docker-backed
@@ -96,7 +99,8 @@ def _module_path(name: str, value: str | None) -> str | None:
     "generate_and_run_tests",
     "Generate structural pytest checks for Python source (it imports; each public function, class "
     "and method exists with the declared parameters) -- or run your own `custom_test_code` -- and "
-    "execute them against the source in a throwaway directory. RUNS CODE. A pass means the module "
+    "execute them against the source in a throwaway directory. RUNS CODE as the gateway's own user "
+    "(no sandbox). A pass means the module "
     "has its declared shape, not that it behaves correctly; custom tests mean what they assert.",
     param("source_code", "string", "The module under test.", max_length=_MAX_SOURCE),
     param("module_import_path", "string", "Dotted module name the tests import it as "
@@ -164,7 +168,7 @@ def _quality(
     "analyze_test_quality",
     "Measure how well a pytest file tests a Python module: line coverage under coverage.py and/or "
     "a mutation score (each True/False constant flipped in turn, up to 10 mutants, counting the "
-    "ones the tests catch). RUNS CODE, once for coverage and up to 11 more times for mutation; "
+    "ones the tests catch). RUNS CODE as the gateway's own user (no sandbox), once for coverage and up to 11 more times for mutation; "
     "the tests must already pass on the unmodified source.",
     param("source_code", "string", "The module under test.", max_length=_MAX_SOURCE),
     param("test_code", "string", "The pytest file. Import the module by `module_name`.",

@@ -14,17 +14,34 @@ class ObservabilityIncidentAnalyzer:
         """Filter and categorize log lines containing error or fatal indicators."""
         error_lines: List[Dict[str, Any]] = []
         exception_counter: Counter[str] = Counter()
+        # A Python traceback puts its exception type on the LAST line (``KeyError: 'x'``), which
+        # carries no severity keyword. After a ``Traceback`` line, skip the indented frames and
+        # credit the first unindented line's exception type to that incident.
+        awaiting_exception: Optional[Dict[str, Any]] = None
 
         for idx, line in enumerate(logs, start=1):
+            if awaiting_exception is not None:
+                if not line.strip() or line[:1].isspace():
+                    continue  # a frame, its source line, or a blank separator
+                found = cls.EXCEPTION_TYPE_RE.findall(line)
+                for ex in found:
+                    exception_counter[ex] += 1
+                awaiting_exception["exceptions"].extend(found)
+                awaiting_exception = None
+                if not cls.SEVERITY_RE.search(line):
+                    continue
             if cls.SEVERITY_RE.search(line):
                 exc_matches = cls.EXCEPTION_TYPE_RE.findall(line)
                 for ex in exc_matches:
                     exception_counter[ex] += 1
-                error_lines.append({
+                incident = {
                     "line_number": idx,
                     "log": line.strip(),
                     "exceptions": exc_matches,
-                })
+                }
+                error_lines.append(incident)
+                if line.lstrip().startswith("Traceback (most recent call last)"):
+                    awaiting_exception = incident
 
         return {
             "total_log_lines": len(logs),
