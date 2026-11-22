@@ -2185,6 +2185,9 @@ class ControlSettings:
     step_up_ttl_s: int = 300
     writes_per_hour: int = 30
     rollback_watch_s: int = 300
+    #: How long a GPU Space change may take to come back RUNNING before it is undone. Longer
+    #: than ``rollback_watch_s``: a Space rebuilds its image and reloads its model.
+    space_watch_s: int = 1200
     #: Run the rollback watcher in this gateway (staging/production only). Turn off only to stop
     #: automatic rollbacks while someone repairs a deployment by hand.
     reconciler_enabled: bool = True
@@ -2200,6 +2203,7 @@ class ControlSettings:
             step_up_ttl_s=_int("CONTROL_STEP_UP_TTL_S", 300, minimum=30, maximum=900),
             writes_per_hour=_int("CONTROL_WRITES_PER_HOUR", 30, minimum=1, maximum=500),
             rollback_watch_s=_int("CONTROL_ROLLBACK_WATCH_S", 300, minimum=60, maximum=3600),
+            space_watch_s=_int("CONTROL_SPACE_WATCH_S", 1200, minimum=300, maximum=7200),
             reconciler_enabled=_bool("CONTROL_RECONCILER", True),
         )
 

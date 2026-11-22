@@ -90,6 +90,17 @@ ROUTES = [
     ("POST", "/api/v3/admin/control/railway/services/svc-gw/redeploy", {"confirm": "gateway"}),
     ("POST", "/api/v3/admin/control/railway/services/svc-gw/restart", {"confirm": "gateway"}),
     ("POST", "/api/v3/admin/control/railway/services/svc-gw/rollback", {"deployment_id": "dep-1", "confirm": "gateway"}),
+    ("GET", "/api/v3/admin/control/space", None),
+    ("GET", "/api/v3/admin/control/space/variables", None),
+    ("GET", "/api/v3/admin/control/space/secrets", None),
+    ("GET", "/api/v3/admin/control/space/logs", None),
+    ("POST", "/api/v3/admin/control/space/variables/validate", {"changes": {"A": "b"}}),
+    ("POST", "/api/v3/admin/control/space/variables", {"changes": {"A": "b"}, "confirm": "space"}),
+    ("POST", "/api/v3/admin/control/space/secrets", {"changes": {"A": "b"}, "confirm": "space"}),
+    ("POST", "/api/v3/admin/control/space/pause", {"confirm": "space"}),
+    ("POST", "/api/v3/admin/control/space/restart", {"confirm": "space"}),
+    ("POST", "/api/v3/admin/control/space/hardware", {"hardware": "l4x1", "confirm": "space"}),
+    ("POST", "/api/v3/admin/control/space/sleep-time", {"seconds": 3600, "confirm": "space"}),
 ]
 
 

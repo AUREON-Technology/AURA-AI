@@ -22,6 +22,9 @@ __all__ = [
     "ReauthClaims",
     "ServiceSummary",
     "SettingsValidator",
+    "SpaceApi",
+    "SpaceSecretInfo",
+    "SpaceStatus",
 ]
 
 
@@ -214,6 +217,58 @@ class SettingsValidator(Protocol):
     (which names settings, never values)."""
 
     async def validate(self, environ: Mapping[str, str]) -> str | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class SpaceStatus:
+    """A Hugging Face Space's runtime, as the Hub reports it (stage 3)."""
+
+    #: The Hub's stage word: RUNNING, BUILDING, APP_STARTING, RUNTIME_ERROR, PAUSED, ...
+    stage: str
+    hardware: str | None = None
+    #: What was asked for; differs from ``hardware`` while a hardware change is pending.
+    requested_hardware: str | None = None
+    #: Seconds of inactivity before the Space sleeps; ``None`` or ``-1`` means never.
+    sleep_time: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SpaceSecretInfo:
+    """A Space secret's name and when it last changed. The Hub never returns the value."""
+
+    name: str
+    updated_at: datetime | None = None
+
+
+@runtime_checkable
+class SpaceApi(DeploymentPlatform, Protocol):
+    """The inference Space, reached with the stored HF token (stage 3). ``target`` and
+    ``space_id`` are the Space's ``owner/name``.
+
+    The Hub restarts a Space whenever a variable or secret changes, so there is no separate
+    deploy step: ``restore_variables`` puts values back (and so restarts it), and ``rollback``
+    is a plain restart.
+    """
+
+    async def status(self, space_id: str) -> SpaceStatus: ...
+
+    async def variables(self, space_id: str) -> Mapping[str, str]: ...
+
+    async def set_variables(self, space_id: str, values: Mapping[str, str | None]) -> None: ...
+
+    async def secrets(self, space_id: str) -> Sequence[SpaceSecretInfo]: ...
+
+    async def set_secrets(self, space_id: str, values: Mapping[str, str | None]) -> None: ...
+
+    async def pause(self, space_id: str) -> None: ...
+
+    async def restart(self, space_id: str, *, factory: bool = False) -> None: ...
+
+    async def request_hardware(self, space_id: str, hardware: str) -> None: ...
+
+    async def set_sleep_time(self, space_id: str, seconds: int) -> None: ...
+
+    async def logs(self, space_id: str, *, kind: str = "run", limit: int = 200) -> Sequence[str]: ...
 
 
 #: Free-form, redacted detail a change carries (variable names, secret flags, deployment ids).

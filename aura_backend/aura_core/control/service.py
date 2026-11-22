@@ -361,7 +361,13 @@ class Reconciler:
             except Exception as exc:
                 logger.warning("could not read a deployment's health", extra={"error": type(exc).__name__})
                 continue
-            watched_long_enough = now - change.created_at >= self._watch
+            # A Space rebuilds and reloads its model, which takes longer than a Railway
+            # redeploy: such a change carries its own window (``detail["watch_s"]``).
+            window = self._watch
+            override = change.detail.get("watch_s") if isinstance(change.detail, Mapping) else None
+            if isinstance(override, (int, float)) and override > 0:
+                window = timedelta(seconds=float(override))
+            watched_long_enough = now - change.created_at >= window
             if health is DeploymentHealth.SUPERSEDED:
                 # Someone (or a merge to main) deployed again: this deployment is no longer the
                 # one serving, so its health says nothing more, and rolling back would undo the
@@ -377,7 +383,7 @@ class Reconciler:
             elif watched_long_enough:
                 closed.append(await self._roll_back(
                     change, platform,
-                    f"the deployment was still {health.value} after {int(self._watch.total_seconds() // 60)} minutes",
+                    f"the deployment was still {health.value} after {int(window.total_seconds() // 60)} minutes",
                 ))
         return closed
 

@@ -984,6 +984,25 @@ class Container:
 
             railway_api = InMemoryRailway()
             validator = StaticSettingsValidator()
+        # Stage 3: the inference Space, reached with the stored HF token; the Space itself is the
+        # one named when that token was connected.
+        from .control.space import SpaceService
+
+        if settings.environment.is_production_like:
+            from .adapters.hf_space import HfSpaceHost
+
+            async def hf_token() -> str:
+                return (await self.control.token(Platform.HF_SPACE)).reveal()
+
+            space_api: Any = HfSpaceHost(token_source=hf_token)
+        else:
+            from .adapters.hf_space import InMemorySpace
+
+            space_api = InMemorySpace()
+        self.space_api = space_api
+        self.space = SpaceService(
+            control=self.control, api=space_api, store=store, watch_s=control.space_watch_s,
+        )
         self.railway_api = railway_api
         self.settings_validator = validator
         # Railway sets RAILWAY_SERVICE_ID in every service's container: the gateway's own id is
@@ -993,7 +1012,8 @@ class Container:
             self_service_id=(os.environ.get("RAILWAY_SERVICE_ID") or "").strip(),
         )
         self.control_reconciler = Reconciler(
-            store=store, vault=vault, platforms={Platform.RAILWAY: railway_api},
+            store=store, vault=vault,
+            platforms={Platform.RAILWAY: railway_api, Platform.HF_SPACE: space_api},
             watch_s=control.rollback_watch_s,
         )
         self._reconciler_task: Any = None

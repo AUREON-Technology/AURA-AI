@@ -9,7 +9,9 @@ the value.
 Stage 1: overview, the AURA settings view, platform tokens (connect / replace / disconnect) and
 the change journal. Stage 2: Railway -- services, variables (validated, then applied with one
 redeploy that the reconciler watches), redeploy, restart, rollback, deployments and logs; and the
-AURA settings view reads, and edits, the gateway's own Railway variables.
+AURA settings view reads, and edits, the gateway's own Railway variables. Stage 3: the GPU
+Space -- status, variables (watched and undone on failure), write-only secrets, pause, restart,
+rebuild, hardware, sleep time and logs.
 """
 
 # No `from __future__ import annotations`: request models are defined inside the register
@@ -78,6 +80,32 @@ def register_control_ops(
     class ServiceConfirmRequest(BaseModel):
         model_config = ConfigDict(extra="forbid")
 
+        confirm: str = Field(default="", max_length=128)
+
+    class SpaceSecretsRequest(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        #: name -> new value; ``null`` deletes the secret. Values are write-only.
+        changes: dict[str, Optional[str]] = Field(min_length=1, max_length=30)
+        confirm: str = Field(default="", max_length=128)
+
+    class SpaceRestartRequest(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        confirm: str = Field(default="", max_length=128)
+        #: Rebuild the image from scratch instead of restarting it.
+        factory: bool = False
+
+    class SpaceHardwareRequest(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        hardware: str = Field(min_length=1, max_length=32)
+        confirm: str = Field(default="", max_length=128)
+
+    class SpaceSleepRequest(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        seconds: int
         confirm: str = Field(default="", max_length=128)
 
     class RollbackRequest(BaseModel):
@@ -232,16 +260,19 @@ def register_control_ops(
         require_super_admin(caller)
         return ok(await container.railway.validate(service_id, payload.changes))
 
-    async def railway_write(request: Any, caller: Any, action: str, service_id: str, run: Callable) -> Any:
+    async def railway_write(
+        request: Any, caller: Any, action: str, service_id: str, run: Callable,
+        *, audit_prefix: str = "admin.control.railway",
+    ) -> Any:
         await stepped_up(request, caller)
         try:
             result = await run()
         except Exception as exc:
-            await audit_admin(request, caller, f"admin.control.railway.{action}", service_id, "refused",
+            await audit_admin(request, caller, f"{audit_prefix}.{action}", service_id, "refused",
                               detail={"error": type(exc).__name__,
                                       "reason": str((getattr(exc, "details", None) or {}).get("reason", ""))})
             raise
-        await audit_admin(request, caller, f"admin.control.railway.{action}", service_id, "success",
+        await audit_admin(request, caller, f"{audit_prefix}.{action}", service_id, "success",
                           detail={"change_id": result["change_id"], "status": result["status"]})
         return ok(result)
 
@@ -275,4 +306,70 @@ def register_control_ops(
     ) -> Any:
         return await railway_write(request, caller, "rollback", service_id, lambda: container.railway.rollback(
             service_id, payload.deployment_id, actor=actor(caller), confirm=payload.confirm,
+        ))
+
+    # -- GPU Space (stage 3) ----------------------------------------------------------------
+    @router.get("/admin/control/space")
+    async def space_overview(caller=Depends(principal)) -> Any:
+        require_super_admin(caller)
+        return ok(await container.space.overview())
+
+    @router.get("/admin/control/space/variables")
+    async def space_variables(caller=Depends(principal)) -> Any:
+        require_super_admin(caller)
+        return ok({"variables": await container.space.variables()})
+
+    @router.get("/admin/control/space/secrets")
+    async def space_secrets(caller=Depends(principal)) -> Any:
+        require_super_admin(caller)
+        return ok({"secrets": await container.space.secrets()})
+
+    @router.get("/admin/control/space/logs")
+    async def space_logs(kind: str = "run", limit: int = 200, caller=Depends(principal)) -> Any:
+        require_super_admin(caller)
+        return ok({"lines": await container.space.logs(kind=kind, limit=max(1, min(limit, 1000)))})
+
+    @router.post("/admin/control/space/variables/validate")
+    async def space_validate(payload: VariablesRequest, caller=Depends(principal)) -> Any:
+        """A dry run: nothing is written, so no step-up is needed."""
+        require_super_admin(caller)
+        return ok(await container.space.validate(payload.changes))
+
+    async def space_write(request: Any, caller: Any, action: str, run: Callable) -> Any:
+        return await railway_write(request, caller, action, "space", run, audit_prefix="admin.control.space")
+
+    @router.post("/admin/control/space/variables")
+    async def space_set_variables(payload: VariablesRequest, request: Request, caller=Depends(principal)) -> Any:
+        return await space_write(request, caller, "set_variables", lambda: container.space.apply_variables(
+            payload.changes, actor=actor(caller), confirm=payload.confirm,
+        ))
+
+    @router.post("/admin/control/space/secrets")
+    async def space_set_secrets(payload: SpaceSecretsRequest, request: Request, caller=Depends(principal)) -> Any:
+        return await space_write(request, caller, "set_secrets", lambda: container.space.set_secrets(
+            payload.changes, actor=actor(caller), confirm=payload.confirm,
+        ))
+
+    @router.post("/admin/control/space/pause")
+    async def space_pause(payload: ServiceConfirmRequest, request: Request, caller=Depends(principal)) -> Any:
+        return await space_write(request, caller, "pause", lambda: container.space.pause(
+            actor=actor(caller), confirm=payload.confirm,
+        ))
+
+    @router.post("/admin/control/space/restart")
+    async def space_restart(payload: SpaceRestartRequest, request: Request, caller=Depends(principal)) -> Any:
+        return await space_write(request, caller, "restart", lambda: container.space.restart(
+            actor=actor(caller), confirm=payload.confirm, factory=payload.factory,
+        ))
+
+    @router.post("/admin/control/space/hardware")
+    async def space_hardware(payload: SpaceHardwareRequest, request: Request, caller=Depends(principal)) -> Any:
+        return await space_write(request, caller, "hardware", lambda: container.space.request_hardware(
+            payload.hardware, actor=actor(caller), confirm=payload.confirm,
+        ))
+
+    @router.post("/admin/control/space/sleep-time")
+    async def space_sleep_time(payload: SpaceSleepRequest, request: Request, caller=Depends(principal)) -> Any:
+        return await space_write(request, caller, "sleep_time", lambda: container.space.set_sleep_time(
+            payload.seconds, actor=actor(caller), confirm=payload.confirm,
         ))
