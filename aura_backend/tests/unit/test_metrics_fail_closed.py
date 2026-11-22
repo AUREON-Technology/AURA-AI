@@ -26,8 +26,12 @@ def _client(container):
     return TestClient(build_app(container, authenticator=authenticator))
 
 
-def _configure(container, environment: Environment, token: str) -> None:
-    observability = dataclasses.replace(container.settings.observability, metrics_token=token)
+def _configure(
+    container, environment: Environment, token: str, *, challenge: bool = False
+) -> None:
+    observability = dataclasses.replace(
+        container.settings.observability, metrics_token=token, metrics_challenge=challenge
+    )
     container.settings = dataclasses.replace(
         container.settings, environment=environment, observability=observability
     )
@@ -100,6 +104,72 @@ class TestMetricsFailClosed:
             for length in range(1, 6):
                 client.get(_path(container), headers={"authorization": "Bearer " + "x" * length})
         assert caplog.text.count("bearer token does not match") == 1
+
+    async def test_no_header_is_404_by_default(self, container) -> None:
+        _configure(container, Environment.PRODUCTION, "scrape-secret")
+        await container.startup()
+        with _client(container) as client:
+            refused = client.get(_path(container))
+            assert refused.status_code == 404
+            assert "www-authenticate" not in refused.headers
+
+    async def test_challenge_answers_401_only_when_no_header_is_sent(self, container) -> None:
+        """Grafana Cloud's test sends no credentials until challenged (live, 2026-11-22)."""
+        _configure(container, Environment.PRODUCTION, "scrape-secret", challenge=True)
+        await container.startup()
+        with _client(container) as client:
+            challenged = client.get(_path(container))
+            assert challenged.status_code == 401
+            assert challenged.headers["www-authenticate"] == "Bearer"
+            # A wrong or malformed credential is still indistinguishable from a missing path.
+            for header in ("Bearer wrong", "Basic c2NyYXBlLXNlY3JldA==", "scrape-secret"):
+                refused = client.get(_path(container), headers={"authorization": header})
+                assert refused.status_code == 404, header
+                assert "www-authenticate" not in refused.headers
+            ok = client.get(_path(container), headers={"authorization": "Bearer scrape-secret"})
+            assert ok.status_code == 200
+
+    async def test_challenge_never_applies_without_a_configured_token(self, container) -> None:
+        """No token means fail closed: nothing to challenge for, so nothing is revealed."""
+        _configure(container, Environment.PRODUCTION, "", challenge=True)
+        await container.startup()
+        with _client(container) as client:
+            refused = client.get(_path(container))
+            assert refused.status_code == 404
+            assert "www-authenticate" not in refused.headers
+
+    async def test_no_header_is_404_by_default(self, container) -> None:
+        _configure(container, Environment.PRODUCTION, "scrape-secret")
+        await container.startup()
+        with _client(container) as client:
+            refused = client.get(_path(container))
+            assert refused.status_code == 404
+            assert "www-authenticate" not in refused.headers
+
+    async def test_challenge_answers_401_only_when_no_header_is_sent(self, container) -> None:
+        """Grafana Cloud's test sends no credentials until challenged (live, 2026-11-22)."""
+        _configure(container, Environment.PRODUCTION, "scrape-secret", challenge=True)
+        await container.startup()
+        with _client(container) as client:
+            challenged = client.get(_path(container))
+            assert challenged.status_code == 401
+            assert challenged.headers["www-authenticate"] == "Bearer"
+            # A wrong or malformed credential is still indistinguishable from a missing path.
+            for header in ("Bearer wrong", "Basic c2NyYXBlLXNlY3JldA==", "scrape-secret"):
+                refused = client.get(_path(container), headers={"authorization": header})
+                assert refused.status_code == 404, header
+                assert "www-authenticate" not in refused.headers
+            ok = client.get(_path(container), headers={"authorization": "Bearer scrape-secret"})
+            assert ok.status_code == 200
+
+    async def test_challenge_never_applies_without_a_configured_token(self, container) -> None:
+        """No token means fail closed: nothing to challenge for, so nothing is revealed."""
+        _configure(container, Environment.PRODUCTION, "", challenge=True)
+        await container.startup()
+        with _client(container) as client:
+            refused = client.get(_path(container))
+            assert refused.status_code == 404
+            assert "www-authenticate" not in refused.headers
 
     async def test_development_without_token_serves_metrics(self, container) -> None:
         _configure(container, Environment.DEVELOPMENT, "")

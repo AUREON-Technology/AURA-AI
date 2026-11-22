@@ -2323,6 +2323,7 @@ def build_app(
             MetricsAuthMiddleware,
             path=container.settings.observability.metrics_path,
             token=metrics_token or None,
+            challenge=container.settings.observability.metrics_challenge,
         )
     if container.settings.security.security_headers_enabled:
         app.add_middleware(

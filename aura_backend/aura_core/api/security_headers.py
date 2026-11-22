@@ -35,6 +35,10 @@ logger = logging.getLogger(__name__)
 #: A refusal reason is logged at most this often (seconds); see `_log_rejection`.
 _REJECTION_LOG_INTERVAL_S = 60.0
 
+#: The refusal reason for a request that carried no ``Authorization`` header (the only one a
+#: challenge answers).
+_NO_HEADER = "no Authorization header"
+
 #: Sent on every response. Values match the nginx template so a request that traverses both sees
 #: one consistent policy rather than two competing ones.
 DEFAULT_HEADERS: dict[str, str] = {
@@ -113,10 +117,13 @@ class MetricsAuthMiddleware:
     private network must therefore send the token too (SaaS P1 plan A, task 1).
     """
 
-    def __init__(self, app: Any, *, path: str, token: str | None) -> None:
+    def __init__(
+        self, app: Any, *, path: str, token: str | None, challenge: bool = False
+    ) -> None:
         self.app = app
         self._path = path
         self._token = token
+        self._challenge = challenge
         self._last_logged: dict[str, float] = {}
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
@@ -124,7 +131,25 @@ class MetricsAuthMiddleware:
             await self.app(scope, receive, send)
             return
 
-        if not self._authorised(scope):
+        reason = self._rejection(scope)
+        if reason is not None:
+            self._log_rejection(scope, reason)
+            # Only a request that sent no credentials at all can be challenged, and only when a
+            # token is configured: a wrong or malformed credential, or a gateway with no token,
+            # keeps the 404.
+            if self._challenge and reason == _NO_HEADER:
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 401,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"www-authenticate", b"Bearer"),
+                        ],
+                    }
+                )
+                await send({"type": "http.response.body", "body": b'{"detail":"Unauthorized"}'})
+                return
             await send(
                 {
                     "type": "http.response.start",
@@ -132,20 +157,14 @@ class MetricsAuthMiddleware:
                     "headers": [(b"content-type", b"application/json")],
                 }
             )
-            # 404, not 401: a scraping endpoint that announces itself to an unauthenticated
-            # caller tells them the stack and that there is something here worth guessing at.
-            # nginx returns 404 for the same path, so the two targets behave identically.
+            # 404, not 401, unless `challenge` is on: a scraping endpoint that announces itself to
+            # an unauthenticated caller tells them the stack and that there is something here worth
+            # guessing at. nginx returns 404 for the same path, so the two targets behave
+            # identically.
             await send({"type": "http.response.body", "body": b'{"detail":"Not Found"}'})
             return
 
         await self.app(scope, receive, send)
-
-    def _authorised(self, scope: dict[str, Any]) -> bool:
-        reason = self._rejection(scope)
-        if reason is None:
-            return True
-        self._log_rejection(scope, reason)
-        return False
 
     def _rejection(self, scope: dict[str, Any]) -> str | None:
         """Why the request is refused, or ``None`` when it carries the right token.
@@ -170,7 +189,7 @@ class MetricsAuthMiddleware:
                 ):
                     return None
                 return f"bearer token does not match (supplied length {len(credentials.strip())})"
-        return "no Authorization header"
+        return _NO_HEADER
 
     def _log_rejection(self, scope: dict[str, Any], reason: str) -> None:
         """Log a refusal at most once per reason per minute, so a scanner cannot flood the log.
