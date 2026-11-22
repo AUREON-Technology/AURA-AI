@@ -389,6 +389,7 @@ class Container:
             max_documents=learning.refresh_max_documents,
             promote_requires_gates=learning.promote_requires_gates,
             index_retention_days=learning.index_retention_days,
+            allowed_licenses=settings.knowledge.allowed_licenses,
         )
 
         self.memory = (

@@ -29,7 +29,7 @@ from typing import Any, Mapping, Sequence
 
 from ..domain.events import KnowledgeRefreshCompleted
 from ..domain.identifiers import GenerationId
-from ..domain.knowledge import KnowledgeSource, SourceType, TrustTier
+from ..domain.knowledge import DEFAULT_ALLOWED_LICENSES, KnowledgeSource, SourceType, TrustTier
 from ..observability.logging import LogContext, get_logger
 from .sources import SourceRegistry, SourceFetcher, FetchedDocument
 
@@ -133,7 +133,9 @@ class KnowledgeRefreshPipeline:
         max_concurrent_sources: int = 3,
         promote_requires_gates: bool = True,
         index_retention_days: int = 7,
+        allowed_licenses: Sequence[str] = DEFAULT_ALLOWED_LICENSES,
     ) -> None:
+        self._allowed_licenses = tuple(allowed_licenses)
         self._registry = registry
         self._fetcher = fetcher
         self._knowledge = knowledge
@@ -227,6 +229,16 @@ class KnowledgeRefreshPipeline:
         fetched = ingested = unchanged = duplicate = quarantined = failed = 0
         seen_hashes: set[str] = set()
 
+        if not source.permits_global_corpus(self._allowed_licenses):
+            # Before any network call: a global source nobody has licence-checked (D-001) must not
+            # reach every user's retrieval. It stays registered, so an admin can add the licence.
+            logger.warning(
+                "source skipped: licence not approved for the global corpus",
+                extra={"source": source.id, "license": source.license_spdx or "unknown",
+                       "status": str(source.license_status)},
+            )
+            return SourceOutcome(source_id=source.id, error="license_not_approved")
+
         try:
             documents = await self._fetcher.fetch(source)
         except Exception as exc:
@@ -272,7 +284,8 @@ class KnowledgeRefreshPipeline:
                     source_type=source.type,
                     source_uri=document.uri or source.uri,
                     trust_tier=source.trust_tier,
-                    metadata={"source_id": source.id, **dict(document.metadata)},
+                    language=source.language,
+                    metadata={**_provenance(source), **dict(document.metadata)},
                 )
             except Exception as exc:
                 failed += 1
@@ -391,6 +404,25 @@ class _DocumentBudget:
             return False
         self._remaining -= 1
         return True
+
+
+def _provenance(source: KnowledgeSource) -> dict[str, Any]:
+    """Where a document came from and under what licence, carried on every ingested document.
+
+    Only what is set: an owner's private source has no licence and records none.
+    """
+    provenance: dict[str, Any] = {"source_id": source.id}
+    for key, value in (
+        ("source_name", source.name),
+        ("publisher", source.publisher),
+        ("license_spdx", source.license_spdx),
+        ("attribution", source.attribution),
+    ):
+        if value:
+            provenance[key] = value
+    if source.domains:
+        provenance["domains"] = list(source.domains)
+    return provenance
 
 
 def _validate(document: FetchedDocument, source: KnowledgeSource) -> str | None:
