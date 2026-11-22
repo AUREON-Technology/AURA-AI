@@ -24,6 +24,7 @@ const PLATFORM_ACTIONS = new Set(["connect", "replace_token", "disconnect"]);
 const SERVICE_ACTIONS = new Set([
   "set_variables", "redeploy", "restart", "rollback",
   "space_variables", "space_secrets", "space_pause", "space_restart", "space_rebuild", "space_hardware", "space_sleep_time",
+  "replace_key", "rotate_key", "revoke_key",
 ]);
 
 export default function ChangesPage() {
@@ -43,7 +44,12 @@ export default function ChangesPage() {
       return t(`settings.changes.action.${row.action}` as MessageKey, { platform });
     }
     if (SERVICE_ACTIONS.has(row.action)) {
-      const service = typeof row.detail.service === "string" ? row.detail.service : row.target;
+      const service =
+        typeof row.detail.slot === "string"
+          ? row.detail.slot
+          : typeof row.detail.service === "string"
+            ? row.detail.service
+            : row.target;
       const variables = Array.isArray(row.detail.variables)
         ? (row.detail.variables as { name?: string }[]).map((v) => v.name).filter(Boolean).join(", ")
         : "";

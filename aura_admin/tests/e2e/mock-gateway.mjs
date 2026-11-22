@@ -114,6 +114,8 @@ function freshRailway() {
         vars: {
           AURA_ENVIRONMENT: "production", AURA_KNOWLEDGE_TOP_K: "4", AURA_JWT_SECRET: RAILWAY_SECRET,
           AURA_DATABASE_URL: "${{Postgres.DATABASE_URL}}", RAILWAY_SERVICE_NAME: "gateway",
+          AURA_PROVIDER_HFSPACE_API_KEY: "hf-old-key-never-shown", AURA_CF_KEY: "cf-old-key-never-shown",
+          AURA_GROQ_KEY: "groq-old-key-never-shown",
         },
         deployments: [
           { deployment_id: "dep-2", status: "SUCCESS", created_at: at(30), can_rollback: true, can_redeploy: true, commit: "85258222c84c", message: "fix(control): accept Google re-sign-ins" },
@@ -149,9 +151,26 @@ function freshSpace() {
   return {
     stage: "RUNNING", hardware: "l4x1", sleep_time: 3600,
     vars: { MODEL_ID: "Qwen/Qwen2.5-7B-Instruct-AWQ", MAX_MODEL_LEN: "8192" },
-    secrets: { HF_TOKEN: { value: SPACE_SECRET, updated_at: "2026-11-20T10:00:00Z" } },
+    secrets: {
+      HF_TOKEN: { value: SPACE_SECRET, updated_at: "2026-11-20T10:00:00Z" },
+      VLLM_API_KEY: { value: "hf-old-key-never-shown", updated_at: "2026-11-20T10:00:00Z" },
+    },
     events: [],
     logs: { run: ["INFO vLLM engine started", "INFO Uvicorn running on 0.0.0.0:7860"], build: ["Step 1/9 : FROM vllm"] },
+  };
+}
+
+// Provider keys (aura_core/control/keys.py): slots read their key from a gateway variable.
+const KEY_SLOTS = [
+  { name: "hfspace", kind: "openai_compatible", host: "org-aura-inference.hf.space", env: "AURA_PROVIDER_HFSPACE_API_KEY", remote: true },
+  { name: "workersai", kind: "openai_compatible", host: "workers-ai", env: "AURA_CF_KEY", account: "acct-123" },
+  { name: "groq", kind: "openai_compatible", host: "groq", env: "AURA_GROQ_KEY" },
+];
+
+function freshCloudflare() {
+  return {
+    seq: 1,
+    tokens: [{ token_id: "cf-1", name: "aura-workersai-old", status: "active", issued_on: "2026-11-01T09:00:00Z", value: "cf-old-key-never-shown" }],
   };
 }
 
@@ -160,7 +179,7 @@ function isSecret(name, value) {
 }
 
 const state = {
-  control: { platforms: {}, changes: [], nonces: {}, grants: {}, stepUps: 0, receivedTokens: [], vaultReady: true, railway: freshRailway(), space: freshSpace() },
+  control: { platforms: {}, changes: [], nonces: {}, grants: {}, stepUps: 0, receivedTokens: [], vaultReady: true, railway: freshRailway(), space: freshSpace(), cf: freshCloudflare() },
   operators: [
     {
       email: "ops@aura.ai",
@@ -401,12 +420,19 @@ const server = http.createServer(async (request, response) => {
       space_events: state.control.space.events,
       space_vars: state.control.space.vars,
       space_secret_names: Object.keys(state.control.space.secrets),
+      key_values: {
+        hfspace: state.control.railway.services["svc-gw"].vars.AURA_PROVIDER_HFSPACE_API_KEY,
+        space: state.control.space.secrets.VLLM_API_KEY?.value,
+        workersai: state.control.railway.services["svc-gw"].vars.AURA_CF_KEY,
+        groq: state.control.railway.services["svc-gw"].vars.AURA_GROQ_KEY,
+      },
+      cf_tokens: state.control.cf.tokens.map((tok) => tok.name),
     });
     return;
   }
   if (method === "POST" && path === "/__test/reset-control") {
     const vaultReady = !new URL(request.url, "http://mock").searchParams.has("no-vault");
-    state.control = { platforms: {}, changes: [], nonces: {}, grants: {}, stepUps: 0, receivedTokens: [], vaultReady, railway: freshRailway(), space: freshSpace() };
+    state.control = { platforms: {}, changes: [], nonces: {}, grants: {}, stepUps: 0, receivedTokens: [], vaultReady, railway: freshRailway(), space: freshSpace(), cf: freshCloudflare() };
     json(response, 200, { ok: true });
     return;
   }
@@ -580,6 +606,107 @@ const server = http.createServer(async (request, response) => {
       control.receivedTokens.push(body.token);
       journal(platformName, replaced ? "replace_token" : "connect");
       json(response, 200, { platform: platformName, verified, verified_detail: verified ? `${platformName} verified` : "" });
+      return;
+    }
+
+    // -- Provider keys (stage 4) --------------------------------------------------------------
+    if (path.startsWith("/api/v3/admin/control/keys")) {
+      const gatewayVars = control.railway.services["svc-gw"].vars;
+      const gatewayReady = Boolean(control.platforms.railway);
+      const spaceId = control.platforms.hf_space?.target || null;
+      const cfReady = Boolean(control.platforms.cloudflare);
+      const refuse = (message, reason) => auraError(response, 422, "validation_error", message, false, { reason });
+      const rotation = (slot) => {
+        if (slot.remote && spaceId && slot.host.startsWith(spaceId.toLowerCase().replace(/[/_.]/g, "-") + ".")) return "both_sides";
+        if (slot.account && cfReady) return "create";
+        return "replace";
+      };
+      const inUseId = () => control.cf.tokens.find((tok) => tok.value === gatewayVars.AURA_CF_KEY)?.token_id ?? null;
+      if (method === "GET" && path === "/api/v3/admin/control/keys") {
+        json(response, 200, {
+          gateway_ready: gatewayReady, space_id: spaceId, cloudflare_ready: cfReady,
+          slots: KEY_SLOTS.map((slot) => ({
+            name: slot.name, kind: slot.kind, host: slot.host, api_key_env: slot.env,
+            key_set: gatewayReady ? Boolean(gatewayVars[slot.env]) : null, rotation: rotation(slot),
+            healthy: slot.name !== "groq", state: slot.name === "groq" ? "open" : "closed",
+            cloudflare_token_id: rotation(slot) === "create" ? inUseId() : null,
+          })),
+        });
+        return;
+      }
+      if (method === "GET" && path === "/api/v3/admin/control/keys/cloudflare/tokens") {
+        if (!cfReady) {
+          auraError(response, 404, "not_found", "Cloudflare is not connected; connect it in Settings");
+          return;
+        }
+        const used = inUseId();
+        json(response, 200, {
+          // Never the token's value: only what the real route returns.
+          tokens: control.cf.tokens.map((tok) => ({
+            token_id: tok.token_id, name: tok.name, status: tok.status, issued_on: tok.issued_on, in_use: tok.token_id === used,
+          })),
+        });
+        return;
+      }
+      if (method !== "POST") {
+        auraError(response, 404, "not_found", "no such route");
+        return;
+      }
+      if (!requireGrant()) return;
+      const body = await readBody(request);
+      const record = (action, detail) => {
+        const change = {
+          change_id: `chg_${control.changes.length + 1}`, actor: who.email, platform: action === "revoke_key" ? "cloudflare" : "railway",
+          target: "svc-gw", action, status: action === "revoke_key" ? "recorded" : "watching", detail,
+          deployment_id: null, previous_deployment_id: null, reason: "",
+          created_at: new Date(now).toISOString(), updated_at: new Date(now).toISOString(),
+        };
+        control.changes.unshift(change);
+        json(response, 200, change);
+      };
+      const revoke = path.match(/^\/api\/v3\/admin\/control\/keys\/cloudflare\/tokens\/([^/]+)\/revoke$/);
+      if (revoke) {
+        const tok = control.cf.tokens.find((x) => x.token_id === revoke[1]);
+        if (!tok) {
+          auraError(response, 404, "not_found", "Cloudflare has no such token");
+          return;
+        }
+        if ((body.confirm || "") !== tok.name) return refuse(`type '${tok.name}' to confirm`, "confirmation_required");
+        if (tok.token_id === inUseId()) return refuse("the gateway still uses that token; create a new key first", "token_in_use");
+        control.cf.tokens = control.cf.tokens.filter((x) => x !== tok);
+        record("revoke_key", { service: tok.name, token_id: tok.token_id });
+        return;
+      }
+      const m = path.match(/^\/api\/v3\/admin\/control\/keys\/([^/]+)\/(replace|rotate)$/);
+      const slot = m && KEY_SLOTS.find((s) => s.name === m[1]);
+      if (!slot) {
+        auraError(response, 404, "not_found", "no provider with that name reads its key from a variable");
+        return;
+      }
+      if ((body.confirm || "") !== slot.name) return refuse(`type '${slot.name}' to confirm`, "confirmation_required");
+      if (!gatewayReady) return refuse("connect Railway first", "railway_not_connected");
+      if (m[2] === "replace") {
+        gatewayVars[slot.env] = body.value;
+        record("replace_key", { slot: slot.name, service: "gateway" });
+        return;
+      }
+      const kind = rotation(slot);
+      if (kind === "both_sides") {
+        const fresh = `rotated-${Math.random().toString(36).slice(2, 12)}`;
+        gatewayVars[slot.env] = fresh;
+        control.space.secrets.VLLM_API_KEY = { value: fresh, updated_at: new Date(now).toISOString() };
+        record("rotate_key", { slot: slot.name, service: "gateway", both_sides: true, space: spaceId });
+        return;
+      }
+      if (kind === "create") {
+        const tokenId = `cf-${++control.cf.seq}`;
+        const value = `cf-new-${control.cf.seq}`;
+        control.cf.tokens.push({ token_id: tokenId, name: `aura-${slot.name}-new`, status: "active", issued_on: new Date(now).toISOString(), value });
+        gatewayVars[slot.env] = value;
+        record("rotate_key", { slot: slot.name, service: "gateway", cloudflare_token_id: tokenId });
+        return;
+      }
+      refuse("this provider's vendor has no key API here: replace the key with one you paste", "replace_only");
       return;
     }
 

@@ -290,3 +290,34 @@ export function spaceTone(stage: string | null): "ok" | "warn" | "bad" | "neutra
   if (word === "PAUSED" || word === "STOPPED") return "neutral";
   return "warn";
 }
+
+// -- Provider keys (stage 4) --------------------------------------------------------------------
+
+export type KeySlotRow = {
+  name: string;
+  kind: string;
+  host: string;
+  api_key_env: string;
+  /** null while Railway is not connected: the gateway's variables cannot be read. */
+  key_set: boolean | null;
+  /** both_sides: the GPU Space; create: a Workers AI slot; replace: paste a new value. */
+  rotation: "replace" | "both_sides" | "create";
+  healthy: boolean | null;
+  state: string | null;
+  cloudflare_token_id: string | null;
+};
+
+export type KeysOverview = {
+  gateway_ready: boolean;
+  space_id: string | null;
+  cloudflare_ready: boolean;
+  slots: KeySlotRow[];
+};
+
+export type CloudflareTokenRow = {
+  token_id: string;
+  name: string;
+  status: string;
+  issued_on: string | null;
+  in_use: boolean;
+};

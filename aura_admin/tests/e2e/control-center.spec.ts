@@ -20,6 +20,8 @@ async function seen(request: APIRequestContext) {
     space_events: string[];
     space_vars: Record<string, string>;
     space_secret_names: string[];
+    key_values: { hfspace: string; space: string; workersai: string; groq: string };
+    cf_tokens: string[];
   };
 }
 
@@ -437,4 +439,77 @@ test("GPU Space: Arabic reads right to left", async ({ page, context }) => {
   await page.goto("/settings/space");
   await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
   await expect(page.getByText("الـ Secrets")).toBeVisible();
+});
+
+// -- Provider keys (stage 4): the mock applies the refusals of aura_core/control/keys.py. No key
+// value -- old or new -- may ever reach the page.
+async function connectPlatform(page: Page, platform: string, target?: string) {
+  const card = page.getByTestId(`platform-${platform}`);
+  await card.getByRole("button", { name: "Connect" }).click();
+  await page.getByLabel("Token", { exact: true }).fill(`${platform}-management-token`);
+  if (target) await page.getByLabel("Space (owner/name)").fill(target);
+  await page.getByLabel(`Type ${platform}`).fill(platform);
+  await page.getByRole("button", { name: "Confirm" }).click();
+  await expect(card).toContainText("Verified");
+}
+
+async function openKeys(page: Page, platforms: [string, string?][]) {
+  await openSettings(page);
+  for (const [platform, target] of platforms) await connectPlatform(page, platform, target);
+  await page.getByRole("link", { name: "Keys" }).click();
+  await expect(page.getByTestId("keys-panel")).toBeVisible();
+}
+
+function noKeyValues(html: string, values: string[]) {
+  for (const value of ["hf-old-key-never-shown", "cf-old-key-never-shown", "groq-old-key-never-shown", ...values]) {
+    expect(html).not.toContain(value);
+  }
+}
+
+test("Keys: without Railway nothing can be written, and the tab says why", async ({ page }) => {
+  await openKeys(page, []);
+  await expect(page.getByTestId("keys-need-railway")).toContainText("Connect Railway first");
+  await expect(page.getByRole("button", { name: "Replace the key for groq" })).toBeDisabled();
+});
+
+test("Keys: a pasted key replaces the gateway variable and is never shown back", async ({ page, request }) => {
+  await openKeys(page, [["railway"]]);
+  await expect(page.getByTestId("key-groq").getByTestId("key-health")).toHaveText("failing");
+  await page.getByRole("button", { name: "Replace the key for groq" }).click();
+  await page.getByLabel("New key").fill("groq-new-key-12345");
+  await confirmWith(page, "groq");
+  await expect(page.getByTestId("keys-notice")).toContainText("The groq key was replaced");
+  expect((await seen(request)).key_values.groq).toBe("groq-new-key-12345");
+  noKeyValues(await page.content(), ["groq-new-key-12345"]);
+});
+
+test("Keys: the GPU Space key rotates on both sides with one confirmation", async ({ page, request }) => {
+  await openKeys(page, [["railway"], ["hf_space", "org/aura-inference"]]);
+  await page.getByTestId("key-hfspace").getByRole("button", { name: "Rotate both sides" }).click();
+  await expect(page.getByRole("dialog")).toContainText("VLLM_API_KEY");
+  await confirmWith(page, "hfspace");
+  await expect(page.getByTestId("keys-notice")).toContainText("rotated on both sides");
+  const values = (await seen(request)).key_values;
+  expect(values.hfspace).not.toBe("hf-old-key-never-shown");
+  expect(values.space).toBe(values.hfspace);
+  noKeyValues(await page.content(), [values.hfspace]);
+});
+
+test("Keys: a new Cloudflare key is created, and only the unused token can be revoked", async ({ page, request }) => {
+  await openKeys(page, [["railway"], ["cloudflare"]]);
+  await page.getByTestId("key-workersai").getByRole("button", { name: "Create new key" }).click();
+  await confirmWith(page, "workersai");
+  await expect(page.getByTestId("keys-notice")).toContainText("Revoke the old token");
+  await expect(page.getByTestId("cf-token-aura-workersai-new")).toContainText("in use");
+  await expect(page.getByRole("button", { name: "Revoke aura-workersai-new" })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Revoke aura-workersai-old" }).click();
+  await confirmWith(page, "aura-workersai-old");
+  await expect(page.getByTestId("keys-notice")).toContainText("aura-workersai-old was revoked");
+  const after = await seen(request);
+  expect(after.cf_tokens).toEqual(["aura-workersai-new"]);
+  noKeyValues(await page.content(), [after.key_values.workersai]);
+
+  await page.getByRole("link", { name: "Changes" }).click();
+  await expect(page.getByTestId("change-row").first()).toContainText("Revoked the token aura-workersai-old");
 });
