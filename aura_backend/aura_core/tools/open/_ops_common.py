@@ -21,6 +21,7 @@ from __future__ import annotations
 import ipaddress
 import os
 import posixpath
+import re
 import signal
 import socket
 import subprocess
@@ -329,6 +330,9 @@ def platform_hosts() -> set[str]:
     return hosts
 
 
+_NUMERIC_HOST = re.compile(r"^(?:0x[0-9a-f]+|\d+)(?:\.(?:0x[0-9a-f]+|\d+))*$", re.I)
+
+
 def _is_ip_literal(host: str) -> bool:
     try:
         ipaddress.ip_address(host)
@@ -341,6 +345,10 @@ def _host_refusal(host: str) -> Optional[str]:
     """Why ``host`` (lower-case, no trailing dot) is refused by name alone, else None."""
     if _is_ip_literal(host):
         return None
+    if _NUMERIC_HOST.match(host):
+        # "127.1", "0x7f.0.0.1", "2130706433": inet_aton spellings of an address. Refused outright
+        # rather than resolved, so there is no lookup and no way to smuggle loopback past the check.
+        return f"Host {host!r} is a non-standard numeric address."
     if host == "localhost" or host.endswith(_DENIED_SUFFIXES):
         return f"Host {host!r} is a local or internal name."
     if "." not in host:

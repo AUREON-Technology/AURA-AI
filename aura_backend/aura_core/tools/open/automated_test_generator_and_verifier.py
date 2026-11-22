@@ -9,7 +9,14 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ._process import PYTEST_ENV, run_bounded
+from ._ops_common import run_group
+from ._process import PYTEST_ENV, scrubbed_env
+
+#: Cap on each returned output stream (the TAIL is kept: pytest's summary is at the end).
+_MAX_OUTPUT_CHARS = 20_000
+#: Timeout bounds. A caller may ask for longer than the default to let a large suite finish, never for
+#: an unbounded run.
+_MAX_TIMEOUT_S = 600
 
 
 class AutomatedTestGeneratorAndVerifier:
@@ -408,13 +415,42 @@ class AutomatedTestGeneratorAndVerifier:
             return Path("module_under_test.py")
         return Path(*parts).with_suffix(".py")
 
+    @staticmethod
+    def _tail(text: str) -> str:
+        text = (text or "").strip()
+        if len(text) <= _MAX_OUTPUT_CHARS:
+            return text
+        return f"[... {len(text) - _MAX_OUTPUT_CHARS} chars truncated ...]\n" + text[-_MAX_OUTPUT_CHARS:]
+
+    @staticmethod
+    def _bounded_timeout(timeout_seconds: Any) -> int:
+        """Clamp a caller-supplied timeout to 1..600 s; junk falls back to 30 s."""
+        try:
+            value = int(timeout_seconds)
+        except (TypeError, ValueError, OverflowError):
+            return 30
+        return max(1, min(value, _MAX_TIMEOUT_S))
+
+    @classmethod
+    def _run_pytest(cls, cmd: List[str], cwd: Any, timeout_seconds: Any) -> "subprocess.CompletedProcess[str]":
+        """Run pytest in its own process group under a scrubbed environment.
+
+        On timeout the whole group is killed (a test that spawned its own children leaves nothing
+        behind) and ``subprocess.TimeoutExpired`` is raised for the callers' existing handlers.
+        """
+        timeout = cls._bounded_timeout(timeout_seconds)
+        result = run_group(cmd, cwd=cwd, timeout_s=timeout, env=scrubbed_env(PYTEST_ENV))
+        if result.timed_out:
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        return subprocess.CompletedProcess(cmd, result.returncode if result.returncode is not None else 0, result.stdout, result.stderr)
+
     @classmethod
     def run_tests_in_temp_dir(
         cls,
         test_code: str,
         source_code: Optional[str] = None,
         source_filename: str = "module_under_test.py",
-        timeout_seconds: int = 30,
+        timeout_seconds: int = 60,
     ) -> Dict[str, Any]:
         syntax_check = cls.validate_test_syntax(test_code)
         if not syntax_check["valid"]:
@@ -455,7 +491,7 @@ class AutomatedTestGeneratorAndVerifier:
 
             cmd = [sys.executable, "-m", "pytest", str(test_file), "-q", "--tb=short", "-p", "no:cacheprovider"]
             try:
-                proc = run_bounded(cmd, cwd=tmp_path, timeout_s=timeout_seconds, extra_env=PYTEST_ENV)
+                proc = cls._run_pytest(cmd, tmp_path, timeout_seconds)
                 duration_ms = round((time.time() - start_time) * 1000, 2)
                 parsed = cls.parse_pytest_output(proc.stdout, proc.stderr, proc.returncode)
                 parsed["duration_ms"] = duration_ms
@@ -510,7 +546,7 @@ class AutomatedTestGeneratorAndVerifier:
         target_path: str,
         working_dir: Optional[str] = None,
         extra_args: Optional[List[str]] = None,
-        timeout_seconds: int = 60,
+        timeout_seconds: int = 180,
     ) -> Dict[str, Any]:
         def refuse(message: str) -> Dict[str, Any]:
             return {
@@ -550,7 +586,7 @@ class AutomatedTestGeneratorAndVerifier:
 
         start_time = time.time()
         try:
-            proc = run_bounded(cmd, cwd=cwd, timeout_s=timeout_seconds, extra_env=PYTEST_ENV)
+            proc = cls._run_pytest(cmd, cwd, timeout_seconds)
             duration_ms = round((time.time() - start_time) * 1000, 2)
             parsed = cls.parse_pytest_output(proc.stdout, proc.stderr, proc.returncode)
             parsed["duration_ms"] = duration_ms
@@ -608,8 +644,8 @@ class AutomatedTestGeneratorAndVerifier:
                 "skipped": int(skipped_match.group(1)) if skipped_match else 0,
             },
             "failed_tests": failed_tests,
-            "stdout": stdout.strip(),
-            "stderr": stderr.strip(),
+            "stdout": AutomatedTestGeneratorAndVerifier._tail(stdout),
+            "stderr": AutomatedTestGeneratorAndVerifier._tail(stderr),
         }
 
     @classmethod
@@ -619,7 +655,7 @@ class AutomatedTestGeneratorAndVerifier:
         custom_test_code: Optional[str] = None,
         module_import_path: Optional[str] = None,
         include_edge_cases: bool = True,
-        timeout_seconds: int = 30,
+        timeout_seconds: int = 60,
         include_call_smoke: bool = False,
     ) -> Dict[str, Any]:
         """Generate (or take) tests and run them against ``source_code``.

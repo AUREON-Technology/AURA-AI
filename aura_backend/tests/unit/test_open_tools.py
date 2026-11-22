@@ -349,3 +349,33 @@ class TestGeneratorAndVerifier:
         (tmp_path / "test_ok.py").write_text("def test_a():\n    assert True\ndef test_b():\n    assert True\n")
         out = Gen.run_existing_tests("test_ok.py", working_dir=str(tmp_path), extra_args=["-x", "-k", "test_a", "--maxfail=2"])
         assert out["passed"] and out["counts"]["passed"] == 1
+
+    def test_timeout_kills_the_whole_process_group(self, tmp_path: Path) -> None:
+        pidfile = tmp_path / "grandchild.pid"
+        code = (
+            "import subprocess, sys, time\n"
+            "def test_hang():\n"
+            f"    p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+            f"    open({str(pidfile)!r}, 'w').write(str(p.pid))\n"
+            "    time.sleep(60)\n"
+        )
+        started = time.time()
+        out = Gen.run_tests_in_temp_dir(code, timeout_seconds=2)
+        assert out["exit_code"] == 124 and time.time() - started < 15
+        if os.name == "posix" and pidfile.exists():
+            time.sleep(0.3)
+            pid = int(pidfile.read_text())
+            # Killed means gone, or a zombie awaiting reaping by a PID 1 that does not wait() (as
+            # in some containers). A zombie is dead: it holds no memory and runs nothing.
+            try:
+                state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+            except (FileNotFoundError, ProcessLookupError):
+                state = "gone"
+            assert state in ("gone", "Z"), f"grandchild survived the timeout (state {state})"
+
+    def test_output_is_bounded(self) -> None:
+        out = Gen.run_tests_in_temp_dir("def test_noise():\n    print('x' * 500000)\n    assert False\n")
+        assert len(out["stdout"]) < 25_000
+
+    def test_timeout_is_clamped(self) -> None:
+        assert Gen._bounded_timeout(10**9) == 600 and Gen._bounded_timeout("junk") == 30 and Gen._bounded_timeout(-5) == 1
