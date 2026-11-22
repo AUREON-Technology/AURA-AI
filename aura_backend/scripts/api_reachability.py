@@ -53,6 +53,7 @@ TRIAGE = (
     ("/api/v3/chat$", "server-to-server: the non-streaming turn is for integrating systems (ADR-029 service keys, AR-6 structured output); the app streams via /chat/stream"),
     ("/api/v3/auth/desktop/", "to wire: desktop pairing flow (ADR-011), no caller in client or hostd yet"),
     ("/api/v3/agents/runs", "to wire: agent-run history (wave 2) has no client or admin view yet"),
+    ("/api/v3/agents/", "to wire: creating, editing, cloning and deleting custom agents (api/agents.py) has no app screen yet; the app's per-agent instruction table (AgentConfigurations) is local and unused"),
     ("/api/v3/knowledge/graph", "to wire: knowledge-graph read API (wave 2) has no view yet"),
     ("/api/v3/admin/connectors", "to wire: Console Project Factory is Track AP phase AP9"),
     ("/api/v3/admin/twin", "to wire: Console twin browser and diff are Track AP phase AP9"),

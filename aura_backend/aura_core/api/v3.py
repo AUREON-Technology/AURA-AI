@@ -36,6 +36,7 @@ from ..domain.errors import (
 )
 from ..domain.caller_context import MAX_CALLER_CONTEXT, CallerContext
 from ..domain.connectors import CONNECTOR_ID_PATTERN, Credential
+from ..domain.custom_agents import is_custom_agent_id
 from ..domain.identifiers import CorrelationId, DocumentId, SessionId, TurnId, UserId
 from ..domain.engineering import ENGINEER_CONSENT_NOTICE_VERSION
 from ..domain.llm import RoutingPolicy, WorkloadClass
@@ -617,6 +618,19 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         if len({e.id for e in caller_context}) != len(caller_context):
             raise ValidationError("context ids must be unique within a turn")
         images = await normalize_images(payload.images, caller) if payload.images else ()
+        # A custom agent is named by its id, which is only ever looked up under the caller's own
+        # ownership: another person's id and a missing one both read as 404. The turn then runs
+        # on its base persona (`agent`), narrowed by the custom agent (`custom_agent`).
+        agent_id, custom_agent = payload.agent, None
+        if is_custom_agent_id(agent_id):
+            if caller.is_service:
+                raise ValidationError("a service key cannot use a custom agent",
+                                      details={"field": "agent"})
+            agents_store = getattr(container, "custom_agents", None)
+            custom_agent = await agents_store.get(caller.user_id, agent_id) if agents_store is not None else None
+            if custom_agent is None:
+                raise NotFoundError("agent not found", details={"agent_id": agent_id})
+            agent_id = custom_agent.base_agent_id
         # F43: both are client-supplied; an identifier that fails its own validation is a bad
         # request (422), not a server error.
         try:
@@ -636,7 +650,8 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             user_id=caller.user_id,
             knowledge_owner=caller.knowledge_owner,
             session_id=session_id,
-            agent=payload.agent,
+            agent=agent_id,
+            custom_agent=custom_agent,
             correlation_id=correlation_id,
             use_knowledge=payload.use_knowledge,
             # Spec §5.2 / ADR-034: a team turn draws on the team's corpus, never on the person's
@@ -730,7 +745,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         """One complete turn. Use ``/chat/stream`` for incremental output."""
         await enforce_rate_limit(request, caller, "chat")
         turn = await to_turn(payload, caller, request)
-        reservation, turn = await admit_turn(caller, payload.agent, turn)
+        reservation, turn = await admit_turn(caller, turn.agent, turn)
         try:
             result = await container.kernel.run(turn)
         except BaseException:
@@ -873,7 +888,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             raise ValidationError("response_schema is supported on POST /api/v3/chat only, not on the stream")
         await enforce_rate_limit(request, caller, "chat")
         turn = await to_turn(payload, caller, request)
-        reservation, turn = await admit_turn(caller, payload.agent, turn)
+        reservation, turn = await admit_turn(caller, turn.agent, turn)
 
         async def events() -> AsyncIterator[bytes]:
             counted = False
@@ -1691,6 +1706,14 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         consent = await store.get(caller.user_id)
         return consent is not None and consent.is_current(ENGINEER_CONSENT_NOTICE_VERSION)
 
+    async def _custom_agents_summary(caller: Principal) -> list[dict[str, Any]]:
+        """The caller's own agents, without their instruction text (``GET /agents/{id}`` has it).
+        A service key has none."""
+        agents_store = getattr(container, "custom_agents", None)
+        if caller.is_service or agents_store is None:
+            return []
+        return [a.as_dict(include_instruction=False) for a in await agents_store.list_for_owner(caller.user_id)]
+
     @router.get("/agents")
     async def list_agents(caller: Principal = Depends(principal)) -> JSONResponse:
         caps = frozenset(granted(caller))
@@ -1743,6 +1766,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                     for spec in container.agents
                 ],
                 "engineer_workspaces": engineer_elsewhere,
+                "custom_agents": await _custom_agents_summary(caller),
             }
         )
 
@@ -2282,6 +2306,13 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         Depends=Depends,
         JSONResponse=JSONResponse,
         Response=Response,
+    )
+
+    from .agents import register_agent_ops
+
+    register_agent_ops(
+        router, container, principal=principal, idempotent=idempotent, Depends=Depends,
+        JSONResponse=JSONResponse,
     )
 
     # The WebSocket routes authenticate per frame without the `principal` dependency, so the

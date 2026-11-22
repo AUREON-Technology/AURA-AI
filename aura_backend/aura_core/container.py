@@ -180,6 +180,7 @@ class Container:
         self.engineer_runs = self._build_engineer_run_store()
         # Module readiness D-03 (WP1): who agreed to the Engineer sending code to Anthropic.
         self.engineer_consent = self._build_engineer_consent_store()
+        self.custom_agents = self._build_custom_agent_store()
         # GAP-024: the same store, under the name of the port it now fully implements
         # (`AgentRunStore` extends `EngineerRunStore`) -- one adapter, one pool, both ledgers.
         self.agent_runs = self.engineer_runs
@@ -1288,6 +1289,22 @@ class Container:
         from .adapters.engineer_consent import InMemoryEngineerConsentStore
 
         return InMemoryEngineerConsentStore()
+
+    def _build_custom_agent_store(self) -> Any:
+        """A person's own agents (``domain/custom_agents.py``). Postgres with the other per-user
+        stores, so an agent made on one request is there for the next, on any gateway worker."""
+        backend = self.settings.infrastructure.memory_backend
+        if backend == "postgres":
+            from .adapters.postgres_custom_agents import PostgresCustomAgentStore
+
+            return PostgresCustomAgentStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        if backend != "memory":
+            raise ConfigurationError(f"unknown memory backend {backend!r}")
+        from .adapters.custom_agents import InMemoryCustomAgentStore
+
+        return InMemoryCustomAgentStore()
 
     async def _github_token_resolver(self, user_id: Any) -> str | None:
         """The caller's forge token, for host-side git only.

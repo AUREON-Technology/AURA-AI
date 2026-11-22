@@ -152,6 +152,16 @@ COVERED = {
         "Postgres-only route (api/chats.py, FULL JOIN over messages and conversations): every statement is scoped to the caller's user row and a stranger's chat id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_chats_postgres.py::test_bob_cannot_see_change_or_delete_alices_chat_and_the_same_key_is_separate",
     ("POST", "/api/v3/chats/{chat_id}/unpin"):
         "Postgres-only route (api/chats.py, FULL JOIN over messages and conversations): every statement is scoped to the caller's user row and a stranger's chat id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_chats_postgres.py::test_bob_cannot_see_change_or_delete_alices_chat_and_the_same_key_is_separate",
+    ("GET", "/api/v3/agents/{agent_id}"):
+        "TestCustomAgents::test_bob_cannot_read_alices_agent",
+    ("PATCH", "/api/v3/agents/{agent_id}"):
+        "TestCustomAgents::test_bob_cannot_change_alices_agent",
+    ("PUT", "/api/v3/agents/{agent_id}/config"):
+        "TestCustomAgents::test_bob_cannot_reconfigure_alices_agent",
+    ("DELETE", "/api/v3/agents/{agent_id}"):
+        "TestCustomAgents::test_bob_cannot_delete_alices_agent",
+    ("POST", "/api/v3/agents/{agent_id}/clone"):
+        "TestCustomAgents::test_bob_cannot_clone_alices_agent",
     ("POST", "/api/v3/insights/{insight_id}/dismiss"):
         "Postgres-only route (api/v2/insights.py): `row.user_id != user.id` -> 404; exercised "
         "against a real database by test_insights_integration.py in the legacy suite",
@@ -595,6 +605,63 @@ class TestTurnUsage:
         assert theirs.status_code == missing.status_code == 404, "Bob reached Alice's turn"
         assert theirs.json()["error"] == missing.json()["error"] == "not_found"
         assert "usage" not in theirs.json() and "prompt_tokens" not in theirs.text
+
+
+class TestCustomAgents:
+    """A custom agent carries its owner's own instructions and tool choices: another person naming
+    its id must get what a missing id gets (404) and change nothing. Also: running a turn as it."""
+
+    @pytest.fixture
+    def alices(self, client):
+        created = client.post("/api/v3/agents", headers=AUTH_A, json={
+            "name": "Alice's planner", "base_agent": "task_planner", "instruction": "ALICE-PRIVATE-NOTES"})
+        assert created.status_code == 201, created.text
+        return created.json()["id"]
+
+    MISSING = "00000000-0000-4000-8000-000000000000"
+
+    def _same_as_missing(self, client, method: str, path_for, body, alices: str) -> None:
+        theirs = client.request(method, path_for(alices), headers=AUTH_B, json=body)
+        missing = client.request(method, path_for(self.MISSING), headers=AUTH_B, json=body)
+        assert theirs.status_code == missing.status_code == 404, f"Bob reached Alice's agent: {theirs.status_code} {theirs.text}"
+        assert theirs.json()["error"] == missing.json()["error"]
+        assert "ALICE-PRIVATE-NOTES" not in theirs.text
+
+    def _unchanged(self, client, alices: str) -> None:
+        agent = client.get(f"/api/v3/agents/{alices}", headers=AUTH_A).json()
+        assert agent["name"] == "Alice's planner" and agent["instruction"] == "ALICE-PRIVATE-NOTES"
+        assert agent["allowed_tools"] is None and agent["risk_ceiling"] is None
+
+    def test_bob_cannot_read_alices_agent(self, client, alices) -> None:
+        self._same_as_missing(client, "GET", lambda i: f"/api/v3/agents/{i}", None, alices)
+        assert client.get("/api/v3/agents", headers=AUTH_B).json()["custom_agents"] == [], "Alice's agent is in Bob's list"
+
+    def test_bob_cannot_change_alices_agent(self, client, alices) -> None:
+        self._same_as_missing(client, "PATCH", lambda i: f"/api/v3/agents/{i}", {"name": "hijacked", "instruction": "x"}, alices)
+        self._unchanged(client, alices)
+
+    def test_bob_cannot_reconfigure_alices_agent(self, client, alices) -> None:
+        self._same_as_missing(client, "PUT", lambda i: f"/api/v3/agents/{i}/config", {"instruction": "x", "risk_ceiling": "PUBLIC"}, alices)
+        self._unchanged(client, alices)
+
+    def test_bob_cannot_delete_alices_agent(self, client, alices) -> None:
+        self._same_as_missing(client, "DELETE", lambda i: f"/api/v3/agents/{i}", None, alices)
+        self._unchanged(client, alices)
+
+    def test_bob_cannot_clone_alices_agent(self, client, alices) -> None:
+        self._same_as_missing(client, "POST", lambda i: f"/api/v3/agents/{i}/clone", {}, alices)
+        assert client.get("/api/v3/agents", headers=AUTH_B).json()["custom_agents"] == [], "Bob now holds a copy of Alice's agent"
+
+    def test_bob_cannot_run_a_turn_as_alices_agent(self, client, alices, container) -> None:
+        echo = container.router.get("echo")
+        before = len(echo.calls)
+        for stream in (False, True):
+            path = "/api/v3/chat/stream" if stream else "/api/v3/chat"
+            theirs = client.post(path, json={"message": "hi", "agent": alices}, headers=AUTH_B)
+            missing = client.post(path, json={"message": "hi", "agent": self.MISSING}, headers=AUTH_B)
+            assert theirs.status_code == missing.status_code == 404, path
+            assert "ALICE-PRIVATE-NOTES" not in theirs.text
+        assert len(echo.calls) == before, "a model was called for a turn that should have been refused"
 
 
 class TestWorkspaces:

@@ -70,6 +70,10 @@ class AgentSpec:
     time_budget_s: float | None = None
     tool_budget: int | None = None
     risk_budget: int | None = None
+    #: Extra instructions a person added to this persona (``agents/custom.py``): appended under the
+    #: rendered prompt as a delimited, lower-priority block, never in place of it. Empty for every
+    #: built-in; only a custom agent's resolved spec carries one.
+    extra_instruction: str = ""
 
     def __post_init__(self) -> None:
         # An empty prefix matches every name: "everything" spelled so that it reads like a
