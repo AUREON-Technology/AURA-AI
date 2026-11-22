@@ -1702,7 +1702,7 @@ gaps:
     component: console/control-center
     severity: P2
     current_state: >-
-      Stages 1-3 built, not proven (ADR-037, docs/plans/console-control-center-plan.md). The
+      Stages 1-4 built, not proven (ADR-037, docs/plans/console-control-center-plan.md). The
       console's Settings page is Super-Admin-only (nav item hidden, page refuses, every
       /api/v3/admin/control/* route 403s below SuperAdmin). Platform tokens for Railway, the HF GPU
       Space, Grafana, Qdrant and Cloudflare are entered in the console, verified where the vendor
@@ -1719,8 +1719,11 @@ gaps:
       edits the gateway's own Railway variables. Stage 3 adds the GPU Space (the one named when
       its token was connected): status, pause/resume, restart, rebuild, hardware and sleep time
       (journaled), variables (watched for AURA_CONTROL_SPACE_WATCH_S, 20 min, and put back if the
-      Space errors), write-only secrets journaled as not restorable, and logs. Key, Grafana and
-      Qdrant operations are stages 4-5, not built.
+      Space errors), write-only secrets journaled as not restorable, and logs. Stage 4 adds
+      provider keys as gateway variable changes: replace (any slot), rotate both sides (the GPU
+      Space's VLLM_API_KEY and the gateway's variable, with a companion restore on rollback), and
+      Cloudflare Workers AI create and revoke (the key in use cannot be revoked). Grafana and
+      Qdrant are stage 5, not built.
     target_state: >-
       The Super Admin runs every platform operation the plan lists (Railway variables, redeploy,
       restart, rollback, logs; Space status, restart, hardware; key create, revoke and rotate;
@@ -1736,7 +1739,9 @@ gaps:
       InMemoryRailway, RailwayPlatform against recorded GraphQL exchanges, the real settings
       check in a child process) and tests/unit/test_control_space.py (Space refusals, the watch
       window, variables put back on RUNTIME_ERROR, write-only secrets, runtime actions, stage to
-      health, HfSpaceHost against a stand-in HfApi).
+      health, HfSpaceHost against a stand-in HfApi) and tests/unit/test_control_keys.py (slots,
+      replace, both-sides rotation and its companion restore, Cloudflare create/revoke,
+      HttpCloudflareTokens against recorded exchanges).
       Opt-in: tests/load/test_control_store_postgres.py and the migration round trip on Postgres.
       Console: tests/e2e/control-center.spec.ts against the mock gateway. Nothing here exercises
       real Google, a real platform API or a deployed gateway.
@@ -1748,5 +1753,7 @@ gaps:
       opens Settings and an Admin is refused in the UI and at the API; (2) a real Google step-up
       round trip; (3) a platform token saved and verified with no response containing it; and,
       from stage 2, (4) one change rolled back automatically after a forced unhealthy deploy; and,
-      from stage 3, (5) the GPU Space paused and resumed and its sleep time changed from Settings.
+      from stage 3, (5) the GPU Space paused and resumed and its sleep time changed from Settings;
+      and, from stage 4, (6) the GPU Space key rotated on both sides with hfspace healthy again
+      afterwards.
     status: built_not_proven

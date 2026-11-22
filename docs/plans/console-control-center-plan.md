@@ -363,6 +363,31 @@ this section wins:
 - **Pause and resume.** Resume is the Hub's restart of a paused Space.
 - **Not in this stage.** Rotating the HF key on both sides is stage 4.
 
+## Stage 4 as built (2026-11-22)
+
+Built and tested locally, not proven (ADR-037, GAP-067). Where it differs from the design above,
+this section wins:
+
+- **Keys are gateway variables.** Every key action is a stage-2 variable change on the gateway,
+  with its checks, one watched redeploy and rollback. A key action needs Railway connected.
+- **"With no downtime" is not possible for the GPU Space.** The Space runs vLLM with a single
+  `--api-key`, and every Space secret change restarts the Space. The rotation minimises the gap
+  to that restart: Space secret first, then the gateway variable in the same action. The router
+  fails over during the restart.
+  - If the gateway side is refused or rolled back, the Space gets its old key back. The rollback
+    case is the reconciler's new *companion restore*.
+  - Accepting two keys at once would need a change to the Space's image. Not in scope.
+- **Cloudflare.**
+  - The user-token API: `/user/tokens` verify, list, create, delete, and permission groups. The
+    API root is derived from the Workers AI provider's base URL, as in stage 1.
+  - A new token gets the "Workers AI Read" and "Workers AI Write" groups (Cloudflare's own
+    Workers AI template), scoped to the account the slot's URL names.
+  - The old token stays until you revoke it, and the token in use cannot be revoked.
+  - A token owned by the account rather than a user is invisible to this API: revoke that one in
+    the Cloudflare dashboard.
+- **Provider health** is the router's state in the process answering the request. After a key
+  redeploy, that is the new gateway.
+
 ## Delivery: five stages, each its own PR, each usable on its own
 
 | Stage | Contents | Proof needed before calling it done |

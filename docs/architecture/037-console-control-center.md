@@ -136,6 +136,28 @@ It is what has to be true before the gateway agrees to act.
     that was failing.
   - The reconciler reads the Space's stage: `RUNNING` is healthy, `*_ERROR` failed, and
     `PAUSED`/`STOPPED` superseded (someone stopped it on purpose).
+- **Provider keys (stage 4, `control/keys.py`) are gateway variables.** Every key change is
+  therefore a Railway variable change on the gateway itself, with all of stage 2's checks,
+  its one watched redeploy and its rollback.
+  - **Replace** works for any slot, with a value you paste. Groq has no key API.
+  - **Rotate both sides** is for the GPU Space. vLLM checks one `--api-key`, so the old and new
+    keys cannot overlap.
+    - The gateway generates the new key and sets it as the Space's `VLLM_API_KEY`, which
+      restarts the Space. It then writes the same key to the gateway variable.
+    - The gateway redeploys faster than the Space reloads its model, so the gap is the Space's
+      restart, which any Space change costs. The router fails over meanwhile.
+    - If the gateway change is refused, the Space gets the old key back at once. If the change
+      is rolled back later, the reconciler puts it back through a *companion restore* kept in
+      the vault with the change. The old key is known because it is the gateway's own variable.
+  - **Create** is for a Workers AI slot. The stored Cloudflare management token creates a token
+    with the Workers AI read and write groups, scoped to the account the slot's URL names; the
+    gateway then switches to it.
+    - A switch that cannot start revokes the token it made.
+    - The old token is revoked as a separate step, and the token in use cannot be revoked.
+  - Slots come from each provider's `api_key_env`. A Workers AI slot is recognised by its URL,
+    and the Space by the hostname the Hub derives from its `owner/name`, so no host is named in
+    source.
+  - No key value is returned, journaled or audited.
 - **"Deploy" means redeploy, restart, rollback, status and logs.** It never means "deploy any
   branch". Shipping code stays `main` → Railway, so the console cannot ship code that has not
   been merged.
@@ -173,7 +195,7 @@ them. The control center adds a way in; it removes none.
 | S1 | Foundation: migration 0031; vault-backed tokens; step-up; journal, reconciler and audit; Settings with Overview, AURA settings (read-only) and Changes | yes (2026-11-21), not proven |
 | S2 | Railway: services, variables (edit with validation), redeploy, restart, rollback, logs; the reconciler turned on; AURA settings edited through the gateway's own Railway variables | yes (2026-11-22), not proven |
 | S3 | HF GPU Space: status, pause/resume, restart, rebuild, hardware, sleep time, variables (watched), secrets (write-only), logs | yes (2026-11-22), not proven |
-| S4 | Provider keys: create and revoke where the vendor allows (Cloudflare), replace-only (Groq), HF rotated on both sides | no |
+| S4 | Provider keys: replace (any), rotate both sides (GPU Space), create and revoke (Cloudflare Workers AI) | yes (2026-11-22), not proven |
 | S5 | Grafana Cloud (set up, status) and Qdrant Cloud (status, snapshots; restore needs step-up) | no |
 
 ## Evidence still owed

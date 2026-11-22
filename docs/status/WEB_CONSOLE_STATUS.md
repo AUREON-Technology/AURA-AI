@@ -21,11 +21,11 @@ Plan and user decisions: [`docs/plans/console-subdomain-plan.md`](../plans/conso
 
 **Re-read against commit:** `b2e14c4` (2026-11-08) for every row dated 2026-11-07 or later (their live checks came first; the re-read confirmed that tree holds what they describe); older rows carry the commit they were checked at. Refresh this line whenever a row is re-verified (audit FSA-120).
 
-## Settings becomes the Super-Admin control center (stage 1 2026-11-21, stages 2-3 2026-11-22)
+## Settings becomes the Super-Admin control center (stage 1 2026-11-21, stages 2-4 2026-11-22)
 
 Plan and user decisions: [`docs/plans/console-control-center-plan.md`](../plans/console-control-center-plan.md);
 design: [ADR-037](../architecture/037-console-control-center.md); gap: GAP-067. Stage 1 merged
-(#275, #276, live at `85258222`); stages 2 and 3 on branch `anas/laughing-hamilton-glfevj` (#278), unmerged.
+(#275, #276, live at `85258222`); stages 2-4 on branch `anas/laughing-hamilton-glfevj` (#278), unmerged.
 
 | Step | Status | Evidence |
 | --- | --- | --- |
@@ -37,12 +37,14 @@ design: [ADR-037](../architecture/037-console-control-center.md); gap: GAP-067. 
 | Changes journal | TESTED locally, mock gateway only | `settings/changes/page.tsx` |
 | Egyptian Arabic, right to left | TESTED locally (one e2e) | 58 `settings.*` keys in `src/lib/i18n/{en,ar}.ts`; not reviewed by a native speaker |
 | GPU Space tab (stage 3): stage, hardware and sleep time; pause/resume, restart, rebuild; hardware with a billing warning; variables through the shared tray (watched 20 minutes); write-only secrets that warn they cannot be undone; run and build logs | TESTED locally 2026-11-22, mock gateway only, not CI-run | `settings/space/page.tsx`; 7 GPU Space tests in `tests/e2e/control-center.spec.ts` |
+| Keys tab (stage 4): each provider slot with its key variable, set or not, and health; Replace (write-only), Rotate both sides (GPU Space), Create new key (Workers AI); Cloudflare tokens with the one in use marked and only the others revocable | TESTED locally 2026-11-22, mock gateway only, not CI-run | `settings/keys/page.tsx`; 4 Keys tests in `tests/e2e/control-center.spec.ts` check no key value reaches the page |
 | Live: Super Admin opens Settings, Admin refused; a real step-up; a token saved and verified; one change rolled back automatically after a forced unhealthy deploy | OPEN | GAP-067 exit condition |
 
 Local checks: on 2026-11-21 (stage 1), `tsc --noEmit`, `npm run lint` and `npm run build` were clean
 and Playwright gave 72 passed. On 2026-11-22 (stage 2), the same checks were clean and Playwright
 gave 80 passed, 17 of them in `control-center.spec.ts`. With stage 3 the same checks were clean
-and Playwright gave 87 passed, 24 of them in `control-center.spec.ts`.
+and Playwright gave 87 passed, 24 of them in `control-center.spec.ts`. With stage 4 the same checks
+were clean and Playwright gave 91 passed, 28 of them in `control-center.spec.ts`.
 
 ## Summary
 

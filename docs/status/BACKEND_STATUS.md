@@ -288,6 +288,18 @@ That needs a check in the Firebase console.
   skipped; legacy `unittest` 148 OK. Not CI-run (CB-44). Not proven: no live Hub call has been
   made from the gateway.
 
+- 2026-11-22, same branch (#278), unmerged: control center stage 4, provider keys (ADR-037,
+  GAP-067). It adds:
+  - `/api/v3/admin/control/keys/*`. Each key is a gateway variable change, checked, watched and
+    rolled back by stage 2's machinery.
+  - Replace (any slot).
+  - Rotate both sides (the GPU Space's `VLLM_API_KEY` and the gateway's variable, with the
+    reconciler's new companion restore).
+  - Cloudflare Workers AI create and revoke (`adapters/cloudflare_tokens.py`).
+
+  TESTED locally (`main` at `f880826a`): `pytest` 7069 passed, 0 failed, 55 skipped; legacy
+  `unittest` 148 OK. Not CI-run (CB-44). Not proven: no live key rotation has been made.
+
 ## Next steps
 
 0. ~~After the ADR-032 merge deploys: check that `/health/ready` reports `schema.revision 0019`~~ (done: live `0019` on 2026-11-07), then
