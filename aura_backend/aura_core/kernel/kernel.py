@@ -532,9 +532,9 @@ class AIKernel:
 
         # 2-4. Memory, retrieval, and history concurrently ---------------------------
         stage_start = time.perf_counter()
-        memories, retrieval, history, history_summary, goals, cag_prefix = await self._gather_context(
-            request, message
-        )
+        (
+            memories, retrieval, history, history_summary, goals, cag_prefix, history_tainted,
+        ) = await self._gather_context(request, message)
         timings["memory"] = timings["retrieval"] = (time.perf_counter() - stage_start) * 1000.0
         await self._classify_context(request, memories, retrieval, history, goals, cag_prefix)
 
@@ -549,9 +549,12 @@ class AIKernel:
             ) * 1000.0
         caller_context, context_quarantined = await self._guard_caller_context(request, turn_id)
         quarantined_count += context_quarantined
+        # History from a tainted turn taints this one (KAN-101). Decided here, before planning,
+        # because the tool context needs it: a summary the context cap later drops still taints
+        # the turn -- fail closed, as quarantined retrieval does whatever the cap keeps of it.
         tainted = (
             tainted or bool(request.caller_context) or bool(resume and resume.tainted)
-            or request.inherited_taint
+            or request.inherited_taint or history_tainted
         )
 
         # 6. Plan and execute --------------------------------------------------------
@@ -564,6 +567,7 @@ class AIKernel:
         plan_steps = plan_revisions = 0
         agent_run_id: str | None = None
         planning_failed = False
+        tools_tainted = False
 
         tool_declarations = await self._tool_declarations(request)
         if resume is not None or self._should_plan(request, tool_declarations):
@@ -582,6 +586,7 @@ class AIKernel:
             timings["planning"] = (time.perf_counter() - stage_start) * 1000.0
             if outcome is not None:
                 agent_run_id = getattr(outcome, "run_id", None)
+                tools_tainted = bool(getattr(outcome, "tainted", False))
                 tool_results = outcome.summary_for_context()
                 plan_steps = len(outcome.plan.steps)
                 plan_revisions = len(outcome.plan.revisions)
@@ -683,7 +688,7 @@ class AIKernel:
 
         # 10. Persist session state --------------------------------------------------
         # Awaited here: `run` returns one complete result, so nothing is gained by deferring it.
-        await self._persist_exchange(request, answer)
+        await self._persist_exchange(request, answer, tainted=tainted or tools_tainted)
 
         telemetry = TurnTelemetry(
             correlation_id=correlation,
@@ -818,9 +823,10 @@ class AIKernel:
                     }
 
                 stage_start = time.perf_counter()
-                memories, retrieval, history, history_summary, goals, cag_prefix = await self._gather_context(
-                    request, message
-                )
+                (
+                    memories, retrieval, history, history_summary, goals, cag_prefix,
+                    history_tainted,
+                ) = await self._gather_context(request, message)
                 timings["memory"] = timings["retrieval"] = (
                     time.perf_counter() - stage_start
                 ) * 1000.0
@@ -835,9 +841,10 @@ class AIKernel:
                     request, turn_id
                 )
                 quarantined_count += context_quarantined
+                # As in `run`: history from a tainted turn taints this one (KAN-101).
                 tainted = (
                     tainted or bool(request.caller_context) or bool(resume and resume.tainted)
-                    or request.inherited_taint
+                    or request.inherited_taint or history_tainted
                 )
 
                 tool_declarations = await self._tool_declarations(request)
@@ -1088,7 +1095,8 @@ class AIKernel:
                 self._schedule_post_turn(
                     request,
                     self._finish_streamed_turn(
-                        request, answer, scope if mark_after_done else None, telemetry
+                        request, answer, scope if mark_after_done else None, telemetry,
+                        tainted=tainted or bool(getattr(outcome, "tainted", False)),
                     ),
                 )
                 degraded_reasons = list(telemetry.degraded_reasons)
@@ -1162,8 +1170,11 @@ class AIKernel:
         str,
         Sequence[GoalSnapshot],
         Any,
+        bool,
     ]:
         """Run memory recall, knowledge retrieval, history, goals, and CAG concurrently.
+
+        The last element says the history came from a tainted turn (KAN-101).
 
         These are independent. Running them in sequence is the single largest avoidable latency
         in the legacy pipeline, which additionally embeds the same message four separate times
@@ -1210,16 +1221,25 @@ class AIKernel:
                 logger.warning("knowledge retrieval failed; continuing without it")
                 return None
 
-        async def load_history() -> tuple[Conversation, str]:
+        async def load_history() -> tuple[Conversation, str, bool]:
             if deps.episodic is None or request.session_id is None:
-                return Conversation(), ""
+                return Conversation(), "", False
             # The session's previous turn may still be appending after its `done` (KAN-110).
             await self._await_session_post_turn(request)
             try:
-                return await deps.episodic.history(request.session_id, request.user_id)
+                snapshot = getattr(deps.episodic, "history_snapshot", None)
+                if snapshot is None:
+                    conversation, summary = await deps.episodic.history(
+                        request.session_id, request.user_id
+                    )
+                    return conversation, summary, False
+                loaded = await snapshot(request.session_id, request.user_id)
+                # KAN-101: history written by a tainted turn -- verbatim, or folded into the
+                # summary -- taints this one, as retrieved content that was quarantined does.
+                return loaded.conversation, loaded.summary, loaded.tainted
             except Exception:
                 logger.warning("session history load failed; continuing without it")
-                return Conversation(), ""
+                return Conversation(), "", False
 
         async def load_goals() -> Sequence[GoalSnapshot]:
             if skip_private or deps.goals is None:
@@ -1239,10 +1259,10 @@ class AIKernel:
                 logger.warning("cag prefix load failed; continuing without it")
                 return None
 
-        memories, retrieval, (history, summary), goals, cag_prefix = await asyncio.gather(
-            recall(), retrieve(), load_history(), load_goals(), load_cag()
+        memories, retrieval, (history, summary, history_tainted), goals, cag_prefix = (
+            await asyncio.gather(recall(), retrieve(), load_history(), load_goals(), load_cag())
         )
-        return memories, retrieval, history, summary, goals, cag_prefix
+        return memories, retrieval, history, summary, goals, cag_prefix, history_tainted
 
     # -- data classification (ADR-030 Phase 4) ----------------------------------------------
 
@@ -2814,8 +2834,14 @@ class AIKernel:
 
     # -- after the answer (KAN-110) -------------------------------------------------------
 
-    async def _persist_exchange(self, request: TurnRequest, answer: str) -> None:
-        """Append the exchange to session history. Never raises."""
+    async def _persist_exchange(
+        self, request: TurnRequest, answer: str, *, tainted: bool = False
+    ) -> None:
+        """Append the exchange to session history. Never raises.
+
+        ``tainted`` is the turn's taint, including any its tools picked up while executing: it
+        travels with the exchange into history and into any summary of it (KAN-101).
+        """
         deps = self._deps
         if deps.episodic is None or request.session_id is None:
             return
@@ -2823,6 +2849,7 @@ class AIKernel:
             await deps.episodic.append(
                 request.session_id, request.user_id,
                 user_message=self._history_message(request), assistant_message=answer,
+                tainted=tainted,
             )
         except Exception:
             # Losing session persistence degrades the next turn; failing this one would be
@@ -2835,6 +2862,8 @@ class AIKernel:
         answer: str,
         clean_scope: DataScope | None,
         telemetry: TurnTelemetry,
+        *,
+        tainted: bool = False,
     ) -> None:
         """What a streamed turn still owes once its ``done`` frame is out.
 
@@ -2848,7 +2877,7 @@ class AIKernel:
             if clean_scope is not None:
                 await self._remember_session_classification(request, clean_scope)
             await self._persist_telemetry(telemetry)
-            await self._persist_exchange(request, answer)
+            await self._persist_exchange(request, answer, tainted=tainted)
 
     @staticmethod
     def _post_turn_key(request: TurnRequest) -> str | None:
