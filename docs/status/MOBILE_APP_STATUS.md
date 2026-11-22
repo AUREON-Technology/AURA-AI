@@ -10,6 +10,46 @@ iOS:
 
 Evidence scale and refresh steps: [README.md](README.md).
 
+## Update 2026-11-22 (web app, PR #288, checked on `ee9f9fc`, merged as `aa0a391`)
+
+The Flutter client now also ships as a browser app at `https://web.aureon-ai.tech/app/`, with the
+mobile app's structure (Copilot / Engineer / You and every screen the mobile app keeps). Plan and
+as-built notes: `docs/plans/client-web-app_plan.md`; runbook: `docs/deployment/web-app.md`.
+**TESTED locally, not CI-run, not live, not tried by a person.** Flutter 3.44.6: `flutter analyze`
+clean, `flutter test` 1408 passed, 4 skipped (baseline before the change: 1371 passed, 4 skipped).
+The merge pushed it to `main` with no CI result (CB-44: Client CI #295 on the PR ended in one second
+with no log, as on `main` #293-#294), so the new `build-web` job has not yet run in CI.
+
+Built:
+- Links under a sub-path: `/app/invite?token=…` and `/app/desktop-sign-in` now reach the router, and
+  invite links include `/app` (they were built without it, which would have been a 404).
+- Web identity (manifest, `index.html`, splash), Firebase web options from `--dart-define`, and the
+  Firebase JS SDK loaded from our own page so the host's CSP needs no inline script
+  (`test/web/web_shell_test.dart` pins its version to `firebase_core_web`'s).
+- Not in a browser, so hidden or replaced: chat microphone, `/voice` (goes to the chat), biometric
+  unlock, the local daemon page (says to pair a computer in the desktop app). The Google "G" is the
+  generic icon on web (the mobile build still fetches it from Wikimedia).
+- Wide layout, web only, 840 px or more of content: You keeps its menu beside the open page,
+  Engineer shows runs beside the open run, Copilot is centered at a readable width. Phones and
+  native builds are unchanged (`test/ux/web_master_detail_test.dart`, English and Arabic).
+- Host and deploy: `aura_web` serves `/app/` under its own CSP; `scripts/build-web-app.sh`;
+  `web-app-main-channel.yml`; a `build-web` job in Client CI.
+
+Proven here with headless Chromium and a local nginx on the real `aura_web` config (not Docker, not
+Railway): the app boots at 1280 and 390 px with no CSP violation, failed request or console error,
+with and without a Firebase config; the sign-in click opens Firebase's handler popup; an invite link
+opens the app and removes its token from the address bar (`scripts/web-app-smoke.js`).
+
+**Not proven:** a real Google, Apple or email sign-in; the Docker image build and run (no daemon in
+the session); the Railway deploy and the two-workflow handover with the desktop installer; Fawry
+checkout; Safari and Firefox; Arabic rendering per OS; screen readers; real-network performance
+(6 MB `main.dart.js` plus CanvasKit). The manual test checklist has not been run.
+
+Still the owner's (backlog CB-50): `https://web.aureon-ai.tech` in the gateway's `ALLOWED_ORIGINS`
+and the backend's `AURA_APP_BASE_URL`; a Firebase Web app, its authorized domain and the
+`FIREBASE_WEB_*` repository variables; the `RAILWAY_WEB_TOKEN` secret; `AURA-Web` without a Railway
+GitHub auto-deploy. Until then the web app does not work for people.
+
 ## Update 2026-11-16 (sign-in review, on `ebe7940`)
 
 A review of how the app signs people in, then fixes for what could be fixed from the repo.
