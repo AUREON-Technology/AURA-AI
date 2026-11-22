@@ -98,8 +98,54 @@ const CONTROL_CATALOG = [
   },
 ];
 
+// Railway as the control center sees it (aura_core/control/railway.py + InMemoryRailway): the
+// same refusals, and secret values that never leave the mock.
+const RAILWAY_SECRET = "rw-secret-value-never-shown";
+const SECRET_NAME = /(KEY|KEYS|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|PRIVATE|DSN)$/;
+const PROTECTED = new Set(["AURA_SECRETS_ENCRYPTION_KEY", "AURA_DATA_ENCRYPTION_KEYS", "AURA_DATABASE_URL"]);
+
+function freshRailway() {
+  const at = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
+  return {
+    seq: 3,
+    services: {
+      "svc-gw": {
+        name: "gateway", healthcheck: "/health/live",
+        vars: {
+          AURA_ENVIRONMENT: "production", AURA_KNOWLEDGE_TOP_K: "4", AURA_JWT_SECRET: RAILWAY_SECRET,
+          AURA_DATABASE_URL: "${{Postgres.DATABASE_URL}}", RAILWAY_SERVICE_NAME: "gateway",
+        },
+        deployments: [
+          { deployment_id: "dep-2", status: "SUCCESS", created_at: at(30), can_rollback: true, can_redeploy: true, commit: "85258222c84c", message: "fix(control): accept Google re-sign-ins" },
+          { deployment_id: "dep-1", status: "REMOVED", created_at: at(90), can_rollback: true, can_redeploy: true, commit: "30b2b251be7c", message: "control center stage 1" },
+        ],
+      },
+      "svc-console": {
+        name: "console", healthcheck: "",
+        vars: { NEXT_PUBLIC_BASE_PATH: "/console" },
+        deployments: [
+          { deployment_id: "dep-3", status: "SUCCESS", created_at: at(20), can_rollback: true, can_redeploy: true, commit: "85258222c84c", message: "console" },
+        ],
+      },
+    },
+    logs: {
+      "deploy:dep-2": [
+        { timestamp: "2026-11-21T21:50:01Z", severity: "info", message: "uvicorn running" },
+        { timestamp: "2026-11-21T21:50:02Z", severity: "info", message: `jwt loaded ${RAILWAY_SECRET}` },
+      ],
+      "build:dep-2": [{ timestamp: "2026-11-21T21:48:00Z", severity: "info", message: "image built" }],
+    },
+    restarts: [],
+    applied: [],
+  };
+}
+
+function isSecret(name, value) {
+  return (!name.endsWith("_ENV") && SECRET_NAME.test(name)) || /^[a-z][a-z0-9+.-]*:\/\/[^/@\s]+@/i.test(value || "");
+}
+
 const state = {
-  control: { platforms: {}, changes: [], nonces: {}, grants: {}, stepUps: 0, receivedTokens: [], vaultReady: true },
+  control: { platforms: {}, changes: [], nonces: {}, grants: {}, stepUps: 0, receivedTokens: [], vaultReady: true, railway: freshRailway() },
   operators: [
     {
       email: "ops@aura.ai",
@@ -334,12 +380,15 @@ const server = http.createServer(async (request, response) => {
       step_ups: state.control.stepUps,
       tokens_received: state.control.receivedTokens,
       live_grants: Object.keys(state.control.grants).length,
+      railway_vars: state.control.railway.services["svc-gw"].vars.AURA_KNOWLEDGE_TOP_K,
+      railway_applied: state.control.railway.applied,
+      railway_restarts: state.control.railway.restarts,
     });
     return;
   }
   if (method === "POST" && path === "/__test/reset-control") {
     const vaultReady = !new URL(request.url, "http://mock").searchParams.has("no-vault");
-    state.control = { platforms: {}, changes: [], nonces: {}, grants: {}, stepUps: 0, receivedTokens: [], vaultReady };
+    state.control = { platforms: {}, changes: [], nonces: {}, grants: {}, stepUps: 0, receivedTokens: [], vaultReady, railway: freshRailway() };
     json(response, 200, { ok: true });
     return;
   }
@@ -418,7 +467,20 @@ const server = http.createServer(async (request, response) => {
       return;
     }
     if (method === "GET" && path === "/api/v3/admin/control/settings") {
-      json(response, 200, { source: "process", groups: CONTROL_CATALOG });
+      if (!control.platforms.railway) {
+        json(response, 200, { source: "process", editable: false, groups: CONTROL_CATALOG });
+        return;
+      }
+      const vars = control.railway.services["svc-gw"].vars;
+      const groups = CONTROL_CATALOG.map((group) => ({
+        ...group,
+        settings: group.settings.map((entry) => ({
+          ...entry,
+          set: entry.variable in vars,
+          raw: entry.secret ? null : (vars[entry.variable] ?? null),
+        })),
+      }));
+      json(response, 200, { source: "railway", editable: true, service_id: "svc-gw", service_name: "gateway", groups });
       return;
     }
     if (method === "GET" && path === "/api/v3/admin/control/changes") {
@@ -492,7 +554,7 @@ const server = http.createServer(async (request, response) => {
         return;
       }
       const replaced = Boolean(control.platforms[platformName]);
-      const verified = !["railway", "grafana"].includes(platformName);
+      const verified = platformName !== "grafana";
       control.platforms[platformName] = {
         target: body.target || "", by: who.email, at: new Date(now).toISOString(), verified,
         detail: verified ? `${platformName} verified` : "",
@@ -500,6 +562,151 @@ const server = http.createServer(async (request, response) => {
       control.receivedTokens.push(body.token);
       journal(platformName, replaced ? "replace_token" : "connect");
       json(response, 200, { platform: platformName, verified, verified_detail: verified ? `${platformName} verified` : "" });
+      return;
+    }
+
+    // -- Railway (stage 2) --------------------------------------------------------------------
+    if (path.startsWith("/api/v3/admin/control/railway")) {
+      if (!control.platforms.railway) {
+        auraError(response, 404, "not_found", "railway is not connected; connect it in Settings");
+        return;
+      }
+      const rw = control.railway;
+      const refuse = (message, reason) =>
+        auraError(response, 422, "validation_error", message, false, { reason });
+      const openTarget = (id) => control.changes.some((c) => c.target === id && c.status === "watching");
+      if (method === "GET" && path === "/api/v3/admin/control/railway") {
+        json(response, 200, {
+          project: { id: "proj-1", name: "aura" },
+          environment: { id: "env-1", name: "production" },
+          services: Object.entries(rw.services).map(([id, svc]) => ({
+            service_id: id, name: svc.name, latest_deployment_id: svc.deployments[0]?.deployment_id ?? null,
+            latest_status: svc.deployments[0]?.status ?? null, latest_at: svc.deployments[0]?.created_at ?? null,
+            healthcheck_path: svc.healthcheck, is_gateway: id === "svc-gw", change_in_progress: openTarget(id),
+          })),
+        });
+        return;
+      }
+      const m = path.match(/^\/api\/v3\/admin\/control\/railway\/services\/([^/]+)(\/.*)$/);
+      const svc = m && rw.services[m[1]];
+      if (!m || !svc) {
+        auraError(response, 404, "not_found", "this environment has no such Railway service");
+        return;
+      }
+      const [, id, rest] = m;
+      if (method === "GET" && rest === "/variables") {
+        json(response, 200, {
+          variables: Object.keys(svc.vars).sort().map((name) => {
+            const value = svc.vars[name];
+            const secret = isSecret(name, value);
+            return { name, secret, value: secret ? null : value, reference: value.includes("${{"),
+              protected: PROTECTED.has(name), provided: name.startsWith("RAILWAY_") };
+          }),
+        });
+        return;
+      }
+      if (method === "GET" && rest === "/deployments") {
+        json(response, 200, { deployments: svc.deployments });
+        return;
+      }
+      const logs = rest.match(/^\/deployments\/([^/]+)\/logs$/);
+      if (method === "GET" && logs) {
+        const kind = new URL(request.url, "http://mock").searchParams.get("kind") || "deploy";
+        const secrets = Object.entries(svc.vars).filter(([k, v]) => isSecret(k, v)).map(([, v]) => v);
+        const lines = (rw.logs[`${kind}:${logs[1]}`] || []).map((l) => ({
+          ...l, message: secrets.reduce((text, v) => text.split(v).join("[redacted]"), l.message),
+        }));
+        json(response, 200, { lines });
+        return;
+      }
+      // What the engine checks before anything is written (control/railway.py `_check`).
+      const check = (changes) => {
+        const names = Object.keys(changes || {});
+        if (!names.length) return refuse("there is nothing to change", "no_changes");
+        const clean = {};
+        for (const name of names) {
+          const value = changes[name];
+          if (PROTECTED.has(name)) return refuse(`${name} can only be changed in the Railway dashboard`, "protected_variable");
+          if (name.startsWith("RAILWAY_")) return refuse(`${name} is provided by Railway`, "provided_variable");
+          if (value !== null && value.includes("${{")) return refuse("references are set in the Railway dashboard", "reference_not_supported");
+          if (value === null && !(name in svc.vars)) continue;
+          if (value !== null && svc.vars[name] === value) continue;
+          clean[name] = value;
+        }
+        if (!Object.keys(clean).length) return refuse("every value is already what you asked for", "no_changes");
+        const runsAura = Object.keys(svc.vars).some((k) => k.startsWith("AURA_"));
+        if (runsAura && !svc.healthcheck) return refuse(`${svc.name} has no health-check path`, "healthcheck_not_configured");
+        const topK = clean.AURA_KNOWLEDGE_TOP_K;
+        if (runsAura && topK !== undefined && topK !== null && Number(topK) > 50) {
+          return refuse("the gateway would not start with this change: AURA_KNOWLEDGE_TOP_K must be <= 50", "settings_invalid");
+        }
+        return { clean, runsAura };
+      };
+      if (method === "POST" && rest === "/variables/validate") {
+        const body = await readBody(request);
+        const ok = check(body.changes);
+        if (!ok) return;
+        json(response, 200, { ok: true, settings_checked: ok.runsAura, variables: Object.keys(ok.clean).map((name) => ({ name })) });
+        return;
+      }
+      if (method !== "POST") {
+        auraError(response, 404, "not_found", "no such route");
+        return;
+      }
+      if (!requireGrant()) return;
+      const body = await readBody(request);
+      if ((body.confirm || "") !== svc.name) {
+        refuse(`type '${svc.name}' to confirm`, "confirmation_required");
+        return;
+      }
+      const record = (action, status, detail, deploymentId = null) => {
+        const change = {
+          change_id: `chg_${control.changes.length + 1}`, actor: who.email, platform: "railway", target: id, action,
+          status, detail: { service: svc.name, ...detail }, deployment_id: deploymentId, previous_deployment_id: null, reason: "",
+          created_at: new Date(now).toISOString(), updated_at: new Date(now).toISOString(),
+        };
+        control.changes.unshift(change);
+        json(response, 200, change);
+      };
+      const deploy = () => {
+        const deploymentId = `dep-${++rw.seq}`;
+        svc.deployments.unshift({ deployment_id: deploymentId, status: "DEPLOYING", created_at: new Date(now).toISOString(),
+          can_rollback: true, can_redeploy: true, commit: "85258222c84c", message: "redeploy" });
+        return deploymentId;
+      };
+      if (rest === "/variables") {
+        if (openTarget(id)) return refuse(`a change to ${svc.name} is still being watched`, "change_in_progress");
+        const ok = check(body.changes);
+        if (!ok) return;
+        for (const [name, value] of Object.entries(ok.clean)) {
+          if (value === null) delete svc.vars[name];
+          else svc.vars[name] = value;
+        }
+        rw.applied.push(Object.keys(ok.clean));
+        record("set_variables", "watching", {
+          variables: Object.entries(ok.clean).map(([name, value]) => ({ name, secret: isSecret(name, value), deleted: value === null })),
+        }, deploy());
+        return;
+      }
+      if (rest === "/redeploy") {
+        if (openTarget(id)) return refuse(`a change to ${svc.name} is still being watched`, "change_in_progress");
+        record("redeploy", "watching", {}, deploy());
+        return;
+      }
+      if (rest === "/restart") {
+        rw.restarts.push(svc.deployments[0].deployment_id);
+        record("restart", "recorded", { deployment_id: svc.deployments[0].deployment_id });
+        return;
+      }
+      if (rest === "/rollback") {
+        if (!svc.deployments.some((d) => d.deployment_id === body.deployment_id)) {
+          auraError(response, 404, "not_found", "that deployment is not one of this service's last 50");
+          return;
+        }
+        record("rollback", "recorded", { to_deployment_id: body.deployment_id }, deploy());
+        return;
+      }
+      auraError(response, 404, "not_found", "no such route");
       return;
     }
   }

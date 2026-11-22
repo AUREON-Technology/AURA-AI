@@ -1,6 +1,8 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
-// The Super-Admin control center, stage 1 (ADR-037, docs/plans/console-control-center-plan.md).
+// The Super-Admin control center, stages 1 and 2 (ADR-037, docs/plans/console-control-center-plan.md).
+// One file on purpose: the mock gateway's control state is shared, and Playwright keeps one
+// file's tests in order on one worker, so no other spec can reset it mid-test.
 // The mock gateway enforces what aura_core/api/admin_control.py enforces: SuperAdmin only, a
 // step-up grant on every write (bought with a one-time challenge), the typed confirmation, and
 // tokens that are never returned.
@@ -12,6 +14,9 @@ async function seen(request: APIRequestContext) {
     step_ups: number;
     tokens_received: string[];
     live_grants: number;
+    railway_vars: string;
+    railway_applied: string[][];
+    railway_restarts: string[];
   };
 }
 
@@ -76,7 +81,7 @@ test("the Super Admin connects a platform: re-sign-in, typed confirm, and the to
   await page.getByLabel("Token", { exact: true }).fill("railway_secret");
   await page.getByLabel("Type railway").fill("railway");
   await page.getByRole("button", { name: "Confirm" }).click();
-  await expect(page.getByTestId("platform-railway")).toContainText("Saved, not verified yet");
+  await expect(page.getByTestId("platform-railway")).toContainText("Verified");
   expect((await seen(request)).step_ups).toBe(1);
 
   await page.getByRole("link", { name: "Changes" }).click();
@@ -91,7 +96,7 @@ test("signing out drops the step-up grant on the gateway too", async ({ page, re
   await page.getByLabel("Token", { exact: true }).fill("railway_secret");
   await page.getByLabel("Type railway").fill("railway");
   await page.getByRole("button", { name: "Confirm" }).click();
-  await expect(page.getByTestId("platform-railway")).toContainText("Saved, not verified yet");
+  await expect(page.getByTestId("platform-railway")).toContainText("Verified");
   expect((await seen(request)).live_grants).toBe(1);
 
   await page.getByRole("button", { name: "Sign out" }).click();
@@ -166,4 +171,158 @@ test("Arabic: the control center reads right to left with the same rules", async
   await expect(page.getByTestId("platform-hf_space")).toContainText("مش متوصّل");
   await page.getByRole("link", { name: "إعدادات AURA" }).click();
   await expect(page.getByText("AURA_KNOWLEDGE_TOP_K")).toBeVisible();
+});
+
+// -- Railway (stage 2): the mock applies the refusals of aura_core/control/railway.py and holds
+// a secret (RAILWAY_SECRET in mock-gateway.mjs) that must never reach the page.
+const SECRET = "rw-secret-value-never-shown";
+
+async function connectRailway(page: Page) {
+  const card = page.getByTestId("platform-railway");
+  await card.getByRole("button", { name: "Connect" }).click();
+  await page.getByLabel("Token", { exact: true }).fill("railway-project-token");
+  await page.getByLabel("Type railway").fill("railway");
+  await page.getByRole("button", { name: "Confirm" }).click();
+  await expect(card).toContainText("Verified");
+}
+
+async function openRailway(page: Page) {
+  await openSettings(page);
+  await connectRailway(page);
+  await page.getByRole("link", { name: "Railway" }).click();
+  await expect(page.getByTestId("railway-scope")).toContainText("Project aura · environment production");
+}
+
+test("Railway: before Railway is connected, the tab says where to connect it", async ({ page }) => {
+  await openSettings(page);
+  await page.getByRole("link", { name: "Railway" }).click();
+  await expect(page.getByTestId("railway-not-connected")).toContainText("Railway is not connected");
+});
+
+test("Railway: services, variables and logs: secrets never reach the page", async ({ page }) => {
+  await openRailway(page);
+  await expect(page.getByTestId("service-gateway")).toHaveAttribute("aria-selected", "true");
+  const panel = page.getByTestId("service-panel");
+  await expect(panel).toContainText("this gateway");
+  await expect(page.getByTestId("var-AURA_KNOWLEDGE_TOP_K")).toContainText("4");
+  await expect(page.getByTestId("var-AURA_JWT_SECRET").getByTestId("secret-badge")).toBeVisible();
+  await expect(page.getByTestId("var-AURA_DATABASE_URL")).toContainText("Change in the Railway dashboard");
+  await expect(page.getByTestId("var-RAILWAY_SERVICE_NAME")).toContainText("provided by Railway");
+  await expect(page.getByRole("button", { name: "Edit AURA_DATABASE_URL" })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Logs for dep-2" }).click();
+  await expect(page.getByTestId("logs")).toContainText("jwt loaded [redacted]");
+  expect(await page.content()).not.toContain(SECRET);
+
+  await page.getByTestId("service-console").click();
+  await expect(page.getByTestId("no-healthcheck")).toBeVisible();
+});
+
+test("Railway: a variable change is checked, applied behind the service name, and watched", async ({ page, request }) => {
+  await openRailway(page);
+  await page.getByRole("button", { name: "Edit AURA_KNOWLEDGE_TOP_K" }).click();
+  await page.getByLabel("New value for AURA_KNOWLEDGE_TOP_K").fill("12");
+  await page.getByRole("button", { name: "Add to changes" }).click();
+
+  const tray = page.getByTestId("change-tray");
+  await expect(tray).toContainText("Pending changes to gateway: 1");
+  await expect(tray).toContainText("→ 12");
+  await tray.getByRole("button", { name: "Check" }).click();
+  await expect(page.getByTestId("tray-checked")).toBeVisible();
+  expect((await seen(request)).railway_vars).toBe("4");
+
+  await tray.getByRole("button", { name: "Apply" }).click();
+  await page.getByLabel("Type gateway").fill("gateway");
+  await page.getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByTestId("railway-notice")).toContainText("watched for 5 minutes");
+  await expect(page.getByTestId("change-tray")).toHaveCount(0);
+  expect((await seen(request)).railway_vars).toBe("12");
+  await expect(page.getByTestId("deployment-row").first()).toContainText("DEPLOYING");
+  await expect(page.getByTestId("service-panel")).toContainText("change being watched");
+
+  await page.getByRole("link", { name: "Changes" }).click();
+  await expect(page.getByTestId("change-row").first()).toContainText("Changed variables on gateway: AURA_KNOWLEDGE_TOP_K");
+});
+
+test("Railway: a value the gateway could not boot with is refused at the check, and nothing is written", async ({ page, request }) => {
+  await openRailway(page);
+  await page.getByRole("button", { name: "Edit AURA_KNOWLEDGE_TOP_K" }).click();
+  await page.getByLabel("New value for AURA_KNOWLEDGE_TOP_K").fill("999");
+  await page.getByRole("button", { name: "Add to changes" }).click();
+  await page.getByTestId("change-tray").getByRole("button", { name: "Check" }).click();
+  await expect(page.getByTestId("change-tray")).toContainText("AURA_KNOWLEDGE_TOP_K must be <= 50");
+  expect((await seen(request)).railway_applied).toEqual([]);
+});
+
+test("Railway: a new secret variable is typed hidden and never shown back", async ({ page, request }) => {
+  await openRailway(page);
+  await page.getByLabel("New variable").fill("AURA_NEW_API_TOKEN");
+  const value = page.getByLabel("Value", { exact: true });
+  await expect(value).toHaveAttribute("type", "password");
+  await value.fill("typed-secret-12345");
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByTestId("change-tray")).toContainText("new secret value set");
+  expect(await page.content()).not.toContain("typed-secret-12345");
+
+  await page.getByTestId("change-tray").getByRole("button", { name: "Apply" }).click();
+  await page.getByLabel("Type gateway").fill("gateway");
+  await page.getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByTestId("railway-notice")).toBeVisible();
+  await expect(page.getByTestId("var-AURA_NEW_API_TOKEN").getByTestId("secret-badge")).toBeVisible();
+  expect(await page.content()).not.toContain("typed-secret-12345");
+  expect((await seen(request)).railway_applied).toEqual([["AURA_NEW_API_TOKEN"]]);
+});
+
+test("Railway: redeploy, restart and rollback each ask for the service name", async ({ page, request }) => {
+  await openRailway(page);
+  await page.getByRole("button", { name: "Restart", exact: true }).click();
+  await page.getByLabel("Type gateway").fill("gateway");
+  await page.getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByTestId("railway-notice")).toContainText("Restart requested");
+  expect((await seen(request)).railway_restarts).toEqual(["dep-2"]);
+
+  await page.getByRole("button", { name: "Roll back to dep-1" }).click();
+  await page.getByLabel("Type gateway").fill("wrong");
+  await page.getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.getByLabel("Type gateway").fill("gateway");
+  await page.getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByTestId("railway-notice")).toContainText("Rollback started");
+
+  await page.getByRole("button", { name: "Redeploy", exact: true }).click();
+  await page.getByLabel("Type gateway").fill("gateway");
+  await page.getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByTestId("railway-notice")).toContainText("Redeploy started");
+});
+
+test("Railway: AURA settings become editable once Railway is connected", async ({ page, request }) => {
+  await openSettings(page);
+  await page.getByRole("link", { name: "AURA settings" }).click();
+  await expect(page.getByTestId("settings-source")).toContainText("Read-only");
+  await expect(page.getByRole("button", { name: "Edit AURA_KNOWLEDGE_TOP_K" })).toHaveCount(0);
+
+  // The sidebar has its own "Overview": use the Settings tabs.
+  await page.getByRole("navigation", { name: "Settings sections" }).getByRole("link", { name: "Overview" }).click();
+  await connectRailway(page);
+  await page.getByRole("link", { name: "AURA settings" }).click();
+  await expect(page.getByTestId("settings-source")).toContainText("gateway");
+  await expect(page.getByRole("button", { name: "Edit AURA_DATABASE_URL" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Edit AURA_KNOWLEDGE_TOP_K" }).click();
+  await page.getByLabel("New value for AURA_KNOWLEDGE_TOP_K").fill("7");
+  await page.getByRole("button", { name: "Add to changes" }).click();
+  await page.getByTestId("change-tray").getByRole("button", { name: "Apply" }).click();
+  await page.getByLabel("Type gateway").fill("gateway");
+  await page.getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByTestId("settings-notice")).toBeVisible();
+  expect((await seen(request)).railway_vars).toBe("7");
+  await expect(page.getByTestId("setting-AURA_KNOWLEDGE_TOP_K").getByTestId("next-deploy")).toContainText("7");
+});
+
+test("Railway: Arabic: the Railway tab reads right to left", async ({ page, context }) => {
+  await openRailway(page);
+  await context.addCookies([{ name: "aura_console_lang", value: "ar", url: process.env.PLAYWRIGHT_BASE_URL! }]);
+  await page.goto("/settings/railway");
+  await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+  await expect(page.getByTestId("service-panel")).toContainText("الـ Gateway ده");
+  await expect(page.getByText("المتغيرات")).toBeVisible();
 });
