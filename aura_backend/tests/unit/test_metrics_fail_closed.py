@@ -52,6 +52,55 @@ class TestMetricsFailClosed:
             ok = client.get(_path(container), headers={"authorization": "Bearer scrape-secret"})
             assert ok.status_code == 200
 
+    async def test_scheme_is_case_insensitive(self, container) -> None:
+        """RFC 7235: `bearer` and `BEARER` are the same scheme as `Bearer`."""
+        _configure(container, Environment.PRODUCTION, "scrape-secret")
+        await container.startup()
+        with _client(container) as client:
+            for header in ("bearer scrape-secret", "BEARER scrape-secret", "Bearer scrape-secret "):
+                ok = client.get(_path(container), headers={"authorization": header})
+                assert ok.status_code == 200, header
+
+    async def test_wrong_scheme_wrong_token_and_non_ascii_are_all_404(self, container) -> None:
+        _configure(container, Environment.PRODUCTION, "scrape-secret")
+        await container.startup()
+        with _client(container) as client:
+            # The last is raw latin-1 bytes: the old str comparison raised TypeError on non-ASCII
+            # input (a 500), where a mismatch is the right answer.
+            for header in (
+                "Basic c2NyYXBlLXNlY3JldA==",
+                "Bearer wrong",
+                "Bearer",
+                "scrape-secret",
+                "Bearer scrape-sécret".encode("latin-1"),
+            ):
+                refused = client.get(_path(container), headers={"authorization": header})
+                assert refused.status_code == 404, header
+
+    async def test_refusal_is_logged_without_the_token(self, container, caplog) -> None:
+        _configure(container, Environment.PRODUCTION, "scrape-secret")
+        await container.startup()
+        with _client(container) as client, caplog.at_level("WARNING"):
+            client.get(
+                _path(container),
+                headers={"authorization": "Bearer not-the-token", "user-agent": "GrafanaProbe/1"},
+            )
+            client.get(_path(container))
+        text = caplog.text
+        assert "bearer token does not match" in text
+        assert "no Authorization header" in text
+        assert "GrafanaProbe/1" in text
+        assert "not-the-token" not in text
+        assert "scrape-secret" not in text
+
+    async def test_repeated_refusals_are_logged_once_per_reason(self, container, caplog) -> None:
+        _configure(container, Environment.PRODUCTION, "scrape-secret")
+        await container.startup()
+        with _client(container) as client, caplog.at_level("WARNING"):
+            for length in range(1, 6):
+                client.get(_path(container), headers={"authorization": "Bearer " + "x" * length})
+        assert caplog.text.count("bearer token does not match") == 1
+
     async def test_development_without_token_serves_metrics(self, container) -> None:
         _configure(container, Environment.DEVELOPMENT, "")
         await container.startup()
