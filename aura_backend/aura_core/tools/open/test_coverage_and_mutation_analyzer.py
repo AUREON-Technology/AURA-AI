@@ -137,6 +137,8 @@ class TestCoverageAndMutationAnalyzer:
 
         ``read_timeout_seconds`` (default 300, at most 600) bounds reading the file, a PDF included.
         """
+        if not isinstance(coverage_json_path, (str, os.PathLike)):
+            return {"loaded": False, "error": "A path to the coverage JSON file is required."}
         try:
             read = run_with_budget(
                 lambda: read_source_file(coverage_json_path, base_dir=base_dir),

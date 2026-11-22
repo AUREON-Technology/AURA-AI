@@ -447,7 +447,7 @@ class BackupRestoreVerifier:
         if truncated:
             result["error"] = "The dump appears truncated: its last statement is not terminated by ';'."
         elif not has_structure:
-            result["error"] = "No CREATE TABLE or INSERT statements were found."
+            result["error"] = "No table definitions or row inserts were found in the dump."
         return result
 
     # ------------------------------------------------------------------
@@ -819,6 +819,6 @@ class BackupRestoreVerifier:
             lines += ["", "## Warnings", ""] + [f"- {w}" for w in warnings]
         error = drill_result.get("error")
         if error and not ready:
-            lines += ["", f"**Error:** {str(error)[:500]}"]
+            lines += ["", f"**Error:** {str(error)[:500].replace(chr(96), chr(39))}"]
         lines += ["", "## Audit Log", "", f"```json\n{audit}\n```"]
         return "\n".join(lines)
