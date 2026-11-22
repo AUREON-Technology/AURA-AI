@@ -643,9 +643,12 @@ reports are committed.
 - **Memory swallows corrections.** `MemoryEngine.remember()` reinforces a near-duplicate and drops
   the new text (`memory/engine.py:106`). A personal correction like "my office moved to Y" is
   lost until consolidation, and then only if both records share a `subject`.
-- **Loop A writes into the live index before its gate.** The nightly refresh ingests into the
-  live identity before `_promote` evaluates its gates (`learning/knowledge_refresh.py`), so
-  ADR-008's "never in place" holds only when the embedding model changes. This was reported during
-  exploration and is not yet independently verified.
+- **Loop A writes into the live index before its gate.** *Fixed 2026-11-22.* The nightly refresh
+  ingested into the live identity before `_promote` evaluated its gates
+  (`learning/knowledge_refresh.py`), so ADR-008's "never in place" held only when the embedding
+  model changed; the count-delta gate compared the live index with itself, the quarantine-rate gate
+  did not exist, and `dry_run` still wrote. Each source is now assessed without writing, gated as a
+  whole, and applied only if it passes; the index is rebuilt and gated only on an embedder or layout
+  change. See the amendment in [ADR-008](../architecture/008-human-in-the-loop-learning.md).
 - **Unused approval kind.** `ApprovalKind.SOURCE_REGISTRATION` exists, but `POST /admin/sources`
   registers a source with no approval.

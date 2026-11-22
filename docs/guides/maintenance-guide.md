@@ -40,10 +40,13 @@ recovery time that months of dumps were empty.
 curl -s -H "$AUTH" $AURA/api/v3/admin/status | jq '.learning'
 ```
 
-A blocked promotion is **not** an incident — the previous index is still serving. It is a ticket:
-read `gate_failures` and decide whether the gate was right. `AuraKnowledgeStale` fires only after
-48 hours without a successful promotion, which is the point at which "the index is a bit old"
-becomes "the index is wrong".
+A held source or a blocked rebuild is **not** an incident — nothing from a held source was written,
+and a blocked rebuild leaves the previous index serving. It is a ticket: read `held_sources` and
+`gate_failures` and decide whether the gate was right. `AuraKnowledgeSourcesHeld` fires after two
+runs with a held source. `AuraKnowledgeStale` fires only after 48 hours without a successful run
+(a source that cannot be fetched, or a rebuild after an embedder change that a gate keeps
+blocking), which is the point at which "the index is a bit old" becomes "the index is wrong". A
+run with an unchanged embedder promotes nothing and still counts as a success.
 
 ### Scan the Security dashboard
 

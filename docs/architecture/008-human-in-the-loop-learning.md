@@ -89,3 +89,35 @@ minutes (dataset stats, eval deltas, cost, diff of examples).
 **Impact:** security and governance improve materially; operating cost is one nightly batch plus
 transient double storage; scalability unaffected (the job runs on its own queue and can move to its
 own host).
+
+## Amendment (2026-11-22): the content gate runs before any write
+
+**What was found.** The nightly refresh ingested every fetched document straight into the live
+corpus, and only afterwards built and gated an index. `KnowledgeEngine.ingest` writes the document
+store, supersedes the old versions, updates the lexical index and the graph, and embeds into the
+index the running embedder writes to, which is the live one unless the embedding model changed. So
+"never in place" (step 5) held only on an embedder change; the count-delta gate compared the live
+index with itself and could never fire; the quarantine-rate gate listed above did not exist;
+`dry_run` still wrote live data; and the whole corpus was re-embedded every night.
+
+**What changed.**
+- **Assess, gate, then apply, per source.** `KnowledgeEngine.assess` runs the read-only half of
+  ingestion (hash idempotency, owner check, versioning, chunking, the context guard) and reports what
+  ingest would do. `RefreshContentGate` judges each source as a whole: quarantined chunks over all
+  chunks must be at most `gate_max_quarantine_rate` (10 %), and the summed size of its *updated*
+  documents may shrink by at most `gate_max_shrink` (40 %, catching a source that started returning
+  an error page). A source that fails is **held**: nothing from it is written, its `last_success_at`
+  does not move, and it is retried next run. Sources that pass still apply.
+- **Rebuild only when needed.** After the sources apply, the index is rebuilt, evaluated and gated
+  (steps 5, 7, 9) only when the published index is not the one the running configuration builds: a
+  different embedding model or index layout. That candidate really is a separate physical index, so
+  the live one is untouched until the alias moves. Otherwise the report says
+  `index_rebuild: not_needed`.
+- **Dry run** stops after the content gate and writes nothing; it reports `would_apply` per source.
+- **Freshness** no longer depends on promotion. A run succeeds when no source failed to fetch and the
+  index phase did not stall; held sources raise their own gauge (`aura_refresh_sources_held`) and
+  alert (`AuraKnowledgeSourcesHeld`).
+
+**Still open.** The retrieval-recall gate (step 7) applies only to the embedder-change rebuild, and no
+evaluator is wired into it yet. A source that legitimately shrinks stays held until an operator
+changes the global thresholds; per-source overrides belong with the registry metadata work.

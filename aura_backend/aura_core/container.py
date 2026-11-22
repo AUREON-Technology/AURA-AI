@@ -56,6 +56,7 @@ from .knowledge.chunking import ChunkingConfig
 from .knowledge.engine import KnowledgeEngine
 from .knowledge.extraction import RuleEntityExtractor
 from .knowledge.index_manager import IndexManager, PromotionGate
+from .knowledge.refresh_gate import RefreshContentGate
 from .knowledge.reranking import build_reranker
 from .kernel.kernel import AIKernel, KernelDependencies
 from .kernel.turn_scope import current_turn_lookups
@@ -389,6 +390,10 @@ class Container:
             max_documents=learning.refresh_max_documents,
             promote_requires_gates=learning.promote_requires_gates,
             index_retention_days=learning.index_retention_days,
+            content_gate=RefreshContentGate(
+                max_quarantine_rate=learning.gate_max_quarantine_rate,
+                max_shrink=learning.gate_max_shrink,
+            ),
         )
 
         self.memory = (
