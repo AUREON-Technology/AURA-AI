@@ -25,12 +25,17 @@ async def run_knowledge_refresh(pipeline: Any, *, enabled: bool) -> dict[str, An
     report = await pipeline.run()
     return {
         "status": "success",
+        # Whether the alias moved. Normally false: with an unchanged embedder a refresh writes
+        # into the live index, so ``index_rebuild`` is ``not_needed``.
         "promoted": report.promoted,
+        "index_rebuild": report.index_rebuild,
         "ingested": report.documents_ingested,
         "skipped": report.documents_skipped,
         "quarantined": report.quarantined,
         "failed": report.failures,
-        "gate_failures": list(report.gate_failures),
+        "held": len(report.held_sources),
+        # Index-phase failures plus each held source's reasons, prefixed ``source:<id>:``.
+        "gate_failures": list(report.all_gate_failures),
     }
 
 

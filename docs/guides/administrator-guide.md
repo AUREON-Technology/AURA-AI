@@ -55,25 +55,36 @@ budget:
 ### What the nightly run does
 
 ```
-collect → validate → dedupe → clean + guard → embed into a NEW index
-        → refresh graph → evaluate → report → promote (gated) → prune
+per source:  fetch → validate → dedupe → assess (writes nothing) → content gate → apply
+afterwards:  index current for the embedder?  yes → done
+                                              no  → rebuild a new index → gates → promote
 ```
 
-**The live index is never modified.** Everything is built into a new generation and promoted
-only if every gate passes, so a bad source, a degraded embedding backend, or a collapsed corpus
-leaves production exactly as it was.
+**Nothing from a source reaches the live corpus unless that source passes the content gates.**
+A source that fails is *held*: nothing from it is written, it is retried next run, and the other
+sources still apply. The index is rebuilt and gated only when the embedding model (or the index
+layout) has changed, because that candidate is a separate index; otherwise new documents are
+embedded straight into the live index and the report says `index_rebuild: not_needed`.
 
-Promotion gates:
+Content gates (per source, before anything is written):
+
+| Setting | Default | Catches |
+| --- | --- | --- |
+| `LEARNING_GATE_QUARANTINE_RATE` | 0.10 | A poisoned or compromised source: too many chunks quarantined |
+| `LEARNING_GATE_SHRINK` | 0.40 | A source silently returning error pages: its updated documents shrank |
+
+Index gates (only on an embedder or layout change):
 
 | Gate | Default | Catches |
 | --- | --- | --- |
-| `gate_max_recall_drop` | 0.02 | A rebuild that retrieves worse than what it replaces |
+| `gate_max_recall_drop` | 0.02 | A rebuild that retrieves worse than what it replaces (needs an evaluator; none is wired yet) |
 | `gate_max_error_rate` | 0.05 | An embedding backend degrading mid-build |
-| `gate_max_count_delta` | 0.40 | A source silently returning error pages |
-| `min_chunks` | 1 | An empty build promoting cleanly |
+| `gate_max_count_delta` | 0.40 | A rebuild whose chunk count collapsed against a *readable* index |
+| `min_chunks` | 1 | A failed build promoting cleanly |
 
-A blocked promotion is visible in the `RefreshReport` and raises `AuraKnowledgeStale` after
-48 hours.
+A held source is listed under `held_sources` in the `RefreshReport` and raises
+`AuraKnowledgeSourcesHeld` after two runs. A failed or blocked run raises `AuraKnowledgeStale`
+after 48 hours. `dry_run` writes nothing and reports what each source would apply.
 
 ### Reindexing
 

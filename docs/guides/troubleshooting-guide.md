@@ -140,10 +140,15 @@ Either restore the previous `AURA_EMBEDDING_MODEL` (the old index is retained fo
 window and the alias flips back in O(1)), or accept the new one and verify the promotion gates
 passed.
 
-If the name did not change, check whether the nightly refresh promoted a regression:
+If the name did not change, the nightly refresh does not promote an index with an unchanged embedder:
+it writes new documents into the live one. Look at what it applied and what it held back:
+
+```bash
+curl -s -H "$AUTH" $AURA/api/v3/admin/refresh/latest | jq '.report | {index_rebuild, held_sources, totals}'
+```
 
 ```promql
-aura_knowledge_generation
+aura_refresh_sources_held
 sum(rate(aura_refresh_gate_failures_total[24h])) by (gate)
 ```
 
@@ -155,14 +160,18 @@ sum(rate(aura_refresh_gate_failures_total[24h])) by (gate)
 time() - aura_refresh_last_success_timestamp_seconds
 ```
 
-Above 172800 fires `AuraKnowledgeStale`. The live index is intact either way — a failed run
-never touches it.
+Above 172800 fires `AuraKnowledgeStale`. A run counts as a success when no source failed to fetch
+and any index rebuild was not blocked, so it is set even though a run with an unchanged embedder
+promotes nothing. The live index is intact either way: a source held at the content gate writes
+nothing, and a blocked rebuild leaves the previous index serving.
 
 Read the last `RefreshReport`. Frequent causes:
 
 | `gate_failures` entry | Meaning |
 | --- | --- |
-| `chunk count changed by N%` | A source is returning error pages or was emptied upstream |
+| `source:<id>: shrink N% across updated documents …` | The source's documents shrank sharply: it is returning error pages or was emptied upstream. Nothing from it was written |
+| `source:<id>: quarantine rate N% …` | Too many of the source's chunks were quarantined as instruction-shaped. Nothing from it was written |
+| `chunk count changed by N%` | A rebuild after an embedder change has far fewer chunks than the readable index it would replace |
 | `error rate N%` | The embedding backend is degrading mid-build |
 | `recall dropped N` | The rebuild retrieves worse than what it replaces |
 
