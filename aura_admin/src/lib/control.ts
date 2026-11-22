@@ -321,3 +321,36 @@ export type CloudflareTokenRow = {
   issued_on: string | null;
   in_use: boolean;
 };
+
+// -- Grafana Cloud and Qdrant Cloud (stage 5) -------------------------------------------------
+
+export type MonitoringOverview = {
+  stack: { slug: string; grafana_url: string };
+  rules: { namespace: string; groups: { name: string; rules: number; loaded: boolean }[]; all_loaded: boolean };
+  scrape: { state: "up" | "down" | "missing"; job: string; url: string; interval_s: number; auth: string; metrics_token_set: boolean };
+  uptime: {
+    checks: { name: string; url: string; frequency_s: number; success: string }[];
+    observed: { job: string; instance: string; success_ratio: number | null }[];
+  };
+  firing: { alertname: string; severity: string }[];
+  /** Status reads that could not run (a token without metrics:read): never read as all clear. */
+  errors: string[];
+};
+
+export type ApplyResult = ChangeRow & { results: { group: string; ok: boolean; error: string }[] };
+
+export type VectorOverview = {
+  cluster: string;
+  healthy: boolean;
+  collections: {
+    name: string;
+    status: string;
+    points_count: number | null;
+    indexed_vectors_count: number | null;
+    segments_count: number | null;
+    vector_size: number | null;
+    distance: string;
+  }[];
+};
+
+export type VectorSnapshotRow = { name: string; created_at: string | null; size: number | null };

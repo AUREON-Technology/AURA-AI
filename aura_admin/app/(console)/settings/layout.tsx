@@ -20,6 +20,8 @@ const TABS: { href: string; label: MessageKey }[] = [
   { href: "/settings/railway", label: "settings.tab.railway" },
   { href: "/settings/space", label: "settings.tab.space" },
   { href: "/settings/keys", label: "settings.tab.keys" },
+  { href: "/settings/monitoring", label: "settings.tab.monitoring" },
+  { href: "/settings/vector", label: "settings.tab.vector" },
   { href: "/settings/aura", label: "settings.tab.aura" },
   { href: "/settings/changes", label: "settings.tab.changes" },
 ];

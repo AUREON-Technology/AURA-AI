@@ -174,12 +174,26 @@ function freshCloudflare() {
   };
 }
 
+// Grafana Cloud and Qdrant Cloud (aura_core/control/monitoring.py and vector.py).
+const RULE_GROUPS = [
+  ["aura-availability", 4], ["aura-security", 7], ["aura-quality", 6],
+  ["aura-performance", 9], ["aura-infrastructure", 8], ["aura-billing", 3],
+];
+
+function freshGrafana() {
+  return { loaded: [], failGroup: null };
+}
+
+function freshQdrant() {
+  return { seq: 0, points: { "aura-knowledge": 1200 }, snaps: { "aura-knowledge": [] } };
+}
+
 function isSecret(name, value) {
   return (!name.endsWith("_ENV") && SECRET_NAME.test(name)) || /^[a-z][a-z0-9+.-]*:\/\/[^/@\s]+@/i.test(value || "");
 }
 
 const state = {
-  control: { platforms: {}, changes: [], nonces: {}, grants: {}, stepUps: 0, receivedTokens: [], vaultReady: true, railway: freshRailway(), space: freshSpace(), cf: freshCloudflare() },
+  control: { platforms: {}, changes: [], nonces: {}, grants: {}, stepUps: 0, receivedTokens: [], vaultReady: true, railway: freshRailway(), space: freshSpace(), cf: freshCloudflare(), grafana: freshGrafana(), qdrant: freshQdrant() },
   operators: [
     {
       email: "ops@aura.ai",
@@ -427,12 +441,14 @@ const server = http.createServer(async (request, response) => {
         groq: state.control.railway.services["svc-gw"].vars.AURA_GROQ_KEY,
       },
       cf_tokens: state.control.cf.tokens.map((tok) => tok.name),
+      grafana_loaded: state.control.grafana.loaded,
+      qdrant_points: state.control.qdrant.points,
     });
     return;
   }
   if (method === "POST" && path === "/__test/reset-control") {
     const vaultReady = !new URL(request.url, "http://mock").searchParams.has("no-vault");
-    state.control = { platforms: {}, changes: [], nonces: {}, grants: {}, stepUps: 0, receivedTokens: [], vaultReady, railway: freshRailway(), space: freshSpace(), cf: freshCloudflare() };
+    state.control = { platforms: {}, changes: [], nonces: {}, grants: {}, stepUps: 0, receivedTokens: [], vaultReady, railway: freshRailway(), space: freshSpace(), cf: freshCloudflare(), grafana: freshGrafana(), qdrant: freshQdrant() };
     json(response, 200, { ok: true });
     return;
   }
@@ -598,7 +614,7 @@ const server = http.createServer(async (request, response) => {
         return;
       }
       const replaced = Boolean(control.platforms[platformName]);
-      const verified = platformName !== "grafana";
+      const verified = true; // every platform's token is checked since stage 5
       control.platforms[platformName] = {
         target: body.target || "", by: who.email, at: new Date(now).toISOString(), verified,
         detail: verified ? `${platformName} verified` : "",
@@ -606,6 +622,131 @@ const server = http.createServer(async (request, response) => {
       control.receivedTokens.push(body.token);
       journal(platformName, replaced ? "replace_token" : "connect");
       json(response, 200, { platform: platformName, verified, verified_detail: verified ? `${platformName} verified` : "" });
+      return;
+    }
+
+    // -- Grafana Cloud and Qdrant Cloud (stage 5) ----------------------------------------------
+    if (path.startsWith("/api/v3/admin/control/monitoring")) {
+      if (!control.platforms.grafana) {
+        auraError(response, 404, "not_found", "Grafana Cloud is not connected; connect it in Settings");
+        return;
+      }
+      const gf = control.grafana;
+      if (method === "GET" && path === "/api/v3/admin/control/monitoring") {
+        const base = "https://api.example.test";
+        json(response, 200, {
+          stack: { slug: "aurastack", grafana_url: "https://aurastack.grafana.net" },
+          rules: {
+            namespace: "aura",
+            groups: RULE_GROUPS.map(([name, rules]) => ({ name, rules, loaded: gf.loaded.includes(name) })),
+            all_loaded: RULE_GROUPS.every(([name]) => gf.loaded.includes(name)),
+          },
+          scrape: { state: "missing", job: "aura-gateway", url: `${base}/metrics`, interval_s: 60,
+            auth: "Bearer: the value of AURA_METRICS_TOKEN on the gateway", metrics_token_set: false },
+          uptime: {
+            checks: [
+              { name: "AURA liveness", url: `${base}/health/live`, frequency_s: 60, success: "status 200" },
+              { name: "AURA readiness", url: `${base}/health/ready`, frequency_s: 300, success: 'status 200 and body matches "healthy":\\s*true' },
+            ],
+            observed: [{ job: "AURA liveness", instance: `${base}/health/live`, success_ratio: 1 }],
+          },
+          firing: [{ alertname: "AuraHighErrorRate", severity: "warning" }],
+          errors: [],
+        });
+        return;
+      }
+      if (method === "POST" && path === "/api/v3/admin/control/monitoring/apply") {
+        if (!requireGrant()) return;
+        const body = await readBody(request);
+        if ((body.confirm || "") !== "grafana") {
+          auraError(response, 422, "validation_error", "type 'grafana' to confirm", false, { reason: "confirmation_required" });
+          return;
+        }
+        const results = RULE_GROUPS.map(([name]) => {
+          const ok = name !== gf.failGroup;
+          if (ok && !gf.loaded.includes(name)) gf.loaded.push(name);
+          return { group: name, ok, error: ok ? "" : "the ruler refused the rule group" };
+        });
+        const failed = results.filter((r) => !r.ok).map((r) => r.group);
+        const change = {
+          change_id: `chg_${control.changes.length + 1}`, actor: who.email, platform: "grafana", target: "aura",
+          action: "grafana_apply", status: failed.length ? "failed" : "recorded",
+          detail: { service: "Grafana Cloud", results }, deployment_id: null, previous_deployment_id: null,
+          reason: failed.length ? `not loaded: ${failed.join(", ")}` : "",
+          created_at: new Date(now).toISOString(), updated_at: new Date(now).toISOString(),
+        };
+        control.changes.unshift(change);
+        json(response, 200, { ...change, results });
+        return;
+      }
+      auraError(response, 404, "not_found", "no such route");
+      return;
+    }
+    if (path.startsWith("/api/v3/admin/control/vector")) {
+      if (!control.platforms.qdrant) {
+        auraError(response, 404, "not_found", "Qdrant is not connected; connect it in Settings");
+        return;
+      }
+      const qd = control.qdrant;
+      if (method === "GET" && path === "/api/v3/admin/control/vector") {
+        json(response, 200, {
+          cluster: control.platforms.qdrant.target || "https://cluster.cloud.qdrant.io",
+          healthy: true,
+          collections: Object.entries(qd.points).map(([name, points]) => ({
+            name, status: "green", points_count: points, indexed_vectors_count: points, segments_count: 2,
+            vector_size: 384, distance: "Cosine",
+          })),
+        });
+        return;
+      }
+      const vm = path.match(/^\/api\/v3\/admin\/control\/vector\/collections\/([^/]+)\/(snapshots|restore)$/);
+      const name = vm && decodeURIComponent(vm[1]);
+      if (!vm || !(name in qd.points)) {
+        auraError(response, 404, "not_found", "the cluster has no such collection");
+        return;
+      }
+      const shot = () => {
+        const snap = { name: `${name}-snap-${++qd.seq}.snapshot`, created_at: new Date(Date.now() + qd.seq * 1000).toISOString(), size: qd.points[name] * 100, points: qd.points[name] };
+        qd.snaps[name].push(snap);
+        return snap;
+      };
+      const pub = (snap) => ({ name: snap.name, created_at: snap.created_at, size: snap.size });
+      if (method === "GET" && vm[2] === "snapshots") {
+        json(response, 200, { snapshots: [...qd.snaps[name]].reverse().map(pub) });
+        return;
+      }
+      if (method !== "POST") {
+        auraError(response, 404, "not_found", "no such route");
+        return;
+      }
+      if (!requireGrant()) return;
+      const body = await readBody(request);
+      if ((body.confirm || "") !== name) {
+        auraError(response, 422, "validation_error", `type '${name}' to confirm`, false, { reason: "confirmation_required" });
+        return;
+      }
+      const journal = (action, detail, extra) => {
+        const change = {
+          change_id: `chg_${control.changes.length + 1}`, actor: who.email, platform: "qdrant", target: name, action,
+          status: "recorded", detail: { service: name, ...detail }, deployment_id: null, previous_deployment_id: null, reason: "",
+          created_at: new Date(now).toISOString(), updated_at: new Date(now).toISOString(),
+        };
+        control.changes.unshift(change);
+        json(response, 200, { ...change, ...extra });
+      };
+      if (vm[2] === "snapshots") {
+        const snap = shot();
+        journal("vector_snapshot", { snapshot: snap.name }, { snapshot: pub(snap) });
+        return;
+      }
+      const target = qd.snaps[name].find((s) => s.name === body.snapshot);
+      if (!target) {
+        auraError(response, 404, "not_found", "that snapshot is not on the cluster");
+        return;
+      }
+      const safety = shot();
+      qd.points[name] = target.points;
+      journal("vector_restore", { snapshot: target.name, safety_snapshot: safety.name }, { safety_snapshot: safety.name });
       return;
     }
 

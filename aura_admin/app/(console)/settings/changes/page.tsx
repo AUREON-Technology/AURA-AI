@@ -25,6 +25,7 @@ const SERVICE_ACTIONS = new Set([
   "set_variables", "redeploy", "restart", "rollback",
   "space_variables", "space_secrets", "space_pause", "space_restart", "space_rebuild", "space_hardware", "space_sleep_time",
   "replace_key", "rotate_key", "revoke_key",
+  "grafana_apply", "vector_snapshot", "vector_restore",
 ]);
 
 export default function ChangesPage() {
