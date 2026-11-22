@@ -12,7 +12,9 @@ redeploy that the reconciler watches), redeploy, restart, rollback, deployments 
 AURA settings view reads, and edits, the gateway's own Railway variables. Stage 3: the GPU
 Space -- status, variables (watched and undone on failure), write-only secrets, pause, restart,
 rebuild, hardware, sleep time and logs. Stage 4: provider keys -- replace, rotate both sides
-(gateway and Space), create a new Cloudflare key and revoke unused ones.
+(gateway and Space), create a new Cloudflare key and revoke unused ones. Stage 5: Grafana Cloud
+(rule groups applied, scrape and uptime status, firing alerts) and Qdrant Cloud (health,
+collections, snapshots, and a restore that snapshots the current state first).
 """
 
 # No `from __future__ import annotations`: request models are defined inside the register
@@ -114,6 +116,12 @@ def register_control_ops(
 
         value: str = Field(min_length=1, max_length=8192)
         confirm: str = Field(default="", max_length=128)
+
+    class SnapshotRestoreRequest(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        snapshot: str = Field(min_length=1, max_length=255)
+        confirm: str = Field(default="", max_length=255)
 
     class RollbackRequest(BaseModel):
         model_config = ConfigDict(extra="forbid")
@@ -412,3 +420,56 @@ def register_control_ops(
         return await keys_write(request, caller, "revoke", token_id, lambda: container.keys.revoke_cloudflare(
             token_id, actor=actor(caller), confirm=payload.confirm,
         ))
+
+    # -- Grafana Cloud and Qdrant Cloud (stage 5) -------------------------------------------
+    def public_url(request: Any) -> str:
+        configured = container.settings.control.public_api_url
+        if configured:
+            return configured
+        proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
+        return f"{proto}://{request.url.netloc}"
+
+    @router.get("/admin/control/monitoring")
+    async def monitoring_overview(request: Request, caller=Depends(principal)) -> Any:
+        require_super_admin(caller)
+        return ok(await container.monitoring.overview(public_url=public_url(request)))
+
+    @router.post("/admin/control/monitoring/apply")
+    async def monitoring_apply(payload: ConfirmRequest, request: Request, caller=Depends(principal)) -> Any:
+        async def run() -> Any:
+            result = await container.monitoring.apply(actor=actor(caller), confirm=payload.confirm)
+            return {**result["change"], "results": result["results"]}
+
+        return await railway_write(request, caller, "apply", "grafana", run, audit_prefix="admin.control.monitoring")
+
+    @router.get("/admin/control/vector")
+    async def vector_overview(caller=Depends(principal)) -> Any:
+        require_super_admin(caller)
+        return ok(await container.vector.overview())
+
+    @router.get("/admin/control/vector/collections/{collection}/snapshots")
+    async def vector_snapshots(collection: str, caller=Depends(principal)) -> Any:
+        require_super_admin(caller)
+        return ok({"snapshots": await container.vector.snapshots(collection)})
+
+    @router.post("/admin/control/vector/collections/{collection}/snapshots")
+    async def vector_create_snapshot(
+        collection: str, payload: ServiceConfirmRequest, request: Request, caller=Depends(principal)
+    ) -> Any:
+        async def run() -> Any:
+            result = await container.vector.create_snapshot(collection, actor=actor(caller), confirm=payload.confirm)
+            return {**result["change"], "snapshot": result["snapshot"]}
+
+        return await railway_write(request, caller, "snapshot", collection, run, audit_prefix="admin.control.vector")
+
+    @router.post("/admin/control/vector/collections/{collection}/restore")
+    async def vector_restore(
+        collection: str, payload: SnapshotRestoreRequest, request: Request, caller=Depends(principal)
+    ) -> Any:
+        async def run() -> Any:
+            result = await container.vector.restore(
+                collection, payload.snapshot, actor=actor(caller), confirm=payload.confirm,
+            )
+            return {**result["change"], "safety_snapshot": result["safety_snapshot"]}
+
+        return await railway_write(request, caller, "restore", collection, run, audit_prefix="admin.control.vector")

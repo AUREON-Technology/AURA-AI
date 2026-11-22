@@ -1702,7 +1702,7 @@ gaps:
     component: console/control-center
     severity: P2
     current_state: >-
-      Stages 1-4 built, not proven (ADR-037, docs/plans/console-control-center-plan.md). The
+      Stages 1-5 built, not proven (ADR-037, docs/plans/console-control-center-plan.md). The
       console's Settings page is Super-Admin-only (nav item hidden, page refuses, every
       /api/v3/admin/control/* route 403s below SuperAdmin). Platform tokens for Railway, the HF GPU
       Space, Grafana, Qdrant and Cloudflare are entered in the console, verified where the vendor
@@ -1722,8 +1722,12 @@ gaps:
       Space errors), write-only secrets journaled as not restorable, and logs. Stage 4 adds
       provider keys as gateway variable changes: replace (any slot), rotate both sides (the GPU
       Space's VLLM_API_KEY and the gateway's variable, with a companion restore on rollback), and
-      Cloudflare Workers AI create and revoke (the key in use cannot be revoked). Grafana and
-      Qdrant are stage 5, not built.
+      Cloudflare Workers AI create and revoke (the key in use cannot be revoked). Stage 5 adds
+      Grafana Cloud (alert rule groups from deploy/monitoring/alerts/aura.yml applied to the
+      stack's ruler with per-group results; the scrape job and uptime checks, which no API
+      covers for this token, shown as exact values with their live state; firing alerts) and
+      Qdrant Cloud (health, collections, snapshots, and a restore that snapshots the current
+      state first). Every stage is built; none is proven.
     target_state: >-
       The Super Admin runs every platform operation the plan lists (Railway variables, redeploy,
       restart, rollback, logs; Space status, restart, hardware; key create, revoke and rotate;
@@ -1741,7 +1745,10 @@ gaps:
       window, variables put back on RUNTIME_ERROR, write-only secrets, runtime actions, stage to
       health, HfSpaceHost against a stand-in HfApi) and tests/unit/test_control_keys.py (slots,
       replace, both-sides rotation and its companion restore, Cloudflare create/revoke,
-      HttpCloudflareTokens against recorded exchanges).
+      HttpCloudflareTokens against recorded exchanges) and tests/unit/test_control_monitoring.py
+      (the packaged rules equal deploy/'s, apply with per-group results, honest status when a
+      query cannot run, snapshot and restore with a safety snapshot, HttpGrafanaCloud and
+      HttpQdrantAdmin against recorded exchanges).
       Opt-in: tests/load/test_control_store_postgres.py and the migration round trip on Postgres.
       Console: tests/e2e/control-center.spec.ts against the mock gateway. Nothing here exercises
       real Google, a real platform API or a deployed gateway.
@@ -1755,5 +1762,6 @@ gaps:
       from stage 2, (4) one change rolled back automatically after a forced unhealthy deploy; and,
       from stage 3, (5) the GPU Space paused and resumed and its sleep time changed from Settings;
       and, from stage 4, (6) the GPU Space key rotated on both sides with hfspace healthy again
-      afterwards.
+      afterwards; and, from stage 5, (7) Apply setup loading every rule group with
+      up{job="aura-gateway"} reading 1, and a Qdrant snapshot created and listed.
     status: built_not_proven

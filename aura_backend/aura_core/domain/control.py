@@ -50,8 +50,8 @@ PLATFORM_TOKEN_HINTS: Mapping[Platform, str] = {
                       "-> Tokens). Not an account or team token.",
     Platform.HF_SPACE: "A Hugging Face fine-grained token with write access to the inference "
                        "Space only (Settings -> Access Tokens -> Fine-grained).",
-    Platform.GRAFANA: "A Grafana Cloud access policy token with metrics, rules and synthetic "
-                      "monitoring scopes for this stack only.",
+    Platform.GRAFANA: "A Grafana Cloud access policy token for this stack only, with stacks:read, "
+                      "metrics:read, rules:read and rules:write.",
     Platform.QDRANT: "The Qdrant Cloud cluster API key (the one the gateway already uses).",
     Platform.CLOUDFLARE: "A Cloudflare API token with 'API Tokens: Edit' and 'Workers AI: Read', "
                          "for creating and revoking the Workers AI key.",

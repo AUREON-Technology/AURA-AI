@@ -257,7 +257,7 @@ That needs a check in the Firebase console.
 
   Not CI-run (CB-44). Not proven: no real Google step-up or platform call has been made.
 
-- 2026-11-22, branch `anas/laughing-hamilton-glfevj`, unmerged: control center stage 2, Railway
+- 2026-11-22, merged as #278 (live at `6aab72f7`): control center stage 2, Railway
   (ADR-037, GAP-067). It adds:
   - `/api/v3/admin/control/railway/*`: services, variables (secret values never returned),
     deployments, logs (secrets masked), a dry-run validate, and the step-up-gated
@@ -275,7 +275,7 @@ That needs a check in the Firebase console.
 
   Not CI-run (CB-44). Not proven: no live Railway call has been made with a real project token.
 
-- 2026-11-22, same branch (#278), unmerged: control center stage 3, the GPU Space (ADR-037,
+- 2026-11-22, merged as #278: control center stage 3, the GPU Space (ADR-037,
   GAP-067). It adds:
   - `/api/v3/admin/control/space/*`: status, variables (watched for
     `AURA_CONTROL_SPACE_WATCH_S`, 20 minutes, and put back if the Space errors), write-only
@@ -288,7 +288,7 @@ That needs a check in the Firebase console.
   skipped; legacy `unittest` 148 OK. Not CI-run (CB-44). Not proven: no live Hub call has been
   made from the gateway.
 
-- 2026-11-22, same branch (#278), unmerged: control center stage 4, provider keys (ADR-037,
+- 2026-11-22, merged as #278: control center stage 4, provider keys (ADR-037,
   GAP-067). It adds:
   - `/api/v3/admin/control/keys/*`. Each key is a gateway variable change, checked, watched and
     rolled back by stage 2's machinery.
@@ -299,6 +299,20 @@ That needs a check in the Firebase console.
 
   TESTED locally (`main` at `f880826a`): `pytest` 7069 passed, 0 failed, 55 skipped; legacy
   `unittest` 148 OK. Not CI-run (CB-44). Not proven: no live key rotation has been made.
+
+- 2026-11-22, branch `anas/laughing-hamilton-glfevj`, unmerged: control center stage 5 (ADR-037,
+  GAP-067; every stage is now built). It adds:
+  - `/api/v3/admin/control/monitoring`: Grafana Cloud. Alert rule groups are applied to the
+    stack's ruler with per-group results; the scrape job and uptime checks are shown as exact
+    values with their live state; firing alerts are listed.
+  - `/api/v3/admin/control/vector`: Qdrant Cloud. Health, collections, snapshots, and a restore
+    that takes a safety snapshot first.
+  - A packaged copy of `deploy/monitoring/alerts/aura.yml`, kept byte-identical by a test.
+  - Grafana tokens are verified on Connect.
+
+  TESTED locally (`main` at `6aab72f7`): `pytest` 7108 passed, 0 failed, 55 skipped; legacy
+  `unittest` 148 OK. Not CI-run (CB-44). Not proven: no live Grafana or Qdrant call has been
+  made from the gateway, and the Cloud restore path is unconfirmed.
 
 ## Next steps
 

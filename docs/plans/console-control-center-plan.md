@@ -1,6 +1,6 @@
 # Plan: Console Settings → a Super-Admin control center for the whole system
 
-**Status:** Draft, awaiting owner approval · **Date:** 2026-11-21 · **Base:** `main@032e47f`
+**Status:** Approved 2026-11-21; stages 1-5 built (1-4 merged as #275, #276, #278), none proven · **Date:** 2026-11-21 · **Base:** `main@032e47f`
 · **Branch:** `anas/laughing-hamilton-glfevj` (restarted from `main`)
 
 ## Goal
@@ -387,6 +387,34 @@ this section wins:
     the Cloudflare dashboard.
 - **Provider health** is the router's state in the process answering the request. After a key
   redeploy, that is the new gateway.
+
+## Stage 5 as built (2026-11-22)
+
+Built and tested locally, not proven (ADR-037, GAP-067). Where it differs from the design above,
+this section wins:
+
+- **The research spike's answer.** Grafana documents no REST API for Metrics Endpoint scrape
+  jobs (UI or Terraform only), and Synthetic Monitoring needs its own access token, not the
+  access policy token. So "Apply setup" loads the alert rules. The scrape job and the two
+  uptime checks are given as exact values to enter once, then shown with their live state: the
+  plan's fallback, applied to both.
+- **API facts taken from the docs.**
+  - The stack: `GET grafana.com/api/instances/<slug>`, which returns `hmInstancePromUrl` and
+    `hmInstancePromId`.
+  - The ruler: one YAML group per `POST .../config/v1/rules/<namespace>`.
+  - Prometheus auth: basic auth with the instance id and the access policy token.
+  - Not documented: Grafana Cloud's ruler prefix. Candidates are tried in order.
+- **Token scopes.** The Grafana token needs `stacks:read`, `metrics:read`, `rules:read` and
+  `rules:write` (the Connect card says so). Grafana tokens are now verified on Connect.
+- **The alert rules copy.** `aura_backend/aura_core/control/assets/aura-alerts.yml` is a copy of
+  `deploy/monitoring/alerts/aura.yml` for the image, and `tests/unit/test_control_monitoring.py`
+  fails when they differ.
+- **Qdrant restore.**
+  - Recovery uses `file:///qdrant/snapshots/<collection>/<snapshot>`, because Qdrant Cloud
+    blocks recovery from a URL. That path is not proven on a Cloud cluster.
+  - A safety snapshot is taken first, so a wrong restore can be undone.
+- **Public URL.** `AURA_CONTROL_PUBLIC_API_URL` sets the gateway's public URL for the values
+  shown. Without it, the request's own URL is used.
 
 ## Delivery: five stages, each its own PR, each usable on its own
 

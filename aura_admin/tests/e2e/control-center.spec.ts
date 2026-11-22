@@ -22,6 +22,8 @@ async function seen(request: APIRequestContext) {
     space_secret_names: string[];
     key_values: { hfspace: string; space: string; workersai: string; groq: string };
     cf_tokens: string[];
+    grafana_loaded: string[];
+    qdrant_points: Record<string, number>;
   };
 }
 
@@ -447,7 +449,8 @@ async function connectPlatform(page: Page, platform: string, target?: string) {
   const card = page.getByTestId(`platform-${platform}`);
   await card.getByRole("button", { name: "Connect" }).click();
   await page.getByLabel("Token", { exact: true }).fill(`${platform}-management-token`);
-  if (target) await page.getByLabel("Space (owner/name)").fill(target);
+  const targetLabel: Record<string, string> = { hf_space: "Space (owner/name)", grafana: "Stack URL" };
+  if (target) await page.getByLabel(targetLabel[platform]).fill(target);
   await page.getByLabel(`Type ${platform}`).fill(platform);
   await page.getByRole("button", { name: "Confirm" }).click();
   await expect(card).toContainText("Verified");
@@ -512,4 +515,68 @@ test("Keys: a new Cloudflare key is created, and only the unused token can be re
 
   await page.getByRole("link", { name: "Changes" }).click();
   await expect(page.getByTestId("change-row").first()).toContainText("Revoked the token aura-workersai-old");
+});
+
+// -- Grafana Cloud and Qdrant Cloud (stage 5) -------------------------------------------------
+async function openTab(page: Page, tab: string, platforms: [string, string?][]) {
+  await openSettings(page);
+  for (const [platform, target] of platforms) await connectPlatform(page, platform, target);
+  await page.getByRole("link", { name: tab }).click();
+}
+
+test("Monitoring: before Grafana is connected, the tab says where to connect it", async ({ page }) => {
+  await openTab(page, "Monitoring", []);
+  await expect(page.getByTestId("monitoring-not-connected")).toContainText("Grafana Cloud is not connected");
+});
+
+test("Monitoring: apply loads every rule group, and the manual steps show exact values", async ({ page, request }) => {
+  await openTab(page, "Monitoring", [["grafana", "https://aurastack.grafana.net"]]);
+  await expect(page.getByTestId("monitoring-rules")).toContainText("not all loaded");
+  const scrape = page.getByTestId("monitoring-scrape");
+  await expect(scrape.getByTestId("scrape-state")).toHaveText("not set up");
+  await expect(scrape).toContainText("aura-gateway");
+  await expect(scrape).toContainText("https://api.example.test/metrics");
+  await expect(page.getByTestId("metrics-token-missing")).toBeVisible();
+  await expect(page.getByTestId("uptime-check").first()).toContainText("100%");
+  await expect(page.getByTestId("monitoring-firing")).toContainText("AuraHighErrorRate");
+
+  await page.getByRole("button", { name: "Apply setup" }).click();
+  await confirmWith(page, "grafana");
+  await expect(page.getByTestId("monitoring-applied")).toHaveText("Every rule group was loaded.");
+  await expect(page.getByTestId("monitoring-rules")).toContainText("all loaded");
+  expect((await seen(request)).grafana_loaded).toHaveLength(6);
+
+  await page.getByRole("link", { name: "Changes" }).click();
+  await expect(page.getByTestId("change-row").first()).toContainText("Loaded the alert rules into Grafana Cloud");
+});
+
+test("Vector DB: a snapshot, then a restore that keeps the state it replaces", async ({ page, request }) => {
+  await openTab(page, "Vector DB", [["qdrant"]]);
+  await expect(page.getByTestId("vector-health")).toHaveText("healthy");
+  await expect(page.getByTestId("collection-aura-knowledge")).toContainText("1,200");
+  await page.getByTestId("collection-aura-knowledge").getByRole("button", { name: "Snapshots" }).click();
+  await expect(page.getByTestId("snapshots")).toContainText("No snapshots yet.");
+
+  await page.getByRole("button", { name: "Take snapshot" }).click();
+  await confirmWith(page, "aura-knowledge");
+  await expect(page.getByTestId("vector-notice")).toContainText("A snapshot of aura-knowledge was taken");
+  await expect(page.getByTestId("snapshot-row")).toHaveCount(1);
+
+  await page.getByRole("button", { name: /Restore from aura-knowledge-snap-1/ }).click();
+  await expect(page.getByRole("dialog")).toContainText("A snapshot of the current state is taken first");
+  await confirmWith(page, "aura-knowledge");
+  await expect(page.getByTestId("vector-notice")).toContainText("is kept as aura-knowledge-snap-2.snapshot");
+  await expect(page.getByTestId("snapshot-row")).toHaveCount(2);
+  expect((await seen(request)).qdrant_points["aura-knowledge"]).toBe(1200);
+
+  await page.getByRole("link", { name: "Changes" }).click();
+  await expect(page.getByTestId("change-row").first()).toContainText("Restored aura-knowledge from a snapshot");
+});
+
+test("Vector DB: Arabic reads right to left", async ({ page, context }) => {
+  await openTab(page, "Vector DB", [["qdrant"]]);
+  await context.addCookies([{ name: "aura_console_lang", value: "ar", url: process.env.PLAYWRIGHT_BASE_URL! }]);
+  await page.goto("/settings/vector");
+  await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+  await expect(page.getByText("الـ Collection")).toBeVisible();
 });

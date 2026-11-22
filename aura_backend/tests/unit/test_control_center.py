@@ -106,6 +106,12 @@ ROUTES = [
     ("POST", "/api/v3/admin/control/keys/hosted1/replace", {"value": "k", "confirm": "hosted1"}),
     ("POST", "/api/v3/admin/control/keys/hosted1/rotate", {"confirm": "hosted1"}),
     ("POST", "/api/v3/admin/control/keys/cloudflare/tokens/cf-1/revoke", {"confirm": "x"}),
+    ("GET", "/api/v3/admin/control/monitoring", None),
+    ("POST", "/api/v3/admin/control/monitoring/apply", {"confirm": "grafana"}),
+    ("GET", "/api/v3/admin/control/vector", None),
+    ("GET", "/api/v3/admin/control/vector/collections/docs/snapshots", None),
+    ("POST", "/api/v3/admin/control/vector/collections/docs/snapshots", {"confirm": "docs"}),
+    ("POST", "/api/v3/admin/control/vector/collections/docs/restore", {"snapshot": "s", "confirm": "docs"}),
 ]
 
 
@@ -135,7 +141,7 @@ class TestOnlyTheSuperAdmin:
         swept = {
             (m, p.replace("/hf_space/", "/{platform}/").replace("/svc-gw/", "/{service_id}/")
                  .replace("/dep-1/", "/{deployment_id}/").replace("/hosted1/", "/{slot}/")
-                 .replace("/cf-1/", "/{token_id}/"))
+                 .replace("/cf-1/", "/{token_id}/").replace("/docs/", "/{collection}/"))
             for m, p, _ in ROUTES
         }
         assert registered == swept
@@ -279,13 +285,15 @@ class TestTokens:
         assert response.status_code == 422
         assert not next(p for p in overview["platforms"] if p["platform"] == "hf_space")["connected"]
 
-    def test_grafana_is_saved_as_not_yet_verified(self, vault_key) -> None:
+    def test_a_grafana_token_is_checked_before_it_is_saved(self, vault_key) -> None:
         container = _container()
+        container.control_verifier.accept(Platform.GRAFANA, "grafana-good")
         with _client(container) as client:
             grant = _step_up(client, container)
-            response = _connect(client, grant, platform="grafana", target="")
-        assert response.status_code == 200
-        assert response.json()["verified"] is False
+            refused = _connect(client, grant, platform="grafana", token="grafana-bad", target="https://s.grafana.net")
+            saved = _connect(client, grant, platform="grafana", token="grafana-good", target="https://s.grafana.net")
+        assert refused.status_code == 422
+        assert saved.status_code == 200 and saved.json()["verified"] is True
 
     def test_a_railway_token_is_checked_before_it_is_saved(self, vault_key) -> None:
         container = _container()

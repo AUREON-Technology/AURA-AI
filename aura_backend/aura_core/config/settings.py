@@ -2185,6 +2185,9 @@ class ControlSettings:
     step_up_ttl_s: int = 300
     writes_per_hour: int = 30
     rollback_watch_s: int = 300
+    #: The gateway's public URL (``https://api.aureon-ai.tech``), for the scrape job and uptime
+    #: checks the Monitoring tab tells you to create. Empty: the URL the request came in on.
+    public_api_url: str = ""
     #: How long a GPU Space change may take to come back RUNNING before it is undone. Longer
     #: than ``rollback_watch_s``: a Space rebuilds its image and reloads its model.
     space_watch_s: int = 1200
@@ -2204,6 +2207,7 @@ class ControlSettings:
             writes_per_hour=_int("CONTROL_WRITES_PER_HOUR", 30, minimum=1, maximum=500),
             rollback_watch_s=_int("CONTROL_ROLLBACK_WATCH_S", 300, minimum=60, maximum=3600),
             space_watch_s=_int("CONTROL_SPACE_WATCH_S", 1200, minimum=300, maximum=7200),
+            public_api_url=(_env("CONTROL_PUBLIC_API_URL", "") or "").rstrip("/"),
             reconciler_enabled=_bool("CONTROL_RECONCILER", True),
         )
 

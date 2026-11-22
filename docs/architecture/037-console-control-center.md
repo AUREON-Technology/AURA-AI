@@ -1,6 +1,6 @@
 # ADR-037 — The console's Super-Admin control center: infrastructure tokens held by the gateway
 
-**Status:** Proposed (stage 1 built, not proven) · **Date:** 2026-11-21 · **Related:** ADR-002
+**Status:** Proposed (stages 1-5 built, not proven) · **Date:** 2026-11-21 · **Related:** ADR-002
 (v3 gateway), ADR-029 (service keys, caller context), ADR-030 (hosted open-weight inference),
 CB-20 (Alembic is the schema authority), CB-43/CB-44 (Railway pre-deploy, no CI runners) ·
 **Gap:** GAP-067 · **Plan:** `docs/plans/console-control-center-plan.md`
@@ -158,6 +158,28 @@ It is what has to be true before the gateway agrees to act.
     and the Space by the hostname the Hub derives from its `owner/name`, so no host is named in
     source.
   - No key value is returned, journaled or audited.
+- **Grafana Cloud (stage 5, `control/monitoring.py`): set up and status.**
+  - **Alert rules.** "Apply setup" loads every group of `deploy/monitoring/alerts/aura.yml` into
+    the stack's ruler (namespace `aura`), one YAML group per request, and reports each group.
+    A partial apply is journaled `FAILED`, naming the groups that did not load.
+    - The gateway image is built from `aura_backend/` alone, so it carries a copy of the rules
+      file, and a test keeps that copy byte-identical to the one in `deploy/`.
+    - The stack comes from grafana.com's instances API, called with the access policy token.
+    - The hosted Prometheus takes basic auth (its instance id, plus the token) and serves
+      queries under `/api/prom`.
+    - Grafana Cloud's ruler path prefix is not documented, so the documented candidates are
+      tried in order and the one that works is remembered.
+  - **What no API covers for this token:** the Metrics Endpoint scrape job (UI or Terraform
+    only) and the Synthetic Monitoring checks (which need their own token). The page gives
+    their exact values to enter once, then reads whether each works: `up{job="aura-gateway"}`
+    and the probe success rate. It also lists firing `ALERTS`.
+  - A query that cannot run is reported as such, never read as "all clear".
+- **Qdrant Cloud (stage 5, `control/vector.py`): status and snapshots.**
+  - Health, collections and snapshots come from the cluster API, with the stored key.
+  - A restore first snapshots the current state, so the restore itself can be undone. It then
+    recovers from the snapshot's file on the node, because Qdrant Cloud refuses recovery from
+    a URL.
+  - No resizing: that is a billing decision.
 - **"Deploy" means redeploy, restart, rollback, status and logs.** It never means "deploy any
   branch". Shipping code stays `main` → Railway, so the console cannot ship code that has not
   been merged.
@@ -196,7 +218,7 @@ them. The control center adds a way in; it removes none.
 | S2 | Railway: services, variables (edit with validation), redeploy, restart, rollback, logs; the reconciler turned on; AURA settings edited through the gateway's own Railway variables | yes (2026-11-22), not proven |
 | S3 | HF GPU Space: status, pause/resume, restart, rebuild, hardware, sleep time, variables (watched), secrets (write-only), logs | yes (2026-11-22), not proven |
 | S4 | Provider keys: replace (any), rotate both sides (GPU Space), create and revoke (Cloudflare Workers AI) | yes (2026-11-22), not proven |
-| S5 | Grafana Cloud (set up, status) and Qdrant Cloud (status, snapshots; restore needs step-up) | no |
+| S5 | Grafana Cloud (rules applied, scrape/uptime/firing status) and Qdrant Cloud (status, snapshots, restore with a safety snapshot) | yes (2026-11-22), not proven |
 
 ## Evidence still owed
 

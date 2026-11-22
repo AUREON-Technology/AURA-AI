@@ -27,6 +27,11 @@ __all__ = [
     "SpaceStatus",
     "CloudflareToken",
     "CloudflareTokens",
+    "GrafanaStack",
+    "ObservabilityStack",
+    "VectorAdmin",
+    "VectorCollection",
+    "VectorSnapshot",
 ]
 
 
@@ -296,6 +301,70 @@ class CloudflareTokens(Protocol):
         ...
 
     async def revoke(self, token_id: str) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class VectorCollection:
+    name: str
+    status: str = ""
+    points_count: int | None = None
+    indexed_vectors_count: int | None = None
+    segments_count: int | None = None
+    vector_size: int | None = None
+    distance: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class VectorSnapshot:
+    name: str
+    created_at: datetime | None = None
+    size: int | None = None
+
+
+@runtime_checkable
+class VectorAdmin(Protocol):
+    """The Qdrant cluster the gateway uses, reached with the stored cluster key (stage 5)."""
+
+    async def health(self) -> bool: ...
+
+    async def collections(self) -> Sequence[VectorCollection]: ...
+
+    async def snapshots(self, collection: str) -> Sequence[VectorSnapshot]: ...
+
+    async def create_snapshot(self, collection: str) -> VectorSnapshot: ...
+
+    async def restore_snapshot(self, collection: str, snapshot: str) -> None:
+        """Replace the collection's contents with the snapshot's. Irreversible."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class GrafanaStack:
+    """A Grafana Cloud stack, as its access policy token reaches it."""
+
+    slug: str
+    grafana_url: str = ""
+    prometheus_url: str = ""
+    prometheus_id: str = ""
+
+
+@runtime_checkable
+class ObservabilityStack(Protocol):
+    """Grafana Cloud (stage 5): the stack, its hosted Prometheus and its ruler."""
+
+    async def stack(self) -> GrafanaStack: ...
+
+    async def load_rule_group(self, namespace: str, group: Mapping[str, Any]) -> None:
+        """Create or replace one Prometheus rule group in ``namespace``."""
+        ...
+
+    async def rule_groups(self, namespace: str) -> Sequence[str]:
+        """The names of the rule groups loaded in ``namespace``."""
+        ...
+
+    async def query(self, promql: str) -> Sequence[Mapping[str, Any]]:
+        """An instant query: ``[{"metric": {...labels}, "value": float}]``."""
+        ...
 
 
 #: Free-form, redacted detail a change carries (variable names, secret flags, deployment ids).

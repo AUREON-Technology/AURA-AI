@@ -1032,6 +1032,47 @@ class Container:
 
             cloudflare_api = InMemoryCloudflareTokens()
         self.cloudflare_tokens = cloudflare_api
+
+        # Stage 5: Qdrant Cloud (the cluster named when its key was connected, or the gateway's
+        # own) and Grafana Cloud (the stack named with its token).
+        from .control.monitoring import MonitoringService
+        from .control.vector import VectorService
+        from .adapters.alert_rules import load_alert_groups
+
+        qdrant_default = settings.infrastructure.qdrant_url
+        if settings.environment.is_production_like:
+            from .adapters.grafana_cloud import HttpGrafanaCloud
+            from .adapters.qdrant_admin import HttpQdrantAdmin
+
+            async def qdrant_key() -> str:
+                return (await self.control.token(Platform.QDRANT)).reveal()
+
+            async def qdrant_url() -> str:
+                credential = await store.get_credential(Platform.QDRANT)
+                return (credential.target if credential and credential.target else qdrant_default) or ""
+
+            async def grafana_token() -> str:
+                return (await self.control.token(Platform.GRAFANA)).reveal()
+
+            async def grafana_stack_url() -> str:
+                credential = await store.get_credential(Platform.GRAFANA)
+                return credential.target if credential else ""
+
+            vector_api: Any = HttpQdrantAdmin(token_source=qdrant_key, url_source=qdrant_url)
+            grafana_api: Any = HttpGrafanaCloud(token_source=grafana_token, stack_source=grafana_stack_url)
+        else:
+            from .adapters.grafana_cloud import InMemoryGrafana
+            from .adapters.qdrant_admin import InMemoryQdrant
+
+            vector_api = InMemoryQdrant()
+            grafana_api = InMemoryGrafana()
+        self.vector_api = vector_api
+        self.grafana_api = grafana_api
+        self.vector = VectorService(control=self.control, api=vector_api, store=store, default_url=qdrant_default)
+        self.monitoring = MonitoringService(
+            control=self.control, store=store, api=grafana_api, rules=load_alert_groups,
+            metrics_token_set=lambda: bool((os.environ.get("AURA_METRICS_TOKEN") or "").strip()),
+        )
         self.keys = KeysService(
             control=self.control, store=store, railway=self.railway, space=self.space,
             space_api=space_api, cloudflare=cloudflare_api, slots=key_slots(settings.llm.providers),
