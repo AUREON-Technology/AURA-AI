@@ -9,7 +9,8 @@ import { useI18n } from "@/lib/i18n/context";
 export function GrafanaFrame({ title, uid }: { title: string; uid: string }) {
   const { t } = useI18n();
   const embed = process.env.NEXT_PUBLIC_GRAFANA_EMBED === "1";
-  const src = `/grafana/d/${uid}?orgId=1&kiosk`;
+  const base = (process.env.NEXT_PUBLIC_GRAFANA_BASE_URL || "/grafana").replace(/\/+$/, "");
+  const src = `${base}/d/${uid}?orgId=1&kiosk`;
   return (
     <Card className="mt-4">
       <CardHeader className={embed ? undefined : "mb-0 items-center"}>
