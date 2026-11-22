@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..domain.errors import DependencyUnavailableError
-from ..domain.telemetry import TurnTelemetry
+from ..domain.telemetry import TurnTelemetry, usage_view_from
 from .postgres_store import PostgresPool
 
 logger = logging.getLogger(__name__)
@@ -46,8 +46,9 @@ class PostgresTelemetrySink:
                     INSERT INTO aura_turn_telemetry (
                         turn_id, correlation_id, started_at, route, agent, outcome, error_kind,
                         provider, model, total_ms, prompt_tokens, completion_tokens, cost_usd,
-                        degraded, cache_hit, tool_calls, tool_failures, groundedness, payload
-                    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb)
+                        degraded, cache_hit, tool_calls, tool_failures, groundedness, payload,
+                        owner_ref
+                    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20)
                     ON CONFLICT (turn_id) DO NOTHING
                     """,
                     telemetry.turn_id.value, telemetry.correlation_id.value, telemetry.started_at,
@@ -57,6 +58,7 @@ class PostgresTelemetrySink:
                     telemetry.degraded, telemetry.cache.hit,
                     len(telemetry.tools), sum(1 for t in telemetry.tools if not t.ok),
                     telemetry.groundedness, json.dumps(payload),
+                    telemetry.owner_ref,
                 )
         except Exception as exc:
             # Telemetry must never fail the turn it describes -- log and move on, the same
@@ -86,6 +88,42 @@ class PostgresTelemetrySink:
         except Exception as exc:
             raise _unavailable(f"could not purge turn telemetry: {exc}") from exc
         # asyncpg reports the command tag ("DELETE 3"); the count is its last word.
+        return int(str(status).rsplit(" ", 1)[-1] or 0)
+
+    async def get_turn_usage(self, turn_id: str, owner_ref: str) -> dict[str, Any] | None:
+        """The owner-facing usage view of one turn, or ``None`` (unknown, not yours, or recorded
+        without an owner -- indistinguishable on purpose). ``owner_ref`` is compared in SQL with
+        ``=``: it is a keyed 128-bit digest, not a secret to guess one character at a time."""
+        if not owner_ref:
+            return None
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT started_at, payload
+                    FROM aura_turn_telemetry
+                    WHERE turn_id = $1 AND owner_ref = $2
+                    """,
+                    turn_id, owner_ref,
+                )
+        except Exception as exc:
+            raise _unavailable(f"could not read turn usage: {exc}") from exc
+        if row is None:
+            return None
+        payload = row["payload"]
+        record = json.loads(payload) if isinstance(payload, str) else dict(payload)
+        return usage_view_from(record, started_at=row["started_at"])
+
+    async def purge_owner(self, owner_ref: str) -> int:
+        if not owner_ref:
+            return 0
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                status = await conn.execute("DELETE FROM aura_turn_telemetry WHERE owner_ref = $1", owner_ref)
+        except Exception as exc:
+            raise _unavailable(f"could not purge turn telemetry: {exc}") from exc
         return int(str(status).rsplit(" ", 1)[-1] or 0)
 
     async def recent_summary(self, *, since: datetime) -> dict[str, Any]:

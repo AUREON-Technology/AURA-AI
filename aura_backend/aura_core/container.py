@@ -81,6 +81,7 @@ from .ports.runtime import Closeable
 from .prompts import PIN_SYNC_INTERVAL_S, build_default_registry
 from .reasoning.engine import ReasoningEngine
 from .safety.pipeline import SafetyPipeline
+from .security.owner_ref import owner_ref_maker
 from .tools.builtin import default_tools
 from .tools.policy import ToolPolicy
 from .tools.registry import ToolRegistry
@@ -189,6 +190,9 @@ class Container:
         self.feedback = self._build_feedback_store()
         self.audit = self._build_audit_sink()
         self.telemetry_sink = self._build_telemetry_sink()
+        # Keyed one-way owner reference for per-turn telemetry (usage reads, erasure). The key
+        # derives from the JWT secret read at call time; none means turns stay unowned.
+        self.owner_ref = owner_ref_maker(lambda: self.settings.infrastructure.host_agent_relay_secret)
         self.sources = self._build_source_registry()
         self.idempotency = self._build_idempotency_store()
         self.service_keys = self._build_service_keys()
@@ -639,6 +643,7 @@ class Container:
                 metrics=self.metrics,
                 event_bus=self.events,
                 telemetry_sink=self.telemetry_sink,
+                owner_ref=self.owner_ref,
                 clock=self.clock,
                 settings=settings,
                 models=self.models,
