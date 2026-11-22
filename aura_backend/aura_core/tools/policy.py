@@ -140,6 +140,11 @@ class ToolPolicy:
                 return ToolPolicyDecision.confirm(
                     "side_effect_on_user_machine_from_remote_device", **audit
                 )
+            if spec.requires_confirmation:
+                # `ToolSpec` only sets this itself for a tool that is *not* workspace-local, so a
+                # workspace-local spec carrying it asked for it explicitly. The exemption exists
+                # to spare prompts nobody should be asked, not to override one a tool declared.
+                return ToolPolicyDecision.confirm("tool_requires_confirmation", **audit)
             return ToolPolicyDecision.allow("workspace_local_side_effect", **audit)
 
         if context.tainted and spec.side_effecting and self._block_when_tainted:

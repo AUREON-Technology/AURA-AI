@@ -32,7 +32,7 @@ from ..agents.registry import AgentRegistry
 from ..domain.connectors import CONNECTOR_TOKEN_PREFIX
 from ..domain.errors import ToolExecutionError
 from ..domain.identifiers import CorrelationId
-from ..domain.tools import ToolCategory, ToolSensitivity, intersect_tool_grants
+from ..domain.tools import NESTED_DISPATCH_TAG, ToolCategory, ToolSensitivity, intersect_tool_grants
 from ..ports.runtime import Tool, ToolContext
 from .base import param, tool
 
@@ -92,7 +92,9 @@ def build_delegation_tools(
         timeout_s=deadline_s,
         # The sub-turn's answer may reflect tainted retrieval/tool output the sub-persona itself
         # pulled in (e.g. research_agent's fetch_url) -- same reasoning as fetch_url's own tag.
-        tags=("untrusted_content",),
+        # NESTED_DISPATCH_TAG: the sub-turn dispatches its own tool calls through the registry, so
+        # this call must not hold one of the registry's concurrency slots while it waits for them.
+        tags=("untrusted_content", NESTED_DISPATCH_TAG),
     )
     async def delegate_to_agent(target_agent_id: str, subtask: str, context: ToolContext) -> str:
         if context.delegation_depth >= max_depth:
