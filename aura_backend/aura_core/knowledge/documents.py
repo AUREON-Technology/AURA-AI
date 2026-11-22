@@ -41,6 +41,8 @@ __all__ = [
     "extract_html",
     "extract_pdf",
     "extract_pdf_async",
+    "extract_docx",
+    "extract_pptx",
     "extract_document",
     "DocumentTooLargeError",
     "MAX_PDF_PAGES",
@@ -82,6 +84,21 @@ class ExtractedBlock:
     #: True when the page has content we could not read. This is the flag an operator greps for to
     #: find out how much of a corpus is invisible to search.
     needs_ocr: bool = False
+    #: Slide number, for a PPTX block (``page`` carries the same number, so everything that already
+    #: cites or filters by page works on a deck unchanged). ``None`` outside a presentation.
+    slide: int | None = None
+    #: The heading path a DOCX/PPTX block sits under, ``"Chapter > Section"``, or ``None`` before the
+    #: first heading. Heading text is document content, so unlike ``page`` it is never sent off-host.
+    section: str | None = None
+    #: Level (1 = top) of the heading that opens this block, when one does.
+    heading_level: int | None = None
+    #: What the block is within an Office document: ``section`` (a heading and the paragraphs under
+    #: it), ``body`` (paragraphs that continue a section after a table), ``table``, ``slide`` or
+    #: ``notes`` (a slide's speaker notes). ``None`` for PDF and plain text.
+    role: str | None = None
+    #: A table block's cells, row by row. ``text`` holds the same cells rendered one row per line,
+    #: cells separated by `` | ``; this is the form a caller wanting the structure uses.
+    rows: tuple[tuple[str, ...], ...] = field(default=(), repr=False)
 
     @property
     def chunk_metadata(self) -> dict[str, Any]:
@@ -89,6 +106,14 @@ class ExtractedBlock:
         meta: dict[str, Any] = {"modality": self.modality}
         if self.page is not None:
             meta["page"] = self.page
+        if self.slide is not None:
+            meta["slide"] = self.slide
+        if self.section:
+            meta["section"] = self.section
+        if self.heading_level is not None:
+            meta["heading_level"] = self.heading_level
+        if self.role:
+            meta["role"] = self.role
         if self.needs_ocr:
             meta["needs_ocr"] = True
         return meta
@@ -352,6 +377,24 @@ async def extract_pdf_async(data: bytes, **kwargs: Any) -> DocumentExtraction:
     return await asyncio.to_thread(lambda: extract_pdf(data, **kwargs))
 
 
+def extract_docx(data: bytes, *, title: str = "the document") -> DocumentExtraction:
+    """A Word document as blocks: headings with their level, paragraphs and tables in reading order,
+    each block carrying its ``section`` path. See :mod:`aura_core.knowledge.office`. Raises
+    :class:`KnowledgeError` for a corrupt, encrypted, oversized or hostile file."""
+    from .office import extract_docx as _extract_docx
+
+    return _extract_docx(data, title=title)
+
+
+def extract_pptx(data: bytes, *, title: str = "the document") -> DocumentExtraction:
+    """A PowerPoint deck as blocks: per slide its text, tables and speaker notes, each carrying the
+    slide number. See :mod:`aura_core.knowledge.office`. Raises :class:`KnowledgeError` for a
+    corrupt, encrypted, oversized or hostile file."""
+    from .office import extract_pptx as _extract_pptx
+
+    return _extract_pptx(data, title=title)
+
+
 def extract_document(data: bytes, *, format: str, title: str = "the document") -> DocumentExtraction:
     """A connected system's document bytes as blocks, by declared format (AP10 project knowledge).
 
@@ -360,6 +403,10 @@ def extract_document(data: bytes, *, format: str, title: str = "the document") -
     """
     if format == "pdf":
         return extract_pdf(data, title=title)
+    if format == "docx":
+        return extract_docx(data, title=title)
+    if format == "pptx":
+        return extract_pptx(data, title=title)
     if format not in ("markdown", "text", "html"):
         raise KnowledgeError("unsupported document format", details={"format": format})
     try:
