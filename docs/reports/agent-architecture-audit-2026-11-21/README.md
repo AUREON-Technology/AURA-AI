@@ -37,7 +37,7 @@ Railway or the VPS.
 | B1 | Fixed earlier | KAN-100. |
 | B2 | Fixed earlier | KAN-101 (summary on DATA, fallback transcript marked). |
 | B3 | Fixed | The kernel replaces `request.message` with the guarded text right after the input guard, in both `run` and `stream`. |
-| B4 | Fixed | `memory/engine.py`: a near-duplicate in different words replaces the old record, keeping its reinforcement and recording `replaces`. The same words still reinforce. |
+| B4 | Fixed | `memory/engine.py`: a near-duplicate in different words replaces the old record, under its own confidence and recording `replaces`, but only when the new write is at least as trusted (the person > `remember_fact` > extractors and documents). A lower-trust rewording leaves the stored fact alone. The same words still reinforce. |
 | B5 | Fixed | `remember_fact` refuses a fact that doesn't restate something the person wrote this session. The kernel passes a predicate, never the text. A delegated sub-turn inherits its parent's statements. |
 | C1 | Fixed | Both paths fall back on any empty answer (`empty_generation_fallback`), and an empty answer is never cached. |
 | C2 | Fixed | `TurnBudget.fallbacks`, counted by the router in `complete` and `stream`, feeds `fallback_count`. |

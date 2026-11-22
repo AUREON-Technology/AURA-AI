@@ -232,8 +232,32 @@ class TestMemoryCorrection:
         assert second.content == "The user lives in Alexandria"
         assert second.metadata.get("replaces") == first.id.value
         assert second.provenance.source == "test-correction"
-        assert second.confidence >= first.confidence
+        # Its own confidence, not the old text's reinforcement.
+        assert second.confidence == pytest.approx(0.8)
         assert await memory._store.get(first.id) is None
+
+    async def test_a_lower_trust_rewording_never_overwrites_what_the_person_said(
+        self, memory, user, monkeypatch
+    ) -> None:
+        stated = await memory.remember(owner_id=user, content="The user lives in Cairo",
+                                       kind=MemoryKind.SEMANTIC, source="api:v3:audit-user")
+
+        async def always_duplicate(*_a, **_kw):
+            return await memory._store.get(stated.id)
+
+        monkeypatch.setattr(memory, "_find_duplicate", always_duplicate)
+        for source in ("extractor:v2", "tool:remember_fact:c1"):
+            kept = await memory.remember(owner_id=user, content="The user lives in Giza",
+                                         kind=MemoryKind.SEMANTIC, source=source)
+            assert kept.id == stated.id
+            assert kept.content == "The user lives in Cairo"
+            assert kept.confidence == pytest.approx(stated.confidence)
+
+        # The person correcting themself still wins.
+        corrected = await memory.remember(owner_id=user, content="The user lives in Alexandria",
+                                          kind=MemoryKind.SEMANTIC, source="api:v3:audit-user")
+        assert corrected.content == "The user lives in Alexandria"
+        assert await memory._store.get(stated.id) is None
 
     async def test_the_same_words_still_reinforce(self, memory, user, monkeypatch) -> None:
         first = await memory.remember(owner_id=user, content="The user is vegetarian.",

@@ -60,6 +60,23 @@ logger = get_logger("memory")
 _NON_WORD = re.compile(r"[\W_]+", re.UNICODE)
 
 
+def _source_trust(source: str | None, document_ref: str | None = None) -> int:
+    """How much a memory's provenance is trusted to say what the person holds true.
+
+    3: the person wrote it directly (``api:v3:*``, the memory endpoint). 2: the model stored it
+    with ``remember_fact``, which only accepts facts restating the person's own words (audit
+    B5). 1: anything else -- an extractor, a document, an unlabelled write.
+    """
+    if document_ref:
+        return 1
+    text = source or ""
+    if text.startswith("api:"):
+        return 3
+    if text.startswith("tool:remember_fact:"):
+        return 2
+    return 1
+
+
 def _same_statement(a: str, b: str) -> bool:
     """Whether two memory texts say the same thing in the same words.
 
@@ -154,7 +171,6 @@ class MemoryEngine:
             owner_id, kind, embedding, threshold=policy.duplicate_threshold, scope=scope
         )
         replacing: MemoryRecord | None = None
-        access_count = 0
         if duplicate is not None:
             # Restating a fact is reinforcement, not a second fact. Bumping access_count and
             # confidence is what makes repeated preferences outrank one-off mentions.
@@ -174,11 +190,20 @@ class MemoryEngine:
             # Close enough to be the same fact, but worded differently -- and a correction
             # ("I moved to Alexandria" after "I live in Cairo") is exactly that. The old code kept
             # the *old* text and raised its confidence, so the correction was lost and the stale
-            # fact grew surer (audit B4). The newest statement wins: it replaces the record,
-            # keeping the reinforcement it had earned, under its own provenance and vector.
+            # fact grew surer (audit B4). The newer statement wins -- but only over a record it
+            # is at least as trusted as: an extractor's paraphrase must never overwrite what the
+            # person stated. A lower-trust write leaves the stored record as it is, unreinforced
+            # (different words are not a restatement). The replacement starts from its own
+            # confidence; the old text's reinforcement says nothing about the new text.
+            if _source_trust(source, document_ref) < _source_trust(
+                duplicate.provenance.source, duplicate.provenance.document_ref
+            ):
+                logger.info(
+                    "memory kept over a lower-trust rewording",
+                    extra={"kind": str(kind), "memory_id": duplicate.id.value},
+                )
+                return duplicate
             replacing = duplicate
-            confidence = raised
-            access_count = touched.access_count
 
         record = MemoryRecord(
             id=MemoryId.new(),
@@ -200,12 +225,10 @@ class MemoryEngine:
             # the same source that later decays and ranks it.
             created_at=now,
             last_accessed_at=now,
-            access_count=access_count,
             metadata={
                 **dict(metadata or {}),
                 SCOPE_METADATA_KEY: scope or SHARED_MEMORY_SCOPE,
                 **({"replaces": replacing.id.value} if replacing is not None else {}),
-                **({BASE_CONFIDENCE_METADATA_KEY: confidence} if replacing is not None else {}),
             },
         )
 
