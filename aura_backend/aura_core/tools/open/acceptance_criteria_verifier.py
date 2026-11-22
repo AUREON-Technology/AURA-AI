@@ -144,6 +144,8 @@ class AcceptanceCriteriaVerifier:
             read = read_source_file(file_path, base_dir=base_dir)
         except SourceReadError as exc:
             return {"criteria": [], "complete": False, "error": str(exc)}
+        except (OSError, TypeError, ValueError) as exc:
+            return {"criteria": [], "complete": False, "error": f"Invalid path: {type(exc).__name__}"}
         criteria = _parse_text(read.text)
         result: Dict[str, Any] = {
             "criteria": criteria,

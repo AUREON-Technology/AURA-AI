@@ -175,6 +175,8 @@ class AmbiguityAndClarificationDetector:
             read = read_source_file(file_path, base_dir=base_dir)
         except SourceReadError as exc:
             return {"error": str(exc), "readiness_status": "UNREADABLE_INPUT", "is_ambiguous": True}
+        except (OSError, TypeError, ValueError) as exc:
+            return {"error": f"Invalid path: {type(exc).__name__}", "readiness_status": "UNREADABLE_INPUT", "is_ambiguous": True}
         result = cls.analyze_task_description(read.text)
         result["score"] = cls.score_ambiguity(read.text)
         result["missing"] = cls.check_missing_specifications(read.text)

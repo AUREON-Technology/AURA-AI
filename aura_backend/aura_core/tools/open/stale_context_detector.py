@@ -155,7 +155,7 @@ class StaleContextDetector:
         """
         if isinstance(snapshots, dict):
             snapshots = [snapshots]
-        snaps = list(snapshots or [])
+        snaps = list(snapshots) if isinstance(snapshots, (list, tuple)) else []
         if not snaps:
             return {
                 "all_fresh": False, "total_checked": 0, "fresh_count": 0, "stale_count": 0,

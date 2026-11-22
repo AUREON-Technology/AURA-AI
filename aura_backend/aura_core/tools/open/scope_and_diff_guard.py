@@ -431,6 +431,11 @@ class ScopeAndDiffGuard:
             allowed_patterns = [allowed_patterns]
         if isinstance(forbidden_patterns, str):
             forbidden_patterns = [forbidden_patterns]
+
+        def seq(v: Any) -> List[Any]:
+            return list(v) if isinstance(v, (list, tuple, set)) else []
+
+        modified_files, allowed_patterns, forbidden_patterns = seq(modified_files), seq(allowed_patterns), seq(forbidden_patterns)
         forbidden = [str(p) for p in (forbidden_patterns or [])] + cls.DEFAULT_FORBIDDEN_PATTERNS
         allowed = [_norm_path(str(p)) for p in (allowed_patterns or []) if str(p).strip()]
         violations: List[str] = []

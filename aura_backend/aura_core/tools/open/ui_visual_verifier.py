@@ -58,9 +58,13 @@ class UiVisualVerifier:
                 resolved.relative_to(Path(base_dir).resolve())
             except ValueError:
                 raise VisualInputError(f"Path is outside the allowed directory: {source}") from None
-        if not resolved.exists():
+        try:
+            exists, is_file = resolved.exists(), resolved.is_file()
+        except OSError as exc:  # e.g. name too long
+            raise VisualInputError(f"Invalid path: {exc.strerror or type(exc).__name__}") from exc
+        if not exists:
             raise VisualInputError(f"File not found: {source}")
-        if not resolved.is_file():
+        if not is_file:
             raise VisualInputError(f"Path is not a file: {source}")
         try:
             size = resolved.stat().st_size

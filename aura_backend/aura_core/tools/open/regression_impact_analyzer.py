@@ -1,5 +1,6 @@
 import ast
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -12,6 +13,22 @@ _SAFE_REF_CHARS = set(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
     "._-/~^@{}"
 )
+
+
+#: Time budgets (seconds). Generous because a large repository or a slow disk is normal; bounded because
+#: nothing here may run unattended forever. Overridable per call, never above the hard maximum.
+DEFAULT_TIME_BUDGET_S = 180.0
+MAX_TIME_BUDGET_S = 600.0
+
+
+def _budget(value: Any, default: float = DEFAULT_TIME_BUDGET_S) -> float:
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return default
+    if v != v or v <= 0:
+        return default
+    return min(v, MAX_TIME_BUDGET_S)
 
 
 class RegressionImpactAnalyzer:
@@ -50,8 +67,12 @@ class RegressionImpactAnalyzer:
         return changed
 
     @staticmethod
-    def get_git_changed_files(repo_dir: str, base_ref: str = "HEAD") -> Dict[str, Any]:
-        """Get changed files in a git repository relative to base_ref."""
+    def get_git_changed_files(
+        repo_dir: str, base_ref: str = "HEAD", timeout_s: float = DEFAULT_TIME_BUDGET_S
+    ) -> Dict[str, Any]:
+        """Get changed files in a git repository relative to base_ref.
+
+        ``timeout_s`` defaults to 180 s and is capped at 600 s."""
         # base_ref is validated (no leading ``-``, safe characters only) so it cannot be read as an
         # option. The ``--`` goes *after* it: before it, git treats the ref as a pathspec and the
         # diff of the working tree against it is always empty.
@@ -72,13 +93,13 @@ class RegressionImpactAnalyzer:
                 ["git", "diff", "--name-only", "-z", base_ref, "--"],
                 cwd=repo_dir,
                 capture_output=True,
-                timeout=20,
+                timeout=_budget(timeout_s),
                 env=scrubbed_env(),
             )
         except FileNotFoundError:
             return {"success": False, "error": "git executable not found.", "files": []}
         except subprocess.TimeoutExpired:
-            return {"success": False, "error": "git diff timed out.", "files": []}
+            return {"success": False, "error": f"git diff timed out after {_budget(timeout_s):.0f}s.", "files": []}
         except OSError as exc:
             return {"success": False, "error": f"git could not be started: {exc.strerror or type(exc).__name__}", "files": []}
 
@@ -98,6 +119,8 @@ class RegressionImpactAnalyzer:
             read = read_source_file(py_file, base_dir=base_dir)
         except SourceReadError as exc:
             return {"modules": [], "parsed": False, "error": str(exc)}
+        except (OSError, TypeError, ValueError) as exc:
+            return {"modules": [], "parsed": False, "error": f"Invalid path: {type(exc).__name__}"}
         if read.kind == "pdf":
             return {
                 "modules": [],
@@ -171,7 +194,7 @@ class RegressionImpactAnalyzer:
         return False
 
     @classmethod
-    def _scan_repo(cls, repo_dir: str, max_files: int) -> Optional[Dict[str, Any]]:
+    def _scan_repo(cls, repo_dir: str, max_files: int, time_budget_s: float = DEFAULT_TIME_BUDGET_S) -> Optional[Dict[str, Any]]:
         """Read every ``.py`` file's imports once. ``None`` when ``repo_dir`` is not a directory."""
         root = Path(repo_dir)
         if not root.is_dir():
@@ -184,7 +207,11 @@ class RegressionImpactAnalyzer:
         unparseable: List[str] = []
         count = 0
         truncated = False
+        deadline = time.monotonic() + _budget(time_budget_s)
         for py_path in root.rglob("*.py"):
+            if time.monotonic() > deadline:
+                truncated = True  # budget exhausted: reported as truncated, never as a complete scan
+                break
             if any(part in {".git", "__pycache__", "venv", ".venv", "node_modules"} for part in py_path.parts):
                 continue
             count += 1
@@ -206,13 +233,14 @@ class RegressionImpactAnalyzer:
         repo_dir: str,
         target_module_fragments: List[str],
         max_files: int = 10000,
+        time_budget_s: float = DEFAULT_TIME_BUDGET_S,
     ) -> Dict[str, Any]:
         """Scan Python files in repo_dir to find modules that import any of *target_module_fragments*.
 
         Returns a dict with ``dependents``, ``truncated``, ``files_scanned`` and ``unparseable``
         (files that could not be read as Python, so their imports are unknown) keys.
         """
-        scan = cls._scan_repo(repo_dir, max_files)
+        scan = cls._scan_repo(repo_dir, max_files, time_budget_s)
         if scan is None:
             return {"dependents": [], "truncated": False, "files_scanned": 0, "unparseable": [],
                     "error": f"Not a directory: {repo_dir!r}"}
@@ -263,6 +291,7 @@ class RegressionImpactAnalyzer:
         modified_files: List[str],
         repo_dir: Optional[str] = None,
         extra_dependents: Optional[List[str]] = None,
+        time_budget_s: float = DEFAULT_TIME_BUDGET_S,
     ) -> Dict[str, Any]:
         """Compute affected modules, suggested tests, and overall regression risk level.
 
@@ -274,10 +303,14 @@ class RegressionImpactAnalyzer:
             modified_files = [modified_files]
         if isinstance(extra_dependents, str):
             extra_dependents = [extra_dependents]
+        if not isinstance(modified_files, (list, tuple, set)):
+            modified_files = []
+        if not isinstance(extra_dependents, (list, tuple, set)):
+            extra_dependents = []
         modified = list(dict.fromkeys(
-            str(f) for f in (modified_files or []) if isinstance(f, (str, Path)) and str(f).strip()
+            str(f) for f in modified_files if isinstance(f, (str, Path)) and str(f).strip()
         ))
-        affected: Set[str] = {str(f) for f in (extra_dependents or []) if str(f).strip()}
+        affected: Set[str] = {str(f) for f in extra_dependents if str(f).strip()}
         warnings: List[str] = []
         total_files_scanned = 0
         any_truncated = False
@@ -285,7 +318,7 @@ class RegressionImpactAnalyzer:
         scanned = False
 
         if repo_dir:
-            scan = cls._scan_repo(repo_dir, 10000)
+            scan = cls._scan_repo(repo_dir, 10000, time_budget_s)
             if scan is None:
                 warnings.append(f"repo_dir is not a directory ({repo_dir!r}); importers were not searched.")
             else:
@@ -299,7 +332,7 @@ class RegressionImpactAnalyzer:
                         rel for rel, mods in scan["index"].items() if cls._imports_fragment(mods, fragments)
                     )
                 if any_truncated:
-                    warnings.append("The repository scan hit its file limit; some importers may be missing.")
+                    warnings.append("The repository scan hit its file or time limit; some importers may be missing.")
                 if unparseable:
                     warnings.append(
                         f"{len(unparseable)} Python file(s) could not be parsed, so their imports are unknown."

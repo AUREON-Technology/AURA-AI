@@ -69,7 +69,11 @@ def _truthy(value: Any) -> bool:
 
 def _dicts(value: Any) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
-    for item in value or []:
+    if isinstance(value, dict):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        return out
+    for item in value:
         out.append(item if isinstance(item, dict) else {"name": str(item)})
     return out
 

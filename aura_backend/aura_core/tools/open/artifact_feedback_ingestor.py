@@ -234,6 +234,8 @@ class ArtifactFeedbackIngestor:
         def fail(msg: str) -> Dict[str, Any]:
             return {"patched": False, "error": msg, "section": section_name, "content": markdown_text if isinstance(markdown_text, str) else ""}
 
+        if markdown_text is None:
+            return fail("markdown_text is missing.")
         try:
             text, read = _text_arg(markdown_text, "markdown_text")
         except ValueError as exc:
@@ -359,7 +361,12 @@ class ArtifactFeedbackIngestor:
         initial = _steps(current_plan)
         working = list(initial)
         all_actions: List[str] = []
-        batch = [feedback_batch] if isinstance(feedback_batch, str) else list(feedback_batch or [])
+        if isinstance(feedback_batch, str):
+            batch = [feedback_batch]
+        elif isinstance(feedback_batch, (list, tuple)):
+            batch = list(feedback_batch)
+        else:
+            batch = []
 
         for feedback in batch:
             res = cls.apply_feedback(working, feedback)

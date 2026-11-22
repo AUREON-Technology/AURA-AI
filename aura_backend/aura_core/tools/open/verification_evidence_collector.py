@@ -272,7 +272,11 @@ class VerificationEvidenceCollector:
                 resolved.relative_to(Path(base_dir).resolve())
             except ValueError:
                 return {"success": False, "error": f"Path is outside the allowed directory: {file_path}"}
-        if not resolved.exists() or not resolved.is_file():
+        try:
+            present = resolved.exists() and resolved.is_file()
+        except OSError:
+            present = False
+        if not present:
             return {"success": False, "error": f"File does not exist: {file_path}"}
 
         hasher = hashlib.sha256()
