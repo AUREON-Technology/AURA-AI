@@ -7,7 +7,23 @@ class DatabaseIntelligenceTool:
     """SQL query inspector for safety checks, destructive operation detection, syntax validation, and index recommendations."""
 
     DESTRUCTIVE_RE = re.compile(r"\b(DROP\s+(TABLE|DATABASE|INDEX|VIEW)|TRUNCATE\s+TABLE)\b", re.IGNORECASE)
-    UNBOUNDED_MUTATION_RE = re.compile(r"\b(DELETE\s+FROM|UPDATE\s+\w+\s+SET)\b(?![^\n;]*\bWHERE\b)", re.IGNORECASE)
+    #: A write statement. Whether it is bounded is decided per statement in ``_unbounded_write``,
+    #: after comments and string literals are masked: a ``WHERE`` inside ``/* ... */`` or ``'where'``
+    #: is not a filter, and a ``WHERE`` on the next line is.
+    MUTATION_RE = re.compile(r"\b(?:DELETE\s+FROM|UPDATE\s+[\w.\"`\[\]]+\s+SET)\b", re.IGNORECASE)
+    _MASK_RE = re.compile(r"--[^\n]*|/\*.*?\*/|'(?:[^']|'')*'", re.DOTALL)
+
+    @classmethod
+    def _mask(cls, sql: str) -> str:
+        """``sql`` with comments and single-quoted string literals blanked out."""
+        return cls._MASK_RE.sub(" ", sql)
+
+    @classmethod
+    def _unbounded_write(cls, masked_sql: str) -> bool:
+        for statement in masked_sql.split(";"):
+            if cls.MUTATION_RE.search(statement) and not re.search(r"\bWHERE\b", statement, re.IGNORECASE):
+                return True
+        return False
 
     INJECTION_PATTERNS = [
         (re.compile(r"(?:f['\"].*?(?:WHERE|AND|OR|VALUES|SET).*?\{[^\}]+\})", re.DOTALL | re.IGNORECASE), "f-string interpolated into SQL clause"),
@@ -21,8 +37,9 @@ class DatabaseIntelligenceTool:
         """Analyze a SQL statement for destructive patterns, missing WHERE clauses, and SELECT *."""
         q = query.strip()
         warnings: List[str] = []
-        is_destructive = bool(cls.DESTRUCTIVE_RE.search(q))
-        unbounded_write = bool(cls.UNBOUNDED_MUTATION_RE.search(q))
+        masked = cls._mask(q)
+        is_destructive = bool(cls.DESTRUCTIVE_RE.search(masked))
+        unbounded_write = cls._unbounded_write(masked)
 
         if is_destructive:
             warnings.append("Destructive DDL statement (DROP/TRUNCATE) detected.")
