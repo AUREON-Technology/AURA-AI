@@ -9,7 +9,7 @@ import 'dart:convert';
 import 'package:collection/collection.dart';
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:drift/drift.dart';
-import 'package:flutter/foundation.dart' show debugPrint, defaultTargetPlatform;
+import 'package:flutter/foundation.dart' show debugPrint, defaultTargetPlatform, visibleForTesting;
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:path/path.dart' as p;
 import 'package:xterm/xterm.dart' as xterm;
@@ -723,12 +723,17 @@ class EditorNotifier extends StateNotifier<EditorState> {
 /// session, keyed by session id, and mirrors their output/exit into
 /// [TerminalState] for the UI to render.
 class TerminalNotifier extends StateNotifier<TerminalState> {
-  TerminalNotifier(this._db, this._eventBus) : super(const TerminalState()) {
+  /// [clientFactory] builds the daemon connection for a session; a test passes a fake so the
+  /// notifier can be exercised without a daemon.
+  TerminalNotifier(this._db, this._eventBus, {HostdTerminalClient Function()? clientFactory})
+      : _clientFactory = clientFactory ?? HostdTerminalClient.new,
+        super(const TerminalState()) {
     _subscribeToEvents();
   }
 
   final AppDatabase _db;
   final IdeEventBus _eventBus;
+  final HostdTerminalClient Function() _clientFactory;
   final Map<String, HostdTerminalClient> _clients = {};
   StreamSubscription? _eventSub;
   Timer? _saveDebounce;
@@ -745,6 +750,24 @@ class TerminalNotifier extends StateNotifier<TerminalState> {
   /// daemon side -- a long-lived session must not grow this process's
   /// memory unboundedly.
   static const _maxScrollbackChars = 500000;
+
+  /// Keeps the last [_maxScrollbackChars] of [text], starting on a line boundary when the kept tail
+  /// has one, so a replayed scrollback never begins in the middle of a line or an escape sequence
+  /// (DATA-001). Never splits a surrogate pair. Falls back to the raw cut for a tail with no newline.
+  @visibleForTesting
+  static String capScrollback(String text) {
+    if (text.length <= _maxScrollbackChars) return text;
+    var cut = text.length - _maxScrollbackChars;
+    final newline = text.indexOf('\n', cut);
+    if (newline != -1 && newline + 1 < text.length) {
+      cut = newline + 1;
+    } else if (_isLowSurrogate(text.codeUnitAt(cut))) {
+      cut += 1;
+    }
+    return text.substring(cut);
+  }
+
+  static bool _isLowSurrogate(int unit) => unit >= 0xDC00 && unit <= 0xDFFF;
 
   /// The live terminal emulator for [sessionId], if one has been created by
   /// [start], [restart], or restoring a persisted session. `null` only
@@ -808,8 +831,21 @@ class TerminalNotifier extends StateNotifier<TerminalState> {
       state = state.copyWith(sessions: otherSessions);
       return;
     }
+    // Scrollback is stored sealed with EncryptionService (D-1): a terminal's output routinely holds
+    // secrets. A row that is not an envelope is a plaintext row from before that change -- never
+    // replayed, and dropped here (the schema-16 migration wipes them too; this covers a database
+    // restored from an older backup). An envelope this device cannot open yet (a data key it has not
+    // fetched) is skipped but kept: the key may arrive.
+    final plain = EncryptionService.tryDecrypt(row.sessionsJson);
+    if (plain == null) {
+      if (!EncryptionService.isEnvelope(row.sessionsJson)) {
+        await (_db.delete(_db.desktopTerminalState)..where((t) => t.workspaceId.equals(workspaceId))).go();
+      }
+      state = state.copyWith(sessions: otherSessions);
+      return;
+    }
     try {
-      final decoded = jsonDecode(row.sessionsJson) as List<dynamic>;
+      final decoded = jsonDecode(plain) as List<dynamic>;
       final sessions = decoded
           .cast<Map<String, dynamic>>()
           .map((json) => TerminalSessionState(
@@ -867,7 +903,7 @@ class TerminalNotifier extends StateNotifier<TerminalState> {
     );
     _terminalFor(sessionId, cols: cols, rows: rows);
 
-    final client = HostdTerminalClient();
+    final client = _clientFactory();
     _clients[sessionId] = client;
     client.output.listen((bytes) => _appendOutput(sessionId, utf8.decode(bytes, allowMalformed: true)));
     client.exitCode.listen((code) => _handleExit(sessionId, code));
@@ -908,7 +944,7 @@ class TerminalNotifier extends StateNotifier<TerminalState> {
     // the restart rather than starting from a blank screen.
     _terminalFor(sessionId, cols: existing.cols, rows: existing.rows);
 
-    final client = HostdTerminalClient();
+    final client = _clientFactory();
     _clients[sessionId] = client;
     client.output.listen((bytes) => _appendOutput(sessionId, utf8.decode(bytes, allowMalformed: true)));
     client.exitCode.listen((code) => _handleExit(sessionId, code));
@@ -937,10 +973,7 @@ class TerminalNotifier extends StateNotifier<TerminalState> {
   void _appendOutput(String sessionId, String text, {bool exited = false}) {
     final session = state.sessions.where((s) => s.id == sessionId).firstOrNull;
     if (session == null) return;
-    var combined = session.output + text;
-    if (combined.length > _maxScrollbackChars) {
-      combined = combined.substring(combined.length - _maxScrollbackChars);
-    }
+    final combined = capScrollback(session.output + text);
     _updateSession(sessionId, (s) => s.copyWith(output: combined, isRunning: exited ? false : s.isRunning));
     // Feeds the real VT100 emulator so escape sequences (clear, cursor move, color) actually
     // take effect instead of the terminal panel showing them as literal text.
@@ -986,8 +1019,17 @@ class TerminalNotifier extends StateNotifier<TerminalState> {
               'rows': s.rows,
             })
         .toList());
+    // Sealed before it touches the database (D-1). Fails closed: with no key yet, nothing is
+    // written, rather than the plaintext scrollback -- losing one save is recoverable.
+    final String sealed;
+    try {
+      sealed = EncryptionService.encryptText(sessionsJson);
+    } on EncryptionException catch (error) {
+      debugPrint('TerminalNotifier: scrollback not saved, encryption unavailable ($error)');
+      return;
+    }
     await _db.into(_db.desktopTerminalState).insertOnConflictUpdate(
-          DesktopTerminalStateCompanion.insert(workspaceId: workspaceId, sessionsJson: sessionsJson),
+          DesktopTerminalStateCompanion.insert(workspaceId: workspaceId, sessionsJson: sealed),
         );
   }
 
