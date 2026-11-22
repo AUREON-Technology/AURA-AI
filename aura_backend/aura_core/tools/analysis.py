@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Callable
+import math
+from typing import Any, Callable, Mapping
 
 from ..domain.errors import ToolExecutionError
 from ..domain.tools import ToolCategory, ToolSensitivity
@@ -53,8 +54,89 @@ _CODE = dict(category=ToolCategory.DEVELOPMENT, sensitivity=ToolSensitivity.PERS
 _DATA = dict(category=ToolCategory.DATA, sensitivity=ToolSensitivity.PERSONAL, timeout_s=10.0)
 
 
+#: A result longer than this is shortened by *us*, not by the registry. The registry cuts a long
+#: string at ``max_result_chars`` (16,000 for these tools) wherever that falls -- mid-JSON -- and
+#: the caller then holds text that no longer parses; here whole list items are dropped instead and
+#: the result says so (``truncated``).
+_MAX_RESULT = 15_000
+#: Longest line ``scan_code_security`` accepts. Its pattern scan grows with the *square* of the number
+#: of matches on one line (ten thousand matches on one line: 27 s of CPU on a thread no timeout can stop),
+#: and real source has no line near this long.
+_MAX_LINE = 2_000
+
+
+def _finite(value: Any) -> Any:
+    """``value`` with every NaN/Infinity replaced by its name as a string.
+
+    ``json.dumps`` writes them as bare ``NaN``/``Infinity``, which is not JSON: a strict parser (the
+    app's, a browser's) rejects the whole result for one overflowed mean.
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else str(value)
+    if isinstance(value, Mapping):
+        return {str(k): _finite(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_finite(v) for v in value]
+    return value
+
+
+def _lists(value: Any, found: list[list]) -> None:
+    if isinstance(value, dict):
+        for v in value.values():
+            _lists(v, found)
+    elif isinstance(value, list):
+        found.append(value)
+        for v in value:
+            _lists(v, found)
+
+
+def _strings(value: Any, limit: int) -> bool:
+    """Cut every string longer than ``limit`` in place; True if any was cut."""
+    cut = False
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if isinstance(v, str) and len(v) > limit:
+                value[k] = v[:limit] + "...[cut]"
+                cut = True
+            else:
+                cut = _strings(v, limit) or cut
+    elif isinstance(value, list):
+        for i, v in enumerate(value):
+            if isinstance(v, str) and len(v) > limit:
+                value[i] = v[:limit] + "...[cut]"
+                cut = True
+            else:
+                cut = _strings(v, limit) or cut
+    return cut
+
+
 def _dump(result: Any) -> str:
-    return json.dumps(result, ensure_ascii=False, default=str)
+    """The result as JSON text that always parses and always fits one tool result."""
+    safe = _finite(result)
+    text = json.dumps(safe, ensure_ascii=False, default=str)
+    if len(text) <= _MAX_RESULT:
+        return text
+    if not isinstance(safe, dict):
+        safe = {"result": safe}
+    omitted = 0
+    limit = 2_000
+    for _ in range(200):
+        lists: list[list] = []
+        _lists(safe, lists)
+        longest = max(lists, key=len, default=None)
+        if longest is not None and len(longest) > 1:
+            keep = len(longest) // 2
+            omitted += len(longest) - keep
+            del longest[keep:]
+        elif limit >= 20:
+            _strings(safe, limit)  # nothing left to drop: shorten the long strings instead
+            limit //= 2
+        else:
+            break
+        text = json.dumps({**safe, "truncated": True, "omitted_items": omitted}, ensure_ascii=False, default=str)
+        if len(text) <= _MAX_RESULT:
+            return text
+    return json.dumps({"truncated": True, "error": "the result was too large to return"})
 
 
 async def _run(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> str:
@@ -74,7 +156,27 @@ def _items(tool_name: str, name: str, value: list | None) -> list:
         raise ToolExecutionError(
             f"'{name}' has {len(value)} items; the limit is {_MAX_ITEMS}", tool=tool_name
         )
+    # The count alone is no bound: 20,000 items of a megabyte each is twenty gigabytes.
+    if sum(len(str(v)) for v in value) > _MAX_TEXT:
+        raise ToolExecutionError(f"'{name}' is larger than {_MAX_TEXT:,} characters in all", tool=tool_name)
     return value
+
+
+def _bounded(tool_name: str, name: str, value: Any) -> Any:
+    """``value`` (an object argument) if it is no larger than a text argument may be."""
+    if value is not None and len(json.dumps(value, default=str)) > _MAX_TEXT:
+        raise ToolExecutionError(f"'{name}' is larger than {_MAX_TEXT:,} characters", tool=tool_name)
+    return value
+
+
+def _short_lines(tool_name: str, name: str, text: str | None) -> None:
+    if text is not None:
+        for number, line in enumerate(text.split("\n"), start=1):
+            if len(line) > _MAX_LINE:
+                raise ToolExecutionError(
+                    f"'{name}' line {number} is {len(line):,} characters; the limit is {_MAX_LINE:,}. "
+                    "Break long lines up (or pass the relevant part) and call again.", tool=tool_name,
+                )
 
 
 def _objects(tool_name: str, name: str, value: list | None) -> list[dict]:
@@ -157,7 +259,7 @@ async def verify_python_symbols(
         SymbolAndImportVerifier.verify_source,
         source_code,
         check_runtime_imports=False,  # would import modules the source names: never from a tool
-        expected_arities=expected_arities,
+        expected_arities=_bounded("verify_python_symbols", "expected_arities", expected_arities),
         check_undefined_names=check_undefined_names,
     )
 
@@ -196,6 +298,8 @@ async def review_code_diff(
 )
 async def scan_code_security(source_code: str | None = None, diff_text: str | None = None) -> str:
     _need("scan_code_security", source_code=source_code, diff_text=diff_text)
+    _short_lines("scan_code_security", "source_code", source_code)
+    _short_lines("scan_code_security", "diff_text", diff_text)
     return await _run(
         SecurityVulnerabilityScanner.full_scan,
         source_code=source_code,
@@ -260,7 +364,17 @@ async def generate_diagram(
     diagram_code: str | None = None,
 ) -> str:
     name = "generate_diagram"
-    spec = spec or {}
+    spec = _bounded(name, "spec", spec) or {}
+
+    def listed(key: str, of: type = dict) -> list:
+        """``spec[key]`` as a list of ``of`` (a bare string would be iterated character by character)."""
+        value = spec.get(key)
+        if value is None:
+            return []
+        if not isinstance(value, list) or not all(isinstance(i, of) for i in value):
+            raise ToolExecutionError(f"spec.{key} must be an array of {of.__name__}s", tool=name)
+        return value
+
     if diagram_type == "class_from_source":
         _need(name, source_code=source_code)
         return await _run(MermaidDiagramGenerator.generate_class_diagram_from_source, source_code)
@@ -272,18 +386,21 @@ async def generate_diagram(
         gen = MermaidDiagramGenerator
         if diagram_type == "class":
             text = gen.generate_class_diagram(
-                class_names=spec.get("class_names"),
-                relations=spec.get("relations"),
-                class_details=spec.get("class_details"),
+                class_names=listed("class_names", str) or None,
+                relations=listed("relations") or None,
+                class_details=listed("class_details") or None,
             )
         elif diagram_type == "flowchart":
             text = gen.generate_flowchart(
-                spec.get("nodes") or [], spec.get("edges") or [], direction=str(spec.get("direction", "TD"))
+                listed("nodes"), listed("edges"), direction=str(spec.get("direction", "TD"))
             )
         elif diagram_type == "sequence":
-            text = gen.generate_sequence_diagram(spec.get("participants") or [], spec.get("messages") or [])
+            text = gen.generate_sequence_diagram(listed("participants", str), listed("messages"))
         else:  # er
-            text = gen.generate_er_diagram(spec.get("entities") or {}, spec.get("relationships"))
+            entities = spec.get("entities") or {}
+            if not isinstance(entities, dict):
+                raise ToolExecutionError("spec.entities must be an object of {Name: [fields]}", tool=name)
+            text = gen.generate_er_diagram(entities, listed("relationships") or None)
         return {"mermaid": text}
 
     return await _run(build)
@@ -380,9 +497,9 @@ async def compare_api_specs(
         raise ToolExecutionError("validate_payload needs payload", tool=name)
     return await _run(
         ApiContractValidator.validate_payload_against_schema,
-        payload,
+        _bounded(name, "payload", payload),
         [str(f) for f in _items(name, "required_fields", required_fields)],
-        field_types,
+        _bounded(name, "field_types", field_types),
     )
 
 
@@ -520,6 +637,9 @@ async def evaluate_quality_gate(
     blocking_checks: list | None = None,
     min_score_threshold: float = 80.0,
 ) -> str:
+    if not math.isfinite(min_score_threshold):
+        # NaN compares false with everything: it answered "approved" with ready_to_merge false.
+        raise ToolExecutionError("min_score_threshold must be a finite number", tool="evaluate_quality_gate")
     checks = dict(
         security_pass=security_pass, tests_pass=tests_pass, coverage_pass=coverage_pass,
         complexity_pass=complexity_pass, lint_pass=lint_pass, architecture_pass=architecture_pass,
@@ -623,13 +743,20 @@ async def plan_rollout(
     previous_version: str | None = None,
     health_checks: list | None = None,
 ) -> str:
-    return await _run(
-        DeploymentReleaseManager.plan_rollout,
-        service_name,
-        target_version,
-        previous_version=previous_version,
-        health_checks=[str(h) for h in _items("plan_rollout", "health_checks", health_checks)] or None,
-    )
+    def plan() -> dict:
+        result = DeploymentReleaseManager.plan_rollout(
+            service_name,
+            target_version,
+            previous_version=previous_version,
+            health_checks=[str(h) for h in _items("plan_rollout", "health_checks", health_checks)] or None,
+        )
+        if previous_version and previous_version.strip() == (target_version or "").strip():
+            # "Roll back to the version you are deploying" is a plan with no rollback in it.
+            result = {**result, "warnings": ["previous_version equals target_version: there is no "
+                                              "earlier version to roll back to."]}
+        return result
+
+    return await _run(plan)
 
 
 _ANALYSIS_TOOLS: tuple[Tool, ...] = (

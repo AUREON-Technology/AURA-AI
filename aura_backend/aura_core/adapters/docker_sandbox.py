@@ -42,10 +42,11 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import stat
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from ..domain.files import strip_absolute_prefix
 from ..observability.logging import get_logger
@@ -117,6 +118,169 @@ def _is_read_timeout(exc: BaseException) -> bool:
 
 class SandboxError(RuntimeError):
     """Raised for any sandbox lifecycle or containment failure."""
+
+
+#: The largest text file ``read_file`` will load for an edit. An edit holds the whole file in
+#: memory twice (old and new text); a multi-hundred-megabyte log is not something to patch with a
+#: find/replace, and refusing it is better than exhausting the gateway.
+_MAX_EDIT_BYTES = 10 * 1024 * 1024
+#: The largest file ``read_file_bytes`` will return (the PDF reader's own ceiling).
+_MAX_READ_BYTES = 100 * 1024 * 1024
+#: Command output kept per stream. ``container.logs()`` has already loaded all of it by the time
+#: this applies, so this bounds what is decoded and returned, not what the daemon sent -- a command
+#: that prints gigabytes is still the pids/memory limits' problem. Head and tail are both kept
+#: because a build's cause is at the top and its verdict at the bottom.
+_MAX_LOG_BYTES = 4 * 1024 * 1024
+_LOG_HEAD_BYTES = 1 * 1024 * 1024
+
+
+def _cap_log(data: bytes) -> bytes:
+    """``data`` unchanged when it fits, else its head and tail around an explicit marker."""
+    if len(data) <= _MAX_LOG_BYTES:
+        return data
+    tail = _MAX_LOG_BYTES - _LOG_HEAD_BYTES
+    omitted = len(data) - _LOG_HEAD_BYTES - tail
+    return (
+        data[:_LOG_HEAD_BYTES]
+        + f"\n[aura] {omitted} bytes of output omitted from the middle\n".encode("utf-8")
+        + data[-tail:]
+    )
+
+
+def decode_workspace_text(data: bytes, label: str) -> str:
+    """Decode a workspace file as UTF-8 *exactly*: no newline translation, no replacement.
+
+    ``Path.read_text`` turns ``\\r\\n`` into ``\\n`` and ``write_text`` does not turn it back, so an
+    edit to a CRLF file silently rewrote every line ending in it. Working in bytes keeps the file as
+    it was except where the edit is. A file that is not UTF-8 text is refused by name rather than
+    decoded lossily: writing lossy text back would destroy it.
+    """
+    if data.startswith(b"%PDF-"):
+        raise SandboxError(f"{label} is a PDF, not a text file; its text cannot be edited in place")
+    if b"\x00" in data[:8192]:
+        raise SandboxError(f"{label} is a binary file, not UTF-8 text")
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SandboxError(
+            f"{label} is not valid UTF-8 text (byte {exc.start}); refusing to treat it as text"
+        ) from None
+
+
+def _grant_path(path: Path, *, directory: bool) -> None:
+    """Make a path this process just created usable by the sandbox uid.
+
+    Files and directories created here belong to the gateway's uid, so a command in the container
+    (uid 10001) could read them but not modify them in place (``black .``, ``echo >> file``) or add
+    to a directory ``write_file`` made for it. Same chown-or-chmod fallback as the workspace root.
+    """
+    try:
+        os.chown(path, _SANDBOX_UID_N, _SANDBOX_GID_N)
+    except (OSError, AttributeError):
+        try:
+            path.chmod(0o777 if directory else 0o666)
+        except OSError:
+            logger.debug("could not grant a new workspace path to the sandbox user",
+                         extra={"path": str(path)})
+
+
+def _make_dirs(directory: Path, grant: Callable[..., None] | None) -> list[Path]:
+    """``mkdir -p`` that returns the directories it actually created (outermost first)."""
+    missing: list[Path] = []
+    current = directory
+    while not current.exists() and current.parent != current:
+        missing.append(current)
+        current = current.parent
+    created: list[Path] = []
+    for path in reversed(missing):
+        path.mkdir(exist_ok=True)
+        created.append(path)
+        if grant is not None:
+            grant(path, directory=True)
+    return created
+
+
+def _atomic_write(target: Path, data: bytes, grant: Callable[..., None] | None) -> None:
+    """Replace ``target`` with ``data`` in one step, so a failure never leaves a half-written file."""
+    previous = target.stat() if target.is_file() else None
+    tmp = target.with_name(f".aura-{uuid.uuid4().hex[:10]}.tmp")
+    try:
+        with open(tmp, "wb") as handle:
+            handle.write(data)
+        if previous is not None:
+            os.chmod(tmp, stat.S_IMODE(previous.st_mode))
+            try:
+                os.chown(tmp, previous.st_uid, previous.st_gid)
+            except (OSError, AttributeError):
+                pass
+        elif grant is not None:
+            grant(tmp, directory=False)
+        os.replace(tmp, target)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def apply_write_plan(
+    plan: Sequence[tuple[Path, bytes]], root: Path, *, grant: Callable[..., None] | None = None
+) -> None:
+    """Write every ``(path, bytes)`` in ``plan``; if one fails, put back the ones already written.
+
+    The caller has validated the whole plan, so a failure here is the filesystem's (disk full,
+    permissions, a directory where a file should go). "Nothing in this call is written" used to be
+    true of validation only; it is now true of the writes too, and when the restore itself cannot
+    finish the error names the files that are left in an unknown state.
+    """
+    for target, _ in plan:
+        # Defence in depth under the caller's own containment check: a temp file is created next
+        # to its target, so a target that *is* the workspace root would put one outside it.
+        if target == root or root not in target.parents:
+            raise SandboxError(f"{_label(target, root)!r} is not a file path inside the workspace")
+    done: list[tuple[Path, bytes | None, list[Path]]] = []
+    for target, data in plan:
+        created: list[Path] = []
+        try:
+            previous = target.read_bytes() if target.is_file() else None
+            created = _make_dirs(target.parent, grant)
+            _atomic_write(target, data, grant)
+        except Exception as exc:
+            for directory in reversed(created):
+                try:
+                    directory.rmdir()
+                except OSError:
+                    pass
+            stuck: list[str] = []
+            for path, before, dirs in reversed(done):
+                try:
+                    if before is None:
+                        path.unlink()
+                    else:
+                        _atomic_write(path, before, grant)
+                    for directory in reversed(dirs):
+                        try:
+                            directory.rmdir()
+                        except OSError:
+                            pass
+                except Exception:
+                    stuck.append(_label(path, root))
+            if stuck:
+                note = f"; could not restore {', '.join(stuck)} -- check them"
+            elif done:
+                note = f"; the {len(done)} file(s) already written in this call were restored"
+            else:
+                note = ""
+            raise SandboxError(f"could not write {_label(target, root)}: {exc}{note}") from exc
+        done.append((target, previous, created))
+
+
+def _label(path: Path, root: Path) -> str:
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return path.name
 
 
 def docker_available() -> bool:
@@ -379,8 +543,8 @@ class DockerSandboxRunner:
                     )
                 # Read the streams separately rather than demuxed: this container ran one
                 # command, so its whole log *is* that command's output.
-                stdout_bytes = container.logs(stdout=True, stderr=False) or b""
-                stderr_bytes = container.logs(stdout=False, stderr=True) or b""
+                stdout_bytes = _cap_log(container.logs(stdout=True, stderr=False) or b"")
+                stderr_bytes = _cap_log(container.logs(stdout=False, stderr=True) or b"")
                 return SandboxResult(
                     stdout=stdout_bytes.decode("utf-8", errors="replace"),
                     stderr=stderr_bytes.decode("utf-8", errors="replace"),
@@ -415,6 +579,11 @@ class DockerSandboxRunner:
         root = self._scratch(handle).resolve()
         if "\x00" in relative:
             raise SandboxError("path contains a null byte")
+        # Inside the container the workspace *is* /workspace, so a model that writes
+        # "/workspace/app.py" means the file `run_command` sees at that path -- the scratch
+        # directory's own app.py, not a nested workspace/app.py it can never find again.
+        if relative == _WORKDIR or relative.startswith(_WORKDIR + "/"):
+            relative = relative[len(_WORKDIR):]
         candidate = (root / strip_absolute_prefix(relative)).resolve()
         if candidate != root and root not in candidate.parents:
             raise SandboxError(f"path {relative!r} escapes the sandbox workspace")
@@ -422,49 +591,57 @@ class DockerSandboxRunner:
 
     async def write_file(self, handle: SandboxHandle, path: str, content: str) -> None:
         target = self._resolve_within(handle, path)
+        root = self._scratch(handle).resolve()
+        data = content.encode("utf-8")
 
-        def _write() -> None:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+        await asyncio.to_thread(apply_write_plan, [(target, data)], root, grant=_grant_path)
 
-        await asyncio.to_thread(_write)
-
-    async def read_file(self, handle: SandboxHandle, path: str) -> str:
+    def _read_target_bytes(self, handle: SandboxHandle, path: str, limit: int) -> bytes:
         target = self._resolve_within(handle, path)
         if not target.is_file():
             raise SandboxError(f"{path} is not a file in the sandbox workspace")
-        return await asyncio.to_thread(target.read_text, "utf-8")
+        size = target.stat().st_size
+        if size > limit:
+            raise SandboxError(f"{path} is too large to read here ({size} bytes; limit {limit})")
+        return target.read_bytes()
+
+    async def read_file(self, handle: SandboxHandle, path: str) -> str:
+        data = await asyncio.to_thread(self._read_target_bytes, handle, path, _MAX_EDIT_BYTES)
+        return decode_workspace_text(data, path)
+
+    async def read_file_bytes(self, handle: SandboxHandle, path: str) -> bytes:
+        """The file's exact bytes, for callers that must not assume text (a PDF)."""
+        return await asyncio.to_thread(self._read_target_bytes, handle, path, _MAX_READ_BYTES)
 
     async def write_files(self, handle: SandboxHandle, operations: Sequence[FileWriteOp]) -> None:
         """D6: pre-validate every operation, then write all of them -- see the port's own
-        docstring for why nothing is written until every operation has already passed."""
+        docstring for why nothing is written until every operation has already passed. A write
+        that fails part-way (disk full, a permission) restores the files already written."""
+        root = self._scratch(handle).resolve()
 
-        def _validate_and_plan() -> list[tuple[Path, str]]:
-            plan: list[tuple[Path, str]] = []
+        def _validate_and_plan() -> list[tuple[Path, bytes]]:
+            plan: list[tuple[Path, bytes]] = []
             for op in operations:
                 target = self._resolve_within(handle, op.path)
                 if op.content is not None:
-                    plan.append((target, op.content))
+                    plan.append((target, op.content.encode("utf-8")))
                 elif op.find is not None and op.replace is not None:
                     if not target.is_file():
                         raise SandboxError(f"{op.path} does not exist")
-                    current = target.read_text("utf-8")
+                    current = decode_workspace_text(target.read_bytes(), op.path)
                     occurrences = current.count(op.find)
                     if occurrences != 1:
                         raise SandboxError(
                             f"expected exactly one occurrence of the given text in {op.path}, "
                             f"found {occurrences}"
                         )
-                    plan.append((target, current.replace(op.find, op.replace, 1)))
+                    plan.append((target, current.replace(op.find, op.replace, 1).encode("utf-8")))
                 else:
                     raise SandboxError(f"operation for {op.path} must set either content, or both find and replace")
             return plan
 
         def _write_all() -> None:
-            plan = _validate_and_plan()
-            for target, content in plan:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(content, encoding="utf-8")
+            apply_write_plan(_validate_and_plan(), root, grant=_grant_path)
 
         await asyncio.to_thread(_write_all)
 

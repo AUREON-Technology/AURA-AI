@@ -24,18 +24,34 @@ the wrong record kind outright.
 
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
+from ..domain.errors import ToolExecutionError
 from ..domain.identifiers import PersonalOsRecordId
 from ..domain.personal_os import PersonalOsRecord, RecordKind
 from ..domain.tools import ParameterSpec, ToolCategory, ToolSensitivity
 from ..ports.runtime import ToolContext
 from ..ports.storage import PersonalOsStore
 from .base import param, tool
+from .personal_os import parse_iso, require_title
 
 __all__ = ["build_personal_os_crud_tools"]
+
+#: Characters of one field shown by a ``list_*`` tool. Without it, 50 records with a 2,000-character
+#: description each overflow the result and the registry drops whole records off the end.
+_SHOWN_FIELD_CHARS = 200
+_DATE_FIELDS = ("due_date", "start_time", "end_time", "occurred_at", "record_date")
+_METRIC_FIELDS = ("weight_kg", "water_ml", "sleep_minutes", "exercise_minutes", "calories")
+
+
+def _shown(value: Any) -> str:
+    """One field on one line: a description holding a newline and ``- [id] ...`` must not read as
+    another record, and a calendar invite's text is not the tool's to format."""
+    text = "".join(c if c.isprintable() else " " for c in str(value))
+    return text if len(text) <= _SHOWN_FIELD_CHARS else text[:_SHOWN_FIELD_CHARS] + "..."
 
 
 def _list_summary(records: list[PersonalOsRecord], *, empty: str) -> str:
@@ -43,9 +59,41 @@ def _list_summary(records: list[PersonalOsRecord], *, empty: str) -> str:
         return empty
     lines = []
     for r in records:
-        summary = ", ".join(f"{k}={v}" for k, v in r.fields.items() if v is not None)
+        summary = ", ".join(f"{k}={_shown(v)}" for k, v in r.fields.items() if v is not None)
         lines.append(f"- [{r.id.value}] {summary} (created {r.created_at.date().isoformat()})")
     return "\n".join(lines)
+
+
+def _checked(kind: RecordKind, fields: Mapping[str, Any], tool_name: str) -> dict[str, Any]:
+    """The fields as they may be stored, or a :class:`ToolExecutionError` the model can act on.
+
+    The in-memory store accepts anything and the Postgres one rejects some of it late, so the
+    rules that matter live here, where both behave the same: no NUL bytes (a Postgres text column
+    refuses them), a real title, parseable dates, finite numbers.
+    """
+    out: dict[str, Any] = {}
+    for key, value in fields.items():
+        if isinstance(value, str):
+            value = value.replace("\x00", "")
+        elif isinstance(value, float) and not math.isfinite(value):
+            raise ToolExecutionError(f"{key} must be a finite number", tool=tool_name)
+        out[key] = value
+    if "title" in out:
+        out["title"] = require_title(out["title"], tool_name)
+    for key in _DATE_FIELDS:
+        if key in out:
+            parse_iso(out[key], key, tool_name)
+    return out
+
+
+def _event_order(fields: Mapping[str, Any], tool_name: str) -> None:
+    start, end = fields.get("start_time"), fields.get("end_time")
+    if start and end:
+        try:
+            if parse_iso(end, "end_time", tool_name) < parse_iso(start, "start_time", tool_name):
+                raise ToolExecutionError("end_time must not be before start_time", tool=tool_name)
+        except TypeError:  # one naive, one aware: not comparable, and not worth refusing over
+            pass
 
 
 def _as_optional(params: Sequence[ParameterSpec]) -> tuple[ParameterSpec, ...]:
@@ -69,6 +117,19 @@ def _domain(
     """
 
     def register(builder: "_Builder") -> None:
+        async def _owned(context: ToolContext, record_id: str) -> PersonalOsRecord | None:
+            """The record, only if it is this caller's and of this kind. ``store.get`` is scoped
+            by owner, so a guessed or leaked id from another account finds nothing; the kind check
+            stops ``update_task`` reaching an event or finance record that shares the owner."""
+            try:
+                typed = PersonalOsRecordId(record_id)
+            except ValueError:  # not an id at all (spaces, over-long, NUL)
+                return None
+            found = await builder.store.get(typed, owner_id=context.user_id)
+            if found is None or found.kind != kind or found.owner_id != context.user_id:
+                return None
+            return found
+
         @tool(
             f"create_{noun}", f"Create a new {noun.replace('_', ' ')} for this user, "
             f"stored immediately -- not a proposal the user must approve.",
@@ -79,7 +140,16 @@ def _domain(
         )
         async def create(context: ToolContext, **kwargs: Any) -> str:
             now = datetime.now(timezone.utc)
-            fields = {k: v for k, v in kwargs.items() if v is not None}
+            name = f"create_{noun}"
+            fields = _checked(kind, {k: v for k, v in kwargs.items() if v is not None}, name)
+            if kind is RecordKind.CALENDAR_EVENT:
+                _event_order(fields, name)
+            if kind is RecordKind.HEALTH_RECORD and not any(k in fields for k in _METRIC_FIELDS):
+                # A row with a date and nothing else is a blank entry that then blocks that day's
+                # real one (health records merge by date).
+                raise ToolExecutionError(
+                    f"give at least one metric ({', '.join(_METRIC_FIELDS)})", tool=name
+                )
             record = PersonalOsRecord(
                 id=PersonalOsRecordId.new(), owner_id=context.user_id, kind=kind,
                 fields=fields, created_at=now, updated_at=now,
@@ -116,14 +186,16 @@ def _domain(
             side_effecting=True,
         )
         async def update(context: ToolContext, record_id: str, **kwargs: Any) -> str:
-            record_id_typed = PersonalOsRecordId(record_id)
-            existing = await builder.store.get(record_id_typed, owner_id=context.user_id)
-            if existing is None or existing.kind != kind:
-                return f"No {noun} found with id {record_id}."
-            changes = {k: v for k, v in kwargs.items() if v is not None}
+            existing = await _owned(context, record_id)
+            if existing is None:
+                return f"No {noun} found with id {_shown(record_id)}."
+            name = f"update_{noun}"
+            changes = _checked(kind, {k: v for k, v in kwargs.items() if v is not None}, name)
             if not changes:
                 return f"Nothing to update for {noun} {record_id}."
             updated = existing.with_fields(changes, updated_at=datetime.now(timezone.utc))
+            if kind is RecordKind.CALENDAR_EVENT:
+                _event_order(updated.fields, name)  # the merged event, not just what was sent
             await builder.store.update(updated)
             return f"Updated {noun} {record_id}."
 
@@ -136,11 +208,12 @@ def _domain(
             side_effecting=True,
         )
         async def delete(context: ToolContext, record_id: str) -> str:
-            record_id_typed = PersonalOsRecordId(record_id)
-            existing = await builder.store.get(record_id_typed, owner_id=context.user_id)
-            if existing is None or existing.kind != kind:
-                return f"No {noun} found with id {record_id}."
-            await builder.store.delete(record_id_typed, owner_id=context.user_id)
+            existing = await _owned(context, record_id)
+            if existing is None:
+                return f"No {noun} found with id {_shown(record_id)}."
+            if not await builder.store.delete(existing.id, owner_id=context.user_id):
+                # Gone between the read and the delete (another device, another call).
+                return f"No {noun} found with id {_shown(record_id)}."
             return f"Deleted {noun} {record_id}."
 
         builder.tools.append(create)

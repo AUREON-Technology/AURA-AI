@@ -32,9 +32,15 @@ existing decisions elsewhere in ``aura_core/tools/``:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import difflib
+import hashlib
+import posixpath
 import re
+import shlex
 import time
+import weakref
+from collections import OrderedDict
 from typing import Any, Mapping, Sequence
 
 from pathlib import Path
@@ -48,6 +54,7 @@ from ..ports.coding import FileWriteOp, McpToolDescriptor, SandboxResult, Stream
 from ..ports.runtime import Tool, ToolContext
 from .base import FunctionTool, param, tool
 from .desktop_ops import build_desktop_ops_tools
+from .open._input import MAX_PDF_BYTES, SourceReadError, read_source_bytes
 
 __all__ = [
     "build_sandbox_tools",
@@ -110,6 +117,211 @@ def _is_binary_path(path: str) -> bool:
     name = path.rsplit("/", 1)[-1]
     dot = name.rfind(".")
     return dot > 0 and name[dot:].lower() in _BINARY_SUFFIXES
+
+
+def _is_pdf_path(path: str) -> bool:
+    return path.rsplit("/", 1)[-1].lower().endswith(".pdf")
+
+
+def _refuse_binary_path(path: str, tool_name: str) -> None:
+    """Text tools never write to a PDF or other binary file type.
+
+    ``write_file``/``edit_file``/``github_commit_files`` take and return *text*. Pointed at a
+    ``.pdf`` they would replace a real document with a few lines of prose (or, for an edit, fail
+    with a decode error that says nothing about why), and the result still opens as "a file".
+    """
+    if _is_pdf_path(path):
+        raise ToolExecutionError(
+            f"{path} is a PDF: text cannot be written into a PDF file. Write the content to a "
+            "text file (for example a .md or .txt) instead; to read a PDF's text, use "
+            "github_get_file_contents, or `cat` the .pdf in run_command.",
+            tool=tool_name,
+        )
+    if _is_binary_path(path):
+        raise ToolExecutionError(
+            f"{path} has a binary file type; this tool only writes text, and overwriting a binary "
+            "file with text would destroy it.",
+            tool=tool_name,
+        )
+
+
+def _norm_path(path: str) -> str:
+    """A path in the one spelling two operations on the same file would share."""
+    return posixpath.normpath(path.lstrip("/")) if path else path
+
+
+_SLUG_PART = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def _strict_slug(value: str, tool_name: str) -> str:
+    """``owner/name`` that is safe to use as a directory name, a URL path and a workspace key.
+
+    ``RepositoryIdentity`` accepts any two non-blank segments, so ``owner/..`` parsed as a valid
+    repository whose *name* is the parent directory -- and ``clone_repository`` joins the name onto
+    the workspace path. Both halves are now plain GitHub-name characters and never ``.``/``..``.
+    """
+    identity = RepositoryIdentity.parse_or_none(value)
+    if identity is not None:
+        owner, name = identity.owner, identity.name
+        if (
+            _SLUG_PART.match(owner) and _SLUG_PART.match(name)
+            and owner not in (".", "..") and name not in (".", "..")
+        ):
+            return identity.slug
+    raise ToolExecutionError(
+        f"{value!r} is not a valid GitHub repository; expected 'owner/name' (letters, digits, "
+        "'-', '_' and '.' only) or a GitHub URL like https://github.com/owner/name",
+        tool=tool_name,
+    )
+
+
+def _workspace_subdir(destination: str | None, slug: str, tool_name: str) -> str:
+    """The directory a clone lands in, as a plain relative path inside the workspace.
+
+    The caller's ``destination`` used to be joined onto the workspace's *host* path unchecked, so
+    ``../../x`` or ``/etc/cron.d`` made the gateway run ``git clone`` outside the workspace.
+    """
+    if destination is None or not destination.strip():
+        return slug.split("/")[-1]
+    value = destination.strip()
+    parts = [part for part in value.replace("\\", "/").split("/") if part not in ("", ".")]
+    bad = (
+        "\x00" in value
+        or value.startswith(("/", "\\", "-", "~"))
+        or re.match(r"^[A-Za-z]:", value) is not None
+        or not parts
+        or any(part == ".." or part == ".git" or part.startswith("-") for part in parts)
+        or any(ord(ch) < 32 for ch in value)
+    )
+    if bad:
+        raise ToolExecutionError(
+            f"destination must be a plain folder name inside the workspace (relative, no '..', "
+            f"not '.git', not starting with '-'), got {destination!r}",
+            tool=tool_name,
+        )
+    return "/".join(parts)
+
+
+_REF_FORBIDDEN = re.compile(r"[\x00-\x20\x7f~^:?*\[\\]")
+
+
+def _valid_ref_name(name: str) -> bool:
+    """A branch/tag/ref name by git's own rules (``git check-ref-format``), minus the exotic.
+
+    Refused here so a model-chosen name is never an option (``-f``), never revision syntax
+    (``main~3``, ``a..b``, ``@{u}``), and never contains whitespace or a newline that would split
+    a command or a ``.git/config`` line.
+    """
+    if not name or _REF_FORBIDDEN.search(name) or name in ("@", "HEAD"):
+        return False
+    if name.startswith(("-", "/", ".")) or name.endswith(("/", ".", ".lock")):
+        return False
+    if ".." in name or "//" in name or "@{" in name:
+        return False
+    return not any(part.startswith(".") or part.endswith(".lock") for part in name.split("/"))
+
+
+def _check_ref(value: str | None, label: str, tool_name: str) -> None:
+    if value == "HEAD":
+        return
+    if value is not None and value != "" and not _valid_ref_name(value.removeprefix("refs/heads/")):
+        # A commit SHA or tag passes: only syntax that git or a URL would misread is refused.
+        raise ToolExecutionError(
+            f"{label} {value!r} is not a valid branch, tag or commit name", tool=tool_name
+        )
+
+
+def _fit_output(text: str, limit: int, label: str) -> str:
+    """``text`` unchanged when it fits, else its head and *tail* around an explicit marker.
+
+    A command's cause is at the top and its verdict (the failing test, the build error) at the
+    bottom. The registry cuts a long result at its start, which for a test run keeps the progress
+    dots and drops the traceback; cutting the middle here keeps both ends and says how much went.
+    """
+    if len(text) <= limit:
+        return text
+    head = limit // 4
+    tail = limit - head
+    omitted = len(text) - head - tail
+    return (
+        f"{text[:head]}\n[aura] {omitted} characters of {label} omitted from the middle "
+        f"(output was {len(text)} characters)\n{text[-tail:]}"
+    )
+
+
+def _to_crlf(text: str) -> str:
+    return re.sub(r"(?<!\r)\n", "\r\n", text)
+
+
+def _prefers_crlf(text: str) -> bool:
+    """True when most of the file's line breaks are CRLF."""
+    crlf = text.count("\r\n")
+    return crlf > text.count("\n") - crlf
+
+
+#: Held across an edit's read-modify-write. Keyed by (sandbox task, normalised path) and weakly
+#: referenced, so a lock lives exactly as long as a call is using or waiting on it.
+_FILE_LOCKS: "weakref.WeakValueDictionary[tuple[str, str], asyncio.Lock]" = weakref.WeakValueDictionary()
+
+
+def _file_lock(handle: Any, path: str) -> asyncio.Lock:
+    key = (str(getattr(handle, "task_id", handle)), _norm_path(path))
+    lock = _FILE_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _FILE_LOCKS[key] = lock
+    return lock
+
+
+#: Phrases in a runner's error that mean it refused the batch *before* writing anything.
+_WRITE_FILES_NOTHING_WRITTEN = (
+    "expected exactly one occurrence", "does not exist", "escapes the sandbox", "must set either",
+    "null byte", "is not a file path", "is a PDF", "is a binary file", "not valid UTF-8",
+)
+
+#: A PDF whose text is at most this long is returned whole by ``cat``; longer is saved beside it.
+_PDF_INLINE_CHARS = 14_000
+#: OCR allowance for a scanned PDF read through ``cat`` (the tool's own timeout is 605 s).
+_PDF_OCR_BUDGET_S = 240.0
+
+#: Characters that make a command more than a plain ``cat <file>``.
+_SHELL_META = re.compile(r"[;&|<>$`()\n\r*?{}\[\]~!#\\]")
+
+
+def _pdf_cat_target(command: str) -> str | None:
+    """The PDF path when ``command`` is exactly ``cat <file>.pdf`` (optionally with ``--``)."""
+    if _SHELL_META.search(command):
+        return None
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+    if not tokens or tokens[0] != "cat":
+        return None
+    args = [token for token in tokens[1:] if token != "--"]
+    if len(args) == 1 and not args[0].startswith("-") and _is_pdf_path(args[0]):
+        return args[0]
+    return None
+
+
+_COMMAND_RESULT_BUDGET = 18_000
+
+
+def _command_result(exit_code: int, stdout: str, stderr: str) -> str:
+    """The ``run_command`` result text, with each stream cut in the middle if the pair is too long.
+
+    The registry would otherwise cut the *whole* string at its start: the head of stdout survives
+    and stderr -- where the traceback and the truncation notice are -- is simply gone.
+    """
+    err_budget = min(len(stderr), _COMMAND_RESULT_BUDGET // 3)
+    out_budget = _COMMAND_RESULT_BUDGET - err_budget
+    if len(stdout) < out_budget:
+        err_budget = min(len(stderr), _COMMAND_RESULT_BUDGET - len(stdout))
+    return (
+        f"exit_code={exit_code}\n"
+        f"--- stdout ---\n{_fit_output(stdout, out_budget, 'stdout')}\n"
+        f"--- stderr ---\n{_fit_output(stderr, err_budget, 'stderr')}"
+    )
 
 
 _PLAIN_BRANCH = re.compile(r"^[A-Za-z0-9._/-]+$")
@@ -321,6 +533,10 @@ class _WorkspaceResolver:
     #: collide with a real repository a user also has open.
     SCRATCH = "(scratch)"
 
+    #: A binding lives for one turn, but nothing tells this object the turn is over, so the map
+    #: is bounded instead of growing by one entry per message for the life of the process.
+    _MAX_BINDINGS = 2048
+
     def __init__(self, manager: Any, runner: Any) -> None:
         self._manager = manager
         self._runner = runner
@@ -328,7 +544,24 @@ class _WorkspaceResolver:
         self._lock = asyncio.Lock()
 
     def bind(self, correlation_id: str, repo: str) -> None:
+        self._bindings.pop(correlation_id, None)
         self._bindings[correlation_id] = repo
+        while len(self._bindings) > self._MAX_BINDINGS:
+            self._bindings.pop(next(iter(self._bindings)))
+
+    def unbind_repo(self, repo: str) -> None:
+        """Forget every turn's binding to ``repo``.
+
+        After ``destroy_workspace`` a still-bound turn would silently re-create an empty workspace
+        for the repository on its next write and report success.
+        """
+        for correlation_id in [c for c, r in self._bindings.items() if r == repo]:
+            del self._bindings[correlation_id]
+
+    async def enforce_quota(self, opened: Any, *, tool_name: str) -> None:
+        enforce = getattr(self._manager, "enforce_disk_quota", None)
+        if enforce is not None:
+            await enforce(opened.record, tool=tool_name)
 
     def bound_repo(self, correlation_id: str) -> str | None:
         return self._bindings.get(correlation_id)
@@ -349,7 +582,7 @@ class _WorkspaceResolver:
             if target is None:
                 target = await self._most_recent_repo(context) or self.SCRATCH
             opened = await self._manager.open(context.user_id, target)
-            self._bindings[context.correlation_id] = target
+            self.bind(context.correlation_id, target)
             await self._manager.touch(opened.record.id)
             return opened
 
@@ -407,6 +640,24 @@ class _SessionAdapter:
             return None
         return await self._resolver.open(context, repo)
 
+    async def write_handle(self, context: ToolContext, *, tool_name: str) -> Any:
+        """The handle for a call that *adds* to the workspace, after its disk quota is checked.
+
+        ``WorkspaceManager.enforce_disk_quota`` existed and documented itself as "checked before a
+        write", but nothing called it, so the quota bounded nothing. It is checked here for the
+        tools that write files (not ``run_command``: a workspace over quota must still be able to
+        run ``rm -rf node_modules`` to get back under it).
+        """
+        if self._resolver is not None and not await self._desktop_active(context):
+            opened = await self._resolver.open(context)
+            await self._resolver.enforce_quota(opened, tool_name=tool_name)
+            return opened.handle
+        return await self.handle(context)
+
+    def forget_repo(self, repo: str) -> None:
+        if self._resolver is not None:
+            self._resolver.unbind_repo(repo)
+
     def bound_repo(self, correlation_id: str) -> str | None:
         return self._resolver.bound_repo(correlation_id) if self._resolver else None
 
@@ -427,9 +678,11 @@ async def _drain_streaming_run(
     total_chars = 0
     truncated = False
     exit_code = -1
+    saw_done = False
     async for event in runner.run_streaming(handle, command, timeout_s=timeout_s):
         if event.kind == "done":
             exit_code = event.exit_code
+            saw_done = True
             break
         if total_chars >= _RUN_COMMAND_STREAM_CAP_CHARS:
             truncated = True
@@ -442,6 +695,8 @@ async def _drain_streaming_run(
         if len(chunk) < len(event.data):
             truncated = True
     stderr = "".join(stderr_parts)
+    if not saw_done:
+        stderr += "\n[aura] the command's output ended without an exit status; its outcome is unknown"
     if truncated:
         stderr += (
             f"\n[aura] output truncated after {_RUN_COMMAND_STREAM_CAP_CHARS} characters "
@@ -495,7 +750,7 @@ def build_sandbox_tools(
         "inside whatever folder they have granted, if they have a paired desktop app connected "
         "(AURA Desktop) -- otherwise an ephemeral sandbox container's scratch directory, torn "
         "down after the task. Overwrites the file if it already exists; creates parent "
-        "directories as needed.",
+        "directories as needed. Text only: it refuses a .pdf or other binary file path.",
         param("path", "string", "Path relative to the workspace root.", max_length=300),
         param("content", "string", "The file's full new content.", max_length=200_000),
         category=ToolCategory.DEVELOPMENT,
@@ -506,15 +761,30 @@ def build_sandbox_tools(
         workspace_local=True,
     )
     async def write_file(path: str, content: str, context: ToolContext) -> str:
-        handle = await sessions.handle(context)
-        await sandbox_runner.write_file(handle, path, content)
-        return f"Wrote {len(content)} bytes to {path}"
+        if not path or not path.strip():
+            raise ToolExecutionError("path must not be empty", tool="write_file")
+        _refuse_binary_path(path, "write_file")
+        handle = await sessions.write_handle(context, tool_name="write_file")
+        async with _file_lock(handle, path):
+            await sandbox_runner.write_file(handle, path, content)
+        return f"Wrote {len(content.encode('utf-8'))} bytes to {path}"
+
+    async def _read_text(handle: Any, path: str, tool_name: str) -> str:
+        try:
+            return await sandbox_runner.read_file(handle, path)
+        except UnicodeDecodeError as exc:
+            raise ToolExecutionError(
+                f"{path} is not valid UTF-8 text (byte {exc.start}); it is binary or in another "
+                "encoding, and editing it as text would corrupt it",
+                tool=tool_name,
+            ) from exc
 
     @tool(
         "edit_file",
         "Replace one exact occurrence of `find` with `replace` in a file inside the engineer "
         "agent's workspace. Fails if `find` is not present exactly once -- read the file "
-        "first (e.g. via run_command 'cat path') to get the exact text.",
+        "first (e.g. via run_command 'cat path') to get the exact text. Line endings and "
+        "everything else outside the replaced text are left exactly as they were.",
         param("path", "string", "Path relative to the workspace root.", max_length=300),
         param("find", "string", "Exact text to replace; must occur exactly once in the file.",
               max_length=50_000),
@@ -527,17 +797,47 @@ def build_sandbox_tools(
         workspace_local=True,
     )
     async def edit_file(path: str, find: str, replace: str, context: ToolContext) -> str:
-        handle = await sessions.handle(context)
-        current = await sandbox_runner.read_file(handle, path)
-        occurrences = current.count(find)
-        if occurrences != 1:
+        _refuse_binary_path(path, "edit_file")
+        if find == "":
             raise ToolExecutionError(
-                f"expected exactly one occurrence of the given text in {path}, "
-                f"found {occurrences}",
+                "`find` is empty; give the exact existing text to replace (to create or "
+                "overwrite a whole file use write_file)",
                 tool="edit_file",
             )
-        await sandbox_runner.write_file(handle, path, current.replace(find, replace, 1))
-        return f"Edited {path}"
+        if find == replace:
+            raise ToolExecutionError(
+                "`find` and `replace` are identical, so nothing would change", tool="edit_file"
+            )
+        handle = await sessions.write_handle(context, tool_name="edit_file")
+        # One edit at a time per file: read-modify-write is two steps, and two edits that read
+        # the same text would each write back a file that lacks the other's change.
+        async with _file_lock(handle, path):
+            current = await _read_text(handle, path, "edit_file")
+            needle, replacement = find, replace
+            occurrences = current.count(needle)
+            crlf_file = _prefers_crlf(current)
+            if occurrences == 0 and crlf_file and "\n" in find:
+                # The file uses CRLF and the model wrote LF: the same text, differently spelled.
+                needle = _to_crlf(find)
+                occurrences = current.count(needle)
+            if crlf_file and "\n" in replace:
+                replacement = _to_crlf(replace)
+            if occurrences != 1:
+                hint = (
+                    " -- include more surrounding lines so it is unique"
+                    if occurrences > 1
+                    else " -- check the exact text, indentation and line breaks (re-read the file; "
+                    "it may have changed)"
+                )
+                raise ToolExecutionError(
+                    f"expected exactly one occurrence of the given text in {path}, "
+                    f"found {occurrences}{hint}",
+                    tool="edit_file",
+                )
+            await sandbox_runner.write_file(handle, path, current.replace(needle, replacement, 1))
+        return f"Edited {path} (1 replacement)"
+
+    _WRITE_FILES_MAX_OPS = 100
 
     @tool(
         "write_files",
@@ -545,7 +845,8 @@ def build_sandbox_tools(
         "in one call. Every operation is validated first (path resolves inside the workspace, "
         "and each find/replace operation's `find` text is present in its target exactly once) "
         "before anything is written -- if any operation fails validation, nothing in this call "
-        "is written, including the other, otherwise-valid operations in the same call.",
+        "is written, including the other, otherwise-valid operations in the same call. Each "
+        "file may appear in only one operation per call.",
         param(
             "operations", "array",
             "Each item is an object with `path` and either `content` (full overwrite, same as "
@@ -564,26 +865,159 @@ def build_sandbox_tools(
         workspace_local=True,
     )
     async def write_files(operations: list, context: ToolContext) -> str:
-        handle = await sessions.handle(context)
+        if not isinstance(operations, list) or not operations:
+            raise ToolExecutionError("operations must be a non-empty array", tool="write_files")
+        if len(operations) > _WRITE_FILES_MAX_OPS:
+            raise ToolExecutionError(
+                f"at most {_WRITE_FILES_MAX_OPS} operations per call (got {len(operations)}); "
+                "split the work into several calls",
+                tool="write_files",
+            )
         ops: list[FileWriteOp] = []
-        for raw in operations:
+        seen: dict[str, str] = {}
+        for index, raw in enumerate(operations, start=1):
+            where = f"operation {index}"
             if not isinstance(raw, Mapping) or "path" not in raw:
                 raise ToolExecutionError(
-                    "each operation must be an object with a 'path'", tool="write_files"
+                    f"{where} must be an object with a 'path'", tool="write_files"
                 )
-            path = str(raw["path"])
-            if "content" in raw:
-                ops.append(FileWriteOp(path=path, content=str(raw["content"])))
+            path = raw["path"]
+            if not isinstance(path, str) or not path.strip() or len(path) > 300:
+                raise ToolExecutionError(
+                    f"{where}: 'path' must be a non-empty string of at most 300 characters",
+                    tool="write_files",
+                )
+            extra = sorted(set(raw) - {"path", "content", "find", "replace"})
+            if extra:
+                raise ToolExecutionError(
+                    f"{where} ({path!r}) has unknown field(s) {extra}; use 'content', or 'find' "
+                    "and 'replace'",
+                    tool="write_files",
+                )
+            _refuse_binary_path(path, "write_files")
+            key = _norm_path(path)
+            if key in seen:
+                raise ToolExecutionError(
+                    f"{where} and {seen[key]} both target {path!r}. Each find/replace is checked "
+                    "against the file as it is now, so the later one would silently undo the "
+                    "earlier one; combine them into one operation, or make two calls.",
+                    tool="write_files",
+                )
+            seen[key] = where
+            has_content = "content" in raw
+            has_edit = "find" in raw or "replace" in raw
+            if has_content and has_edit:
+                raise ToolExecutionError(
+                    f"{where} ({path!r}) mixes 'content' with 'find'/'replace'; use exactly one "
+                    "shape",
+                    tool="write_files",
+                )
+            if has_content:
+                content = raw["content"]
+                if not isinstance(content, str) or len(content) > 200_000:
+                    raise ToolExecutionError(
+                        f"{where} ({path!r}): 'content' must be a string of at most 200000 "
+                        f"characters (got {type(content).__name__})",
+                        tool="write_files",
+                    )
+                ops.append(FileWriteOp(path=path, content=content))
             elif "find" in raw and "replace" in raw:
-                ops.append(FileWriteOp(path=path, find=str(raw["find"]), replace=str(raw["replace"])))
+                find, replace = raw["find"], raw["replace"]
+                if not isinstance(find, str) or not isinstance(replace, str):
+                    raise ToolExecutionError(
+                        f"{where} ({path!r}): 'find' and 'replace' must both be strings",
+                        tool="write_files",
+                    )
+                if find == "" or find == replace or len(find) > 50_000 or len(replace) > 50_000:
+                    raise ToolExecutionError(
+                        f"{where} ({path!r}): 'find' must be non-empty, differ from 'replace' and "
+                        "be at most 50000 characters",
+                        tool="write_files",
+                    )
+                ops.append(FileWriteOp(path=path, find=find, replace=replace))
             else:
                 raise ToolExecutionError(
                     f"operation for {path!r} must have either 'content', or both 'find' and "
                     "'replace'",
                     tool="write_files",
                 )
-        await sandbox_runner.write_files(handle, ops)
+        handle = await sessions.write_handle(context, tool_name="write_files")
+        async with contextlib.AsyncExitStack() as stack:
+            for lock_key in sorted({_norm_path(op.path) for op in ops}):
+                await stack.enter_async_context(_file_lock(handle, lock_key))
+            try:
+                await sandbox_runner.write_files(handle, ops)
+            except ToolExecutionError:
+                raise
+            except Exception as exc:
+                message = str(exc) or type(exc).__name__
+                if any(marker in message for marker in _WRITE_FILES_NOTHING_WRITTEN):
+                    message += " (nothing in this call was written)"
+                raise ToolExecutionError(message, tool="write_files", cause=exc) from exc
         return f"Wrote/edited {len(ops)} file(s): {', '.join(op.path for op in ops)}"
+
+    async def _pdf_cat(handle: Any, pdf_path: str) -> str | None:
+        """``cat file.pdf`` -> the PDF's full text, in the same result shape ``run_command`` uses.
+
+        The sandbox has no PDF tooling, so ``cat`` of a PDF is a screenful of binary noise and the
+        model concludes the file is unreadable. A runner that can hand back a file's exact bytes
+        (the server-side sandbox) lets the platform's own page-by-page extractor read it instead --
+        every page, scanned pages named (and OCR'd when an engine is configured). A runner that
+        cannot (a paired desktop) falls through to the real command.
+        """
+        reader = getattr(sandbox_runner, "read_file_bytes", None)
+        if reader is None:
+            return None
+        try:
+            data = await reader(handle, pdf_path)
+        except Exception:
+            return None  # let the real `cat` say why (missing file, a directory, ...)
+        if len(data) > MAX_PDF_BYTES:
+            return _command_result(
+                1, "", f"{pdf_path} is larger than {MAX_PDF_BYTES // (1024 * 1024)} MiB; too big to read."
+            )
+        try:
+            read = await asyncio.to_thread(
+                read_source_bytes, data, name=pdf_path, ocr_time_budget_s=_PDF_OCR_BUDGET_S
+            )
+        except SourceReadError as exc:
+            return _command_result(1, "", str(exc))
+        text = read.text
+        if read.kind == "pdf":
+            info = read.describe()
+            note = f"[PDF {pdf_path}: {info['pages']} page(s), {info['pages_read']} read, {len(text)} characters of text"
+            if info["unreadable_pages"]:
+                note += f"; page(s) NOT read: {', '.join(map(str, info['unreadable_pages']))}"
+            note += "]"
+        else:
+            note = f"[{pdf_path} has a .pdf name but is plain text: {len(text)} characters]"
+        warnings = "\n".join(read.warnings())
+        if len(text) <= _PDF_INLINE_CHARS:
+            return _command_result(0, f"{note}\n{text}", warnings)
+        sidecar = f"{pdf_path}.txt"
+        try:
+            await sandbox_runner.write_file(handle, sidecar, text)
+        except Exception:
+            shown = text[:_PDF_INLINE_CHARS]
+            return _command_result(
+                0,
+                f"{note}\n{shown}\n[aura] only the first {len(shown)} of {len(text)} characters are "
+                "shown; the rest could not be saved to a file to read in parts.",
+                warnings,
+            )
+        quoted = shlex.quote(sidecar)
+        shown = text[:_PDF_INLINE_CHARS // 2]
+        shown = shown[: shown.rfind("\n")] if "\n" in shown else shown
+        shown_lines = shown.count("\n") + 1
+        return _command_result(
+            0,
+            f"{note}\n[The full text ({len(text)} characters, {text.count(chr(10)) + 1} lines) is "
+            f"saved to {sidecar}. Lines 1-{shown_lines} are shown below; read on with "
+            f"`sed -n '{shown_lines + 1},{shown_lines + 150}p' {quoted}` (then the next range), or "
+            f"search it with `grep -n WORD {quoted}`. It is an untracked helper file: delete it "
+            f"when finished.]\n{shown}",
+            warnings,
+        )
 
     @tool(
         "run_command",
@@ -592,7 +1026,9 @@ def build_sandbox_tools(
         "workspace's files. If the user has a paired desktop app connected, this runs directly "
         "on their own machine -- their real network, subject to the daemon's own path "
         "containment and command policy. Otherwise it runs in an ephemeral, network-restricted "
-        "sandbox container that cannot reach the user's real network or host.",
+        "sandbox container that cannot reach the user's real network or host. Very long output "
+        "keeps its beginning and its end (the middle is cut, and the result says how much). "
+        "`cat file.pdf` on its own returns the whole PDF's text.",
         param("command", "string", "The shell command to run, e.g. 'pytest -q'.", max_length=2000),
         param("timeout_s", "number", "Max seconds to allow the command to run.", required=False,
               minimum=1, maximum=600, default=60),
@@ -612,7 +1048,16 @@ def build_sandbox_tools(
         workspace_local=True,
     )
     async def run_command(command: str, context: ToolContext, timeout_s: float = 60.0) -> str:
+        if not command or not command.strip():
+            raise ToolExecutionError("command is empty; give the shell command to run", tool="run_command")
+        if "\x00" in command:
+            raise ToolExecutionError("command contains a NUL byte", tool="run_command")
         handle = await sessions.handle(context)
+        pdf_target = _pdf_cat_target(command)
+        if pdf_target is not None:
+            outcome = await _pdf_cat(handle, pdf_target)
+            if outcome is not None:
+                return outcome
         if isinstance(sandbox_runner, StreamingSandboxRunner):
             # Streaming and non-streaming runners return the same shape either way -- the
             # difference `run_streaming` makes today is bounding memory while output is still
@@ -625,25 +1070,62 @@ def build_sandbox_tools(
             )
         else:
             result = await sandbox_runner.run(handle, ["sh", "-c", command], timeout_s=timeout_s)
-        return (
-            f"exit_code={result.exit_code}\n"
-            f"--- stdout ---\n{result.stdout}\n"
-            f"--- stderr ---\n{result.stderr}"
-        )
+        stdout = result.stdout
+        if stdout.startswith("%PDF-"):
+            stdout = (
+                f"[aura] the command printed a PDF's raw bytes ({len(stdout)} characters), which "
+                "are not readable text. To read the PDF's text run `cat <file>.pdf` on its own "
+                "(nothing piped or combined)."
+            )
+        return _command_result(result.exit_code, stdout, result.stderr)
+
+    async def _git(handle: Any, argv: list[str], *, timeout_s: float = 15.0) -> Any:
+        return await sandbox_runner.run(handle, argv, timeout_s=timeout_s)
+
+    def _git_failure(result: Any) -> str:
+        """What git said, from whichever stream it used (``nothing to commit`` goes to stdout)."""
+        return (result.stderr.strip() or result.stdout.strip() or f"exit code {result.exit_code}")[:300]
 
     @tool(
         "git_diff",
-        "Show the workspace's current git diff (unstaged and staged changes).",
+        "Show the workspace's current git diff against HEAD (staged and unstaged changes), and "
+        "list untracked files, which a diff never includes.",
         category=ToolCategory.DEVELOPMENT,
         sensitivity=ToolSensitivity.PERSONAL,
         required_capability=_ENGINEER_CAPABILITY,
-        timeout_s=30.0,
+        timeout_s=45.0,
         max_result_chars=20_000,
     )
     async def git_diff(context: ToolContext) -> str:
         handle = await sessions.handle(context)
-        result = await sandbox_runner.run(handle, ["git", "diff", "HEAD"], timeout_s=15.0)
-        return result.stdout or "(no changes)"
+        has_head = await _git(handle, ["git", "rev-parse", "--verify", "--quiet", "HEAD"])
+        # A repository with no commit yet has no HEAD to diff against: its changes are what is
+        # staged, plus what is edited since. (This used to run `git diff HEAD`, fail, and report
+        # "(no changes)" for a workspace full of them.)
+        commands = (
+            [["git", "diff", "--no-ext-diff", "HEAD"]]
+            if has_head.exit_code == 0
+            else [["git", "diff", "--no-ext-diff", "--cached"], ["git", "diff", "--no-ext-diff"]]
+        )
+        parts: list[str] = []
+        for argv in commands:
+            result = await _git(handle, argv)
+            if result.exit_code != 0:
+                raise ToolExecutionError(
+                    f"{' '.join(argv)} failed: {_git_failure(result)}", tool="git_diff"
+                )
+            if result.stdout:
+                parts.append(result.stdout)
+        untracked = await _git(handle, ["git", "ls-files", "--others", "--exclude-standard"])
+        names = [line for line in untracked.stdout.splitlines() if line] if untracked.exit_code == 0 else []
+        diff = "".join(parts)
+        if not names:
+            return diff or "(no changes)"
+        listed = "\n".join(f"- {name}" for name in names[:50])
+        if len(names) > 50:
+            listed += f"\n... and {len(names) - 50} more"
+        header = diff or "(no changes to tracked files)\n"
+        return f"{header}\n\nUntracked files (new, not in the diff above):\n{listed}"
 
     @tool(
         "git_commit",
@@ -653,37 +1135,65 @@ def build_sandbox_tools(
         sensitivity=ToolSensitivity.PERSONAL,
         side_effecting=True,
         required_capability=_ENGINEER_CAPABILITY,
-        timeout_s=30.0,
+        timeout_s=45.0,
         # A commit is local to the checkout until something pushes it; git_push is the tool that
         # crosses the boundary, and it is deliberately not marked.
         workspace_local=True,
     )
     async def git_commit(message: str, context: ToolContext) -> str:
+        if not message.strip():
+            raise ToolExecutionError("commit message must not be empty", tool="git_commit")
         handle = await sessions.handle(context)
-        await sandbox_runner.run(handle, ["git", "add", "-A"], timeout_s=15.0)
-        result = await sandbox_runner.run(handle, ["git", "commit", "-m", message], timeout_s=15.0)
+        added = await _git(handle, ["git", "add", "-A"])
+        if added.exit_code != 0:
+            raise ToolExecutionError(f"git add failed: {_git_failure(added)}", tool="git_commit")
+        # The sandbox's HOME is a fresh tmpfs for every command, so there is no global identity
+        # and `git commit` refuses ("Please tell me who you are"). Supply one for this commit
+        # only, and only when none is configured -- never over a person's own.
+        identity = await _git(
+            handle, ["sh", "-c", "git config user.name >/dev/null && git config user.email >/dev/null"]
+        )
+        argv = ["git"]
+        if identity.exit_code != 0:
+            argv += ["-c", "user.name=AURA Engineer Agent", "-c", "user.email=engineer-agent@aura.local"]
+        result = await _git(handle, [*argv, "commit", "-m", message])
         if result.exit_code != 0:
-            raise ToolExecutionError(f"git commit failed: {result.stderr[:300]}", tool="git_commit")
+            raise ToolExecutionError(f"git commit failed: {_git_failure(result)}", tool="git_commit")
         return result.stdout or "committed"
 
     @tool(
         "git_checkout_branch",
-        "Create (or switch to) a git branch in the workspace.",
+        "Create (or switch to) a git branch in the workspace. An existing branch is switched to "
+        "as it is; it is never reset.",
         param("branch", "string", "Branch name.", max_length=200),
         category=ToolCategory.DEVELOPMENT,
         sensitivity=ToolSensitivity.PERSONAL,
         side_effecting=True,
         required_capability=_ENGINEER_CAPABILITY,
-        timeout_s=15.0,
+        timeout_s=30.0,
         workspace_local=True,
     )
     async def git_checkout_branch(branch: str, context: ToolContext) -> str:
+        if not _valid_ref_name(branch):
+            raise ToolExecutionError(
+                f"{branch!r} is not a valid branch name (no spaces, no '..', no leading '-', no "
+                "'~^:?*[\\\\')",
+                tool="git_checkout_branch",
+            )
         handle = await sessions.handle(context)
-        result = await sandbox_runner.run(handle, ["git", "checkout", "-B", branch], timeout_s=10.0)
+        exists = await _git(
+            handle, ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], timeout_s=10.0
+        )
+        # `checkout -B` -- which this used to run -- *resets* an existing branch to the current
+        # HEAD: asking for `main` while on a feature branch moved `main` onto the feature's
+        # commits. An existing branch is switched to; only a new one is created.
+        argv = (
+            ["git", "checkout", branch, "--"] if exists.exit_code == 0 else ["git", "checkout", "-b", branch]
+        )
+        result = await _git(handle, argv, timeout_s=10.0)
         if result.exit_code != 0:
             raise ToolExecutionError(
-                f"git checkout -B {branch} failed: {result.stderr[:300]}",
-                tool="git_checkout_branch",
+                f"{' '.join(argv)} failed: {_git_failure(result)}", tool="git_checkout_branch"
             )
         return result.stdout or f"switched to {branch}"
 
@@ -709,7 +1219,7 @@ def build_sandbox_tools(
                 "per-turn here",
                 tool="open_workspace",
             )
-        slug = _normalize_repo(repo)
+        slug = _strict_slug(repo, "open_workspace")
         opened = await sessions.opened(context, slug)
         listing = await sandbox_runner.run(
             opened.handle, ["sh", "-c", "ls -A"], timeout_s=15.0
@@ -762,11 +1272,14 @@ def build_sandbox_tools(
                 "persistent workspaces are not enabled on this deployment",
                 tool="destroy_workspace",
             )
-        slug = _normalize_repo(repo)
+        slug = _strict_slug(repo, "destroy_workspace")
         record = await workspace_manager.get(context.user_id, slug)
         if record is None:
             return f"No workspace open for {slug}."
         await workspace_manager.destroy(record)
+        # A turn still bound to this repository would otherwise re-create an empty workspace for
+        # it on its next write and report success.
+        sessions.forget_repo(slug)
         return f"Deleted the workspace for {slug} and everything in it."
 
     @tool(
@@ -782,7 +1295,11 @@ def build_sandbox_tools(
         result = await sandbox_runner.run(
             handle, ["sh", "-c", "git status --short --branch"], timeout_s=15.0
         )
-        return result.stdout or result.stderr or "(clean)"
+        if result.exit_code != 0:
+            raise ToolExecutionError(
+                f"git status failed: {_git_failure(result)}", tool="git_status"
+            )
+        return result.stdout or "(clean)"
 
     @tool(
         "git_push",
@@ -809,7 +1326,7 @@ def build_sandbox_tools(
                 "github_create_draft_pull_request instead",
                 tool="git_push",
             )
-        slug = _normalize_repo(repo) if repo else sessions.bound_repo(context.correlation_id)
+        slug = _strict_slug(repo, "git_push") if repo else sessions.bound_repo(context.correlation_id)
         if not slug or slug == _WorkspaceResolver.SCRATCH:
             raise ToolExecutionError(
                 "no repository is associated with this workspace; clone one first",
@@ -843,6 +1360,12 @@ def build_sandbox_tools(
             )
 
         token = await token_resolver(context.user_id) if token_resolver else None
+        if token_resolver is not None and not token:
+            raise ToolExecutionError(
+                "GitHub is not connected for this user, so there is no credential to push with -- "
+                "connect an account via /api/v3/integrations/github/connect",
+                tool="git_push",
+            )
         await host_git.push(checkout, branch=branch, token=token, repo=slug)
         return f"Pushed {branch} to {slug}."
 
@@ -898,14 +1421,9 @@ def build_sandbox_tools(
         weaker result -- no history, no push -- and it says so in what it returns rather than
         leaving the agent to discover that ``git log`` is empty.
         """
-        identity = RepositoryIdentity.parse_or_none(repo)
-        if identity is None:
-            raise ToolExecutionError(
-                f"could not read a repository from {repo!r}; expected 'owner/name' or a "
-                "GitHub URL like https://github.com/owner/name",
-                tool="clone_repository",
-            )
-        slug = identity.slug
+        slug = _strict_slug(repo, "clone_repository")
+        _check_ref(ref, "ref", "clone_repository")
+        subdir = _workspace_subdir(destination, slug, "clone_repository")
         client = await code_host_resolver(context.user_id)
         if client is None:
             raise ToolExecutionError(
@@ -917,9 +1435,15 @@ def build_sandbox_tools(
 
         if host_git is not None and sessions.durable:
             opened = await sessions.opened(context, slug)
-            checkout = Path(await sandbox_runner.workspace_path(opened.handle)) / _clone_dir(
-                slug, destination
-            )
+            await sessions._resolver.enforce_quota(opened, tool_name="clone_repository")
+            checkout = Path(await sandbox_runner.workspace_path(opened.handle)) / subdir
+            # Belt and braces under `_workspace_subdir`: whatever was joined, the checkout must
+            # still be inside the workspace, because this is the gateway's own filesystem.
+            workspace_root = Path(await sandbox_runner.workspace_path(opened.handle)).resolve()
+            if workspace_root not in checkout.resolve().parents:
+                raise ToolExecutionError(
+                    f"destination {destination!r} is outside the workspace", tool="clone_repository"
+                )
             # The token travels on its own channel rather than being dug out of the code-host
             # client: a private attribute would tie this to one adapter and silently yield None
             # for any other, turning a private clone into a confusing auth failure.
@@ -930,7 +1454,7 @@ def build_sandbox_tools(
             branch = await host_git.current_branch(checkout)
             note = "\nNote: " + "; ".join(opened.evicted) if opened.evicted else ""
             return (
-                f"Cloned {slug} into {checkout.name}/ with full git history "
+                f"Cloned {slug} into {subdir}/ with full git history "
                 f"(branch {branch}). Recent commits:\n{log}{note}"
             )
         try:
@@ -947,12 +1471,15 @@ def build_sandbox_tools(
                 tool="clone_repository",
             )
 
-        root = (destination or slug.split("/")[1]).strip("/") or "repo"
+        root = subdir
         selected: list[Any] = []
         skipped_binary = skipped_large = skipped_budget = 0
+        pdf_names: list[str] = []
         total_bytes = 0
         for entry in tree.files:
-            if _is_binary_path(entry.path):
+            if _is_pdf_path(entry.path):
+                pdf_names.append(entry.path)
+            elif _is_binary_path(entry.path):
                 skipped_binary += 1
             elif entry.size > _CLONE_MAX_FILE_BYTES:
                 skipped_large += 1
@@ -965,33 +1492,62 @@ def build_sandbox_tools(
                 selected.append(entry)
                 total_bytes += entry.size
 
-        handle = await sessions.handle(context)
+        handle = await sessions.write_handle(context, tool_name="clone_repository")
         semaphore = asyncio.Semaphore(_CLONE_CONCURRENCY)
         failed: list[str] = []
+        skipped_nontext: list[str] = []
+        get_bytes = getattr(client, "get_file_bytes", None)
 
         async def _copy(entry: Any) -> None:
             async with semaphore:
                 try:
-                    content = await client.get_file_contents(slug, entry.path, ref=ref)
+                    if get_bytes is not None:
+                        raw = await get_bytes(slug, entry.path, ref=ref)
+                        if b"\x00" in raw[:8192]:
+                            skipped_nontext.append(entry.path)
+                            return
+                        try:
+                            content = raw.decode("utf-8")
+                        except UnicodeDecodeError:
+                            # Writing replacement characters into the copy would be a quiet
+                            # corruption of the file; say it was not copied instead.
+                            skipped_nontext.append(entry.path)
+                            return
+                    else:
+                        content = await client.get_file_contents(slug, entry.path, ref=ref)
                     await sandbox_runner.write_file(handle, f"{root}/{entry.path}", content)
                 except Exception as exc:  # one unreadable file must not lose the whole clone
                     failed.append(f"{entry.path}: {exc}"[:200])
 
         await asyncio.gather(*(_copy(entry) for entry in selected))
 
-        copied = len(selected) - len(failed)
+        copied = len(selected) - len(failed) - len(skipped_nontext)
         lines = [
             f"Copied {copied} file(s) from {slug}{'@' + ref if ref else ''} into "
             f"./{root} in the workspace.",
             "Explore it with run_command (e.g. 'ls -R {0}', 'cat {0}/README.md').".format(root),
         ]
-        if skipped_binary or skipped_large or skipped_budget or failed or tree.truncated:
+        if (
+            skipped_binary or skipped_large or skipped_budget or failed or tree.truncated
+            or pdf_names or skipped_nontext
+        ):
             lines.append(
                 "Snapshot is partial -- do not conclude a file is absent from the repository "
                 "because it is absent here:"
             )
         if skipped_binary:
             lines.append(f"- {skipped_binary} binary file(s) skipped")
+        if pdf_names:
+            shown_pdfs = ", ".join(pdf_names[:8]) + (", ..." if len(pdf_names) > 8 else "")
+            lines.append(
+                f"- {len(pdf_names)} PDF file(s) not copied (the copy is text-only): {shown_pdfs}. "
+                "Read any of them in full with github_get_file_contents (every page is returned)."
+            )
+        if skipped_nontext:
+            lines.append(
+                f"- {len(skipped_nontext)} file(s) are not UTF-8 text and were not copied: "
+                f"{', '.join(skipped_nontext[:5])}"
+            )
         if skipped_large:
             lines.append(
                 f"- {skipped_large} file(s) over {_CLONE_MAX_FILE_BYTES // 1000}kB skipped"

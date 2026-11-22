@@ -9,9 +9,12 @@ turn cannot emit them without a bound confirmation (``approval_ids``, ADR-006).
 from __future__ import annotations
 
 import json
+import math
 import re
+from datetime import datetime
 from typing import Any, Mapping, Sequence
 
+from ..domain.errors import ToolExecutionError
 from ..domain.tools import ToolCategory, ToolSensitivity
 from .base import param, tool
 
@@ -116,15 +119,71 @@ def matching_personal_os_tool(
     text = message.strip()
     if not text:
         return None
-    for pattern, tool in _INTENT_PATTERNS:
-        if tool in offered and pattern.search(text):
-            return tool
+    for pattern, candidate in _INTENT_PATTERNS:
+        if candidate in offered and pattern.search(text):
+            return candidate
     return None
 
 
+_TOOL_FOR_ACTION = {
+    "add_task": "propose_task", "add_event": "propose_event", "add_expense": "propose_expense",
+    "add_income": "propose_income", "log_health": "propose_health_log",
+}
+
+
+def _clean_text(value: str) -> str:
+    """No NUL bytes and no lone surrogates: either one makes the payload unstorable or unencodable
+    somewhere between here and the user's device."""
+    return value.replace("\x00", "").encode("utf-8", "replace").decode("utf-8")
+
+
 def _payload(action_type: str, params: Mapping[str, Any]) -> str:
-    cleaned = {key: value for key, value in params.items() if value is not None}
+    cleaned: dict[str, Any] = {}
+    for key, value in params.items():
+        if value is None:
+            continue
+        if isinstance(value, str):
+            value = _clean_text(value)
+        elif isinstance(value, float) and not math.isfinite(value):
+            # json.dumps writes NaN/Infinity, which is not JSON: the app's decoder would refuse
+            # the whole approval card.
+            raise ToolExecutionError(f"{key} must be a finite number", tool=_TOOL_FOR_ACTION[action_type])
+        cleaned[key] = value
     return json.dumps({"type": action_type, "params": cleaned}, ensure_ascii=False)
+
+
+def parse_iso(value: str, field: str, tool_name: str) -> datetime:
+    """``value`` as a datetime, or a :class:`ToolExecutionError` the model can correct itself from.
+
+    A proposal carries its dates as the string the model wrote, and the app's executor parses it
+    only after the user taps Approve -- a typo should fail here, where the model can retry, not there.
+    """
+    text = value.strip() if isinstance(value, str) else ""
+    if text[-1:] in ("Z", "z"):
+        text = text[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        raise ToolExecutionError(
+            f"{field} must be an ISO 8601 date or datetime such as '2026-09-01T14:30:00'; "
+            f"got {str(value)[:60]!r}", tool=tool_name,
+        ) from None
+
+
+def require_title(value: str, tool_name: str) -> str:
+    title = value.replace("\x00", "").strip() if isinstance(value, str) else ""
+    if not title:
+        raise ToolExecutionError("title must not be empty", tool=tool_name)
+    return title
+
+
+def _later(start: datetime, end: datetime) -> bool:
+    """Whether ``end`` is not before ``start`` (comparing a naive and an aware one is not possible,
+    and not an error worth raising: they are then taken as unordered)."""
+    try:
+        return end >= start
+    except TypeError:
+        return True
 
 
 def parse_proposed_action(text: str) -> dict[str, Any] | None:
@@ -182,6 +241,9 @@ def personal_os_tools() -> list:
         dueDate: str | None = None,
         description: str | None = None,
     ) -> str:
+        title = require_title(title, "propose_task")
+        if dueDate:
+            parse_iso(dueDate, "dueDate", "propose_task")
         return _payload("add_task", {
             "title": title,
             "priority": priority,
@@ -210,6 +272,10 @@ def personal_os_tools() -> list:
         endTime: str | None = None,
         description: str | None = None,
     ) -> str:
+        title = require_title(title, "propose_event")
+        start = parse_iso(startTime, "startTime", "propose_event")
+        if endTime and not _later(start, parse_iso(endTime, "endTime", "propose_event")):
+            raise ToolExecutionError("endTime must not be before startTime", tool="propose_event")
         return _payload("add_event", {
             "title": title,
             "startTime": startTime,
@@ -288,6 +354,11 @@ def personal_os_tools() -> list:
         exerciseMinutes: int | None = None,
         weight: float | None = None,
     ) -> str:
+        if all(v is None for v in (waterIntakeMl, sleepMinutes, caloriesConsumed, exerciseMinutes, weight)):
+            raise ToolExecutionError(
+                "give at least one metric (waterIntakeMl, sleepMinutes, caloriesConsumed, "
+                "exerciseMinutes or weight)", tool="propose_health_log",
+            )
         return _payload("log_health", {
             "waterIntakeMl": waterIntakeMl,
             "sleepMinutes": sleepMinutes,

@@ -23,6 +23,11 @@ from ..ports.coding import FileWriteOp, McpToolDescriptor, RepoFile, RepoTree, S
 
 __all__ = ["InMemorySandboxRunner", "InMemoryGitHubClient", "InMemoryMcpClient"]
 
+#: Same ceilings as ``DockerSandboxRunner`` (the fake mirrors the adapter's contract, not just its
+#: happy path), so a test of an oversized file means the same thing against either.
+_MAX_EDIT_BYTES = 10 * 1024 * 1024
+_MAX_READ_BYTES = 100 * 1024 * 1024
+
 
 class InMemorySandboxRunner:
     """Runs commands for real, in a real (unsandboxed) temp directory per task.
@@ -88,40 +93,56 @@ class InMemorySandboxRunner:
             return SandboxResult(stdout="", stderr=str(exc), exit_code=127)
 
     async def write_file(self, handle: SandboxHandle, path: str, content: str) -> None:
-        target = self._resolve_within(handle, path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        await asyncio.to_thread(target.write_text, content, "utf-8")
+        from .docker_sandbox import apply_write_plan
 
-    async def read_file(self, handle: SandboxHandle, path: str) -> str:
+        target = self._resolve_within(handle, path)
+        root = self._scratch(handle).resolve()
+        await asyncio.to_thread(apply_write_plan, [(target, content.encode("utf-8"))], root)
+
+    def _read_target_bytes(self, handle: SandboxHandle, path: str, limit: int) -> bytes:
         target = self._resolve_within(handle, path)
         if not target.is_file():
             raise RuntimeError(f"{path} is not a file in the sandbox workspace")
-        return await asyncio.to_thread(target.read_text, "utf-8")
+        size = target.stat().st_size
+        if size > limit:
+            raise RuntimeError(f"{path} is too large to read here ({size} bytes; limit {limit})")
+        return target.read_bytes()
+
+    async def read_file(self, handle: SandboxHandle, path: str) -> str:
+        from .docker_sandbox import decode_workspace_text
+
+        data = await asyncio.to_thread(self._read_target_bytes, handle, path, _MAX_EDIT_BYTES)
+        return decode_workspace_text(data, path)
+
+    async def read_file_bytes(self, handle: SandboxHandle, path: str) -> bytes:
+        """The file's exact bytes, for callers that must not assume text (a PDF)."""
+        return await asyncio.to_thread(self._read_target_bytes, handle, path, _MAX_READ_BYTES)
 
     async def write_files(self, handle: SandboxHandle, operations: Sequence[FileWriteOp]) -> None:
         """D6: pre-validate every operation, then write all of them -- mirrors
         `DockerSandboxRunner.write_files` exactly, so tests exercise the same contract."""
-        plan: list[tuple[Any, str]] = []
+        from .docker_sandbox import apply_write_plan, decode_workspace_text
+
+        root = self._scratch(handle).resolve()
+        plan: list[tuple[Path, bytes]] = []
         for op in operations:
             target = self._resolve_within(handle, op.path)
             if op.content is not None:
-                plan.append((target, op.content))
+                plan.append((target, op.content.encode("utf-8")))
             elif op.find is not None and op.replace is not None:
                 if not target.is_file():
                     raise RuntimeError(f"{op.path} does not exist")
-                current = target.read_text("utf-8")
+                current = decode_workspace_text(target.read_bytes(), op.path)
                 occurrences = current.count(op.find)
                 if occurrences != 1:
                     raise RuntimeError(
                         f"expected exactly one occurrence of the given text in {op.path}, "
                         f"found {occurrences}"
                     )
-                plan.append((target, current.replace(op.find, op.replace, 1)))
+                plan.append((target, current.replace(op.find, op.replace, 1).encode("utf-8")))
             else:
                 raise RuntimeError(f"operation for {op.path} must set either content, or both find and replace")
-        for target, content in plan:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            await asyncio.to_thread(target.write_text, content, "utf-8")
+        await asyncio.to_thread(apply_write_plan, plan, root)
 
     async def destroy(self, handle: SandboxHandle) -> None:
         scratch = self._scratch_dirs.pop(handle.task_id, None)

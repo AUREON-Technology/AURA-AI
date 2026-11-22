@@ -211,18 +211,30 @@ class WorkspaceManager:
         self, now: datetime, *, keep: WorkspaceId | None
     ) -> list[str]:
         """Pause least-recently-used hot workspaces until one more may run."""
+        if self._max_running < 1:
+            raise WorkspaceCapacityError(
+                "no workspace may run on this deployment (the running limit is 0)",
+                tool="open_workspace",
+            )
         evicted: list[str] = []
         while True:
             hot = [
                 w for w in await self._store.list_all()
                 if w.status == WorkspaceStatus.HOT and (keep is None or w.id != keep)
             ]
-            if len(hot) < self._max_running:
+            if len(hot) < self._max_running or not hot:
                 return evicted
             # list_all is most-recently-active first, so the last entry is the LRU one.
             victim = hot[-1]
             await self._pause(victim, now)
             evicted.append(f"paused {victim.repo}")
+            if len(evicted) > self._max_workspaces + self._max_running:
+                # Pausing is not changing the store's view of the victim: a store bug, and a loop
+                # that would otherwise spin forever holding the admission lock for every user.
+                raise WorkspaceCapacityError(
+                    "could not free a running slot: paused workspaces still read as running",
+                    tool="open_workspace",
+                )
 
     async def _make_room_to_exist(self, now: datetime) -> list[str]:
         """Destroy least-recently-used workspaces until one more may exist.
@@ -231,14 +243,24 @@ class WorkspaceManager:
         reported: a user whose workspace disappeared deserves to be told which, rather than
         discovering the branch they were working on is gone.
         """
+        if self._max_workspaces < 1:
+            raise WorkspaceCapacityError(
+                "no workspace may exist on this deployment (the workspace limit is 0)",
+                tool="open_workspace",
+            )
         evicted: list[str] = []
         while True:
             everything = list(await self._store.list_all())
-            if len(everything) < self._max_workspaces:
+            if len(everything) < self._max_workspaces or not everything:
                 return evicted
             victim = everything[-1]
             await self.destroy(victim)
             evicted.append(f"removed {victim.repo} (workspace limit reached)")
+            if len(evicted) > self._max_workspaces + 1:
+                raise WorkspaceCapacityError(
+                    "could not make room for another workspace: removed ones still read as present",
+                    tool="open_workspace",
+                )
 
     async def _pause(self, workspace: AgentWorkspace, now: datetime) -> None:
         handle = await self._runner.open_workspace(workspace.id.value)
@@ -274,19 +296,21 @@ class WorkspaceManager:
         await self._store.delete(workspace.id)
         await self._publish_gauges()
 
-    async def enforce_disk_quota(self, workspace: AgentWorkspace) -> None:
+    async def enforce_disk_quota(self, workspace: AgentWorkspace, *, tool: str = "run_command") -> None:
         """Raise when a checkout has outgrown its allowance.
 
         Checked before a write rather than after, so the quota bounds the disk rather than
-        recording that it was already exceeded.
+        recording that it was already exceeded. ``tool`` names the tool the refusal is reported
+        against (it used to say ``run_command`` whichever tool was refused).
         """
         handle = await self._runner.open_workspace(workspace.id.value)
         used = await self._runner.workspace_disk_usage_mb(handle)
         if used >= self._disk_quota_mb:
             raise WorkspaceCapacityError(
                 f"workspace for {workspace.repo} has reached its {self._disk_quota_mb} MiB disk "
-                f"quota ({used:.0f} MiB used). Remove build artefacts, or destroy and re-clone.",
-                tool="run_command",
+                f"quota ({used:.0f} MiB used). Remove build artefacts with run_command (for example "
+                "`rm -rf node_modules`), or destroy and re-clone.",
+                tool=tool,
             )
 
     async def expired(self, now: datetime | None = None) -> Sequence[AgentWorkspace]:
