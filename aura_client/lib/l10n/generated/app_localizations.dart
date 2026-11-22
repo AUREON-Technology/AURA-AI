@@ -8927,6 +8927,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Manage paired devices'**
   String get webManageDevices;
+
+  /// Web wide layout: empty detail pane beside the You menu
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a page'**
+  String get webYouPaneTitle;
+
+  /// Web wide layout: what to do in the empty You detail pane
+  ///
+  /// In en, this message translates to:
+  /// **'Pick a setting or tool from the list to open it here.'**
+  String get webYouPaneMessage;
+
+  /// Web wide layout: empty detail pane beside the Engineer run list
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a run'**
+  String get webEngineerPaneTitle;
+
+  /// Web wide layout: what to do in the empty Engineer detail pane
+  ///
+  /// In en, this message translates to:
+  /// **'Pick a run from the list to see its status, branch and output.'**
+  String get webEngineerPaneMessage;
 }
 
 class _AppLocalizationsDelegate

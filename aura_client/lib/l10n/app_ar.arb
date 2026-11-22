@@ -1470,5 +1470,9 @@
   "webDaemonUnavailableTitle": "اربط كمبيوترك من تطبيق سطح المكتب",
   "webDaemonUnavailableMessage": "المتصفح مش بيقدر يشغّل خدمة AURA بتاعة الكمبيوتر. نزّل تطبيق سطح المكتب على جهازك واربطه من هناك. وبعد ما يتربط، فعّل التحكم عن بُعد وAURA Engineer يقدر يستخدمه من هنا.",
   "webGetDesktopApp": "نزّل تطبيق سطح المكتب",
-  "webManageDevices": "إدارة الأجهزة المربوطة"
+  "webManageDevices": "إدارة الأجهزة المربوطة",
+  "webYouPaneTitle": "اختار صفحة",
+  "webYouPaneMessage": "اختار إعداد أو أداة من القايمة وهتتفتح هنا.",
+  "webEngineerPaneTitle": "اختار عملية",
+  "webEngineerPaneMessage": "اختار عملية من القايمة تشوف حالتها والفرع والمخرجات بتاعتها."
 }

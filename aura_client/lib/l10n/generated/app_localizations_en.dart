@@ -5330,4 +5330,18 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get webManageDevices => 'Manage paired devices';
+
+  @override
+  String get webYouPaneTitle => 'Choose a page';
+
+  @override
+  String get webYouPaneMessage =>
+      'Pick a setting or tool from the list to open it here.';
+
+  @override
+  String get webEngineerPaneTitle => 'Choose a run';
+
+  @override
+  String get webEngineerPaneMessage =>
+      'Pick a run from the list to see its status, branch and output.';
 }

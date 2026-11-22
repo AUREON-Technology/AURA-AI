@@ -9,6 +9,19 @@ import 'package:aura_client/features/engineering/presentation/engineer_consent_t
 import 'package:aura_client/features/workspaces/presentation/workspace_tile.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
+/// Opens one of You's pages. Beside a detail pane (the web layout) it replaces what the pane
+/// shows; everywhere else it stacks the page on top, as the mobile app always did.
+void _open(BuildContext context, String path) {
+  if (AuraPaneScope.maybeOf(context) != null) {
+    context.go(path);
+  } else {
+    context.push(path);
+  }
+}
+
+bool _isOpen(BuildContext context, String path) =>
+    AuraPaneScope.maybeOf(context)?.isSelected(path) ?? false;
+
 /// "You" — grouped as Account, (Desktop,) Your AURA, Engineer, System and
 /// About, so each of its pages is found under the heading it belongs to rather
 /// than in one long mixed list.
@@ -53,21 +66,24 @@ class SettingsPage extends ConsumerWidget {
                         key: const Key('plan-tile'),
                         icon: Icons.workspace_premium_outlined,
                         title: l10n.planTitle,
-                        onTap: () => context.push('/plan'),
+                        selected: _isOpen(context, '/plan'),
+                        onTap: () => _open(context, '/plan'),
                       ),
                       const _RowDivider(),
                       AuraListTile(
                         icon: Icons.person_outline,
                         title: l10n.settingsProfileTitle,
                         subtitle: l10n.settingsProfileSubtitle,
-                        onTap: () => context.push('/profile'),
+                        selected: _isOpen(context, '/profile'),
+                        onTap: () => _open(context, '/profile'),
                       ),
                       const _RowDivider(),
                       AuraListTile(
                         icon: Icons.palette_outlined,
                         title: l10n.appearanceTitle,
                         subtitle: l10n.settingsAppearanceSubtitle,
-                        onTap: () => context.push('/appearance'),
+                        selected: _isOpen(context, '/appearance'),
+                        onTap: () => _open(context, '/appearance'),
                       ),
                       // A release build has one server to offer, so no picker (see
                       // BackendUrlSettings.selectableEnvironments).
@@ -77,7 +93,8 @@ class SettingsPage extends ConsumerWidget {
                           icon: Icons.dns_outlined,
                           title: l10n.serverEnvironmentTitle,
                           subtitle: l10n.settingsServerEnvironmentSubtitle,
-                          onTap: () => context.push('/server-environment'),
+                          selected: _isOpen(context, '/server-environment'),
+                        onTap: () => _open(context, '/server-environment'),
                         ),
                       ],
                       const _RowDivider(),
@@ -85,7 +102,8 @@ class SettingsPage extends ConsumerWidget {
                         icon: Icons.devices_outlined,
                         title: l10n.devicesTitle,
                         subtitle: l10n.settingsDevicesSubtitle,
-                        onTap: () => context.push('/desktop-devices'),
+                        selected: _isOpen(context, '/desktop-devices'),
+                        onTap: () => _open(context, '/desktop-devices'),
                       ),
                       const _RowDivider(),
                       AuraListTile(
@@ -93,7 +111,8 @@ class SettingsPage extends ConsumerWidget {
                         icon: Icons.key_outlined,
                         title: l10n.signInMethodsTitle,
                         subtitle: l10n.signInMethodsSubtitle,
-                        onTap: () => context.push('/sign-in-methods'),
+                        selected: _isOpen(context, '/sign-in-methods'),
+                        onTap: () => _open(context, '/sign-in-methods'),
                       ),
                       const _RowDivider(),
                       const DeleteAccountTile(),
@@ -110,14 +129,16 @@ class SettingsPage extends ConsumerWidget {
                         icon: Icons.folder_shared_outlined,
                         title: l10n.knowledgeTitle,
                         subtitle: l10n.settingsKnowledgeSubtitle,
-                        onTap: () => context.push('/knowledge'),
+                        selected: _isOpen(context, '/knowledge'),
+                        onTap: () => _open(context, '/knowledge'),
                       ),
                       const _RowDivider(),
                       AuraListTile(
                         icon: Icons.psychology_outlined,
                         title: l10n.memoryTitle,
                         subtitle: l10n.settingsMemorySubtitle,
-                        onTap: () => context.push('/memory'),
+                        selected: _isOpen(context, '/memory'),
+                        onTap: () => _open(context, '/memory'),
                       ),
                       const _RowDivider(),
                       AuraListTile(
@@ -125,14 +146,16 @@ class SettingsPage extends ConsumerWidget {
                         iconColor: AuraPalette.of(context).warning,
                         title: l10n.settingsAutomationsTitle,
                         subtitle: l10n.settingsAutomationsSubtitle,
-                        onTap: () => context.push('/automations'),
+                        selected: _isOpen(context, '/automations'),
+                        onTap: () => _open(context, '/automations'),
                       ),
                       const _RowDivider(),
                       AuraListTile(
                         icon: Icons.rate_review_outlined,
                         title: l10n.feedbackTitle,
                         subtitle: l10n.settingsFeedbackSubtitle,
-                        onTap: () => context.push('/feedback'),
+                        selected: _isOpen(context, '/feedback'),
+                        onTap: () => _open(context, '/feedback'),
                       ),
                     ],
                   ),
@@ -147,14 +170,16 @@ class SettingsPage extends ConsumerWidget {
                         icon: Icons.code_outlined,
                         title: l10n.settingsEngineerTitle,
                         subtitle: l10n.settingsEngineerSubtitle,
-                        onTap: () => context.push('/engineer-history'),
+                        selected: _isOpen(context, '/engineer-history'),
+                        onTap: () => _open(context, '/engineer-history'),
                       ),
                       const _RowDivider(),
                       AuraListTile(
                         icon: Icons.hub_outlined,
                         title: l10n.settingsGithubTitle,
                         subtitle: l10n.settingsGithubSubtitle,
-                        onTap: () => context.push('/github-connect'),
+                        selected: _isOpen(context, '/github-connect'),
+                        onTap: () => _open(context, '/github-connect'),
                       ),
                       const _RowDivider(),
                       const EngineerConsentTile(),
@@ -172,7 +197,8 @@ class SettingsPage extends ConsumerWidget {
                         iconColor: AuraPalette.of(context).info,
                         title: l10n.engineStatusTitle,
                         subtitle: l10n.settingsEngineStatusSubtitle,
-                        onTap: () => context.push('/models'),
+                        selected: _isOpen(context, '/models'),
+                        onTap: () => _open(context, '/models'),
                       ),
                       const _RowDivider(),
                       AuraListTile(
@@ -180,7 +206,8 @@ class SettingsPage extends ConsumerWidget {
                         iconColor: AuraPalette.of(context).success,
                         title: l10n.settingsUsageTitle,
                         subtitle: l10n.settingsUsageSubtitle,
-                        onTap: () => context.push('/analytics'),
+                        selected: _isOpen(context, '/analytics'),
+                        onTap: () => _open(context, '/analytics'),
                       ),
                     ],
                   ),

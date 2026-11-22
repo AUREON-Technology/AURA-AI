@@ -7114,5 +7114,21 @@
   "webManageDevices": "Manage paired devices",
   "@webManageDevices": {
     "description": "Web only: button that opens the paired desktop devices list"
+  },
+  "webYouPaneTitle": "Choose a page",
+  "@webYouPaneTitle": {
+    "description": "Web wide layout: empty detail pane beside the You menu"
+  },
+  "webYouPaneMessage": "Pick a setting or tool from the list to open it here.",
+  "@webYouPaneMessage": {
+    "description": "Web wide layout: what to do in the empty You detail pane"
+  },
+  "webEngineerPaneTitle": "Choose a run",
+  "@webEngineerPaneTitle": {
+    "description": "Web wide layout: empty detail pane beside the Engineer run list"
+  },
+  "webEngineerPaneMessage": "Pick a run from the list to see its status, branch and output.",
+  "@webEngineerPaneMessage": {
+    "description": "Web wide layout: what to do in the empty Engineer detail pane"
   }
 }

@@ -51,7 +51,13 @@ import '../../desktop/workspace/workspace_manager_page.dart';
 
 class ShellLayout extends ConsumerWidget {
   final Widget child;
-  const ShellLayout({super.key, required this.child});
+
+  /// Whether this is the web build, which lays You out as a menu beside its open page on a wide
+  /// window. A parameter only so a test can ask the web's answer on the test host.
+  @visibleForTesting
+  final bool isWeb;
+
+  const ShellLayout({super.key, required this.child, this.isWeb = kIsWeb});
 
   /// The shell's tabs. The Windows desktop app is the IDE and You; every other
   /// build is the one AURA app: Copilot, Engineer and You.
@@ -225,7 +231,13 @@ class ShellLayout extends ConsumerWidget {
                 child: Column(
                   children: [
                     const SyncAlertBanner(),
-                    Expanded(child: child),
+                    Expanded(
+                      child: _WebContentFrame(
+                        isWeb: isWeb,
+                        path: GoRouterState.of(context).uri.path,
+                        child: child,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -233,6 +245,49 @@ class ShellLayout extends ConsumerWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// How the web build frames the routed screen on a wide window.
+///
+/// - Copilot (`/chat`) and the Engineer run list lay themselves out (list and detail panes).
+/// - Every other screen is, to the navigation, part of **You** (`_calculateSelectedIndex`): with
+///   room for two panes it opens beside the You menu, and the menu stays put while the page
+///   changes. `/you` itself shows a prompt in the detail pane.
+/// - Engineer's other pages, and any screen too narrow to split, stay one column, centered at a
+///   readable width.
+///
+/// Off the web, and on a narrow window, it returns [child] as it was, so the mobile app is
+/// unchanged.
+class _WebContentFrame extends StatelessWidget {
+  const _WebContentFrame({required this.isWeb, required this.path, required this.child});
+
+  final bool isWeb;
+  final String path;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!isWeb || path.startsWith('/chat') || path.startsWith('/engineer-history')) return child;
+    return LayoutBuilder(
+      builder: (context, box) {
+        final youPage = !ShellLayout._isEngineerPath(path);
+        if (youPage && masterDetailSplits(box.maxWidth, isWeb: isWeb)) {
+          final l10n = context.l10n;
+          return AuraMasterDetail(
+            master: AuraPaneScope(selectedPath: path, child: const SettingsPage()),
+            detail: path == '/you'
+                ? AuraDetailPlaceholder(
+                    icon: Icons.tune_outlined,
+                    title: l10n.webYouPaneTitle,
+                    message: l10n.webYouPaneMessage,
+                  )
+                : child,
+          );
+        }
+        return AuraReadableWidth(enabled: true, child: child);
+      },
     );
   }
 }

@@ -5355,4 +5355,17 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get webManageDevices => 'إدارة الأجهزة المربوطة';
+
+  @override
+  String get webYouPaneTitle => 'اختار صفحة';
+
+  @override
+  String get webYouPaneMessage => 'اختار إعداد أو أداة من القايمة وهتتفتح هنا.';
+
+  @override
+  String get webEngineerPaneTitle => 'اختار عملية';
+
+  @override
+  String get webEngineerPaneMessage =>
+      'اختار عملية من القايمة تشوف حالتها والفرع والمخرجات بتاعتها.';
 }
