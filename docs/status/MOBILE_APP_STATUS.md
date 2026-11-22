@@ -45,10 +45,18 @@ the session); the Railway deploy and the two-workflow handover with the desktop 
 checkout; Safari and Firefox; Arabic rendering per OS; screen readers; real-network performance
 (6 MB `main.dart.js` plus CanvasKit). The manual test checklist has not been run.
 
-Still the owner's (backlog CB-50): `https://web.aureon-ai.tech` in the gateway's `ALLOWED_ORIGINS`
-and the backend's `AURA_APP_BASE_URL`; a Firebase Web app, its authorized domain and the
-`FIREBASE_WEB_*` repository variables; the `RAILWAY_WEB_TOKEN` secret; `AURA-Web` without a Railway
-GitHub auto-deploy. Until then the web app does not work for people.
+**Update 2026-11-22 (evening, UTC): the web app is live, published by hand, and observed working for
+one Google sign-in; not PROVEN.** Done by the owner's session that day (backlog CB-50; detail and
+commands in `docs/deployment/web-app.md`): `https://web.aureon-ai.tech` is in the gateway's
+`ALLOWED_ORIGINS` and `AURA_APP_BASE_URL` is set; the gateway's missing `FIREBASE_CREDENTIALS_JSON`
+is set (without it every Firebase sign-in was a 401); the Firebase Web app existed, its authorized
+domain and Email/Password were added, and the `FIREBASE_WEB_*` repository variables are set; the
+`AURA-Web` GitHub trigger is deleted. Published from `main` at `5074875` with `railway up` (Actions
+cannot start: a GitHub billing block, not code), and `/app/app-version.json` names that commit. The
+smoke test and a signed-out sweep of every route are clean; one Google sign-in reached the app.
+Still not done: the manual checklist, Apple (not configured in Firebase), email sign-in tried, any
+page behind sign-in checked, the workflow path and the `RAILWAY_WEB_TOKEN` secret, and the fix for
+a placeholder-email row that blocked Access role assignment (PR #295, draft).
 
 ## Update 2026-11-16 (sign-in review, on `ebe7940`)
 
