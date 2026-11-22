@@ -468,6 +468,12 @@ class Metrics:
             "Seconds since the knowledge index was last promoted.",
             multiprocess_mode="livemax",
         )
+        self.knowledge_index_mismatch = self._gauge(
+            "knowledge_index_mismatch",
+            "1 when the published knowledge index was built by a different embedding model "
+            "(retrieval returns nothing), else 0. Set whenever readiness is evaluated.",
+            multiprocess_mode="livemax",
+        )
         self.refresh_last_success_timestamp = self._gauge(
             "refresh_last_success_timestamp_seconds",
             "Unix time of the last successful refresh.",

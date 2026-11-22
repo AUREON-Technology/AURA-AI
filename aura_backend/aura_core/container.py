@@ -2358,7 +2358,11 @@ class Container:
     async def health(self) -> dict[str, Any]:
         """Dependency health, for the readiness probe."""
         providers = await self.router.health()
-        index = await self.index_manager.active_identity()
+        knowledge_index = await self.index_manager.status()
+        # Informational, never gates readiness: chat works without knowledge, and only an admin
+        # rebuild repairs this, so evicting the gateway from the load balancer would not help.
+        # The gauge is what an alert reads (AuraKnowledgeIndexMismatch).
+        self.metrics.knowledge_index_mismatch.set(0 if knowledge_index["matches_embedder"] else 1)
         # A passive provider (health_probe=passive) was not called, so its "healthy" means only
         # "not known to be broken". It cannot carry readiness on its own while a provider that
         # *was* checked is down; it counts only when every provider is passive.
@@ -2382,7 +2386,10 @@ class Container:
 
         payload = {
             "providers": providers,
-            "index": index.physical_name if index else None,
+            "index": knowledge_index["published"],
+            # Which index is published versus which the running embedder needs. A mismatch means
+            # every retrieval returns nothing until an admin rebuilds (scripts/rebuild_index.py).
+            "knowledge_index": knowledge_index,
             "tools": len(self.tools),
             "prompts": len(self.prompts),
             "agents": len(self.agents),

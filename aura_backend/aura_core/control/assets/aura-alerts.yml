@@ -148,6 +148,18 @@ groups:
             The 02:00 job is failing or its promotion gates are blocking. Check the last
             RefreshReport; the live index is intact either way.
 
+      - alert: AuraKnowledgeIndexMismatch
+        expr: aura_knowledge_index_mismatch > 0
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "The published knowledge index was built by a different embedding model"
+          description: >
+            Every retrieval returns nothing until an admin rebuilds the index
+            (scripts/rebuild_index.py, read its gate_failures before any --force). Chat itself
+            keeps working, so nothing else shows this. The gauge is set when readiness is
+            evaluated, so it needs /health/ready to be probed.
+
       - alert: AuraBackupStale
         expr: |
           aura_backup_last_success_timestamp_seconds > 0
