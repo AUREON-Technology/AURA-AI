@@ -37,6 +37,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
+
 import 'approval_queue.dart';
 import 'command_policy.dart';
 import 'containment.dart';
@@ -505,6 +507,232 @@ class TaskHandler {
     return {'bytes_written': totalBytes};
   }
 
+  /// The root a file RPC acts in: the task's bound root, an isolated task's worktree, or the one
+  /// granted root that contains [path] -- the resolution `writeFile` does inline.
+  Future<WorkspaceRoot> _rootForFileOp(String? taskId, String path) async {
+    var root = _boundRootFor(taskId);
+    if (root == null && _isolatedTasks.needsResolution(taskId)) {
+      root = await _isolatedTasks.resolve(taskId, path) ?? (throw _noWorktreeError());
+    }
+    root ??= _roots.findContainingRoot(path);
+    if (root == null) {
+      throw RpcError(
+        'no granted workspace root contains "$path" -- grant it (or its parent project folder) '
+        'first',
+      );
+    }
+    return root;
+  }
+
+  /// The absolute path of the directory entry [rawPath] *names*, without following it when it is
+  /// itself a symlink: the entry's parent is resolved and checked for containment, and the final
+  /// component is appended as written. `requireContained` on the whole path would resolve a link
+  /// to its target, so deleting or renaming a link would act on whatever it points at instead.
+  String _entryPath(WorkspaceRoot root, String rawPath) {
+    final candidate = p.isAbsolute(rawPath) ? rawPath : p.join(root.canonicalPath, rawPath);
+    final name = p.basename(candidate);
+    if (name.isEmpty || name == '.' || name == '..') {
+      throw RpcError('"$rawPath" does not name a file or directory entry');
+    }
+    final parent = _roots.requireContained(root, p.dirname(candidate));
+    return p.join(parent, name);
+  }
+
+  /// Anything at or under a `.git` directory. `protectedGitWriteRefusal` already refuses the files
+  /// that become code git runs; moving or deleting entries inside git's own storage is a different
+  /// harm (a repository that no longer opens) and no editing task needs it -- `git` commands are
+  /// the way to change that.
+  void _refuseGitInternals(String absolute, {required String verb}) {
+    final inside = absolute
+        .split(RegExp(r'[/\\]'))
+        .map((s) => s.toLowerCase().replaceAll(RegExp(r'[. ]+$'), ''))
+        .contains('.git');
+    if (inside) {
+      throw RpcError(
+        '$verb of "$absolute" is refused: it is inside a .git directory -- use git commands to '
+        'change a repository\'s own storage',
+        code: HostdErrorCode.protectedGitDirFile,
+      );
+    }
+    final protectedWrite = protectedGitWriteRefusal(absolute);
+    if (protectedWrite != null) throw RpcError(protectedWrite.reason, code: protectedWrite.code);
+  }
+
+  /// What a human approved, in a form that changes when the entry does: its type, size and
+  /// modification time, not following a link. Compared again after the approval so a file edited
+  /// while the person was deciding is not deleted or moved on the strength of the old state.
+  String _entryFingerprint(String absolute) {
+    final type = FileSystemEntity.typeSync(absolute, followLinks: false);
+    if (type == FileSystemEntityType.notFound) return 'absent';
+    final stat = FileStat.statSync(absolute);
+    return '$type:${stat.size}:${stat.modified.microsecondsSinceEpoch}';
+  }
+
+  /// Delete one file (or symlink) inside a granted root. Directories are refused: deleting a tree
+  /// is the case that destroys the most for the least typing, so it stays a deliberate
+  /// `run_command` that goes through the command policy.
+  ///
+  /// Gated exactly as `writeFile` is: refusals first, then a remote task's confirmation or an
+  /// untrusted desktop root's approval queue -- the human sees the file's content as removed lines.
+  Future<Map<String, Object?>> deleteFile(Map<String, dynamic> params, {String? callId}) async {
+    _refresh();
+    final remote = _checkRemote(params);
+    final path = _requireString(params, 'path');
+    final taskId = params['task_id'] as String?;
+    final root = await _rootForFileOp(taskId, path);
+    final entry = _entryPath(root, path);
+    _refuseGitInternals(entry, verb: 'delete');
+
+    final type = FileSystemEntity.typeSync(entry, followLinks: false);
+    if (type == FileSystemEntityType.notFound) throw RpcError('"$path" does not exist');
+    if (type == FileSystemEntityType.directory) {
+      throw RpcError(
+        '"$path" is a directory -- delete_file removes one file at a time; use run_command to '
+        'remove a directory',
+      );
+    }
+
+    if (remote) {
+      _requireRemoteConfirmation(params, 'delete_file');
+    } else if (evaluateWrite(workspaceTrusted: root.trusted).decision ==
+        CommandDecision.needsApproval) {
+      var preview = 'delete symbolic link $path';
+      if (type == FileSystemEntityType.file) {
+        final List<int> bytes;
+        try {
+          bytes = File(entry).readAsBytesSync();
+        } on FileSystemException catch (error) {
+          throw RpcError('could not read "$path" to show what would be deleted: ${error.message}');
+        }
+        try {
+          preview = unifiedDiff(path: path, before: utf8.decode(bytes), after: '');
+        } on FormatException {
+          // Not text: show what is known rather than refuse to ask.
+          preview = 'delete binary file $path (${bytes.length} bytes)';
+        }
+      }
+      await _awaitEntryApproval(
+        path: path,
+        preview: preview,
+        root: root,
+        verb: 'delete',
+        callId: callId,
+        entries: [entry],
+      );
+    }
+
+    // Re-derive from the grants as they stand now: an approval can have outlived a revoke.
+    final current = _currentGrantFor(root) ?? (throw RpcError('workspace root is no longer granted'));
+    final target = _entryPath(current, path);
+    try {
+      if (FileSystemEntity.typeSync(target, followLinks: false) == FileSystemEntityType.link) {
+        Link(target).deleteSync();
+      } else {
+        File(target).deleteSync();
+      }
+    } on FileSystemException catch (error) {
+      throw RpcError('could not delete "$path": ${error.message}');
+    }
+    return {'deleted': path};
+  }
+
+  /// Rename (move) one entry inside a granted root. Both ends must lie in the same root; the
+  /// destination must not exist -- a rename never silently replaces a file, because that would be
+  /// a delete the person did not see.
+  Future<Map<String, Object?>> renameFile(Map<String, dynamic> params, {String? callId}) async {
+    _refresh();
+    final remote = _checkRemote(params);
+    final path = _requireString(params, 'path');
+    final newPath = _requireString(params, 'new_path');
+    final taskId = params['task_id'] as String?;
+    final root = await _rootForFileOp(taskId, path);
+    final source = _entryPath(root, path);
+    final destination = _entryPath(root, newPath);
+    _refuseGitInternals(source, verb: 'rename');
+    _refuseGitInternals(destination, verb: 'rename');
+
+    final sourceType = FileSystemEntity.typeSync(source, followLinks: false);
+    if (sourceType == FileSystemEntityType.notFound) throw RpcError('"$path" does not exist');
+    if (FileSystemEntity.typeSync(destination, followLinks: false) != FileSystemEntityType.notFound) {
+      throw RpcError('"$newPath" already exists -- rename never replaces an existing entry');
+    }
+    if (sourceType == FileSystemEntityType.directory && p.isWithin(source, destination)) {
+      throw RpcError('cannot move "$path" into itself ("$newPath")');
+    }
+
+    if (remote) {
+      _requireRemoteConfirmation(params, 'rename_file');
+    } else if (evaluateWrite(workspaceTrusted: root.trusted).decision ==
+        CommandDecision.needsApproval) {
+      await _awaitEntryApproval(
+        path: '$path -> $newPath',
+        preview: 'rename $path -> $newPath',
+        root: root,
+        verb: 'rename',
+        callId: callId,
+        entries: [source, destination],
+      );
+    }
+
+    final current = _currentGrantFor(root) ?? (throw RpcError('workspace root is no longer granted'));
+    final from = _entryPath(current, path);
+    final to = _entryPath(current, newPath);
+    try {
+      Directory(p.dirname(to)).createSync(recursive: true);
+      switch (sourceType) {
+        case FileSystemEntityType.directory:
+          Directory(from).renameSync(to);
+        case FileSystemEntityType.link:
+          Link(from).renameSync(to);
+        default:
+          File(from).renameSync(to);
+      }
+    } on FileSystemException catch (error) {
+      throw RpcError('could not rename "$path" to "$newPath": ${error.message}');
+    }
+    return {'renamed': path, 'to': newPath};
+  }
+
+  /// Approval for a delete or rename: queue it with [preview] as what the person reviews, wait for
+  /// the answer, then check the grants and every entry in [entries] are still as they were when the
+  /// preview was made (type, size, modification time -- and a destination that was absent is still
+  /// absent).
+  Future<void> _awaitEntryApproval({
+    required String path,
+    required String preview,
+    required WorkspaceRoot root,
+    required String verb,
+    required List<String> entries,
+    String? callId,
+  }) async {
+    final before = {for (final e in entries) e: _entryFingerprint(e)};
+    final PendingApproval approval;
+    try {
+      approval = _approvals.createForWrite(
+        operations: [WriteOp(path: path, finalContent: '')],
+        diffText: preview,
+        cwd: root.canonicalPath,
+        rootPath: root.canonicalPath,
+      );
+    } on ApprovalQueueFullError catch (error) {
+      throw RpcError(error.message, code: error.code);
+    }
+    await _awaitDecision(approval, callId: callId, verb: verb, subject: path);
+
+    _refresh();
+    if (_currentGrantFor(root) == null) {
+      throw RpcError('workspace root is no longer granted -- refusing approved $verb: $path');
+    }
+    for (final entry in before.entries) {
+      if (_entryFingerprint(entry.key) != entry.value) {
+        throw RpcError(
+          '"$path" changed on disk since this $verb was approved -- refusing, ask again to '
+          'review the current state',
+        );
+      }
+    }
+  }
+
   Future<Map<String, Object?>> readFile(Map<String, dynamic> params) async {
     _refresh();
     // Read-only: no confirmation for a remote task, but it still stops once remote control is off.
@@ -843,25 +1071,7 @@ class TaskHandler {
       throw RpcError(error.message, code: error.code); // G-21
     }
     final pathList = operations.map((o) => o.path).join(', ');
-    _trackApproval(callId, approval);
-    final ApprovalStatus status;
-    try {
-      status = await _approvals.awaitDecision(approval);
-    } finally {
-      _untrackApproval(callId);
-    }
-    switch (status) {
-      case ApprovalStatus.approved:
-        break;
-      case ApprovalStatus.rejected:
-        throw RpcError('write was rejected by the user: $pathList');
-      case ApprovalStatus.expired:
-        throw RpcError('write approval timed out waiting for a response: $pathList');
-      case ApprovalStatus.cancelled:
-        throw RpcError('write approval was cancelled: $pathList');
-      case ApprovalStatus.pending:
-        throw RpcError('write approval resolved with no decision -- this should not happen');
-    }
+    await _awaitDecision(approval, callId: callId, verb: 'write', subject: pathList);
 
     // G-05: re-read the grants, then re-derive *this* root from them (an isolated worktree, not
     // the folder it sits in, so relative paths are re-read where they will be written).
@@ -879,6 +1089,35 @@ class TaskHandler {
           'no longer reflects the current file, refusing to write',
         );
       }
+    }
+  }
+
+  /// Blocks until a human answers [approval], then throws unless they approved it. [verb] and
+  /// [subject] only shape the message ("write was rejected by the user: a.txt").
+  Future<void> _awaitDecision(
+    PendingApproval approval, {
+    required String? callId,
+    required String verb,
+    required String subject,
+  }) async {
+    _trackApproval(callId, approval);
+    final ApprovalStatus status;
+    try {
+      status = await _approvals.awaitDecision(approval);
+    } finally {
+      _untrackApproval(callId);
+    }
+    switch (status) {
+      case ApprovalStatus.approved:
+        return;
+      case ApprovalStatus.rejected:
+        throw RpcError('$verb was rejected by the user: $subject');
+      case ApprovalStatus.expired:
+        throw RpcError('$verb approval timed out waiting for a response: $subject');
+      case ApprovalStatus.cancelled:
+        throw RpcError('$verb approval was cancelled: $subject');
+      case ApprovalStatus.pending:
+        throw RpcError('$verb approval resolved with no decision -- this should not happen');
     }
   }
 

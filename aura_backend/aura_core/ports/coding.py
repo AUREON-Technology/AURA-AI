@@ -257,6 +257,22 @@ class SandboxRunner(Protocol):
         """
         ...
 
+    async def delete_file(self, handle: SandboxHandle, path: str) -> None:
+        """Delete one file (or symlink) -- never a directory -- inside the workspace.
+
+        Raises if the path escapes the workspace, does not exist, names a directory, or is inside a
+        ``.git`` directory. The desktop daemon enforces the same rules on the user's machine and
+        additionally asks the person first in a folder they have not marked trusted.
+        """
+        ...
+
+    async def rename_file(self, handle: SandboxHandle, path: str, new_path: str) -> None:
+        """Move ``path`` to ``new_path`` inside the workspace. Both must resolve inside it and
+        neither may be in a ``.git`` directory; the destination must not exist (a rename never
+        replaces), and a directory cannot be moved into itself. Parent directories of the
+        destination are created."""
+        ...
+
     async def destroy(self, handle: SandboxHandle) -> None:
         ...
 

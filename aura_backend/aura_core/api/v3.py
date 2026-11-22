@@ -41,6 +41,7 @@ from ..domain.agent_runs import AgentRunStatus
 from ..domain.custom_agents import is_custom_agent_id
 from ..domain.identifiers import AgentRunId, CorrelationId, DocumentId, SessionId, TurnId, UserId
 from ..domain.engineering import ENGINEER_CONSENT_NOTICE_VERSION
+from ..domain.repository_identity import RepositoryIdentity
 from ..domain.llm import RoutingPolicy, WorkloadClass
 from ..llm.workload import workload_class_for_turn
 from ..text.language import CLIENT_LANGUAGE_HEADER, normalize_language
@@ -54,6 +55,7 @@ from ..kernel.kernel import TurnRequest
 from ..observability.logging import get_logger
 from ..ports.runtime import AuditEvent
 from ..prompts import PIN_SYNC_INTERVAL_S
+from ..tools.workspaces import WorkspaceCapacityError
 from ..security.rate_limit import extract_client_ip
 from .admin import register_admin_ops
 
@@ -1796,6 +1798,19 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             }
         )
 
+    def _workspace_body(w: Any, ttl_hours: float) -> dict[str, Any]:
+        """One workspace as the routes show it. ``expires_at`` is computed from the deployment's TTL
+        rather than stored, so changing the TTL does not leave rows advertising the old one."""
+        return {
+            "id": w.id.value,
+            "repo": w.repo,
+            "status": w.status,
+            "branch": w.branch,
+            "created_at": w.created_at.isoformat(),
+            "last_active_at": w.last_active_at.isoformat(),
+            "expires_at": (w.last_active_at + timedelta(hours=ttl_hours)).isoformat(),
+        }
+
     @router.get("/engineering/workspaces")
     async def list_agent_workspaces(caller: Principal = Depends(principal)) -> JSONResponse:
         """The caller's persistent engineer-agent workspaces.
@@ -1813,21 +1828,58 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             content={
                 "enabled": True,
                 "ttl_hours": ttl_hours,
-                "workspaces": [
-                    {
-                        "id": w.id.value,
-                        "repo": w.repo,
-                        "status": w.status,
-                        "branch": w.branch,
-                        "created_at": w.created_at.isoformat(),
-                        "last_active_at": w.last_active_at.isoformat(),
-                        "expires_at": (
-                            w.last_active_at + timedelta(hours=ttl_hours)
-                        ).isoformat(),
-                    }
-                    for w in rows
-                ],
+                "workspaces": [_workspace_body(w, ttl_hours) for w in rows],
             }
+        )
+
+    class CreateWorkspaceRequest(BaseModel):
+        repo: str = Field(
+            min_length=3, max_length=400,
+            description="The repository this workspace is for: 'owner/name' or a GitHub URL.",
+        )
+
+    @router.post("/engineering/workspaces", dependencies=idempotent)
+    async def create_agent_workspace(
+        payload: CreateWorkspaceRequest, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Create (or resume) the caller's persistent workspace for a repository, outside a chat turn.
+
+        This is the server-side workspace of ADR-013: a durable checkout directory keyed by
+        (user, repository), the one ``open_workspace`` opens for the agent. **It creates the
+        workspace, it does not clone into it** -- the repository arrives when the agent (or a
+        ``run_command``) clones it, which needs the user's GitHub connection. It is empty until then.
+
+        Opening is an admission decision (memory, how many exist); a host that cannot afford another
+        is 503 rather than a workspace that dies mid-build. The workspace is stopped again straight
+        away -- nothing is using it yet, and a stopped one holds no memory (the next turn resumes
+        it). 201 when it is new, 200 when it already existed.
+        """
+        if not await engineer_granted(caller):
+            raise HTTPException(
+                status_code=403,
+                detail=AuthorizationError("the Engineer is not available to this account").to_dict(),
+            )
+        manager = container.workspace_manager
+        if manager is None:
+            raise HTTPException(status_code=404, detail="workspaces are not enabled")
+        identity = RepositoryIdentity.parse_or_none(payload.repo)
+        if identity is None:
+            raise ValidationError("repo must be 'owner/name' or a GitHub URL", details={"field": "repo"})
+        existed = await manager.get(caller.user_id, identity.slug) is not None
+        try:
+            opened = await manager.open(caller.user_id, identity.slug)
+        except WorkspaceCapacityError as exc:  # the host cannot afford another workspace right now
+            raise DependencyUnavailableError(str(exc), dependency="workspace_capacity") from exc
+        await manager.pause(opened.record.id)
+        record = await manager.get(caller.user_id, identity.slug) or opened.record
+        ttl_hours = container.settings.sandbox.workspace_ttl_hours
+        return JSONResponse(
+            status_code=200 if existed else 201,
+            content={
+                "workspace": _workspace_body(record, ttl_hours),
+                "created": not existed,
+                "evicted": list(opened.evicted),
+            },
         )
 
     @router.delete("/engineering/workspaces/{workspace_id}", dependencies=idempotent)

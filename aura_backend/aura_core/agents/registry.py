@@ -270,7 +270,8 @@ def build_default_agent_registry() -> AgentRegistry:
                     # engineer_agent capability but missing here, so the persona could never use
                     # it (audit FSA-057). tests/unit/test_agents.py pins that every tool the
                     # sandbox and code-host builders register for the capability is granted.
-                    "write_file", "write_files", "edit_file", "run_command", "clone_repository",
+                    "write_file", "write_files", "edit_file", "delete_file", "rename_file", "run_command",
+                    "clone_repository",
                     "git_diff", "git_commit", "git_checkout_branch", "git_status", "git_push",
                     # Persistent workspaces (ADR-013). Only registered when a deployment wires a
                     # workspace manager, so naming them here is a grant, not a guarantee they
