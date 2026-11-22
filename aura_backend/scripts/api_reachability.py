@@ -60,6 +60,7 @@ TRIAGE = (
     ("/api/v3/admin/", "to wire: admin console page missing for this route"),
     ("/api/v3/learning/", "to wire or remove: learning surface with no caller (GAP-013)"),
     ("/api/v3/me", "to wire: profile read/update and password change have no app screen yet; register and forgot/reset password stay in the client's Firebase SDK (api/me.py)"),
+    ("/api/v3/turns/", "to wire: usage by turn id (read it later); the app already gets the same numbers inline on /chat and the stream's done frame"),
     ("/api/v3/tools", "to wire: tool catalogue is not shown anywhere"),
     ("/api/v3/workspaces", "client: team workspaces, plan, billing and shared chats are called from aura_client/lib/features/workspaces/data/workspaces_client.dart through AuraApiClient's string-built paths (SaaS P1-F2)"),
 )

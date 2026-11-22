@@ -15,6 +15,7 @@ time; injecting it is what makes those testable without ``sleep`` or monkey-patc
 from __future__ import annotations
 
 import asyncio
+import hmac
 import time
 import uuid
 from collections import deque
@@ -319,6 +320,23 @@ class InMemoryTelemetrySink:
     async def purge_sessions(self, session_ids) -> int:
         doomed = {str(s) for s in session_ids}
         kept = [t for t in self._turns if t.session_id is None or t.session_id.value not in doomed]
+        purged = len(self._turns) - len(kept)
+        self._turns.clear()
+        self._turns.extend(kept)
+        return purged
+
+    async def get_turn_usage(self, turn_id: str, owner_ref: str) -> dict | None:
+        if not owner_ref:
+            return None
+        for t in self._turns:
+            if t.turn_id.value == turn_id and t.owner_ref and hmac.compare_digest(t.owner_ref, owner_ref):
+                return t.usage_view()
+        return None
+
+    async def purge_owner(self, owner_ref: str) -> int:
+        if not owner_ref:
+            return 0
+        kept = [t for t in self._turns if t.owner_ref != owner_ref]
         purged = len(self._turns) - len(kept)
         self._turns.clear()
         self._turns.extend(kept)

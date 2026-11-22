@@ -24,6 +24,7 @@ __all__ = [
     "ToolTelemetry",
     "TurnOutcome",
     "TurnTelemetry",
+    "usage_view_from",
 ]
 
 
@@ -128,6 +129,11 @@ class TurnTelemetry:
     correlation_id: CorrelationId
     turn_id: TurnId
     session_id: SessionId | None = None
+    #: A keyed one-way reference to the turn's owner (``aura_core.security.owner_ref``), so the
+    #: owner can read this turn's usage back and nobody else can. Not the user id, and
+    #: deliberately absent from ``as_dict``: it goes to the sink's own column and nowhere else
+    #: (no log line, no metric label, no payload JSON).
+    owner_ref: str | None = None
     route: str = "chat"
     agent: str = "orchestrator"
     strategy: str = "direct"
@@ -235,6 +241,12 @@ class TurnTelemetry:
     def with_timing(self, **stages: float) -> "TurnTelemetry":
         return replace(self, timings=replace(self.timings, **stages))
 
+    def usage_view(self) -> dict[str, Any]:
+        """What the owner may read back about this turn's consumption: counts, cost, which model
+        served it, how long it took. Nothing from the conversation and nothing that identifies
+        anyone (``owner_ref`` is not here)."""
+        return usage_view_from(self.as_dict(), started_at=self.started_at)
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "correlation_id": self.correlation_id.value,
@@ -300,3 +312,34 @@ class TurnTelemetry:
             "degraded_reasons": list(self.degraded_reasons),
             "started_at": self.started_at.isoformat(),
         }
+
+
+def usage_view_from(record: Mapping[str, Any], *, started_at: Any) -> dict[str, Any]:
+    """The owner-facing usage view of a stored ``TurnTelemetry.as_dict()``.
+
+    One function for the in-memory and the Postgres sink, so the two cannot drift apart. ``record``
+    is the stored payload, which never held content or identity.
+    """
+    tokens = record.get("tokens") or {}
+    latency = record.get("latency") or {}
+    when = started_at.isoformat() if hasattr(started_at, "isoformat") else started_at
+    return {
+        "turn_id": record.get("turn_id"),
+        "session_id": record.get("session_id"),
+        "started_at": when,
+        "outcome": record.get("outcome"),
+        "provider": record.get("provider"),
+        "model": record.get("model"),
+        "cached": bool((record.get("cache") or {}).get("hit")),
+        "degraded": bool(record.get("degraded")),
+        "usage": {
+            "prompt_tokens": int(tokens.get("prompt") or 0),
+            "completion_tokens": int(tokens.get("completion") or 0),
+            "total_tokens": int(tokens.get("total") or 0),
+            "estimated": bool(tokens.get("estimated")),
+            "generations": int(tokens.get("generations") or 0),
+            "by_purpose": tokens.get("by_purpose") or {},
+            "cost_usd": float(record.get("cost_usd") or 0.0),
+        },
+        "latency_ms": latency.get("total_ms"),
+    }

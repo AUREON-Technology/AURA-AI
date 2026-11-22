@@ -411,6 +411,13 @@ async def _erase_core(
     await step("personal_os_records", personal_os)
     await step("conversations", conversations)
     await step("telemetry_turns", lambda: container.telemetry_sink.purge_sessions(conversation_ids))
+    make_ref = getattr(container, "owner_ref", None)
+    owner_ref = make_ref(owner) if make_ref is not None else None
+    if owner_ref:
+        # A turn's usage is tied to its owner by a keyed reference (migration 0033). It is
+        # pseudonymous personal data, and `purge_sessions` cannot find a session the server never
+        # learned the id of, so the reference is what erasure deletes by.
+        await step("telemetry_owner_turns", lambda: container.telemetry_sink.purge_owner(owner_ref))
     sharing = getattr(container, "sharing", None)
     if sharing is not None:
         # Copies they shared into teams are theirs to take back (review F1#7).

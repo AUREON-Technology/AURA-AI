@@ -316,6 +316,10 @@ class KernelDependencies:
     metrics: Any = None
     event_bus: Any = None
     telemetry_sink: Any = None
+    #: ``user id -> keyed reference`` (``aura_core.security.owner_ref``) stamped on each turn's
+    #: telemetry so its owner can read the usage back. ``None`` leaves turns unowned: their
+    #: usage is then readable by no one.
+    owner_ref: Callable[[str], str | None] | None = None
     clock: Any = None
     settings: Any = None
     models: Any = None
@@ -716,6 +720,7 @@ class AIKernel:
             correlation_id=correlation,
             turn_id=turn_id,
             session_id=request.session_id,
+            owner_ref=self._owner_ref(request),
             route=request.route,
             agent=request.agent,
             strategy=str(strategy),
@@ -1105,6 +1110,7 @@ class AIKernel:
                     correlation_id=correlation,
                     turn_id=turn_id,
                     session_id=request.session_id,
+                    owner_ref=self._owner_ref(request),
                     route=request.route,
                     agent=request.agent,
                     outcome=TurnOutcome.SUCCESS,
@@ -2911,6 +2917,7 @@ class AIKernel:
             correlation_id=correlation,
             turn_id=turn_id,
             session_id=request.session_id,
+            owner_ref=self._owner_ref(request),
             route=request.route,
             agent=request.agent,
             outcome=outcome,
@@ -2950,6 +2957,21 @@ class AIKernel:
                 self._metrics.observe_turn(telemetry)
             except Exception:  # pragma: no cover - defensive
                 logger.debug("metric observation failed", exc_info=True)
+
+    def _owner_ref(self, request: "TurnRequest") -> str | None:
+        """The turn owner's keyed reference, or ``None`` when no maker is wired or it fails.
+
+        Telemetry must never fail the turn it describes, so a maker that raises leaves the turn
+        unowned (unreadable) rather than breaking it.
+        """
+        make = self._deps.owner_ref
+        if make is None:
+            return None
+        try:
+            return make(request.user_id.value)
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("owner reference could not be derived", exc_info=True)
+            return None
 
     async def _persist_telemetry(self, telemetry: TurnTelemetry) -> None:
         """The I/O half: the telemetry sink and the ``TurnCompleted`` event."""

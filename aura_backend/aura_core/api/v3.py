@@ -36,7 +36,7 @@ from ..domain.errors import (
 )
 from ..domain.caller_context import MAX_CALLER_CONTEXT, CallerContext
 from ..domain.connectors import CONNECTOR_ID_PATTERN, Credential
-from ..domain.identifiers import CorrelationId, DocumentId, SessionId, UserId
+from ..domain.identifiers import CorrelationId, DocumentId, SessionId, TurnId, UserId
 from ..domain.engineering import ENGINEER_CONSENT_NOTICE_VERSION
 from ..domain.llm import RoutingPolicy, WorkloadClass
 from ..llm.workload import workload_class_for_turn
@@ -1591,6 +1591,38 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             raise ValidationError("session id is not a valid identifier") from exc
         await container.episodic.clear(session, caller.user_id)
         return JSONResponse(content={"deleted": True})
+
+    # -- per-turn usage ----------------------------------------------------------------
+
+    @router.get("/turns/{turn_id}/usage")
+    async def turn_usage(
+        request: Request, turn_id: str, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """What one of the caller's own turns consumed: tokens by purpose, cost, model, latency.
+
+        ``turn_id`` is the one ``/chat`` and the stream's ``done`` frame return. The same numbers
+        come back inline on that response; this is for reading them later, when the client did
+        not keep them. Content-free, like the telemetry it reads.
+
+        Owner-scoped by a keyed reference stamped on the turn (``aura_core.security.owner_ref``),
+        because the telemetry table holds no user id. A turn that does not exist, is someone
+        else's, or was recorded before ownership was tracked all answer the same 404, so a turn
+        id cannot be probed for existence. A deployment with no signing secret has no references
+        and therefore answers 404 for every turn: it fails closed.
+        """
+        await enforce_rate_limit(request, caller, "read")
+        try:
+            TurnId(turn_id)
+        except ValueError as exc:
+            raise ValidationError("turn id is not a valid identifier") from exc
+        make_ref = getattr(container, "owner_ref", None)
+        owner_ref = make_ref(caller.user_id.value) if make_ref is not None else None
+        usage = (
+            await container.telemetry_sink.get_turn_usage(turn_id, owner_ref) if owner_ref else None
+        )
+        if usage is None:
+            raise NotFoundError(f"turn {turn_id!r} not found", details={"turn_id": turn_id})
+        return JSONResponse(content=usage)
 
     # -- feedback ----------------------------------------------------------------------
 

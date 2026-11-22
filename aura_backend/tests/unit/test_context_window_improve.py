@@ -84,7 +84,13 @@ class TestCountEachItemOnce:
         for message in _history(6):
             assert tokenizer.seen[message.content] <= 1, message.content
 
-    def test_history_is_counted_once_even_when_the_cap_drops_messages(self) -> None:
+    def test_history_is_counted_once_even_when_the_cap_drops_messages(self, monkeypatch) -> None:
+        # The turn's fence nonce is random (``secrets.token_hex(6)``) and is part of the prompt
+        # the cap is fitted against. The heuristic counts a digit/letter-alternating nonce as
+        # more tokens than a uniform one, so this prompt's irreducible floor ranged from 188 to
+        # 207 against a cap of 200 and the assertion below failed about one run in thirty.
+        # Fixing the nonce makes the floor deterministic (194) without loosening the cap.
+        monkeypatch.setattr("aura_core.domain.context.secrets.token_hex", lambda _n: "0" * 12)
         tokenizer = CountingTokenizer()
         long_history = Conversation.of(
             [Message.user("tell me more " * 30), Message.assistant("here is more " * 30)] * 3
