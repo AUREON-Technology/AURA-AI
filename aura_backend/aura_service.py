@@ -143,6 +143,7 @@ def _mount_platform_routers(app) -> None:
     from api.admin_platform import router as admin_platform_router
     from api.automation import router as automation_router
     from api.learning import router as learning_router
+    from api.me import router as me_router
     from api.v2.auth import router as auth_router
     from api.v2.github_integration import router as github_integration_router
     from api.v2.insights import router as insights_router
@@ -155,6 +156,7 @@ def _mount_platform_routers(app) -> None:
     app.include_router(learning_router)
     app.include_router(admin_platform_router)
     app.include_router(account_router)
+    app.include_router(me_router)
     app.include_router(github_integration_router)
 
 
