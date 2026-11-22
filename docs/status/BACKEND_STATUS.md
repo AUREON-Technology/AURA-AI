@@ -269,8 +269,8 @@ That needs a check in the Firebase console.
   - No migration.
 
   TESTED locally:
-  - default `pytest`: 6647 passed, 12 failed, 50 skipped (the same 12 `tools/open` failures
-    already on `main`);
+  - default `pytest` after merging `main` at `7591762f`: 6952 passed, 0 failed, 55 skipped
+    (`main` had fixed the 12 `tools/open` failures);
   - legacy `unittest`: 148 OK.
 
   Not CI-run (CB-44). Not proven: no live Railway call has been made with a real project token.
