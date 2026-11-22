@@ -592,3 +592,27 @@ class TestPersonaGrantsAgainstTheRealToolSet:
         decision = ToolPolicy().evaluate(remember, context=_ctx(tainted=True))
         assert decision.requires_confirmation
         assert re.fullmatch(r"side_effect_in_tainted_context", decision.reason)
+
+
+class TestRefusalsAndHoldsAreAudited:
+    @staticmethod
+    def _registry(audit: _Audit) -> ToolRegistry:
+        @tool("save", "s", param("n", "integer", "n"), sensitivity=ToolSensitivity.PERSONAL,
+              side_effecting=True)
+        async def save(n: int) -> str:
+            return "saved"
+
+        registry = ToolRegistry(audit=audit)
+        registry.register(save)
+        return registry
+
+    async def test_invalid_arguments_leave_an_audit_record_with_a_digest_not_the_values(self) -> None:
+        audit = _Audit()
+        await self._registry(audit).execute(_call("save", {"n": "secret-value"}), _ctx())
+        assert audit.events == [("tool.save", "denied", "invalid_arguments", "save")]
+
+    async def test_a_call_held_for_confirmation_leaves_an_audit_record(self) -> None:
+        audit = _Audit()
+        _, report = await self._registry(audit).execute(_call("save", {"n": 1}), _ctx(tainted=True))
+        assert report.needs_confirmation
+        assert audit.events == [("tool.save", "needs_confirmation", "side_effect_in_tainted_context", "save")]

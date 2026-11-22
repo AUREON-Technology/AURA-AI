@@ -336,6 +336,7 @@ class ToolRegistry:
             arguments = validate_arguments(spec, call.arguments)
         except ValidationError as exc:
             self._observe(name, outcome="invalid_arguments")
+            await self._audit_call(name, context, "denied", arguments_digest, "invalid_arguments")
             # Argument values are not logged (they can carry user content); the keys and the
             # validator's own message are enough to tell a bad name from a bad value.
             logger.warning(
@@ -385,6 +386,11 @@ class ToolRegistry:
             )
         if decision.requires_confirmation and not confirmed:
             self._observe(name, outcome="needs_confirmation")
+            # A held call is an attempt like a refused one: "a tainted turn tried to write and was
+            # stopped for confirmation" is the event a reviewer looks for, and until now it left
+            # only a metric and a same-user response.
+            await self._audit_call(name, context, "needs_confirmation", arguments_digest,
+                                   decision.reason)
             # D6: give the human something to review beyond the raw arguments, when the tool can
             # produce one. A preview failure must never block confirmation itself -- the call is
             # already going to sit in confirm-required limbo either way, so this degrades to "no
