@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from api.v2.sync import (
+    _LEGACY_PULL_TABLES,
     _PULL_TABLES,
     CLIENT_CLOCK_SKEW_ALLOWANCE,
     PageToken,
@@ -27,7 +28,8 @@ from api.v2.sync import (
 from infrastructure.db.models import SYNC_TXID_SQL, SYNCABLE_MODELS, Task
 
 NOW = datetime(2026, 10, 28, 12, 0, tzinfo=timezone.utc)
-_MIGRATION = Path(__file__).resolve().parents[2] / "alembic" / "versions" / "0014_sync_txid_cursor.py"
+_MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "alembic" / "versions"
+_MIGRATION = _MIGRATIONS_DIR / "0014_sync_txid_cursor.py"
 
 
 def _migration():
@@ -89,10 +91,23 @@ class TestSyncTxidColumn:
             assert ("user_id", "sync_txid") in indexed, table
 
     def test_the_migration_covers_every_syncable_table_with_the_same_default(self) -> None:
+        """0014 added the txid column to the eight tables that existed. A table added to the sync
+        since creates its own txid column and index in the migration that creates it, with the
+        same default: ``_LATER`` names each, and the two sets together must be every syncable
+        table, so a new one cannot join the sync without a txid."""
         migration = _migration()
-        assert set(migration._SYNCABLE_TABLES) == set(SYNCABLE_MODELS)
         assert migration.SYNC_TXID_SQL == SYNC_TXID_SQL
         assert migration.down_revision == "0013"
+        created_later = {"conversations": _MIGRATIONS_DIR / "0034_conversations.py"}
+        assert set(migration._SYNCABLE_TABLES) | set(created_later) == set(SYNCABLE_MODELS)
+        assert not set(migration._SYNCABLE_TABLES) & set(created_later)
+        for table, path in created_later.items():
+            spec = importlib.util.spec_from_file_location(f"migration_{path.stem}", path)
+            later = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(later)
+            assert later.SYNC_TXID_SQL == SYNC_TXID_SQL, table
+            source = path.read_text(encoding="utf-8")
+            assert '"sync_txid"' in source and f'"ix_{table}_user_sync_txid"' in source, table
 
 
 class TestPageToken:
@@ -120,7 +135,14 @@ class TestPageToken:
         assert decode_page(encode_page(PageToken(since=None, cursor=901, table=0)), xmax=900) is None
 
     def test_tables_are_walked_in_a_fixed_order_covering_every_one(self) -> None:
-        assert list(_PULL_TABLES) == sorted(SYNCABLE_MODELS)
+        """The order is part of the protocol (a token's ``table`` indexes it, and another gateway
+        instance may read the token mid-deploy): the original eight keep their sorted positions
+        and every table added since is appended, sorted. See ``tests/unit/test_chats_api.py``."""
+        assert sorted(_PULL_TABLES) == sorted(SYNCABLE_MODELS) and len(set(_PULL_TABLES)) == len(_PULL_TABLES)
+        original = [t for t in _PULL_TABLES if t in _LEGACY_PULL_TABLES]
+        assert list(_PULL_TABLES[: len(original)]) == original == sorted(original)
+        appended = list(_PULL_TABLES[len(original):])
+        assert appended == sorted(appended) and not set(appended) & _LEGACY_PULL_TABLES
 
 
 class TestSameBatchTie:

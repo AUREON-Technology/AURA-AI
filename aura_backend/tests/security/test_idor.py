@@ -138,6 +138,20 @@ COVERED = {
         "TestWorkspaces::test_bob_cannot_unshare_alices_shared_chat",
     ("POST", "/api/v3/workspaces/{workspace_id}/billing/store-token"):
         "TestWorkspaces::test_bob_cannot_bind_a_purchase_to_alices_workspace",
+    ("GET", "/api/v3/chats/{chat_id}"):
+        "Postgres-only route (api/chats.py, FULL JOIN over messages and conversations): every statement is scoped to the caller's user row and a stranger's chat id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_chats_postgres.py::test_bob_cannot_see_change_or_delete_alices_chat_and_the_same_key_is_separate",
+    ("PATCH", "/api/v3/chats/{chat_id}"):
+        "Postgres-only route (api/chats.py, FULL JOIN over messages and conversations): every statement is scoped to the caller's user row and a stranger's chat id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_chats_postgres.py::test_bob_cannot_see_change_or_delete_alices_chat_and_the_same_key_is_separate",
+    ("DELETE", "/api/v3/chats/{chat_id}"):
+        "Postgres-only route (api/chats.py, FULL JOIN over messages and conversations): every statement is scoped to the caller's user row and a stranger's chat id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_chats_postgres.py::test_bob_cannot_see_change_or_delete_alices_chat_and_the_same_key_is_separate",
+    ("POST", "/api/v3/chats/{chat_id}/archive"):
+        "Postgres-only route (api/chats.py, FULL JOIN over messages and conversations): every statement is scoped to the caller's user row and a stranger's chat id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_chats_postgres.py::test_bob_cannot_see_change_or_delete_alices_chat_and_the_same_key_is_separate",
+    ("POST", "/api/v3/chats/{chat_id}/unarchive"):
+        "Postgres-only route (api/chats.py, FULL JOIN over messages and conversations): every statement is scoped to the caller's user row and a stranger's chat id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_chats_postgres.py::test_bob_cannot_see_change_or_delete_alices_chat_and_the_same_key_is_separate",
+    ("POST", "/api/v3/chats/{chat_id}/pin"):
+        "Postgres-only route (api/chats.py, FULL JOIN over messages and conversations): every statement is scoped to the caller's user row and a stranger's chat id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_chats_postgres.py::test_bob_cannot_see_change_or_delete_alices_chat_and_the_same_key_is_separate",
+    ("POST", "/api/v3/chats/{chat_id}/unpin"):
+        "Postgres-only route (api/chats.py, FULL JOIN over messages and conversations): every statement is scoped to the caller's user row and a stranger's chat id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_chats_postgres.py::test_bob_cannot_see_change_or_delete_alices_chat_and_the_same_key_is_separate",
     ("POST", "/api/v3/insights/{insight_id}/dismiss"):
         "Postgres-only route (api/v2/insights.py): `row.user_id != user.id` -> 404; exercised "
         "against a real database by test_insights_integration.py in the legacy suite",
