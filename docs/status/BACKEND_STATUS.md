@@ -7,6 +7,8 @@
 
 ## Summary
 
+**Update 2026-11-22, `/api/v3/me` (branch `anas/laughing-darwin-6g7r2l`, TESTED locally, not CI-run or deployed).** `GET /me`, `PATCH /me` (display name, photo, language, time zone; the email is refused) and `POST /me/password` (`aura_backend/api/me.py`). Sign-in and the password stay at Firebase: this server stores no password. A password change needs a Firebase ID token from signing in with the *current* password in the last 5 minutes, for the same account, then revokes every session and paired device. Register and forgot/reset password remain in the client's Firebase SDK. 41 new tests in `tests/unit/test_me_profile.py` (a mutation of the freshness and account checks makes 3 of them fail); `tests/architecture` and the neighbouring auth tests: 544 passed. The Firebase calls are replaced by a scripted provider, so nothing has run against a real Firebase project, and there is no app screen yet (`docs/guides/api-reachability.md`, triaged "to wire"). A full `pytest -x` stopped at `test_context_window_improve.py::TestCountEachItemOnce::test_history_is_counted_once_even_when_the_cap_drops_messages`, which passes alone and as a file and runs before any of the new code's tests, so it looks order-dependent rather than caused by this change; the rest of that run did not execute.
+
 **Update 2026-11-18, Phase R (same branch, TESTED locally, not CI-run or deployed).** On Railway,
 `/metrics` was answered by one random uvicorn worker per scrape. The image `CMD` now shares one
 `PROMETHEUS_MULTIPROC_DIR`. Tracing produced no spans at all; requests, provider attempts and turns
