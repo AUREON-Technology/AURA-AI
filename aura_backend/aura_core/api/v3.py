@@ -2410,6 +2410,10 @@ def build_app(
     @app.on_event("startup")
     async def on_startup() -> None:
         await container.startup()
+        # The gateway, not a Celery worker, watches control-center changes (ADR-037).
+        start = getattr(container, "start_control_reconciler", None)
+        if start is not None:
+            start()
 
     @app.on_event("shutdown")
     async def on_shutdown() -> None:

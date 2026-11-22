@@ -21,24 +21,30 @@ Plan and user decisions: [`docs/plans/console-subdomain-plan.md`](../plans/conso
 
 **Re-read against commit:** `b2e14c4` (2026-11-08) for every row dated 2026-11-07 or later (their live checks came first; the re-read confirmed that tree holds what they describe); older rows carry the commit they were checked at. Refresh this line whenever a row is re-verified (audit FSA-120).
 
-## Settings becomes the Super-Admin control center (2026-11-21, stage 1)
+## Settings becomes the Super-Admin control center (stage 1 2026-11-21, stages 2-4 2026-11-22)
 
 Plan and user decisions: [`docs/plans/console-control-center-plan.md`](../plans/console-control-center-plan.md);
-design: [ADR-037](../architecture/037-console-control-center.md); gap: GAP-067. Branch
-`anas/laughing-hamilton-glfevj`, unmerged.
+design: [ADR-037](../architecture/037-console-control-center.md); gap: GAP-067. Stage 1 merged
+(#275, #276, live at `85258222`); stages 2-4 on branch `anas/laughing-hamilton-glfevj` (#278), unmerged.
 
 | Step | Status | Evidence |
 | --- | --- | --- |
 | Settings is Super-Admin-only: no nav item or command-palette entry below SuperAdmin; the page renders a refusal and makes no control call | TESTED locally 2026-11-21, not CI-run (CB-44) | `src/lib/nav.ts` (`superAdminOnly`), `app/(console)/settings/layout.tsx`; `tests/e2e/control-center.spec.ts` |
 | Overview: release, open changes, one card per platform (Railway, HF Space, Grafana, Qdrant, Cloudflare) with Connect / Replace token / Disconnect | TESTED locally, mock gateway only | `settings/page.tsx`; e2e checks that a typed token never appears in the page or comes back from the gateway |
-| Step-up: a fresh Google sign-in in a popup (`prompt=login`, `max_age`), a five-minute grant held in memory, a typed confirmation on every write; sign-out revokes the grant | TESTED locally against the mock. First live try 2026-11-21: `redirect_uri_mismatch` (fixed by registering `/console/step-up/callback`, since the console still runs under `/console`), then refused because Google sends no `auth_time` (fixed: falls back to `iat`; branch `anas/laughing-hamilton-glfevj`, unmerged) | `src/lib/control.ts`, `app/step-up/callback/page.tsx`, `app/api/auth/logout/route.ts`. Redirect URIs to register: `/console/step-up/callback` now, `/step-up/callback` after the domain move |
-| AURA settings (read-only catalog of every `AURA_*` variable: value, default, range, secret set or not, protected) | TESTED locally, mock gateway only | `settings/aura/page.tsx`; editing is stage 2 |
+| Step-up: a fresh Google sign-in in a popup (`prompt=login`, `max_age`), a five-minute grant held in memory, a typed confirmation on every write; sign-out revokes the grant | TESTED locally against the mock. First live try 2026-11-21: `redirect_uri_mismatch` (fixed by registering `/console/step-up/callback`, since the console still runs under `/console`), then refused because Google sends no `auth_time` (fixed in #276: falls back to `iat`; live at `85258222`) | `src/lib/control.ts`, `app/step-up/callback/page.tsx`, `app/api/auth/logout/route.ts`. Redirect URIs to register: `/console/step-up/callback` now, `/step-up/callback` after the domain move |
+| AURA settings (catalog of every `AURA_*` variable: value, default, range, secret set or not, protected); stage 2: edited through the gateway's own Railway variables once Railway is connected, with a "next deploy" marker | TESTED locally, mock gateway only | `settings/aura/page.tsx`, `src/components/change-tray.tsx` |
+| Railway tab (stage 2): services and status, variables (secrets write-only; protected, provided and reference rows locked), a pending-changes tray (check, then apply behind the service name), deployments with rollback, deploy/build logs with secrets masked, redeploy and restart | TESTED locally 2026-11-22, mock gateway only, not CI-run | `settings/railway/page.tsx`; 8 Railway tests in `tests/e2e/control-center.spec.ts` |
 | Changes journal | TESTED locally, mock gateway only | `settings/changes/page.tsx` |
 | Egyptian Arabic, right to left | TESTED locally (one e2e) | 58 `settings.*` keys in `src/lib/i18n/{en,ar}.ts`; not reviewed by a native speaker |
-| Live: Super Admin opens Settings, Admin refused; a real step-up; a token saved and verified | OPEN | GAP-067 exit condition |
+| GPU Space tab (stage 3): stage, hardware and sleep time; pause/resume, restart, rebuild; hardware with a billing warning; variables through the shared tray (watched 20 minutes); write-only secrets that warn they cannot be undone; run and build logs | TESTED locally 2026-11-22, mock gateway only, not CI-run | `settings/space/page.tsx`; 7 GPU Space tests in `tests/e2e/control-center.spec.ts` |
+| Keys tab (stage 4): each provider slot with its key variable, set or not, and health; Replace (write-only), Rotate both sides (GPU Space), Create new key (Workers AI); Cloudflare tokens with the one in use marked and only the others revocable | TESTED locally 2026-11-22, mock gateway only, not CI-run | `settings/keys/page.tsx`; 4 Keys tests in `tests/e2e/control-center.spec.ts` check no key value reaches the page |
+| Live: Super Admin opens Settings, Admin refused; a real step-up; a token saved and verified; one change rolled back automatically after a forced unhealthy deploy | OPEN | GAP-067 exit condition |
 
-Local checks on 2026-11-21: `tsc --noEmit`, `npm run lint` and `npm run build` clean; Playwright
-72 passed (9 in `control-center.spec.ts`).
+Local checks: on 2026-11-21 (stage 1), `tsc --noEmit`, `npm run lint` and `npm run build` were clean
+and Playwright gave 72 passed. On 2026-11-22 (stage 2), the same checks were clean and Playwright
+gave 80 passed, 17 of them in `control-center.spec.ts`. With stage 3 the same checks were clean
+and Playwright gave 87 passed, 24 of them in `control-center.spec.ts`. With stage 4 the same checks
+were clean and Playwright gave 91 passed, 28 of them in `control-center.spec.ts`.
 
 ## Summary
 

@@ -21,6 +21,8 @@ __all__ = [
     "PlatformCredential",
     "StepUpGrant",
     "PROTECTED_VARIABLES",
+    "SPACE_HARDWARE",
+    "KeySlot",
     "SECRET_NAME_PATTERN",
     "grant_digest",
     "is_secret_name",
@@ -54,6 +56,32 @@ PLATFORM_TOKEN_HINTS: Mapping[Platform, str] = {
     Platform.CLOUDFLARE: "A Cloudflare API token with 'API Tokens: Edit' and 'Workers AI: Read', "
                          "for creating and revoking the Workers AI key.",
 }
+
+
+#: Hardware a Hugging Face Space can request (``huggingface_hub.SpaceHardware``, 1.28), cheapest
+#: first. Kept here so the engine and the console can offer it without the Hub client.
+SPACE_HARDWARE: tuple[str, ...] = (
+    "cpu-basic", "cpu-upgrade", "zero-a10g", "t4-small", "t4-medium", "l4x1", "l4x4",
+    "a10g-small", "a10g-large", "a10g-largex2", "a10g-largex4", "l40sx1", "l40sx4", "l40sx8",
+    "a100-large", "a100x4", "a100x8",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class KeySlot:
+    """A provider whose API key the control center can manage (stage 4). Never the key.
+
+    ``remote_host`` is set when the provider's host is a gated remote-inference host (a Space);
+    ``account_id`` when it is a Workers AI slot (its base URL names the Cloudflare account).
+    """
+
+    name: str
+    kind: str
+    #: The variable on the gateway that holds the key (``api_key_env``).
+    api_key_env: str
+    host: str = ""
+    remote_host: bool = False
+    account_id: str = ""
 
 
 class ChangeStatus(str, enum.Enum):

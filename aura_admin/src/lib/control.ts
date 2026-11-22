@@ -42,6 +42,8 @@ export type CatalogEntry = {
   minimum: number | null;
   maximum: number | null;
   requires_redeploy: boolean;
+  /** The variable as Railway holds it (may differ from value until the next redeploy). */
+  raw?: string | null;
 };
 
 export type CatalogGroup = { section: string; settings: CatalogEntry[] };
@@ -189,3 +191,133 @@ export class StepUp {
     }
   }
 }
+
+// -- Railway (stage 2) --------------------------------------------------------------------------
+
+export type RailwayServiceRow = {
+  service_id: string;
+  name: string;
+  latest_deployment_id: string | null;
+  latest_status: string | null;
+  latest_at: string | null;
+  healthcheck_path: string;
+  is_gateway: boolean;
+  change_in_progress: boolean;
+};
+
+export type RailwayOverview = {
+  project: { id: string; name: string };
+  environment: { id: string; name: string };
+  services: RailwayServiceRow[];
+};
+
+export type RailwayVariable = {
+  name: string;
+  secret: boolean;
+  /** Never present for a secret: the gateway does not send it. */
+  value: string | null;
+  reference: boolean;
+  protected: boolean;
+  provided: boolean;
+};
+
+export type RailwayDeployment = {
+  deployment_id: string;
+  status: string;
+  created_at: string | null;
+  can_rollback: boolean;
+  can_redeploy: boolean;
+  commit: string;
+  message: string;
+};
+
+export type LogRow = { timestamp: string; severity: string; message: string };
+
+/** name -> new value, or null to delete. Values of secret names are never shown back. */
+export type PendingChanges = Record<string, string | null>;
+
+const SECRET_NAME = /(KEY|KEYS|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|PRIVATE|DSN)$/;
+const URL_USERINFO = /^[a-z][a-z0-9+.-]*:\/\/[^/@\s]+@/i;
+
+/** The gateway's own rule (aura_core/domain/control.py), so the tray never echoes a secret. */
+export function isSecretVariable(name: string, value?: string | null): boolean {
+  const upper = name.trim().toUpperCase();
+  if (upper.endsWith("_ENV")) return Boolean(value && URL_USERINFO.test(value.trim()));
+  return SECRET_NAME.test(upper) || Boolean(value && URL_USERINFO.test(value.trim()));
+}
+
+/** Railway's status words, as a badge tone. */
+export function deploymentTone(status: string | null): "ok" | "warn" | "bad" | "neutral" {
+  switch ((status || "").toUpperCase()) {
+    case "SUCCESS":
+    case "SLEEPING":
+      return "ok";
+    case "FAILED":
+    case "CRASHED":
+      return "bad";
+    case "REMOVED":
+    case "REMOVING":
+    case "SKIPPED":
+      return "neutral";
+    default:
+      return "warn";
+  }
+}
+
+// -- GPU Space (stage 3) ------------------------------------------------------------------------
+
+export type SpaceOverview = {
+  space_id: string;
+  name: string;
+  stage: string;
+  hardware: string | null;
+  requested_hardware: string | null;
+  sleep_time: number | null;
+  hardware_options: string[];
+  sleep_choices: number[];
+  change_in_progress: boolean;
+  watch_minutes: number;
+};
+
+export type SpaceVariable = { name: string; secret: boolean; value: string | null };
+export type SpaceSecret = { name: string; updated_at: string | null };
+
+/** The Hub's stage words, as a badge tone. */
+export function spaceTone(stage: string | null): "ok" | "warn" | "bad" | "neutral" {
+  const word = (stage || "").toUpperCase();
+  if (word === "RUNNING") return "ok";
+  if (word.endsWith("_ERROR") || word === "NO_APP_FILE" || word === "DELETING") return "bad";
+  if (word === "PAUSED" || word === "STOPPED") return "neutral";
+  return "warn";
+}
+
+// -- Provider keys (stage 4) --------------------------------------------------------------------
+
+export type KeySlotRow = {
+  name: string;
+  kind: string;
+  host: string;
+  api_key_env: string;
+  /** null while Railway is not connected: the gateway's variables cannot be read. */
+  key_set: boolean | null;
+  /** both_sides: the GPU Space; create: a Workers AI slot; replace: paste a new value. */
+  rotation: "replace" | "both_sides" | "create";
+  healthy: boolean | null;
+  state: string | null;
+  cloudflare_token_id: string | null;
+};
+
+export type KeysOverview = {
+  gateway_ready: boolean;
+  space_id: string | null;
+  cloudflare_ready: boolean;
+  slots: KeySlotRow[];
+};
+
+export type CloudflareTokenRow = {
+  token_id: string;
+  name: string;
+  status: string;
+  issued_on: string | null;
+  in_use: boolean;
+};

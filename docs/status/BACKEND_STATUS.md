@@ -237,7 +237,8 @@ That needs a check in the Firebase console.
   checks, `backup-fetch.sh`, and the `AuraBackupUnderReplicated` / `AuraBackupOffsiteStale`
   alerts. Deploy-stack only; no backend code. Local checks pass; CI ran with no logs (CB-44).
 
-- 2026-11-21, branch `anas/laughing-hamilton-glfevj`, unmerged: console control center stage 1
+- 2026-11-21, merged as #275 and #276 (live at `85258222`, `schema.revision 0031` checked on
+  `/health/ready`): console control center stage 1
   (ADR-037, GAP-067; plan `docs/plans/console-control-center-plan.md`). It adds:
   - `/api/v3/admin/control/*`: overview, settings catalog, changes, step-up challenge, redeem
     and revoke, and platform credential and disconnect. Every route is SuperAdmin-only, and
@@ -255,6 +256,49 @@ That needs a check in the Firebase console.
   - `tests/load/test_control_store_postgres.py` and the migration round trip on PG16.
 
   Not CI-run (CB-44). Not proven: no real Google step-up or platform call has been made.
+
+- 2026-11-22, branch `anas/laughing-hamilton-glfevj`, unmerged: control center stage 2, Railway
+  (ADR-037, GAP-067). It adds:
+  - `/api/v3/admin/control/railway/*`: services, variables (secret values never returned),
+    deployments, logs (secrets masked), a dry-run validate, and the step-up-gated
+    set-variables, redeploy, restart and rollback actions.
+  - `adapters/railway_platform.py`: the GraphQL client, checked against Railway's live schema.
+  - `adapters/settings_probe.py`: candidate settings validated in a child process.
+  - The rollback Reconciler is started by the gateway in staging/production
+    (`AURA_CONTROL_RECONCILER`).
+  - No migration.
+
+  TESTED locally:
+  - default `pytest` after merging `main` at `7591762f`: 6952 passed, 0 failed, 55 skipped
+    (`main` had fixed the 12 `tools/open` failures);
+  - legacy `unittest`: 148 OK.
+
+  Not CI-run (CB-44). Not proven: no live Railway call has been made with a real project token.
+
+- 2026-11-22, same branch (#278), unmerged: control center stage 3, the GPU Space (ADR-037,
+  GAP-067). It adds:
+  - `/api/v3/admin/control/space/*`: status, variables (watched for
+    `AURA_CONTROL_SPACE_WATCH_S`, 20 minutes, and put back if the Space errors), write-only
+    secrets journaled as not restorable, pause/resume, restart, rebuild, hardware, sleep time
+    and logs.
+  - `adapters/hf_space.py` on `huggingface_hub` 1.28.
+  - The reconciler now watches the Space too.
+
+  TESTED locally after merging `main` at `f880826a`: `pytest` 7035 passed, 0 failed, 55
+  skipped; legacy `unittest` 148 OK. Not CI-run (CB-44). Not proven: no live Hub call has been
+  made from the gateway.
+
+- 2026-11-22, same branch (#278), unmerged: control center stage 4, provider keys (ADR-037,
+  GAP-067). It adds:
+  - `/api/v3/admin/control/keys/*`. Each key is a gateway variable change, checked, watched and
+    rolled back by stage 2's machinery.
+  - Replace (any slot).
+  - Rotate both sides (the GPU Space's `VLLM_API_KEY` and the gateway's variable, with the
+    reconciler's new companion restore).
+  - Cloudflare Workers AI create and revoke (`adapters/cloudflare_tokens.py`).
+
+  TESTED locally (`main` at `f880826a`): `pytest` 7069 passed, 0 failed, 55 skipped; legacy
+  `unittest` 148 OK. Not CI-run (CB-44). Not proven: no live key rotation has been made.
 
 ## Next steps
 

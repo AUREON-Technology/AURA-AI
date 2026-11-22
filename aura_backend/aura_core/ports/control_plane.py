@@ -13,9 +13,20 @@ __all__ = [
     "ControlStore",
     "DeploymentHealth",
     "DeploymentPlatform",
+    "DeploymentSummary",
     "IdentityReverifier",
+    "LogLine",
     "PlatformVerifier",
+    "RailwayApi",
+    "RailwayScope",
     "ReauthClaims",
+    "ServiceSummary",
+    "SettingsValidator",
+    "SpaceApi",
+    "SpaceSecretInfo",
+    "SpaceStatus",
+    "CloudflareToken",
+    "CloudflareTokens",
 ]
 
 
@@ -106,7 +117,8 @@ class DeploymentHealth(str, enum.Enum):
     PENDING = "pending"      # still building or starting
     HEALTHY = "healthy"
     UNHEALTHY = "unhealthy"  # running, but its health check fails
-    FAILED = "failed"        # never came up (build or health-check gate failed)
+    FAILED = "failed"        # never came up (build or health-check gate failed), or crashed
+    SUPERSEDED = "superseded"  # replaced by a newer deployment before the watch ended
 
     def __str__(self) -> str:
         return self.value
@@ -125,6 +137,165 @@ class DeploymentPlatform(Protocol):
     async def restore_variables(self, target: str, values: Mapping[str, str | None]) -> None:
         """Set each variable back (``None`` deletes it), without starting a deploy."""
         ...
+
+
+@dataclass(frozen=True, slots=True)
+class RailwayScope:
+    """The one project and environment a Railway project token reaches."""
+
+    project_id: str
+    environment_id: str
+    project_name: str = ""
+    environment_name: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceSummary:
+    service_id: str
+    name: str
+    latest_deployment_id: str | None = None
+    #: Railway's own status word (SUCCESS, BUILDING, CRASHED, ...); ``None`` before any deploy.
+    latest_status: str | None = None
+    latest_at: datetime | None = None
+    #: The service's health-check path; empty means Railway switches traffic without one.
+    healthcheck_path: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class DeploymentSummary:
+    deployment_id: str
+    status: str
+    created_at: datetime | None = None
+    can_rollback: bool = False
+    can_redeploy: bool = False
+    #: Non-secret build provenance from the deployment's metadata (commit, message, branch).
+    commit: str = ""
+    message: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class LogLine:
+    timestamp: str
+    message: str
+    severity: str = ""
+
+
+@runtime_checkable
+class RailwayApi(DeploymentPlatform, Protocol):
+    """Railway, as the project token stored in the control center reaches it (stage 2).
+
+    ``target`` in the inherited methods is a service id. ``variables`` returns values only for
+    the engine to classify and to keep as restore values; nothing above the engine ever sees a
+    secret one.
+    """
+
+    async def scope(self) -> RailwayScope: ...
+
+    async def services(self) -> Sequence[ServiceSummary]: ...
+
+    async def variables(self, service_id: str, *, rendered: bool = True) -> Mapping[str, str]:
+        """The service's variables. ``rendered=False`` keeps ``${{...}}`` references as written,
+        which is what a restore must put back."""
+        ...
+
+    async def set_variables(self, service_id: str, values: Mapping[str, str | None]) -> None:
+        """Upsert (``None`` deletes) without starting a deploy."""
+        ...
+
+    async def deployments(self, service_id: str, *, limit: int = 20) -> Sequence[DeploymentSummary]: ...
+
+    async def redeploy(self, service_id: str) -> str:
+        """A new deployment of the service's current build with its current variables; its id."""
+        ...
+
+    async def restart(self, deployment_id: str) -> None: ...
+
+    async def logs(self, deployment_id: str, *, kind: str = "deploy", limit: int = 200) -> Sequence[LogLine]: ...
+
+
+@runtime_checkable
+class SettingsValidator(Protocol):
+    """Would a gateway boot with this environment? Returns ``None`` if yes, else the reason
+    (which names settings, never values)."""
+
+    async def validate(self, environ: Mapping[str, str]) -> str | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class SpaceStatus:
+    """A Hugging Face Space's runtime, as the Hub reports it (stage 3)."""
+
+    #: The Hub's stage word: RUNNING, BUILDING, APP_STARTING, RUNTIME_ERROR, PAUSED, ...
+    stage: str
+    hardware: str | None = None
+    #: What was asked for; differs from ``hardware`` while a hardware change is pending.
+    requested_hardware: str | None = None
+    #: Seconds of inactivity before the Space sleeps; ``None`` or ``-1`` means never.
+    sleep_time: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SpaceSecretInfo:
+    """A Space secret's name and when it last changed. The Hub never returns the value."""
+
+    name: str
+    updated_at: datetime | None = None
+
+
+@runtime_checkable
+class SpaceApi(DeploymentPlatform, Protocol):
+    """The inference Space, reached with the stored HF token (stage 3). ``target`` and
+    ``space_id`` are the Space's ``owner/name``.
+
+    The Hub restarts a Space whenever a variable or secret changes, so there is no separate
+    deploy step: ``restore_variables`` puts values back (and so restarts it), and ``rollback``
+    is a plain restart.
+    """
+
+    async def status(self, space_id: str) -> SpaceStatus: ...
+
+    async def variables(self, space_id: str) -> Mapping[str, str]: ...
+
+    async def set_variables(self, space_id: str, values: Mapping[str, str | None]) -> None: ...
+
+    async def secrets(self, space_id: str) -> Sequence[SpaceSecretInfo]: ...
+
+    async def set_secrets(self, space_id: str, values: Mapping[str, str | None]) -> None: ...
+
+    async def pause(self, space_id: str) -> None: ...
+
+    async def restart(self, space_id: str, *, factory: bool = False) -> None: ...
+
+    async def request_hardware(self, space_id: str, hardware: str) -> None: ...
+
+    async def set_sleep_time(self, space_id: str, seconds: int) -> None: ...
+
+    async def logs(self, space_id: str, *, kind: str = "run", limit: int = 200) -> Sequence[str]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class CloudflareToken:
+    token_id: str
+    name: str
+    status: str = ""
+    issued_on: datetime | None = None
+
+
+@runtime_checkable
+class CloudflareTokens(Protocol):
+    """Cloudflare API tokens, reached with the stored management token (stage 4)."""
+
+    async def identify(self, token: str) -> str | None:
+        """The id of the token ``token`` is, or ``None`` when Cloudflare does not know it."""
+        ...
+
+    async def list(self) -> Sequence[CloudflareToken]: ...
+
+    async def create(self, *, name: str, account_id: str) -> tuple[str, str]:
+        """A new token for Workers AI on that account: ``(id, value)``. The value is shown once."""
+        ...
+
+    async def revoke(self, token_id: str) -> None: ...
 
 
 #: Free-form, redacted detail a change carries (variable names, secret flags, deployment ids).

@@ -961,6 +961,89 @@ class Container:
             store=store, vault=vault, verifier=verifier, writes_per_hour=control.writes_per_hour,
         )
 
+        import os
+
+        # Stage 2: Railway, reached with the project token stored above. Read from the vault on
+        # every call, so connecting or replacing the token takes effect without a restart.
+        from .control.railway import RailwayService
+        from .control.service import Reconciler
+        from .domain.control import Platform
+
+        if settings.environment.is_production_like:
+            from .adapters.railway_platform import RailwayPlatform
+            from .adapters.settings_probe import SubprocessSettingsValidator
+
+            async def railway_token() -> str:
+                return (await self.control.token(Platform.RAILWAY)).reveal()
+
+            railway_api: Any = RailwayPlatform(token_source=railway_token)
+            validator: Any = SubprocessSettingsValidator()
+        else:
+            from .adapters.railway_platform import InMemoryRailway
+            from .adapters.settings_probe import StaticSettingsValidator
+
+            railway_api = InMemoryRailway()
+            validator = StaticSettingsValidator()
+        # Stage 3: the inference Space, reached with the stored HF token; the Space itself is the
+        # one named when that token was connected.
+        from .control.space import SpaceService
+
+        if settings.environment.is_production_like:
+            from .adapters.hf_space import HfSpaceHost
+
+            async def hf_token() -> str:
+                return (await self.control.token(Platform.HF_SPACE)).reveal()
+
+            space_api: Any = HfSpaceHost(token_source=hf_token)
+        else:
+            from .adapters.hf_space import InMemorySpace
+
+            space_api = InMemorySpace()
+        self.space_api = space_api
+        self.space = SpaceService(
+            control=self.control, api=space_api, store=store, watch_s=control.space_watch_s,
+        )
+        self.railway_api = railway_api
+        self.settings_validator = validator
+        # Railway sets RAILWAY_SERVICE_ID in every service's container: the gateway's own id is
+        # the service whose variables the AURA settings tab (and every key, stage 4) edits.
+        self.railway = RailwayService(
+            control=self.control, api=railway_api, validator=validator,
+            self_service_id=(os.environ.get("RAILWAY_SERVICE_ID") or "").strip(),
+        )
+
+        # Stage 4: provider keys. A key is a gateway variable; the Cloudflare management token
+        # (stored above) creates and revokes Workers AI keys at the API root derived from the
+        # configured Workers AI provider.
+        from .control.keys import KeysService
+        from .control.wiring import key_slots
+
+        if settings.environment.is_production_like:
+            from .adapters.cloudflare_tokens import HttpCloudflareTokens
+
+            async def cloudflare_token() -> str:
+                return (await self.control.token(Platform.CLOUDFLARE)).reveal()
+
+            cloudflare_api: Any = HttpCloudflareTokens(
+                token_source=cloudflare_token, api_root=cloudflare_api_root(settings.llm.providers),
+            )
+        else:
+            from .adapters.cloudflare_tokens import InMemoryCloudflareTokens
+
+            cloudflare_api = InMemoryCloudflareTokens()
+        self.cloudflare_tokens = cloudflare_api
+        self.keys = KeysService(
+            control=self.control, store=store, railway=self.railway, space=self.space,
+            space_api=space_api, cloudflare=cloudflare_api, slots=key_slots(settings.llm.providers),
+            provider_health=lambda: self.router.stats(),
+        )
+        self.control_reconciler = Reconciler(
+            store=store, vault=vault,
+            platforms={Platform.RAILWAY: railway_api, Platform.HF_SPACE: space_api},
+            watch_s=control.rollback_watch_s,
+        )
+        self._reconciler_task: Any = None
+
     def _build_adaptation(self, *, use_postgres: bool) -> Any:
         """The connector registry, its vault and its stores -- or ``None`` when Track AP is off.
 
@@ -2079,6 +2162,30 @@ class Container:
             except Exception:
                 logger.exception("prompt pin sync failed; keeping the last known pins")
 
+    def start_control_reconciler(self) -> bool:
+        """Start the control center's rollback watcher in this process (the gateway's startup).
+
+        Staging/production only, and only once per process. Every gateway worker runs one; the
+        lease in Postgres lets exactly one act. Celery workers never call this.
+        """
+        settings = self.settings
+        if (self._reconciler_task is not None or not settings.control.reconciler_enabled
+                or not settings.environment.is_production_like):
+            return False
+        self._reconciler_task = asyncio.create_task(
+            self.control_reconciler.run_forever(), name="control-reconciler"
+        )
+        return True
+
+    async def _stop_control_reconciler(self) -> None:
+        task, self._reconciler_task = self._reconciler_task, None
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
     async def shutdown(self) -> None:
         """Release every connection this container opened (R2.7). Idempotent; never raises.
 
@@ -2099,6 +2206,7 @@ class Container:
         if self._shut_down:
             return
         self._shut_down = True
+        await self._stop_control_reconciler()
         try:
             await self.kernel.wait_for_post_turn(timeout_s=POST_TURN_DRAIN_S)
         except Exception:  # pragma: no cover - defensive; shutdown never raises

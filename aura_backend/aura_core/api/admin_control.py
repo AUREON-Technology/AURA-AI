@@ -6,40 +6,29 @@ confirmation the console asks for, re-checked here so a script cannot skip eithe
 are ``no-store``. No route returns a secret value; the audit trail names what changed, never
 the value.
 
-Stage 1: overview, the AURA settings view (read), platform tokens (connect / replace /
-disconnect) and the change journal. Platform actions arrive with their stages.
+Stage 1: overview, the AURA settings view, platform tokens (connect / replace / disconnect) and
+the change journal. Stage 2: Railway -- services, variables (validated, then applied with one
+redeploy that the reconciler watches), redeploy, restart, rollback, deployments and logs; and the
+AURA settings view reads, and edits, the gateway's own Railway variables. Stage 3: the GPU
+Space -- status, variables (watched and undone on failure), write-only secrets, pause, restart,
+rebuild, hardware, sleep time and logs. Stage 4: provider keys -- replace, rotate both sides
+(gateway and Space), create a new Cloudflare key and revoke unused ones.
 """
 
 # No `from __future__ import annotations`: request models are defined inside the register
 # function, and FastAPI must resolve their annotations at decoration time (as in v3.py).
 import os
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from ..control.catalog import build_catalog
+from ..control.railway import change_json
 from ..control.service import STEP_UP_HEADER
-from ..domain.control import ChangeRecord, Platform
+from ..domain.control import Platform
 from ..domain.errors import ValidationError
 
 __all__ = ["register_control_ops"]
 
 _NO_STORE = {"Cache-Control": "no-store"}
-
-
-def _change_json(change: ChangeRecord) -> dict[str, Any]:
-    return {
-        "change_id": change.change_id,
-        "actor": change.actor,
-        "platform": change.platform.value,
-        "target": change.target,
-        "action": change.action,
-        "status": change.status.value,
-        "detail": dict(change.detail),
-        "deployment_id": change.deployment_id,
-        "previous_deployment_id": change.previous_deployment_id,
-        "reason": change.reason,
-        "created_at": change.created_at.isoformat(),
-        "updated_at": change.updated_at.isoformat(),
-    }
 
 
 def _platform(value: str) -> Platform:
@@ -82,6 +71,56 @@ def register_control_ops(
 
         confirm: str = Field(default="", max_length=64)
 
+    class VariablesRequest(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        #: name -> new value; ``null`` deletes the variable.
+        changes: dict[str, Optional[str]] = Field(min_length=1, max_length=50)
+        confirm: str = Field(default="", max_length=128)
+
+    class ServiceConfirmRequest(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        confirm: str = Field(default="", max_length=128)
+
+    class SpaceSecretsRequest(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        #: name -> new value; ``null`` deletes the secret. Values are write-only.
+        changes: dict[str, Optional[str]] = Field(min_length=1, max_length=30)
+        confirm: str = Field(default="", max_length=128)
+
+    class SpaceRestartRequest(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        confirm: str = Field(default="", max_length=128)
+        #: Rebuild the image from scratch instead of restarting it.
+        factory: bool = False
+
+    class SpaceHardwareRequest(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        hardware: str = Field(min_length=1, max_length=32)
+        confirm: str = Field(default="", max_length=128)
+
+    class SpaceSleepRequest(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        seconds: int
+        confirm: str = Field(default="", max_length=128)
+
+    class KeyReplaceRequest(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        value: str = Field(min_length=1, max_length=8192)
+        confirm: str = Field(default="", max_length=128)
+
+    class RollbackRequest(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        deployment_id: str = Field(min_length=1, max_length=128)
+        confirm: str = Field(default="", max_length=128)
+
     def actor(caller: Any) -> str:
         return caller.email or caller.user_id.value
 
@@ -104,9 +143,23 @@ def register_control_ops(
 
     @router.get("/admin/control/settings")
     async def control_settings(caller=Depends(principal)) -> Any:
+        """The catalog, read from the gateway's own Railway variables when Railway is connected
+        and this gateway runs there (so it can be edited); otherwise from this process."""
         require_super_admin(caller)
-        # Stage 1 reads the running process's environment; stage 2 reads Railway's variables.
-        return ok({"source": "process", "groups": build_catalog(container.settings, os.environ)})
+        railway = container.railway
+        service_id = railway.self_service_id
+        if service_id and await container.control_store.get_credential(Platform.RAILWAY) is not None:
+            try:
+                service = await railway.service(service_id)
+                environ = await railway.environment(service_id)
+            except Exception as exc:
+                return ok({"source": "process", "editable": False, "railway_error": type(exc).__name__,
+                           "groups": build_catalog(container.settings, os.environ)})
+            return ok({"source": "railway", "editable": True, "service_id": service_id,
+                       "service_name": service.name,
+                       "groups": build_catalog(container.settings, environ)})
+        return ok({"source": "process", "editable": False,
+                   "groups": build_catalog(container.settings, os.environ)})
 
     @router.post("/admin/control/step-up/challenge")
     async def step_up_challenge(caller=Depends(principal)) -> Any:
@@ -176,4 +229,186 @@ def register_control_ops(
     async def control_changes(limit: int = 50, caller=Depends(principal)) -> Any:
         require_super_admin(caller)
         changes = await container.control.changes(limit=limit)
-        return ok({"changes": [_change_json(c) for c in changes]})
+        return ok({"changes": [change_json(c) for c in changes]})
+
+    # -- Railway (stage 2) ------------------------------------------------------------------
+    @router.get("/admin/control/railway")
+    async def railway_overview(caller=Depends(principal)) -> Any:
+        require_super_admin(caller)
+        return ok(await container.railway.overview())
+
+    @router.get("/admin/control/railway/services/{service_id}/variables")
+    async def railway_variables(service_id: str, caller=Depends(principal)) -> Any:
+        require_super_admin(caller)
+        return ok({"variables": await container.railway.variables(service_id)})
+
+    @router.get("/admin/control/railway/services/{service_id}/deployments")
+    async def railway_deployments(service_id: str, limit: int = 20, caller=Depends(principal)) -> Any:
+        require_super_admin(caller)
+        limit = max(1, min(limit, 50))
+        return ok({"deployments": await container.railway.deployments(service_id, limit=limit)})
+
+    @router.get("/admin/control/railway/services/{service_id}/deployments/{deployment_id}/logs")
+    async def railway_logs(
+        service_id: str, deployment_id: str, kind: str = "deploy", limit: int = 200,
+        caller=Depends(principal),
+    ) -> Any:
+        require_super_admin(caller)
+        if kind not in ("deploy", "build"):
+            raise ValidationError("logs are 'deploy' or 'build'")
+        lines = await container.railway.logs(
+            service_id, deployment_id, kind=kind, limit=max(1, min(limit, 1000))
+        )
+        return ok({"lines": lines})
+
+    @router.post("/admin/control/railway/services/{service_id}/variables/validate")
+    async def railway_validate(service_id: str, payload: VariablesRequest, caller=Depends(principal)) -> Any:
+        """A dry run of a variable change: nothing is written, so no step-up is needed."""
+        require_super_admin(caller)
+        return ok(await container.railway.validate(service_id, payload.changes))
+
+    async def railway_write(
+        request: Any, caller: Any, action: str, service_id: str, run: Callable,
+        *, audit_prefix: str = "admin.control.railway",
+    ) -> Any:
+        await stepped_up(request, caller)
+        try:
+            result = await run()
+        except Exception as exc:
+            await audit_admin(request, caller, f"{audit_prefix}.{action}", service_id, "refused",
+                              detail={"error": type(exc).__name__,
+                                      "reason": str((getattr(exc, "details", None) or {}).get("reason", ""))})
+            raise
+        await audit_admin(request, caller, f"{audit_prefix}.{action}", service_id, "success",
+                          detail={"change_id": result["change_id"], "status": result["status"]})
+        return ok(result)
+
+    @router.post("/admin/control/railway/services/{service_id}/variables")
+    async def railway_set_variables(
+        service_id: str, payload: VariablesRequest, request: Request, caller=Depends(principal)
+    ) -> Any:
+        return await railway_write(request, caller, "set_variables", service_id, lambda: container.railway.apply_variables(
+            service_id, payload.changes, actor=actor(caller), confirm=payload.confirm,
+        ))
+
+    @router.post("/admin/control/railway/services/{service_id}/redeploy")
+    async def railway_redeploy(
+        service_id: str, payload: ServiceConfirmRequest, request: Request, caller=Depends(principal)
+    ) -> Any:
+        return await railway_write(request, caller, "redeploy", service_id, lambda: container.railway.redeploy(
+            service_id, actor=actor(caller), confirm=payload.confirm,
+        ))
+
+    @router.post("/admin/control/railway/services/{service_id}/restart")
+    async def railway_restart(
+        service_id: str, payload: ServiceConfirmRequest, request: Request, caller=Depends(principal)
+    ) -> Any:
+        return await railway_write(request, caller, "restart", service_id, lambda: container.railway.restart(
+            service_id, actor=actor(caller), confirm=payload.confirm,
+        ))
+
+    @router.post("/admin/control/railway/services/{service_id}/rollback")
+    async def railway_rollback(
+        service_id: str, payload: RollbackRequest, request: Request, caller=Depends(principal)
+    ) -> Any:
+        return await railway_write(request, caller, "rollback", service_id, lambda: container.railway.rollback(
+            service_id, payload.deployment_id, actor=actor(caller), confirm=payload.confirm,
+        ))
+
+    # -- GPU Space (stage 3) ----------------------------------------------------------------
+    @router.get("/admin/control/space")
+    async def space_overview(caller=Depends(principal)) -> Any:
+        require_super_admin(caller)
+        return ok(await container.space.overview())
+
+    @router.get("/admin/control/space/variables")
+    async def space_variables(caller=Depends(principal)) -> Any:
+        require_super_admin(caller)
+        return ok({"variables": await container.space.variables()})
+
+    @router.get("/admin/control/space/secrets")
+    async def space_secrets(caller=Depends(principal)) -> Any:
+        require_super_admin(caller)
+        return ok({"secrets": await container.space.secrets()})
+
+    @router.get("/admin/control/space/logs")
+    async def space_logs(kind: str = "run", limit: int = 200, caller=Depends(principal)) -> Any:
+        require_super_admin(caller)
+        return ok({"lines": await container.space.logs(kind=kind, limit=max(1, min(limit, 1000)))})
+
+    @router.post("/admin/control/space/variables/validate")
+    async def space_validate(payload: VariablesRequest, caller=Depends(principal)) -> Any:
+        """A dry run: nothing is written, so no step-up is needed."""
+        require_super_admin(caller)
+        return ok(await container.space.validate(payload.changes))
+
+    async def space_write(request: Any, caller: Any, action: str, run: Callable) -> Any:
+        return await railway_write(request, caller, action, "space", run, audit_prefix="admin.control.space")
+
+    @router.post("/admin/control/space/variables")
+    async def space_set_variables(payload: VariablesRequest, request: Request, caller=Depends(principal)) -> Any:
+        return await space_write(request, caller, "set_variables", lambda: container.space.apply_variables(
+            payload.changes, actor=actor(caller), confirm=payload.confirm,
+        ))
+
+    @router.post("/admin/control/space/secrets")
+    async def space_set_secrets(payload: SpaceSecretsRequest, request: Request, caller=Depends(principal)) -> Any:
+        return await space_write(request, caller, "set_secrets", lambda: container.space.set_secrets(
+            payload.changes, actor=actor(caller), confirm=payload.confirm,
+        ))
+
+    @router.post("/admin/control/space/pause")
+    async def space_pause(payload: ServiceConfirmRequest, request: Request, caller=Depends(principal)) -> Any:
+        return await space_write(request, caller, "pause", lambda: container.space.pause(
+            actor=actor(caller), confirm=payload.confirm,
+        ))
+
+    @router.post("/admin/control/space/restart")
+    async def space_restart(payload: SpaceRestartRequest, request: Request, caller=Depends(principal)) -> Any:
+        return await space_write(request, caller, "restart", lambda: container.space.restart(
+            actor=actor(caller), confirm=payload.confirm, factory=payload.factory,
+        ))
+
+    @router.post("/admin/control/space/hardware")
+    async def space_hardware(payload: SpaceHardwareRequest, request: Request, caller=Depends(principal)) -> Any:
+        return await space_write(request, caller, "hardware", lambda: container.space.request_hardware(
+            payload.hardware, actor=actor(caller), confirm=payload.confirm,
+        ))
+
+    @router.post("/admin/control/space/sleep-time")
+    async def space_sleep_time(payload: SpaceSleepRequest, request: Request, caller=Depends(principal)) -> Any:
+        return await space_write(request, caller, "sleep_time", lambda: container.space.set_sleep_time(
+            payload.seconds, actor=actor(caller), confirm=payload.confirm,
+        ))
+
+    # -- Provider keys (stage 4) ------------------------------------------------------------
+    @router.get("/admin/control/keys")
+    async def keys_overview(caller=Depends(principal)) -> Any:
+        require_super_admin(caller)
+        return ok(await container.keys.overview())
+
+    @router.get("/admin/control/keys/cloudflare/tokens")
+    async def keys_cloudflare_tokens(caller=Depends(principal)) -> Any:
+        require_super_admin(caller)
+        return ok({"tokens": await container.keys.cloudflare_tokens()})
+
+    async def keys_write(request: Any, caller: Any, action: str, target: str, run: Callable) -> Any:
+        return await railway_write(request, caller, action, target, run, audit_prefix="admin.control.keys")
+
+    @router.post("/admin/control/keys/{slot}/replace")
+    async def keys_replace(slot: str, payload: KeyReplaceRequest, request: Request, caller=Depends(principal)) -> Any:
+        return await keys_write(request, caller, "replace", slot, lambda: container.keys.replace(
+            slot, payload.value, actor=actor(caller), confirm=payload.confirm,
+        ))
+
+    @router.post("/admin/control/keys/{slot}/rotate")
+    async def keys_rotate(slot: str, payload: ServiceConfirmRequest, request: Request, caller=Depends(principal)) -> Any:
+        return await keys_write(request, caller, "rotate", slot, lambda: container.keys.rotate(
+            slot, actor=actor(caller), confirm=payload.confirm,
+        ))
+
+    @router.post("/admin/control/keys/cloudflare/tokens/{token_id}/revoke")
+    async def keys_revoke(token_id: str, payload: ServiceConfirmRequest, request: Request, caller=Depends(principal)) -> Any:
+        return await keys_write(request, caller, "revoke", token_id, lambda: container.keys.revoke_cloudflare(
+            token_id, actor=actor(caller), confirm=payload.confirm,
+        ))

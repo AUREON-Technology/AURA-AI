@@ -20,7 +20,12 @@ const TONE: Record<ChangeRow["status"], "neutral" | "ok" | "warn" | "bad"> = {
   failed: "bad",
 };
 
-const KNOWN_ACTIONS = new Set(["connect", "replace_token", "disconnect"]);
+const PLATFORM_ACTIONS = new Set(["connect", "replace_token", "disconnect"]);
+const SERVICE_ACTIONS = new Set([
+  "set_variables", "redeploy", "restart", "rollback",
+  "space_variables", "space_secrets", "space_pause", "space_restart", "space_rebuild", "space_hardware", "space_sleep_time",
+  "replace_key", "rotate_key", "revoke_key",
+]);
 
 export default function ChangesPage() {
   const { t, lang, errorText } = useI18n();
@@ -35,9 +40,23 @@ export default function ChangesPage() {
 
   function what(row: ChangeRow): string {
     const platform = t(`settings.platform.${row.platform}` as MessageKey);
-    return KNOWN_ACTIONS.has(row.action)
-      ? t(`settings.changes.action.${row.action}` as MessageKey, { platform })
-      : `${row.action} · ${row.target}`;
+    if (PLATFORM_ACTIONS.has(row.action)) {
+      return t(`settings.changes.action.${row.action}` as MessageKey, { platform });
+    }
+    if (SERVICE_ACTIONS.has(row.action)) {
+      const service =
+        typeof row.detail.slot === "string"
+          ? row.detail.slot
+          : typeof row.detail.service === "string"
+            ? row.detail.service
+            : row.target;
+      const variables = Array.isArray(row.detail.variables)
+        ? (row.detail.variables as { name?: string }[]).map((v) => v.name).filter(Boolean).join(", ")
+        : "";
+      const text = t(`settings.changes.action.${row.action}` as MessageKey, { service });
+      return variables ? `${text}: ${variables}` : text;
+    }
+    return `${row.action} · ${row.target}`;
   }
 
   return (

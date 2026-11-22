@@ -98,8 +98,88 @@ const CONTROL_CATALOG = [
   },
 ];
 
+// Railway as the control center sees it (aura_core/control/railway.py + InMemoryRailway): the
+// same refusals, and secret values that never leave the mock.
+const RAILWAY_SECRET = "rw-secret-value-never-shown";
+const SECRET_NAME = /(KEY|KEYS|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|PRIVATE|DSN)$/;
+const PROTECTED = new Set(["AURA_SECRETS_ENCRYPTION_KEY", "AURA_DATA_ENCRYPTION_KEYS", "AURA_DATABASE_URL"]);
+
+function freshRailway() {
+  const at = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
+  return {
+    seq: 3,
+    services: {
+      "svc-gw": {
+        name: "gateway", healthcheck: "/health/live",
+        vars: {
+          AURA_ENVIRONMENT: "production", AURA_KNOWLEDGE_TOP_K: "4", AURA_JWT_SECRET: RAILWAY_SECRET,
+          AURA_DATABASE_URL: "${{Postgres.DATABASE_URL}}", RAILWAY_SERVICE_NAME: "gateway",
+          AURA_PROVIDER_HFSPACE_API_KEY: "hf-old-key-never-shown", AURA_CF_KEY: "cf-old-key-never-shown",
+          AURA_GROQ_KEY: "groq-old-key-never-shown",
+        },
+        deployments: [
+          { deployment_id: "dep-2", status: "SUCCESS", created_at: at(30), can_rollback: true, can_redeploy: true, commit: "85258222c84c", message: "fix(control): accept Google re-sign-ins" },
+          { deployment_id: "dep-1", status: "REMOVED", created_at: at(90), can_rollback: true, can_redeploy: true, commit: "30b2b251be7c", message: "control center stage 1" },
+        ],
+      },
+      "svc-console": {
+        name: "console", healthcheck: "",
+        vars: { NEXT_PUBLIC_BASE_PATH: "/console" },
+        deployments: [
+          { deployment_id: "dep-3", status: "SUCCESS", created_at: at(20), can_rollback: true, can_redeploy: true, commit: "85258222c84c", message: "console" },
+        ],
+      },
+    },
+    logs: {
+      "deploy:dep-2": [
+        { timestamp: "2026-11-21T21:50:01Z", severity: "info", message: "uvicorn running" },
+        { timestamp: "2026-11-21T21:50:02Z", severity: "info", message: `jwt loaded ${RAILWAY_SECRET}` },
+      ],
+      "build:dep-2": [{ timestamp: "2026-11-21T21:48:00Z", severity: "info", message: "image built" }],
+    },
+    restarts: [],
+    applied: [],
+  };
+}
+
+// The inference Space (aura_core/control/space.py + InMemorySpace).
+const SPACE_SECRET = "hf-space-secret-never-shown";
+const SPACE_HARDWARE = ["cpu-basic", "cpu-upgrade", "t4-small", "l4x1", "a10g-large", "a100-large"];
+const SLEEP_CHOICES = [-1, 300, 900, 1800, 3600, 10800, 36000, 86400, 172800];
+
+function freshSpace() {
+  return {
+    stage: "RUNNING", hardware: "l4x1", sleep_time: 3600,
+    vars: { MODEL_ID: "Qwen/Qwen2.5-7B-Instruct-AWQ", MAX_MODEL_LEN: "8192" },
+    secrets: {
+      HF_TOKEN: { value: SPACE_SECRET, updated_at: "2026-11-20T10:00:00Z" },
+      VLLM_API_KEY: { value: "hf-old-key-never-shown", updated_at: "2026-11-20T10:00:00Z" },
+    },
+    events: [],
+    logs: { run: ["INFO vLLM engine started", "INFO Uvicorn running on 0.0.0.0:7860"], build: ["Step 1/9 : FROM vllm"] },
+  };
+}
+
+// Provider keys (aura_core/control/keys.py): slots read their key from a gateway variable.
+const KEY_SLOTS = [
+  { name: "hfspace", kind: "openai_compatible", host: "org-aura-inference.hf.space", env: "AURA_PROVIDER_HFSPACE_API_KEY", remote: true },
+  { name: "workersai", kind: "openai_compatible", host: "workers-ai", env: "AURA_CF_KEY", account: "acct-123" },
+  { name: "groq", kind: "openai_compatible", host: "groq", env: "AURA_GROQ_KEY" },
+];
+
+function freshCloudflare() {
+  return {
+    seq: 1,
+    tokens: [{ token_id: "cf-1", name: "aura-workersai-old", status: "active", issued_on: "2026-11-01T09:00:00Z", value: "cf-old-key-never-shown" }],
+  };
+}
+
+function isSecret(name, value) {
+  return (!name.endsWith("_ENV") && SECRET_NAME.test(name)) || /^[a-z][a-z0-9+.-]*:\/\/[^/@\s]+@/i.test(value || "");
+}
+
 const state = {
-  control: { platforms: {}, changes: [], nonces: {}, grants: {}, stepUps: 0, receivedTokens: [], vaultReady: true },
+  control: { platforms: {}, changes: [], nonces: {}, grants: {}, stepUps: 0, receivedTokens: [], vaultReady: true, railway: freshRailway(), space: freshSpace(), cf: freshCloudflare() },
   operators: [
     {
       email: "ops@aura.ai",
@@ -334,12 +414,25 @@ const server = http.createServer(async (request, response) => {
       step_ups: state.control.stepUps,
       tokens_received: state.control.receivedTokens,
       live_grants: Object.keys(state.control.grants).length,
+      railway_vars: state.control.railway.services["svc-gw"].vars.AURA_KNOWLEDGE_TOP_K,
+      railway_applied: state.control.railway.applied,
+      railway_restarts: state.control.railway.restarts,
+      space_events: state.control.space.events,
+      space_vars: state.control.space.vars,
+      space_secret_names: Object.keys(state.control.space.secrets),
+      key_values: {
+        hfspace: state.control.railway.services["svc-gw"].vars.AURA_PROVIDER_HFSPACE_API_KEY,
+        space: state.control.space.secrets.VLLM_API_KEY?.value,
+        workersai: state.control.railway.services["svc-gw"].vars.AURA_CF_KEY,
+        groq: state.control.railway.services["svc-gw"].vars.AURA_GROQ_KEY,
+      },
+      cf_tokens: state.control.cf.tokens.map((tok) => tok.name),
     });
     return;
   }
   if (method === "POST" && path === "/__test/reset-control") {
     const vaultReady = !new URL(request.url, "http://mock").searchParams.has("no-vault");
-    state.control = { platforms: {}, changes: [], nonces: {}, grants: {}, stepUps: 0, receivedTokens: [], vaultReady };
+    state.control = { platforms: {}, changes: [], nonces: {}, grants: {}, stepUps: 0, receivedTokens: [], vaultReady, railway: freshRailway(), space: freshSpace(), cf: freshCloudflare() };
     json(response, 200, { ok: true });
     return;
   }
@@ -418,7 +511,20 @@ const server = http.createServer(async (request, response) => {
       return;
     }
     if (method === "GET" && path === "/api/v3/admin/control/settings") {
-      json(response, 200, { source: "process", groups: CONTROL_CATALOG });
+      if (!control.platforms.railway) {
+        json(response, 200, { source: "process", editable: false, groups: CONTROL_CATALOG });
+        return;
+      }
+      const vars = control.railway.services["svc-gw"].vars;
+      const groups = CONTROL_CATALOG.map((group) => ({
+        ...group,
+        settings: group.settings.map((entry) => ({
+          ...entry,
+          set: entry.variable in vars,
+          raw: entry.secret ? null : (vars[entry.variable] ?? null),
+        })),
+      }));
+      json(response, 200, { source: "railway", editable: true, service_id: "svc-gw", service_name: "gateway", groups });
       return;
     }
     if (method === "GET" && path === "/api/v3/admin/control/changes") {
@@ -492,7 +598,7 @@ const server = http.createServer(async (request, response) => {
         return;
       }
       const replaced = Boolean(control.platforms[platformName]);
-      const verified = !["railway", "grafana"].includes(platformName);
+      const verified = platformName !== "grafana";
       control.platforms[platformName] = {
         target: body.target || "", by: who.email, at: new Date(now).toISOString(), verified,
         detail: verified ? `${platformName} verified` : "",
@@ -500,6 +606,379 @@ const server = http.createServer(async (request, response) => {
       control.receivedTokens.push(body.token);
       journal(platformName, replaced ? "replace_token" : "connect");
       json(response, 200, { platform: platformName, verified, verified_detail: verified ? `${platformName} verified` : "" });
+      return;
+    }
+
+    // -- Provider keys (stage 4) --------------------------------------------------------------
+    if (path.startsWith("/api/v3/admin/control/keys")) {
+      const gatewayVars = control.railway.services["svc-gw"].vars;
+      const gatewayReady = Boolean(control.platforms.railway);
+      const spaceId = control.platforms.hf_space?.target || null;
+      const cfReady = Boolean(control.platforms.cloudflare);
+      const refuse = (message, reason) => auraError(response, 422, "validation_error", message, false, { reason });
+      const rotation = (slot) => {
+        if (slot.remote && spaceId && slot.host.startsWith(spaceId.toLowerCase().replace(/[/_.]/g, "-") + ".")) return "both_sides";
+        if (slot.account && cfReady) return "create";
+        return "replace";
+      };
+      const inUseId = () => control.cf.tokens.find((tok) => tok.value === gatewayVars.AURA_CF_KEY)?.token_id ?? null;
+      if (method === "GET" && path === "/api/v3/admin/control/keys") {
+        json(response, 200, {
+          gateway_ready: gatewayReady, space_id: spaceId, cloudflare_ready: cfReady,
+          slots: KEY_SLOTS.map((slot) => ({
+            name: slot.name, kind: slot.kind, host: slot.host, api_key_env: slot.env,
+            key_set: gatewayReady ? Boolean(gatewayVars[slot.env]) : null, rotation: rotation(slot),
+            healthy: slot.name !== "groq", state: slot.name === "groq" ? "open" : "closed",
+            cloudflare_token_id: rotation(slot) === "create" ? inUseId() : null,
+          })),
+        });
+        return;
+      }
+      if (method === "GET" && path === "/api/v3/admin/control/keys/cloudflare/tokens") {
+        if (!cfReady) {
+          auraError(response, 404, "not_found", "Cloudflare is not connected; connect it in Settings");
+          return;
+        }
+        const used = inUseId();
+        json(response, 200, {
+          // Never the token's value: only what the real route returns.
+          tokens: control.cf.tokens.map((tok) => ({
+            token_id: tok.token_id, name: tok.name, status: tok.status, issued_on: tok.issued_on, in_use: tok.token_id === used,
+          })),
+        });
+        return;
+      }
+      if (method !== "POST") {
+        auraError(response, 404, "not_found", "no such route");
+        return;
+      }
+      if (!requireGrant()) return;
+      const body = await readBody(request);
+      const record = (action, detail) => {
+        const change = {
+          change_id: `chg_${control.changes.length + 1}`, actor: who.email, platform: action === "revoke_key" ? "cloudflare" : "railway",
+          target: "svc-gw", action, status: action === "revoke_key" ? "recorded" : "watching", detail,
+          deployment_id: null, previous_deployment_id: null, reason: "",
+          created_at: new Date(now).toISOString(), updated_at: new Date(now).toISOString(),
+        };
+        control.changes.unshift(change);
+        json(response, 200, change);
+      };
+      const revoke = path.match(/^\/api\/v3\/admin\/control\/keys\/cloudflare\/tokens\/([^/]+)\/revoke$/);
+      if (revoke) {
+        const tok = control.cf.tokens.find((x) => x.token_id === revoke[1]);
+        if (!tok) {
+          auraError(response, 404, "not_found", "Cloudflare has no such token");
+          return;
+        }
+        if ((body.confirm || "") !== tok.name) return refuse(`type '${tok.name}' to confirm`, "confirmation_required");
+        if (tok.token_id === inUseId()) return refuse("the gateway still uses that token; create a new key first", "token_in_use");
+        control.cf.tokens = control.cf.tokens.filter((x) => x !== tok);
+        record("revoke_key", { service: tok.name, token_id: tok.token_id });
+        return;
+      }
+      const m = path.match(/^\/api\/v3\/admin\/control\/keys\/([^/]+)\/(replace|rotate)$/);
+      const slot = m && KEY_SLOTS.find((s) => s.name === m[1]);
+      if (!slot) {
+        auraError(response, 404, "not_found", "no provider with that name reads its key from a variable");
+        return;
+      }
+      if ((body.confirm || "") !== slot.name) return refuse(`type '${slot.name}' to confirm`, "confirmation_required");
+      if (!gatewayReady) return refuse("connect Railway first", "railway_not_connected");
+      if (m[2] === "replace") {
+        gatewayVars[slot.env] = body.value;
+        record("replace_key", { slot: slot.name, service: "gateway" });
+        return;
+      }
+      const kind = rotation(slot);
+      if (kind === "both_sides") {
+        const fresh = `rotated-${Math.random().toString(36).slice(2, 12)}`;
+        gatewayVars[slot.env] = fresh;
+        control.space.secrets.VLLM_API_KEY = { value: fresh, updated_at: new Date(now).toISOString() };
+        record("rotate_key", { slot: slot.name, service: "gateway", both_sides: true, space: spaceId });
+        return;
+      }
+      if (kind === "create") {
+        const tokenId = `cf-${++control.cf.seq}`;
+        const value = `cf-new-${control.cf.seq}`;
+        control.cf.tokens.push({ token_id: tokenId, name: `aura-${slot.name}-new`, status: "active", issued_on: new Date(now).toISOString(), value });
+        gatewayVars[slot.env] = value;
+        record("rotate_key", { slot: slot.name, service: "gateway", cloudflare_token_id: tokenId });
+        return;
+      }
+      refuse("this provider's vendor has no key API here: replace the key with one you paste", "replace_only");
+      return;
+    }
+
+    // -- GPU Space (stage 3) ------------------------------------------------------------------
+    if (path.startsWith("/api/v3/admin/control/space")) {
+      const credential = control.platforms.hf_space;
+      if (!credential) {
+        auraError(response, 404, "not_found", "the GPU Space is not connected; connect it in Settings");
+        return;
+      }
+      const sp = control.space;
+      const spaceId = credential.target || "org/aura-inference";
+      const name = spaceId.split("/").pop();
+      const refuse = (message, reason) => auraError(response, 422, "validation_error", message, false, { reason });
+      const busy = () => control.changes.some((c) => c.target === spaceId && c.status === "watching");
+      if (method === "GET" && path === "/api/v3/admin/control/space") {
+        json(response, 200, {
+          space_id: spaceId, name, stage: sp.stage, hardware: sp.hardware, requested_hardware: sp.hardware,
+          sleep_time: sp.sleep_time, hardware_options: SPACE_HARDWARE, sleep_choices: SLEEP_CHOICES,
+          change_in_progress: busy(), watch_minutes: 20,
+        });
+        return;
+      }
+      if (method === "GET" && path === "/api/v3/admin/control/space/variables") {
+        json(response, 200, {
+          variables: Object.keys(sp.vars).sort().map((n) => ({ name: n, secret: isSecret(n, sp.vars[n]), value: isSecret(n, sp.vars[n]) ? null : sp.vars[n] })),
+        });
+        return;
+      }
+      if (method === "GET" && path === "/api/v3/admin/control/space/secrets") {
+        json(response, 200, { secrets: Object.keys(sp.secrets).sort().map((n) => ({ name: n, updated_at: sp.secrets[n].updated_at })) });
+        return;
+      }
+      if (method === "GET" && path === "/api/v3/admin/control/space/logs") {
+        const kind = new URL(request.url, "http://mock").searchParams.get("kind") || "run";
+        json(response, 200, { lines: sp.logs[kind] || [] });
+        return;
+      }
+      const checkVars = (changes) => {
+        const clean = {};
+        for (const [n, v] of Object.entries(changes || {})) {
+          if (v !== null && isSecret(n, v)) return refuse(`${n} looks secret: add it under the Space's secrets`, "secret_as_variable");
+          if (v === null && !(n in sp.vars)) continue;
+          if (v !== null && sp.vars[n] === v) continue;
+          clean[n] = v;
+        }
+        if (!Object.keys(clean).length) return refuse("every value is already what you asked for", "no_changes");
+        return clean;
+      };
+      if (method === "POST" && path === "/api/v3/admin/control/space/variables/validate") {
+        const body = await readBody(request);
+        if (!checkVars(body.changes)) return;
+        json(response, 200, { ok: true, variables: [] });
+        return;
+      }
+      if (method !== "POST") {
+        auraError(response, 404, "not_found", "no such route");
+        return;
+      }
+      if (!requireGrant()) return;
+      const body = await readBody(request);
+      if ((body.confirm || "") !== name) {
+        refuse(`type '${name}' to confirm`, "confirmation_required");
+        return;
+      }
+      const record = (action, status, detail = {}) => {
+        const change = {
+          change_id: `chg_${control.changes.length + 1}`, actor: who.email, platform: "hf_space", target: spaceId, action,
+          status, detail: { service: name, ...detail }, deployment_id: null, previous_deployment_id: null, reason: "",
+          created_at: new Date(now).toISOString(), updated_at: new Date(now).toISOString(),
+        };
+        control.changes.unshift(change);
+        json(response, 200, change);
+      };
+      const op = path.slice("/api/v3/admin/control/space".length);
+      if (op === "/variables") {
+        if (busy()) return refuse("a change to the Space is still being watched", "change_in_progress");
+        const clean = checkVars(body.changes);
+        if (!clean) return;
+        for (const [n, v] of Object.entries(clean)) {
+          if (v === null) delete sp.vars[n];
+          else sp.vars[n] = v;
+        }
+        sp.stage = "APP_STARTING";
+        sp.events.push("variables");
+        record("space_variables", "watching", { watch_s: 1200, variables: Object.keys(clean).map((n) => ({ name: n })) });
+        return;
+      }
+      if (op === "/secrets") {
+        for (const [n, v] of Object.entries(body.changes || {})) {
+          if (v === "") return refuse(`give ${n} a value (or delete it)`, "value_required");
+          if (v === null) delete sp.secrets[n];
+          else sp.secrets[n] = { value: v, updated_at: new Date(now).toISOString() };
+        }
+        sp.events.push("secrets");
+        record("space_secrets", "recorded", { restorable: false, variables: Object.keys(body.changes).map((n) => ({ name: n, secret: true })) });
+        return;
+      }
+      if (op === "/pause") {
+        sp.stage = "PAUSED";
+        sp.events.push("pause");
+        record("space_pause", "recorded");
+        return;
+      }
+      if (op === "/restart") {
+        sp.stage = "APP_STARTING";
+        sp.events.push(body.factory ? "factory" : "restart");
+        record(body.factory ? "space_rebuild" : "space_restart", "recorded");
+        return;
+      }
+      if (op === "/hardware") {
+        if (!SPACE_HARDWARE.includes(body.hardware)) return refuse("unknown Space hardware", "bad_hardware");
+        if (body.hardware === sp.hardware) return refuse(`the Space already runs on ${body.hardware}`, "no_changes");
+        const from = sp.hardware;
+        sp.hardware = body.hardware;
+        sp.events.push(`hardware:${body.hardware}`);
+        record("space_hardware", "recorded", { from, to: body.hardware });
+        return;
+      }
+      if (op === "/sleep-time") {
+        if (!SLEEP_CHOICES.includes(body.seconds)) return refuse("choose one of the offered sleep times", "bad_sleep_time");
+        sp.sleep_time = body.seconds;
+        sp.events.push(`sleep:${body.seconds}`);
+        record("space_sleep_time", "recorded", { to: body.seconds });
+        return;
+      }
+      auraError(response, 404, "not_found", "no such route");
+      return;
+    }
+
+    // -- Railway (stage 2) --------------------------------------------------------------------
+    if (path.startsWith("/api/v3/admin/control/railway")) {
+      if (!control.platforms.railway) {
+        auraError(response, 404, "not_found", "railway is not connected; connect it in Settings");
+        return;
+      }
+      const rw = control.railway;
+      const refuse = (message, reason) =>
+        auraError(response, 422, "validation_error", message, false, { reason });
+      const openTarget = (id) => control.changes.some((c) => c.target === id && c.status === "watching");
+      if (method === "GET" && path === "/api/v3/admin/control/railway") {
+        json(response, 200, {
+          project: { id: "proj-1", name: "aura" },
+          environment: { id: "env-1", name: "production" },
+          services: Object.entries(rw.services).map(([id, svc]) => ({
+            service_id: id, name: svc.name, latest_deployment_id: svc.deployments[0]?.deployment_id ?? null,
+            latest_status: svc.deployments[0]?.status ?? null, latest_at: svc.deployments[0]?.created_at ?? null,
+            healthcheck_path: svc.healthcheck, is_gateway: id === "svc-gw", change_in_progress: openTarget(id),
+          })),
+        });
+        return;
+      }
+      const m = path.match(/^\/api\/v3\/admin\/control\/railway\/services\/([^/]+)(\/.*)$/);
+      const svc = m && rw.services[m[1]];
+      if (!m || !svc) {
+        auraError(response, 404, "not_found", "this environment has no such Railway service");
+        return;
+      }
+      const [, id, rest] = m;
+      if (method === "GET" && rest === "/variables") {
+        json(response, 200, {
+          variables: Object.keys(svc.vars).sort().map((name) => {
+            const value = svc.vars[name];
+            const secret = isSecret(name, value);
+            return { name, secret, value: secret ? null : value, reference: value.includes("${{"),
+              protected: PROTECTED.has(name), provided: name.startsWith("RAILWAY_") };
+          }),
+        });
+        return;
+      }
+      if (method === "GET" && rest === "/deployments") {
+        json(response, 200, { deployments: svc.deployments });
+        return;
+      }
+      const logs = rest.match(/^\/deployments\/([^/]+)\/logs$/);
+      if (method === "GET" && logs) {
+        const kind = new URL(request.url, "http://mock").searchParams.get("kind") || "deploy";
+        const secrets = Object.entries(svc.vars).filter(([k, v]) => isSecret(k, v)).map(([, v]) => v);
+        const lines = (rw.logs[`${kind}:${logs[1]}`] || []).map((l) => ({
+          ...l, message: secrets.reduce((text, v) => text.split(v).join("[redacted]"), l.message),
+        }));
+        json(response, 200, { lines });
+        return;
+      }
+      // What the engine checks before anything is written (control/railway.py `_check`).
+      const check = (changes) => {
+        const names = Object.keys(changes || {});
+        if (!names.length) return refuse("there is nothing to change", "no_changes");
+        const clean = {};
+        for (const name of names) {
+          const value = changes[name];
+          if (PROTECTED.has(name)) return refuse(`${name} can only be changed in the Railway dashboard`, "protected_variable");
+          if (name.startsWith("RAILWAY_")) return refuse(`${name} is provided by Railway`, "provided_variable");
+          if (value !== null && value.includes("${{")) return refuse("references are set in the Railway dashboard", "reference_not_supported");
+          if (value === null && !(name in svc.vars)) continue;
+          if (value !== null && svc.vars[name] === value) continue;
+          clean[name] = value;
+        }
+        if (!Object.keys(clean).length) return refuse("every value is already what you asked for", "no_changes");
+        const runsAura = Object.keys(svc.vars).some((k) => k.startsWith("AURA_"));
+        if (runsAura && !svc.healthcheck) return refuse(`${svc.name} has no health-check path`, "healthcheck_not_configured");
+        const topK = clean.AURA_KNOWLEDGE_TOP_K;
+        if (runsAura && topK !== undefined && topK !== null && Number(topK) > 50) {
+          return refuse("the gateway would not start with this change: AURA_KNOWLEDGE_TOP_K must be <= 50", "settings_invalid");
+        }
+        return { clean, runsAura };
+      };
+      if (method === "POST" && rest === "/variables/validate") {
+        const body = await readBody(request);
+        const ok = check(body.changes);
+        if (!ok) return;
+        json(response, 200, { ok: true, settings_checked: ok.runsAura, variables: Object.keys(ok.clean).map((name) => ({ name })) });
+        return;
+      }
+      if (method !== "POST") {
+        auraError(response, 404, "not_found", "no such route");
+        return;
+      }
+      if (!requireGrant()) return;
+      const body = await readBody(request);
+      if ((body.confirm || "") !== svc.name) {
+        refuse(`type '${svc.name}' to confirm`, "confirmation_required");
+        return;
+      }
+      const record = (action, status, detail, deploymentId = null) => {
+        const change = {
+          change_id: `chg_${control.changes.length + 1}`, actor: who.email, platform: "railway", target: id, action,
+          status, detail: { service: svc.name, ...detail }, deployment_id: deploymentId, previous_deployment_id: null, reason: "",
+          created_at: new Date(now).toISOString(), updated_at: new Date(now).toISOString(),
+        };
+        control.changes.unshift(change);
+        json(response, 200, change);
+      };
+      const deploy = () => {
+        const deploymentId = `dep-${++rw.seq}`;
+        svc.deployments.unshift({ deployment_id: deploymentId, status: "DEPLOYING", created_at: new Date(now).toISOString(),
+          can_rollback: true, can_redeploy: true, commit: "85258222c84c", message: "redeploy" });
+        return deploymentId;
+      };
+      if (rest === "/variables") {
+        if (openTarget(id)) return refuse(`a change to ${svc.name} is still being watched`, "change_in_progress");
+        const ok = check(body.changes);
+        if (!ok) return;
+        for (const [name, value] of Object.entries(ok.clean)) {
+          if (value === null) delete svc.vars[name];
+          else svc.vars[name] = value;
+        }
+        rw.applied.push(Object.keys(ok.clean));
+        record("set_variables", "watching", {
+          variables: Object.entries(ok.clean).map(([name, value]) => ({ name, secret: isSecret(name, value), deleted: value === null })),
+        }, deploy());
+        return;
+      }
+      if (rest === "/redeploy") {
+        if (openTarget(id)) return refuse(`a change to ${svc.name} is still being watched`, "change_in_progress");
+        record("redeploy", "watching", {}, deploy());
+        return;
+      }
+      if (rest === "/restart") {
+        rw.restarts.push(svc.deployments[0].deployment_id);
+        record("restart", "recorded", { deployment_id: svc.deployments[0].deployment_id });
+        return;
+      }
+      if (rest === "/rollback") {
+        if (!svc.deployments.some((d) => d.deployment_id === body.deployment_id)) {
+          auraError(response, 404, "not_found", "that deployment is not one of this service's last 50");
+          return;
+        }
+        record("rollback", "recorded", { to_deployment_id: body.deployment_id }, deploy());
+        return;
+      }
+      auraError(response, 404, "not_found", "no such route");
       return;
     }
   }

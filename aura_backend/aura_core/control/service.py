@@ -192,6 +192,21 @@ class ControlService:
             "vault_ready": self.vault_ready,
         }
 
+    async def check_write_cap(self, actor: str) -> None:
+        await self._check_write_cap(actor)
+
+    async def journal(
+        self, *, actor: str, platform: Platform, target: str, action: str,
+        detail: Mapping[str, Any], status: ChangeStatus = ChangeStatus.RECORDED, reason: str = "",
+    ) -> ChangeRecord:
+        """A change that needs no watching (a restart, a chosen rollback, a failed attempt)."""
+        return await self._journal(actor=actor, platform=platform, target=target, action=action,
+                                   detail=detail, status=status, reason=reason)
+
+    async def open_changes(self, platform: Platform | None = None) -> Sequence[ChangeRecord]:
+        changes = await self._store.open_changes()
+        return [c for c in changes if platform is None or c.platform is platform]
+
     async def _check_write_cap(self, actor: str) -> None:
         since = self._now() - timedelta(hours=1)
         if await self._store.count_changes_since(actor, since) >= self._writes_per_hour:
@@ -346,15 +361,29 @@ class Reconciler:
             except Exception as exc:
                 logger.warning("could not read a deployment's health", extra={"error": type(exc).__name__})
                 continue
-            watched_long_enough = now - change.created_at >= self._watch
-            if health is DeploymentHealth.FAILED:
+            # A Space rebuilds and reloads its model, which takes longer than a Railway
+            # redeploy: such a change carries its own window (``detail["watch_s"]``).
+            window = self._watch
+            override = change.detail.get("watch_s") if isinstance(change.detail, Mapping) else None
+            if isinstance(override, (int, float)) and override > 0:
+                window = timedelta(seconds=float(override))
+            watched_long_enough = now - change.created_at >= window
+            if health is DeploymentHealth.SUPERSEDED:
+                # Someone (or a merge to main) deployed again: this deployment is no longer the
+                # one serving, so its health says nothing more, and rolling back would undo the
+                # newer one too.
+                closed.append(await self._close(
+                    change, ChangeStatus.SUCCEEDED,
+                    "a newer deployment replaced it before the watch ended; not watched further",
+                ))
+            elif health is DeploymentHealth.FAILED:
                 closed.append(await self._roll_back(change, platform, "the new deployment failed to start"))
             elif watched_long_enough and health is DeploymentHealth.HEALTHY:
                 closed.append(await self._close(change, ChangeStatus.SUCCEEDED, ""))
             elif watched_long_enough:
                 closed.append(await self._roll_back(
                     change, platform,
-                    f"the deployment was still {health.value} after {int(self._watch.total_seconds() // 60)} minutes",
+                    f"the deployment was still {health.value} after {int(window.total_seconds() // 60)} minutes",
                 ))
         return closed
 
@@ -375,11 +404,20 @@ class Reconciler:
             change.change_id, status=ChangeStatus.ROLLING_BACK, updated_at=self._now(), reason=reason,
         )
         try:
+            companion = None
             if change.restore_ref:
                 values = json.loads((await self._vault.get(change.restore_ref)).reveal())
+                companion = values.pop("__companion__", None)
                 await platform.restore_variables(change.target, values)
             if change.previous_deployment_id:
                 await platform.rollback(change.target, change.previous_deployment_id)
+            if companion:
+                # The other side of a key rotated on two platforms (stage 4): the Space gets the
+                # key back that the restored gateway still sends.
+                other = self._platforms.get(Platform(companion["platform"]))
+                if other is None:
+                    raise RuntimeError("no platform to restore the companion change on")
+                await other.set_secrets(companion["target"], companion["secrets"])
         except Exception as exc:
             logger.error("automatic rollback failed", extra={"error": type(exc).__name__})
             return await self._close(

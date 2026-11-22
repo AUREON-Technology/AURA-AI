@@ -81,6 +81,31 @@ ROUTES = [
     ("POST", "/api/v3/admin/control/step-up/revoke", None),
     ("POST", "/api/v3/admin/control/platforms/hf_space/credential", {"token": "x", "confirm": "hf_space"}),
     ("POST", "/api/v3/admin/control/platforms/hf_space/disconnect", {"confirm": "hf_space"}),
+    ("GET", "/api/v3/admin/control/railway", None),
+    ("GET", "/api/v3/admin/control/railway/services/svc-gw/variables", None),
+    ("GET", "/api/v3/admin/control/railway/services/svc-gw/deployments", None),
+    ("GET", "/api/v3/admin/control/railway/services/svc-gw/deployments/dep-1/logs", None),
+    ("POST", "/api/v3/admin/control/railway/services/svc-gw/variables/validate", {"changes": {"A": "b"}}),
+    ("POST", "/api/v3/admin/control/railway/services/svc-gw/variables", {"changes": {"A": "b"}, "confirm": "gateway"}),
+    ("POST", "/api/v3/admin/control/railway/services/svc-gw/redeploy", {"confirm": "gateway"}),
+    ("POST", "/api/v3/admin/control/railway/services/svc-gw/restart", {"confirm": "gateway"}),
+    ("POST", "/api/v3/admin/control/railway/services/svc-gw/rollback", {"deployment_id": "dep-1", "confirm": "gateway"}),
+    ("GET", "/api/v3/admin/control/space", None),
+    ("GET", "/api/v3/admin/control/space/variables", None),
+    ("GET", "/api/v3/admin/control/space/secrets", None),
+    ("GET", "/api/v3/admin/control/space/logs", None),
+    ("POST", "/api/v3/admin/control/space/variables/validate", {"changes": {"A": "b"}}),
+    ("POST", "/api/v3/admin/control/space/variables", {"changes": {"A": "b"}, "confirm": "space"}),
+    ("POST", "/api/v3/admin/control/space/secrets", {"changes": {"A": "b"}, "confirm": "space"}),
+    ("POST", "/api/v3/admin/control/space/pause", {"confirm": "space"}),
+    ("POST", "/api/v3/admin/control/space/restart", {"confirm": "space"}),
+    ("POST", "/api/v3/admin/control/space/hardware", {"hardware": "l4x1", "confirm": "space"}),
+    ("POST", "/api/v3/admin/control/space/sleep-time", {"seconds": 3600, "confirm": "space"}),
+    ("GET", "/api/v3/admin/control/keys", None),
+    ("GET", "/api/v3/admin/control/keys/cloudflare/tokens", None),
+    ("POST", "/api/v3/admin/control/keys/hosted1/replace", {"value": "k", "confirm": "hosted1"}),
+    ("POST", "/api/v3/admin/control/keys/hosted1/rotate", {"confirm": "hosted1"}),
+    ("POST", "/api/v3/admin/control/keys/cloudflare/tokens/cf-1/revoke", {"confirm": "x"}),
 ]
 
 
@@ -107,7 +132,12 @@ class TestOnlyTheSuperAdmin:
             if path.startswith("/api/v3/admin/control/")
             for method in operations
         }
-        swept = {(m, p.replace("/hf_space/", "/{platform}/")) for m, p, _ in ROUTES}
+        swept = {
+            (m, p.replace("/hf_space/", "/{platform}/").replace("/svc-gw/", "/{service_id}/")
+                 .replace("/dep-1/", "/{deployment_id}/").replace("/hosted1/", "/{slot}/")
+                 .replace("/cf-1/", "/{token_id}/"))
+            for m, p, _ in ROUTES
+        }
         assert registered == swept
 
     def test_the_super_admin_can_read(self) -> None:
@@ -249,13 +279,23 @@ class TestTokens:
         assert response.status_code == 422
         assert not next(p for p in overview["platforms"] if p["platform"] == "hf_space")["connected"]
 
-    def test_railway_is_saved_as_not_yet_verified(self, vault_key) -> None:
+    def test_grafana_is_saved_as_not_yet_verified(self, vault_key) -> None:
         container = _container()
         with _client(container) as client:
             grant = _step_up(client, container)
-            response = _connect(client, grant, platform="railway", target="")
+            response = _connect(client, grant, platform="grafana", target="")
         assert response.status_code == 200
         assert response.json()["verified"] is False
+
+    def test_a_railway_token_is_checked_before_it_is_saved(self, vault_key) -> None:
+        container = _container()
+        container.control_verifier.accept(Platform.RAILWAY, "railway-good")
+        with _client(container) as client:
+            grant = _step_up(client, container)
+            refused = _connect(client, grant, platform="railway", token="railway-bad", target="")
+            saved = _connect(client, grant, platform="railway", token="railway-good", target="")
+        assert refused.status_code == 422
+        assert saved.status_code == 200 and saved.json()["verified"] is True
 
     def test_no_secret_value_ever_leaves_the_server(self, vault_key, monkeypatch) -> None:
         monkeypatch.setenv("AURA_SMTP_PASSWORD", CANARY + "-smtp")

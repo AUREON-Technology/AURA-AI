@@ -70,8 +70,9 @@ It is what has to be true before the gateway agrees to act.
   - Cloudflare: `/user/tokens/verify`.
   - Qdrant: `GET /collections`. The host must end in `.qdrant.io` or be `AURA_QDRANT_URL`'s
     host, so a token cannot be sent anywhere else (SSRF).
-  - Railway and Grafana are saved "not verified yet" until stage 2 and stage 5 add their
-    clients.
+  - Railway: the `projectToken` query, which also tells the gateway which project and
+    environment the token reaches. An account or team token is refused.
+  - Grafana is saved "not verified yet" until stage 5 adds its client.
 
   The Cloudflare API root comes from the configured Workers AI provider's `base_url`, never a
   literal, so ADR-030's rule that hosted-inference hosts never appear in Python source still
@@ -92,6 +93,71 @@ It is what has to be true before the gateway agrees to act.
   variables. If the rollback itself fails, the change is marked `FAILED` for a human to handle.
   A Postgres lease row (`aura_control_leases`) makes sure exactly one gateway process acts, even
   with several uvicorn workers.
+- **A variable change has to pass, before anything is written** (stage 2, `control/railway.py`):
+  - the typed service name and a step-up grant;
+  - no other change to that service still being watched, so a rollback can never undo the
+    wrong change;
+  - not a protected variable, not one of Railway's own `RAILWAY_*`, and no `${{...}}`
+    reference (its rendered value is unknown until Railway renders it, so it cannot be
+    checked);
+  - for a service that runs AURA (any `AURA_*` variable): a health-check path on the service,
+    or Railway would switch traffic to a deployment that never proved it boots; and the whole
+    candidate environment must pass `SettingsValidator`. That loads `AuraSettings` and runs
+    `validate()` in a **child process** whose environment is exactly the candidate, plus the
+    gateway's JWT-secret rule. A redeploy reuses the image, so this is the code that will boot.
+
+  Then the variables are written with `skipDeploys`, and exactly one redeploy of the current
+  image (`deploymentRedeploy`, `usePreviousImageTag`) is started. Its id goes in the journal,
+  with the previous raw values (references kept as written) in the vault. If the redeploy
+  cannot start, the old values are put back and the change is journaled `FAILED`.
+- **The reconciler runs in every staging/production gateway process** (`AURA_CONTROL_RECONCILER`,
+  default on), started by the gateway's startup hook, never by a Celery worker. Railway's
+  status words map to health: `SUCCESS` (health check passed) is healthy, `FAILED`/`CRASHED`
+  failed, `REMOVED`/`SKIPPED` superseded. A change whose deployment was replaced by a newer one
+  (a merge to `main`, say) is closed without a rollback, which would undo the newer deployment
+  too.
+- **A rollback you choose is journaled, not watched.** Undoing it automatically would only pick
+  between two states a person has already rejected.
+- **Logs are masked:** every secret value of the service is replaced before a log line is
+  returned.
+- **The GPU Space (stage 3, `control/space.py`) is the Space its token was connected for**
+  (the HF credential's `owner/name`), so no setting points the token anywhere else. The Hub
+  restarts a Space by itself whenever a variable or secret changes, so the rules differ from
+  Railway's:
+  - **Variables** are checked, written and watched with the Space's own window
+    (`AURA_CONTROL_SPACE_WATCH_S`, 20 minutes by default), because a rebuild reloads the model
+    on the GPU. A failed or still-not-running Space gets its old values back, which restarts
+    it. A variable whose name or value looks secret is refused: it belongs in the Space's
+    secrets.
+  - **Secrets** are write-only, as on the Hub, and journaled as not restorable: the Hub never
+    returns a value, so nothing can be put back. The console says so before every change.
+  - **Hardware** (billed per hour), sleep time, pause, restart and rebuild are journaled, not
+    watched. Rolling back hardware automatically could put the Space back on the hardware
+    that was failing.
+  - The reconciler reads the Space's stage: `RUNNING` is healthy, `*_ERROR` failed, and
+    `PAUSED`/`STOPPED` superseded (someone stopped it on purpose).
+- **Provider keys (stage 4, `control/keys.py`) are gateway variables.** Every key change is
+  therefore a Railway variable change on the gateway itself, with all of stage 2's checks,
+  its one watched redeploy and its rollback.
+  - **Replace** works for any slot, with a value you paste. Groq has no key API.
+  - **Rotate both sides** is for the GPU Space. vLLM checks one `--api-key`, so the old and new
+    keys cannot overlap.
+    - The gateway generates the new key and sets it as the Space's `VLLM_API_KEY`, which
+      restarts the Space. It then writes the same key to the gateway variable.
+    - The gateway redeploys faster than the Space reloads its model, so the gap is the Space's
+      restart, which any Space change costs. The router fails over meanwhile.
+    - If the gateway change is refused, the Space gets the old key back at once. If the change
+      is rolled back later, the reconciler puts it back through a *companion restore* kept in
+      the vault with the change. The old key is known because it is the gateway's own variable.
+  - **Create** is for a Workers AI slot. The stored Cloudflare management token creates a token
+    with the Workers AI read and write groups, scoped to the account the slot's URL names; the
+    gateway then switches to it.
+    - A switch that cannot start revokes the token it made.
+    - The old token is revoked as a separate step, and the token in use cannot be revoked.
+  - Slots come from each provider's `api_key_env`. A Workers AI slot is recognised by its URL,
+    and the Space by the hostname the Hub derives from its `owner/name`, so no host is named in
+    source.
+  - No key value is returned, journaled or audited.
 - **"Deploy" means redeploy, restart, rollback, status and logs.** It never means "deploy any
   branch". Shipping code stays `main` → Railway, so the console cannot ship code that has not
   been merged.
@@ -127,9 +193,9 @@ them. The control center adds a way in; it removes none.
 | Stage | Scope | Built |
 |---|---|---|
 | S1 | Foundation: migration 0031; vault-backed tokens; step-up; journal, reconciler and audit; Settings with Overview, AURA settings (read-only) and Changes | yes (2026-11-21), not proven |
-| S2 | Railway: services, variables (edit with validation), redeploy, restart, rollback, logs; the reconciler turned on | no |
-| S3 | HF GPU Space: status, restart, hardware, variables | no |
-| S4 | Provider keys: create and revoke where the vendor allows (Cloudflare), replace-only (Groq), HF rotated on both sides | no |
+| S2 | Railway: services, variables (edit with validation), redeploy, restart, rollback, logs; the reconciler turned on; AURA settings edited through the gateway's own Railway variables | yes (2026-11-22), not proven |
+| S3 | HF GPU Space: status, pause/resume, restart, rebuild, hardware, sleep time, variables (watched), secrets (write-only), logs | yes (2026-11-22), not proven |
+| S4 | Provider keys: replace (any), rotate both sides (GPU Space), create and revoke (Cloudflare Workers AI) | yes (2026-11-22), not proven |
 | S5 | Grafana Cloud (set up, status) and Qdrant Cloud (status, snapshots; restore needs step-up) | no |
 
 ## Evidence still owed

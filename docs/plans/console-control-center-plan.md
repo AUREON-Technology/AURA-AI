@@ -301,6 +301,93 @@ this section wins:
   Authorized redirect URIs on the console's Google OAuth client, and make sure
   `AURA_SECRETS_ENCRYPTION_KEY` is set on the Railway gateway.
 
+## Stage 2 as built (2026-11-22)
+
+Built and tested locally, not proven (ADR-037, GAP-067). Where it differs from the design above,
+this section wins:
+
+- **Railway API, checked first.** Every query and mutation was checked against Railway's live
+  schema (introspection, then each document sent with a dummy token: every answer was an auth
+  or "not found" error, never a schema error). Requests use `httpx`, since Cloudflare in front
+  of Railway refuses Python's `urllib` (error 1010).
+- **Scope from the token.** The project and environment come from the token's own
+  `projectToken`. Nothing else is configured, and the token check on Connect is the same query.
+- **One redeploy per change.** Variables are written with `skipDeploys: true`, then one
+  `deploymentRedeploy(usePreviousImageTag: true)`: same image, new variables, no rebuild. A
+  rebuild would outlast the 5-minute watch.
+- **Validation.** It runs `AuraSettings.from_env().validate()` in a child process with exactly
+  the candidate environment, plus the gateway's JWT-secret rule, for any service with an
+  `AURA_*` variable. Other services, such as the console, skip it.
+- **Extra refusals, beyond the design:**
+  - `${{...}}` references (set them in the Railway dashboard);
+  - `RAILWAY_*` variables;
+  - a second change while one is watched;
+  - an AURA service with no health-check path.
+- **Restore values are raw.** A rollback restores references as written, not their rendered
+  values.
+- **The reconciler is started** by the gateway's startup hook in staging/production
+  (`AURA_CONTROL_RECONCILER`, default on).
+  - A deployment replaced by a newer one is closed without a rollback.
+  - A rollback you choose is journaled, not watched.
+- **AURA settings tab.** It reads, and edits through the same tray, the gateway's own Railway
+  variables (`RAILWAY_SERVICE_ID`), once Railway is connected. Each row shows the value Railway
+  holds when it differs from the running one ("next deploy").
+- **Console e2e.** One spec file (`control-center.spec.ts`) holds both stages, because the mock
+  gateway's control state is shared and Playwright keeps one file's tests on one worker.
+- **Not built yet.** Stage 2 has no live contract test (`tests/load/test_control_live.py`); the
+  owner's live checks below stand in for it.
+
+## Stage 3 as built (2026-11-22)
+
+Built and tested locally, not proven (ADR-037, GAP-067). Where it differs from the design above,
+this section wins:
+
+- **Hub client.** `huggingface_hub` 1.28, already locked. Every method used was checked against
+  its signatures: `get_space_runtime`, `get_space_variables`, `add_space_variable`,
+  `delete_space_variable`, `get_space_secrets`, `add_space_secret`, `delete_space_secret`,
+  `pause_space`, `restart_space(factory_reboot=)`, `request_space_hardware`,
+  `set_space_sleep_time` and `fetch_space_logs(follow=False)`. The token is passed per call,
+  never set on a shared client.
+- **Which Space.** The one named on the HF card when its token was connected (`owner/name`).
+  Writes ask for the Space's short name (`aura-inference`).
+- **No deploy step.** The Hub restarts the Space on every variable or secret change.
+  - Variables are watched for 20 minutes (`AURA_CONTROL_SPACE_WATCH_S`). If the Space errors
+    or is not running in time, the old values are put back.
+  - Secrets cannot be restored, because the Hub never returns them. Their changes are
+    journaled and the console warns first.
+  - A secret-looking variable is refused.
+- **Hardware and sleep time are journaled, not watched.**
+  - The hardware list is a fixed copy of `SpaceHardware`, in `domain/control.py`.
+  - The sleep times offered are -1 (never), 5, 15 and 30 minutes, and 1, 3, 10, 24 and 48
+    hours.
+- **Pause and resume.** Resume is the Hub's restart of a paused Space.
+- **Not in this stage.** Rotating the HF key on both sides is stage 4.
+
+## Stage 4 as built (2026-11-22)
+
+Built and tested locally, not proven (ADR-037, GAP-067). Where it differs from the design above,
+this section wins:
+
+- **Keys are gateway variables.** Every key action is a stage-2 variable change on the gateway,
+  with its checks, one watched redeploy and rollback. A key action needs Railway connected.
+- **"With no downtime" is not possible for the GPU Space.** The Space runs vLLM with a single
+  `--api-key`, and every Space secret change restarts the Space. The rotation minimises the gap
+  to that restart: Space secret first, then the gateway variable in the same action. The router
+  fails over during the restart.
+  - If the gateway side is refused or rolled back, the Space gets its old key back. The rollback
+    case is the reconciler's new *companion restore*.
+  - Accepting two keys at once would need a change to the Space's image. Not in scope.
+- **Cloudflare.**
+  - The user-token API: `/user/tokens` verify, list, create, delete, and permission groups. The
+    API root is derived from the Workers AI provider's base URL, as in stage 1.
+  - A new token gets the "Workers AI Read" and "Workers AI Write" groups (Cloudflare's own
+    Workers AI template), scoped to the account the slot's URL names.
+  - The old token stays until you revoke it, and the token in use cannot be revoked.
+  - A token owned by the account rather than a user is invisible to this API: revoke that one in
+    the Cloudflare dashboard.
+- **Provider health** is the router's state in the process answering the request. After a key
+  redeploy, that is the new gateway.
+
 ## Delivery: five stages, each its own PR, each usable on its own
 
 | Stage | Contents | Proof needed before calling it done |
