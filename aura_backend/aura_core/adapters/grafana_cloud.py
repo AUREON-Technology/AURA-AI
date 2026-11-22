@@ -51,8 +51,24 @@ def stack_slug(stack_url: str) -> str:
     return slug
 
 
+#: A token made inside a stack's own Grafana (a service-account token). grafana.com's API does
+#: not take it; the control center needs a Cloud access policy token (``glc_``).
+_SERVICE_ACCOUNT_PREFIX = "glsa_"
+
+
 async def grafana_stack(token: str, slug: str, *, transport: Any = None) -> GrafanaStack:
-    """The stack a token reaches. Also the token check when Grafana is connected."""
+    """The stack a token reaches. Also the token check when Grafana is connected.
+
+    The refusals say which of the three usual mistakes it was: a service-account token from the
+    stack's own Grafana (refused before any call), a token grafana.com does not accept at all
+    (401), or a valid token whose policy lacks ``stacks:read`` or does not cover the stack (403).
+    """
+    if token.strip().startswith(_SERVICE_ACCOUNT_PREFIX):
+        raise ValidationError(
+            "that is a Grafana service-account token (glsa_). Use a Cloud access policy token "
+            "(glc_) from grafana.com -> Security -> Access Policies",
+            details={"reason": "grafana_wrong_token_type"},
+        )
     import httpx
 
     try:
@@ -63,9 +79,19 @@ async def grafana_stack(token: str, slug: str, *, transport: Any = None) -> Graf
         raise DependencyUnavailableError(
             "Grafana Cloud could not be reached", dependency="grafana", details={"error": type(exc).__name__},
         ) from exc
-    if response.status_code in (401, 403):
-        raise ValidationError("Grafana Cloud refused the token (it needs stacks:read)",
-                              details={"reason": "grafana_refused"})
+    if response.status_code == 401:
+        raise ValidationError(
+            "Grafana Cloud did not accept the token: use a Cloud access policy token (it starts with "
+            "glc_), copied whole, that has not expired or been deleted",
+            details={"reason": "grafana_token_invalid"},
+        )
+    if response.status_code == 403:
+        raise ValidationError(
+            f"Grafana Cloud accepted the token but it may not read the stack {slug!r}: its access "
+            "policy needs stacks:read, with a realm that covers this stack (the organization, or "
+            "this stack)",
+            details={"reason": "grafana_refused"},
+        )
     if response.status_code == 404:
         raise ValidationError(f"Grafana Cloud has no stack {slug!r} for this token", details={"reason": "grafana_stack_missing"})
     if response.status_code >= 400:

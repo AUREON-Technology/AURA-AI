@@ -449,6 +449,9 @@ const server = http.createServer(async (request, response) => {
   if (method === "POST" && path === "/__test/reset-control") {
     const vaultReady = !new URL(request.url, "http://mock").searchParams.has("no-vault");
     state.control = { platforms: {}, changes: [], nonces: {}, grants: {}, stepUps: 0, receivedTokens: [], vaultReady, railway: freshRailway(), space: freshSpace(), cf: freshCloudflare(), grafana: freshGrafana(), qdrant: freshQdrant() };
+    if (new URL(request.url, "http://mock").searchParams.has("no-gw-healthcheck")) {
+      state.control.railway.services["svc-gw"].healthcheck = "";
+    }
     json(response, 200, { ok: true });
     return;
   }

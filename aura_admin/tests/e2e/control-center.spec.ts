@@ -221,8 +221,21 @@ test("Railway: services, variables and logs: secrets never reach the page", asyn
   await expect(page.getByTestId("logs")).toContainText("jwt loaded [redacted]");
   expect(await page.content()).not.toContain(SECRET);
 
+  // The console runs no AURA: a missing health check is only a note there, not a refusal.
   await page.getByTestId("service-console").click();
-  await expect(page.getByTestId("no-healthcheck")).toBeVisible();
+  await expect(page.getByTestId("no-healthcheck-note")).toBeVisible();
+  await expect(page.getByTestId("no-healthcheck")).toHaveCount(0);
+});
+
+test("Railway: an AURA service with no health check gets the warning, and its change is refused", async ({ page, request }) => {
+  await request.post(`${gateway}/__test/reset-control?no-gw-healthcheck=1`);
+  await openRailway(page);
+  await expect(page.getByTestId("no-healthcheck")).toContainText("Variable changes to a service that runs AURA are refused");
+  await page.getByRole("button", { name: "Edit AURA_KNOWLEDGE_TOP_K" }).click();
+  await page.getByLabel("New value for AURA_KNOWLEDGE_TOP_K").fill("12");
+  await page.getByRole("button", { name: "Add to changes" }).click();
+  await page.getByTestId("change-tray").getByRole("button", { name: "Check" }).click();
+  await expect(page.getByTestId("change-tray")).toContainText("has no health-check path");
 });
 
 test("Railway: a variable change is checked, applied behind the service name, and watched", async ({ page, request }) => {

@@ -299,3 +299,20 @@ class TestHttpGrafanaCloudContract:
         with pytest.raises(ValidationError) as caught:
             await cloud.query("up")
         assert "metrics:read" in caught.value.message and "glc-token" not in caught.value.message
+
+    async def test_each_usual_token_mistake_gets_its_own_reason(self) -> None:
+        """Found on the first live Connect (2026-11-22): one message for 401 and 403 could not
+        tell a wrong token type from a policy without stacks:read."""
+        from aura_core.adapters.grafana_cloud import grafana_stack
+
+        with pytest.raises(ValidationError) as wrong_type:
+            await grafana_stack("glsa_from_the_stack", "aurastack",
+                                transport=httpx.MockTransport(lambda r: pytest.fail("no call expected")))
+        assert wrong_type.value.details["reason"] == "grafana_wrong_token_type"
+        for status, reason, words in ((401, "grafana_token_invalid", "glc_"), (403, "grafana_refused", "stacks:read")):
+            with pytest.raises(ValidationError) as caught:
+                await grafana_stack("glc_token", "aurastack",
+                                    transport=httpx.MockTransport(lambda r, s=status: httpx.Response(s)))
+            assert caught.value.details["reason"] == reason and words in caught.value.message
+            assert "glc_token" not in caught.value.message
+

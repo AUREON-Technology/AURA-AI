@@ -344,6 +344,7 @@ export const en = {
   "settings.railway.thisGateway": "this gateway",
   "settings.railway.watching": "change being watched",
   "settings.railway.noHealthcheck": "No health-check path: Railway switches traffic without checking that a new deployment boots. Variable changes to a service that runs AURA are refused until it is set (service Settings -> Deploy -> Healthcheck Path: /health/live).",
+  "settings.railway.noHealthcheckNote": "No health-check path. That is fine here: this service does not run AURA (a cron job, say), so its changes are not refused.",
   "settings.railway.healthcheck": "Health check: {path}",
   "settings.railway.redeployTitle": "Redeploy {service}",
   "settings.railway.redeployBody": "A new deployment of the current image with the current variables, watched for 5 minutes and rolled back if it fails.",
