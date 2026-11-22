@@ -14,6 +14,10 @@ extension type _History(JSObject _) implements JSObject {
   external void replaceState(JSAny? data, String unused, String url);
 }
 
+/// The path the app is served from, from the page's `<base href>` (`/app/` when it is built with
+/// `--base-href /app/`, `/` when it is served from the root).
+String browserBasePath() => Uri.parse(_baseUri).path;
+
 /// Replaces the current history entry's path and query with the app's base address (its
 /// `<base href>`), keeping the `#fragment` the router uses. Nothing is navigated or reloaded, and
 /// no new history entry is added, so the removed query is gone from both the address bar and the

@@ -537,10 +537,19 @@ const _webDeepLinkPaths = {desktopSignInPath, '/invite'};
 /// browser used to land on the home page with its token lost. This reads it back from [base] so
 /// the page opens with its query intact. Null for every other address, which then starts as it
 /// always has.
+///
+/// [basePath] is the path the app is served from (its `<base href>`): under `/app/`, the address
+/// `/app/invite?token=…` is the invite page, not an unknown path.
 @visibleForTesting
-String? webDeepLinkLocation(Uri base) {
-  if (!_webDeepLinkPaths.contains(base.path)) return null;
-  return base.hasQuery ? '${base.path}?${base.query}' : base.path;
+String? webDeepLinkLocation(Uri base, {String basePath = '/'}) {
+  final prefix = basePath.replaceAll(RegExp(r'/+$'), '');
+  var path = base.path;
+  if (prefix.isNotEmpty) {
+    if (path != prefix && !path.startsWith('$prefix/')) return null;
+    path = path.substring(prefix.length);
+  }
+  if (!_webDeepLinkPaths.contains(path)) return null;
+  return base.hasQuery ? '$path?${base.query}' : path;
 }
 
 /// The web start location, and -- for an invite -- the single-use token taken out of the real
@@ -549,7 +558,7 @@ String? webDeepLinkLocation(Uri base) {
 /// in the address bar and in history. Dropped here, before anything else runs; the token travels
 /// on in the router's initial location only.
 String? _webInitialLocation() {
-  final location = webDeepLinkLocation(Uri.base);
+  final location = webDeepLinkLocation(Uri.base, basePath: browserBasePath());
   if (location != null && location.startsWith('/invite?')) dropAddressPathAndQuery();
   return location;
 }
