@@ -307,6 +307,13 @@ AURA_LLM_STREAM_MAX_S=120
 
 # Prompt cap (PP-09). 400 is sized for qwen2.5:3b on CPU; nothing on this target is that slow.
 AURA_LLM_MAX_PROMPT_TOKENS=<rule below>
+
+# How much retrieved knowledge reaches the model (docs/reports/PROMPT_BUDGET_EVAL_2026-11-22.md).
+# At the defaults (400 / 2 / 280) no retrieved text reached the prompt in the offline evaluation.
+# Measured offline, hash embedder, not with a real model: cap 3000, top_k 4, 1200 chars put the
+# answer text in the prompt for 70% of questions against 0% at the defaults.
+AURA_KNOWLEDGE_TOP_K=4
+AURA_KNOWLEDGE_PROMPT_CHUNK_CHARS=1200
 ```
 
 Why each value:
@@ -343,9 +350,12 @@ Why each value:
   Use `min(context_window) − max_output_tokens − 500` across `hosted1` and `hfspace`. Also mind
   `TPM`: a chat turn sends roughly the prompt twice (planner, then answer), so
   `2 × prompt × turns per minute` must stay under it. `3000` is a reasonable first value for
-  8k-context models with a generous TPM. The cap is one global value, not per provider. That is
-  fine here because no provider on this target is slow enough to need a small prompt. A mixed
-  deployment with a CPU model would need a per-provider cap, which does not exist yet.
+  8k-context models with a generous TPM. This is also what lets retrieved knowledge into the
+  prompt at all: at the default 400 the evaluation above showed none reaching the model, whatever
+  `AURA_KNOWLEDGE_TOP_K` and `AURA_KNOWLEDGE_PROMPT_CHUNK_CHARS` were. The variable is the global
+  ceiling; a provider can narrow it with `AURA_PROVIDER_<NAME>_MAX_PROMPT_TOKENS`, and a turn is
+  sized to the smallest cap among the providers eligible for it (KAN-98). A mixed deployment with a
+  CPU model therefore raises the global value and sets the small cap on the CPU provider.
 
 What these do not fix: sensitive turns (memory, documents, tools, images, Engineer) still have
 no eligible model while only `hosted1` is healthy, because its ceiling is `internal`. For the
