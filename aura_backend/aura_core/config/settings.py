@@ -1245,6 +1245,13 @@ class ObservabilitySettings:
     #: found /metrics world-readable there, publishing which safety bypasses are on and which
     #: dependencies are down.
     metrics_token: str = ""
+    #: Answer a request that sends no ``Authorization`` header with ``401`` and a
+    #: ``WWW-Authenticate: Bearer`` challenge instead of the usual ``404``. Off by default: the 404
+    #: is deliberate, so an unauthenticated caller learns nothing about the path. Turn it on only for
+    #: a scraper that sends credentials after a challenge -- Grafana Cloud's Metrics Endpoint test
+    #: sends none up front (live, 2026-11-22), so with 404 it can never pass. A wrong or malformed
+    #: credential still gets 404, and the metrics stay unreadable without the token.
+    metrics_challenge: bool = False
     #: How long audit events and turn telemetry are kept (audit FSA-016). Both hold personal
     #: data (the audit actor is an email or subject, with a source IP; telemetry names a user's
     #: conversations) and were kept forever. ``0`` keeps rows indefinitely. The daily
@@ -1268,6 +1275,7 @@ class ObservabilitySettings:
             telemetry_persist=_bool("TELEMETRY_PERSIST", True),
             trace_content_sampling=_float("TRACE_CONTENT_SAMPLING", 0.0, minimum=0.0, maximum=1.0),
             metrics_token=(_env("METRICS_TOKEN", "") or "").strip(),
+            metrics_challenge=_bool("METRICS_CHALLENGE", False),
         )
 
 
