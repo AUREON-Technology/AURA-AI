@@ -77,6 +77,9 @@ class AgentRunContext:
     goal: str = ""
     tools_available: int = 0
     tainted: bool = False
+    #: The earlier run this turn retries (``AgentRun.retry_of``); already checked to be the
+    #: caller's own and retryable by the API layer.
+    retry_of: str | None = None
 
 
 class RunRecorder:
@@ -111,6 +114,7 @@ class RunRecorder:
             goal_digest=goal_digest(context.goal),
             goal_chars=len(context.goal),
             budget=budget,
+            retry_of=context.retry_of,
         )
         self.steps: list[AgentStep] = []
 
@@ -321,7 +325,9 @@ class RunRecorder:
         self, outcome: Any, *, stop_reason: str | None, exhausted_budget: str | None,
     ) -> AgentRun:
         """Completion or failure: the terminal status, and the run-level metrics."""
-        if outcome is None:
+        if stop_reason == "run_cancelled":
+            status = AgentRunStatus.CANCELLED
+        elif outcome is None:
             status = AgentRunStatus.FAILED
         elif outcome.succeeded:
             status = AgentRunStatus.COMPLETED

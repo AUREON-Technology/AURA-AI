@@ -153,6 +153,10 @@ class TurnRequest:
     #: persona. The kernel never looks one up: a custom agent cannot be named across owners
     #: because nothing here accepts an id. Never copied onto a delegated child turn.
     custom_agent: CustomAgent | None = None
+    #: The earlier agent run this turn retries, already checked by the API layer to be the
+    #: caller's own and in a retryable status. Recorded on the new run; the instruction itself is
+    #: not stored anywhere, so the client sends it again.
+    retry_of: str | None = None
     correlation_id: CorrelationId | None = None
     use_knowledge: bool = True
     use_memory: bool = True
@@ -2073,6 +2077,7 @@ class AIKernel:
                 goal=message,
                 tools_available=len(tools),
                 tainted=tainted,
+                retry_of=request.retry_of,
             ),
         }
 

@@ -104,6 +104,12 @@ COVERED = {
         "TestEngineering::test_bob_cannot_delete_alices_workspace",
     ("GET", "/api/v3/agents/runs/{run_id}"):
         "TestAgentRuns::test_bob_cannot_read_alices_agent_run",
+    ("GET", "/api/v3/agents/runs/{run_id}/status"):
+        "TestAgentRuns::test_bob_cannot_read_alices_run_status_or_logs",
+    ("GET", "/api/v3/agents/runs/{run_id}/logs"):
+        "TestAgentRuns::test_bob_cannot_read_alices_run_status_or_logs",
+    ("POST", "/api/v3/agents/runs/{run_id}/cancel"):
+        "TestAgentRuns::test_bob_cannot_cancel_alices_run",
     ("DELETE", "/api/v3/workspaces/{workspace_id}"):
         "TestWorkspaces::test_bob_cannot_delete_alices_team",
     ("GET", "/api/v3/workspaces/{workspace_id}/members"):
@@ -492,6 +498,44 @@ class TestAgentRuns:
             mine = client.get(f"/api/v3/agents/runs/{run_id}", headers=AUTH_A)
         assert mine.status_code == 200
         assert [s["tool"] for s in mine.json()["steps"]] == ["git_status"]
+
+    def test_bob_cannot_read_alices_run_status_or_logs(self, container) -> None:
+        from fastapi.testclient import TestClient
+
+        run_id = self._alice_run(container)
+        missing = "00000000-0000-4000-8000-000000000000"
+        with TestClient(_app(container)) as client:
+            for suffix in ("status", "logs"):
+                theirs = client.get(f"/api/v3/agents/runs/{run_id}/{suffix}", headers=AUTH_B)
+                gone = client.get(f"/api/v3/agents/runs/{missing}/{suffix}", headers=AUTH_B)
+                assert theirs.status_code == gone.status_code == 404, f"Bob read Alice's run {suffix}"
+                assert theirs.json()["error"] == gone.json()["error"]
+                assert "git_status" not in theirs.text
+                assert client.get(f"/api/v3/agents/runs/{run_id}/{suffix}", headers=AUTH_A).status_code == 200
+
+    def test_bob_cannot_cancel_alices_run(self, container) -> None:
+        """A cancel is a write: it must neither stop Alice's run nor leave a flag that would."""
+        from datetime import datetime, timezone
+
+        from fastapi.testclient import TestClient
+
+        from aura_core.domain.agent_runs import AgentRun, AgentRunStatus
+        from aura_core.domain.identifiers import AgentRunId
+
+        now = datetime.now(timezone.utc)
+        run = AgentRun(id=AgentRunId.new(), user_id=UserId(ALICE), agent_id="orchestrator", turn_id="t",
+                       correlation_id="c", status=AgentRunStatus.RUNNING, created_at=now, updated_at=now)
+        asyncio.run(container.agent_runs.save_run(run))
+        with TestClient(_app(container)) as client:
+            theirs = client.post(f"/api/v3/agents/runs/{run.id.value}/cancel", headers=AUTH_B)
+            gone = client.post("/api/v3/agents/runs/00000000-0000-4000-8000-000000000000/cancel", headers=AUTH_B)
+            assert theirs.status_code == gone.status_code == 404, "Bob reached Alice's run"
+            assert theirs.json()["error"] == gone.json()["error"]
+            status = client.get(f"/api/v3/agents/runs/{run.id.value}/status", headers=AUTH_A).json()
+        assert status["status"] == "running", "Bob's cancel changed Alice's run"
+        for owner in (ALICE, BOB):
+            flag = asyncio.run(container.cache_backend.get(f"agent_run_cancel:{owner}:{run.id.value}"))
+            assert not flag, f"a cancel flag was left under {owner}"
 
     def test_bob_cannot_list_alices_agent_runs(self, container) -> None:
         from fastapi.testclient import TestClient

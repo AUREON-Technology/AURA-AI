@@ -60,7 +60,7 @@ logger = get_logger("agentic_loop")
 _TERMINAL_BLOCKS = frozenset(
     {
         "deadline_exceeded", "step_budget_exceeded", "budget_exceeded", "needs_confirmation",
-        "tool_budget_exceeded", "risk_budget_exceeded",
+        "tool_budget_exceeded", "risk_budget_exceeded", "run_cancelled",
     }
 )
 
@@ -121,6 +121,9 @@ class RunBudgetGate:
         self.risk_spent = 0
         self.costs: dict[str, int] = {}
         self._refusals: list[BudgetRefusal] = []
+        #: Set by the loop to the run's cancel watch. Consulted before every dispatch: once the
+        #: owner has asked the run to stop, no further tool call is admitted.
+        self.cancelled: Callable[[], bool] | None = None
 
     def admit(self, step: PlanStep, spec: Any) -> str | None:
         sensitivity = int(getattr(spec, "sensitivity", 0) or 0) if spec is not None else 0
@@ -129,7 +132,9 @@ class RunBudgetGate:
         side_effecting = bool(getattr(spec, "side_effecting", True)) if spec is not None else True
         cost = risk_cost(sensitivity, side_effecting=side_effecting) if spec is not None else 0
         reason: str | None = None
-        if self._budget.tool_budget is not None and self.tools_used + 1 > self._budget.tool_budget:
+        if self.cancelled is not None and self.cancelled():
+            reason = "run_cancelled"
+        elif self._budget.tool_budget is not None and self.tools_used + 1 > self._budget.tool_budget:
             reason = "tool_budget_exceeded"
         elif (
             self._budget.risk_budget is not None
@@ -172,7 +177,11 @@ class AgenticExecutor:
         metrics: Any = None,
         clock: Any = None,
         runs: Any = None,
+        cancellation: Any = None,
     ) -> None:
+        #: ``RunCancellation`` (``execution/cancellation.py``); ``None`` means runs cannot be
+        #: cancelled by id (a client closing its connection still ends the turn).
+        self._cancellation = cancellation
         self._planner = planner
         self._executor = executor
         self._metrics = metrics
@@ -198,10 +207,13 @@ class AgenticExecutor:
         max_iterations: int,
         tokens_used: int,
         budget: AgentBudget,
+        cancelled: bool = False,
     ) -> tuple[str | None, str | None]:
         """``(stop_reason, exhausted_budget)``, or ``(None, None)`` to replan."""
         if outcome.succeeded:
             return "completed", None
+        if cancelled:
+            return "run_cancelled", None
         if self._monotonic() > deadline:
             return "time_budget_exhausted", BudgetKind.TIME
         if outcome.blocked_reason in _TERMINAL_BLOCKS:
@@ -315,6 +327,14 @@ class AgenticExecutor:
             )
             if run_context is not None else None
         )
+        # A run that records itself can be cancelled by id; the watch is how the gate and this
+        # loop learn of it. Closed on every way out (below).
+        watch = (
+            self._cancellation.watch(run_context.user_id.value, recorder.run.id.value)
+            if recorder is not None and self._cancellation is not None else None
+        )
+        if watch is not None:
+            gate.cancelled = lambda: watch.cancelled
         tokens_used = int(plan.generation_tokens)
         stop_reason: str | None = None
         exhausted: str | None = None
@@ -351,6 +371,7 @@ class AgenticExecutor:
                 stop_reason, exhausted = self._evaluate(
                     outcome, deadline=deadline, max_iterations=max_iterations,
                     tokens_used=tokens_used, budget=budget,
+                    cancelled=watch is not None and watch.cancelled,
                 )
                 if recorder is not None:
                     await recorder.evaluated(iteration=iteration, stop_reason=stop_reason)
@@ -375,11 +396,15 @@ class AgenticExecutor:
                     await recorder.crashed(exc)
                 except Exception:  # pragma: no cover - recording must never mask the error
                     logger.debug("recording a crashed run failed", exc_info=True)
+            if watch is not None:
+                await watch.close()
             raise
         if recorder is not None:
             await recorder.finish(outcome, stop_reason=stop_reason, exhausted_budget=exhausted)
             if outcome is not None:
                 outcome.run_id = recorder.run.id.value
+        if watch is not None:
+            await watch.close()
         if outcome is not None:
             yield outcome
 

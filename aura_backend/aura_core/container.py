@@ -81,6 +81,7 @@ from .ports.runtime import Closeable
 from .prompts import PIN_SYNC_INTERVAL_S, build_default_registry
 from .reasoning.engine import ReasoningEngine
 from .safety.pipeline import SafetyPipeline
+from .execution.cancellation import RunCancellation
 from .security.owner_ref import owner_ref_maker
 from .tools.builtin import default_tools
 from .tools.policy import ToolPolicy
@@ -181,6 +182,9 @@ class Container:
         # Module readiness D-03 (WP1): who agreed to the Engineer sending code to Anthropic.
         self.engineer_consent = self._build_engineer_consent_store()
         self.custom_agents = self._build_custom_agent_store()
+        # Cancel-by-id for live agent runs: a request is a cache key every worker polls for the
+        # runs it is executing (``execution/cancellation.py``).
+        self.run_cancellation = RunCancellation(self.cache_backend)
         # GAP-024: the same store, under the name of the port it now fully implements
         # (`AgentRunStore` extends `EngineerRunStore`) -- one adapter, one pool, both ledgers.
         self.agent_runs = self.engineer_runs
@@ -503,7 +507,7 @@ class Container:
         self.agentic_executor = (
             AgenticExecutor(
                 planner=self.planner, executor=self.executor, metrics=self.metrics,
-                clock=self.clock, runs=self.agent_runs,
+                clock=self.clock, runs=self.agent_runs, cancellation=self.run_cancellation,
             )
             if self.planner is not None
             else None

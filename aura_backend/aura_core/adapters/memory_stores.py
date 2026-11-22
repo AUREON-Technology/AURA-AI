@@ -585,22 +585,31 @@ class InMemoryEngineerRunStore:
         agent_id: str | None = None,
         status: str | None = None,
         limit: int = 50,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        retry_of: str | None = None,
+        before: tuple[datetime, str] | None = None,
     ) -> list[AgentRun]:
         matches = [
             r for r in self._agent_runs.values()
             if r.user_id == user_id
             and (agent_id is None or r.agent_id == agent_id)
             and (status is None or r.status == status)
+            and (since is None or r.created_at >= since)
+            and (until is None or r.created_at < until)
+            and (retry_of is None or r.retry_of == retry_of)
+            and (before is None or (r.created_at, r.id.value) < before)
         ]
         matches.sort(key=lambda r: (r.created_at, r.id.value), reverse=True)
         return matches[:limit]
 
     async def list_steps(
-        self, run_id: Any, *, user_id: UserId, limit: int = 500,
+        self, run_id: Any, *, user_id: UserId, limit: int = 500, after_seq: int = -1,
     ) -> list[AgentStep]:
         if await self.get_run(run_id, user_id=user_id) is None:
             return []
-        steps = [s for s in self._agent_steps.get(run_id.value, []) if s.user_id == user_id]
+        steps = [s for s in self._agent_steps.get(run_id.value, [])
+                 if s.user_id == user_id and s.seq > after_seq]
         steps.sort(key=lambda s: s.seq)
         return steps[:limit]
 

@@ -28,6 +28,7 @@ from ..domain.errors import (
     AuraError,
     AuthenticationError,
     AuthorizationError,
+    ConflictError,
     DependencyUnavailableError,
     NotFoundError,
     OverloadedError,
@@ -36,8 +37,9 @@ from ..domain.errors import (
 )
 from ..domain.caller_context import MAX_CALLER_CONTEXT, CallerContext
 from ..domain.connectors import CONNECTOR_ID_PATTERN, Credential
+from ..domain.agent_runs import AgentRunStatus
 from ..domain.custom_agents import is_custom_agent_id
-from ..domain.identifiers import CorrelationId, DocumentId, SessionId, TurnId, UserId
+from ..domain.identifiers import AgentRunId, CorrelationId, DocumentId, SessionId, TurnId, UserId
 from ..domain.engineering import ENGINEER_CONSENT_NOTICE_VERSION
 from ..domain.llm import RoutingPolicy, WorkloadClass
 from ..llm.workload import workload_class_for_turn
@@ -269,6 +271,11 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         message: str = Field(min_length=1, max_length=32_000)
         session_id: str | None = None
         agent: str = "orchestrator"
+        #: The id of one of the caller's own earlier agent runs that ended without achieving what it
+        #: planned (failed, partial, budget exhausted, cancelled), which this turn retries. Only a
+        #: link: the instruction is not stored, so a retry is this request, sent again. The new run
+        #: records it as ``retry_of``.
+        retry_of: str | None = Field(default=None, max_length=64)
         use_knowledge: bool = True
         use_memory: bool = True
         use_tools: bool = True
@@ -633,6 +640,24 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             agent_id = custom_agent.base_agent_id
         # F43: both are client-supplied; an identifier that fails its own validation is a bad
         # request (422), not a server error.
+        retry_of = None
+        if payload.retry_of:
+            if caller.is_service:
+                raise ValidationError("a service key has no runs to retry", details={"field": "retry_of"})
+            run_store = getattr(container, "agent_runs", None)
+            try:
+                earlier = (await run_store.get_run(AgentRunId(payload.retry_of), user_id=caller.user_id)
+                           if run_store is not None else None)
+            except ValueError:
+                earlier = None
+            if earlier is None:
+                raise NotFoundError("run not found", details={"retry_of": payload.retry_of})
+            if earlier.status not in AgentRunStatus.RETRYABLE:
+                raise ConflictError(
+                    f"a run that is {earlier.status} cannot be retried",
+                    details={"reason": "not_retryable", "status": earlier.status},
+                )
+            retry_of = earlier.id.value
         try:
             session_id = SessionId(payload.session_id) if payload.session_id else None
         except ValueError as exc:
@@ -652,6 +677,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             session_id=session_id,
             agent=agent_id,
             custom_agent=custom_agent,
+            retry_of=retry_of,
             correlation_id=correlation_id,
             use_knowledge=payload.use_knowledge,
             # Spec §5.2 / ADR-034: a team turn draws on the team's corpus, never on the person's
@@ -2030,18 +2056,37 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         agent: str | None = Query(default=None, max_length=64),
         status: str | None = Query(default=None, max_length=32),
         limit: int = Query(default=50, ge=1, le=200),
+        cursor: str | None = Query(default=None, max_length=512),
+        since: datetime | None = Query(default=None, description="Only runs created at or after this instant."),
+        until: datetime | None = Query(default=None, description="Only runs created before this instant."),
+        retry_of: str | None = Query(default=None, max_length=64, description="Only the retries of this run."),
     ) -> JSONResponse:
         """The caller's own agent runs, newest first, with run-level metrics. Owner-scoped in
-        the store (``user_id`` is a required argument of every read), not filtered here."""
+        the store (``user_id`` is a required argument of every read), not filtered here.
+
+        Keyset-paged: pass ``next_cursor`` back as ``cursor`` with the same filters (a cursor made
+        for other filters is a 422). ``agent`` is a built-in id or ``custom:<id>``."""
         await enforce_rate_limit(request, caller, "read")
         from ..domain.agent_runs import run_metrics
+        from .agent_runs import decode_run_cursor, encode_run_cursor, run_list_fingerprint
 
         store = getattr(container, "agent_runs", None)
-        if store is None:
-            return JSONResponse(content={"runs": []})
-        runs = await store.list_runs(caller.user_id, agent_id=agent, status=status, limit=limit)
+        if store is None or caller.is_service:
+            return JSONResponse(content={"runs": [], "next_cursor": None})
+        fingerprint = run_list_fingerprint(agent=agent, status=status, since=since, until=until, retry_of=retry_of)
+        before = decode_run_cursor(cursor, fingerprint) if cursor is not None else None
+        runs = list(await store.list_runs(
+            caller.user_id, agent_id=agent, status=status, limit=limit + 1, since=since, until=until,
+            retry_of=retry_of, before=before,
+        ))
+        page, more = runs[:limit], len(runs) > limit
+        next_cursor = (
+            encode_run_cursor(fingerprint, created_at=page[-1].created_at, run_id=page[-1].id.value)
+            if more else None
+        )
         return JSONResponse(
-            content={"runs": [{**r.as_dict(), "metrics": run_metrics(r)} for r in runs]}
+            content={"runs": [{**r.as_dict(), "metrics": run_metrics(r)} for r in page],
+                     "next_cursor": next_cursor}
         )
 
     @router.get("/agents/runs/{run_id}")
@@ -2313,6 +2358,13 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
     register_agent_ops(
         router, container, principal=principal, idempotent=idempotent, Depends=Depends,
         JSONResponse=JSONResponse,
+    )
+
+    from .agent_runs import register_run_ops
+
+    register_run_ops(
+        router, container, principal=principal, idempotent=idempotent, Depends=Depends,
+        JSONResponse=JSONResponse, enforce_rate_limit=enforce_rate_limit, Request=Request,
     )
 
     # The WebSocket routes authenticate per frame without the `principal` dependency, so the

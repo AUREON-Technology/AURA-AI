@@ -425,12 +425,24 @@ class AgentRunStore(EngineerRunStore, Protocol):
         agent_id: str | None = None,
         status: str | None = None,
         limit: int = 50,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        retry_of: str | None = None,
+        before: tuple[datetime, str] | None = None,
     ) -> Sequence[AgentRun]:
+        """The owner's runs, newest first (``created_at DESC, id DESC``).
+
+        ``since`` / ``until`` bound ``created_at`` (``>=`` / ``<``); ``retry_of`` lists the retries
+        of one run; ``before`` is a keyset position ``(created_at, id)`` -- only runs strictly
+        after it in that ordering are returned, which is how a page continues.
+        """
         ...
 
     async def list_steps(
-        self, run_id: AgentRunId, *, user_id: UserId, limit: int = 500,
+        self, run_id: AgentRunId, *, user_id: UserId, limit: int = 500, after_seq: int = -1,
     ) -> Sequence[AgentStep]:
+        """The run's steps in ``seq`` order; ``after_seq`` returns only those after that ``seq``,
+        so a client following a live run asks for what it has not seen."""
         ...
 
 

@@ -120,8 +120,14 @@ class AgentRunStatus:
     AWAITING_APPROVAL = "awaiting_approval"
     #: A budget (``exhausted_budget`` says which) stopped the run before it finished.
     BUDGET_EXHAUSTED = "budget_exhausted"
+    #: The owner asked for it to stop (``POST /agents/runs/{id}/cancel``). Takes effect at the next
+    #: step boundary: a step already in flight (a model call, a tool) is not interrupted.
+    CANCELLED = "cancelled"
 
-    TERMINAL = frozenset({COMPLETED, PARTIAL, FAILED, AWAITING_APPROVAL, BUDGET_EXHAUSTED})
+    TERMINAL = frozenset({COMPLETED, PARTIAL, FAILED, AWAITING_APPROVAL, BUDGET_EXHAUSTED, CANCELLED})
+    #: Runs a person may retry: one that ended without achieving what it planned. A completed run
+    #: has nothing to retry, and one awaiting approval is resumed with its approval ids, not retried.
+    RETRYABLE = frozenset({PARTIAL, FAILED, BUDGET_EXHAUSTED, CANCELLED})
 
 
 class AgentStepKind:
@@ -211,6 +217,10 @@ class AgentRun:
     stop_reason: str | None = None
     exhausted_budget: str | None = None
     finished_at: datetime | None = None
+    #: The earlier run this one retries, set when the client resends a turn with ``retry_of``. A
+    #: link only: the instruction itself is never stored (the content rule above), so a retry is
+    #: the client sending it again, and this is what lets the history show the chain.
+    retry_of: str | None = None
 
     @property
     def is_terminal(self) -> bool:
@@ -245,6 +255,7 @@ class AgentRun:
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+            "retry_of": self.retry_of,
         }
 
 
