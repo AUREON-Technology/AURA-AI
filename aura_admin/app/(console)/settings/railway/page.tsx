@@ -209,6 +209,9 @@ function ServicePanel({ service, onChanged }: { service: RailwayServiceRow; onCh
   }, [load]);
 
   const secretNames = useMemo(() => new Set((variables ?? []).filter((v) => v.secret).map((v) => v.name)), [variables]);
+  // The gateway's rule (control/railway.py `runs_aura`): only a service with an AURA_* variable
+  // has its changes checked against a health-check path.
+  const runsAura = (variables ?? []).some((v) => v.name.startsWith("AURA_"));
 
   function stage(name: string, value: string | null) {
     setPending((p) => ({ ...p, [name]: value }));
@@ -258,8 +261,11 @@ function ServicePanel({ service, onChanged }: { service: RailwayServiceRow; onCh
           {service.is_gateway ? <Badge tone="ok">{t("settings.railway.thisGateway")}</Badge> : null}
           {service.change_in_progress ? <Badge tone="warn" pulse>{t("settings.railway.watching")}</Badge> : null}
         </div>
-        {!service.healthcheck_path ? (
+        {!service.healthcheck_path && runsAura ? (
           <Alert className="mb-0" data-testid="no-healthcheck">{t("settings.railway.noHealthcheck")}</Alert>
+        ) : !service.healthcheck_path ? (
+          // A cron job or a service that does not run AURA: nothing is refused, so no alarm.
+          <p className="text-[13px] text-muted" data-testid="no-healthcheck-note">{t("settings.railway.noHealthcheckNote")}</p>
         ) : (
           <p className="text-[13px] text-muted">{t("settings.railway.healthcheck", { path: service.healthcheck_path })}</p>
         )}

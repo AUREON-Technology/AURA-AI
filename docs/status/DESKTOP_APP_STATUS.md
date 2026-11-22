@@ -61,6 +61,14 @@ devices. This fixes the multi-device key-loss wipe. It also means the server can
 personal-OS fields, which are no longer zero-knowledge. Production needs migration `0019` before
 any of this works.
 
+**Update 2026-11-22 (web app, PR #288):** the install page's service (`AURA-Web`) now also serves the
+web app at `/app/`, and `/` redirects there; the installer stays at `/desktop-ide/install` (with a
+new "Open the web app" link). `desktop-main-channel.yml`'s deploy job now also builds the web app
+(`scripts/build-web-app.sh`) and shares the concurrency group `web-service-deploy` with the new web
+workflow, because `railway up` replaces the whole image and each deploy would otherwise erase the
+other's half. BUILT and parsed by actionlint locally; **no run has executed** (CB-44), so the
+handover (the web workflow restoring the live installer, checked against its SHA-256) is unproven.
+
 ## Capabilities
 
 | Area | Status | Evidence |

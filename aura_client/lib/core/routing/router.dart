@@ -43,6 +43,7 @@ import '../../features/voice_live/presentation/live_voice_page.dart';
 import '../config/app_links.dart';
 import '../design_system/design_system.dart';
 import '../platform/aura_platform.dart';
+import '../platform/web_capabilities.dart';
 import '../../desktop/shell/desktop_ide_unavailable_page.dart';
 import '../../desktop/shell/desktop_shell.dart';
 import '../../desktop/workspace/workspace_welcome_page.dart';
@@ -50,7 +51,13 @@ import '../../desktop/workspace/workspace_manager_page.dart';
 
 class ShellLayout extends ConsumerWidget {
   final Widget child;
-  const ShellLayout({super.key, required this.child});
+
+  /// Whether this is the web build, which lays You out as a menu beside its open page on a wide
+  /// window. A parameter only so a test can ask the web's answer on the test host.
+  @visibleForTesting
+  final bool isWeb;
+
+  const ShellLayout({super.key, required this.child, this.isWeb = kIsWeb});
 
   /// The shell's tabs. The Windows desktop app is the IDE and You; every other
   /// build is the one AURA app: Copilot, Engineer and You.
@@ -224,7 +231,13 @@ class ShellLayout extends ConsumerWidget {
                 child: Column(
                   children: [
                     const SyncAlertBanner(),
-                    Expanded(child: child),
+                    Expanded(
+                      child: _WebContentFrame(
+                        isWeb: isWeb,
+                        path: GoRouterState.of(context).uri.path,
+                        child: child,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -232,6 +245,49 @@ class ShellLayout extends ConsumerWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// How the web build frames the routed screen on a wide window.
+///
+/// - Copilot (`/chat`) and the Engineer run list lay themselves out (list and detail panes).
+/// - Every other screen is, to the navigation, part of **You** (`_calculateSelectedIndex`): with
+///   room for two panes it opens beside the You menu, and the menu stays put while the page
+///   changes. `/you` itself shows a prompt in the detail pane.
+/// - Engineer's other pages, and any screen too narrow to split, stay one column, centered at a
+///   readable width.
+///
+/// Off the web, and on a narrow window, it returns [child] as it was, so the mobile app is
+/// unchanged.
+class _WebContentFrame extends StatelessWidget {
+  const _WebContentFrame({required this.isWeb, required this.path, required this.child});
+
+  final bool isWeb;
+  final String path;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!isWeb || path.startsWith('/chat') || path.startsWith('/engineer-history')) return child;
+    return LayoutBuilder(
+      builder: (context, box) {
+        final youPage = !ShellLayout._isEngineerPath(path);
+        if (youPage && masterDetailSplits(box.maxWidth, isWeb: isWeb)) {
+          final l10n = context.l10n;
+          return AuraMasterDetail(
+            master: AuraPaneScope(selectedPath: path, child: const SettingsPage()),
+            detail: path == '/you'
+                ? AuraDetailPlaceholder(
+                    icon: Icons.tune_outlined,
+                    title: l10n.webYouPaneTitle,
+                    message: l10n.webYouPaneMessage,
+                  )
+                : child,
+          );
+        }
+        return AuraReadableWidth(enabled: true, child: child);
+      },
     );
   }
 }
@@ -537,10 +593,19 @@ const _webDeepLinkPaths = {desktopSignInPath, '/invite'};
 /// browser used to land on the home page with its token lost. This reads it back from [base] so
 /// the page opens with its query intact. Null for every other address, which then starts as it
 /// always has.
+///
+/// [basePath] is the path the app is served from (its `<base href>`): under `/app/`, the address
+/// `/app/invite?token=…` is the invite page, not an unknown path.
 @visibleForTesting
-String? webDeepLinkLocation(Uri base) {
-  if (!_webDeepLinkPaths.contains(base.path)) return null;
-  return base.hasQuery ? '${base.path}?${base.query}' : base.path;
+String? webDeepLinkLocation(Uri base, {String basePath = '/'}) {
+  final prefix = basePath.replaceAll(RegExp(r'/+$'), '');
+  var path = base.path;
+  if (prefix.isNotEmpty) {
+    if (path != prefix && !path.startsWith('$prefix/')) return null;
+    path = path.substring(prefix.length);
+  }
+  if (!_webDeepLinkPaths.contains(path)) return null;
+  return base.hasQuery ? '$path?${base.query}' : path;
 }
 
 /// The web start location, and -- for an invite -- the single-use token taken out of the real
@@ -549,7 +614,7 @@ String? webDeepLinkLocation(Uri base) {
 /// in the address bar and in history. Dropped here, before anything else runs; the token travels
 /// on in the router's initial location only.
 String? _webInitialLocation() {
-  final location = webDeepLinkLocation(Uri.base);
+  final location = webDeepLinkLocation(Uri.base, basePath: browserBasePath());
   if (location != null && location.startsWith('/invite?')) dropAddressPathAndQuery();
   return location;
 }
@@ -606,6 +671,8 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/learning', redirect: (context, state) => '/feedback'),
       GoRoute(
         path: '/voice',
+        // A browser has no streaming mic or PCM sink: back to the chat, not a dead screen.
+        redirect: (context, state) => liveVoiceRouteAvailable() ? null : '/chat',
         builder: (context, state) => const LiveVoicePage(),
       ),
       ShellRoute(

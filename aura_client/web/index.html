@@ -18,7 +18,10 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="AURA AI: your private AI copilot and engineer, with memory, knowledge and tools, in the browser.">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0f1f">
+  <meta name="color-scheme" content="dark light">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
@@ -31,8 +34,19 @@
 
   <title>AURA AI</title>
   <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="splash.css">
+  <script src="firebase-sdk.js"></script>
 </head>
 <body>
+  <!-- Shown until Flutter paints its first frame (splash.js removes it). Plain markup and an
+       external stylesheet/script only: the host's Content-Security-Policy forbids inline script. -->
+  <div id="aura-splash" role="status" aria-live="polite">
+    <img src="icons/Icon-192.png" width="96" height="96" alt="">
+    <div class="aura-splash-name">AURA AI</div>
+    <div class="aura-splash-bar"><span></span></div>
+  </div>
+  <noscript>AURA AI needs JavaScript to run.</noscript>
+  <script src="splash.js"></script>
   <!--
     You can customize the "flutter_bootstrap.js" script.
     This is useful to provide a custom configuration to the Flutter loader

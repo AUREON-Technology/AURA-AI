@@ -5317,4 +5317,31 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get desktopSignInReturnFailed =>
       'Couldn\'t go back to the desktop app. Make sure it\'s still waiting for you, then start again from it.';
+
+  @override
+  String get webDaemonUnavailableTitle => 'Pair a computer in the desktop app';
+
+  @override
+  String get webDaemonUnavailableMessage =>
+      'A browser can\'t run the AURA desktop daemon. Install the desktop app on your computer and pair it there. Once it\'s paired, turn on remote control and the Engineer can use it from here.';
+
+  @override
+  String get webGetDesktopApp => 'Get the desktop app';
+
+  @override
+  String get webManageDevices => 'Manage paired devices';
+
+  @override
+  String get webYouPaneTitle => 'Choose a page';
+
+  @override
+  String get webYouPaneMessage =>
+      'Pick a setting or tool from the list to open it here.';
+
+  @override
+  String get webEngineerPaneTitle => 'Choose a run';
+
+  @override
+  String get webEngineerPaneMessage =>
+      'Pick a run from the list to see its status, branch and output.';
 }

@@ -8903,6 +8903,54 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Couldn\'t go back to the desktop app. Make sure it\'s still waiting for you, then start again from it.'**
   String get desktopSignInReturnFailed;
+
+  /// Web only: title of the Engineer daemon page, which a browser cannot run
+  ///
+  /// In en, this message translates to:
+  /// **'Pair a computer in the desktop app'**
+  String get webDaemonUnavailableTitle;
+
+  /// Web only: why the daemon page is unavailable and what to do
+  ///
+  /// In en, this message translates to:
+  /// **'A browser can\'t run the AURA desktop daemon. Install the desktop app on your computer and pair it there. Once it\'s paired, turn on remote control and the Engineer can use it from here.'**
+  String get webDaemonUnavailableMessage;
+
+  /// Web only: button that opens the desktop installer page
+  ///
+  /// In en, this message translates to:
+  /// **'Get the desktop app'**
+  String get webGetDesktopApp;
+
+  /// Web only: button that opens the paired desktop devices list
+  ///
+  /// In en, this message translates to:
+  /// **'Manage paired devices'**
+  String get webManageDevices;
+
+  /// Web wide layout: empty detail pane beside the You menu
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a page'**
+  String get webYouPaneTitle;
+
+  /// Web wide layout: what to do in the empty You detail pane
+  ///
+  /// In en, this message translates to:
+  /// **'Pick a setting or tool from the list to open it here.'**
+  String get webYouPaneMessage;
+
+  /// Web wide layout: empty detail pane beside the Engineer run list
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a run'**
+  String get webEngineerPaneTitle;
+
+  /// Web wide layout: what to do in the empty Engineer detail pane
+  ///
+  /// In en, this message translates to:
+  /// **'Pick a run from the list to see its status, branch and output.'**
+  String get webEngineerPaneMessage;
 }
 
 class _AppLocalizationsDelegate

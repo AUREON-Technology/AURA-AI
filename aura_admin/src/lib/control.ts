@@ -248,7 +248,9 @@ export function isSecretVariable(name: string, value?: string | null): boolean {
 
 /** Railway's status words, as a badge tone. */
 export function deploymentTone(status: string | null): "ok" | "warn" | "bad" | "neutral" {
-  switch ((status || "").toUpperCase()) {
+  // No status at all: a cron job between runs, or a service never deployed. Not a warning.
+  if (!status) return "neutral";
+  switch (status.toUpperCase()) {
     case "SUCCESS":
     case "SLEEPING":
       return "ok";

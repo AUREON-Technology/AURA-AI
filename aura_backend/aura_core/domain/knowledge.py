@@ -26,6 +26,8 @@ from .identifiers import ChunkId, DocumentId, UserId
 __all__ = [
     "SourceType",
     "TrustTier",
+    "LicenseStatus",
+    "DEFAULT_ALLOWED_LICENSES",
     "DocumentStatus",
     "Document",
     "Chunk",
@@ -77,6 +79,34 @@ class TrustTier(int, enum.Enum):
     COMMUNITY = 1
     VERIFIED = 2
     INTERNAL = 3
+
+
+class LicenseStatus(str, enum.Enum):
+    """Whether anyone has checked a source's licence against the corpus policy."""
+
+    APPROVED = "approved"
+    RESTRICTED = "restricted"
+    UNKNOWN = "unknown"
+
+    def __str__(self) -> str:
+        return self.value
+
+
+#: Licences the global corpus accepts (owner decision D-001, 2026-11-22): CC0, CC BY and
+#: permissive licences. No share-alike and no non-commercial. Overridable per deployment with
+#: ``AURA_KNOWLEDGE_ALLOWED_LICENSES``; compared case-insensitively against SPDX ids.
+DEFAULT_ALLOWED_LICENSES: tuple[str, ...] = (
+    "CC0-1.0",
+    "CC-BY-4.0",
+    "CC-BY-3.0",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Apache-2.0",
+    "PSF-2.0",
+    "PostgreSQL",
+    "ISC",
+)
 
 
 class DocumentStatus(str, enum.Enum):
@@ -446,6 +476,16 @@ class KnowledgeSource:
     last_success_at: datetime | None = None
     last_cursor: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    #: Provenance (WP3, KM-04). All optional, so a source registered before this existed keeps
+    #: working; the licence fields decide whether a *global* source may be refreshed at all.
+    name: str = ""
+    publisher: str = ""
+    domains: tuple[str, ...] = ()
+    language: str | None = None
+    license_spdx: str | None = None
+    license_status: LicenseStatus = LicenseStatus.UNKNOWN
+    #: The credit line a citation must carry when the licence requires attribution (CC BY).
+    attribution: str = ""
 
     def __post_init__(self) -> None:
         if not self.id:
@@ -455,6 +495,19 @@ class KnowledgeSource:
 
     def with_progress(self, *, cursor: str | None, at: datetime) -> "KnowledgeSource":
         return replace(self, last_cursor=cursor, last_success_at=at)
+
+    def permits_global_corpus(self, allowed_licenses: Sequence[str]) -> bool:
+        """Whether this source may feed the corpus every user reads from (D-001).
+
+        A source owned by a person or a project is that owner's own content, so the global
+        policy does not apply to it. A global source needs an *approved* status **and** a licence
+        id on the allow-list: unknown means "nobody has checked", which is not permission.
+        """
+        if self.owner_id is not None:
+            return True
+        if self.license_status is not LicenseStatus.APPROVED or not self.license_spdx:
+            return False
+        return self.license_spdx.strip().lower() in {a.strip().lower() for a in allowed_licenses}
 
 
 def estimate_tokens(text: str) -> int:

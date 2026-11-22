@@ -3,4 +3,5 @@
 !aura_web/site
 !aura_web/nginx
 !aura_web/build-assets
+!aura_web/app-build
 !scripts/AURA-Desktop-Setup.cmd

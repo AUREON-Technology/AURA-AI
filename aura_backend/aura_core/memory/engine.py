@@ -153,7 +153,12 @@ class MemoryEngine:
         metadata: Mapping[str, Any] | None = None,
         scope: str = SHARED_MEMORY_SCOPE,
     ) -> MemoryRecord:
-        """Write one memory, merging with a near-duplicate if one exists.
+        """Write one memory, reconciling it with a near-duplicate if one exists.
+
+        A near-duplicate is reinforced (same words), kept alongside (a different subject), kept
+        as stored (same fact, lower-trust write) or superseded (same fact, a correction); the
+        comment in the body spells out each case. The returned record is the one now standing for
+        the fact.
 
         Provenance is mandatory (``source`` has no default that hides its absence) because two
         operations depend on it: rolling back everything a bad extractor version produced, and
@@ -172,8 +177,24 @@ class MemoryEngine:
         )
         replacing: MemoryRecord | None = None
         if duplicate is not None:
-            # Restating a fact is reinforcement, not a second fact. Bumping access_count and
-            # confidence is what makes repeated preferences outrank one-off mentions.
+            # Four outcomes for a near-duplicate, in this order:
+            #
+            # 1. REINFORCE -- the same words. Restating a fact is not a second fact; bumping
+            #    access_count and confidence is what makes repeated preferences outrank one-off
+            #    mentions.
+            # 2. KEEP BOTH -- worded differently and not about the same subject. Two memories
+            #    can embed close together without being one fact ("I like tea" / "I also like
+            #    coffee"), and the subject is what says what a memory is about. A record with no
+            #    subject has no claim to be corrected, so it is never replaced.
+            # 3. KEEP STORED -- the same fact, but the new write is less trusted. An extractor's
+            #    paraphrase must never overwrite what the person stated; the stored record is
+            #    returned unreinforced (different words are not a restatement).
+            # 4. SUPERSEDE -- the same fact, written at least as trustworthily: a correction
+            #    ("I moved to Alexandria" after "I live in Cairo"). The old code kept the *old*
+            #    text and raised its confidence, so the correction was lost and the stale fact
+            #    grew surer (audit B4). The old record is marked superseded, not deleted, so what
+            #    was believed when stays auditable. The replacement starts from its own
+            #    confidence; the old text's reinforcement says nothing about the new text.
             touched = duplicate.touched(now=now)
             raised = round(min(1.0, max(touched.confidence, confidence) + 0.05), 6)
             if _same_statement(duplicate.content, text):
@@ -187,15 +208,15 @@ class MemoryEngine:
                     "memory reinforced", extra={"kind": str(kind), "memory_id": merged.id.value}
                 )
                 return merged
-            # Close enough to be the same fact, but worded differently -- and a correction
-            # ("I moved to Alexandria" after "I live in Cairo") is exactly that. The old code kept
-            # the *old* text and raised its confidence, so the correction was lost and the stale
-            # fact grew surer (audit B4). The newer statement wins -- but only over a record it
-            # is at least as trusted as: an extractor's paraphrase must never overwrite what the
-            # person stated. A lower-trust write leaves the stored record as it is, unreinforced
-            # (different words are not a restatement). The replacement starts from its own
-            # confidence; the old text's reinforcement says nothing about the new text.
-            if _source_trust(source, document_ref) < _source_trust(
+            # A write with no subject inherits the old record's, so "my office moved to Giza"
+            # corrects "my office is in Cairo" without the caller having to repeat the subject.
+            effective_subject = subject or duplicate.subject
+            if not duplicate.subject or duplicate.subject != effective_subject:
+                logger.info(
+                    "memory kept alongside a similar one about a different subject",
+                    extra={"kind": str(kind), "memory_id": duplicate.id.value},
+                )
+            elif _source_trust(source, document_ref) < _source_trust(
                 duplicate.provenance.source, duplicate.provenance.document_ref
             ):
                 logger.info(
@@ -203,7 +224,9 @@ class MemoryEngine:
                     extra={"kind": str(kind), "memory_id": duplicate.id.value},
                 )
                 return duplicate
-            replacing = duplicate
+            else:
+                subject = effective_subject
+                replacing = duplicate
 
         record = MemoryRecord(
             id=MemoryId.new(),
@@ -257,11 +280,15 @@ class MemoryEngine:
 
         if replacing is not None:
             # After the new record is stored: a failure in between leaves both, never neither.
-            await self._forget(replacing)
+            # Superseded, not deleted: the old record stays in the store for audit and erasure
+            # (`forget_owner` includes superseded rows), and `recall` and `_find_duplicate` skip
+            # it because it is no longer active. Its vector point stays in the index; `update`
+            # never creates a row, so a record forgotten in the meantime stays forgotten.
+            await self._store.update(replacing.superseded(record.id))
             logger.info(
-                "memory replaced by a newer statement",
+                "memory superseded by a newer statement",
                 extra={"kind": str(kind), "memory_id": record.id.value,
-                       "replaced": replacing.id.value},
+                       "superseded": replacing.id.value},
             )
 
         if self._metrics is not None:

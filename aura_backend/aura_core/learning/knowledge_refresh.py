@@ -38,7 +38,7 @@ from typing import Any, Mapping, Sequence
 
 from ..domain.events import KnowledgeRefreshCompleted
 from ..domain.identifiers import GenerationId
-from ..domain.knowledge import KnowledgeSource, SourceType, TrustTier
+from ..domain.knowledge import DEFAULT_ALLOWED_LICENSES, KnowledgeSource, SourceType, TrustTier
 from ..knowledge.index_manager import GateResult
 from ..knowledge.refresh_gate import RefreshContentGate
 from ..observability.logging import LogContext, get_logger
@@ -47,6 +47,10 @@ from .sources import SourceRegistry, SourceFetcher, FetchedDocument
 __all__ = ["KnowledgeRefreshPipeline", "RefreshReport", "SourceOutcome"]
 
 logger = get_logger("learning.refresh")
+
+#: The outcome error of a global source refused before any fetch because nobody has approved its
+#: licence for the global corpus. An administrator's pending decision, not a failure of the job.
+LICENSE_NOT_APPROVED = "license_not_approved"
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,9 +137,14 @@ class RefreshReport:
         """No source failed to fetch and the index phase did not stall.
 
         A *held* source does not make a run unsuccessful: the gate did its job, and that is a
-        ticket for an operator (``refresh_sources_held``), not a stale corpus.
+        ticket for an operator (``refresh_sources_held``), not a stale corpus. Nor does a source
+        refused for want of an approved licence: it is still registered, awaiting an
+        administrator's decision, and the rest of the corpus refreshed normally.
         """
-        return all(s.ok for s in self.sources) and self.index_rebuild != "held"
+        return (
+            all(s.ok or s.error == LICENSE_NOT_APPROVED for s in self.sources)
+            and self.index_rebuild != "held"
+        )
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -210,7 +219,9 @@ class KnowledgeRefreshPipeline:
         promote_requires_gates: bool = True,
         index_retention_days: int = 7,
         content_gate: RefreshContentGate | None = None,
+        allowed_licenses: Sequence[str] = DEFAULT_ALLOWED_LICENSES,
     ) -> None:
+        self._allowed_licenses = tuple(allowed_licenses)
         self._registry = registry
         self._fetcher = fetcher
         self._knowledge = knowledge
@@ -346,13 +357,26 @@ class KnowledgeRefreshPipeline:
             "source_type": source.type,
             "source_uri": document.uri or source.uri,
             "trust_tier": source.trust_tier,
-            "metadata": {"source_id": source.id, **dict(document.metadata)},
+            "language": source.language,
+            # Where the document came from and under what licence, on every ingested document.
+            "metadata": {**_provenance(source), **dict(document.metadata)},
         }
 
     async def _stage_source(self, source: KnowledgeSource, budget: "_DocumentBudget") -> _Staged:
         """Fetch, validate, dedupe and assess. Writes nothing."""
         staged = _Staged()
         seen_hashes: set[str] = set()
+
+        if not source.permits_global_corpus(self._allowed_licenses):
+            # Before any network call: a global source nobody has licence-checked (D-001) must not
+            # reach every user's retrieval. It stays registered, so an admin can add the licence.
+            logger.warning(
+                "source skipped: licence not approved for the global corpus",
+                extra={"source": source.id, "license": source.license_spdx or "unknown",
+                       "status": str(source.license_status)},
+            )
+            staged.error = LICENSE_NOT_APPROVED
+            return staged
 
         try:
             documents = await self._fetcher.fetch(source)
@@ -556,6 +580,25 @@ class _DocumentBudget:
             return False
         self._remaining -= 1
         return True
+
+
+def _provenance(source: KnowledgeSource) -> dict[str, Any]:
+    """Where a document came from and under what licence, carried on every ingested document.
+
+    Only what is set: an owner's private source has no licence and records none.
+    """
+    provenance: dict[str, Any] = {"source_id": source.id}
+    for key, value in (
+        ("source_name", source.name),
+        ("publisher", source.publisher),
+        ("license_spdx", source.license_spdx),
+        ("attribution", source.attribution),
+    ):
+        if value:
+            provenance[key] = value
+    if source.domains:
+        provenance["domains"] = list(source.domains)
+    return provenance
 
 
 def _validate(document: FetchedDocument, source: KnowledgeSource) -> str | None:

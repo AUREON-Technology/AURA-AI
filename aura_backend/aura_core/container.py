@@ -394,6 +394,7 @@ class Container:
                 max_quarantine_rate=learning.gate_max_quarantine_rate,
                 max_shrink=learning.gate_max_shrink,
             ),
+            allowed_licenses=settings.knowledge.allowed_licenses,
         )
 
         self.memory = (

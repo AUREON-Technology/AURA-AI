@@ -5,10 +5,17 @@ Every mutating handler writes an audit event. SuperAdmin-only routes are
 marked with ``require_super_admin``.
 """
 
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
-from ..domain.errors import AuthorizationError, ValidationError
-from ..domain.knowledge import IndexIdentity, KnowledgeSource, SourceType, TrustTier
+from ..domain.errors import AuthorizationError, NotFoundError, ValidationError
+from ..domain.knowledge import (
+    DEFAULT_ALLOWED_LICENSES,
+    IndexIdentity,
+    KnowledgeSource,
+    LicenseStatus,
+    SourceType,
+    TrustTier,
+)
 from ..learning.approval import ApprovalKind
 from ..mlops.model_registry import ModelStage
 from ..observability.logging import get_logger
@@ -21,7 +28,9 @@ _SUPER_ADMIN_APPROVAL_KINDS = frozenset(
 )
 
 
-def _source_payload(source: KnowledgeSource) -> dict[str, Any]:
+def _source_payload(
+    source: KnowledgeSource, allowed_licenses: Sequence[str] = DEFAULT_ALLOWED_LICENSES
+) -> dict[str, Any]:
     return {
         "id": source.id,
         "type": str(source.type),
@@ -34,7 +43,40 @@ def _source_payload(source: KnowledgeSource) -> dict[str, Any]:
         "last_success_at": source.last_success_at.isoformat() if source.last_success_at else None,
         "last_cursor": source.last_cursor,
         "owner": source.owner_id.value if source.owner_id else None,
+        "name": source.name,
+        "publisher": source.publisher,
+        "domains": list(source.domains),
+        "language": source.language,
+        "license_spdx": source.license_spdx,
+        "license_status": str(source.license_status),
+        "attribution": source.attribution,
+        # False means the nightly refresh will skip it: a global source needs an approved licence
+        # on the allow-list (D-001). Shown so an operator does not have to infer it.
+        "ingestible": source.permits_global_corpus(allowed_licenses),
     }
+
+
+def _checked_licence(spdx: str | None, allowed: Sequence[str]) -> LicenseStatus:
+    """The status a stated licence earns: approved if it is on the allow-list, else a refusal.
+
+    Stating the licence is the Super Admin's attestation that they read the source's terms.
+    Nothing stated leaves the status unknown, which keeps the source registered but inert.
+    """
+    if not spdx or not spdx.strip():
+        return LicenseStatus.UNKNOWN
+    if spdx.strip().lower() not in {a.strip().lower() for a in allowed}:
+        raise ValidationError(
+            "this licence is not accepted for the global corpus",
+            details={"license_spdx": spdx, "allowed": list(allowed)},
+        )
+    return LicenseStatus.APPROVED
+
+
+def _clean_domains(domains: Sequence[str]) -> tuple[str, ...]:
+    cleaned = tuple(dict.fromkeys(d.strip().lower() for d in domains if d and d.strip()))
+    if any(len(d) > 64 for d in cleaned):
+        raise ValidationError("a domain is at most 64 characters")
+    return cleaned
 
 
 def _parse_index_name(physical_name: str, fallback: IndexIdentity) -> IndexIdentity:
@@ -95,6 +137,21 @@ def register_admin_ops(
         max_documents: int = Field(default=1000, ge=1, le=50_000)
         max_bytes_per_document: int = Field(default=5 * 1024 * 1024, ge=1024)
         schedule_cron: str = "0 2 * * *"
+        # Provenance (WP3). All optional: without a licence the source is registered but inert.
+        name: str = Field(default="", max_length=200)
+        publisher: str = Field(default="", max_length=200)
+        domains: list[str] = Field(default_factory=list, max_length=20)
+        language: str | None = Field(default=None, max_length=16)
+        license_spdx: str | None = Field(default=None, max_length=64)
+        attribution: str = Field(default="", max_length=500)
+
+    class SourceProvenanceRequest(BaseModel):
+        name: str | None = Field(default=None, max_length=200)
+        publisher: str | None = Field(default=None, max_length=200)
+        domains: list[str] | None = Field(default=None, max_length=20)
+        language: str | None = Field(default=None, max_length=16)
+        license_spdx: str | None = Field(default=None, max_length=64)
+        attribution: str | None = Field(default=None, max_length=500)
 
     class SourceEnableRequest(BaseModel):
         enabled: bool
@@ -158,7 +215,8 @@ def register_admin_ops(
         registry = container.sources
         listing = getattr(registry, "list_all", None)
         sources = await listing() if listing else await registry.list_enabled()
-        return JSONResponse(content={"sources": [_source_payload(s) for s in sources]})
+        allowed = container.settings.knowledge.allowed_licenses
+        return JSONResponse(content={"sources": [_source_payload(s, allowed) for s in sources]})
 
     @router.post("/admin/sources", dependencies=list(idempotent))
     async def create_source(
@@ -179,6 +237,13 @@ def register_admin_ops(
             from ..adaptation.knowledge import project_owner
 
             owner_id = project_owner(twins.project_id)
+        allowed = container.settings.knowledge.allowed_licenses
+        # A connector's documents belong to its project, so the global licence policy does not
+        # apply to it; for any other source a stated licence is checked before anything is stored.
+        license_status = (
+            LicenseStatus.UNKNOWN if owner_id is not None
+            else _checked_licence(payload.license_spdx, allowed)
+        )
         source = KnowledgeSource(
             id=payload.id,
             type=source_type,
@@ -189,10 +254,57 @@ def register_admin_ops(
             max_documents=payload.max_documents,
             max_bytes_per_document=payload.max_bytes_per_document,
             schedule_cron=payload.schedule_cron,
+            name=payload.name.strip(),
+            publisher=payload.publisher.strip(),
+            domains=_clean_domains(payload.domains),
+            language=(payload.language or "").strip() or None,
+            license_spdx=(payload.license_spdx or "").strip() or None,
+            license_status=license_status,
+            attribution=payload.attribution.strip(),
         )
         await container.sources.register(source)
-        await audit_admin(request, caller, "admin.source.register", source.id, "ok")
-        return JSONResponse(content={"source": _source_payload(source)})
+        await audit_admin(
+            request, caller, "admin.source.register", source.id, "ok",
+            detail={"license_spdx": source.license_spdx, "license_status": str(source.license_status)},
+        )
+        return JSONResponse(content={"source": _source_payload(source, allowed)})
+
+    @router.put("/admin/sources/{source_id}/provenance")
+    async def update_source_provenance(
+        request: Request,
+        source_id: str,
+        payload: SourceProvenanceRequest,
+        caller=Depends(principal),
+    ) -> JSONResponse:
+        """Add or correct a source's provenance and licence (WP3, D-001).
+
+        Naming a licence on the allow-list approves it; one outside the list is refused and
+        nothing changes. Super Admin only: stating the licence attests the terms were read.
+        """
+        require_super_admin(caller)
+        existing = await container.sources.get(source_id)
+        if existing is None:
+            raise NotFoundError(f"unknown source {source_id!r}")
+        allowed = container.settings.knowledge.allowed_licenses
+        license_status = None
+        if payload.license_spdx is not None and existing.owner_id is None:
+            license_status = _checked_licence(payload.license_spdx, allowed)
+        await container.sources.update_provenance(
+            source_id,
+            name=payload.name.strip() if payload.name is not None else None,
+            publisher=payload.publisher.strip() if payload.publisher is not None else None,
+            domains=_clean_domains(payload.domains) if payload.domains is not None else None,
+            language=payload.language.strip() if payload.language is not None else None,
+            license_spdx=payload.license_spdx.strip() if payload.license_spdx is not None else None,
+            license_status=license_status,
+            attribution=payload.attribution.strip() if payload.attribution is not None else None,
+        )
+        await audit_admin(
+            request, caller, "admin.source.provenance", source_id, "ok",
+            detail={"license_spdx": payload.license_spdx},
+        )
+        updated = await container.sources.get(source_id)
+        return JSONResponse(content={"source": _source_payload(updated, allowed)})
 
     @router.patch("/admin/sources/{source_id}")
     async def enable_source(
@@ -208,7 +320,10 @@ def register_admin_ops(
             detail={"enabled": payload.enabled},
         )
         source = await container.sources.get(source_id)
-        return JSONResponse(content={"source": _source_payload(source) if source else {"id": source_id}})
+        allowed = container.settings.knowledge.allowed_licenses
+        return JSONResponse(
+            content={"source": _source_payload(source, allowed) if source else {"id": source_id}}
+        )
 
     @router.delete("/admin/sources/{source_id}")
     async def delete_source(

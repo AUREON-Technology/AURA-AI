@@ -26,6 +26,7 @@ from typing import ClassVar, Any, Mapping, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 from ..domain.errors import ConfigurationError
+from ..domain.knowledge import DEFAULT_ALLOWED_LICENSES
 from ..domain.llm import DataClassification, Modality, ModelPool, RoutingPolicy, WorkloadClass
 from .external_inference import (
     CLAUDE_PROVIDER_KIND,
@@ -996,10 +997,14 @@ class KnowledgeSettings:
     #: Qdrant never sees readable content, and retrieval resolves the text from the owner-scoped
     #: document store instead. ``True``/``False`` override the rule.
     vector_payload_content: bool | None = None
+    #: SPDX ids the global corpus accepts (owner decision D-001: CC0, CC BY and permissive). A
+    #: global source whose licence is not approved against this list is never refreshed.
+    allowed_licenses: tuple[str, ...] = DEFAULT_ALLOWED_LICENSES
 
     @classmethod
     def from_env(cls) -> "KnowledgeSettings":
         return cls(
+            allowed_licenses=_list("KNOWLEDGE_ALLOWED_LICENSES", DEFAULT_ALLOWED_LICENSES),
             vector_payload_content=(
                 None if not _env("KNOWLEDGE_VECTOR_PAYLOAD_CONTENT", "")
                 else _bool("KNOWLEDGE_VECTOR_PAYLOAD_CONTENT", True)

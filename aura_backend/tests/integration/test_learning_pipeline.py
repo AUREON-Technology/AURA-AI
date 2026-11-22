@@ -479,6 +479,26 @@ class TestSuccessIsNotPromotion:
         assert not report.succeeded
         assert metrics.refresh_last_success_timestamp.calls == []
 
+    async def test_a_source_refused_for_its_licence_does_not_make_the_run_look_stale(
+        self, knowledge, index_manager, user
+    ) -> None:
+        """A global source nobody has licence-checked is refused before any fetch. That is an
+        administrator's pending decision, not a failure: the rest of the corpus refreshed, so the
+        run still counts, and AuraKnowledgeStale must not fire every two days over it."""
+        metrics = _FakeMetrics()
+        refused = KnowledgeSource(id="global", type=SourceType.INTERNAL, uri="internal://global")
+        registry = InMemorySourceRegistry([_source("policies", owner=user), refused])
+        fetcher = StaticSourceFetcher({"policies": [_doc("leave", "Leave", LEAVE)]})
+        await index_manager.ensure_ready()
+
+        report = await self._pipeline(knowledge, index_manager, registry, fetcher, metrics).run()
+
+        outcomes = {s.source_id: s for s in report.sources}
+        assert outcomes["global"].error == "license_not_approved"
+        assert outcomes["policies"].ingested == 1
+        assert report.succeeded
+        assert len(metrics.refresh_last_success_timestamp.calls) == 1
+
     async def test_a_dry_run_says_nothing_about_freshness(self, knowledge, index_manager, user) -> None:
         metrics = _FakeMetrics()
         registry = InMemorySourceRegistry([_source("policies", owner=user)])
