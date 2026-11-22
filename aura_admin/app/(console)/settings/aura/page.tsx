@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Lock, Pencil, RotateCcw, Search } from "lucide-react";
 
-import { ChangeTray } from "@/components/change-tray";
+import { ChangeTray, stepUpError } from "@/components/change-tray";
+import { useStepUp } from "@/components/settings-context";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,7 +12,7 @@ import { Card } from "@/components/ui/card";
 import { Input, Select } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
-import type { CatalogEntry, CatalogGroup, PendingChanges } from "@/lib/control";
+import type { CatalogEntry, CatalogGroup, ChangeRow, PendingChanges } from "@/lib/control";
 import { useI18n } from "@/lib/i18n/context";
 
 type SettingsBody = {
@@ -156,6 +157,7 @@ function initialEffective(entry: CatalogEntry): string {
 
 export default function AuraSettingsPage() {
   const { t, errorText } = useI18n();
+  const stepUp = useStepUp();
   const [body, setBody] = useState<SettingsBody | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [query, setQuery] = useState("");
@@ -206,8 +208,20 @@ export default function AuraSettingsPage() {
       {notice ? <p className="text-[13px] text-ok" role="status" data-testid="settings-notice">{notice}</p> : null}
       {editable && body.service_id && body.service_name ? (
         <ChangeTray
-          serviceId={body.service_id}
           serviceName={body.service_name}
+          onCheck={(changes) =>
+            api(`/admin/control/railway/services/${body.service_id}/variables/validate`, { method: "POST", body: JSON.stringify({ changes }) })
+          }
+          onApply={async (changes) => {
+            try {
+              return await stepUp.write<ChangeRow>(`/admin/control/railway/services/${body.service_id}/variables`, {
+                changes,
+                confirm: body.service_name,
+              });
+            } catch (err) {
+              throw stepUpError(err, t);
+            }
+          }}
           changes={pending}
           secretNames={secretNames}
           onRemove={(name) => setPending((p) => Object.fromEntries(Object.entries(p).filter(([k]) => k !== name)))}

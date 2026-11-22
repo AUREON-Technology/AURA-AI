@@ -17,6 +17,9 @@ async function seen(request: APIRequestContext) {
     railway_vars: string;
     railway_applied: string[][];
     railway_restarts: string[];
+    space_events: string[];
+    space_vars: Record<string, string>;
+    space_secret_names: string[];
   };
 }
 
@@ -325,4 +328,113 @@ test("Railway: Arabic: the Railway tab reads right to left", async ({ page, cont
   await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
   await expect(page.getByTestId("service-panel")).toContainText("الـ Gateway ده");
   await expect(page.getByText("المتغيرات")).toBeVisible();
+});
+
+// -- GPU Space (stage 3): the mock applies the refusals of aura_core/control/space.py and holds a
+// Space secret (SPACE_SECRET in mock-gateway.mjs) that must never reach the page.
+const SPACE_SECRET = "hf-space-secret-never-shown";
+
+async function openSpace(page: Page) {
+  await openSettings(page);
+  const card = page.getByTestId("platform-hf_space");
+  await card.getByRole("button", { name: "Connect" }).click();
+  await page.getByLabel("Token", { exact: true }).fill("hf_token_value");
+  await page.getByLabel("Space (owner/name)").fill("org/aura-inference");
+  await page.getByLabel("Type hf_space").fill("hf_space");
+  await page.getByRole("button", { name: "Confirm" }).click();
+  await expect(card).toContainText("Verified");
+  await page.getByRole("link", { name: "GPU Space" }).click();
+  await expect(page.getByTestId("space-stage")).toHaveText("RUNNING");
+}
+
+async function confirmWith(page: Page, word: string) {
+  await page.getByLabel(`Type ${word}`).fill(word);
+  await page.getByRole("button", { name: "Confirm" }).click();
+}
+
+test("GPU Space: before it is connected, the tab says where to connect it", async ({ page }) => {
+  await openSettings(page);
+  await page.getByRole("link", { name: "GPU Space" }).click();
+  await expect(page.getByTestId("space-not-connected")).toContainText("The GPU Space is not connected");
+});
+
+test("GPU Space: status, secrets by name only, and logs", async ({ page }) => {
+  await openSpace(page);
+  const panel = page.getByTestId("space-panel");
+  await expect(panel).toContainText("org/aura-inference");
+  await expect(panel).toContainText("Hardware l4x1");
+  await expect(page.getByTestId("space-var-MODEL_ID")).toContainText("Qwen/Qwen2.5-7B-Instruct-AWQ");
+  await expect(page.getByTestId("space-secret-HF_TOKEN")).toBeVisible();
+  await expect(page.getByTestId("space-logs")).toContainText("vLLM engine started");
+  expect(await page.content()).not.toContain(SPACE_SECRET);
+});
+
+test("GPU Space: a variable change is checked, applied behind the Space name, and watched", async ({ page, request }) => {
+  await openSpace(page);
+  await page.getByRole("button", { name: "Edit MAX_MODEL_LEN" }).click();
+  await page.getByLabel("New value for MAX_MODEL_LEN").fill("4096");
+  await page.getByRole("button", { name: "Add to changes" }).click();
+  const tray = page.getByTestId("change-tray");
+  await tray.getByRole("button", { name: "Check" }).click();
+  await expect(page.getByTestId("tray-checked")).toBeVisible();
+  await tray.getByRole("button", { name: "Apply" }).click();
+  await expect(page.getByRole("dialog")).toContainText("within 20 minutes");
+  await confirmWith(page, "aura-inference");
+  await expect(page.getByTestId("space-notice")).toContainText("watched for 20 minutes");
+  await expect(page.getByTestId("space-stage")).toHaveText("APP_STARTING");
+  expect((await seen(request)).space_vars.MAX_MODEL_LEN).toBe("4096");
+});
+
+test("GPU Space: a secret-looking variable is refused at the check", async ({ page, request }) => {
+  await openSpace(page);
+  await page.getByLabel("New variable").fill("OPENAI_API_KEY");
+  await page.getByLabel("Value", { exact: true }).fill("sk-not-here");
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page.getByTestId("change-tray").getByRole("button", { name: "Check" }).click();
+  await expect(page.getByTestId("change-tray")).toContainText("looks secret");
+  expect((await seen(request)).space_events).toEqual([]);
+});
+
+test("GPU Space: a secret is replaced write-only, with a warning that it cannot be undone", async ({ page, request }) => {
+  await openSpace(page);
+  await page.getByRole("button", { name: "Replace HF_TOKEN" }).click();
+  await expect(page.getByRole("dialog")).toContainText("cannot be undone automatically");
+  await page.getByLabel("New value").fill("hf_new_secret_value_42");
+  await confirmWith(page, "aura-inference");
+  await expect(page.getByTestId("space-notice")).toContainText("HF_TOKEN saved");
+  expect(await page.content()).not.toContain("hf_new_secret_value_42");
+  expect((await seen(request)).space_events).toEqual(["secrets"]);
+});
+
+test("GPU Space: pause, resume, hardware and sleep time each ask for the Space name", async ({ page, request }) => {
+  await openSpace(page);
+  await page.getByRole("button", { name: "Pause" }).click();
+  await confirmWith(page, "aura-inference");
+  await expect(page.getByTestId("space-stage")).toHaveText("PAUSED");
+  await page.getByRole("button", { name: "Resume" }).click();
+  await confirmWith(page, "aura-inference");
+  await expect(page.getByTestId("space-stage")).toHaveText("APP_STARTING");
+
+  await page.getByLabel("Hardware").selectOption("a10g-large");
+  await page.getByRole("button", { name: "Change hardware" }).click();
+  await expect(page.getByRole("dialog")).toContainText("billed by Hugging Face per hour");
+  await confirmWith(page, "aura-inference");
+  await expect(page.getByTestId("space-notice")).toContainText("a10g-large requested");
+
+  await page.getByLabel("Sleep after inactivity").selectOption("900");
+  await page.getByRole("button", { name: "Change sleep time" }).click();
+  await confirmWith(page, "aura-inference");
+  await expect(page.getByTestId("space-notice")).toContainText("Sleep time changed");
+  expect((await seen(request)).space_events).toEqual(["pause", "restart", "hardware:a10g-large", "sleep:900"]);
+
+  await page.getByRole("link", { name: "Changes" }).click();
+  await expect(page.getByTestId("change-row").first()).toContainText("Changed when aura-inference sleeps");
+});
+
+test("GPU Space: Arabic reads right to left", async ({ page, context }) => {
+  await openSpace(page);
+  await context.addCookies([{ name: "aura_console_lang", value: "ar", url: process.env.PLAYWRIGHT_BASE_URL! }]);
+  await page.goto("/settings/space");
+  await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+  await expect(page.getByText("الـ Secrets")).toBeVisible();
 });

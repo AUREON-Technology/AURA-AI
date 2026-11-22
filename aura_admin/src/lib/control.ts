@@ -263,3 +263,30 @@ export function deploymentTone(status: string | null): "ok" | "warn" | "bad" | "
       return "warn";
   }
 }
+
+// -- GPU Space (stage 3) ------------------------------------------------------------------------
+
+export type SpaceOverview = {
+  space_id: string;
+  name: string;
+  stage: string;
+  hardware: string | null;
+  requested_hardware: string | null;
+  sleep_time: number | null;
+  hardware_options: string[];
+  sleep_choices: number[];
+  change_in_progress: boolean;
+  watch_minutes: number;
+};
+
+export type SpaceVariable = { name: string; secret: boolean; value: string | null };
+export type SpaceSecret = { name: string; updated_at: string | null };
+
+/** The Hub's stage words, as a badge tone. */
+export function spaceTone(stage: string | null): "ok" | "warn" | "bad" | "neutral" {
+  const word = (stage || "").toUpperCase();
+  if (word === "RUNNING") return "ok";
+  if (word.endsWith("_ERROR") || word === "NO_APP_FILE" || word === "DELETING") return "bad";
+  if (word === "PAUSED" || word === "STOPPED") return "neutral";
+  return "warn";
+}

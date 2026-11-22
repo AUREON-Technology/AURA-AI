@@ -4,11 +4,9 @@ import { useState } from "react";
 import { CircleCheck, ListChecks, X } from "lucide-react";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { useStepUp } from "@/components/settings-context";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { api } from "@/lib/api";
 import { isSecretVariable, type ChangeRow, type PendingChanges } from "@/lib/control";
 import { useI18n } from "@/lib/i18n/context";
 
@@ -26,24 +24,30 @@ export function stepUpError(err: unknown, t: (key: "settings.stepUp.blocked" | "
  * A secret's new value is never shown back, here or anywhere.
  */
 export function ChangeTray({
-  serviceId,
   serviceName,
   changes,
   secretNames,
   onRemove,
   onClear,
   onApplied,
+  onCheck,
+  onApply,
+  applyBody,
 }: {
-  serviceId: string;
+  /** What the person types to apply, and names the tray. */
   serviceName: string;
   changes: PendingChanges;
   secretNames: ReadonlySet<string>;
   onRemove: (name: string) => void;
   onClear: () => void;
   onApplied: (change: ChangeRow) => void;
+  /** The dry run (no step-up: nothing is written). */
+  onCheck: (changes: PendingChanges) => Promise<unknown>;
+  /** The write, through the step-up helper. */
+  onApply: (changes: PendingChanges) => Promise<ChangeRow>;
+  applyBody?: string;
 }) {
   const { t, errorText } = useI18n();
-  const stepUp = useStepUp();
   const [checked, setChecked] = useState<"ok" | null>(null);
   const [checkError, setCheckError] = useState<unknown>(null);
   const [checking, setChecking] = useState(false);
@@ -55,10 +59,7 @@ export function ChangeTray({
     setChecked(null);
     setCheckError(null);
     try {
-      await api(`/admin/control/railway/services/${serviceId}/variables/validate`, {
-        method: "POST",
-        body: JSON.stringify({ changes }),
-      });
+      await onCheck(changes);
       setChecked("ok");
     } catch (err) {
       setCheckError(err);
@@ -69,11 +70,7 @@ export function ChangeTray({
 
   async function apply() {
     try {
-      const change = await stepUp.write<ChangeRow>(`/admin/control/railway/services/${serviceId}/variables`, {
-        changes,
-        confirm: serviceName,
-      });
-      onApplied(change);
+      onApplied(await onApply(changes));
     } catch (err) {
       throw stepUpError(err, t);
     }
@@ -126,7 +123,7 @@ export function ChangeTray({
           title={t("settings.tray.applyTitle", { service: serviceName })}
           confirmText={serviceName}
           onConfirm={apply}
-          body={<p className="text-[13px] text-muted">{t("settings.tray.applyBody")}</p>}
+          body={<p className="text-[13px] text-muted">{applyBody ?? t("settings.tray.applyBody")}</p>}
         >
           {t("settings.tray.apply")}
         </ConfirmDialog>

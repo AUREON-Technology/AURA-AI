@@ -21,7 +21,10 @@ const TONE: Record<ChangeRow["status"], "neutral" | "ok" | "warn" | "bad"> = {
 };
 
 const PLATFORM_ACTIONS = new Set(["connect", "replace_token", "disconnect"]);
-const SERVICE_ACTIONS = new Set(["set_variables", "redeploy", "restart", "rollback"]);
+const SERVICE_ACTIONS = new Set([
+  "set_variables", "redeploy", "restart", "rollback",
+  "space_variables", "space_secrets", "space_pause", "space_restart", "space_rebuild", "space_hardware", "space_sleep_time",
+]);
 
 export default function ChangesPage() {
   const { t, lang, errorText } = useI18n();

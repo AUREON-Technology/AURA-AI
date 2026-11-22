@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 const TABS: { href: string; label: MessageKey }[] = [
   { href: "/settings", label: "settings.tab.overview" },
   { href: "/settings/railway", label: "settings.tab.railway" },
+  { href: "/settings/space", label: "settings.tab.space" },
   { href: "/settings/aura", label: "settings.tab.aura" },
   { href: "/settings/changes", label: "settings.tab.changes" },
 ];

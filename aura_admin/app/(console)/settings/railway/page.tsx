@@ -278,8 +278,17 @@ function ServicePanel({ service, onChanged }: { service: RailwayServiceRow; onCh
       {error ? <Alert>{errorText(error)}</Alert> : null}
 
       <ChangeTray
-        serviceId={id}
         serviceName={service.name}
+        onCheck={(changes) =>
+          api(`/admin/control/railway/services/${id}/variables/validate`, { method: "POST", body: JSON.stringify({ changes }) })
+        }
+        onApply={async (changes) => {
+          try {
+            return await stepUp.write<ChangeRow>(`/admin/control/railway/services/${id}/variables`, { changes, confirm: service.name });
+          } catch (err) {
+            throw stepUpError(err, t);
+          }
+        }}
         changes={pending}
         secretNames={secretNames}
         onRemove={(name) => setPending((p) => Object.fromEntries(Object.entries(p).filter(([k]) => k !== name)))}
