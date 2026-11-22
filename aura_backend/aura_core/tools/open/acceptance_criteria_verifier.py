@@ -162,6 +162,8 @@ class AcceptanceCriteriaVerifier:
         """Transform free-form requirements into structured verifiable criteria with verification types."""
         if isinstance(requirements, str):
             requirements = [requirements]
+        if not isinstance(requirements, (list, tuple, set)):
+            requirements = []
         structured = []
         idx = 0
         for req in requirements or []:
@@ -201,6 +203,8 @@ class AcceptanceCriteriaVerifier:
         """
         if isinstance(criteria, str):
             criteria = [criteria]
+        if not isinstance(criteria, (list, tuple, set)):
+            criteria = []
         if not isinstance(evidence, dict):
             evidence = {}
         unique: List[str] = []
@@ -317,7 +321,9 @@ class AcceptanceCriteriaVerifier:
         }
         if isinstance(criteria, str):
             criteria = [criteria]
-        for crit in criteria or []:
+        if not isinstance(criteria, (list, tuple, set)):
+            criteria = []
+        for crit in criteria:
             low = str(crit).lower()
             if re.search(r"\bcoverage\b", low):
                 evidence[str(crit)] = coverage_ok

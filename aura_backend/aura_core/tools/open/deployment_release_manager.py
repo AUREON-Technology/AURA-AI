@@ -63,8 +63,8 @@ class DeploymentReleaseManager:
     ``-v`` turned ``compose down`` into "delete my volumes"); paths are resolved to absolute paths and
     optionally confined to ``base_dir``; the child gets a scrubbed environment and its own process
     group; output is bounded; and ``docker compose config`` runs ``--quiet`` because the full
-    rendering prints interpolated secrets. Probes only reach http/https on loopback or public hosts
-    (``allow_private=True`` adds private ranges). The planning methods only produce text: nothing
+    rendering prints interpolated secrets. Probes only reach http/https on **public** hosts (no opt-out: loopback, private, internal
+    names, the platform's own hosts and the gateway's ``/api/v3/`` and ``/health`` paths are refused). The planning methods only produce text: nothing
     they return has been executed.
     """
 
@@ -73,7 +73,7 @@ class DeploymentReleaseManager:
         image_tag: str,
         dockerfile_path: str = "Dockerfile",
         context_dir: str = ".",
-        timeout_seconds: int = 180,
+        timeout_seconds: int = 300,
         *,
         base_dir: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -91,7 +91,7 @@ class DeploymentReleaseManager:
                     "error": "Refusing to use the filesystem root or the home directory as a build context."}
 
         cmd = ["docker", "build", "-t", image_tag, "-f", str(dockerfile), str(context)]
-        out = _run_docker(cmd, context, _clamp_timeout(timeout_seconds, 180))
+        out = _run_docker(cmd, context, _clamp_timeout(timeout_seconds, 300, 600))
         if "error" in out:
             return {"success": False, "image_tag": image_tag, "error": out["error"]}
         if out.get("timed_out"):
@@ -110,7 +110,7 @@ class DeploymentReleaseManager:
         action: str,
         compose_file: str = "docker-compose.yml",
         services: Optional[List[str]] = None,
-        timeout_seconds: int = 120,
+        timeout_seconds: int = 300,
         *,
         base_dir: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -146,7 +146,7 @@ class DeploymentReleaseManager:
         if services:
             cmd.extend(services)
 
-        out = _run_docker(cmd, compose.parent, _clamp_timeout(timeout_seconds, 120))
+        out = _run_docker(cmd, compose.parent, _clamp_timeout(timeout_seconds, 300, 600))
         if "error" in out:
             return {"success": False, "action": action,
                     "error": out["error"].replace("docker CLI", "docker compose")}
@@ -264,8 +264,6 @@ class DeploymentReleaseManager:
     def check_readiness_probes(
         endpoints: List[str],
         timeout_seconds: float = 3.0,
-        *,
-        allow_private: bool = False,
     ) -> Dict[str, Any]:
         """Verify that deployed microservice readiness probes respond with 2xx.
 
@@ -291,8 +289,7 @@ class DeploymentReleaseManager:
                 continue
             try:
                 req = urllib.request.Request(url, headers={"User-Agent": "AURA-Readiness-Probe/1.0"})
-                with open_guarded(req, timeout=timeout_seconds, allow_loopback=True,
-                                  allow_private=allow_private) as resp:
+                with open_guarded(req, timeout=timeout_seconds) as resp:
                     code = resp.getcode()
                     ready = isinstance(code, int) and (200 <= code < 300)
                     if not ready:

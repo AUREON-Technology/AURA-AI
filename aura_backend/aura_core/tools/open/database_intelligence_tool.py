@@ -467,7 +467,7 @@ class DatabaseIntelligenceTool:
             "ddl_scaffold": migration_ddl,
         }
         if not compared:
-            result["warnings"] = ["No CREATE TABLE statements found in either schema; nothing was compared."]
+            result["warnings"] = ["No table definitions were found in either schema; nothing was compared."]
         return result
 
     @classmethod

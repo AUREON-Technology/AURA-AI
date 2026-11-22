@@ -35,7 +35,7 @@ def _screenshot_target(path: Any, base_dir: Optional[str]) -> str:
     return str(resolved)
 
 
-def _route_guard(allow_local: bool):
+def _route_guard():
     """A Playwright route handler that applies the outbound-URL policy to *every* request.
 
     Checking only the first URL is not enough: a page can redirect, load sub-resources and call
@@ -44,7 +44,7 @@ def _route_guard(allow_local: bool):
 
     def handler(route: Any) -> None:
         try:
-            check_url(route.request.url, allow_loopback=allow_local, allow_private=allow_local)
+            check_url(route.request.url)
         except UrlRefused:
             route.abort()
         else:
@@ -58,10 +58,11 @@ class BrowserSubagent:
 
     Safety properties (ADR-036 marks this class *Deferred* because it had no SSRF policy):
 
-    * only ``http``/``https`` URLs on **public** hosts by default; ``allow_local=True`` (a keyword on
-      every browsing method) adds loopback and private ranges. Link-local and cloud-metadata
-      addresses are never reachable. In the browser the policy is enforced on every request through a
-      route guard, not just on the first URL;
+    * only ``http``/``https`` URLs on **public** hosts, with **no opt-out**: loopback, private,
+      link-local, ``*.internal``/``*.local``, bare service names, cloud metadata, the platform's own
+      hosts and the gateway's ``/api/v3/`` and ``/health`` paths are refused (``_ops_common.check_url``).
+      In the browser the same policy is enforced on every request through a route guard (redirects,
+      sub-resources, ``fetch``), not just on the first URL;
     * screenshots may only be written to an image path (optionally under ``base_dir``);
     * the browser is always closed, and an unknown or incomplete action is reported rather than
       silently skipped while ``executed`` says True.
@@ -86,9 +87,7 @@ class BrowserSubagent:
             }
 
     @classmethod
-    def check_url_accessibility(
-        cls, url: str, timeout_seconds: float = 5.0, *, allow_local: bool = False
-    ) -> Dict[str, Any]:
+    def check_url_accessibility(cls, url: str, timeout_seconds: float = 5.0) -> Dict[str, Any]:
         """Perform lightweight HTTP GET probe to verify destination responsiveness before launching browser."""
         shown = url if isinstance(url, str) and len(url) <= 200 else None
         try:
@@ -96,8 +95,7 @@ class BrowserSubagent:
                 url,
                 headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AURA-Browser/1.0"},
             )
-            with open_guarded(req, timeout=timeout_seconds, allow_loopback=allow_local,
-                              allow_private=allow_local) as resp:
+            with open_guarded(req, timeout=timeout_seconds) as resp:
                 code = resp.getcode()
                 if not isinstance(code, int):
                     return {"accessible": False, "status_code": 0, "url": shown,
@@ -124,7 +122,6 @@ class BrowserSubagent:
         screenshot_path: Optional[str] = None,
         timeout_ms: int = 15000,
         *,
-        allow_local: bool = False,
         base_dir: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Navigate to a URL and execute browser actions (click, fill, wait_for) using Playwright.
@@ -133,7 +130,7 @@ class BrowserSubagent:
         out; skipped actions are counted in ``skipped_actions`` and explained in ``error``.
         """
         try:
-            check_url(url, allow_loopback=allow_local, allow_private=allow_local)
+            check_url(url)
         except UrlRefused as exc:
             return {"executed": False, "url": url if isinstance(url, str) and len(url) <= 200 else None,
                     "error": f"URL refused: {exc}", "steps": []}
@@ -170,7 +167,7 @@ class BrowserSubagent:
                 browser = p.chromium.launch(headless=bool(headless))
                 try:
                     context = browser.new_context()
-                    context.route("**/*", _route_guard(allow_local))
+                    context.route("**/*", _route_guard())
                     page = context.new_page()
                     page.set_default_timeout(_clamp_ms(timeout_ms))
 
@@ -238,12 +235,11 @@ class BrowserSubagent:
         full_page: bool = True,
         headless: bool = True,
         *,
-        allow_local: bool = False,
         base_dir: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Capture screenshot of a web page using specified viewport dimensions."""
         try:
-            check_url(url, allow_loopback=allow_local, allow_private=allow_local)
+            check_url(url)
             target = _screenshot_target(output_path, base_dir)
         except UrlRefused as exc:
             return {"success": False, "error": f"URL refused: {exc}", "output_path": None}
@@ -262,7 +258,7 @@ class BrowserSubagent:
                 browser = p.chromium.launch(headless=bool(headless))
                 try:
                     context = browser.new_context(viewport={"width": width, "height": height})
-                    context.route("**/*", _route_guard(allow_local))
+                    context.route("**/*", _route_guard())
                     page = context.new_page()
                     page.goto(url, wait_until="networkidle", timeout=20000)
                     page.screenshot(path=target, full_page=bool(full_page))
@@ -285,12 +281,10 @@ class BrowserSubagent:
         url: str,
         selector: Optional[str] = None,
         headless: bool = True,
-        *,
-        allow_local: bool = False,
     ) -> Dict[str, Any]:
         """Fetch rendered text content or innerHTML from a live web page (at most 200,000 characters)."""
         try:
-            check_url(url, allow_loopback=allow_local, allow_private=allow_local)
+            check_url(url)
         except UrlRefused as exc:
             return {"success": False, "error": f"URL refused: {exc}", "url": None}
         avail = cls.check_playwright_availability()
@@ -303,7 +297,7 @@ class BrowserSubagent:
                 browser = p.chromium.launch(headless=bool(headless))
                 try:
                     context = browser.new_context()
-                    context.route("**/*", _route_guard(allow_local))
+                    context.route("**/*", _route_guard())
                     page = context.new_page()
                     page.goto(url, wait_until="domcontentloaded")
 
@@ -332,8 +326,6 @@ class BrowserSubagent:
         url: str,
         script_js: str,
         headless: bool = True,
-        *,
-        allow_local: bool = False,
     ) -> Dict[str, Any]:
         """Evaluate a custom JavaScript expression inside page DOM and return output."""
         if not isinstance(script_js, str) or not script_js.strip():
@@ -341,7 +333,7 @@ class BrowserSubagent:
         if len(script_js) > _MAX_SCRIPT_CHARS:
             return {"success": False, "error": f"script_js is too long (limit {_MAX_SCRIPT_CHARS} characters)."}
         try:
-            check_url(url, allow_loopback=allow_local, allow_private=allow_local)
+            check_url(url)
         except UrlRefused as exc:
             return {"success": False, "error": f"URL refused: {exc}"}
         avail = cls.check_playwright_availability()
@@ -354,7 +346,7 @@ class BrowserSubagent:
                 browser = p.chromium.launch(headless=bool(headless))
                 try:
                     context = browser.new_context()
-                    context.route("**/*", _route_guard(allow_local))
+                    context.route("**/*", _route_guard())
                     page = context.new_page()
                     page.goto(url, wait_until="domcontentloaded")
                     result = page.evaluate(script_js)

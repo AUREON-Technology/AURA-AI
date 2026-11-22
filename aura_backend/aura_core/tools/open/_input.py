@@ -26,6 +26,10 @@ MAX_TEXT_BYTES = 10 * 1024 * 1024
 #: A PDF larger than this is refused. A 100 MB PDF held in memory twice (bytes + parsed) is already
 #: heavy for a request-scoped tool.
 MAX_PDF_BYTES = 100 * 1024 * 1024
+#: Pages read per PDF. The platform's own ingestion limit is 500; these tools are asked to read a
+#: whole document, so the ceiling here is ten times that. Beyond it the file is refused with a clear
+#: error rather than cut short.
+MAX_PDF_PAGES = 5000
 
 _PDF_MAGIC = b"%PDF-"
 
@@ -107,9 +111,14 @@ def read_source_file(
         except ValueError:
             raise SourceReadError(f"Path is outside the allowed directory: {file_path}") from None
 
-    if not resolved.exists():
+    try:
+        exists = resolved.exists()
+        is_file = exists and resolved.is_file()
+    except OSError as exc:  # e.g. ENAMETOOLONG, which Path.exists() raises instead of returning False
+        raise SourceReadError(f"Invalid path: {exc.strerror or type(exc).__name__}") from exc
+    if not exists:
         raise SourceReadError(f"File not found: {file_path}")
-    if not resolved.is_file():
+    if not is_file:
         raise SourceReadError(f"Path is not a file: {file_path}")
 
     try:
@@ -157,17 +166,27 @@ def _read_pdf(data: bytes, name: str) -> SourceRead:
         # Not parseable at all: let extract_pdf produce the canonical error below.
         pass
 
+    title = Path(name).name or "the document"
     try:
-        extraction = extract_pdf(data, title=Path(name).name or "the document")
+        # Pass 1, the platform's default, classifies each page: readable / scanned image / blank.
+        strict = extract_pdf(data, title=title, max_pages=MAX_PDF_PAGES)
+        # Pass 2 keeps short pages. The default treats a page with fewer than 16 characters and no
+        # image as blank, so a last page that says only "PASSED" or "OK" would vanish from the text,
+        # which is exactly the page a reader most wants.
+        lenient = extract_pdf(data, title=title, max_pages=MAX_PDF_PAGES, min_page_chars=1)
     except AuraError as exc:
-        raise SourceReadError(f"Could not parse {name} as a PDF ({exc}).") from exc
+        raise SourceReadError(f"Could not read {name} as a PDF ({exc}).") from exc
 
     # Unreadable-page placeholders are the extractor's note *about* a page, not the page's content.
-    text = "\n\n".join(block.text for block in extraction.blocks if block.text and not block.needs_ocr)
+    text = "\n\n".join(block.text for block in lenient.blocks if block.text and not block.needs_ocr)
+    # A scanned page that carries a stray glyph (a page number, a stamp) stays "unreadable": it has
+    # text the second pass picked up, but its content is an image nobody has recognised.
+    read_pages = {block.page for block in lenient.blocks if block.text and not block.needs_ocr}
+    blank = tuple(p for p in strict.blank_pages if p not in read_pages)
     return SourceRead(
         text=text,
         kind="pdf",
-        pages=extraction.pages,
-        unreadable_pages=tuple(extraction.unreadable_pages),
-        blank_pages=tuple(extraction.blank_pages),
+        pages=strict.pages,
+        unreadable_pages=tuple(strict.unreadable_pages),
+        blank_pages=blank,
     )

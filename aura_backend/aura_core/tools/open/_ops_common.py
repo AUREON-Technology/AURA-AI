@@ -7,8 +7,9 @@ Three things the individual classes each got wrong in their own way:
   ``stdout=PIPE`` blocks the child as soon as the pipe buffer (about 64 KiB) fills -- a chatty dev
   server then "hangs" while looking alive. :func:`run_group` and :class:`StreamTail` fix both.
 * **Outbound URLs.** ``urllib.request.urlopen`` happily opens ``file://`` and follows redirects to any
-  host, so a "health check" or "webhook" tool becomes a way to read local files or reach cloud
-  metadata endpoints. :func:`check_url` and :func:`open_guarded` apply one policy everywhere.
+  host, so a "health check" or "webhook" tool becomes a way to read local files, reach cloud
+  metadata endpoints or call the AURA gateway itself. :func:`check_url` and :func:`open_guarded`
+  apply one policy everywhere, with **no opt-out**: only public hosts, never the platform's own.
 * **Path confinement.** :func:`confine` is the one place a user-supplied directory is resolved and
   held inside an optional ``base_dir``.
 
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import posixpath
 import signal
 import socket
 import subprocess
@@ -30,8 +32,11 @@ import urllib.request
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Any, Callable, Optional, Sequence, Union
+from typing import IO, Any, Callable, Optional, Sequence, TypeVar, Union
 
+from ._process import scrubbed_env
+
+_T = TypeVar("_T")
 #: Output kept per stream. A test run or dev server can print gigabytes; the tail is what matters.
 DEFAULT_TAIL_BYTES = 64 * 1024
 
@@ -219,7 +224,7 @@ def run_group(
     *,
     cwd: Union[str, os.PathLike[str], None],
     timeout_s: float,
-    env: Optional[dict[str, str]],
+    env: Optional[dict[str, str]] = None,
     max_output: int = DEFAULT_TAIL_BYTES,
 ) -> GroupResult:
     """Run ``argv`` (never through a shell) in its own process group with a hard timeout.
@@ -227,7 +232,10 @@ def run_group(
     On timeout the *whole group* is killed, so a test or build that spawned its own children leaves
     nothing behind. Output goes to temp files and only the tail is returned, so a runaway child cannot
     exhaust memory. ``FileNotFoundError`` / ``NotADirectoryError`` / ``PermissionError`` propagate.
+    ``env=None`` means a *scrubbed* environment, never the gateway's own.
     """
+    if env is None:
+        env = scrubbed_env()
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         proc = subprocess.Popen(
             list(argv),
@@ -267,7 +275,22 @@ class UrlRefused(Exception):
 
 
 _MAX_URL_LEN = 2048
-_METADATA_HOSTS = {"metadata.google.internal", "metadata", "instance-data"}
+#: Names that are never public hosts: docker/compose service names resolve to single labels
+#: (``gateway``, ``postgres``), Railway's private network is ``*.railway.internal``, and the rest are
+#: the usual intranet suffixes.
+_DENIED_SUFFIXES = (
+    ".internal", ".local", ".localhost", ".lan", ".home", ".corp", ".intranet", ".home.arpa",
+    ".svc", ".cluster", ".localdomain",
+)
+#: The platform's own public hosts. A tool that could call them could call the AURA API as the
+#: gateway's network identity; subdomains are covered.
+_PLATFORM_HOSTS = ("aureon-ai.tech", "console.aureon-ai.tech")
+_PLATFORM_ENV_VARS = (
+    "AURA_PUBLIC_URL", "AURA_PUBLIC_BASE_URL", "AURA_BASE_URL", "PUBLIC_BASE_URL",
+    "RAILWAY_PUBLIC_DOMAIN", "RAILWAY_PRIVATE_DOMAIN",
+)
+#: Path prefixes that are the gateway's API / health surface, refused on *any* host.
+_DENIED_PATH_ROOTS = ("health",)
 
 
 def redact_url(url: Any) -> str:
@@ -276,44 +299,100 @@ def redact_url(url: Any) -> str:
         parts = urllib.parse.urlsplit(str(url))
         if parts.scheme and parts.hostname:
             port = f":{parts.port}" if parts.port else ""
-            return f"{parts.scheme}://{parts.hostname}{port}/..." if (parts.path or parts.query) else (
-                f"{parts.scheme}://{parts.hostname}{port}"
-            )
+            base = f"{parts.scheme}://{parts.hostname}{port}"
+            return base + "/..." if (parts.path or parts.query) else base
     except ValueError:
         pass
     return "<invalid url>"
 
 
-def _classify(ip: Union[ipaddress.IPv4Address, ipaddress.IPv6Address]) -> str:
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
-    if (
-        ip.is_unspecified
-        or ip.is_multicast
-        or ip.is_link_local
-        or ip.is_reserved
-        or str(ip) in {"169.254.169.254", "fd00:ec2::254"}
-    ):
-        return "blocked"
-    if ip.is_loopback:
-        return "loopback"
-    if ip.is_global:
-        return "public"
-    return "private"
+def _bare_host(value: str) -> str:
+    """The lower-cased host of ``value`` (a URL, ``host:port`` or ``host``), or ''."""
+    text = value.strip()
+    if not text:
+        return ""
+    try:
+        parts = urllib.parse.urlsplit(text if "://" in text else "//" + text)
+        return (parts.hostname or "").lower().rstrip(".")
+    except ValueError:
+        return ""
 
 
-def check_url(url: Any, *, allow_loopback: bool = False, allow_private: bool = False) -> str:
+def platform_hosts() -> set[str]:
+    """Hosts the tools must never contact: the platform's own, from the environment and built in."""
+    hosts = {h for h in _PLATFORM_HOSTS}
+    for name in _PLATFORM_ENV_VARS:
+        for item in os.environ.get(name, "").split(","):
+            host = _bare_host(item)
+            if host:
+                hosts.add(host)
+    return hosts
+
+
+def _is_ip_literal(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
+
+
+def _host_refusal(host: str) -> Optional[str]:
+    """Why ``host`` (lower-case, no trailing dot) is refused by name alone, else None."""
+    if _is_ip_literal(host):
+        return None
+    if host == "localhost" or host.endswith(_DENIED_SUFFIXES):
+        return f"Host {host!r} is a local or internal name."
+    if "." not in host:
+        return f"Host {host!r} is a single-label name (an internal service name); only public hosts are allowed."
+    for denied in platform_hosts():
+        if host == denied or host.endswith("." + denied):
+            return "The platform's own hosts are not reachable from these tools."
+    return None
+
+
+def path_refusal(path: str) -> Optional[str]:
+    """Refuse the gateway's API and health paths on any host, however they are spelled.
+
+    Percent-encoding, ``..``, repeated slashes, ``;params`` and case are all normalised first, so
+    ``/%61pi/v3/``, ``/x/../api/v3/chat`` and ``//API//v3`` are all caught.
+    """
+    text = path or "/"
+    for _ in range(3):
+        decoded = urllib.parse.unquote(text)
+        if decoded == text:
+            break
+        text = decoded
+    text = text.replace("\\", "/").lower()
+    segments = [seg.split(";", 1)[0] for seg in text.split("/")]
+    normal = posixpath.normpath("/" + "/".join(segments).lstrip("/"))
+    parts = [p for p in normal.split("/") if p]
+    if any(parts[i] == "api" and parts[i + 1] == "v3" for i in range(len(parts) - 1)):
+        return "The AURA API path (/api/v3/) is not reachable from these tools."
+    if parts and parts[0].startswith(_DENIED_PATH_ROOTS):
+        return "The health-check path is not reachable from these tools."
+    return None
+
+
+def check_url(url: Any) -> str:
     """Validate ``url`` against the outbound policy and return it unchanged. Raises :class:`UrlRefused`.
 
-    * only ``http`` and ``https``; no embedded credentials; no control characters;
-    * every address the host resolves to is checked, so a name that points at ``127.0.0.1`` or
-      ``169.254.169.254`` is caught as well as a literal IP;
-    * link-local, multicast, unspecified and cloud-metadata addresses are always refused;
-      loopback and private ranges only when the caller opts in.
+    There is **no opt-out**. A URL is accepted only when it is:
+
+    * ``http`` or ``https``, without embedded credentials or control characters;
+    * a public host: loopback, private, link-local, CGNAT, unique-local, multicast, reserved and cloud
+      metadata addresses are refused (a name is resolved and *every* address checked; an IP literal is
+      checked without any DNS lookup), as are ``localhost``, ``*.internal``, ``*.local``,
+      ``*.localhost`` and bare single-label names such as docker service names;
+    * not one of the platform's own hosts (``aureon-ai.tech`` and subdomains, plus whatever
+      ``AURA_PUBLIC_URL`` / ``AURA_PUBLIC_BASE_URL`` / ``AURA_BASE_URL`` / ``PUBLIC_BASE_URL`` /
+      ``RAILWAY_PUBLIC_DOMAIN`` / ``RAILWAY_PRIVATE_DOMAIN`` name);
+    * not on the gateway's ``/api/v3/`` or ``/health`` paths, on any host.
+
+    Name checks run before any lookup, so a refused URL never causes a DNS query or a connection.
 
     Known limit: the name is resolved here and again by the HTTP client, so a hostile DNS server can
-    answer differently the second time (rebinding). A gateway that must withstand a hostile resolver
-    needs an egress proxy; this stops the direct and the redirect routes.
+    answer differently the second time (rebinding); stopping that needs an egress proxy.
     """
     if not isinstance(url, str) or not url.strip():
         raise UrlRefused("A URL is required.")
@@ -326,34 +405,39 @@ def check_url(url: Any, *, allow_loopback: bool = False, allow_private: bool = F
         port = parts.port
     except ValueError:
         raise UrlRefused("URL is malformed.") from None
-    if parts.scheme.lower() not in ("http", "https"):
+    scheme = parts.scheme.lower()
+    if scheme not in ("http", "https"):
         raise UrlRefused(f"Only http and https URLs are allowed (got {parts.scheme or 'none'!r}).")
-    host = parts.hostname
+    host = (parts.hostname or "").lower().rstrip(".")
     if not host:
         raise UrlRefused("URL has no host.")
     if parts.username or parts.password:
         raise UrlRefused("URLs with embedded credentials are not allowed.")
-    if host.lower().rstrip(".") in _METADATA_HOSTS:
-        raise UrlRefused("Cloud metadata hosts are not allowed.")
-    try:
-        infos = socket.getaddrinfo(host, port or (443 if parts.scheme.lower() == "https" else 80),
-                                   type=socket.SOCK_STREAM)
-    except (socket.gaierror, UnicodeError, OSError):
-        raise UrlRefused(f"Cannot resolve host {host!r}.") from None
-    if not infos:
-        raise UrlRefused(f"Cannot resolve host {host!r}.")
-    for info in infos:
+    reason = _host_refusal(host) or path_refusal(parts.path)
+    if reason:
+        raise UrlRefused(reason)
+
+    if _is_ip_literal(host):
+        addresses = [host]
+    else:
         try:
-            ip = ipaddress.ip_address(info[4][0].split("%", 1)[0])
+            infos = socket.getaddrinfo(host, port or (443 if scheme == "https" else 80), type=socket.SOCK_STREAM)
+        except (socket.gaierror, UnicodeError, OSError):
+            raise UrlRefused(f"Cannot resolve host {host!r}.") from None
+        addresses = [info[4][0].split("%", 1)[0] for info in infos]
+        if not addresses:
+            raise UrlRefused(f"Cannot resolve host {host!r}.")
+    for address in addresses:
+        try:
+            ip = ipaddress.ip_address(address)
         except ValueError:
             raise UrlRefused(f"Host {host!r} resolved to an unreadable address.") from None
-        kind = _classify(ip)
-        if kind == "blocked":
-            raise UrlRefused(f"Host {host!r} resolves to a blocked address (link-local, metadata or reserved).")
-        if kind == "loopback" and not allow_loopback:
-            raise UrlRefused(f"Host {host!r} is a loopback address; not allowed for this call.")
-        if kind == "private" and not allow_private:
-            raise UrlRefused(f"Host {host!r} is on a private network; not allowed for this call.")
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
+        if not ip.is_global or ip.is_multicast:
+            raise UrlRefused(
+                f"Host {host!r} is not a public address (loopback, private, link-local, reserved or metadata)."
+            )
     return url
 
 
@@ -371,7 +455,7 @@ class _GuardedRedirect(urllib.request.HTTPRedirectHandler):
                 req.full_url, code, f"redirect to {redact_url(newurl)} was not followed", headers, fp
             )
         try:
-            self._validate(newurl)
+            self._validate(urllib.parse.urljoin(req.full_url, newurl))
         except UrlRefused as exc:
             raise urllib.error.HTTPError(
                 req.full_url, code, f"redirect refused: {exc}", headers, fp
@@ -383,19 +467,42 @@ def open_guarded(
     request: Union[str, urllib.request.Request],
     *,
     timeout: float,
-    allow_loopback: bool = False,
-    allow_private: bool = False,
     follow_redirects: bool = True,
 ):
-    """``urlopen`` under :func:`check_url`'s policy, for the first URL and for every redirect."""
+    """``urlopen`` under :func:`check_url`'s policy, for the first URL and for every redirect hop."""
     url = request if isinstance(request, str) else request.full_url
-    check_url(url, allow_loopback=allow_loopback, allow_private=allow_private)
-
-    def validate(new_url: str) -> None:
-        check_url(new_url, allow_loopback=allow_loopback, allow_private=allow_private)
-
-    opener = urllib.request.build_opener(_GuardedRedirect(validate if follow_redirects else None))
+    check_url(url)
+    opener = urllib.request.build_opener(_GuardedRedirect(check_url if follow_redirects else None))
     return opener.open(request, timeout=clamp_timeout(timeout))
+
+
+def open_owned_local(url: Any, port_ok: Callable[[int], bool], *, timeout: float):
+    """GET a URL on **this machine's loopback**, only on a port ``port_ok`` vouches for.
+
+    Used by the dev-server manager to probe a server it spawned itself. The host must be the literal
+    ``127.0.0.1`` / ``localhost`` (no lookup, no proxy), the port must be one the caller allocated,
+    the gateway's API and health paths are refused, and redirects are never followed.
+    """
+    if not isinstance(url, str) or len(url) > _MAX_URL_LEN or any(ord(c) < 33 or ord(c) == 127 for c in url):
+        raise UrlRefused("A plain http URL is required.")
+    try:
+        parts = urllib.parse.urlsplit(url)
+        port = parts.port
+    except ValueError:
+        raise UrlRefused("URL is malformed.") from None
+    if parts.scheme.lower() != "http":
+        raise UrlRefused("Only http URLs on a server this tool started are allowed.")
+    host = (parts.hostname or "").lower()
+    if host not in ("127.0.0.1", "localhost") or parts.username or parts.password:
+        raise UrlRefused("Only http://127.0.0.1:<port>/ on a server this tool started is allowed.")
+    if port is None or not port_ok(port):
+        raise UrlRefused("That port was not allocated or started by this tool.")
+    reason = path_refusal(parts.path)
+    if reason:
+        raise UrlRefused(reason)
+    target = urllib.parse.urlunsplit(("http", f"127.0.0.1:{port}", parts.path or "/", parts.query, ""))
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _GuardedRedirect(None))
+    return opener.open(target, timeout=clamp_timeout(timeout))
 
 
 def clamp_timeout(value: Any, default: float = 5.0, maximum: float = 30.0) -> float:
@@ -407,3 +514,71 @@ def clamp_timeout(value: Any, default: float = 5.0, maximum: float = 30.0) -> fl
     if seconds != seconds or seconds <= 0:  # NaN or non-positive
         return default
     return min(seconds, maximum)
+
+
+# -- time budgets -----------------------------------------------------------------------------
+
+#: Reading a long PDF or a multi-gigabyte archive is legitimately slow. The default is generous, the
+#: caller may raise or lower it, and nothing is ever *truncated* to fit: a run that exceeds its
+#: budget fails with a clear message instead of reporting on part of the input.
+DEFAULT_READ_BUDGET_S = 300.0
+MAX_BUDGET_S = 600.0
+
+
+def clamp_budget(value: Any, default: float = DEFAULT_READ_BUDGET_S, maximum: float = MAX_BUDGET_S) -> float:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return default
+    if seconds != seconds or seconds <= 0:
+        return default
+    return min(seconds, maximum)
+
+
+class BudgetExceeded(Exception):
+    """A read or verification ran past its time budget."""
+
+
+def run_with_budget(fn: Callable[[], _T], seconds: float, what: str = "The operation") -> _T:
+    """Run ``fn`` on a worker thread and give up waiting after ``seconds``.
+
+    A thread cannot be killed, so on timeout the worker finishes in the background (it only reads, and
+    its input is size-capped) and its result is discarded -- the caller gets :class:`BudgetExceeded`,
+    never a partial result.
+    """
+    box: dict[str, Any] = {}
+
+    def target() -> None:
+        try:
+            box["value"] = fn()
+        except BaseException as exc:  # re-raised in the caller's thread below
+            box["error"] = exc
+
+    worker = threading.Thread(target=target, daemon=True)
+    worker.start()
+    worker.join(seconds)
+    if worker.is_alive():
+        raise BudgetExceeded(f"{what} did not finish within its {seconds:g}s time budget.")
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
+
+
+# -- environments -----------------------------------------------------------------------------
+
+_SECRET_NAME_PARTS = ("KEY", "SECRET", "TOKEN", "PASSWORD", "PASSWD", "CREDENTIAL", "JWT", "DATABASE_URL",
+                      "REDIS_URL", "DSN")
+
+
+def forbidden_env_names(env: Optional[dict[str, str]]) -> list[str]:
+    """Names in a caller-supplied ``env`` that look like platform credentials (``AURA_*``, keys, tokens).
+
+    Children get a scrubbed environment; this stops a caller (or an agent that fills ``env``) from
+    simply handing the gateway's secrets back in.
+    """
+    bad = []
+    for name in env or {}:
+        upper = str(name).upper()
+        if upper.startswith("AURA_") or any(part in upper for part in _SECRET_NAME_PARTS):
+            bad.append(str(name))
+    return bad

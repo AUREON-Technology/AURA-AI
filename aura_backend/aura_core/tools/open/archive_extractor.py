@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from ._input import SourceReadError, is_pdf_bytes, read_source_bytes, read_source_file
+from ._time_budget import DEFAULT_BUDGET_S, Deadline
 
 #: Members listed / extracted per call. A zip can hold millions of tiny entries.
 DEFAULT_MAX_MEMBERS = 100_000
@@ -45,6 +46,10 @@ _Member = Tuple[str, int, str]  # (name, declared size, kind) with kind in file|
 
 class _SizeLimit(Exception):
     """Internal: the byte budget was exceeded while streaming a member."""
+
+
+class _TimedOut(Exception):
+    """Internal: the time budget ran out while streaming."""
 
 
 def _to_path(value: Any) -> Optional[Path]:
@@ -298,8 +303,12 @@ class ArchiveExtractor:
         max_size_mb: float = 100.0,
         max_members: int = DEFAULT_MAX_MEMBERS,
         base_dir: Optional[str] = None,
+        time_budget_s: float = DEFAULT_BUDGET_S,
     ) -> Dict[str, Any]:
         """Safely extract a .zip or .tar.* archive into destination_dir.
+
+        ``time_budget_s`` (default 300, at most 600) is checked while streaming; if it runs out the
+        result is ``extracted: False``, ``timed_out: True`` with the members written so far listed.
 
         All members are validated before anything is written (path traversal, links, devices, member
         count, declared total size). Links and devices are refused, never created. Written bytes are
@@ -355,6 +364,7 @@ class ArchiveExtractor:
             # ---- phase 2: write ----
             total_bytes = 0
             extracted: List[str] = []
+            deadline = Deadline(time_budget_s)
             if kind == "zip":
                 with zipfile.ZipFile(src, "r") as zf:
                     for info in zf.infolist():
@@ -364,7 +374,9 @@ class ArchiveExtractor:
                             continue
                         target.parent.mkdir(parents=True, exist_ok=True)
                         with zf.open(info) as s_file:
-                            total_bytes = ArchiveExtractor._write_stream(s_file, target, total_bytes, max_bytes)
+                            total_bytes = ArchiveExtractor._write_stream(
+                                s_file, target, total_bytes, max_bytes, deadline
+                            )
                         extracted.append(info.filename)
             else:
                 with tarfile.open(src, "r:*") as tf:
@@ -377,7 +389,7 @@ class ArchiveExtractor:
                         if stream is None:
                             continue
                         target.parent.mkdir(parents=True, exist_ok=True)
-                        total_bytes = ArchiveExtractor._write_stream(stream, target, total_bytes, max_bytes)
+                        total_bytes = ArchiveExtractor._write_stream(stream, target, total_bytes, max_bytes, deadline)
                         extracted.append(member.name)
 
             return {
@@ -387,13 +399,22 @@ class ArchiveExtractor:
                 "total_bytes": total_bytes,
                 "members": extracted,
             }
+        except _TimedOut:
+            return {
+                "extracted": False,
+                "timed_out": True,
+                "error": Deadline(time_budget_s).message("extraction is incomplete."),
+                "members": extracted,
+            }
         except _SizeLimit:
             return {"extracted": False, "error": f"Archive exceeds max size limit ({max_size_mb} MB)."}
         except Exception as exc:
             return {"extracted": False, "error": f"{type(exc).__name__}: {exc}"}
 
     @staticmethod
-    def _write_stream(source: Any, target: Path, written_so_far: int, max_bytes: int) -> int:
+    def _write_stream(
+        source: Any, target: Path, written_so_far: int, max_bytes: int, deadline: Optional[Deadline] = None
+    ) -> int:
         """Stream ``source`` to ``target`` counting real bytes; never follows an existing symlink."""
         if target.is_symlink():
             raise OSError(f"refusing to write through a symlink: {target.name}")
@@ -404,8 +425,10 @@ class ArchiveExtractor:
                     total += len(chunk)
                     if total > max_bytes:
                         raise _SizeLimit()
+                    if deadline is not None and deadline.expired():
+                        raise _TimedOut()
                     out.write(chunk)
-        except _SizeLimit:
+        except (_SizeLimit, _TimedOut):
             try:
                 target.unlink()
             except OSError:
@@ -563,8 +586,12 @@ class ArchiveExtractor:
         max_members: int = 1000,
         max_size_mb: float = DEFAULT_MAX_MEMBER_MB,
         base_dir: Optional[str] = None,
+        time_budget_s: float = DEFAULT_BUDGET_S,
     ) -> Dict[str, Any]:
         """Read every readable text/PDF member of an archive; PDFs are read in full.
+
+        ``time_budget_s`` (default 300, at most 600) is checked between members; members not reached
+        are listed under ``skipped`` and ``timed_out`` is true.
 
         Members that cannot be read (binary, too large, corrupt or password-protected PDF) are listed
         under ``skipped`` with the reason -- never dropped silently. ``complete`` is true only when
@@ -591,7 +618,13 @@ class ArchiveExtractor:
         skipped: List[Dict[str, str]] = []
         warnings: List[str] = []
         files = [name for name, _size, mtype in members if mtype == "file"]
+        deadline = Deadline(time_budget_s)
+        timed_out = False
         for name in files[:limit]:
+            if deadline.expired():
+                timed_out = True
+                skipped.append({"member": name, "reason": "time budget used up before this member was read"})
+                continue
             if not _safe_name(name):
                 skipped.append({"member": name, "reason": "unsafe path"})
                 continue
@@ -609,6 +642,8 @@ class ArchiveExtractor:
         if scan_truncated:
             warnings.append(f"Archive has more than {DEFAULT_MAX_MEMBERS} entries; the rest were not read.")
 
+        if timed_out:
+            warnings.append(deadline.message("the members listed under 'skipped' were not read."))
         complete = (
             not skipped and not left_over and not scan_truncated and all(d["complete"] for d in documents)
         )
@@ -618,6 +653,7 @@ class ArchiveExtractor:
             "documents_read": len(documents),
             "documents": documents,
             "skipped": skipped,
+            "timed_out": timed_out,
             "complete": complete,
             "warnings": warnings,
         }
@@ -632,8 +668,12 @@ class ArchiveExtractor:
         max_files: int = 50_000,
         max_total_mb: float = 1024.0,
         base_dir: Optional[str] = None,
+        time_budget_s: float = DEFAULT_BUDGET_S,
     ) -> Dict[str, Any]:
         """Create a zip or tar(.gz) archive from a directory.
+
+        ``time_budget_s`` (default 300, at most 600) is checked between files; if it runs out nothing
+        is left behind and the result is ``created: False`` with ``timed_out: True``.
 
         Symlinks are skipped (a link inside the tree could pull a file from outside it into the
         archive) and reported under ``skipped_links``; the output file itself is never archived.
@@ -659,6 +699,7 @@ class ArchiveExtractor:
         files: List[Tuple[Path, str]] = []
         skipped_links: List[str] = []
         total = 0
+        deadline = Deadline(time_budget_s)
         try:
             for current, dirs, names in os.walk(src_resolved, followlinks=False):
                 dirs.sort()
@@ -687,11 +728,15 @@ class ArchiveExtractor:
                 if fmt == "zip":
                     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, strict_timestamps=False) as zf:
                         for path, rel in files:
+                            if deadline.expired():
+                                raise _TimedOut()
                             zf.write(path, rel)
                 else:
                     mode = "w:gz" if "gz" in fmt else "w"
                     with tarfile.open(out, mode) as tf:
                         for path, rel in files:
+                            if deadline.expired():
+                                raise _TimedOut()
                             tf.add(path, arcname=rel, recursive=False)
             except BaseException:
                 try:
@@ -707,5 +752,7 @@ class ArchiveExtractor:
                 "archive_size_bytes": out.stat().st_size,
                 "skipped_links": skipped_links,
             }
+        except _TimedOut:
+            return {"created": False, "timed_out": True, "error": deadline.message("no archive was written.")}
         except Exception as exc:
             return {"created": False, "error": str(exc)}

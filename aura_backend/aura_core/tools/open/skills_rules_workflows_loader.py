@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from ._input import SourceReadError, read_source_bytes, read_source_file
+from ._time_budget import DEFAULT_BUDGET_S, Deadline
 
 _SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "__pycache__"}
 _TOKEN = re.compile(r"\w{3,}")
@@ -78,11 +79,13 @@ class SkillsRulesWorkflowsLoader:
         extra_dirs: Optional[List[str]] = None,
         max_files: int = 5000,
         include_pdf: bool = True,
+        time_budget_s: float = DEFAULT_BUDGET_S,
     ) -> Dict[str, Any]:
         """Discover markdown (and PDF) skill/rule/workflow files and activate those matching context_tags.
 
         Only directories inside the workspace are searched. ``truncated`` is true when ``max_files``
-        was reached. Use :meth:`read_resource` to read one in full.
+        was reached or ``time_budget_s`` (default 300, at most 600) ran out (``timed_out``). Use
+        :meth:`read_resource` to read one in full.
         """
         try:
             root = Path(workspace_path)
@@ -111,6 +114,8 @@ class SkillsRulesWorkflowsLoader:
         seen_paths = set()
         rejected: List[str] = []
         truncated = False
+        timed_out = False
+        deadline = Deadline(time_budget_s)
 
         for rel_dir in rel_dirs:
             sdir = root / rel_dir
@@ -142,6 +147,9 @@ class SkillsRulesWorkflowsLoader:
                     if len(discovered) >= limit:
                         truncated = True
                         break
+                    if deadline.expired():
+                        truncated = timed_out = True
+                        break
                     seen_paths.add(resolved)
 
                     stem = md_file.stem
@@ -168,12 +176,15 @@ class SkillsRulesWorkflowsLoader:
             "active_skills": active,
             "all_skills": discovered,
             "truncated": truncated,
+            "timed_out": timed_out,
         }
         warnings: List[str] = []
         if rejected:
             result["rejected_dirs"] = rejected
             warnings.append(f"Directories outside the workspace were not searched: {rejected}")
-        if truncated:
+        if timed_out:
+            warnings.append(deadline.message("the listing is incomplete."))
+        elif truncated:
             warnings.append(f"Stopped after {limit} files; more exist.")
         if warnings:
             result["warnings"] = warnings

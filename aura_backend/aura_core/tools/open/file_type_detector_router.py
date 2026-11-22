@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ._input import SourceReadError, is_pdf_bytes, read_source_file
+from ._time_budget import DEFAULT_BUDGET_S, Deadline
 
 _IGNORED_DIRS = {".git", "__pycache__", "venv", ".venv", "node_modules"}
 
@@ -321,12 +322,15 @@ class FileTypeDetectorRouter:
         max_files: int = 200,
         inspect_pdfs: bool = False,
         base_dir: Optional[str] = None,
+        time_budget_s: float = DEFAULT_BUDGET_S,
     ) -> Dict[str, Any]:
         """Scan a directory and categorize all files by their routed parsers.
 
         ``truncated`` is true when more than ``max_files`` files exist. PDFs are listed under
         ``pdf_files``; their pages are only counted when ``inspect_pdfs=True`` (reading a directory of
         large PDFs in full is slow), in which case ``pdf_coverage`` maps each to its ``input`` block.
+        ``time_budget_s`` (default 300, at most 600) is checked between files; when it runs out the
+        scan stops with ``timed_out`` and ``truncated`` set.
         """
         root = _as_path(directory_path)
         if root is None:
@@ -346,6 +350,8 @@ class FileTypeDetectorRouter:
         pdf_coverage: Dict[str, Any] = {}
         total_scanned = 0
         truncated = False
+        timed_out = False
+        deadline = Deadline(time_budget_s)
 
         for current, dirs, names in os.walk(root, followlinks=False):
             dirs[:] = sorted(d for d in dirs if d not in _IGNORED_DIRS)
@@ -353,6 +359,9 @@ class FileTypeDetectorRouter:
                 full = Path(current) / name
                 if total_scanned >= max_files:
                     truncated = True
+                    break
+                if deadline.expired():
+                    truncated = timed_out = True
                     break
                 if full.is_symlink() or not full.is_file():
                     continue
@@ -371,12 +380,15 @@ class FileTypeDetectorRouter:
             "directory": str(root.resolve()),
             "total_scanned": total_scanned,
             "truncated": truncated,
+            "timed_out": timed_out,
             "parser_breakdown": {k: len(v) for k, v in parser_groups.items()},
             "grouped_files": parser_groups,
             "pdf_files": pdf_files,
             "pdf_coverage": pdf_coverage,
         }
-        if truncated:
+        if timed_out:
+            result["warnings"] = [deadline.message(f"{total_scanned} file(s) were classified; the rest were not.")]
+        elif truncated:
             result["warnings"] = [f"Stopped after {max_files} files; the directory holds more."]
         if pdf_files and not inspect_pdfs:
             result.setdefault("warnings", []).append(

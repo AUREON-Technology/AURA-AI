@@ -9,6 +9,7 @@ from ._ops_common import (
     PathRefused,
     StreamTail,
     confine,
+    forbidden_env_names,
     group_popen_kwargs,
     stop_group,
 )
@@ -27,8 +28,9 @@ class BackgroundTaskManager:
     Safety properties (the previous version had none of them):
 
     * the child gets a **scrubbed environment** (``_process.scrubbed_env``), not the gateway's -- its
-      provider keys, JWT secret and database URL are not passed on. ``env`` adds to that;
-      ``inherit_env=True`` is the explicit opt-out;
+      provider keys, JWT secret and database URL are not passed on, and there is no opt-out. ``env``
+      adds to that, but a name that looks like a credential or platform setting (``AURA_*``, ``*KEY``,
+      ``*TOKEN``, ``*SECRET``, ``DATABASE_URL`` ...) is refused;
     * every task runs in **its own process group**, and stopping it stops the whole group, so a task
       that spawned children leaves nothing behind;
     * stdout/stderr are **drained continuously** into a bounded tail -- an undrained pipe blocks a
@@ -37,8 +39,10 @@ class BackgroundTaskManager:
       (the old registry silently orphaned the running process);
     * ``base_dir`` confines ``cwd``; ``allowed_executables`` confines what may be started.
 
-    Known limit: this runs *whatever command it is given*, in the caller's process, with the caller's
-    privileges and no container. It is not registered as an agent tool (ADR-036); a caller that
+    Known limit: this runs *whatever command it is given*, with the caller's privileges and no
+    container. It does not (and cannot) stop that command from opening sockets of its own -- a task
+    that runs ``curl`` can reach whatever the host network reaches -- so the network policy of
+    ``_ops_common.check_url`` does NOT cover it. It is not registered as an agent tool (ADR-036); a caller that
     exposes it must gate it (capability + confirmation) and pass ``allowed_executables``.
     Tasks still running when the manager is dropped are not killed automatically: call
     :meth:`terminate_all`.
@@ -60,7 +64,6 @@ class BackgroundTaskManager:
         *,
         base_dir: Optional[str] = None,
         allowed_executables: Optional[List[str]] = None,
-        inherit_env: bool = False,
     ) -> Dict[str, Any]:
         """Start a background command without a shell and register it under ``task_id``."""
         if not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 128 or not task_id.isprintable():
@@ -103,11 +106,12 @@ class BackgroundTaskManager:
             isinstance(env, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in env.items())
         ):
             return {"started": False, "task_id": task_id, "error": "env must be a mapping of strings to strings."}
-        if inherit_env:
-            run_env = os.environ.copy()
-            run_env.update(env or {})
-        else:
-            run_env = scrubbed_env(env)
+        bad_env = forbidden_env_names(env)
+        if bad_env:
+            return {"started": False, "task_id": task_id,
+                    "error": f"env may not carry credentials or platform settings: {sorted(bad_env)}"}
+        # Never the gateway's own environment, and there is no opt-out.
+        run_env = scrubbed_env(env)
 
         with self._lock:
             existing = self._tasks.get(task_id)

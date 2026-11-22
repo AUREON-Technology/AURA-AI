@@ -34,6 +34,7 @@ from pathlib import PurePath
 from typing import Any, Dict, Iterator, List, Optional, Union
 
 from ._input import SourceReadError, read_source_bytes, read_source_file
+from ._time_budget import DEFAULT_BUDGET_S, Deadline
 
 #: Source longer than this is refused (ast.parse needs ~50x the text in memory).
 MAX_SOURCE_CHARS = 5_000_000
@@ -452,12 +453,15 @@ class MultiLanguageAstAnalyzer:
         return cls._EXT_MAP.get(PurePath(str(filepath).replace("\\", "/")).suffix.lower())
 
     @classmethod
-    def extract_cross_language_symbols(cls, files: Dict[str, str]) -> Dict[str, Any]:
+    def extract_cross_language_symbols(
+        cls, files: Dict[str, str], time_budget_s: float = DEFAULT_BUDGET_S
+    ) -> Dict[str, Any]:
         """Analyze a collection of files mapped by filename to source content.
 
         The language comes from the extension; files of an unsupported type are listed under
         ``skipped_files`` and are not analysed as Python. A value may be bytes: a PDF is read in full,
-        then reported as not being source code.
+        then reported as not being source code. ``time_budget_s`` (default 300, at most 600) is checked
+        between files; files not reached are listed under ``skipped_files`` and ``timed_out`` is true.
         """
         project_summary: Dict[str, Any] = {}
         all_symbols: List[Dict[str, str]] = []
@@ -473,8 +477,15 @@ class MultiLanguageAstAnalyzer:
                 "error": "files must be a dict mapping file names to source text",
             }
 
+        deadline = Deadline(time_budget_s)
+        timed_out = False
         for filepath, content in files.items():
             name = str(filepath)
+            if deadline.expired():
+                timed_out = True
+                project_summary[name] = {"valid": False, "language": None, "error": "Not analysed: time budget used up."}
+                skipped.append({"file": name, "reason": "time budget used up"})
+                continue
             lang = cls._language_for(name)
             if lang is None:
                 project_summary[name] = {"valid": False, "language": None,
@@ -514,4 +525,5 @@ class MultiLanguageAstAnalyzer:
             "symbols": all_symbols,
             "file_analyses": project_summary,
             "skipped_files": skipped,
+            "timed_out": timed_out,
         }

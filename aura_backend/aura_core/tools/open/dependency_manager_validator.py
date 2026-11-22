@@ -4,13 +4,21 @@ import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 from ._input import MAX_TEXT_BYTES, SourceReadError, read_source_bytes, read_source_file
-from ._ops_common import PathRefused, confine, run_group
+from ._ops_common import (
+    DEFAULT_READ_BUDGET_S,
+    BudgetExceeded,
+    PathRefused,
+    clamp_budget,
+    confine,
+    run_group,
+    run_with_budget,
+)
 from ._process import scrubbed_env
 
 _DIRECT_REF_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://")
 
 
-def _coerce(content: Any) -> Tuple[str, Optional[Dict[str, Any]], List[str], Optional[str]]:
+def _coerce(content: Any, budget: float = DEFAULT_READ_BUDGET_S) -> Tuple[str, Optional[Dict[str, Any]], List[str], Optional[str]]:
     """``content`` as text, plus coverage info, warnings and an error message.
 
     ``str`` is used as is. ``bytes`` (a file's contents) go through the shared reader, so a PDF is
@@ -22,8 +30,12 @@ def _coerce(content: Any) -> Tuple[str, Optional[Dict[str, Any]], List[str], Opt
         return content, None, [], None
     if isinstance(content, (bytes, bytearray)):
         try:
-            read = read_source_bytes(bytes(content), name="<content>")
-        except SourceReadError as exc:
+            data = bytes(content)
+            # A long PDF takes a while to extract: a generous, bounded budget (default 300 s, at most
+            # 600 s). Running out is an error -- the text is never cut short to fit.
+            read = run_with_budget(lambda: read_source_bytes(data, name="<content>"), clamp_budget(budget),
+                                   "Reading the document")
+        except (SourceReadError, BudgetExceeded) as exc:
             return "", None, [], str(exc)
         if len(read.text) > MAX_TEXT_BYTES:
             return "", None, [], "Input is too large to check safely."
@@ -132,9 +144,11 @@ class DependencyManagerValidator:
         }
 
     @classmethod
-    def parse_requirements_text(cls, content: Any) -> Dict[str, Any]:
+    def parse_requirements_text(
+        cls, content: Any, *, read_timeout_seconds: float = DEFAULT_READ_BUDGET_S
+    ) -> Dict[str, Any]:
         """Parse requirements.txt content (text or file bytes) into structured entries and directives."""
-        text, info, warns, err = _coerce(content)
+        text, info, warns, err = _coerce(content, read_timeout_seconds)
         if err:
             return {"packages": [], "directives": [], "invalid_lines": [], "vcs_references": [], "error": err}
         return _attach(cls._parse(text), info, warns)
@@ -183,9 +197,11 @@ class DependencyManagerValidator:
         return result
 
     @classmethod
-    def check_version_pinning(cls, requirements_content: Any) -> Dict[str, Any]:
+    def check_version_pinning(
+        cls, requirements_content: Any, *, read_timeout_seconds: float = DEFAULT_READ_BUDGET_S
+    ) -> Dict[str, Any]:
         """Verify whether packages in requirements content use exact pinning (==) or explicit constraints."""
-        text, info, warns, err = _coerce(requirements_content)
+        text, info, warns, err = _coerce(requirements_content, read_timeout_seconds)
         if err:
             return {"is_valid_lock": False, "exact_pinned_count": 0, "ranged_packages": [],
                     "unpinned_packages": [], "invalid_lines": [], "error": err}
@@ -238,21 +254,25 @@ class DependencyManagerValidator:
         }
 
     @classmethod
-    def detect_duplicate_or_conflicting_specs(cls, requirements_content: Any) -> Dict[str, Any]:
+    def detect_duplicate_or_conflicting_specs(
+        cls, requirements_content: Any, *, read_timeout_seconds: float = DEFAULT_READ_BUDGET_S
+    ) -> Dict[str, Any]:
         """Detect duplicate package declarations or potentially conflicting version operators.
 
         If the input could not be read, ``has_duplicates`` and ``has_conflicts`` are ``None`` (unknown)
         and ``error`` says why -- not ``False``.
         """
-        text, info, warns, err = _coerce(requirements_content)
+        text, info, warns, err = _coerce(requirements_content, read_timeout_seconds)
         if err:
             return {"has_duplicates": None, "has_conflicts": None, "duplicates": {}, "conflicts": [], "error": err}
         return _attach(cls._duplicates(text), info, warns)
 
     @staticmethod
-    def validate_package_json(package_json_content: Any) -> Dict[str, Any]:
+    def validate_package_json(
+        package_json_content: Any, *, read_timeout_seconds: float = DEFAULT_READ_BUDGET_S
+    ) -> Dict[str, Any]:
         """Validate package.json structure (text or file bytes) and flag unpinned or wildcard versions."""
-        text, info, warns, err = _coerce(package_json_content)
+        text, info, warns, err = _coerce(package_json_content, read_timeout_seconds)
         if err:
             return {"valid": False, "error": err, "wildcards": [], "ranged": []}
         try:
@@ -310,11 +330,11 @@ class DependencyManagerValidator:
             detail = ""
             result: Dict[str, Any] = {}
             try:
-                read = read_source_file(root)
+                read = run_with_budget(lambda: read_source_file(root), DEFAULT_READ_BUDGET_S, "Reading the file")
                 if read.kind == "pdf":
                     detail = f" It is a PDF ({read.pages} page(s), read in full), not a project."
                     result = {"input": read.describe(), "warnings": read.warnings()}
-            except SourceReadError:
+            except (SourceReadError, BudgetExceeded):
                 pass
             return {"exists": False, "error": f"Not a directory: {project_dir}.{detail}", **result}
 
@@ -415,9 +435,10 @@ class DependencyManagerValidator:
         run_env_check: bool = False,
         *,
         base_dir: Optional[str] = None,
+        read_timeout_seconds: float = DEFAULT_READ_BUDGET_S,
     ) -> Dict[str, Any]:
         """Unified validation entry point for requirements pinning, duplicates, lockfiles, and env."""
-        text, info, warns, err = _coerce(requirements_content)
+        text, info, warns, err = _coerce(requirements_content, read_timeout_seconds)
         if err:
             return {"valid": False, "error": err, "pinning": None, "duplicates_and_conflicts": None,
                     "lockfiles": None, "environment": None}

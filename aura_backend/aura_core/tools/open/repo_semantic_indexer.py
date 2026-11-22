@@ -31,6 +31,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional, Set
 
 from ._input import SourceReadError, read_source_file
+from ._time_budget import DEFAULT_BUDGET_S, Deadline
 
 _LINE_SPLIT = re.compile(r"\r\n|\r|\n")
 _PARSE_ERRORS = (SyntaxError, ValueError, RecursionError, MemoryError)
@@ -61,11 +62,13 @@ class RepoSemanticIndexer:
         extensions: Optional[List[str]] = None,
         chunk_lines: int = 50,
         max_files: int = 1000,
+        time_budget_s: float = DEFAULT_BUDGET_S,
     ) -> Dict[str, Any]:
         """Scan a repository directory and extract file metadata, chunks, and symbols.
 
         PDF files are read in full; see the module notes for what is reported when something could
-        not be read.
+        not be read. ``time_budget_s`` (default 300, at most 600) is checked between files: when it is
+        used up the scan stops with ``timed_out`` and ``truncated`` set -- no file is cut short.
         """
         try:
             root = Path(root_path)
@@ -94,6 +97,8 @@ class RepoSemanticIndexer:
         total_chunks = 0
         scanned = 0
         truncated = False
+        timed_out = False
+        deadline = Deadline(time_budget_s)
 
         for current, dirs, names in os.walk(root, followlinks=False):
             dirs[:] = sorted(d for d in dirs if d not in cls.IGNORED_DIRS)
@@ -103,6 +108,9 @@ class RepoSemanticIndexer:
                     continue
                 if scanned >= file_limit:
                     truncated = True
+                    break
+                if deadline.expired():
+                    truncated = timed_out = True
                     break
                 rel_path = path.relative_to(root).as_posix()
                 scanned += 1
@@ -145,7 +153,9 @@ class RepoSemanticIndexer:
             if truncated:
                 break
 
-        if truncated:
+        if timed_out:
+            warnings.append(deadline.message(f"{scanned} file(s) were reached; the rest were not indexed."))
+        elif truncated:
             warnings.append(f"Stopped after {file_limit} files; the repository holds more matching files.")
         if skipped:
             warnings.append(f"{len(skipped)} file(s) could not be read and are not indexed (see skipped_files).")
@@ -165,6 +175,7 @@ class RepoSemanticIndexer:
             "skipped_files": skipped,
             "incomplete_files": incomplete,
             "truncated": truncated,
+            "timed_out": timed_out,
             "warnings": warnings,
         }
 
@@ -228,33 +239,42 @@ class RepoSemanticIndexer:
         return chunks
 
     @classmethod
-    def search_text_bm25_or_keyword(
+    def search_text_report(
         cls,
         index_result: Dict[str, Any],
         query: str,
         workspace_root: Optional[str] = None,
         max_results: int = 10,
-    ) -> List[Dict[str, Any]]:
+        time_budget_s: float = DEFAULT_BUDGET_S,
+    ) -> Dict[str, Any]:
         """Rank repository files by term matching score (filename hits and capped content hits).
 
         File contents are read through ``_input`` (a PDF in full, every page) and only from inside the
-        root; a path in ``index_result`` that points elsewhere is ignored.
+        root; a path in ``index_result`` that points elsewhere is ignored. ``timed_out`` is true when
+        ``time_budget_s`` (default 300, at most 600) ran out before every file was searched.
         """
         if not isinstance(query, str) or not isinstance(index_result, dict):
-            return []
+            return {"results": [], "timed_out": False, "files_searched": 0}
         tokens = [t.lower() for t in re.findall(r"\w{2,}", query)]
         if not tokens:
-            return []
+            return {"results": [], "timed_out": False, "files_searched": 0}
 
         root_str = workspace_root or index_result.get("root", "")
         root_path = Path(root_str) if isinstance(root_str, (str, Path)) and root_str else None
         files = index_result.get("files", [])
         scored_files: List[Dict[str, Any]] = []
+        deadline = Deadline(time_budget_s)
+        timed_out = False
+        searched = 0
 
         for f_info in files if isinstance(files, list) else []:
+            if deadline.expired():
+                timed_out = True
+                break
             rel = f_info.get("file", "") if isinstance(f_info, dict) else ""
             if not isinstance(rel, str) or not rel:
                 continue
+            searched += 1
             score = 0.0
 
             # Match in filename
@@ -275,7 +295,25 @@ class RepoSemanticIndexer:
                 scored_files.append({"file": rel, "relevance_score": round(score, 2), "lines": f_info.get("lines", 0)})
 
         scored_files.sort(key=lambda x: x["relevance_score"], reverse=True)
-        return scored_files[: _int(max_results, 10)]
+        return {
+            "results": scored_files[: _int(max_results, 10)],
+            "timed_out": timed_out,
+            "files_searched": searched,
+        }
+
+    @classmethod
+    def search_text_bm25_or_keyword(
+        cls,
+        index_result: Dict[str, Any],
+        query: str,
+        workspace_root: Optional[str] = None,
+        max_results: int = 10,
+        time_budget_s: float = DEFAULT_BUDGET_S,
+    ) -> List[Dict[str, Any]]:
+        """:meth:`search_text_report`'s ranked list. Use the report to see whether the budget ran out."""
+        return list(
+            cls.search_text_report(index_result, query, workspace_root, max_results, time_budget_s)["results"]
+        )
 
     @staticmethod
     def get_index_statistics(index_result: Dict[str, Any]) -> Dict[str, Any]:

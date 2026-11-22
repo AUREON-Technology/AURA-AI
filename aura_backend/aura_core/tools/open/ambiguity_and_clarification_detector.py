@@ -194,8 +194,10 @@ class AmbiguityAndClarificationDetector:
         """Identify contradictory statements across requirement specifications (English patterns only)."""
         if isinstance(requirements_list, str):
             requirements_list = [requirements_list]
+        if not isinstance(requirements_list, (list, tuple, set)):
+            requirements_list = []
         parts: List[str] = []
-        for r in requirements_list or []:
+        for r in requirements_list:
             text, _read = _coerce_text(r) if isinstance(r, (str, bytes, bytearray)) or r is None else (str(r), None)
             parts.append(text)
         joined_text = "\n".join(parts)

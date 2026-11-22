@@ -1,4 +1,3 @@
-import ipaddress
 import os
 import re
 import shlex
@@ -9,6 +8,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 
 from ._ops_common import (
@@ -17,8 +17,9 @@ from ._ops_common import (
     StreamTail,
     UrlRefused,
     confine,
+    forbidden_env_names,
     group_popen_kwargs,
-    open_guarded,
+    open_owned_local,
     stop_group,
 )
 from ._process import scrubbed_env
@@ -70,6 +71,32 @@ _NODE_EVAL_FLAGS = ("-e", "--eval", "-p", "--print", "-r", "--require", "--impor
 _PY_COMMAND_FLAG = re.compile(r"^-(?![WX])[A-Za-z]*c")
 _MAX_RUNNING_SERVERS = 8
 _MAX_WAIT_SECONDS = 60.0
+
+#: Loopback ports this module handed out (``find_free_port``) or was told a server it started listens
+#: on. The manager only ever *connects* to these: a caller-supplied host or port -- say the gateway's
+#: own port -- is refused, so the health probe cannot be turned into a probe of anything else.
+_MAX_TRACKED_PORTS = 256
+_OWNED_PORTS: "OrderedDict[int, None]" = OrderedDict()
+_PORT_LOCK = threading.Lock()
+
+
+def _own_port(port: int) -> None:
+    with _PORT_LOCK:
+        _OWNED_PORTS[port] = None
+        _OWNED_PORTS.move_to_end(port)
+        while len(_OWNED_PORTS) > _MAX_TRACKED_PORTS:
+            _OWNED_PORTS.popitem(last=False)
+
+
+def _release_port(port: Optional[int]) -> None:
+    if port is not None:
+        with _PORT_LOCK:
+            _OWNED_PORTS.pop(port, None)
+
+
+def _port_owned(port: Any) -> bool:
+    with _PORT_LOCK:
+        return isinstance(port, int) and not isinstance(port, bool) and port in _OWNED_PORTS
 
 
 def _refusal_for(tokens: List[str], executable: str) -> Optional[str]:
@@ -152,8 +179,10 @@ class DevServerManager:
     - the child gets a scrubbed environment, its own process group, and drained, bounded output;
       stopping it stops the whole group (``npm run dev`` is several processes);
     - processes live in an instance-level registry, capped at ``_MAX_RUNNING_SERVERS``;
-    - health probes only reach loopback (or public hosts) over http/https, never ``file://`` or
-      link-local/metadata addresses, and redirects are re-checked.
+    - it only ever **connects** to a loopback port it allocated itself (``find_free_port``): a
+      caller-supplied host or port, ``file://``, and the gateway's ``/api/v3/`` and ``/health`` paths
+      are refused before any socket is opened, and redirects are never followed;
+    - an ``env`` passed in may not carry credentials (``AURA_*``, keys, tokens, URLs with secrets).
 
     Known limit (the reason ADR-036 defers this class): ``npm run dev`` and ``python manage.py ...``
     still execute the *project's own scripts* with the gateway's privileges and no container. The
@@ -165,6 +194,7 @@ class DevServerManager:
         # Instance-level registry – avoids cross-caller state leakage.
         self._processes: Dict[int, subprocess.Popen] = {}
         self._tails: Dict[int, tuple] = {}
+        self._ports: Dict[int, int] = {}
         self._lock = threading.RLock()
 
     # Keep a backward-compatible class-level fallback for callers that use the
@@ -190,6 +220,7 @@ class DevServerManager:
         *,
         base_dir: Optional[str] = None,
         env: Optional[Dict[str, str]] = None,
+        port: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Start a development server process in the background and track its PID.
 
@@ -200,6 +231,10 @@ class DevServerManager:
         ``wait_seconds`` is consumed as a non-blocking poll loop so the calling
         thread is not fully suspended for the whole duration. A server that exits within that
         window is reported as ``started: False`` with its output.
+
+        ``port`` declares the loopback port the server will listen on; it must have been allocated
+        with :meth:`find_free_port`. Only a declared port can later be probed
+        (:meth:`check_http_health`, :meth:`wait_for_port_ready`).
         """
         tokens = _parse_command(command)
         if tokens is None:
@@ -224,6 +259,14 @@ class DevServerManager:
             isinstance(env, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in env.items())
         ):
             return {"started": False, "error": "env must be a mapping of strings to strings.", "command": command}
+        bad_env = forbidden_env_names(env)
+        if bad_env:
+            return {"started": False, "command": command,
+                    "error": f"env may not carry credentials or platform settings: {sorted(bad_env)}"}
+        if port is not None and not _port_owned(port):
+            return {"started": False, "command": command,
+                    "error": "port must be one allocated with DevServerManager.find_free_port."}
+        # A scrubbed environment: the gateway's keys, JWT secret and database URL never reach the child.
         child_env = scrubbed_env({k: os.environ[k] for k in CLI_ENV_PASSTHROUGH if k in os.environ})
         child_env.update(env or {})
 
@@ -283,6 +326,8 @@ class DevServerManager:
         with self._lock:
             self._processes[proc.pid] = proc
             self._tails[proc.pid] = tails
+            if port is not None:
+                self._ports[proc.pid] = port
         return {
             "started": True,
             "pid": proc.pid,
@@ -327,6 +372,7 @@ class DevServerManager:
             code = stop_group(proc, 0.0 if already else grace)
             tails = self._tails.pop(pid, None)
             self._processes.pop(pid, None)
+            _release_port(self._ports.pop(pid, None))
         for tail in tails or ():
             tail.join(2.0)
         for stream in (proc.stdout, proc.stderr):
@@ -372,28 +418,20 @@ class DevServerManager:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def check_http_health(
-        url: str,
-        timeout_seconds: float = 3.0,
-        *,
-        allow_private: bool = False,
-    ) -> Dict[str, Any]:
-        """Perform a lightweight HTTP GET health probe against a running server URL.
+    def check_http_health(url: str, timeout_seconds: float = 3.0) -> Dict[str, Any]:
+        """Perform a lightweight HTTP GET health probe against a server this manager allocated a port for.
 
-        Only ``http``/``https`` URLs on loopback or public hosts are probed (``allow_private=True``
-        adds private ranges); link-local and cloud-metadata addresses are never probed and redirects
-        are re-checked. Every failure is a result, never an exception.
+        Only ``http://127.0.0.1:<port>/`` (or ``localhost``) on a port from :meth:`find_free_port` is
+        probed: any other host or port -- the AURA gateway's included -- is refused before a socket is
+        opened, the gateway's ``/api/v3/`` and ``/health`` paths are refused on any port, and a redirect
+        is reported, never followed. Every failure is a result, never an exception.
         """
         shown = url if isinstance(url, str) and len(url) <= 200 else None
         try:
-            with open_guarded(url, timeout=timeout_seconds, allow_loopback=True,
-                              allow_private=allow_private) as resp:
+            with open_owned_local(url, _port_owned, timeout=timeout_seconds) as resp:
                 status_code = resp.getcode()
-                if not isinstance(status_code, int):
-                    return {"healthy": False, "url": shown, "status_code": None,
-                            "error": "The URL did not return an HTTP status."}
                 return {
-                    "healthy": 200 <= status_code < 400,
+                    "healthy": isinstance(status_code, int) and 200 <= status_code < 300,
                     "url": shown,
                     "status_code": status_code,
                 }
@@ -419,7 +457,8 @@ class DevServerManager:
         """Find an unallocated TCP port on localhost.
 
         Out-of-range arguments are clamped rather than raised. The answer is a hint: another process
-        can take the port before the caller binds it.
+        can take the port before the caller binds it. The port is recorded as owned by this module,
+        which is what allows the health and readiness probes to connect to it.
         """
         try:
             start = int(start_port)
@@ -432,49 +471,45 @@ class DevServerManager:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 try:
                     s.bind(("127.0.0.1", port))
-                    return port
                 except OSError:
                     continue
+            _own_port(port)
+            return port
         # Fallback OS ephemeral port
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(("127.0.0.1", 0))
-            return s.getsockname()[1]
+            fallback = s.getsockname()[1]
+        _own_port(fallback)
+        return fallback
 
     @staticmethod
     def wait_for_port_ready(
         host: str = "127.0.0.1",
         port: int = 8000,
         timeout_seconds: float = 10.0,
-        *,
-        allow_remote: bool = False,
     ) -> bool:
-        """Poll until a network port is listening or timeout expires.
+        """Poll until a port this module allocated is listening on loopback, or the timeout expires.
 
-        Only loopback hosts are probed unless ``allow_remote=True``: connecting to arbitrary
-        host:port pairs from the gateway is a port scanner. A refused host returns False.
+        Only ``127.0.0.1`` / ``localhost`` and a port from :meth:`find_free_port` are ever connected
+        to; any other host or port returns False *without opening a socket* (connecting to arbitrary
+        host:port pairs from the gateway is a port scanner, and the gateway's own port is one of them).
         """
+        if host not in ("127.0.0.1", "localhost") or not _port_owned(port):
+            return False
         try:
-            port_n = int(port)
             seconds = max(0.0, min(float(timeout_seconds), 120.0))
-            if not isinstance(host, str) or not host or not (0 < port_n < 65536) or seconds != seconds:
-                return False
         except (TypeError, ValueError):
             return False
-        if not allow_remote:
-            try:
-                addrs = {i[4][0].split("%", 1)[0] for i in socket.getaddrinfo(host, port_n, type=socket.SOCK_STREAM)}
-                if not addrs or not all(ipaddress.ip_address(a).is_loopback for a in addrs):
-                    return False
-            except (OSError, ValueError, UnicodeError):
-                return False
+        if seconds != seconds:
+            return False
         deadline = time.time() + seconds
         while True:
             try:
-                with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET, socket.SOCK_STREAM) as s:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     s.settimeout(0.5)
-                    if s.connect_ex((host, port_n)) == 0:
+                    if s.connect_ex(("127.0.0.1", port)) == 0:
                         return True
-            except (OSError, UnicodeError):
+            except OSError:
                 pass
             if time.time() >= deadline:
                 return False

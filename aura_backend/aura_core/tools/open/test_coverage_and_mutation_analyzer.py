@@ -10,7 +10,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ._input import SourceReadError, read_source_bytes, read_source_file
-from ._ops_common import PathRefused, confine, run_group
+from ._ops_common import (
+    DEFAULT_READ_BUDGET_S,
+    BudgetExceeded,
+    PathRefused,
+    clamp_budget,
+    confine,
+    run_group,
+    run_with_budget,
+)
 from ._process import PYTEST_ENV, scrubbed_env
 
 #: Not worth copying into the mutation workspace, and a venv or ``.git`` can be gigabytes.
@@ -119,11 +127,22 @@ class TestCoverageAndMutationAnalyzer:
         }
 
     @staticmethod
-    def parse_coverage_json(coverage_json_path: str, *, base_dir: Optional[str] = None) -> Dict[str, Any]:
-        """Parse a coverage.py JSON export file into per-file and overall metrics."""
+    def parse_coverage_json(
+        coverage_json_path: str,
+        *,
+        base_dir: Optional[str] = None,
+        read_timeout_seconds: float = DEFAULT_READ_BUDGET_S,
+    ) -> Dict[str, Any]:
+        """Parse a coverage.py JSON export file into per-file and overall metrics.
+
+        ``read_timeout_seconds`` (default 300, at most 600) bounds reading the file, a PDF included.
+        """
         try:
-            read = read_source_file(coverage_json_path, base_dir=base_dir)
-        except SourceReadError as exc:
+            read = run_with_budget(
+                lambda: read_source_file(coverage_json_path, base_dir=base_dir),
+                clamp_budget(read_timeout_seconds), "Reading the coverage report",
+            )
+        except (SourceReadError, BudgetExceeded) as exc:
             return {"loaded": False, "error": str(exc)}
         if read.kind == "pdf":
             return {
@@ -177,7 +196,7 @@ class TestCoverageAndMutationAnalyzer:
         source_package: Optional[str] = None,
         working_dir: Optional[str] = None,
         threshold: float = 80.0,
-        timeout_seconds: int = 60,
+        timeout_seconds: int = 120,
         *,
         base_dir: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -201,9 +220,9 @@ class TestCoverageAndMutationAnalyzer:
             return {"available": True, "passed": False,
                     "error": "source_package must be a package name or directory (not starting with '-')."}
         try:
-            seconds = max(1.0, min(float(timeout_seconds), 3600.0))
+            seconds = max(1.0, min(float(timeout_seconds), 600.0))
         except (TypeError, ValueError):
-            seconds = 60.0
+            seconds = 120.0
         try:
             cwd: Optional[str] = str(confine(working_dir, base_dir, kind="dir")) if working_dir is not None \
                 else None
@@ -282,9 +301,12 @@ class TestCoverageAndMutationAnalyzer:
         use ``evaluate_mutations_against_tests`` when you need the reason.
         """
         if isinstance(source_code, (bytes, bytearray)):
+            raw = bytes(source_code)
             try:
-                source_code = read_source_bytes(bytes(source_code)).text
-            except SourceReadError:
+                source_code = run_with_budget(
+                    lambda: read_source_bytes(raw).text, DEFAULT_READ_BUDGET_S, "Reading the source"
+                )
+            except (SourceReadError, BudgetExceeded):
                 return []
         if not isinstance(source_code, str):
             return []
@@ -311,10 +333,11 @@ class TestCoverageAndMutationAnalyzer:
         cls,
         source_filename: str,
         working_dir: str,
-        timeout_seconds: int = 30,
+        timeout_seconds: int = 120,
         *,
         base_dir: Optional[str] = None,
         max_mutants: int = 10,
+        read_timeout_seconds: float = DEFAULT_READ_BUDGET_S,
     ) -> Dict[str, Any]:
         """
         Apply simple boolean mutations to a target file inside working_dir and run pytest
@@ -343,8 +366,11 @@ class TestCoverageAndMutationAnalyzer:
             return {"evaluated": False, "error": f"Target file not found: {target_path}"}
 
         try:
-            read = read_source_file(target_path, base_dir=root)
-        except SourceReadError as exc:
+            read = run_with_budget(
+                lambda: read_source_file(target_path, base_dir=root),
+                clamp_budget(read_timeout_seconds), "Reading the source file",
+            )
+        except (SourceReadError, BudgetExceeded) as exc:
             return {"evaluated": False, "error": str(exc)}
         if read.kind == "pdf":
             return {
@@ -374,7 +400,7 @@ class TestCoverageAndMutationAnalyzer:
             seconds = max(1.0, min(float(timeout_seconds), 600.0))
             limit = max(1, min(int(max_mutants), 50))
         except (TypeError, ValueError):
-            seconds, limit = 30.0, 10
+            seconds, limit = 120.0, 10
         budget_error = _copy_budget_error(root)
         if budget_error:
             return {"evaluated": False, "error": budget_error}

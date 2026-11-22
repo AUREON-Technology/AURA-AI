@@ -16,7 +16,14 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ._input import SourceReadError, is_pdf_bytes, read_source_file
-from ._ops_common import PathRefused, confine
+from ._ops_common import (
+    DEFAULT_READ_BUDGET_S,
+    BudgetExceeded,
+    PathRefused,
+    clamp_budget,
+    confine,
+    run_with_budget,
+)
 
 _HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 _CHUNK = 64 * 1024
@@ -80,15 +87,31 @@ def _compression_of(p: Path) -> Optional[str]:
     return None
 
 
-def _read_pdf_in_full(p: Path) -> Tuple[Optional[Any], Optional[str]]:
-    """Read every page of the PDF at ``p`` through the shared reader."""
+def _read_pdf_in_full(p: Path, budget: float = DEFAULT_READ_BUDGET_S) -> Tuple[Optional[Any], Optional[str]]:
+    """Read every page of the PDF at ``p`` through the shared reader, within ``budget`` seconds.
+
+    A long PDF is slow to extract, so the budget is generous (default 300 s, at most 600 s); running
+    out of it is an error, never a partial read.
+    """
     try:
-        return read_source_file(p), None
-    except SourceReadError as exc:
+        return run_with_budget(lambda: read_source_file(p), clamp_budget(budget), "Reading the PDF"), None
+    except (SourceReadError, BudgetExceeded) as exc:
         return None, str(exc)
 
 
-def _stream_count(reader: Any, limit: int, used: int = 0) -> int:
+def _deadline(seconds: Any) -> float:
+    return time.monotonic() + clamp_budget(seconds)
+
+
+def _check_deadline(deadline: Optional[float], what: str = "The verification") -> None:
+    if deadline is not None and time.monotonic() > deadline:
+        raise _Refused(
+            f"{what} ran past its time budget and was stopped; nothing was reported as verified. "
+            "Raise timeout_seconds (at most 600) for a very large backup."
+        )
+
+
+def _stream_count(reader: Any, limit: int, used: int = 0, deadline: Optional[float] = None) -> int:
     """Read ``reader`` to EOF, returning bytes read; raise _Refused past ``limit`` (a bomb)."""
     total = 0
     while True:
@@ -98,9 +121,10 @@ def _stream_count(reader: Any, limit: int, used: int = 0) -> int:
         total += len(chunk)
         if used + total > limit:
             raise _Refused(f"Archive expands to more than {limit} bytes; refusing to read it all.")
+        _check_deadline(deadline)
 
 
-def _copy_limited(src: Any, dest: Path, remaining: int) -> int:
+def _copy_limited(src: Any, dest: Path, remaining: int, deadline: Optional[float] = None) -> int:
     written = 0
     with dest.open("wb") as out:
         while True:
@@ -110,6 +134,7 @@ def _copy_limited(src: Any, dest: Path, remaining: int) -> int:
             written += len(chunk)
             if written > remaining:
                 raise _Refused(f"Archive expands to more than the {MAX_EXTRACT_BYTES}-byte drill limit.")
+            _check_deadline(deadline, "The restore")
             out.write(chunk)
 
 
@@ -141,14 +166,21 @@ class BackupRestoreVerifier:
 
     # ------------------------------------------------------------------
     @staticmethod
-    def compute_sha256(file_path: str, *, base_dir: Optional[str] = None) -> Dict[str, Any]:
-        """Compute the SHA-256 digest and byte size of a file on disk (every byte, streamed)."""
+    def compute_sha256(
+        file_path: str, *, base_dir: Optional[str] = None, timeout_seconds: float = DEFAULT_READ_BUDGET_S
+    ) -> Dict[str, Any]:
+        """Compute the SHA-256 digest and byte size of a file on disk (every byte, streamed).
+
+        ``timeout_seconds`` (default 300, at most 600) bounds the read; a file that cannot be hashed
+        in time is an error, never a digest of part of it.
+        """
         path, err = _file(file_path, base_dir)
         if path is None:
             return {"exists": False, "error": err}
 
         h = hashlib.sha256()
         size_bytes = 0
+        deadline = _deadline(timeout_seconds)
         try:
             with path.open("rb") as f:
                 while True:
@@ -157,6 +189,9 @@ class BackupRestoreVerifier:
                         break
                     size_bytes += len(chunk)
                     h.update(chunk)
+                    _check_deadline(deadline, "Hashing")
+        except _Refused as exc:
+            return {"exists": True, "error": str(exc)}
         except OSError as exc:
             return {"exists": True, "error": f"Failed to read file: {exc.strerror or type(exc).__name__}"}
 
@@ -169,7 +204,12 @@ class BackupRestoreVerifier:
 
     @classmethod
     def verify_checksum(
-        cls, file_path: str, expected_sha256: str, *, base_dir: Optional[str] = None
+        cls,
+        file_path: str,
+        expected_sha256: str,
+        *,
+        base_dir: Optional[str] = None,
+        timeout_seconds: float = DEFAULT_READ_BUDGET_S,
     ) -> Dict[str, Any]:
         """Verify a file's SHA-256 digest against an expected 64-digit hex string."""
         if not isinstance(expected_sha256, str):
@@ -180,7 +220,7 @@ class BackupRestoreVerifier:
         if not _HEX64.match(expected):
             return {"verified": False, "error": "expected_sha256 must be 64 hexadecimal digits."}
 
-        info = cls.compute_sha256(file_path, base_dir=base_dir)
+        info = cls.compute_sha256(file_path, base_dir=base_dir, timeout_seconds=timeout_seconds)
         if "sha256" not in info:
             return {"verified": False, "error": info.get("error")}
 
@@ -199,17 +239,20 @@ class BackupRestoreVerifier:
         *,
         base_dir: Optional[str] = None,
         max_uncompressed_bytes: int = MAX_VERIFY_BYTES,
+        timeout_seconds: float = DEFAULT_READ_BUDGET_S,
     ) -> Dict[str, Any]:
         """Verify that a .zip / .tar(.gz|.bz2|.xz) / single-file .gz|.bz2|.xz decompresses end to end.
 
         Every member is read, so a corrupt member or truncated stream is found, not just a bad header.
+        ``timeout_seconds`` (default 300, at most 600) bounds the work; running out of it fails the
+        check rather than verifying only part of the archive.
         """
         path, err = _file(archive_path, base_dir)
         if path is None:
             return {"valid_archive": False, "error": err}
 
         if _looks_pdf(path):
-            read, perr = _read_pdf_in_full(path)
+            read, perr = _read_pdf_in_full(path, timeout_seconds)
             detail = f"{read.pages} page(s) read" if read is not None else f"could not be read: {perr}"
             return {
                 "valid_archive": False,
@@ -222,14 +265,15 @@ class BackupRestoreVerifier:
             limit = int(max_uncompressed_bytes)
         except (TypeError, ValueError):
             limit = MAX_VERIFY_BYTES
+        deadline = _deadline(timeout_seconds)
         try:
             if zipfile.is_zipfile(path):
-                return cls._verify_zip(path, limit)
+                return cls._verify_zip(path, limit, deadline)
             if tarfile.is_tarfile(path):
-                return cls._verify_tar(path, limit)
+                return cls._verify_tar(path, limit, deadline)
             kind = _compression_of(path)
             if kind:
-                return cls._verify_compressed(path, kind, limit)
+                return cls._verify_compressed(path, kind, limit, deadline)
             return {"valid_archive": False,
                     "error": "Unsupported archive format (not zip, tar, gzip, bzip2 or xz)."}
         except _Refused as exc:
@@ -243,7 +287,7 @@ class BackupRestoreVerifier:
         return {"unsafe_entries": unsafe[:20], "unsafe_count": len(unsafe), "safe_to_extract": not unsafe}
 
     @classmethod
-    def _verify_zip(cls, path: Path, limit: int) -> Dict[str, Any]:
+    def _verify_zip(cls, path: Path, limit: int, deadline: Optional[float] = None) -> Dict[str, Any]:
         with zipfile.ZipFile(path, "r") as zf:
             infos = zf.infolist()
             if len(infos) > MAX_ARCHIVE_ENTRIES:
@@ -263,7 +307,7 @@ class BackupRestoreVerifier:
                     continue
                 try:
                     with zf.open(info) as member:
-                        total += _stream_count(member, limit, total)
+                        total += _stream_count(member, limit, total, deadline)
                 except (zipfile.BadZipFile, zlib.error, EOFError, RuntimeError, NotImplementedError) as exc:
                     return {"valid_archive": False, "format": "zip", "entries_count": len(infos),
                             "error": f"Corrupt zip member {info.filename!r}: {type(exc).__name__}: {exc}",
@@ -272,7 +316,7 @@ class BackupRestoreVerifier:
                     "uncompressed_bytes": total, **cls._unsafe_result(unsafe)}
 
     @classmethod
-    def _verify_tar(cls, path: Path, limit: int) -> Dict[str, Any]:
+    def _verify_tar(cls, path: Path, limit: int, deadline: Optional[float] = None) -> Dict[str, Any]:
         unsafe: List[str] = []
         count = 0
         total = 0
@@ -291,7 +335,7 @@ class BackupRestoreVerifier:
                 if member.isreg():
                     handle = tf.extractfile(member)
                     if handle is not None:
-                        total += _stream_count(handle, limit, total)
+                        total += _stream_count(handle, limit, total, deadline)
         if count == 0:
             return {"valid_archive": False, "format": "tar", "entries_count": 0,
                     "error": "Archive contains no entries.", **cls._unsafe_result([])}
@@ -299,10 +343,12 @@ class BackupRestoreVerifier:
                 "uncompressed_bytes": total, **cls._unsafe_result(unsafe)}
 
     @classmethod
-    def _verify_compressed(cls, path: Path, kind: str, limit: int) -> Dict[str, Any]:
+    def _verify_compressed(
+        cls, path: Path, kind: str, limit: int, deadline: Optional[float] = None
+    ) -> Dict[str, Any]:
         opener: Callable[..., Any] = {"gzip": gzip.open, "bzip2": bz2.open, "xz": lzma.open}[kind]
         with opener(path, "rb") as stream:
-            total = _stream_count(stream, limit)
+            total = _stream_count(stream, limit, 0, deadline)
         if total == 0:
             return {"valid_archive": False, "format": kind, "entries_count": 0,
                     "error": "The compressed file is empty.", **cls._unsafe_result([])}
@@ -310,10 +356,17 @@ class BackupRestoreVerifier:
                 **cls._unsafe_result([])}
 
     @classmethod
-    def verify_sql_dump_integrity(cls, sql_dump_path: str, *, base_dir: Optional[str] = None) -> Dict[str, Any]:
+    def verify_sql_dump_integrity(
+        cls,
+        sql_dump_path: str,
+        *,
+        base_dir: Optional[str] = None,
+        timeout_seconds: float = DEFAULT_READ_BUDGET_S,
+    ) -> Dict[str, Any]:
         """Validate an SQL backup dump for structure, table definitions and truncation.
 
-        The whole file is streamed; ``valid`` additionally requires that the dump does not stop in
+        ``timeout_seconds`` (default 300, at most 600) bounds the scan; running out of it is an error,
+        never a verdict on part of the dump. The whole file is streamed; ``valid`` additionally requires that the dump does not stop in
         the middle of a statement.
         """
         p, err = _file(sql_dump_path, base_dir)
@@ -321,7 +374,7 @@ class BackupRestoreVerifier:
             return {"valid": False, "error": err}
 
         if _looks_pdf(p):
-            read, perr = _read_pdf_in_full(p)
+            read, perr = _read_pdf_in_full(p, timeout_seconds)
             detail = f"{read.pages} page(s) read in full" if read is not None else f"could not be read: {perr}"
             return {
                 "valid": False,
@@ -337,6 +390,7 @@ class BackupRestoreVerifier:
         marker = False
         last_significant = ""
         size = 0
+        deadline = _deadline(timeout_seconds)
         table_re = re.compile(r"CREATE\s+(?:TEMP(?:ORARY)?\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z0-9_`\"'.]+)", re.I)
         try:
             with p.open("rb") as handle:
@@ -348,6 +402,7 @@ class BackupRestoreVerifier:
                 handle.seek(0)
                 for raw in iter(lambda: handle.readline(1 << 20), b""):
                     size += len(raw)
+                    _check_deadline(deadline, "The scan")
                     line = raw.decode("utf-8", errors="replace")
                     stripped = line.strip()
                     if not stripped:
@@ -366,6 +421,8 @@ class BackupRestoreVerifier:
                         tables_total += 1
                         if len(tables) < 1000:
                             tables.append(m.group(1))
+        except _Refused as exc:
+            return {"valid": False, "file": str(p), "error": str(exc)}
         except OSError as exc:
             return {"valid": False, "file": str(p), "error": f"Failed to read file: {exc.strerror or type(exc).__name__}"}
 
@@ -410,7 +467,7 @@ class BackupRestoreVerifier:
         return dest
 
     @classmethod
-    def _extract_zip(cls, path: Path, target: Path) -> Dict[str, Any]:
+    def _extract_zip(cls, path: Path, target: Path, deadline: Optional[float] = None) -> Dict[str, Any]:
         files = dirs = written = 0
         skipped: List[str] = []
         with zipfile.ZipFile(path, "r") as zf:
@@ -435,12 +492,12 @@ class BackupRestoreVerifier:
                     continue
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 with zf.open(info) as member:
-                    written += _copy_limited(member, dest, MAX_EXTRACT_BYTES - written)
+                    written += _copy_limited(member, dest, MAX_EXTRACT_BYTES - written, deadline)
                 files += 1
         return {"files": files, "dirs": dirs, "bytes": written, "skipped": skipped}
 
     @classmethod
-    def _extract_tar(cls, path: Path, target: Path) -> Dict[str, Any]:
+    def _extract_tar(cls, path: Path, target: Path, deadline: Optional[float] = None) -> Dict[str, Any]:
         files = dirs = written = count = 0
         skipped: List[str] = []
         with tarfile.open(path, "r:*") as tf:
@@ -462,7 +519,7 @@ class BackupRestoreVerifier:
                     if handle is None:
                         skipped.append(member.name)
                         continue
-                    written += _copy_limited(handle, dest, MAX_EXTRACT_BYTES - written)
+                    written += _copy_limited(handle, dest, MAX_EXTRACT_BYTES - written, deadline)
                     files += 1
                 else:  # symlink, hardlink, device, fifo: never recreated
                     skipped.append(member.name)
@@ -517,17 +574,17 @@ class BackupRestoreVerifier:
         return {"tables": tables}
 
     @classmethod
-    def _restore_pdf(cls, path: Path, target: Path) -> Dict[str, Any]:
+    def _restore_pdf(cls, path: Path, target: Path, budget: float = DEFAULT_READ_BUDGET_S) -> Dict[str, Any]:
         dest = target / (path.name if path.name else "restored.pdf")
         with path.open("rb") as src:
             written = _copy_limited(src, dest, MAX_EXTRACT_BYTES)
-        src_hash = cls.compute_sha256(str(path)).get("sha256")
-        dst_hash = cls.compute_sha256(str(dest)).get("sha256")
+        src_hash = cls.compute_sha256(str(path), timeout_seconds=budget).get("sha256")
+        dst_hash = cls.compute_sha256(str(dest), timeout_seconds=budget).get("sha256")
         identical = bool(src_hash) and src_hash == dst_hash
         out: Dict[str, Any] = {"files": 1, "dirs": 0, "bytes": written, "skipped": [], "bytes_identical": identical}
         if not identical:
             raise _Refused("The restored copy does not match the original byte for byte.")
-        read, perr = _read_pdf_in_full(dest)
+        read, perr = _read_pdf_in_full(dest, budget)
         if read is None:
             out["content_error"] = perr
             raise _Refused(f"The restored bytes are identical, but the PDF could not be read in full: {perr}")
@@ -542,9 +599,12 @@ class BackupRestoreVerifier:
         temp_target_dir: Optional[str] = None,
         *,
         base_dir: Optional[str] = None,
-        timeout_seconds: float = 30.0,
+        timeout_seconds: float = DEFAULT_READ_BUDGET_S,
     ) -> Dict[str, Any]:
         """Test a restore inside an isolated directory to prove recovery readiness.
+
+        ``timeout_seconds`` (default 300, at most 600) is the budget for the whole drill -- reading,
+        extracting or replaying; exceeding it fails the drill, it never restores "part".
 
         Supports zip, tar (any compression), ``.sql`` (replayed in memory in SQLite) and PDF (copied,
         hash-compared, every page read). ``temp_target_dir`` must be absent or empty. Returns
@@ -553,10 +613,8 @@ class BackupRestoreVerifier:
         p, err = _file(archive_or_dump_path, base_dir)
         if p is None:
             return {"restored": False, "error": err}
-        try:
-            seconds = max(1.0, min(float(timeout_seconds), 600.0))
-        except (TypeError, ValueError):
-            seconds = 30.0
+        seconds = max(1.0, clamp_budget(timeout_seconds))
+        deadline = time.monotonic() + seconds
 
         owns_target = temp_target_dir is None
         start_time = time.perf_counter()
@@ -583,15 +641,15 @@ class BackupRestoreVerifier:
             skipped: List[str] = []
             extra: Dict[str, Any] = {}
             if _looks_pdf(p):
-                stats = cls._restore_pdf(p, target)
+                stats = cls._restore_pdf(p, target, seconds)
                 extra = {k: stats[k] for k in ("input", "warnings", "bytes_identical") if k in stats}
                 items, files = 1, 1
             elif zipfile.is_zipfile(p):
-                stats = cls._extract_zip(p, target)
+                stats = cls._extract_zip(p, target, deadline)
                 skipped, files = stats["skipped"], stats["files"]
                 items = stats["files"] + stats["dirs"]
             elif tarfile.is_tarfile(p):
-                stats = cls._extract_tar(p, target)
+                stats = cls._extract_tar(p, target, deadline)
                 skipped, files = stats["skipped"], stats["files"]
                 items = stats["files"] + stats["dirs"]
             elif p.suffix.lower() == ".sql":
@@ -645,6 +703,7 @@ class BackupRestoreVerifier:
         expected_sha256: Optional[str] = None,
         *,
         base_dir: Optional[str] = None,
+        timeout_seconds: float = DEFAULT_READ_BUDGET_S,
     ) -> Dict[str, Any]:
         """Combined backup verification: checksum (optional), format-specific integrity, and PDF full read.
 
@@ -668,7 +727,7 @@ class BackupRestoreVerifier:
             reasons.append("The backup file is empty.")
 
         if expected_sha256:
-            checksum_res = cls.verify_checksum(str(path), expected_sha256)
+            checksum_res = cls.verify_checksum(str(path), expected_sha256, timeout_seconds=timeout_seconds)
             checks.append("checksum")
             checksum_ok = bool(checksum_res.get("verified"))
             if not checksum_ok:
@@ -677,7 +736,7 @@ class BackupRestoreVerifier:
 
         suffix = path.suffix.lower()
         if _looks_pdf(path):
-            read, perr = _read_pdf_in_full(path)
+            read, perr = _read_pdf_in_full(path, timeout_seconds)
             checks.append("pdf_full_read")
             if read is None:
                 ready = False
@@ -690,13 +749,13 @@ class BackupRestoreVerifier:
                     ready = False
                     reasons.append("Some PDF pages could not be read; pass expected_sha256 to prove the file's bytes.")
         elif suffix == ".sql":
-            sql_res = cls.verify_sql_dump_integrity(str(path))
+            sql_res = cls.verify_sql_dump_integrity(str(path), timeout_seconds=timeout_seconds)
             checks.append("sql_dump")
             if not sql_res.get("valid"):
                 ready = False
                 reasons.append(sql_res.get("error") or "The SQL dump is not valid.")
         elif suffix in _ARCHIVE_SUFFIXES or zipfile.is_zipfile(path) or tarfile.is_tarfile(path):
-            archive_res = cls.verify_archive_integrity(str(path))
+            archive_res = cls.verify_archive_integrity(str(path), timeout_seconds=timeout_seconds)
             checks.append("archive_integrity")
             if not archive_res.get("valid_archive"):
                 ready = False

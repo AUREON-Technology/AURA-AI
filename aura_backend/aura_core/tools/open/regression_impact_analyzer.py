@@ -197,7 +197,10 @@ class RegressionImpactAnalyzer:
     def _scan_repo(cls, repo_dir: str, max_files: int, time_budget_s: float = DEFAULT_TIME_BUDGET_S) -> Optional[Dict[str, Any]]:
         """Read every ``.py`` file's imports once. ``None`` when ``repo_dir`` is not a directory."""
         root = Path(repo_dir)
-        if not root.is_dir():
+        try:
+            if not root.is_dir():
+                return None
+        except OSError:
             return None
         try:
             root_resolved = root.resolve()
@@ -240,12 +243,22 @@ class RegressionImpactAnalyzer:
         Returns a dict with ``dependents``, ``truncated``, ``files_scanned`` and ``unparseable``
         (files that could not be read as Python, so their imports are unknown) keys.
         """
-        scan = cls._scan_repo(repo_dir, max_files, time_budget_s)
+        if isinstance(target_module_fragments, str):
+            target_module_fragments = [target_module_fragments]
+        fragments = [str(f) for f in target_module_fragments] if isinstance(target_module_fragments, (list, tuple, set)) else []
+        if not isinstance(repo_dir, (str, Path)):
+            scan = None
+        else:
+            try:
+                limit = max(1, int(max_files))
+            except (TypeError, ValueError, OverflowError):
+                limit = 10000
+            scan = cls._scan_repo(repo_dir, limit, time_budget_s)
         if scan is None:
             return {"dependents": [], "truncated": False, "files_scanned": 0, "unparseable": [],
                     "error": f"Not a directory: {repo_dir!r}"}
         dependents = [
-            rel for rel, mods in scan["index"].items() if cls._imports_fragment(mods, list(target_module_fragments))
+            rel for rel, mods in scan["index"].items() if cls._imports_fragment(mods, fragments)
         ]
         return {
             "dependents": dependents,
@@ -267,7 +280,15 @@ class RegressionImpactAnalyzer:
         """
         suggestions: List[Dict[str, Any]] = []
         seen: Set[str] = set()
+        if isinstance(affected_files, str):
+            affected_files = [affected_files]
+        if not isinstance(affected_files, (list, tuple, set)):
+            return suggestions
+        test_root = test_root if isinstance(test_root, str) else "tests"
         for fpath in affected_files:
+            if not isinstance(fpath, (str, Path)):
+                continue
+            fpath = str(fpath)
             stem = Path(fpath).stem
             if stem.startswith("test_"):
                 test_path = fpath
@@ -317,7 +338,7 @@ class RegressionImpactAnalyzer:
         unparseable: List[str] = []
         scanned = False
 
-        if repo_dir:
+        if repo_dir and isinstance(repo_dir, (str, Path)):
             scan = cls._scan_repo(repo_dir, 10000, time_budget_s)
             if scan is None:
                 warnings.append(f"repo_dir is not a directory ({repo_dir!r}); importers were not searched.")

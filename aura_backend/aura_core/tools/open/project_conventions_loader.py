@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from ._input import SourceReadError, read_source_bytes, read_source_file
+from ._time_budget import DEFAULT_BUDGET_S, Deadline
 
 _SKIP_DIRS = (".git", "venv", ".venv", "node_modules", "__pycache__")
 
@@ -79,12 +80,14 @@ class ProjectConventionsLoader:
         candidate_files: Optional[List[str]] = None,
         max_chars_per_file: Optional[int] = 4000,
         max_pdf_chars: Optional[int] = None,
+        time_budget_s: float = DEFAULT_BUDGET_S,
     ) -> Dict[str, Any]:
         """Read convention and configuration files present at workspace root.
 
         Only files inside the workspace are read. ``max_chars_per_file=None`` disables the cut for
         text files; ``max_pdf_chars`` (default none) is the separate cut for PDFs. Cut files are
-        listed under ``truncated_files``.
+        listed under ``truncated_files``. ``time_budget_s`` (default 300, at most 600) is checked between
+        files; files not reached are named under ``errors`` and ``timed_out`` is true.
         """
         root = Path(workspace_path) if isinstance(workspace_path, (str, Path)) and str(workspace_path) else None
         try:
@@ -111,8 +114,14 @@ class ProjectConventionsLoader:
         inputs: Dict[str, Any] = {}
         truncated: Dict[str, Dict[str, int]] = {}
         warnings: List[str] = []
+        deadline = Deadline(time_budget_s)
+        timed_out = False
 
         for filename in targets:
+            if deadline.expired():
+                timed_out = True
+                errors[str(filename)] = "Not read: time budget used up."
+                continue
             if not filename or "\x00" in filename:
                 errors[str(filename)] = "Invalid file name."
                 continue
@@ -154,7 +163,8 @@ class ProjectConventionsLoader:
             "errors": errors,
             "truncated_files": truncated,
             "input": inputs,
-            "warnings": warnings,
+            "timed_out": timed_out,
+            "warnings": warnings + ([deadline.message("unread files are listed under errors.")] if timed_out else []),
         }
 
     @classmethod

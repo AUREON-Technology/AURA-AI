@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ._input import SourceReadError, is_pdf_bytes, read_source_file
+from ._time_budget import DEFAULT_BUDGET_S, Deadline
 
 _CHUNK = 1024 * 1024
 #: Files above this are refused by hashing / entropy rather than half-read. 2 GiB.
@@ -127,11 +128,15 @@ class BinaryFileInspector:
         return "Generic Binary"
 
     @classmethod
-    def inspect(cls, file_path: str, base_dir: Optional[str] = None) -> Dict[str, Any]:
+    def inspect(
+        cls, file_path: str, base_dir: Optional[str] = None, time_budget_s: float = DEFAULT_BUDGET_S
+    ) -> Dict[str, Any]:
         """Inspect a file on disk and return metadata, hashes, and format.
 
         A PDF is additionally read in full: the result carries ``pages`` and an ``input`` coverage
         block (pages read, scanned pages that need OCR, blank pages) plus ``warnings``.
+        Hashing checks ``time_budget_s`` (default 300, at most 600); a digest is never reported for a
+        file that was only partly hashed -- the result is an error with ``timed_out: True`` instead.
         """
         path, error = _resolve(file_path, base_dir)
         if path is None:
@@ -139,6 +144,7 @@ class BinaryFileInspector:
 
         sha256 = hashlib.sha256()
         md5 = _md5()
+        deadline = Deadline(time_budget_s)
         try:
             size_bytes = path.stat().st_size
             with path.open("rb") as handle:
@@ -147,6 +153,8 @@ class BinaryFileInspector:
                 while chunk := handle.read(_CHUNK):
                     sha256.update(chunk)
                     md5.update(chunk)
+                    if deadline.expired():
+                        return {"exists": True, "timed_out": True, "error": deadline.message("the file was not fully hashed.")}
         except OSError as exc:
             return {"exists": True, "error": f"Cannot read file: {exc.strerror or type(exc).__name__}"}
 
@@ -189,6 +197,7 @@ class BinaryFileInspector:
         algorithms: Optional[List[str]] = None,
         max_bytes: int = DEFAULT_MAX_BYTES,
         base_dir: Optional[str] = None,
+        time_budget_s: float = DEFAULT_BUDGET_S,
     ) -> Dict[str, Any]:
         """Compute cryptographic hashes in parallel streams without loading large files to memory.
 
@@ -218,10 +227,13 @@ class BinaryFileInspector:
             if size > max_bytes:
                 return {"error": f"File is too large to hash ({size} bytes; limit {max_bytes}): {file_path}"}
             if hashers:
+                deadline = Deadline(time_budget_s)
                 with path.open("rb") as handle:
                     while chunk := handle.read(_CHUNK):
                         for h in hashers.values():
                             h.update(chunk)
+                        if deadline.expired():
+                            return {"timed_out": True, "error": deadline.message("the file was not fully hashed.")}
         except OSError as exc:
             return {"error": f"Cannot read file: {exc.strerror or type(exc).__name__}"}
 
@@ -323,6 +335,7 @@ class BinaryFileInspector:
         file_path: str,
         max_bytes: int = DEFAULT_MAX_BYTES,
         base_dir: Optional[str] = None,
+        time_budget_s: float = DEFAULT_BUDGET_S,
     ) -> Dict[str, Any]:
         """Calculate Shannon entropy [0.0 - 8.0] to detect packed, compressed, or encrypted content.
 
@@ -338,10 +351,13 @@ class BinaryFileInspector:
             size = path.stat().st_size
             if size > max_bytes:
                 return {"error": f"File is too large to measure ({size} bytes; limit {max_bytes}): {file_path}"}
+            deadline = Deadline(time_budget_s)
             with path.open("rb") as handle:
                 while chunk := handle.read(_CHUNK):
                     total_bytes += len(chunk)
                     freq.update(chunk)
+                    if deadline.expired():
+                        return {"timed_out": True, "error": deadline.message("entropy was not computed over the whole file.")}
         except OSError as exc:
             return {"error": f"Cannot read file: {exc.strerror or type(exc).__name__}"}
 

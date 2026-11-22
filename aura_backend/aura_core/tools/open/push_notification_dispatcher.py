@@ -57,9 +57,9 @@ class PushNotificationDispatcher:
 
     Safety properties:
 
-    * a webhook is only called over http/https on a **public** host (``allow_private=True`` opts in
-      to loopback/private ranges), never ``file://`` and never a link-local/metadata address, and a
-      redirect is **not followed** (a POST that quietly became a GET elsewhere is a failure);
+    * a webhook is only called over http/https on a **public** host -- no opt-out: loopback, private,
+      internal names, the platform's own hosts (so never the AURA gateway) and ``/api/v3/`` or
+      ``/health`` paths are refused, as is ``file://`` -- and a redirect is **not followed** (a POST that quietly became a GET elsewhere is a failure);
     * webhook URLs embed their secret in the path (``hooks.slack.com/services/T0/B0/<secret>``), so
       results show ``scheme://host/...`` only;
     * ``dispatch`` without a ``webhook_url`` no longer reports ``delivered``: there is no local
@@ -208,8 +208,6 @@ class PushNotificationDispatcher:
         payload: Dict[str, Any],
         headers: Optional[Dict[str, str]] = None,
         timeout_seconds: float = 5.0,
-        *,
-        allow_private: bool = False,
     ) -> Dict[str, Any]:
         """Send JSON payload to target webhook URL. Every failure is a returned result."""
         shown = redact_url(url)
@@ -238,8 +236,7 @@ class PushNotificationDispatcher:
 
         try:
             req = urllib.request.Request(url, data=body, headers=req_headers, method="POST")
-            with open_guarded(req, timeout=timeout_seconds, allow_loopback=allow_private,
-                              allow_private=allow_private, follow_redirects=False) as resp:
+            with open_guarded(req, timeout=timeout_seconds, follow_redirects=False) as resp:
                 code = resp.getcode()
                 return {
                     "success": isinstance(code, int) and 200 <= code < 300,
@@ -262,8 +259,6 @@ class PushNotificationDispatcher:
         priority: str = "normal",
         webhook_url: Optional[str] = None,
         timeout_seconds: float = 5.0,
-        *,
-        allow_private: bool = False,
     ) -> Dict[str, Any]:
         """Build a notification and POST it to ``webhook_url``.
 
@@ -286,8 +281,7 @@ class PushNotificationDispatcher:
                 "payload": payload,
             }
 
-        res = cls.dispatch_to_webhook(webhook_url, payload, timeout_seconds=timeout_seconds,
-                                      allow_private=allow_private)
+        res = cls.dispatch_to_webhook(webhook_url, payload, timeout_seconds=timeout_seconds)
         return {
             "dispatched": res["success"],
             "channel": "webhook",

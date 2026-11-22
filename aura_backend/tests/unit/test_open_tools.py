@@ -41,6 +41,19 @@ class TestPdfIsReadInFull:
             assert f"marker-{i} " in read.text + " "
         assert read.describe()["pages_read"] == 60
 
+    def test_a_short_last_page_is_not_dropped(self, tmp_path: Path) -> None:
+        """A closing page that says only "PASSED" has < 16 chars; the default extractor calls it blank."""
+        path = tmp_path / "short.pdf"
+        path.write_bytes(_pdf([{"text": ["A normal page with plenty of ordinary prose"]}, {"text": ["PASSED"]}]))
+        read = read_source_file(path)
+        assert "PASSED" in read.text and read.pages == 2 and read.complete and read.blank_pages == ()
+
+    def test_more_than_500_pages_are_read(self, tmp_path: Path) -> None:
+        path = tmp_path / "huge.pdf"
+        path.write_bytes(_many_pages(520))
+        read = read_source_file(path)
+        assert read.pages == 520 and "marker-520 " in read.text + " "
+
     def test_scanned_pages_are_named_not_silently_dropped(self, tmp_path: Path) -> None:
         path = tmp_path / "mixed.pdf"
         path.write_bytes(_pdf([
@@ -70,6 +83,10 @@ class TestPdfIsReadInFull:
         path.write_bytes(b"%PDF-1.4\n garbage \x00\x01")
         with pytest.raises(SourceReadError):
             read_source_file(path)
+
+    def test_overlong_path_is_a_clean_error(self, tmp_path: Path) -> None:
+        with pytest.raises(SourceReadError):
+            read_source_file(tmp_path / ("x" * 5000))
 
     def test_base_dir_confines_paths(self, tmp_path: Path) -> None:
         (tmp_path / "in").mkdir()
