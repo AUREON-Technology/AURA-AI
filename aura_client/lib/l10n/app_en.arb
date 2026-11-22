@@ -7098,5 +7098,21 @@
   "desktopSignInReturnFailed": "Couldn't go back to the desktop app. Make sure it's still waiting for you, then start again from it.",
   "@desktopSignInReturnFailed": {
     "description": "Web desktop sign-in page: the browser would not navigate back to the desktop app's local address"
+  },
+  "webDaemonUnavailableTitle": "Pair a computer in the desktop app",
+  "@webDaemonUnavailableTitle": {
+    "description": "Web only: title of the Engineer daemon page, which a browser cannot run"
+  },
+  "webDaemonUnavailableMessage": "A browser can't run the AURA desktop daemon. Install the desktop app on your computer and pair it there. Once it's paired, turn on remote control and the Engineer can use it from here.",
+  "@webDaemonUnavailableMessage": {
+    "description": "Web only: why the daemon page is unavailable and what to do"
+  },
+  "webGetDesktopApp": "Get the desktop app",
+  "@webGetDesktopApp": {
+    "description": "Web only: button that opens the desktop installer page"
+  },
+  "webManageDevices": "Manage paired devices",
+  "@webManageDevices": {
+    "description": "Web only: button that opens the paired desktop devices list"
   }
 }

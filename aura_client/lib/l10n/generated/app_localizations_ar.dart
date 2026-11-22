@@ -5342,4 +5342,17 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get desktopSignInReturnFailed =>
       'مقدرناش نرجع لتطبيق الكمبيوتر. اتأكد إنه لسه مستنيك، وبعدين ابدأ تاني منه.';
+
+  @override
+  String get webDaemonUnavailableTitle => 'اربط كمبيوترك من تطبيق سطح المكتب';
+
+  @override
+  String get webDaemonUnavailableMessage =>
+      'المتصفح مش بيقدر يشغّل خدمة AURA بتاعة الكمبيوتر. نزّل تطبيق سطح المكتب على جهازك واربطه من هناك. وبعد ما يتربط، فعّل التحكم عن بُعد وAURA Engineer يقدر يستخدمه من هنا.';
+
+  @override
+  String get webGetDesktopApp => 'نزّل تطبيق سطح المكتب';
+
+  @override
+  String get webManageDevices => 'إدارة الأجهزة المربوطة';
 }

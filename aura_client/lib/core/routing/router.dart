@@ -43,6 +43,7 @@ import '../../features/voice_live/presentation/live_voice_page.dart';
 import '../config/app_links.dart';
 import '../design_system/design_system.dart';
 import '../platform/aura_platform.dart';
+import '../platform/web_capabilities.dart';
 import '../../desktop/shell/desktop_ide_unavailable_page.dart';
 import '../../desktop/shell/desktop_shell.dart';
 import '../../desktop/workspace/workspace_welcome_page.dart';
@@ -615,6 +616,8 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/learning', redirect: (context, state) => '/feedback'),
       GoRoute(
         path: '/voice',
+        // A browser has no streaming mic or PCM sink: back to the chat, not a dead screen.
+        redirect: (context, state) => liveVoiceRouteAvailable() ? null : '/chat',
         builder: (context, state) => const LiveVoicePage(),
       ),
       ShellRoute(

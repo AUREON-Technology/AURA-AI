@@ -1466,5 +1466,9 @@
   "desktopSignInServerUnreachable": "مقدرناش نوصل لسيرفر AURA. اتأكد من الاتصال وجرّب تاني.",
   "desktopSignInServerFailed": "سيرفر AURA مقدرش يوصّل تسجيل الدخول ده لتطبيق الكمبيوتر (HTTP {status}).",
   "desktopSignInNoIdentityToken": "خدمة تسجيل الدخول مرجّعتش identity token للحساب ده. جرّب تاني.",
-  "desktopSignInReturnFailed": "مقدرناش نرجع لتطبيق الكمبيوتر. اتأكد إنه لسه مستنيك، وبعدين ابدأ تاني منه."
+  "desktopSignInReturnFailed": "مقدرناش نرجع لتطبيق الكمبيوتر. اتأكد إنه لسه مستنيك، وبعدين ابدأ تاني منه.",
+  "webDaemonUnavailableTitle": "اربط كمبيوترك من تطبيق سطح المكتب",
+  "webDaemonUnavailableMessage": "المتصفح مش بيقدر يشغّل خدمة AURA بتاعة الكمبيوتر. نزّل تطبيق سطح المكتب على جهازك واربطه من هناك. وبعد ما يتربط، فعّل التحكم عن بُعد وAURA Engineer يقدر يستخدمه من هنا.",
+  "webGetDesktopApp": "نزّل تطبيق سطح المكتب",
+  "webManageDevices": "إدارة الأجهزة المربوطة"
 }

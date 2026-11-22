@@ -92,6 +92,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   /// Each check is guarded on its own: local_auth has no Linux implementation, and a throw
   /// there must not also hide the saved session.
   Future<bool> _biometricsEnrolled() async {
+    // A browser has no fingerprint or face unlock: a saved web session resumes directly.
+    if (kIsWeb) return false;
     try {
       if (!await _localAuth.canCheckBiometrics) return false;
       return (await _localAuth.getAvailableBiometrics()).isNotEmpty;
