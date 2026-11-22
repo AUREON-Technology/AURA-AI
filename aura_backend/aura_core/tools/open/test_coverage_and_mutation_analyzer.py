@@ -1,5 +1,6 @@
 import ast
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -233,28 +234,37 @@ class TestCoverageAndMutationAnalyzer:
                     "stderr": baseline.stderr.strip(),
                 }
 
-            lines = original_text.splitlines()
+            # ast numbers lines on \n, \r\n and \r only (not form feed, U+2028 ...), and its column
+            # offsets are UTF-8 BYTE offsets, so work on encoded lines.
+            lines = re.split(r"\r\n|\r|\n", original_text)
             killed = 0
             tested = 0
+            skipped = 0
 
-            for mut in candidates[:10]:
+            for mut in candidates:
+                if tested >= 10:
+                    break
                 line_idx = mut["line"] - 1
                 if line_idx < 0 or line_idx >= len(lines):
+                    skipped += 1
                     continue
 
-                old_line = lines[line_idx]
+                old_bytes = lines[line_idx].encode("utf-8")
                 col_start = mut["col"]
                 col_end = mut["end_col"]
 
                 # Validate that the AST offsets actually match the expected token
                 target_str = "True" if mut["original"] else "False"
-                if old_line[col_start:col_end] != target_str:
+                if old_bytes[col_start:col_end] != target_str.encode():
+                    skipped += 1
                     continue
 
                 repl_str = "False" if mut["original"] else "True"
 
                 # AST-precise replacement using column offsets
-                mutated_line = old_line[:col_start] + repl_str + old_line[col_end:]
+                mutated_line = (
+                    old_bytes[:col_start] + repl_str.encode() + old_bytes[col_end:]
+                ).decode("utf-8")
 
                 tested += 1
                 mutated_lines = list(lines)
@@ -281,5 +291,6 @@ class TestCoverageAndMutationAnalyzer:
             "mutants_total": tested,
             "mutants_killed": killed,
             "mutants_survived": tested - killed,
+            "mutants_skipped": skipped,
             "mutation_score": score,
         }
