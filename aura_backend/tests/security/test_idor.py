@@ -98,6 +98,8 @@ COVERED = {
         "TestMemory::test_bob_cannot_delete_alices_memory",
     ("DELETE", "/api/v3/sessions/{session_id}"):
         "TestConversations::test_bob_cannot_delete_alices_conversation_by_session_id",
+    ("GET", "/api/v3/turns/{turn_id}/usage"):
+        "TestTurnUsage::test_bob_cannot_read_alices_turn_usage_by_turn_id",
     ("DELETE", "/api/v3/engineering/workspaces/{workspace_id}"):
         "TestEngineering::test_bob_cannot_delete_alices_workspace",
     ("GET", "/api/v3/agents/runs/{run_id}"):
@@ -549,6 +551,36 @@ class TestConversations:
         assert response.status_code == 200  # idempotent: Bob's (empty) session is cleared
         history, _ = asyncio.run(container.episodic.history(session, UserId(ALICE)))
         assert any("14th" in m.content for m in history), "Bob's delete erased Alice's conversation"
+
+
+class TestTurnUsage:
+    """``GET /api/v3/turns/{turn_id}/usage``: the telemetry table holds no user id, so ownership is
+    a keyed reference stamped on the turn (migration 0033). Bob naming Alice's turn id must get
+    exactly what he gets for a turn that does not exist."""
+
+    def test_bob_cannot_read_alices_turn_usage_by_turn_id(self, client, monkeypatch) -> None:
+        import time
+
+        monkeypatch.setenv("AURA_JWT_SECRET", "idor-test-signing-secret-0123456789abcdef")
+        monkeypatch.delenv("JWT_SECRET", raising=False)
+
+        chat = client.post("/api/v3/chat", json={"message": "hello", "use_tools": False}, headers=AUTH_A)
+        assert chat.status_code == 200, chat.text
+        turn_id = chat.json()["turn_id"]
+
+        mine = None
+        for _ in range(40):  # the record is written just after the response is built
+            mine = client.get(f"/api/v3/turns/{turn_id}/usage", headers=AUTH_A)
+            if mine.status_code == 200:
+                break
+            time.sleep(0.05)
+        assert mine is not None and mine.status_code == 200, "Alice cannot read her own turn's usage"
+
+        theirs = client.get(f"/api/v3/turns/{turn_id}/usage", headers=AUTH_B)
+        missing = client.get("/api/v3/turns/00000000-0000-4000-8000-000000000000/usage", headers=AUTH_B)
+        assert theirs.status_code == missing.status_code == 404, "Bob reached Alice's turn"
+        assert theirs.json()["error"] == missing.json()["error"] == "not_found"
+        assert "usage" not in theirs.json() and "prompt_tokens" not in theirs.text
 
 
 class TestWorkspaces:
