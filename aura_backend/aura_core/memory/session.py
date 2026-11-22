@@ -30,8 +30,9 @@ from ..domain.identifiers import SessionId, UserId
 from ..domain.messages import Conversation, Message, Role
 from ..observability.logging import get_logger
 from ..ports.storage import Cache
+from .checkpoint import SessionCheckpoint, extract_checkpoint, parse_checkpoint_json
 
-__all__ = ["WorkingMemory", "EpisodicMemory", "SessionState"]
+__all__ = ["WorkingMemory", "EpisodicMemory", "SessionState", "SessionCheckpoint"]
 
 logger = get_logger("memory.session")
 
@@ -178,6 +179,9 @@ class EpisodicMemory:
     # Deliberately not under _PREFIX: no session id can make its data key equal a lease key,
     # so releasing a lease can never delete a conversation.
     _LEASE_PREFIX = "session-lease:"
+    # Also its own namespace, owner-keyed like the session itself (tests/security/test_idor.py): a
+    # checkpoint is a digest of a private conversation and must not be reachable by session id alone.
+    _CHECKPOINT_PREFIX = "session-checkpoint:"
 
     def __init__(
         self,
@@ -189,8 +193,11 @@ class EpisodicMemory:
         summariser: Any = None,
         lease_ttl_s: int = 10,
         lease_wait_s: float = 12.0,
+        checkpointer: Any = None,
     ) -> None:
         self._cache = cache
+        #: ``async (transcript, previous_summary) -> raw model text``; ``None`` = extractive only.
+        self._checkpointer = checkpointer
         self._window = window
         self._summarise_after = summarise_after
         self._ttl = ttl_s
@@ -355,6 +362,54 @@ class EpisodicMemory:
             await asyncio.sleep(delay)
             delay = min(delay * 2, 0.2)
 
+    # -- checkpoints -------------------------------------------------------------------
+
+    def _checkpoint_key(self, session_id: SessionId, owner_id: UserId) -> str:
+        owner = owner_id.value
+        return f"{self._CHECKPOINT_PREFIX}u{len(owner)}:{owner}:{session_id.value}"
+
+    async def checkpoint(
+        self, session_id: SessionId, owner_id: UserId, *, save: bool = True
+    ) -> SessionCheckpoint:
+        """Write the session's decisions / completed work / blockers / next steps down.
+
+        Model-written when a ``checkpointer`` is configured and its reply parses; otherwise (no
+        model, model error, unparseable reply) extracted by keyword and marked
+        ``source="extractive"``. Never raises for a model failure. An empty session yields an empty
+        checkpoint and saves nothing. The model call happens outside any lock, like summarising.
+        """
+        state = await self.load(session_id, owner_id)
+        if not state.messages and not state.summary:
+            return SessionCheckpoint(created_at=time.time())
+        covers = state.folded + len(state.messages)
+        result: SessionCheckpoint | None = None
+        if self._checkpointer is not None:
+            transcript = "\n".join(f"{m.role}: {m.content}" for m in state.messages)
+            try:
+                raw = await self._checkpointer(transcript, state.summary)
+                result = parse_checkpoint_json(raw, covers_messages=covers)
+            except Exception:
+                logger.warning("session checkpoint generation failed; extracting instead")
+        if result is None or result.is_empty():
+            extracted = extract_checkpoint(state.messages, state.summary)
+            result = replace(extracted, covers_messages=covers) if result is None or not extracted.is_empty() else result
+        if save:
+            await self._cache.set(
+                self._checkpoint_key(session_id, owner_id), result.to_json().encode("utf-8"), ttl_s=self._ttl
+            )
+        return result
+
+    async def latest_checkpoint(self, session_id: SessionId, owner_id: UserId) -> SessionCheckpoint | None:
+        """The last saved checkpoint for this owner's session, or ``None``."""
+        raw = await self._cache.get(self._checkpoint_key(session_id, owner_id))
+        if raw is None:
+            return None
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            return None
+        return SessionCheckpoint.from_dict(data) if isinstance(data, Mapping) else None
+
     async def history(self, session_id: SessionId, owner_id: UserId) -> tuple[Conversation, str]:
         state = await self.load(session_id, owner_id)
         return Conversation.of(state.messages[-self._window * 2 :]), state.summary
@@ -369,6 +424,7 @@ class EpisodicMemory:
         key = self._key(session_id, owner_id)
         async with self._exclusive(key):
             await self._cache.delete(key)
+            await self._cache.delete(self._checkpoint_key(session_id, owner_id))
             legacy = await self._cache.get(self._key(session_id))
             if legacy is not None:
                 state = SessionState.from_json(legacy)

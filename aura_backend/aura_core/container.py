@@ -69,6 +69,7 @@ from .llm.registry import (
 from .llm.router import ProviderRouter
 from .agents import build_default_agent_registry
 from .memory.engine import MemoryEngine
+from .memory.checkpoint import build_session_checkpointer
 from .memory.session import EpisodicMemory, build_session_summariser
 from .observability.logging import configure_logging, get_logger
 from .observability.metrics import get_metrics
@@ -415,6 +416,7 @@ class Container:
             window=settings.memory.episodic_window,
             summarise_after=settings.memory.summarise_after_turns,
             summariser=build_session_summariser(self.router, self.prompts),
+            checkpointer=build_session_checkpointer(self.router),
         )
 
         # The ten retrieval strategies, and a facade presenting the selected one with the
@@ -1679,6 +1681,14 @@ class Container:
         ``CompositeSandboxRunner.create_task`` routes on (a live ``aura_hostd`` session)."""
         return await self.host_agent_registry.resolve(context.user_id) is not None
 
+    async def _guard_tool_result(self, text: str, tool: str, context) -> Any:
+        """Tool output through the safety pipeline's TOOL_RESULT stage (inventory row 34).
+
+        Credentials are redacted and injection-looking output is withheld. ``SafetyPipeline`` is a
+        pass-through when ``AURA_SAFETY_ENABLED`` is off, so this needs no flag of its own.
+        """
+        return await self.safety.guard_tool_result(text, tool=tool, user_id=context.user_id)
+
     def _build_tools(self) -> ToolRegistry:
         registry = ToolRegistry(
             policy=ToolPolicy.from_settings(self.settings.tools),
@@ -1690,6 +1700,7 @@ class Container:
             event_bus=self.events,
             audit=self.audit,
             host_routed=self._host_routed,
+            result_guard=self._guard_tool_result,
         )
         github_default_repo = ""
         if self.settings.github.default_owner and self.settings.github.default_repo:
@@ -1707,6 +1718,11 @@ class Container:
                 host_git=self.host_git,
                 github_token_resolver=self._github_token_resolver,
                 host_agent_registry=self.host_agent_registry,
+                # Both default to empty, which registers nothing (list_files/read_file/fetch_url were
+                # implemented but could never be switched on: audit T-06). An operator opts in with
+                # AURA_TOOLS_FILES_ROOT / AURA_TOOLS_HTTP_ALLOWED_HOSTS; personas still need a grant.
+                workspace=self.settings.tools.files_root or None,
+                allowed_http_hosts=self.settings.tools.http_allowed_hosts,
                 enable_analysis_tools=self.settings.open_tools.analysis_enabled,
                 enable_open_exec_tools=self.settings.open_tools.exec_enabled,
                 enable_desktop_ops_tools=self.settings.open_tools.desktop_ops_enabled,

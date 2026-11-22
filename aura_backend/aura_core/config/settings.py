@@ -1122,6 +1122,13 @@ class ToolSettings:
     default_timeout_s: float = 15.0
     max_parallel: int = 4
     require_confirmation_for_side_effects: bool = True
+    #: Directory ``list_files`` / ``read_file`` are confined to (``tools/builtin.py::build_file_tools``).
+    #: Empty (the default) registers neither tool: a file tool with no root would be advertised and
+    #: then refuse every call. Must be an absolute path that is not ``/``; it is created if missing.
+    files_root: str = ""
+    #: Hosts ``fetch_url`` may reach (``build_http_tool``); subdomains are not implied. Empty (the
+    #: default) registers no ``fetch_url``. Private/loopback addresses are refused regardless.
+    http_allowed_hosts: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls) -> "ToolSettings":
@@ -1133,6 +1140,8 @@ class ToolSettings:
             default_timeout_s=_float("TOOLS_DEFAULT_TIMEOUT_S", 15.0, minimum=0.5),
             max_parallel=_int("TOOLS_MAX_PARALLEL", 4, minimum=1, maximum=32),
             require_confirmation_for_side_effects=_bool("TOOLS_REQUIRE_CONFIRMATION", True),
+            files_root=(_env("TOOLS_FILES_ROOT", "") or "").strip(),
+            http_allowed_hosts=_list("TOOLS_HTTP_ALLOWED_HOSTS"),
         )
 
 
@@ -2384,6 +2393,16 @@ class AuraSettings:
 
         if self.email.enabled and not (self.email.smtp_host and self.email.from_address and self.email.app_base_url):
             problems.append("AURA_EMAIL_ENABLED needs AURA_SMTP_HOST, AURA_EMAIL_FROM and AURA_APP_BASE_URL")
+
+        root = self.tools.files_root
+        if root and (not root.startswith("/") or root.rstrip("/") == "" or ".." in root.split("/")):
+            problems.append("AURA_TOOLS_FILES_ROOT must be an absolute path that is not '/' and has no '..'")
+        for host in self.tools.http_allowed_hosts:
+            if "://" in host or "/" in host or "*" in host or ":" in host:
+                problems.append(
+                    f"AURA_TOOLS_HTTP_ALLOWED_HOSTS entry {host!r} must be a bare host name "
+                    "(no scheme, path, port or wildcard)"
+                )
 
         if self.billing.apple_environment not in ("", "Production", "Sandbox"):
             problems.append("billing.apple_environment must be Production, Sandbox or empty")

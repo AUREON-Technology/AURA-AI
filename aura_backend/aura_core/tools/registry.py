@@ -115,8 +115,14 @@ class ToolRegistry:
         event_bus: Any = None,
         audit: Any = None,
         host_routed: Callable[[ToolContext], Awaitable[bool]] | None = None,
+        result_guard: Callable[[str, str, ToolContext], Awaitable[Any]] | None = None,
     ) -> None:
         self._tools: dict[str, Tool] = {}
+        # ``await result_guard(content, tool_name, context)`` -> a ``SafetyDecision`` (the container
+        # passes ``SafetyPipeline.guard_tool_result``). Every successful tool result goes through it
+        # before the model, a UI or the transcript sees it: credentials are redacted, and output
+        # that looks like an injection or cannot be checked is withheld. ``None`` = unguarded.
+        self._result_guard = result_guard
         self._policy = policy or ToolPolicy()
         # An allowlist, when non-empty, is exclusive: only listed tools are visible at all.
         self._allowlist = frozenset(allowlist)
@@ -495,6 +501,43 @@ class ToolRegistry:
                 content[: spec.max_result_chars]
                 + f"\n[…truncated at {spec.max_result_chars} characters]"
             )
+
+        if self._result_guard is not None:
+            try:
+                verdict = await self._result_guard(content, name, context)
+            except Exception:
+                # Fails CLOSED, like every exfiltration guard (ADR-006): output that could not be
+                # checked for credentials is not handed on.
+                logger.exception("tool result guard failed", extra={"tool": name})
+                duration = (time.perf_counter() - started) * 1000.0
+                self._observe(name, outcome="guard_error", duration_ms=duration)
+                await self._audit_call(name, context, "error", arguments_digest, "output_guard_error")
+                await self._publish(name, context, allowed=True, ok=False, duration_ms=duration,
+                                    error_kind="output_withheld")
+                return finish(
+                    ok=False,
+                    content=f"The '{name}' tool's output could not be checked and was withheld.",
+                    error_kind="output_withheld",
+                    policy_reason=decision.reason,
+                )
+            if not verdict.allowed:
+                reasons = ", ".join(verdict.report.reasons()) or "safety guard"
+                if getattr(verdict, "tainted", False):
+                    context.tainted = True  # suspected injection: later side effects need confirmation
+                duration = (time.perf_counter() - started) * 1000.0
+                self._observe(name, outcome="output_withheld", duration_ms=duration)
+                await self._audit_call(name, context, "error", arguments_digest, "output_withheld")
+                await self._publish(name, context, allowed=True, ok=False, duration_ms=duration,
+                                    error_kind="output_withheld")
+                return finish(
+                    ok=False,
+                    content=f"The '{name}' tool's output was withheld by a safety guard ({reasons}).",
+                    error_kind="output_withheld",
+                    policy_reason=decision.reason,
+                )
+            if verdict.text != content:
+                logger.info("tool result redacted by the output guard", extra={"tool": name})
+                content = verdict.text
 
         if "untrusted_content" in spec.tags:
             # This tool's output is attacker-influenceable external content that

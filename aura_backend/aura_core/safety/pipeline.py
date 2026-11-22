@@ -28,6 +28,7 @@ from ..domain.safety import GuardAction, GuardStage, GuardVerdict, SafetyReport
 from ..observability.logging import get_logger
 from .guards import (
     Guard,
+    SecretGuard,
     default_context_guards,
     default_input_guards,
     default_output_guards,
@@ -75,9 +76,14 @@ class SafetyPipeline:
             GuardStage.CONTEXT: tuple(
                 context_guards if context_guards is not None else default_context_guards()
             ),
+            # Tool output is third-party content (the context chain: size, encoding, injection)
+            # AND may carry whatever the tool read -- a config file, an env dump, a connected
+            # system's record. ``SecretGuard`` declares this stage but was never in the chain, so
+            # credentials in a tool result reached the model and the transcript. It redacts
+            # rather than blocks: the rest of the output is still what the model asked for.
             GuardStage.TOOL_RESULT: tuple(
                 context_guards if context_guards is not None else default_context_guards()
-            ),
+            ) + (SecretGuard(block=False),),
             GuardStage.OUTPUT: tuple(
                 output_guards if output_guards is not None else default_output_guards()
             ),
