@@ -1470,6 +1470,10 @@ class LearningSettings:
     gate_max_error_rate: float = 0.05
     gate_max_quarantine_rate: float = 0.10
     gate_max_count_delta: float = 0.40
+    #: The most a source's updated documents may shrink in total before the whole source is held
+    #: back (the content gate, run before anything is written). Catches a source that started
+    #: returning a short error page.
+    gate_max_shrink: float = 0.40
     index_retention_days: int = 7
     finetune_min_examples: int = 500
     finetune_min_distinct_users: int = 5
@@ -1507,6 +1511,7 @@ class LearningSettings:
             gate_max_error_rate=_float("LEARNING_GATE_ERROR_RATE", 0.05, minimum=0.0, maximum=1.0),
             gate_max_quarantine_rate=_float("LEARNING_GATE_QUARANTINE_RATE", 0.10, minimum=0.0, maximum=1.0),
             gate_max_count_delta=_float("LEARNING_GATE_COUNT_DELTA", 0.40, minimum=0.0, maximum=10.0),
+            gate_max_shrink=_float("LEARNING_GATE_SHRINK", 0.40, minimum=0.0, maximum=1.0),
             index_retention_days=_int("LEARNING_INDEX_RETENTION_DAYS", 7, minimum=0),
             finetune_min_examples=_int("LEARNING_FINETUNE_MIN_EXAMPLES", 500, minimum=1),
             finetune_min_distinct_users=_int("LEARNING_FINETUNE_MIN_USERS", 5, minimum=1),

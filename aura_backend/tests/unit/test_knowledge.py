@@ -16,6 +16,7 @@ from aura_core.knowledge import (
     split_sentences,
     tokenize,
 )
+from aura_core.ports.storage import GLOBAL_OWNER, VectorPoint
 
 
 class TestChunking:
@@ -271,3 +272,127 @@ class TestPromotionGate:
             candidate_chunks=1050, baseline_chunks=1000,
         )
         assert result.passed
+
+
+def _dummy_points(count: int, dimension: int) -> list[VectorPoint]:
+    return [
+        VectorPoint(id=f"dummy-{i}", vector=[0.1] * dimension, payload={"owner_id": GLOBAL_OWNER})
+        for i in range(count)
+    ]
+
+
+class TestIndexStatus:
+    """What `/health/ready` reports about the published index (KM-01).
+
+    A published index built by another embedder makes every read refuse and every retrieval
+    return nothing; the operator has to be able to see that without running a query.
+    """
+
+    async def test_a_matching_index_is_reported_as_matching(self, index_manager) -> None:
+        await index_manager.ensure_ready()
+        status = await index_manager.status()
+        assert status["matches_embedder"] is True
+        assert status["published"] == status["required"]
+
+    async def test_an_index_from_another_embedder_is_reported_as_a_mismatch(
+        self, vectors, index_manager, embedder
+    ) -> None:
+        foreign = IndexIdentity("test_knowledge", 1, "legacy-embedder", embedder.dimension)
+        await vectors.set_alias("test_knowledge", foreign)
+        status = await index_manager.status()
+        assert status["matches_embedder"] is False
+        assert status["published"] == foreign.physical_name
+        assert status["required"] != status["published"]
+
+    async def test_no_published_index_is_reported_as_not_matching(self, index_manager) -> None:
+        status = await index_manager.status()
+        assert status["published"] is None
+        assert status["matches_embedder"] is False
+        assert status["up_to_date"] is False
+
+    async def test_a_matching_index_is_up_to_date(self, index_manager) -> None:
+        await index_manager.ensure_ready()
+        assert (await index_manager.status())["up_to_date"] is True
+
+    async def test_an_index_from_another_embedder_is_not_up_to_date(
+        self, vectors, index_manager, embedder
+    ) -> None:
+        await vectors.set_alias(
+            "test_knowledge", IndexIdentity("test_knowledge", 1, "legacy-embedder", embedder.dimension)
+        )
+        assert (await index_manager.status())["up_to_date"] is False
+
+    async def test_a_schema_version_bump_is_readable_but_not_up_to_date(
+        self, vectors, documents, embedder
+    ) -> None:
+        """Same embedder, new index layout: queries still work against the old index, but the
+        published name is not the one the running configuration would build."""
+        await vectors.set_alias(
+            "k", IndexIdentity("k", 1, embedder.model_id, embedder.dimension)
+        )
+        manager = IndexManager(
+            vectors=vectors, documents=documents, embedder=embedder, alias="k", schema_version=2
+        )
+        status = await manager.status()
+        assert status["matches_embedder"] is True
+        assert status["up_to_date"] is False
+
+
+class TestFirstPublishAfterAnEmbedderChange:
+    """KM-01: the rebuild that repairs a stale alias must be able to promote.
+
+    The gate guards a corpus that collapsed, or an empty build replacing a working index. Neither
+    applies when the published index was built by another embedder: nothing can read it.
+    """
+
+    async def _publish_foreign(self, vectors, embedder, *, points: int) -> IndexIdentity:
+        foreign = IndexIdentity("test_knowledge", 1, "legacy-embedder", embedder.dimension)
+        await vectors.upsert(foreign, _dummy_points(points, embedder.dimension))
+        await vectors.set_alias("test_knowledge", foreign)
+        return foreign
+
+    async def test_an_empty_corpus_can_replace_an_index_nothing_can_read(
+        self, vectors, index_manager, embedder
+    ) -> None:
+        await self._publish_foreign(vectors, embedder, points=5)
+        target = index_manager.identity_for_current_embedder()
+        report = await index_manager.build(identity=target)
+        gate = await index_manager.evaluate_promotion(target, report=report)
+        assert report.chunks == 0
+        assert gate.passed, gate.failures
+
+    async def test_a_chunk_count_change_is_ignored_against_a_foreign_index(
+        self, vectors, knowledge, index_manager, embedder, user, handbook
+    ) -> None:
+        await self._publish_foreign(vectors, embedder, points=500)
+        await knowledge.ingest(content=handbook, title="Handbook", owner_id=user)
+        target = index_manager.identity_for_current_embedder()
+        report = await index_manager.build(identity=target)
+        gate = await index_manager.evaluate_promotion(target, report=report)
+        assert report.chunks > 0
+        assert gate.passed, gate.failures
+        await index_manager.promote(target, gate=gate, reason="test")
+        assert (await index_manager.status())["matches_embedder"] is True
+
+    async def test_an_empty_build_still_cannot_replace_a_readable_index(
+        self, vectors, index_manager, embedder
+    ) -> None:
+        await index_manager.ensure_ready()
+        await vectors.upsert(await index_manager.active_identity(), _dummy_points(10, embedder.dimension))
+        candidate = IndexIdentity("test_knowledge", 2, embedder.model_id, embedder.dimension)
+        report = await index_manager.build(identity=candidate)
+        gate = await index_manager.evaluate_promotion(candidate, report=report)
+        assert not gate.passed
+        assert any("minimum" in failure for failure in gate.failures)
+
+    async def test_a_collapsed_corpus_still_cannot_replace_a_readable_index(
+        self, vectors, knowledge, index_manager, embedder, user, handbook
+    ) -> None:
+        await index_manager.ensure_ready()
+        await vectors.upsert(await index_manager.active_identity(), _dummy_points(500, embedder.dimension))
+        await knowledge.ingest(content=handbook, title="Handbook", owner_id=user)
+        candidate = IndexIdentity("test_knowledge", 2, embedder.model_id, embedder.dimension)
+        report = await index_manager.build(identity=candidate)
+        gate = await index_manager.evaluate_promotion(candidate, report=report)
+        assert not gate.passed
+        assert any("chunk count" in failure for failure in gate.failures)

@@ -16,7 +16,7 @@ which is how a model ends up grounding a confident answer in noise.
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 import asyncio
 import hashlib
@@ -47,7 +47,7 @@ from .graph_pipeline import KnowledgeGraphPipeline
 from .index_manager import IndexManager
 from .retrieval import BM25Index, HeuristicReranker, reciprocal_rank_fusion
 
-__all__ = ["KnowledgeEngine", "IngestionResult", "derive_document_id"]
+__all__ = ["KnowledgeEngine", "IngestionResult", "IngestAssessment", "derive_document_id"]
 
 logger = get_logger("knowledge")
 
@@ -128,6 +128,41 @@ class IngestionResult:
 
     def __bool__(self) -> bool:
         return self.created
+
+
+@dataclass(frozen=True, slots=True)
+class IngestAssessment:
+    """What :meth:`KnowledgeEngine.ingest` would do with a document, decided without doing it.
+
+    Produced by :meth:`KnowledgeEngine.assess`. A gate reads this before any write: the nightly
+    refresh holds back a source whose documents would shrink sharply or are mostly quarantined.
+
+    ``would_version`` is the version ingest would create, or ``None`` when it would write nothing
+    (unchanged content, or every chunk quarantined). ``chunks`` counts the chunks that would be
+    indexed; ``quarantined_chunks`` those the context guard would drop. ``previous_bytes`` is the
+    size of the active version this would supersede, ``None`` for a new document.
+    """
+
+    document_id: DocumentId
+    would_version: int | None
+    unchanged: bool
+    fully_quarantined: bool
+    chunks: int
+    quarantined_chunks: int
+    new_bytes: int
+    previous_bytes: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class _Prepared:
+    """Everything ingest decides before it writes. Built by :meth:`KnowledgeEngine._prepare`."""
+
+    document: Document
+    previous: Document | None
+    pieces: list[tuple[str, tuple[str, ...]]]
+    piece_metadata: list[Mapping[str, Any]]
+    quarantined: int
+    skipped_reason: str | None = None
 
 
 class KnowledgeEngine:
@@ -230,16 +265,7 @@ class KnowledgeEngine:
         given, the document text is derived from it.
         """
         started = time.perf_counter()
-        if not content and segments:
-            content = "\n\n".join(b.text for b in segments if b.text)
-        text = content.strip()
-        if not text:
-            raise ValidationError("cannot ingest empty content")
-        if len(content.encode("utf-8")) > self._max_bytes:
-            raise ValidationError(
-                "document exceeds the configured size limit",
-                details={"limit_bytes": self._max_bytes},
-            )
+        text = self._checked_text(content, segments)
 
         doc_id = document_id or derive_document_id(title, owner_id)
 
@@ -258,17 +284,83 @@ class KnowledgeEngine:
                     started=started,
                 )
 
-    async def _ingest_serialised(
+    def _checked_text(self, content: str, segments: Sequence[ExtractedBlock] | None) -> str:
+        """The text to ingest, after the checks both :meth:`ingest` and :meth:`assess` apply."""
+        if not content and segments:
+            content = "\n\n".join(b.text for b in segments if b.text)
+        text = content.strip()
+        if not text:
+            raise ValidationError("cannot ingest empty content")
+        if len(content.encode("utf-8")) > self._max_bytes:
+            raise ValidationError(
+                "document exceeds the configured size limit",
+                details={"limit_bytes": self._max_bytes},
+            )
+        return text
+
+    async def assess(
+        self,
+        *,
+        content: str = "",
+        title: str,
+        document_id: DocumentId | None = None,
+        owner_id: UserId | None = None,
+        source_type: SourceType = SourceType.UPLOAD,
+        source_uri: str | None = None,
+        trust_tier: TrustTier = TrustTier.COMMUNITY,
+        metadata: Mapping[str, Any] | None = None,
+        language: str | None = None,
+        segments: Sequence[ExtractedBlock] | None = None,
+    ) -> IngestAssessment:
+        """What :meth:`ingest` would do with this document, without doing it.
+
+        Runs the read-only half of ingestion -- the size check, content-hash idempotency, the
+        owner check, versioning, chunking and the context guard -- and writes nothing: no
+        document, no chunk, no vector, no lexical entry, no graph fact, no event. It raises what
+        ingest would raise (empty or oversized content, someone else's document id).
+
+        It takes no ingest lock, because it changes nothing; the real ingest repeats every check
+        under its locks, so an assessment that went stale in between is corrected there. The
+        context guard runs again at that point, so a guard's own bookkeeping (a tainted-turn
+        counter, say) can count a document twice.
+        """
+        text = self._checked_text(content, segments)
+        doc_id = document_id or derive_document_id(title, owner_id)
+        candidate = Document(
+            id=doc_id, version=1, title=title, content=text, source_type=source_type,
+            source_uri=source_uri, owner_id=owner_id, trust_tier=trust_tier,
+            language=language, metadata=dict(metadata or {}),
+        )
+        prepared = await self._prepare(candidate, text=text, segments=segments, metadata=metadata)
+        writes_nothing = prepared.skipped_reason is not None
+        return IngestAssessment(
+            document_id=doc_id,
+            would_version=None if writes_nothing else prepared.document.version,
+            unchanged=prepared.skipped_reason == "unchanged_content",
+            fully_quarantined=prepared.skipped_reason == "fully_quarantined",
+            chunks=len(prepared.pieces),
+            quarantined_chunks=prepared.quarantined,
+            new_bytes=len(text.encode("utf-8")),
+            previous_bytes=(
+                len(prepared.previous.content.encode("utf-8")) if prepared.previous else None
+            ),
+        )
+
+    async def _prepare(
         self,
         candidate: Document,
         *,
         text: str,
         segments: Sequence[ExtractedBlock] | None,
         metadata: Mapping[str, Any] | None,
-        started: float,
-    ) -> IngestionResult:
+    ) -> _Prepared:
+        """Everything ingest decides before it writes, and nothing it writes.
+
+        Shared by :meth:`ingest` (which then embeds and stores) and :meth:`assess` (which stops
+        here). Keeping one implementation is what makes an assessment trustworthy: it cannot drift
+        from what ingest really does.
+        """
         doc_id, owner_id, title = candidate.id, candidate.owner_id, candidate.title
-        source_type = candidate.source_type
 
         # Idempotency on content hash. Without this the nightly refresh creates a new version of
         # every unchanged document each night, which multiplies storage and forces a needless
@@ -277,10 +369,9 @@ class KnowledgeEngine:
             candidate.content_hash, owner_id=owner_id
         )
         if existing_by_hash is not None:
-            return IngestionResult(
-                document=existing_by_hash,
-                duration_ms=(time.perf_counter() - started) * 1000.0,
-                skipped_reason="unchanged_content",
+            return _Prepared(
+                document=existing_by_hash, previous=None, pieces=[], piece_metadata=[],
+                quarantined=0, skipped_reason="unchanged_content",
             )
 
         previous = await self._documents.get(doc_id)
@@ -331,23 +422,57 @@ class KnowledgeEngine:
             pieces = accepted_pieces
             piece_metadata = accepted_metadata
             if not pieces:
-                # Every chunk was instruction-shaped. Ingesting nothing is correct; recording
-                # why is what makes it diagnosable.
-                logger.warning(
-                    "document fully quarantined during ingestion",
-                    extra={"document": doc_id.value, "chunks": quarantined},
+                return _Prepared(
+                    document=document, previous=previous, pieces=[], piece_metadata=[],
+                    quarantined=quarantined, skipped_reason="fully_quarantined",
                 )
-                await self._publish(
-                    DocumentIngested(
-                        document_id=doc_id, version=document.version, chunks=0,
-                        source_type=str(source_type), owner_id=owner_id, quarantined=True,
-                    )
+
+        return _Prepared(
+            document=document, previous=previous, pieces=list(pieces),
+            piece_metadata=list(piece_metadata), quarantined=quarantined,
+        )
+
+    async def _ingest_serialised(
+        self,
+        candidate: Document,
+        *,
+        text: str,
+        segments: Sequence[ExtractedBlock] | None,
+        metadata: Mapping[str, Any] | None,
+        started: float,
+    ) -> IngestionResult:
+        doc_id, owner_id = candidate.id, candidate.owner_id
+        source_type = candidate.source_type
+
+        prepared = await self._prepare(candidate, text=text, segments=segments, metadata=metadata)
+        document, previous = prepared.document, prepared.previous
+        pieces, piece_metadata, quarantined = (
+            prepared.pieces, prepared.piece_metadata, prepared.quarantined
+        )
+        if prepared.skipped_reason == "unchanged_content":
+            return IngestionResult(
+                document=document,
+                duration_ms=(time.perf_counter() - started) * 1000.0,
+                skipped_reason="unchanged_content",
+            )
+        if prepared.skipped_reason == "fully_quarantined":
+            # Every chunk was instruction-shaped. Ingesting nothing is correct; recording
+            # why is what makes it diagnosable.
+            logger.warning(
+                "document fully quarantined during ingestion",
+                extra={"document": doc_id.value, "chunks": quarantined},
+            )
+            await self._publish(
+                DocumentIngested(
+                    document_id=doc_id, version=document.version, chunks=0,
+                    source_type=str(source_type), owner_id=owner_id, quarantined=True,
                 )
-                return IngestionResult(
-                    document=document, quarantined=quarantined,
-                    duration_ms=(time.perf_counter() - started) * 1000.0,
-                    skipped_reason="fully_quarantined",
-                )
+            )
+            return IngestionResult(
+                document=document, quarantined=quarantined,
+                duration_ms=(time.perf_counter() - started) * 1000.0,
+                skipped_reason="fully_quarantined",
+            )
 
         chunks = build_chunks(document, pieces, chunk_metadata=piece_metadata or None)
 

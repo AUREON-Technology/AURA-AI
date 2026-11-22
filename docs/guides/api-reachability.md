@@ -41,15 +41,15 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | GET | `/api/v3/admin/control/overview` | — | `aura_admin/app/(console)/settings/page.tsx:149` | — | called |  |
 | POST | `/api/v3/admin/control/platforms/{platform}/credential` | — | `aura_admin/app/(console)/settings/page.tsx:47` | — | called |  |
 | POST | `/api/v3/admin/control/platforms/{platform}/disconnect` | — | `aura_admin/app/(console)/settings/page.tsx:60` | — | called |  |
-| GET | `/api/v3/admin/control/railway` | — | `aura_admin/app/(console)/settings/railway/page.tsx:382` | — | called |  |
+| GET | `/api/v3/admin/control/railway` | — | `aura_admin/app/(console)/settings/railway/page.tsx:388` | — | called |  |
 | GET | `/api/v3/admin/control/railway/services/{service_id}/deployments` | — | `aura_admin/app/(console)/settings/railway/page.tsx:193` | — | called |  |
 | GET | `/api/v3/admin/control/railway/services/{service_id}/deployments/{deployment_id}/logs` | — | `aura_admin/app/(console)/settings/railway/page.tsx:146` | — | called |  |
-| POST | `/api/v3/admin/control/railway/services/{service_id}/redeploy` | — | `aura_admin/app/(console)/settings/railway/page.tsx:230` | — | called |  |
-| POST | `/api/v3/admin/control/railway/services/{service_id}/restart` | — | `aura_admin/app/(console)/settings/railway/page.tsx:231` | — | called |  |
-| POST | `/api/v3/admin/control/railway/services/{service_id}/rollback` | — | `aura_admin/app/(console)/settings/railway/page.tsx:240` | — | called |  |
+| POST | `/api/v3/admin/control/railway/services/{service_id}/redeploy` | — | `aura_admin/app/(console)/settings/railway/page.tsx:233` | — | called |  |
+| POST | `/api/v3/admin/control/railway/services/{service_id}/restart` | — | `aura_admin/app/(console)/settings/railway/page.tsx:234` | — | called |  |
+| POST | `/api/v3/admin/control/railway/services/{service_id}/rollback` | — | `aura_admin/app/(console)/settings/railway/page.tsx:243` | — | called |  |
 | GET | `/api/v3/admin/control/railway/services/{service_id}/variables` | — | `aura_admin/app/(console)/settings/aura/page.tsx:217`, `aura_admin/app/(console)/settings/railway/page.tsx:192` (+1) | — | called |  |
 | POST | `/api/v3/admin/control/railway/services/{service_id}/variables` | — | `aura_admin/app/(console)/settings/aura/page.tsx:217`, `aura_admin/app/(console)/settings/railway/page.tsx:192` (+1) | — | called |  |
-| POST | `/api/v3/admin/control/railway/services/{service_id}/variables/validate` | — | `aura_admin/app/(console)/settings/aura/page.tsx:213`, `aura_admin/app/(console)/settings/railway/page.tsx:283` | — | called |  |
+| POST | `/api/v3/admin/control/railway/services/{service_id}/variables/validate` | — | `aura_admin/app/(console)/settings/aura/page.tsx:213`, `aura_admin/app/(console)/settings/railway/page.tsx:289` | — | called |  |
 | GET | `/api/v3/admin/control/settings` | — | `aura_admin/app/(console)/settings/aura/page.tsx:168` | — | called |  |
 | GET | `/api/v3/admin/control/space` | — | `aura_admin/app/(console)/settings/space/page.tsx:224` | — | called |  |
 | POST | `/api/v3/admin/control/space/hardware` | — | `aura_admin/app/(console)/settings/space/page.tsx:331` | — | called |  |

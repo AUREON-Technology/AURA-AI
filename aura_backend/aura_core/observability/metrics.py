@@ -468,9 +468,23 @@ class Metrics:
             "Seconds since the knowledge index was last promoted.",
             multiprocess_mode="livemax",
         )
+        self.knowledge_index_mismatch = self._gauge(
+            "knowledge_index_mismatch",
+            "1 when the published knowledge index was built by a different embedding model "
+            "(retrieval returns nothing), else 0. Set whenever readiness is evaluated.",
+            multiprocess_mode="livemax",
+        )
         self.refresh_last_success_timestamp = self._gauge(
             "refresh_last_success_timestamp_seconds",
-            "Unix time of the last successful refresh.",
+            "Unix time of the last successful refresh: no source failed to fetch and the index "
+            "phase did not stall. A source held back by the content gate does not make a run "
+            "unsuccessful; see refresh_sources_held.",
+            multiprocess_mode="livemax",
+        )
+        self.refresh_sources_held = self._gauge(
+            "refresh_sources_held",
+            "Sources the last refresh held back at the content gate (nothing from them was "
+            "written). Zero when every source passed.",
             multiprocess_mode="livemax",
         )
         self.refresh_duration = self._histogram(
