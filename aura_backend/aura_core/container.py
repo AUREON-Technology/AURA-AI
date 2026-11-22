@@ -344,6 +344,12 @@ class Container:
         # `api/v3.py`'s `/knowledge/documents/upload` -- so it lives here as its own attribute
         # rather than as a `KnowledgeEngine` constructor argument.
         self.ocr_engine = self._build_ocr_engine()
+        # The developer tools in `tools/open/` read PDFs through one shared reader; handing it the same
+        # engine means a scanned page is recognised there too instead of being reported as unread.
+        # `None` (OCR disabled or tesseract missing) leaves them on the "name the unread pages" path.
+        from .tools.open._input import configure_ocr_engine
+
+        configure_ocr_engine(self.ocr_engine)
         # Phase F2: neither speech port feeds an engine constructor either -- both are reached
         # directly from `api/v3.py`'s `/voice/*` routes.
         self.stt_engine = self._build_stt_engine()

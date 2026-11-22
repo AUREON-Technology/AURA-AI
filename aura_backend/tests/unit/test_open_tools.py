@@ -379,3 +379,121 @@ class TestGeneratorAndVerifier:
 
     def test_timeout_is_clamped(self) -> None:
         assert Gen._bounded_timeout(10**9) == 600 and Gen._bounded_timeout("junk") == 30 and Gen._bounded_timeout(-5) == 1
+
+
+# -- OCR: scanned pages are recognised when the platform's engine is available ----------------------
+
+
+class _FakeOcr:
+    """An ``OcrEngine`` (the port): returns text keyed by page number."""
+
+    name = "fake-ocr"
+
+    def __init__(self, texts: dict[int, str] | None = None, *, delay: float = 0.0, fail: bool = False) -> None:
+        self.texts, self.delay, self.fail, self.calls = texts or {}, delay, fail, 0
+
+    async def image_text(self, image: bytes, *, page: int) -> str:
+        import asyncio
+
+        self.calls += 1
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if self.fail:
+            raise RuntimeError("engine down")
+        return self.texts.get(page, "")
+
+
+@pytest.fixture
+def pillow() -> None:
+    pytest.importorskip("PIL")
+
+
+def _scanned_pdf() -> bytes:
+    return _pdf([{"text": ["A normal page with plenty of ordinary prose"]}, {"image": True}, {"text": ["Last page of ordinary prose here"]}])
+
+
+class TestOcrOfScannedPages:
+    def test_a_scanned_page_is_recognised_and_marked_as_ocr(self, pillow: None) -> None:
+        engine = _FakeOcr({2: "الفاتورة الإجمالية مئة وعشرون جنيها OCR-MARKER"})
+        read = read_source_bytes(_scanned_pdf(), name="scan.pdf", ocr_engine=engine)
+        assert "OCR-MARKER" in read.text and "ordinary prose" in read.text
+        assert read.ocr_pages == (2,) and read.unreadable_pages == () and read.complete
+        assert read.text.index("normal page") < read.text.index("OCR-MARKER") < read.text.index("Last page")
+        assert "approximate" in read.warnings()[0] and read.describe()["ocr_pages"] == [2]
+
+    def test_without_an_engine_the_page_is_named_as_unread(self, pillow: None) -> None:
+        read = read_source_bytes(_scanned_pdf(), name="scan.pdf")
+        assert read.unreadable_pages == (2,) and not read.complete and "not configured" in read.warnings()[0]
+
+    def test_a_configured_engine_is_used_and_can_be_switched_off(self, pillow: None) -> None:
+        from aura_core.tools.open._input import configure_ocr_engine
+
+        configure_ocr_engine(_FakeOcr({2: "CONFIGURED-OCR"}))
+        try:
+            assert "CONFIGURED-OCR" in read_source_bytes(_scanned_pdf()).text
+        finally:
+            configure_ocr_engine(None)
+        assert read_source_bytes(_scanned_pdf()).unreadable_pages == (2,)
+
+    def test_an_engine_that_fails_leaves_the_page_unread_without_raising(self, pillow: None) -> None:
+        read = read_source_bytes(_scanned_pdf(), ocr_engine=_FakeOcr(fail=True))
+        assert read.unreadable_pages == (2,) and not read.complete and "recognised no text" in read.warnings()[0]
+        assert "ordinary prose" in read.text  # the readable pages are still returned
+
+    def test_a_slow_engine_is_cut_off_by_the_budget(self, pillow: None) -> None:
+        started = time.time()
+        read = read_source_bytes(_scanned_pdf(), ocr_engine=_FakeOcr({2: "late"}, delay=30), ocr_time_budget_s=1)
+        assert time.time() - started < 10
+        assert read.unreadable_pages == (2,) and "did not finish within 1s" in read.warnings()[0]
+
+    async def test_it_works_from_inside_a_running_event_loop(self, pillow: None) -> None:
+        read = read_source_bytes(_scanned_pdf(), ocr_engine=_FakeOcr({2: "FROM-LOOP"}))
+        assert "FROM-LOOP" in read.text
+
+    def test_a_text_only_pdf_never_calls_the_engine(self, pillow: None) -> None:
+        engine = _FakeOcr({1: "x"})
+        read_source_bytes(_many_pages(3), ocr_engine=engine)
+        assert engine.calls == 0
+
+    def test_tools_get_ocr_through_the_shared_reader(self, pillow: None, tmp_path: Path) -> None:
+        path = tmp_path / "scan.pdf"
+        path.write_bytes(_pdf([{"image": True}]))
+        from aura_core.tools.open._input import configure_ocr_engine
+
+        configure_ocr_engine(_FakeOcr({1: f"token = '{SECRET}'"}))
+        try:
+            result = Scanner.scan_file(path)
+        finally:
+            configure_ocr_engine(None)
+        assert {f["rule_id"] for f in result["findings"]} >= {"SEC-KEY-OPENAI"}
+        assert result["input"]["ocr_pages"] == [1] and any("OCR" in w for w in result["warnings"])
+
+    def test_real_tesseract_reads_a_real_scanned_pdf(self, tmp_path: Path) -> None:
+        pytest.importorskip("PIL")
+        from aura_core.adapters.tesseract_ocr import TesseractOcrEngine, tesseract_available
+
+        if not tesseract_available():
+            pytest.skip("tesseract binary not on PATH")
+        import io
+
+        from PIL import Image, ImageDraw
+
+        image = Image.new("RGB", (900, 200), color="white")
+        ImageDraw.Draw(image).text((20, 80), "Invoice total forty two dollars", fill="black")
+        buf = io.BytesIO()
+        image.save(buf, format="PDF")
+        read = read_source_bytes(buf.getvalue(), name="scan.pdf", ocr_engine=TesseractOcrEngine(lang="eng"))
+        assert read.ocr_pages == (1,) and read.complete and "forty" in read.text.lower()
+
+
+def test_the_container_hands_its_ocr_engine_to_the_open_tools(pillow: None) -> None:
+    """Wiring: ``Container`` installs ``container.ocr_engine`` into the shared reader."""
+    from aura_core.config.settings import load_settings
+    from aura_core.container import Container
+    from aura_core.tools.open._input import configure_ocr_engine, get_ocr_engine
+
+    try:
+        container = Container(load_settings(refresh=True, validate=False))
+        assert get_ocr_engine() is container.ocr_engine  # None when OCR is disabled / tesseract is absent
+    finally:
+        configure_ocr_engine(None)
