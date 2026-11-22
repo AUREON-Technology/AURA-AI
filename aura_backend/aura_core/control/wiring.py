@@ -5,9 +5,10 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlsplit
 
-from ..config.external_inference import is_hosted_open_weight_host
+from ..config.external_inference import is_hosted_open_weight_host, is_remote_inference_host
+from ..domain.control import KeySlot
 
-__all__ = ["cloudflare_api_root"]
+__all__ = ["cloudflare_api_root", "key_slots"]
 
 
 def cloudflare_api_root(providers: Any) -> str:
@@ -24,3 +25,29 @@ def cloudflare_api_root(providers: Any) -> str:
         if parts.scheme == "https" and marker in parts.path and is_hosted_open_weight_host(parts.hostname or ""):
             return f"https://{parts.hostname}{parts.path.split(marker, 1)[0]}/client/v4"
     return ""
+
+
+def key_slots(providers: Any) -> list[KeySlot]:
+    """One slot per configured provider whose key is read from a variable (``api_key_env``).
+
+    A Workers AI slot is recognised by its base URL (``.../client/v4/accounts/<id>/...`` on a
+    sanctioned host), which also names the account a new token must be scoped to; a Space by its
+    host being a gated remote-inference host. No host is named here (ADR-030).
+    """
+    slots: list[KeySlot] = []
+    for provider in providers:
+        env = getattr(provider, "api_key_env", "") or ""
+        if not env:
+            continue
+        parts = urlsplit(getattr(provider, "base_url", "") or "")
+        host = (parts.hostname or "").lower()
+        account = ""
+        marker = "/client/v4/accounts/"
+        if parts.scheme == "https" and marker in parts.path and is_hosted_open_weight_host(host):
+            account = parts.path.split(marker, 1)[1].split("/", 1)[0]
+        slots.append(KeySlot(
+            name=provider.name, kind=getattr(provider, "kind", ""), api_key_env=env, host=host,
+            remote_host=is_remote_inference_host(host) is not None, account_id=account,
+        ))
+    return slots
+

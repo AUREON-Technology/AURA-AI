@@ -404,11 +404,20 @@ class Reconciler:
             change.change_id, status=ChangeStatus.ROLLING_BACK, updated_at=self._now(), reason=reason,
         )
         try:
+            companion = None
             if change.restore_ref:
                 values = json.loads((await self._vault.get(change.restore_ref)).reveal())
+                companion = values.pop("__companion__", None)
                 await platform.restore_variables(change.target, values)
             if change.previous_deployment_id:
                 await platform.rollback(change.target, change.previous_deployment_id)
+            if companion:
+                # The other side of a key rotated on two platforms (stage 4): the Space gets the
+                # key back that the restored gateway still sends.
+                other = self._platforms.get(Platform(companion["platform"]))
+                if other is None:
+                    raise RuntimeError("no platform to restore the companion change on")
+                await other.set_secrets(companion["target"], companion["secrets"])
         except Exception as exc:
             logger.error("automatic rollback failed", extra={"error": type(exc).__name__})
             return await self._close(

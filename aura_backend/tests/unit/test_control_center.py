@@ -101,6 +101,11 @@ ROUTES = [
     ("POST", "/api/v3/admin/control/space/restart", {"confirm": "space"}),
     ("POST", "/api/v3/admin/control/space/hardware", {"hardware": "l4x1", "confirm": "space"}),
     ("POST", "/api/v3/admin/control/space/sleep-time", {"seconds": 3600, "confirm": "space"}),
+    ("GET", "/api/v3/admin/control/keys", None),
+    ("GET", "/api/v3/admin/control/keys/cloudflare/tokens", None),
+    ("POST", "/api/v3/admin/control/keys/hosted1/replace", {"value": "k", "confirm": "hosted1"}),
+    ("POST", "/api/v3/admin/control/keys/hosted1/rotate", {"confirm": "hosted1"}),
+    ("POST", "/api/v3/admin/control/keys/cloudflare/tokens/cf-1/revoke", {"confirm": "x"}),
 ]
 
 
@@ -129,7 +134,8 @@ class TestOnlyTheSuperAdmin:
         }
         swept = {
             (m, p.replace("/hf_space/", "/{platform}/").replace("/svc-gw/", "/{service_id}/")
-                 .replace("/dep-1/", "/{deployment_id}/"))
+                 .replace("/dep-1/", "/{deployment_id}/").replace("/hosted1/", "/{slot}/")
+                 .replace("/cf-1/", "/{token_id}/"))
             for m, p, _ in ROUTES
         }
         assert registered == swept

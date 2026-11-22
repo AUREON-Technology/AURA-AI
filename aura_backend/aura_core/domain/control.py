@@ -22,6 +22,7 @@ __all__ = [
     "StepUpGrant",
     "PROTECTED_VARIABLES",
     "SPACE_HARDWARE",
+    "KeySlot",
     "SECRET_NAME_PATTERN",
     "grant_digest",
     "is_secret_name",
@@ -64,6 +65,23 @@ SPACE_HARDWARE: tuple[str, ...] = (
     "a10g-small", "a10g-large", "a10g-largex2", "a10g-largex4", "l40sx1", "l40sx4", "l40sx8",
     "a100-large", "a100x4", "a100x8",
 )
+
+
+@dataclass(frozen=True, slots=True)
+class KeySlot:
+    """A provider whose API key the control center can manage (stage 4). Never the key.
+
+    ``remote_host`` is set when the provider's host is a gated remote-inference host (a Space);
+    ``account_id`` when it is a Workers AI slot (its base URL names the Cloudflare account).
+    """
+
+    name: str
+    kind: str
+    #: The variable on the gateway that holds the key (``api_key_env``).
+    api_key_env: str
+    host: str = ""
+    remote_host: bool = False
+    account_id: str = ""
 
 
 class ChangeStatus(str, enum.Enum):

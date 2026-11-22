@@ -33,7 +33,10 @@ from ..domain.errors import NotFoundError, ValidationError
 from ..ports.control_plane import DeploymentSummary, RailwayApi, ServiceSummary, SettingsValidator
 from .service import ControlService, _confirm
 
-__all__ = ["RailwayService", "change_json"]
+__all__ = ["COMPANION_KEY", "RailwayService", "change_json"]
+
+#: The entry in a change's restore values that holds a second platform's restore (stage 4).
+COMPANION_KEY = "__companion__"
 
 _NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _MAX_VALUE = 32_768
@@ -254,29 +257,37 @@ class RailwayService:
     # -- acting ------------------------------------------------------------------------------
     async def apply_variables(
         self, service_id: str, changes: Mapping[str, str | None], *, actor: str, confirm: str | None,
+        action: str = "set_variables", extra_detail: Mapping[str, Any] | None = None,
+        companion: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """``companion`` is a second platform's restore (stage 4: the Space's key when both
+        sides of a key rotate): ``{"platform": ..., "target": ..., "secrets": {name: old}}``. It
+        is kept in the vault with the variables and put back by the reconciler on a rollback."""
         service = await self.service(service_id)
         _confirm(service.name, confirm)
         await self._control.check_write_cap(actor)
         await self._not_busy(service)
         clean, raw, aura = await self._check(service, changes)
-        restore = {name: raw.get(name) for name in clean}
+        restore: dict[str, Any] = {name: raw.get(name) for name in clean}
+        if companion:
+            restore[COMPANION_KEY] = dict(companion)
         previous = await self._last_good(service_id)
-        detail = {"service": service.name, "variables": self._redacted(clean, raw), "settings_checked": aura}
+        detail = {"service": service.name, "variables": self._redacted(clean, raw), "settings_checked": aura,
+                  **dict(extra_detail or {})}
         await self._api.set_variables(service_id, clean)
         try:
             deployment_id = await self._api.redeploy(service_id)
         except Exception:
             # Nothing is running the new values yet: put the old ones back before saying so.
-            await self._api.set_variables(service_id, restore)
+            await self._api.set_variables(service_id, {k: v for k, v in restore.items() if k != COMPANION_KEY})
             await self._control.journal(
-                actor=actor, platform=Platform.RAILWAY, target=service_id, action="set_variables",
+                actor=actor, platform=Platform.RAILWAY, target=service_id, action=action,
                 detail=detail, status=ChangeStatus.FAILED,
                 reason="the redeploy could not be started; the variables were put back",
             )
             raise
         record = await self._control.watch(
-            actor=actor, platform=Platform.RAILWAY, target=service_id, action="set_variables",
+            actor=actor, platform=Platform.RAILWAY, target=service_id, action=action,
             detail=detail, deployment_id=deployment_id, previous_deployment_id=previous,
             restore_values=restore,
         )

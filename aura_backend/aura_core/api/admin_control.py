@@ -11,7 +11,8 @@ the change journal. Stage 2: Railway -- services, variables (validated, then app
 redeploy that the reconciler watches), redeploy, restart, rollback, deployments and logs; and the
 AURA settings view reads, and edits, the gateway's own Railway variables. Stage 3: the GPU
 Space -- status, variables (watched and undone on failure), write-only secrets, pause, restart,
-rebuild, hardware, sleep time and logs.
+rebuild, hardware, sleep time and logs. Stage 4: provider keys -- replace, rotate both sides
+(gateway and Space), create a new Cloudflare key and revoke unused ones.
 """
 
 # No `from __future__ import annotations`: request models are defined inside the register
@@ -106,6 +107,12 @@ def register_control_ops(
         model_config = ConfigDict(extra="forbid")
 
         seconds: int
+        confirm: str = Field(default="", max_length=128)
+
+    class KeyReplaceRequest(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        value: str = Field(min_length=1, max_length=8192)
         confirm: str = Field(default="", max_length=128)
 
     class RollbackRequest(BaseModel):
@@ -372,4 +379,36 @@ def register_control_ops(
     async def space_sleep_time(payload: SpaceSleepRequest, request: Request, caller=Depends(principal)) -> Any:
         return await space_write(request, caller, "sleep_time", lambda: container.space.set_sleep_time(
             payload.seconds, actor=actor(caller), confirm=payload.confirm,
+        ))
+
+    # -- Provider keys (stage 4) ------------------------------------------------------------
+    @router.get("/admin/control/keys")
+    async def keys_overview(caller=Depends(principal)) -> Any:
+        require_super_admin(caller)
+        return ok(await container.keys.overview())
+
+    @router.get("/admin/control/keys/cloudflare/tokens")
+    async def keys_cloudflare_tokens(caller=Depends(principal)) -> Any:
+        require_super_admin(caller)
+        return ok({"tokens": await container.keys.cloudflare_tokens()})
+
+    async def keys_write(request: Any, caller: Any, action: str, target: str, run: Callable) -> Any:
+        return await railway_write(request, caller, action, target, run, audit_prefix="admin.control.keys")
+
+    @router.post("/admin/control/keys/{slot}/replace")
+    async def keys_replace(slot: str, payload: KeyReplaceRequest, request: Request, caller=Depends(principal)) -> Any:
+        return await keys_write(request, caller, "replace", slot, lambda: container.keys.replace(
+            slot, payload.value, actor=actor(caller), confirm=payload.confirm,
+        ))
+
+    @router.post("/admin/control/keys/{slot}/rotate")
+    async def keys_rotate(slot: str, payload: ServiceConfirmRequest, request: Request, caller=Depends(principal)) -> Any:
+        return await keys_write(request, caller, "rotate", slot, lambda: container.keys.rotate(
+            slot, actor=actor(caller), confirm=payload.confirm,
+        ))
+
+    @router.post("/admin/control/keys/cloudflare/tokens/{token_id}/revoke")
+    async def keys_revoke(token_id: str, payload: ServiceConfirmRequest, request: Request, caller=Depends(principal)) -> Any:
+        return await keys_write(request, caller, "revoke", token_id, lambda: container.keys.revoke_cloudflare(
+            token_id, actor=actor(caller), confirm=payload.confirm,
         ))

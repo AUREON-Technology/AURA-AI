@@ -1006,10 +1006,36 @@ class Container:
         self.railway_api = railway_api
         self.settings_validator = validator
         # Railway sets RAILWAY_SERVICE_ID in every service's container: the gateway's own id is
-        # the service whose variables the AURA settings tab edits.
+        # the service whose variables the AURA settings tab (and every key, stage 4) edits.
         self.railway = RailwayService(
             control=self.control, api=railway_api, validator=validator,
             self_service_id=(os.environ.get("RAILWAY_SERVICE_ID") or "").strip(),
+        )
+
+        # Stage 4: provider keys. A key is a gateway variable; the Cloudflare management token
+        # (stored above) creates and revokes Workers AI keys at the API root derived from the
+        # configured Workers AI provider.
+        from .control.keys import KeysService
+        from .control.wiring import key_slots
+
+        if settings.environment.is_production_like:
+            from .adapters.cloudflare_tokens import HttpCloudflareTokens
+
+            async def cloudflare_token() -> str:
+                return (await self.control.token(Platform.CLOUDFLARE)).reveal()
+
+            cloudflare_api: Any = HttpCloudflareTokens(
+                token_source=cloudflare_token, api_root=cloudflare_api_root(settings.llm.providers),
+            )
+        else:
+            from .adapters.cloudflare_tokens import InMemoryCloudflareTokens
+
+            cloudflare_api = InMemoryCloudflareTokens()
+        self.cloudflare_tokens = cloudflare_api
+        self.keys = KeysService(
+            control=self.control, store=store, railway=self.railway, space=self.space,
+            space_api=space_api, cloudflare=cloudflare_api, slots=key_slots(settings.llm.providers),
+            provider_health=lambda: self.router.stats(),
         )
         self.control_reconciler = Reconciler(
             store=store, vault=vault,

@@ -25,6 +25,8 @@ __all__ = [
     "SpaceApi",
     "SpaceSecretInfo",
     "SpaceStatus",
+    "CloudflareToken",
+    "CloudflareTokens",
 ]
 
 
@@ -269,6 +271,31 @@ class SpaceApi(DeploymentPlatform, Protocol):
     async def set_sleep_time(self, space_id: str, seconds: int) -> None: ...
 
     async def logs(self, space_id: str, *, kind: str = "run", limit: int = 200) -> Sequence[str]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class CloudflareToken:
+    token_id: str
+    name: str
+    status: str = ""
+    issued_on: datetime | None = None
+
+
+@runtime_checkable
+class CloudflareTokens(Protocol):
+    """Cloudflare API tokens, reached with the stored management token (stage 4)."""
+
+    async def identify(self, token: str) -> str | None:
+        """The id of the token ``token`` is, or ``None`` when Cloudflare does not know it."""
+        ...
+
+    async def list(self) -> Sequence[CloudflareToken]: ...
+
+    async def create(self, *, name: str, account_id: str) -> tuple[str, str]:
+        """A new token for Workers AI on that account: ``(id, value)``. The value is shown once."""
+        ...
+
+    async def revoke(self, token_id: str) -> None: ...
 
 
 #: Free-form, redacted detail a change carries (variable names, secret flags, deployment ids).
