@@ -17,15 +17,25 @@ class NotebookReader:
     """Reader for parsing Jupyter (.ipynb) notebooks, extracting code, markdown, outputs, and stripping outputs."""
 
     @staticmethod
+    def _read(path_or_json: str) -> str:
+        """The notebook text: the file's contents if the argument names a file, else the argument.
+
+        Probing a long JSON string as a path raises ``OSError`` (``File name too long``) rather
+        than returning False, which made every inline notebook over ~255 characters unreadable.
+        """
+        try:
+            candidate = Path(path_or_json)
+            if candidate.is_file():
+                return candidate.read_text(encoding="utf-8")
+        except (OSError, ValueError):
+            pass  # too long to be a file name, or contains a NUL: it is JSON text
+        return path_or_json
+
+    @staticmethod
     def parse_notebook(path_or_json: str) -> Dict[str, Any]:
         """Parse notebook JSON and separate code cells and markdown cells cleanly."""
-        candidate = Path(path_or_json)
         try:
-            if candidate.exists() and candidate.is_file():
-                raw_text = candidate.read_text(encoding="utf-8")
-            else:
-                raw_text = path_or_json
-            nb = json.loads(raw_text)
+            nb = json.loads(NotebookReader._read(path_or_json))
         except Exception as exc:
             return {
                 "valid": False,
@@ -122,11 +132,11 @@ class NotebookReader:
     @staticmethod
     def extract_cell_outputs(path_or_json: str) -> List[Dict[str, Any]]:
         """Extract captured stdout, stderr, errors, and image display metadata from notebook cells."""
-        candidate = Path(path_or_json)
         try:
-            raw_text = candidate.read_text(encoding="utf-8") if candidate.exists() and candidate.is_file() else path_or_json
-            nb = json.loads(raw_text)
+            nb = json.loads(NotebookReader._read(path_or_json))
         except Exception:
+            return []
+        if not isinstance(nb, dict):
             return []
 
         outputs = []
@@ -154,9 +164,7 @@ class NotebookReader:
     @staticmethod
     def strip_notebook_outputs(path_or_json: str) -> str:
         """Clear all output cells and execution counts for clean git commit diffs."""
-        candidate = Path(path_or_json)
-        raw_text = candidate.read_text(encoding="utf-8") if candidate.exists() and candidate.is_file() else path_or_json
-        nb = json.loads(raw_text)
+        nb = json.loads(NotebookReader._read(path_or_json))  # invalid JSON raises ValueError
 
         for cell in nb.get("cells", []):
             if cell.get("cell_type") == "code":

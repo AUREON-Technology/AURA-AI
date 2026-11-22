@@ -164,29 +164,33 @@ class QualityGateAggregator:
         arch_result: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Ingest tool result payloads from across the test suite and evaluate release readiness."""
-        tests_ok = True
-        if test_result:
+        # Fails closed, like ``evaluate_checks``: a result that was not supplied is a check that
+        # was not run (``None``), never a pass. Complexity and lint are not computed from any of
+        # these payloads, so they are reported as not run rather than claimed as passing, and are
+        # therefore not required here; architecture is required only when its result is given.
+        tests_ok = None
+        if test_result is not None:
             tests_ok = test_result.get("failed", 0) == 0 and test_result.get("passed", 0) > 0
 
-        sec_ok = True
-        if sec_result:
+        sec_ok = None
+        if sec_result is not None:
             sec_ok = len(sec_result.get("findings", [])) == 0 and sec_result.get("clean", True)
 
-        cov_ok = True
-        if cov_result:
-            cov_ok = float(cov_result.get("coverage_ratio", 1.0)) >= 0.70
+        cov_ok = None
+        if cov_result is not None:
+            cov_ok = float(cov_result.get("coverage_ratio", 0.0)) >= 0.70
 
-        arch_ok = True
-        if arch_result:
+        arch_ok = None
+        if arch_result is not None:
             arch_ok = arch_result.get("is_consistent", True) and len(arch_result.get("violations", [])) == 0
 
+        required = ["security", "tests", "coverage"] + (["architecture"] if arch_result is not None else [])
         return cls.build_release_readiness_report(
             security_pass=sec_ok,
             tests_pass=tests_ok,
             coverage_pass=cov_ok,
-            complexity_pass=True,
-            lint_pass=True,
             architecture_pass=arch_ok,
+            required_checks=required,
         )
 
     @staticmethod

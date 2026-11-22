@@ -16,6 +16,8 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
 
+from ._net import http_url_error
+
 # ---------------------------------------------------------------------------
 # Allowlist of permitted executable names for start_server.
 # Only these binaries may be launched; arbitrary shell strings are rejected.
@@ -231,6 +233,9 @@ class DevServerManager:
     @staticmethod
     def check_http_health(url: str, timeout_seconds: float = 3.0) -> Dict[str, Any]:
         """Perform a lightweight HTTP GET health probe against a running server URL."""
+        problem = http_url_error(url)
+        if problem:
+            return {"healthy": False, "url": url, "status_code": 0, "error": problem}
         try:
             with urllib.request.urlopen(url, timeout=timeout_seconds) as resp:
                 status_code = resp.getcode()

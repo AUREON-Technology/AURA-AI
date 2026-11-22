@@ -93,7 +93,9 @@ class AutonomousResearchAndSynthesisTool:
         sentences = re.split(r"(?<=[.!?])\s+", text.strip())
         empirical_findings: List[Dict[str, Any]] = []
 
-        num_pat = re.compile(r"\b\d+(?:\.\d+)?(?:%|x|ms|s|gb|mb|kb|users|requests)\b", re.I)
+        # `%` is not a word character, so it cannot be followed by `\b` ("80% of users" has no boundary
+        # after the `%`); only the alphabetic units need one.
+        num_pat = re.compile(r"\b\d+(?:\.\d+)?(?:%|(?:x|ms|s|gb|mb|kb|users|requests)\b)", re.I)
 
         for s in sentences:
             s_clean = s.strip()

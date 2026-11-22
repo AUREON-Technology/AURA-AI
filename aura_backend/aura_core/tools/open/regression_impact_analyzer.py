@@ -115,6 +115,11 @@ class RegressionImpactAnalyzer:
                         modules.add(dots)
                 elif node.module:
                     modules.add(node.module)
+                # `from pkg import name` may import the submodule pkg.name.
+                base = ("." * (node.level or 0)) + (node.module or "")
+                for alias in node.names:
+                    if alias.name != "*":
+                        modules.add(f"{base}.{alias.name}" if node.module else f"{base}{alias.name}")
         return sorted(modules)
 
     @classmethod
@@ -136,6 +141,15 @@ class RegressionImpactAnalyzer:
         for start in range(len(parts)):
             fragments.append(".".join(parts[start:]))
         return fragments
+
+    @staticmethod
+    def _imports_fragment(module: str, fragment: str) -> bool:
+        """True when ``fragment`` is a run of whole dotted segments of ``module``.
+
+        A substring test matched ``utility_extra`` and ``my_util_helper`` as importers of ``util``.
+        Leading dots of a relative import are ignored.
+        """
+        return f".{fragment}." in f".{module.lstrip('.')}."
 
     @classmethod
     def find_reverse_dependents(
@@ -167,7 +181,7 @@ class RegressionImpactAnalyzer:
 
             imported = cls.extract_imported_modules_from_file(str(py_path))
             if any(
-                fragment in mod
+                cls._imports_fragment(mod, fragment)
                 for mod in imported
                 for fragment in target_module_fragments
             ):

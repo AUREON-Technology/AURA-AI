@@ -12,6 +12,8 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
 
+from ._net import http_url_error
+
 
 class BrowserSubagent:
     """Browser automation subagent interface backed by Playwright when available, with fallback HTTP diagnostics."""
@@ -32,6 +34,9 @@ class BrowserSubagent:
     @classmethod
     def check_url_accessibility(cls, url: str, timeout_seconds: float = 5.0) -> Dict[str, Any]:
         """Perform lightweight HTTP GET probe to verify destination responsiveness before launching browser."""
+        problem = http_url_error(url)
+        if problem:
+            return {"accessible": False, "status_code": 0, "error": problem, "url": url}
         try:
             req = urllib.request.Request(
                 url,

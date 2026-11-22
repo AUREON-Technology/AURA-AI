@@ -58,7 +58,20 @@ class ArtifactFeedbackIngestor:
         lower = user_feedback.strip().lower()
 
         remove_triggers = ("remove ", "delete ", "drop ", "skip ")
+        removed_by_number = False
         if any(trig in lower for trig in remove_triggers):
+            # "remove step 2": by position (1-based). The keyword filter below ignores words of
+            # three characters or fewer, so a step number never reached it.
+            numbered = re.search(r"\b(?:step|task|item)\s*#?(\d+)\b", lower)
+            if numbered:
+                position = int(numbered.group(1))
+                if 1 <= position <= len(revised):
+                    removed = revised.pop(position - 1)
+                    actions.append(f"Removed step {position}: '{removed}'")
+                else:
+                    actions.append(f"There is no step {position} in a plan of {len(revised)} steps.")
+                removed_by_number = True  # do not also run the keyword removal on the same words
+        if not removed_by_number and any(trig in lower for trig in remove_triggers):
             keywords = [
                 w.strip(".,!?") for w in lower.split()
                 if len(w.strip(".,!?")) > 3 and w not in {"remove", "delete", "step", "task", "drop", "skip"}

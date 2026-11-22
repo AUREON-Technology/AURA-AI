@@ -3,6 +3,8 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
 
+from ._net import http_url_error
+
 
 class DeploymentReleaseManager:
     """Release and deployment manager for Docker/compose workflows, readiness probing, rollback planning, and risk calculation."""
@@ -139,6 +141,11 @@ class DeploymentReleaseManager:
         all_ready = True
 
         for url in endpoints:
+            problem = http_url_error(url)
+            if problem:
+                all_ready = False
+                results.append({"endpoint": url, "ready": False, "error": problem})
+                continue
             try:
                 req = urllib.request.Request(url, headers={"User-Agent": "AURA-Readiness-Probe/1.0"})
                 with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:

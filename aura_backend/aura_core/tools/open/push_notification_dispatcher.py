@@ -15,6 +15,8 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
 
+from ._net import http_url_error, open_no_redirect, public_http_url_error
+
 
 class PushNotificationDispatcher:
     """Dispatcher for building and sending task, CI, and approval notifications to Webhooks, Slack, Discord, and ntfy."""
@@ -138,8 +140,18 @@ class PushNotificationDispatcher:
         payload: Dict[str, Any],
         headers: Optional[Dict[str, str]] = None,
         timeout_seconds: float = 5.0,
+        allow_private: bool = False,
     ) -> Dict[str, Any]:
-        """Send JSON payload to target webhook URL."""
+        """Send JSON payload to target webhook URL.
+
+        Only ``http``/``https`` URLs whose host resolves to public addresses are accepted, and a
+        redirect is not followed (it could lead to an internal address). ``allow_private`` lifts
+        the address check, not the scheme check, for a caller that deliberately targets a local
+        service.
+        """
+        problem = http_url_error(url) if allow_private else public_http_url_error(url)
+        if problem:
+            return {"success": False, "status_code": 0, "error": problem, "url": url}
         req_headers = {"Content-Type": "application/json"}
         if headers:
             req_headers.update(headers)
@@ -147,7 +159,7 @@ class PushNotificationDispatcher:
         try:
             body = json.dumps(payload).encode("utf-8")
             req = urllib.request.Request(url, data=body, headers=req_headers, method="POST")
-            with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+            with open_no_redirect(req, timeout_seconds) as resp:
                 code = resp.getcode()
                 return {
                     "success": 200 <= code < 300,

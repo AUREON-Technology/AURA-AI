@@ -19,6 +19,23 @@ from typing import Any, Dict, List, Optional
 class ScopeAndDiffGuard:
     """Guard for analyzing git diffs against task scope, change budgets, forbidden paths, and secret leaks."""
 
+    @staticmethod
+    def _normalise_path(path: str) -> str:
+        """``path`` with ``\\`` as ``/`` and any leading ``./`` or ``/`` removed.
+
+        ``str.lstrip("./")`` strips *characters*, so ``.env`` became ``env`` and ``.github/x``
+        became ``github/x``; only the literal ``./`` prefix is dropped here.
+        """
+        text = path.replace("\\", "/")
+        while text.startswith("./"):
+            text = text[2:]
+        return text.lstrip("/")
+
+    @staticmethod
+    def _strip_prefix(path: str, prefix: str) -> str:
+        """Drop one leading ``prefix`` (``b/``), not every leading ``b`` or ``/`` character."""
+        return path[len(prefix):] if path.startswith(prefix) else path
+
     SECRET_PATTERNS = [
         (re.compile(r"-----BEGIN (RSA|EC|DSA|OPENSSH|PRIVATE) KEY-----"), "Private cryptographic key"),
         (re.compile(r"(?i)(api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*['\"][A-Za-z0-9_\-\.]{12,}['\"]"), "Hardcoded API secret token"),
@@ -44,7 +61,7 @@ class ScopeAndDiffGuard:
         max_lines_changed: int = 300,
     ) -> Dict[str, Any]:
         """Validate modified paths and total added/deleted line counts against task scope."""
-        allowed_norm = [Path(p).as_posix().lstrip("./") for p in (allowed_files or [])]
+        allowed_norm = [ScopeAndDiffGuard._normalise_path(Path(p).as_posix()) for p in (allowed_files or [])]
         modified_files: List[str] = []
         added_lines = 0
         deleted_lines = 0
@@ -53,7 +70,7 @@ class ScopeAndDiffGuard:
         for raw_line in diff_text.splitlines():
             line = raw_line.strip()
             if line.startswith("+++ b/"):
-                fpath = Path(line[6:].strip()).as_posix().lstrip("./")
+                fpath = ScopeAndDiffGuard._normalise_path(Path(line[6:].strip()).as_posix())
                 if fpath != "/dev/null" and fpath not in modified_files:
                     modified_files.append(fpath)
                     if allowed_norm and not any(
@@ -86,25 +103,53 @@ class ScopeAndDiffGuard:
 
     @staticmethod
     def parse_diff_files(diff_text: str) -> List[Dict[str, Any]]:
-        """Parse git diff text into structured file-level metrics."""
+        """Parse a unified diff into structured file-level metrics.
+
+        Understands ``git diff`` output (a ``diff --git`` line per file) and a plain unified diff
+        (``--- a/x`` then ``+++ b/x``), since callers often hold only the latter.
+        """
         files: List[Dict[str, Any]] = []
         current_file: Optional[Dict[str, Any]] = None
+        header_seen = False  # has the current file's ---/+++ pair been consumed?
+        lines = diff_text.splitlines()
 
-        for line in diff_text.splitlines():
+        def new_file(path: str) -> Dict[str, Any]:
+            return {
+                "path": path,
+                "is_new": False,
+                "is_deleted": False,
+                "is_rename": False,
+                "lines_added": 0,
+                "lines_deleted": 0,
+                "hunks_count": 0,
+            }
+
+        for idx, line in enumerate(lines):
             if line.startswith("diff --git"):
                 if current_file:
                     files.append(current_file)
                 parts = line.split()
-                path = parts[-1].lstrip("b/") if len(parts) >= 4 else "unknown"
-                current_file = {
-                    "path": path,
-                    "is_new": False,
-                    "is_deleted": False,
-                    "is_rename": False,
-                    "lines_added": 0,
-                    "lines_deleted": 0,
-                    "hunks_count": 0,
-                }
+                path = ScopeAndDiffGuard._strip_prefix(parts[-1], "b/") if len(parts) >= 4 else "unknown"
+                current_file = new_file(path)
+                header_seen = False
+            elif (
+                line.startswith("--- ")
+                and idx + 1 < len(lines)
+                and lines[idx + 1].startswith("+++ ")
+                and (current_file is None or header_seen)
+            ):
+                # A file header with no `diff --git` line before it (or a second file after one).
+                if current_file:
+                    files.append(current_file)
+                old_path = line[4:].strip()
+                new_path = lines[idx + 1][4:].strip()
+                chosen = old_path if new_path == "/dev/null" else new_path
+                current_file = new_file(
+                    ScopeAndDiffGuard._strip_prefix(ScopeAndDiffGuard._strip_prefix(chosen, "a/"), "b/")
+                )
+                if new_path == "/dev/null":
+                    current_file["is_deleted"] = True
+                header_seen = False
             elif current_file is not None:
                 if line.startswith("new file mode"):
                     current_file["is_new"] = True
@@ -112,9 +157,14 @@ class ScopeAndDiffGuard:
                     current_file["is_deleted"] = True
                 elif line.startswith("similarity index"):
                     current_file["is_rename"] = True
-                elif line.startswith("+++ b/"):
-                    current_file["path"] = line[6:].strip()
+                elif line.startswith("+++ ") and not header_seen:
+                    header_seen = True
+                    if line.strip() != "+++ /dev/null":
+                        current_file["path"] = ScopeAndDiffGuard._strip_prefix(line[4:].strip(), "b/")
+                elif line.startswith("--- ") and not header_seen:
+                    continue  # the `---` half of a header already announced by `diff --git`
                 elif line.startswith("@@ "):
+                    header_seen = True
                     current_file["hunks_count"] += 1
                 elif line.startswith("+") and not line.startswith("+++"):
                     current_file["lines_added"] += 1
@@ -140,7 +190,7 @@ class ScopeAndDiffGuard:
         forbidden_hits: List[str] = []
 
         for f in modified_files:
-            norm_f = f.replace("\\", "/").lstrip("./")
+            norm_f = cls._normalise_path(f)
 
             # Check forbidden
             for pat in forbidden:
@@ -153,7 +203,7 @@ class ScopeAndDiffGuard:
             if allowed_patterns:
                 matched = False
                 for allow in allowed_patterns:
-                    norm_allow = allow.replace("\\", "/").lstrip("./")
+                    norm_allow = cls._normalise_path(allow)
                     if fnmatch.fnmatch(norm_f, norm_allow) or norm_f.startswith(norm_allow.rstrip("/") + "/"):
                         matched = True
                         break
