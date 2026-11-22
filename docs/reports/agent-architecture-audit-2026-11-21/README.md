@@ -23,6 +23,30 @@ fixed it: the semantic tier is keyed on a digest of everything except the last u
 invalidation rotates a per-scope token (`aura_core/llm/cache.py:196-231`, `:406-419`). It is not
 a finding.
 
+## Remediation status (2026-11-22)
+
+All twelve findings now have a code change. Every row below is **built and tested locally, not
+proven live**: CI cannot run (GitHub Actions billing block), and nothing here has been checked on
+Railway or the VPS.
+
+| Finding | Status | Where |
+|---|---|---|
+| A1 | Fixed | `kernel/claims.py`. An answer claiming a completed action, on a turn where no tool succeeded and nothing awaits confirmation, gets a fixed correction (a `revision` frame on the stream). The corrected text is what history keeps, and the turn is degraded with `unbacked_action_claim`. |
+| A2 | Fixed | `tools/personal_os.py`: Arabic intents, `create_*` equivalents, and record-read intents (`list_*`). `planning/engine.py`: a short agreement to an offered action plans, and the planner gets the offer as its referent. |
+| A3 | Fixed earlier | KAN-102 (pinned dropped-tool note, `tool_output_dropped`). |
+| B1 | Fixed earlier | KAN-100. |
+| B2 | Fixed earlier | KAN-101 (summary on DATA, fallback transcript marked). |
+| B3 | Fixed | The kernel replaces `request.message` with the guarded text right after the input guard, in both `run` and `stream`. |
+| B4 | Fixed | `memory/engine.py`: a near-duplicate in different words replaces the old record, under its own confidence and recording `replaces`, but only when the new write is at least as trusted (the person > `remember_fact` > extractors and documents). A lower-trust rewording leaves the stored fact alone. The same words still reinforce. |
+| B5 | Fixed | `remember_fact` refuses a fact that doesn't restate something the person wrote this session. The kernel passes a predicate, never the text. A delegated sub-turn inherits its parent's statements. |
+| C1 | Fixed | Both paths fall back on any empty answer (`empty_generation_fallback`), and an empty answer is never cached. |
+| C2 | Fixed | `TurnBudget.fallbacks`, counted by the router in `complete` and `stream`, feeds `fallback_count`. |
+| C3 | Fixed | The client keeps `degraded_reasons` and names the most consequential one. A correction revision no longer shows as a safety edit. |
+| C4 | Partly | `AnswerEvaluator` and `AgentEvaluator` take `transport="stream"`, and the `done` frame now lists `tools`. The gates still run on `run`, because their baselines were recorded there. A stream baseline is still owed. Also fixed: `AgentEvaluator` crashed on any turn that ran a tool. |
+
+Tests: `aura_backend/tests/unit/test_agent_audit_remaining.py` and
+`aura_client/test/ux/turn_degraded_reasons_test.dart`.
+
 ## Executive verdict
 
 **Overall: medium-high risk.** The kernel's structural defences hold: the trust channels, the

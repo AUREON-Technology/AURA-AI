@@ -35,6 +35,11 @@ class SseChatEvent {
   final TurnMeta? turnMeta;
   final TurnStep? step;
 
+  /// Why a `revision` frame replaced the answer: `output_guard_redaction` (a safety guard
+  /// changed it) or `unbacked_action_claim` (the kernel appended a correction because the
+  /// answer claimed an action no tool performed). Null against an older backend.
+  final String? reason;
+
   const SseChatEvent._({
     required this.kind,
     this.text,
@@ -47,6 +52,7 @@ class SseChatEvent {
     this.unknownType,
     this.turnMeta,
     this.step,
+    this.reason,
   });
 
   factory SseChatEvent.fromWire(String eventType, Map<String, dynamic> data) {
@@ -62,7 +68,11 @@ class SseChatEvent {
       case 'citations':
         return SseChatEvent._(kind: SseEventKind.citations, citations: data['citations'] as List<dynamic>?);
       case 'revision':
-        return SseChatEvent._(kind: SseEventKind.revision, text: data['text'] as String?);
+        return SseChatEvent._(
+          kind: SseEventKind.revision,
+          text: data['text'] as String?,
+          reason: data['reason'] as String?,
+        );
       case 'error':
         return SseChatEvent._(
           kind: SseEventKind.error,

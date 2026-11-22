@@ -6,6 +6,10 @@ class TurnMeta {
   final String? correlationId;
   final double? confidence;
   final bool degraded;
+  // Why [degraded] is true: the backend's bounded slugs (`planning_failed`, `tool_failure`,
+  // `unbacked_action_claim`, ...), so the row can say what went wrong instead of one generic
+  // "reduced mode" line (audit C3). Empty against a backend that does not send them.
+  final List<String> degradedReasons;
   final bool needsConfirmation;
   final bool tainted;
   final bool guardsComplete;
@@ -36,6 +40,7 @@ class TurnMeta {
     this.correlationId,
     this.confidence,
     this.degraded = false,
+    this.degradedReasons = const [],
     this.needsConfirmation = false,
     this.tainted = false,
     this.guardsComplete = false,
@@ -59,6 +64,7 @@ class TurnMeta {
     String? correlationId,
     double? confidence,
     bool? degraded,
+    List<String>? degradedReasons,
     bool? needsConfirmation,
     bool? tainted,
     bool? guardsComplete,
@@ -79,6 +85,7 @@ class TurnMeta {
       correlationId: correlationId ?? this.correlationId,
       confidence: confidence ?? this.confidence,
       degraded: degraded ?? this.degraded,
+      degradedReasons: degradedReasons ?? this.degradedReasons,
       needsConfirmation: needsConfirmation ?? this.needsConfirmation,
       tainted: tainted ?? this.tainted,
       guardsComplete: guardsComplete ?? this.guardsComplete,
@@ -101,6 +108,7 @@ class TurnMeta {
         'correlation_id': correlationId,
         'confidence': confidence,
         'degraded': degraded,
+        if (degradedReasons.isNotEmpty) 'degraded_reasons': degradedReasons,
         'needs_confirmation': needsConfirmation,
         'tainted': tainted,
         'guards_complete': guardsComplete,
@@ -133,6 +141,9 @@ class TurnMeta {
       correlationId: json['correlation_id']?.toString(),
       confidence: _asDouble(json['confidence']),
       degraded: json['degraded'] == true,
+      degradedReasons: json['degraded_reasons'] is List
+          ? (json['degraded_reasons'] as List).whereType<String>().toList()
+          : const [],
       needsConfirmation: _readNeedsConfirmation(json['needs_confirmation']),
       tainted: json['tainted'] == true,
       guardsComplete: json['guards_complete'] == true,

@@ -335,9 +335,21 @@ class TurnBudget:
     engine_generations_used: int = 0
     #: Every generation charged to this turn (and to the turns it was started from), summed.
     usage: TurnUsage = field(default_factory=TurnUsage)
+    #: Generations of this turn that a fallback provider served, because the one the router
+    #: preferred failed or was skipped (audit C2). What the turn's ``fallback_count`` reports:
+    #: the kernel hard-coded 0 before, so ``provider_fallback`` never marked a turn degraded.
+    fallbacks: int = 0
     #: The budget of the turn this one was started from (a delegated sub-turn), which is
     #: charged every dollar and token this one spends: the same person is paying for both.
     parent: "TurnBudget | None" = field(default=None, repr=False, compare=False)
+
+    def note_fallback(self) -> None:
+        """Count one generation served by a fallback provider, on this turn only.
+
+        Not walked up to the parent, unlike cost: a delegated sub-turn's fallback is the
+        sub-turn's degradation, and the parent turn's answer did not come from it.
+        """
+        self.fallbacks += 1
 
     def check(self) -> None:
         if self.generations_used >= self.max_generations:
@@ -1206,7 +1218,7 @@ class ProviderRouter:
                 if index > 0:
                     # Attribute the fallback to the provider that actually failed, not to the
                     # one that succeeded -- otherwise the metric points at the healthy node.
-                    self._note_fallback(decision.candidates[index - 1], attempts)
+                    self._note_fallback(decision.candidates[index - 1], attempts, budget)
                 return replace(response, queue_wait_ms=ticket.queue_wait_ms)
             except asyncio.TimeoutError as exc:
                 if budget_bound:
@@ -1280,7 +1292,14 @@ class ProviderRouter:
             quota=self._quota,
         )
 
-    def _note_fallback(self, failed_provider: str, attempts: Sequence[Mapping[str, Any]]) -> None:
+    def _note_fallback(
+        self,
+        failed_provider: str,
+        attempts: Sequence[Mapping[str, Any]],
+        budget: TurnBudget | None = None,
+    ) -> None:
+        if budget is not None:
+            budget.note_fallback()
         reason = "unknown"
         for attempt in attempts:
             if attempt.get("provider") == failed_provider:
@@ -1374,7 +1393,7 @@ class ProviderRouter:
                     first = None
 
                 if index > 0:
-                    self._note_fallback(decision.candidates[index - 1], attempts)
+                    self._note_fallback(decision.candidates[index - 1], attempts, budget)
 
                 if first is not None:
                     first_chunk_at = last_chunk_at = self._clock()

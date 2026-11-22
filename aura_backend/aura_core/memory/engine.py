@@ -25,6 +25,7 @@ are still found -- and still land in ``"shared"``.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import asdict, replace
 from typing import Any, Mapping, Sequence
@@ -33,6 +34,7 @@ from ..domain.errors import EmbeddingError, MemoryStoreError, ValidationError
 from ..domain.events import MemoryConsolidated, MemoryWritten
 from ..domain.identifiers import MemoryId, SessionId, UserId
 from ..domain.knowledge import IndexIdentity
+from ..domain.text import fold_arabic
 from ..domain.memory import (
     BASE_CONFIDENCE_METADATA_KEY,
     MEMORY_POLICIES,
@@ -54,6 +56,37 @@ from ..ports.storage import MemoryStore, VectorPoint, VectorStore
 __all__ = ["MemoryEngine"]
 
 logger = get_logger("memory")
+
+_NON_WORD = re.compile(r"[\W_]+", re.UNICODE)
+
+
+def _source_trust(source: str | None, document_ref: str | None = None) -> int:
+    """How much a memory's provenance is trusted to say what the person holds true.
+
+    3: the person wrote it directly (``api:v3:*``, the memory endpoint). 2: the model stored it
+    with ``remember_fact``, which only accepts facts restating the person's own words (audit
+    B5). 1: anything else -- an extractor, a document, an unlabelled write.
+    """
+    if document_ref:
+        return 1
+    text = source or ""
+    if text.startswith("api:"):
+        return 3
+    if text.startswith("tool:remember_fact:"):
+        return 2
+    return 1
+
+
+def _same_statement(a: str, b: str) -> bool:
+    """Whether two memory texts say the same thing in the same words.
+
+    Case, spacing, punctuation and Arabic diacritics aside. Anything more is a different
+    statement, which :meth:`MemoryEngine.remember` treats as the newer word on the fact.
+    """
+    def norm(text: str) -> str:
+        return _NON_WORD.sub(" ", fold_arabic(text).casefold()).strip()
+
+    return norm(a) == norm(b)
 
 
 class MemoryEngine:
@@ -137,19 +170,40 @@ class MemoryEngine:
         duplicate = await self._find_duplicate(
             owner_id, kind, embedding, threshold=policy.duplicate_threshold, scope=scope
         )
+        replacing: MemoryRecord | None = None
         if duplicate is not None:
             # Restating a fact is reinforcement, not a second fact. Bumping access_count and
             # confidence is what makes repeated preferences outrank one-off mentions.
             touched = duplicate.touched(now=now)
             raised = round(min(1.0, max(touched.confidence, confidence) + 0.05), 6)
-            merged = replace(
-                touched,
-                confidence=raised,
-                metadata={**touched.metadata, BASE_CONFIDENCE_METADATA_KEY: raised},
-            )
-            await self._store.update(merged)
-            logger.info("memory reinforced", extra={"kind": str(kind), "memory_id": merged.id.value})
-            return merged
+            if _same_statement(duplicate.content, text):
+                merged = replace(
+                    touched,
+                    confidence=raised,
+                    metadata={**touched.metadata, BASE_CONFIDENCE_METADATA_KEY: raised},
+                )
+                await self._store.update(merged)
+                logger.info(
+                    "memory reinforced", extra={"kind": str(kind), "memory_id": merged.id.value}
+                )
+                return merged
+            # Close enough to be the same fact, but worded differently -- and a correction
+            # ("I moved to Alexandria" after "I live in Cairo") is exactly that. The old code kept
+            # the *old* text and raised its confidence, so the correction was lost and the stale
+            # fact grew surer (audit B4). The newer statement wins -- but only over a record it
+            # is at least as trusted as: an extractor's paraphrase must never overwrite what the
+            # person stated. A lower-trust write leaves the stored record as it is, unreinforced
+            # (different words are not a restatement). The replacement starts from its own
+            # confidence; the old text's reinforcement says nothing about the new text.
+            if _source_trust(source, document_ref) < _source_trust(
+                duplicate.provenance.source, duplicate.provenance.document_ref
+            ):
+                logger.info(
+                    "memory kept over a lower-trust rewording",
+                    extra={"kind": str(kind), "memory_id": duplicate.id.value},
+                )
+                return duplicate
+            replacing = duplicate
 
         record = MemoryRecord(
             id=MemoryId.new(),
@@ -171,7 +225,11 @@ class MemoryEngine:
             # the same source that later decays and ranks it.
             created_at=now,
             last_accessed_at=now,
-            metadata={**dict(metadata or {}), SCOPE_METADATA_KEY: scope or SHARED_MEMORY_SCOPE},
+            metadata={
+                **dict(metadata or {}),
+                SCOPE_METADATA_KEY: scope or SHARED_MEMORY_SCOPE,
+                **({"replaces": replacing.id.value} if replacing is not None else {}),
+            },
         )
 
         await self._enforce_quota(owner_id)
@@ -196,6 +254,15 @@ class MemoryEngine:
                 )
             ],
         )
+
+        if replacing is not None:
+            # After the new record is stored: a failure in between leaves both, never neither.
+            await self._forget(replacing)
+            logger.info(
+                "memory replaced by a newer statement",
+                extra={"kind": str(kind), "memory_id": record.id.value,
+                       "replaced": replacing.id.value},
+            )
 
         if self._metrics is not None:
             self._metrics.memory_writes_total.labels(kind=str(kind)).inc()

@@ -776,16 +776,11 @@ class Metrics:
         if telemetry.groundedness is not None:
             self.groundedness_score.observe(telemetry.groundedness)
 
-        if telemetry.fallback_count:
-            self.turn_degraded_total.labels(reason="provider_fallback").inc()
-        if telemetry.tainted:
-            self.turn_degraded_total.labels(reason="tainted_context").inc()
-        if retrieval.returned_nothing:
-            self.turn_degraded_total.labels(reason="empty_retrieval").inc()
-        if any(not t.ok for t in telemetry.tools):
-            self.turn_degraded_total.labels(reason="tool_failure").inc()
-        if telemetry.planning_failed:
-            self.turn_degraded_total.labels(reason="planning_failed").inc()
+        # One source for the slugs: `degraded_reasons` is what the client and the telemetry
+        # record report too, so the counter cannot miss a reason they show (it had missed
+        # `tool_output_dropped`).
+        for reason in telemetry.degraded_reasons:
+            self.turn_degraded_total.labels(reason=reason).inc()
 
     def observe_generation(self, timing: Any) -> None:
         """Fan one :class:`~aura_core.domain.llm.GenerationTiming` out to the catalogue.

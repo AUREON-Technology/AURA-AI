@@ -32,9 +32,54 @@ from ..domain.messages import Conversation, Message
 from ..domain.planning import Goal, Plan, PlanStep, Priority, StepKind, StepStatus
 from ..observability.logging import get_logger
 from ..tools.coding import matching_repository_tool
-from ..tools.personal_os import matching_personal_os_tool
+from ..domain.text import fold_arabic
+from ..tools.personal_os import matching_personal_os_tool, matching_record_tool
 
-__all__ = ["PlanningEngine"]
+__all__ = ["PlanningEngine", "is_follow_up", "follow_up_goal"]
+
+#: A short reply that only agrees: "yes", "ok do it", "add it", "نعم", "تمام", "ضيفها".
+_AFFIRMATION = re.compile(
+    r"^\W*(?:yes|yeah|yep|yup|sure|ok|okay|please|do it|go ahead|go for it|sounds good|"
+    r"(?:add|book|schedule|log|save|create|send|set) (?:it|that|them)|"
+    r"نعم|ايوه|ايوا|اه|تمام|ماشي|اكيد|طيب|حسنا|موافق|اوكي|يلا|نفذ|"
+    r"(?:اضف|ضيف|سجل|احجز|اعمل|انشئ|ارسل)(?:ها|ه|هم)?)\b",
+    re.I,
+)
+#: The previous reply offered to act: "shall I add it?", "do you want me to schedule ...",
+#: "هل تريد أن أضيف ...".
+_OFFER = re.compile(
+    r"\b(?:shall i|should i|do you want me to|would you like me to|want me to|"
+    r"i can (?:add|create|schedule|log|book|set|save|send))\b"
+    r"|هل\s+(?:تريد|تود|تحب|تريدني|اضيف|اسجل|احجز|انشئ)|تحب\s+ان|تريدني\s+ان",
+    re.I,
+)
+#: A follow-up is short; anything longer states its own request.
+_FOLLOW_UP_MAX_CHARS = 60
+#: How much of the reply the planner is shown: the offer is near its end.
+_REFERENT_MAX_CHARS = 800
+
+
+def is_follow_up(message: str, previous_reply: str | None) -> bool:
+    """Whether ``message`` only agrees to an action ``previous_reply`` offered (audit A2)."""
+    text = fold_arabic((message or "").strip())
+    if not text or len(text) > _FOLLOW_UP_MAX_CHARS or not previous_reply:
+        return False
+    return bool(_AFFIRMATION.search(text)) and bool(_OFFER.search(fold_arabic(previous_reply)))
+
+
+def follow_up_goal(message: str, previous_reply: str | None) -> str:
+    """The planner's input for ``message``: the message, plus the reply it answers if it is a
+    follow-up.
+
+    The planner sees only the goal (``goal_from_message``), so "yes, add it" reached it with no
+    referent and planned nothing. The reply is the assistant's own words from the previous turn;
+    a turn whose history came from a tainted turn is tainted itself (KAN-101), so a reply that
+    quoted something hostile still cannot run a side-effecting tool unconfirmed.
+    """
+    if not is_follow_up(message, previous_reply):
+        return message
+    referent = (previous_reply or "").strip()[-_REFERENT_MAX_CHARS:]
+    return f"{message.strip()}\n\n(This answers the assistant's previous message: {referent})"
 
 logger = get_logger("planning")
 
@@ -147,7 +192,12 @@ class PlanningEngine:
     # -- gating ------------------------------------------------------------------------
 
     def needs_plan(
-        self, message: str, *, available_tools: Sequence[str] = (), force: bool | None = None
+        self,
+        message: str,
+        *,
+        available_tools: Sequence[str] = (),
+        force: bool | None = None,
+        previous_reply: str | None = None,
     ) -> bool:
         """Decide whether planning earns its cost for this turn.
 
@@ -163,6 +213,14 @@ class PlanningEngine:
             return False
         text = message.strip()
         if matching_personal_os_tool(text, available_tools):
+            return True
+        # Questions about the person's own records ("how much did I spend this month?") need
+        # the matching list_* tool, which only a plan can run (audit A2).
+        if matching_record_tool(text, available_tools):
+            return True
+        # "Yes, add it" carries no intent of its own: the request is in the reply it answers.
+        # Without this the confirmation of an offered action was answered as small talk.
+        if is_follow_up(text, previous_reply):
             return True
         # Same exception, for the engineer agent's repository tools: "clone <url> and analyse it"
         # puts its verb before the conjunction, so `_MULTI_STEP_MARKERS` misses it, and it can

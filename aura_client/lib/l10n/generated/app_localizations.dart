@@ -6296,6 +6296,36 @@ abstract class AppLocalizations {
   /// **'Ungrounded — no sources attached.'**
   String get chatTurnUngrounded;
 
+  /// Chat: note when the answer claimed an action but no tool ran
+  ///
+  /// In en, this message translates to:
+  /// **'No action was taken — nothing was created, changed or sent.'**
+  String get chatTurnNoActionTaken;
+
+  /// Chat: note when tool planning failed for the turn
+  ///
+  /// In en, this message translates to:
+  /// **'AURA couldn\'t use its tools for this turn, so nothing was done.'**
+  String get chatTurnToolsUnavailable;
+
+  /// Chat: note when a tool call failed during the turn
+  ///
+  /// In en, this message translates to:
+  /// **'A tool AURA used failed during this turn.'**
+  String get chatTurnToolFailed;
+
+  /// Chat: note when the model produced no text and a fallback was shown
+  ///
+  /// In en, this message translates to:
+  /// **'The model returned no reply for this turn.'**
+  String get chatTurnEmptyReply;
+
+  /// Chat: note when a tool's output did not fit the prompt
+  ///
+  /// In en, this message translates to:
+  /// **'A tool\'s result was too long to use in full.'**
+  String get chatTurnToolOutputTrimmed;
+
   /// Chat: note under a truncated code, file, diff or terminal preview
   ///
   /// In en, this message translates to:

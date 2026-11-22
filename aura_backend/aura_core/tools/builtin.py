@@ -282,6 +282,20 @@ def build_memory_tools(memory_engine: Any) -> list[Tool]:
         timeout_s=10.0,
     )
     async def remember_fact(fact: str, context: ToolContext, subject: str | None = None) -> str:
+        # "Only what the user stated" was a sentence in the description above, and nothing else
+        # (audit B5): a fact the model inferred, or lifted from a document or a tool's output,
+        # was stored as the user's own. The kernel hands the tool a predicate over what the
+        # person actually wrote -- never the text itself, which a tool must not see -- and a
+        # fact those words do not restate is refused. No predicate (a caller outside a kernel
+        # turn) keeps the old behaviour.
+        user_stated = (context.metadata or {}).get("user_stated")
+        if callable(user_stated) and not user_stated(fact):
+            raise ToolExecutionError(
+                "not recorded: remember_fact stores only what the user said about themselves, "
+                "and nothing the user wrote states this",
+                tool="remember_fact",
+                retryable=False,
+            )
         record = await memory_engine.remember(
             owner_id=context.user_id,
             content=fact,

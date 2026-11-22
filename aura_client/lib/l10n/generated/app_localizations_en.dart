@@ -3694,6 +3694,24 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatTurnUngrounded => 'Ungrounded — no sources attached.';
 
   @override
+  String get chatTurnNoActionTaken =>
+      'No action was taken — nothing was created, changed or sent.';
+
+  @override
+  String get chatTurnToolsUnavailable =>
+      'AURA couldn\'t use its tools for this turn, so nothing was done.';
+
+  @override
+  String get chatTurnToolFailed => 'A tool AURA used failed during this turn.';
+
+  @override
+  String get chatTurnEmptyReply => 'The model returned no reply for this turn.';
+
+  @override
+  String get chatTurnToolOutputTrimmed =>
+      'A tool\'s result was too long to use in full.';
+
+  @override
   String chatMoreLines(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,

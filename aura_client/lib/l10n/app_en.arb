@@ -4947,6 +4947,26 @@
   "@chatTurnUngrounded": {
     "description": "Chat: note under an answer with no citations"
   },
+  "chatTurnNoActionTaken": "No action was taken — nothing was created, changed or sent.",
+  "@chatTurnNoActionTaken": {
+    "description": "Chat: note when the answer claimed an action but no tool ran"
+  },
+  "chatTurnToolsUnavailable": "AURA couldn't use its tools for this turn, so nothing was done.",
+  "@chatTurnToolsUnavailable": {
+    "description": "Chat: note when tool planning failed for the turn"
+  },
+  "chatTurnToolFailed": "A tool AURA used failed during this turn.",
+  "@chatTurnToolFailed": {
+    "description": "Chat: note when a tool call failed during the turn"
+  },
+  "chatTurnEmptyReply": "The model returned no reply for this turn.",
+  "@chatTurnEmptyReply": {
+    "description": "Chat: note when the model produced no text and a fallback was shown"
+  },
+  "chatTurnToolOutputTrimmed": "A tool's result was too long to use in full.",
+  "@chatTurnToolOutputTrimmed": {
+    "description": "Chat: note when a tool's output did not fit the prompt"
+  },
   "chatMoreLines": "… {count, plural, =1{1 more line} other{{count} more lines}}",
   "@chatMoreLines": {
     "description": "Chat: note under a truncated code, file, diff or terminal preview",
