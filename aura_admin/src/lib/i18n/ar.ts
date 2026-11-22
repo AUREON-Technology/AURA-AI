@@ -344,6 +344,7 @@ export const ar: Dictionary = {
   "settings.railway.thisGateway": "الـ Gateway ده",
   "settings.railway.watching": "تغيير تحت المتابعة",
   "settings.railway.noHealthcheck": "مفيش health-check path: Railway بيحوّل الترافيك من غير ما يتأكد إن الـ deployment الجديد اشتغل. تغيير متغيرات service شغّال عليه AURA مرفوض لحد ما يتحدد (Settings ← Deploy ← Healthcheck Path: ‏/health/live).",
+  "settings.railway.noHealthcheckNote": "مفيش health-check path. ده عادي هنا: الـ service دي مش شغّال عليها AURA (cron job مثلًا)، فتغييراتها مش مرفوضة.",
   "settings.railway.healthcheck": "الـ Health check: ‏{path}",
   "settings.railway.redeployTitle": "اعمل redeploy لـ {service}",
   "settings.railway.redeployBody": "deployment جديد بنفس الـ image والمتغيرات الحالية، بيتراقب 5 دقايق ويرجع لو فشل.",
