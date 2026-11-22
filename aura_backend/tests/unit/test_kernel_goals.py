@@ -41,6 +41,7 @@ class TestGoalsFlowIntoContext:
             _summary,
             goals,
             _cag_prefix,
+            _history_tainted,
         ) = await container.kernel._gather_context(_request(user_id=user), "hello")
         assert len(goals) == 1
         assert goals[0].category == "fitness" and goals[0].priority == "high"
@@ -56,6 +57,7 @@ class TestGoalsFlowIntoContext:
             _summary,
             goals,
             _cag_prefix,
+            _history_tainted,
         ) = await container.kernel._gather_context(_request(user_id=user), "hello")
         assert len(goals) == 0
 
@@ -71,6 +73,7 @@ class TestGoalsFlowIntoContext:
             _summary,
             goals,
             _cag_prefix,
+            _history_tainted,
         ) = await container.kernel._gather_context(_request(user_id=user), "hello")
         assert len(goals) == 0
 
