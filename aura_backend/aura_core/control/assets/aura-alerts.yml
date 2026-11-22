@@ -1,0 +1,418 @@
+# Alert rules derived from the ADR-009 metric catalogue.
+#
+# Every rule here is actionable: it names a condition an operator can do something about, and
+# it fires on user-visible impact rather than on a proxy for it. Rules that page without a
+# corresponding action get silenced within a month and then everything they would have caught
+# goes unnoticed.
+groups:
+  - name: aura-availability
+    rules:
+      - alert: AuraGatewayDown
+        expr: up{job="aura-gateway"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "AURA gateway is not scrapeable"
+          description: "No successful scrape for 2 minutes. Check `docker compose logs gateway`."
+
+      - alert: AuraAllProvidersUnhealthy
+        expr: sum(aura_provider_healthy) == 0
+        for: 3m
+        labels: {severity: critical}
+        annotations:
+          summary: "Every LLM provider circuit is open"
+          description: >
+            No provider can serve a generation. Chat returns 503 rather than a fabricated
+            answer. Check provider health and reset a circuit via
+            POST /api/v3/admin/providers/{name}/reset-circuit once the cause is fixed.
+
+      - alert: AuraHighErrorRate
+        expr: |
+          sum(rate(aura_turns_total{outcome="error"}[5m]))
+            / clamp_min(sum(rate(aura_turns_total[5m])), 0.001) > 0.05
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "More than 5% of turns are failing"
+
+      # CB-14: a planner timeout used to become a plain "success" answered without tools.
+      # Those turns are now counted; a sustained rate means action requests ("add a task")
+      # are being answered with an apology instead of being done.
+      - alert: AuraPlanningFailing
+        expr: |
+          sum(rate(aura_turn_degraded_total{reason="planning_failed"}[10m]))
+            / clamp_min(sum(rate(aura_turns_total[10m])), 0.001) > 0.10
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "More than 10% of turns could not plan and ran no tools"
+          description: >
+            Usually the planner generation timing out on the model host. Check
+            aura_llm_generation_total_seconds and the provider's queue before raising timeouts.
+
+      - alert: AuraHttp5xxRate
+        expr: |
+          sum(rate(aura_http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(aura_http_requests_total[5m])), 0.001) > 0.05
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "More than 5% of HTTP requests return 5xx"
+          description: "Break it down by route with sum by (route) (rate(aura_http_requests_total{status=~\"5..\"}[5m]))."
+
+      - alert: AuraOutboxBacklog
+        expr: max(aura_outbox_oldest_pending_age_seconds) > 900
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "A durable event has waited more than 15 minutes for delivery"
+          description: "The outbox drain (Celery beat + worker) is not running or is failing. Check the worker logs."
+
+      - alert: AuraOutboxDeadLetters
+        expr: max(aura_outbox_dead_lettered) > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Durable events exhausted their delivery attempts"
+          description: "SELECT id, event_name, last_error FROM aura_event_outbox WHERE dead_lettered;"
+
+  - name: aura-security
+    rules:
+      # SEC-05 was invisible partly because nothing reported it. This is the one-line rule
+      # that catches a production deploy with debug or mock auth enabled.
+      - alert: AuraInsecureModeActive
+        expr: max(aura_insecure_mode) > 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "A security bypass is active in this deployment"
+          description: >
+            aura_insecure_mode is non-zero for bypass={{ $labels.bypass }}. Debug mode, mock
+            auth, disabled safety, or disabled rate limiting is enabled. Production settings
+            validation should have prevented this -- investigate immediately.
+
+      - alert: AuraGuardBlockSpike
+        expr: sum(rate(aura_guard_verdicts_total{action="block"}[15m])) > 0.5
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Output guards are blocking responses at an unusual rate"
+          description: "Either an attack is in progress or a guard threshold is mistuned."
+
+      - alert: AuraInjectionQuarantineSpike
+        expr: sum(rate(aura_turns_tainted_total[30m])) > 0.2
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Retrieved content is being quarantined frequently"
+          description: >
+            Documents in the knowledge base contain instruction-shaped content. Review recent
+            ingestions; a poisoned source may have been added.
+
+      - alert: AuraRateLimitSaturation
+        expr: sum(rate(aura_rate_limit_rejections_total[10m])) > 5
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Sustained rate-limit rejections"
+
+  - name: aura-quality
+    rules:
+      - alert: AuraRetrievalReturningNothing
+        expr: |
+          sum(rate(aura_retrieval_empty_total[30m]))
+            / clamp_min(sum(rate(aura_retrieval_total[30m])), 0.001) > 0.4
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Over 40% of retrievals find nothing above threshold"
+          description: >
+            Either the corpus does not cover what users ask, the score threshold is too high,
+            or an index promotion regressed recall. Check aura_knowledge_generation.
+
+      - alert: AuraGroundednessDegraded
+        expr: histogram_quantile(0.5, sum(rate(aura_groundedness_score_bucket[1h])) by (le)) < 0.35
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "Median groundedness has fallen below 0.35"
+          description: "Answers are drifting away from retrieved sources -- a hallucination proxy."
+
+      - alert: AuraKnowledgeStale
+        expr: time() - aura_refresh_last_success_timestamp_seconds > 172800
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "The nightly knowledge refresh has not succeeded in 48 hours"
+          description: >
+            The 02:00 job is failing or its promotion gates are blocking. Check the last
+            RefreshReport; the live index is intact either way.
+
+      - alert: AuraBackupStale
+        expr: |
+          aura_backup_last_success_timestamp_seconds > 0
+          and time() - aura_backup_last_success_timestamp_seconds > 93600
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Verified backup is more than 26 hours old"
+          description: >
+            The backup sidecar failed verification or did not finish a cycle.
+            Check `docker compose logs backup`. Offsite copy is independent
+            (`AuraBackupOffsiteFailed`).
+
+      - alert: AuraBackupMisconfigured
+        expr: aura_backup_config_error == 1
+        for: 15m
+        labels: {severity: critical}
+        annotations:
+          summary: "Backup cycle refused to run: invalid backup configuration"
+          description: >
+            Usually BACKUP_ENCRYPTION=age with no age recipient configured. The sidecar fails
+            closed rather than write plaintext, so NO new backups are being taken. Set
+            BACKUP_AGE_RECIPIENT or deploy/secrets/backup_age_recipients.txt (maintenance-guide).
+
+      - alert: AuraBackupUnencrypted
+        expr: aura_backup_encryption_enabled == 0
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "Backups are being written unencrypted (BACKUP_ENCRYPTION=none)"
+          description: >
+            Plaintext backup sets on the host, and offsite copy is refused for them.
+
+      - alert: AuraBackupSingleKey
+        expr: aura_backup_encryption_enabled == 1 and aura_backup_age_recipients < 2
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "New backups can be decrypted by fewer than two age keys"
+          description: >
+            Every set on the VPS, B2 and R2 is readable only with the offline private key(s).
+            With a single key pair, losing that one key loses every backup on every provider.
+            Put both public keys in deploy/secrets/backup/backup_age_recipients.txt
+            (maintenance-guide "Backup encryption keys").
+
+      - alert: AuraBackupOffsiteFailed
+        expr: aura_backup_offsite_configured == 1 and aura_backup_offsite_last_exit_code != 0
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Offsite rclone copy or its remote verification failed"
+          description: >
+            BACKUP_S3_URI is set but the last upload, remote check, or cycle failed.
+            Credentials live in deploy/secrets/; no keys are in the image.
+
+      - alert: AuraBackupUnderReplicated
+        expr: |
+          aura_backup_offsite_configured == 1
+          and aura_backup_offsite_copies_verified < aura_backup_offsite_copies_required
+        for: 15m
+        labels: {severity: critical}
+        annotations:
+          summary: "Latest backup set is not on enough offsite providers"
+          description: >
+            Fewer than BACKUP_OFFSITE_MIN_COPIES offsite targets verified the last set. A
+            single provider holding the only copy is one outage from data loss. Check
+            `docker compose logs backup` for which target failed verification.
+
+      - alert: AuraBackupOffsiteStale
+        expr: |
+          aura_backup_offsite_configured == 1
+          and time() - aura_backup_offsite_last_success_timestamp_seconds > 129600
+        for: 30m
+        labels: {severity: critical}
+        annotations:
+          summary: "No backup set has reached enough offsite providers in 36 hours"
+          description: >
+            The success marker advances only when BACKUP_OFFSITE_MIN_COPIES targets verify a
+            set, so this fires for repeated under-replication, a stopped backup sidecar, or
+            offsite never having succeeded (timestamp 0). Losing the VPS now loses more than
+            a day of data.
+
+      - alert: AuraEvalRegression
+        expr: aura_eval_score{metric="recall_at_k"} < 0.6
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Retrieval evaluation recall has dropped below 0.6"
+
+  - name: aura-performance
+    rules:
+      - alert: AuraSlowTimeToFirstToken
+        expr: histogram_quantile(0.95, sum(rate(aura_llm_ttft_seconds_bucket[10m])) by (le, provider)) > 8
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "p95 time-to-first-token above 8s on {{ $labels.provider }}"
+
+      - alert: AuraPipelineOverheadHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(aura_stage_duration_seconds_bucket{stage!="generation"}[10m])) by (le)) > 0.25
+        for: 20m
+        labels: {severity: warning}
+        annotations:
+          summary: "p95 non-model pipeline overhead above 250ms"
+          description: "Target is <60ms. Check retrieval and memory stage timings."
+
+      - alert: AuraProviderSaturated
+        expr: sum(aura_llm_inflight) by (provider) >= 2
+        for: 10m
+        labels: {severity: info}
+        annotations:
+          summary: "{{ $labels.provider }} is at its concurrency limit"
+          description: "Requests are queueing. Scale the inference tier (Scalability Report, Stage 1)."
+
+      # Admission control (roadmap P2.4). Both gauges are summed across worker processes, so the
+      # ratio is fleet-wide slots in use over fleet-wide slots.
+      - alert: AuraGenerationQueueSaturated
+        expr: |
+          (
+            sum by (group) (aura_llm_group_inflight)
+              >= sum by (group) (aura_llm_group_capacity)
+          )
+          and on (group)
+          (
+            sum by (group) (label_replace(aura_llm_queue_depth, "group", "$1", "provider", "(.*)")) > 0
+          )
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Capacity group {{ $labels.group }} has been full with a queue for 10 minutes"
+          description: >
+            Every generation slot is busy and requests are waiting in AURA's admission queue.
+            Users see growing latency, then 503 + Retry-After once the queue timeout or bound is
+            hit. Check aura_llm_generation_queue_wait_seconds on the overview dashboard; add
+            capacity (a GPU pool, docs/guides/gpu-hybrid-setup.md §6) or shed background work.
+
+      - alert: AuraGenerationAdmissionRefusals
+        expr: |
+          sum by (group) (
+            rate(aura_llm_admission_total{outcome=~"queue_full|queue_timeout|preempted"}[10m])
+          ) > 0.02
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Capacity group {{ $labels.group }} is refusing generations"
+          description: >
+            Requests are being refused for lack of capacity (503 with Retry-After). Nothing is
+            broken -- there is not enough serving capacity for the offered load.
+
+      - alert: AuraCostSpike
+        expr: sum(rate(aura_llm_cost_usd_total[1h])) * 24 > 25
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "Projected LLM spend above $25/day"
+          description: "Check the cache hit rate and consider a local-first routing policy."
+
+      - alert: AuraCacheIneffective
+        expr: |
+          sum(rate(aura_cache_lookups_total{result="hit"}[1h]))
+            / clamp_min(sum(rate(aura_cache_lookups_total[1h])), 0.001) < 0.05
+        for: 2h
+        labels: {severity: info}
+        annotations:
+          summary: "Response cache hit rate below 5%"
+
+  - name: aura-infrastructure
+    rules:
+      - alert: AuraDiskFilling
+        expr: |
+          node_filesystem_avail_bytes{mountpoint="/"}
+            / node_filesystem_size_bytes{mountpoint="/"} < 0.15
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Less than 15% disk free"
+          description: "Model weights, Qdrant segments, and WAL grow silently. Check backups too."
+
+      - alert: AuraDependencyDown
+        expr: aura_dependency_up == 0
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Dependency {{ $labels.dependency }} is failing its health probe"
+
+  # SaaS P1-H (spec 6.1 item 5): payments and email. Every rule is conjoined with
+  # aura_billing_enabled == 1, so a deployment with billing off never pages for it. The cycle runs
+  # in a cron process; its numbers reach the gateway through the heartbeat it leaves in the cache.
+  - name: aura-billing
+    rules:
+      - alert: AuraBillingCycleStale
+        expr: |
+          (time() - max(aura_billing_cycle_last_run_timestamp_seconds) > 10800)
+          and on() max(aura_billing_enabled) == 1
+        for: 15m
+        labels: {severity: critical}
+        annotations:
+          summary: "The billing cycle has not run for over 3 hours (or never has)"
+          description: >
+            Renewals, past-due -> grace -> Free, and reconciliation of lost Fawry notifications all
+            stop. Check the Railway cron service running scripts/run_billing_cycle.py (schedule,
+            last exit code, its logs) and that it shares the gateway's Redis.
+
+      - alert: AuraBillingCycleErrors
+        expr: |
+          max(aura_billing_cycle_last_errors) > 0
+          and on() max(aura_billing_enabled) == 1
+        for: 2h
+        labels: {severity: warning}
+        annotations:
+          summary: "The billing cycle keeps failing to process some payments or renewals"
+          description: >
+            Two hours of cycles each left work undone. Read the cron service's log for
+            "could not be applied" or "status could not be read" (Fawry's API, or a payment stuck
+            in received).
+
+      - alert: AuraBillingNotificationsRejected
+        expr: |
+          sum(increase(aura_billing_notifications_total{result=~"invalid_signature|malformed|too_large"}[1h])) > 3
+          and on() max(aura_billing_enabled) == 1
+        for: 0m
+        labels: {severity: warning}
+        annotations:
+          summary: "Payment notifications are being rejected"
+          description: >
+            More than three notifications in an hour failed their signature or shape check: a
+            forgery attempt, or a key that no longer matches (Fawry secure key, Apple bundle id,
+            Google push audience). Real payments in that window are reconciled by the cycle for
+            Fawry only; store events are retried by the store.
+
+      - alert: AuraBillingNotifyErrors
+        expr: |
+          sum(increase(aura_billing_notifications_total{result="error"}[15m])) > 0
+          and on() max(aura_billing_enabled) == 1
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "A payment notification crashed the gateway (HTTP 500)"
+          description: >
+            A bug, not a bad request: the provider will retry, but a paying customer may not get
+            their plan. Search the gateway log for the traceback on /api/v3/billing/*/notify.
+
+      - alert: AuraStoreApiUnavailable
+        expr: |
+          sum(increase(aura_billing_notifications_total{result="store_unavailable"}[30m])) > 0
+          and on() max(aura_billing_enabled) == 1
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Google Play's API has not answered for 30 minutes"
+          description: >
+            Play notifications are answered 503 so Pub/Sub redelivers them; nothing is lost yet,
+            but purchases are not activating. Check the Play service account and Google's status.
+
+      - alert: AuraEmailFailing
+        expr: |
+          (sum(increase(aura_email_sends_total{result="failed"}[1h]) or vector(0))
+            + (max(aura_billing_cycle_last_email_failures) or vector(0))) > 3
+          and on() max(aura_billing_enabled) == 1
+        for: 0m
+        labels: {severity: warning}
+        annotations:
+          summary: "Transactional email is failing"
+          description: >
+            Invites, receipts, renewal references or past-due notices are not reaching people.
+            Check the SMTP settings in docs/deployment/email.md and the audit log's email.failed.

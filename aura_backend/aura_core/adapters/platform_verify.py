@@ -1,10 +1,9 @@
 """``PlatformVerifier`` adapters: one cheap read call proving a pasted token works (ADR-037).
 
-Verified now: Railway (``projectToken``: the project and environment a project token reaches),
-Hugging Face (``whoami``, then the Space itself), Cloudflare (its token-verify endpoint) and
-Qdrant (listing collections on the configured cluster). Grafana is verified by stage 5, which
-brings its client; until then ``verify`` returns ``None`` and the console says "saved, not yet
-verified" rather than inventing a check.
+Every platform is verified: Railway (``projectToken``: the project and environment a project
+token reaches), Hugging Face (``whoami``, then the Space itself), Cloudflare (its token-verify
+endpoint), Qdrant (listing collections on the configured cluster) and Grafana Cloud (the stack
+named with the token, through grafana.com's instances API).
 
 Every vendor call is made inside a method, never at import, and never logs the token or the
 vendor's response body (which can echo it).
@@ -50,7 +49,12 @@ class HttpPlatformVerifier:
             return await self._verify_cloudflare(token)
         if platform is Platform.QDRANT:
             return await self._verify_qdrant(token, (target or self._default_qdrant_url).rstrip("/"))
-        return None  # Grafana (stage 5)
+        if platform is Platform.GRAFANA:
+            from .grafana_cloud import grafana_stack, stack_slug
+
+            stack = await grafana_stack(token, stack_slug(target))
+            return f"stack {stack.slug} (Prometheus {stack.prometheus_id})"
+        return None
 
     @staticmethod
     def _verify_hf(token: str, space_id: str) -> str:
@@ -133,8 +137,6 @@ class StaticPlatformVerifier:
         self._good.setdefault(platform, set()).add(token)
 
     async def verify(self, platform: Platform, token: str, *, target: str = "") -> str | None:
-        if platform is Platform.GRAFANA:
-            return None
         if token in self._good.get(platform, set()):
             return f"{platform.value} verified"
         raise ValidationError(f"{platform.value} refused the token")
