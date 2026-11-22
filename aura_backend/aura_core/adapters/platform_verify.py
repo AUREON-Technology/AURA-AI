@@ -1,9 +1,10 @@
 """``PlatformVerifier`` adapters: one cheap read call proving a pasted token works (ADR-037).
 
-Verified now: Hugging Face (``whoami``, then the Space itself), Cloudflare (its token-verify
-endpoint) and Qdrant (listing collections on the configured cluster). Railway and Grafana are
-verified by their own stages (2 and 5), which bring their API clients; until then ``verify``
-returns ``None`` and the console says "saved, not yet verified" rather than inventing a check.
+Verified now: Railway (``projectToken``: the project and environment a project token reaches),
+Hugging Face (``whoami``, then the Space itself), Cloudflare (its token-verify endpoint) and
+Qdrant (listing collections on the configured cluster). Grafana is verified by stage 5, which
+brings its client; until then ``verify`` returns ``None`` and the console says "saved, not yet
+verified" rather than inventing a check.
 
 Every vendor call is made inside a method, never at import, and never logs the token or the
 vendor's response body (which can echo it).
@@ -38,13 +39,18 @@ class HttpPlatformVerifier:
         self._cloudflare_api_root = cloudflare_api_root.rstrip("/")
 
     async def verify(self, platform: Platform, token: str, *, target: str = "") -> str | None:
+        if platform is Platform.RAILWAY:
+            from .railway_platform import railway_scope
+
+            scope = await railway_scope(token)
+            return f"project {scope.project_name or scope.project_id}, environment {scope.environment_name or scope.environment_id}"
         if platform is Platform.HF_SPACE:
             return await asyncio.to_thread(self._verify_hf, token, target.strip().strip("/"))
         if platform is Platform.CLOUDFLARE:
             return await self._verify_cloudflare(token)
         if platform is Platform.QDRANT:
             return await self._verify_qdrant(token, (target or self._default_qdrant_url).rstrip("/"))
-        return None  # Railway (stage 2), Grafana (stage 5)
+        return None  # Grafana (stage 5)
 
     @staticmethod
     def _verify_hf(token: str, space_id: str) -> str:
@@ -127,7 +133,7 @@ class StaticPlatformVerifier:
         self._good.setdefault(platform, set()).add(token)
 
     async def verify(self, platform: Platform, token: str, *, target: str = "") -> str | None:
-        if platform in (Platform.RAILWAY, Platform.GRAFANA):
+        if platform is Platform.GRAFANA:
             return None
         if token in self._good.get(platform, set()):
             return f"{platform.value} verified"

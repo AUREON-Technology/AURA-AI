@@ -946,6 +946,43 @@ class Container:
             store=store, vault=vault, verifier=verifier, writes_per_hour=control.writes_per_hour,
         )
 
+        import os
+
+        # Stage 2: Railway, reached with the project token stored above. Read from the vault on
+        # every call, so connecting or replacing the token takes effect without a restart.
+        from .control.railway import RailwayService
+        from .control.service import Reconciler
+        from .domain.control import Platform
+
+        if settings.environment.is_production_like:
+            from .adapters.railway_platform import RailwayPlatform
+            from .adapters.settings_probe import SubprocessSettingsValidator
+
+            async def railway_token() -> str:
+                return (await self.control.token(Platform.RAILWAY)).reveal()
+
+            railway_api: Any = RailwayPlatform(token_source=railway_token)
+            validator: Any = SubprocessSettingsValidator()
+        else:
+            from .adapters.railway_platform import InMemoryRailway
+            from .adapters.settings_probe import StaticSettingsValidator
+
+            railway_api = InMemoryRailway()
+            validator = StaticSettingsValidator()
+        self.railway_api = railway_api
+        self.settings_validator = validator
+        # Railway sets RAILWAY_SERVICE_ID in every service's container: the gateway's own id is
+        # the service whose variables the AURA settings tab edits.
+        self.railway = RailwayService(
+            control=self.control, api=railway_api, validator=validator,
+            self_service_id=(os.environ.get("RAILWAY_SERVICE_ID") or "").strip(),
+        )
+        self.control_reconciler = Reconciler(
+            store=store, vault=vault, platforms={Platform.RAILWAY: railway_api},
+            watch_s=control.rollback_watch_s,
+        )
+        self._reconciler_task: Any = None
+
     def _build_adaptation(self, *, use_postgres: bool) -> Any:
         """The connector registry, its vault and its stores -- or ``None`` when Track AP is off.
 
@@ -2050,6 +2087,30 @@ class Container:
             except Exception:
                 logger.exception("prompt pin sync failed; keeping the last known pins")
 
+    def start_control_reconciler(self) -> bool:
+        """Start the control center's rollback watcher in this process (the gateway's startup).
+
+        Staging/production only, and only once per process. Every gateway worker runs one; the
+        lease in Postgres lets exactly one act. Celery workers never call this.
+        """
+        settings = self.settings
+        if (self._reconciler_task is not None or not settings.control.reconciler_enabled
+                or not settings.environment.is_production_like):
+            return False
+        self._reconciler_task = asyncio.create_task(
+            self.control_reconciler.run_forever(), name="control-reconciler"
+        )
+        return True
+
+    async def _stop_control_reconciler(self) -> None:
+        task, self._reconciler_task = self._reconciler_task, None
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
     async def shutdown(self) -> None:
         """Release every connection this container opened (R2.7). Idempotent; never raises.
 
@@ -2070,6 +2131,7 @@ class Container:
         if self._shut_down:
             return
         self._shut_down = True
+        await self._stop_control_reconciler()
         closers = self._shutdown_closers()
         await asyncio.gather(*(self._close_quietly(name, close) for name, close in closers))
         mark_dead = getattr(self.metrics, "mark_process_dead", None)

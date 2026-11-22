@@ -64,6 +64,9 @@ class CatalogEntry:
     #: Always true today: settings are read once at boot (``load_settings``), so a change needs a
     #: redeploy. Kept explicit so the console says so rather than implying a live edit.
     requires_redeploy: bool = True
+    #: The variable exactly as the platform holds it (stage 2), which can differ from ``value``
+    #: until the next redeploy; ``None`` for a secret or when unset.
+    raw: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -74,6 +77,7 @@ class CatalogEntry:
             "value": None if self.secret else _jsonable(self.value),
             "minimum": self.minimum, "maximum": self.maximum,
             "requires_redeploy": self.requires_redeploy,
+            "raw": None if self.secret else self.raw,
         }
 
 
@@ -258,7 +262,7 @@ def build_catalog(
                 secret=bool(named) or is_secret_variable(variable, raw),
                 protected=variable in PROTECTED_VARIABLES,
                 set=raw is not None, value=None if named else values.get(f.name),
-                minimum=meta.get("minimum"), maximum=meta.get("maximum"),
+                minimum=meta.get("minimum"), maximum=meta.get("maximum"), raw=raw,
             ).as_dict())
         groups.append({"section": top.name, "settings": entries})
     groups.insert(1, {"section": "providers", "settings": _provider_entries(settings, environ, index)})
@@ -288,7 +292,7 @@ def _provider_entries(
                 description=meta.get("description", ""),
                 secret=is_secret_variable(variable, raw), protected=False,
                 set=raw is not None, value=value,
-                minimum=meta.get("minimum"), maximum=meta.get("maximum"),
+                minimum=meta.get("minimum"), maximum=meta.get("maximum"), raw=raw,
             ).as_dict())
         key_var = getattr(provider, "api_key_env", "") or ""
         if key_var:

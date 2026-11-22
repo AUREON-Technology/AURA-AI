@@ -192,6 +192,21 @@ class ControlService:
             "vault_ready": self.vault_ready,
         }
 
+    async def check_write_cap(self, actor: str) -> None:
+        await self._check_write_cap(actor)
+
+    async def journal(
+        self, *, actor: str, platform: Platform, target: str, action: str,
+        detail: Mapping[str, Any], status: ChangeStatus = ChangeStatus.RECORDED, reason: str = "",
+    ) -> ChangeRecord:
+        """A change that needs no watching (a restart, a chosen rollback, a failed attempt)."""
+        return await self._journal(actor=actor, platform=platform, target=target, action=action,
+                                   detail=detail, status=status, reason=reason)
+
+    async def open_changes(self, platform: Platform | None = None) -> Sequence[ChangeRecord]:
+        changes = await self._store.open_changes()
+        return [c for c in changes if platform is None or c.platform is platform]
+
     async def _check_write_cap(self, actor: str) -> None:
         since = self._now() - timedelta(hours=1)
         if await self._store.count_changes_since(actor, since) >= self._writes_per_hour:
@@ -347,7 +362,15 @@ class Reconciler:
                 logger.warning("could not read a deployment's health", extra={"error": type(exc).__name__})
                 continue
             watched_long_enough = now - change.created_at >= self._watch
-            if health is DeploymentHealth.FAILED:
+            if health is DeploymentHealth.SUPERSEDED:
+                # Someone (or a merge to main) deployed again: this deployment is no longer the
+                # one serving, so its health says nothing more, and rolling back would undo the
+                # newer one too.
+                closed.append(await self._close(
+                    change, ChangeStatus.SUCCEEDED,
+                    "a newer deployment replaced it before the watch ended; not watched further",
+                ))
+            elif health is DeploymentHealth.FAILED:
                 closed.append(await self._roll_back(change, platform, "the new deployment failed to start"))
             elif watched_long_enough and health is DeploymentHealth.HEALTHY:
                 closed.append(await self._close(change, ChangeStatus.SUCCEEDED, ""))
