@@ -43,6 +43,17 @@ score = w_sim · cosine + w_rec · exp(-Δt / τ_kind) + w_use · log1p(access_c
   rather than deleting it (auditability, and the user may correct the newer one),
 - decays confidence for records untouched past `τ_kind`, and expires those below a floor.
 
+**Write-time corrections (2026-11-22).** A write that lands near an existing record
+(`MemoryEngine.remember`) is reconciled at once rather than waiting for consolidation:
+- the same words reinforce the stored record;
+- different words about the **same `subject`** are a correction: the old record is marked
+  `superseded_by` the new one (kept for audit and erasure, hidden from recall), unless the new write is
+  less trusted than the stored one (the person's own write outranks `remember_fact`, which outranks
+  anything else), in which case the stored record stands;
+- a write with no `subject` inherits the old record's subject;
+- a near-duplicate about a **different subject**, or a stored record with **no subject**, is a different
+  fact and both stay active. Two memories can embed close together without saying the same thing.
+
 **Writes are explicit and attributable.** Nothing is written to semantic memory without a provenance
 record naming the turn and the extractor version, so a bad extractor version can be rolled back by
 query.

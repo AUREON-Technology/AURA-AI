@@ -217,16 +217,22 @@ class TestHistoryKeepsTheGuardedMessage:
 
 
 class TestMemoryCorrection:
+    # The subject says what a memory is about, so it is what makes a rewording a *correction*:
+    # two near-duplicates with no subject are different facts and both stay (see
+    # tests/unit/test_memory_subject_supersede.py). These tests give both a subject, and expect the
+    # old record to be superseded -- kept for audit -- rather than deleted.
+
     async def test_newer_wording_replaces_a_near_duplicate(self, memory, user, monkeypatch) -> None:
         first = await memory.remember(owner_id=user, content="The user lives in Cairo",
-                                      kind=MemoryKind.SEMANTIC, source="test")
+                                      subject="home", kind=MemoryKind.SEMANTIC, source="test")
 
         async def always_duplicate(*_a, **_kw):
             return await memory._store.get(first.id)
 
         monkeypatch.setattr(memory, "_find_duplicate", always_duplicate)
         second = await memory.remember(owner_id=user, content="The user lives in Alexandria",
-                                       kind=MemoryKind.SEMANTIC, source="test-correction")
+                                       subject="home", kind=MemoryKind.SEMANTIC,
+                                       source="test-correction")
 
         assert second.id != first.id
         assert second.content == "The user lives in Alexandria"
@@ -234,13 +240,14 @@ class TestMemoryCorrection:
         assert second.provenance.source == "test-correction"
         # Its own confidence, not the old text's reinforcement.
         assert second.confidence == pytest.approx(0.8)
-        assert await memory._store.get(first.id) is None
+        assert (await memory._store.get(first.id)).superseded_by == second.id
 
     async def test_a_lower_trust_rewording_never_overwrites_what_the_person_said(
         self, memory, user, monkeypatch
     ) -> None:
         stated = await memory.remember(owner_id=user, content="The user lives in Cairo",
-                                       kind=MemoryKind.SEMANTIC, source="api:v3:audit-user")
+                                       subject="home", kind=MemoryKind.SEMANTIC,
+                                       source="api:v3:audit-user")
 
         async def always_duplicate(*_a, **_kw):
             return await memory._store.get(stated.id)
@@ -255,9 +262,10 @@ class TestMemoryCorrection:
 
         # The person correcting themself still wins.
         corrected = await memory.remember(owner_id=user, content="The user lives in Alexandria",
-                                          kind=MemoryKind.SEMANTIC, source="api:v3:audit-user")
+                                          subject="home", kind=MemoryKind.SEMANTIC,
+                                          source="api:v3:audit-user")
         assert corrected.content == "The user lives in Alexandria"
-        assert await memory._store.get(stated.id) is None
+        assert (await memory._store.get(stated.id)).superseded_by == corrected.id
 
     async def test_the_same_words_still_reinforce(self, memory, user, monkeypatch) -> None:
         first = await memory.remember(owner_id=user, content="The user is vegetarian.",
