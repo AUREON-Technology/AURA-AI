@@ -15,7 +15,13 @@ COPY . .
 ARG NEXT_BASE_PATH=
 ARG NEXT_PUBLIC_BASE_PATH=
 ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID
-ARG NEXT_PUBLIC_GRAFANA_EMBED=1
+# Embedding needs nginx to proxy /grafana on the console's own host. Only the VPS stacks have that
+# (their compose files pass 1); Railway has no such route, so the default must be off or every
+# dashboard card renders a 404 frame. Optionally point the "Open in Grafana" links elsewhere
+# (e.g. the Grafana Cloud stack URL) with NEXT_PUBLIC_GRAFANA_BASE_URL.
+ARG NEXT_PUBLIC_GRAFANA_EMBED=0
+ARG NEXT_PUBLIC_GRAFANA_BASE_URL=
+ENV NEXT_PUBLIC_GRAFANA_BASE_URL=$NEXT_PUBLIC_GRAFANA_BASE_URL
 ENV NEXT_BASE_PATH=$NEXT_BASE_PATH
 ENV NEXT_PUBLIC_BASE_PATH=$NEXT_PUBLIC_BASE_PATH
 ENV NEXT_PUBLIC_GOOGLE_CLIENT_ID=$NEXT_PUBLIC_GOOGLE_CLIENT_ID
