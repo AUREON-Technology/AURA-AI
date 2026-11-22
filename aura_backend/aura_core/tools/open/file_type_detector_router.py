@@ -1,3 +1,12 @@
+"""Not exposed (ADR-036, 2026-11-21) -- deliberately NOT registered as a tool. It opens paths and
+``batch_detect_directory`` walks directories, on the gateway's own disk (KAN-34).
+
+Reachable from no persona: nothing under ``aura_core`` imports this module, which
+``tests/architecture/test_open_tools_classification.py`` checks against
+``tools/open/_classification.py``. Kept as reference code; change that classification and
+ADR-036 before wiring it in.
+"""
+
 import mimetypes
 from pathlib import Path
 from typing import Any, Dict, List, Optional

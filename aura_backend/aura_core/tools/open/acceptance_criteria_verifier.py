@@ -1,3 +1,14 @@
+"""Not exposed (ADR-036, 2026-11-21) -- deliberately NOT registered as a tool. ``verify_criteria`` marks a
+criterion satisfied on substring overlap with any evidence key or value -- an empty key matches
+every criterion -- and reports ``ACCEPTED``: a rubber stamp presented as verification.
+``evaluate_quality_gate`` is the fail-closed gate the agent has.
+
+Reachable from no persona: nothing under ``aura_core`` imports this module, which
+``tests/architecture/test_open_tools_classification.py`` checks against
+``tools/open/_classification.py``. Kept as reference code; change that classification and
+ADR-036 before wiring it in.
+"""
+
 import re
 from typing import Any, Dict, List, Optional
 

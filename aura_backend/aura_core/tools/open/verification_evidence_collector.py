@@ -1,3 +1,13 @@
+"""Not exposed (ADR-036, 2026-11-21) -- deliberately NOT registered as a tool. A digest over
+caller-supplied evidence proves nothing about whether the commands ran, a missing ``exit_code``
+counts as 0, and ``record_file_artifact`` reads paths on the gateway.
+
+Reachable from no persona: nothing under ``aura_core`` imports this module, which
+``tests/architecture/test_open_tools_classification.py`` checks against
+``tools/open/_classification.py``. Kept as reference code; change that classification and
+ADR-036 before wiring it in.
+"""
+
 import hashlib
 import json
 from pathlib import Path

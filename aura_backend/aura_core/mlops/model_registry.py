@@ -19,11 +19,13 @@ with automatic rollback on metric regression) → ``production`` → ``archived`
 
 from __future__ import annotations
 
+import asyncio
 import enum
 import hashlib
+import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
+from typing import Any, Callable, Mapping, Protocol, Sequence, runtime_checkable
 
 from ..domain.errors import ApprovalRequiredError, ConflictError, NotFoundError, ValidationError
 from ..domain.events import ModelPromoted
@@ -33,6 +35,12 @@ from ..ports.runtime import AuditEvent
 __all__ = ["ModelStage", "ModelVersion", "ModelRegistry", "InMemoryModelStore", "ABAssignment"]
 
 logger = get_logger("mlops.registry")
+
+#: How long one process trusts its snapshot of which versions serve a model (KAN-109). Every
+#: chat turn asks; with nothing registered, the answer was three store reads per turn to learn
+#: there is nothing to serve. A promotion or rollback made through this process applies at once
+#: (the snapshot is dropped); one made by another process applies within this many seconds.
+SERVING_SNAPSHOT_TTL_S = 5.0
 
 
 class ModelStage(str, enum.Enum):
@@ -142,6 +150,16 @@ class InMemoryModelStore:
 
 
 @dataclass(frozen=True, slots=True)
+class _ServingSnapshot:
+    """One process's view of a model's traffic-serving versions, and when it was taken."""
+
+    taken_at: float
+    production: ModelVersion | None
+    canaries: tuple[ModelVersion, ...]
+    shadows: tuple[ModelVersion, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ABAssignment:
     """Which version a given user is routed to, and why."""
 
@@ -160,12 +178,18 @@ class ModelRegistry:
         audit: Any = None,
         event_bus: Any = None,
         metrics: Any = None,
+        serving_ttl_s: float = SERVING_SNAPSHOT_TTL_S,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._store = store
         self._approvals = approvals
         self._audit = audit
         self._events = event_bus
         self._metrics = metrics
+        self._serving_ttl_s = serving_ttl_s
+        self._monotonic = monotonic
+        #: model_id -> (taken at, production, canaries, shadows). See `serving_version`.
+        self._serving: dict[str, _ServingSnapshot] = {}
 
     # -- registration ------------------------------------------------------------------
 
@@ -177,6 +201,7 @@ class ModelRegistry:
                 details={"stage": str(existing.stage)},
             )
         await self._store.put(version)
+        self._serving.pop(version.model_id, None)
         logger.info("model version registered", extra={"model": version.key})
         await self._record(
             action="model.register", actor="system", resource=version.key, outcome="registered",
@@ -259,6 +284,7 @@ class ModelRegistry:
             promoted_at=datetime.now(timezone.utc),
         )
         await self._store.put(promoted)
+        self._serving.pop(model_id, None)
 
         # Exactly one production version per model: the previous one is archived in the same
         # operation, so there is never an ambiguous "which model is live?".
@@ -266,6 +292,7 @@ class ModelRegistry:
             for other in await self._store.list(model_id=model_id, stage=ModelStage.PRODUCTION):
                 if other.version != version:
                     await self._store.put(replace(other, stage=ModelStage.ARCHIVED))
+            self._serving.pop(model_id, None)
 
         logger.info(
             "model stage changed",
@@ -303,6 +330,7 @@ class ModelRegistry:
         await self._store.put(restored)
         if current is not None and current.version != to_version:
             await self._store.put(replace(current, stage=ModelStage.ARCHIVED))
+        self._serving.pop(model_id, None)
 
         logger.warning(
             "model rolled back",
@@ -372,7 +400,56 @@ class ModelRegistry:
         """
         production = await self.production(model_id)
         canaries = await self._store.list(model_id=model_id, stage=ModelStage.CANARY)
+        picked = self._pick(model_id, subject, production, canaries)
+        if picked is None:
+            return None
+        version, bucket = picked
+        return ABAssignment(
+            model_id=model_id, version=version.version, stage=version.stage, bucket=bucket,
+        )
 
+    async def serving_version(self, model_id: str, *, subject: str) -> ModelVersion | None:
+        """The version :meth:`assign` would route ``subject`` to, read from a short-lived snapshot.
+
+        The per-turn read path (KAN-109). :meth:`assign` plus the ``get`` a caller then needs
+        for the artefact cost three store reads per turn, and on almost every deployment the
+        answer is "nothing registered". This returns the whole version in one step and keeps
+        the serving set for :data:`SERVING_SNAPSHOT_TTL_S`; this process's own transitions and
+        rollbacks drop it at once. Same stable hash as :meth:`assign`, so a user keeps their
+        variant whichever method was asked.
+        """
+        snapshot = await self._serving_set(model_id)
+        picked = self._pick(model_id, subject, snapshot.production, snapshot.canaries)
+        return picked[0] if picked is not None else None
+
+    async def _serving_set(self, model_id: str) -> "_ServingSnapshot":
+        now = self._monotonic()
+        cached = self._serving.get(model_id)
+        if cached is not None and now - cached.taken_at < self._serving_ttl_s:
+            return cached
+        # Concurrently: on a real store these are separate round trips, and nothing orders them.
+        productions, canaries, shadows = await asyncio.gather(
+            self._store.list(model_id=model_id, stage=ModelStage.PRODUCTION),
+            self._store.list(model_id=model_id, stage=ModelStage.CANARY),
+            self._store.list(model_id=model_id, stage=ModelStage.SHADOW),
+        )
+        snapshot = _ServingSnapshot(
+            taken_at=now,
+            production=productions[0] if productions else None,
+            canaries=tuple(canaries),
+            shadows=tuple(shadows),
+        )
+        self._serving[model_id] = snapshot
+        return snapshot
+
+    @staticmethod
+    def _pick(
+        model_id: str,
+        subject: str,
+        production: ModelVersion | None,
+        canaries: Sequence[ModelVersion],
+    ) -> tuple[ModelVersion, int] | None:
+        """The version serving ``subject`` and its bucket, or ``None`` when nothing serves."""
         if production is None and not canaries:
             return None
 
@@ -384,21 +461,18 @@ class ModelRegistry:
         for canary in canaries:
             cumulative += canary.canary_percent
             if bucket < cumulative:
-                return ABAssignment(
-                    model_id=model_id, version=canary.version, stage=ModelStage.CANARY,
-                    bucket=bucket,
-                )
+                return canary, bucket
 
         if production is None:
             return None
-        return ABAssignment(
-            model_id=model_id, version=production.version, stage=ModelStage.PRODUCTION,
-            bucket=bucket,
-        )
+        return production, bucket
 
     async def shadow_versions(self, model_id: str) -> Sequence[ModelVersion]:
-        """Versions receiving mirrored traffic. Their output is never returned to a user."""
-        return await self._store.list(model_id=model_id, stage=ModelStage.SHADOW)
+        """Versions receiving mirrored traffic. Their output is never returned to a user.
+
+        Read from the same snapshot as :meth:`serving_version`: the kernel asks on every turn.
+        """
+        return (await self._serving_set(model_id)).shadows
 
     async def inventory(self) -> list[dict[str, Any]]:
         return [v.as_dict() for v in await self._store.list()]

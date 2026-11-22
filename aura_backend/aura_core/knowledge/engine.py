@@ -37,6 +37,7 @@ from ..domain.knowledge import (
     TrustTier,
     build_chunks,
 )
+from ..llm.turn_embeddings import embed_query
 from ..observability.logging import get_logger
 from ..ports.llm import EmbeddingProvider, Reranker
 from ..ports.storage import GLOBAL_OWNER, DocumentStore, VectorPoint, VectorStore
@@ -699,7 +700,8 @@ class KnowledgeEngine:
         filters: Mapping[str, Any] | None,
     ) -> list[tuple[str, float, Mapping[str, Any]]]:
         try:
-            embedding = await self._embedder.embed([text], for_query=True)
+            # Shared with memory recall and the semantic cache for this turn (KAN-111).
+            embedding = await embed_query(self._embedder, text)
         except EmbeddingError as exc:
             # Degrade to lexical-only rather than failing the turn. This is a legitimate
             # degradation because the fallback still searches the real corpus -- unlike the
