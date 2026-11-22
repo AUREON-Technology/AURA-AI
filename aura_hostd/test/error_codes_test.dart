@@ -157,7 +157,9 @@ void main() {
 
   group('no error leaves the daemon without a code', () {
     test('control_server.dart writes every error body through _fail', () {
-      final source = File('lib/src/control_server.dart').readAsStringSync();
+      // Normalise CRLF: a Windows checkout can carry \r\n, and the multi-line match below is
+      // about the source's text, not its line endings.
+      final source = File('lib/src/control_server.dart').readAsStringSync().replaceAll('\r\n', '\n');
       // The only `'error':` literal left is _fail's own body; every other error goes through it,
       // and _respond asserts the pair at runtime as well.
       expect(RegExp(r"'error':").allMatches(source).length, 1);
