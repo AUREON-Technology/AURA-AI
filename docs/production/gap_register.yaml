@@ -1702,17 +1702,22 @@ gaps:
     component: console/control-center
     severity: P2
     current_state: >-
-      Stage 1 built, not proven (ADR-037, docs/plans/console-control-center-plan.md). The console's
-      Settings page is Super-Admin-only (nav item hidden, page refuses, every
+      Stages 1 and 2 built, not proven (ADR-037, docs/plans/console-control-center-plan.md). The
+      console's Settings page is Super-Admin-only (nav item hidden, page refuses, every
       /api/v3/admin/control/* route 403s below SuperAdmin). Platform tokens for Railway, the HF GPU
       Space, Grafana, Qdrant and Cloudflare are entered in the console, verified where the vendor
-      allows (HF, Cloudflare, Qdrant), encrypted in Postgres with the credential vault and never
-      returned. Every write needs a five-minute step-up grant bought with a fresh Google
-      re-sign-in (prompt=login, max_age 300, one-time nonce) plus a typed confirmation; sign-out
-      revokes the grant. Changes are journaled (migration 0031). The Reconciler (Postgres lease,
-      automatic rollback of unhealthy deployments) is built and tested but not started in the
-      gateway: no stage-1 action produces a deployment, so stage 2 starts it. The AURA settings view is read-only and reads the gateway process's own
-      environment. Railway, Space, key, Grafana and Qdrant operations are stages 2-5, not built.
+      allows (Railway, HF, Cloudflare, Qdrant), encrypted in Postgres with the credential vault and
+      never returned. Every write needs a five-minute step-up grant bought with a fresh Google
+      re-sign-in (one-time nonce; Google sends no auth_time, so freshness is iat) plus a typed
+      confirmation; sign-out revokes the grant. Stage 2 adds Railway: services, variables (secret
+      values never returned, logs masked), redeploy, restart, rollback and logs. A variable change
+      is refused for protected, RAILWAY_* and ${{...}} names, while another change to the service
+      is watched, and for an AURA service without a health-check path; the candidate environment
+      is validated in a child process first, then written with skipDeploys and redeployed once
+      (same image). The Reconciler runs in staging/production gateways and rolls back a failed
+      or still-unhealthy deployment after 5 minutes, restoring raw values. The AURA settings tab
+      edits the gateway's own Railway variables. Space, key, Grafana and Qdrant operations are
+      stages 3-5, not built.
     target_state: >-
       The Super Admin runs every platform operation the plan lists (Railway variables, redeploy,
       restart, rollback, logs; Space status, restart, hardware; key create, revoke and rotate;
@@ -1723,7 +1728,10 @@ gaps:
     test: >-
       Default pytest: tests/unit/test_control_center.py (role sweep over every control route with
       an OpenAPI completeness check, step-up refusals, server-side confirmation, canary sweep over
-      responses and audit events, write cap, catalog completeness, reconciler rollback and lease).
+      responses and audit events, write cap, catalog completeness, reconciler rollback and lease)
+      and tests/unit/test_control_railway.py (Railway refusals, apply/watch/rollback against
+      InMemoryRailway, RailwayPlatform against recorded GraphQL exchanges, the real settings
+      check in a child process).
       Opt-in: tests/load/test_control_store_postgres.py and the migration round trip on Postgres.
       Console: tests/e2e/control-center.spec.ts against the mock gateway. Nothing here exercises
       real Google, a real platform API or a deployed gateway.

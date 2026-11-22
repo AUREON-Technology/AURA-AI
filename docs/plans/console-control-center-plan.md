@@ -301,6 +301,42 @@ this section wins:
   Authorized redirect URIs on the console's Google OAuth client, and make sure
   `AURA_SECRETS_ENCRYPTION_KEY` is set on the Railway gateway.
 
+## Stage 2 as built (2026-11-22)
+
+Built and tested locally, not proven (ADR-037, GAP-067). Where it differs from the design above,
+this section wins:
+
+- **Railway API, checked first.** Every query and mutation was checked against Railway's live
+  schema (introspection, then each document sent with a dummy token: every answer was an auth
+  or "not found" error, never a schema error). Requests use `httpx`, since Cloudflare in front
+  of Railway refuses Python's `urllib` (error 1010).
+- **Scope from the token.** The project and environment come from the token's own
+  `projectToken`. Nothing else is configured, and the token check on Connect is the same query.
+- **One redeploy per change.** Variables are written with `skipDeploys: true`, then one
+  `deploymentRedeploy(usePreviousImageTag: true)`: same image, new variables, no rebuild. A
+  rebuild would outlast the 5-minute watch.
+- **Validation.** It runs `AuraSettings.from_env().validate()` in a child process with exactly
+  the candidate environment, plus the gateway's JWT-secret rule, for any service with an
+  `AURA_*` variable. Other services, such as the console, skip it.
+- **Extra refusals, beyond the design:**
+  - `${{...}}` references (set them in the Railway dashboard);
+  - `RAILWAY_*` variables;
+  - a second change while one is watched;
+  - an AURA service with no health-check path.
+- **Restore values are raw.** A rollback restores references as written, not their rendered
+  values.
+- **The reconciler is started** by the gateway's startup hook in staging/production
+  (`AURA_CONTROL_RECONCILER`, default on).
+  - A deployment replaced by a newer one is closed without a rollback.
+  - A rollback you choose is journaled, not watched.
+- **AURA settings tab.** It reads, and edits through the same tray, the gateway's own Railway
+  variables (`RAILWAY_SERVICE_ID`), once Railway is connected. Each row shows the value Railway
+  holds when it differs from the running one ("next deploy").
+- **Console e2e.** One spec file (`control-center.spec.ts`) holds both stages, because the mock
+  gateway's control state is shared and Playwright keeps one file's tests on one worker.
+- **Not built yet.** Stage 2 has no live contract test (`tests/load/test_control_live.py`); the
+  owner's live checks below stand in for it.
+
 ## Delivery: five stages, each its own PR, each usable on its own
 
 | Stage | Contents | Proof needed before calling it done |

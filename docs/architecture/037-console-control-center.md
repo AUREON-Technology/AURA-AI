@@ -70,8 +70,9 @@ It is what has to be true before the gateway agrees to act.
   - Cloudflare: `/user/tokens/verify`.
   - Qdrant: `GET /collections`. The host must end in `.qdrant.io` or be `AURA_QDRANT_URL`'s
     host, so a token cannot be sent anywhere else (SSRF).
-  - Railway and Grafana are saved "not verified yet" until stage 2 and stage 5 add their
-    clients.
+  - Railway: the `projectToken` query, which also tells the gateway which project and
+    environment the token reaches. An account or team token is refused.
+  - Grafana is saved "not verified yet" until stage 5 adds its client.
 
   The Cloudflare API root comes from the configured Workers AI provider's `base_url`, never a
   literal, so ADR-030's rule that hosted-inference hosts never appear in Python source still
@@ -92,6 +93,33 @@ It is what has to be true before the gateway agrees to act.
   variables. If the rollback itself fails, the change is marked `FAILED` for a human to handle.
   A Postgres lease row (`aura_control_leases`) makes sure exactly one gateway process acts, even
   with several uvicorn workers.
+- **A variable change has to pass, before anything is written** (stage 2, `control/railway.py`):
+  - the typed service name and a step-up grant;
+  - no other change to that service still being watched, so a rollback can never undo the
+    wrong change;
+  - not a protected variable, not one of Railway's own `RAILWAY_*`, and no `${{...}}`
+    reference (its rendered value is unknown until Railway renders it, so it cannot be
+    checked);
+  - for a service that runs AURA (any `AURA_*` variable): a health-check path on the service,
+    or Railway would switch traffic to a deployment that never proved it boots; and the whole
+    candidate environment must pass `SettingsValidator`. That loads `AuraSettings` and runs
+    `validate()` in a **child process** whose environment is exactly the candidate, plus the
+    gateway's JWT-secret rule. A redeploy reuses the image, so this is the code that will boot.
+
+  Then the variables are written with `skipDeploys`, and exactly one redeploy of the current
+  image (`deploymentRedeploy`, `usePreviousImageTag`) is started. Its id goes in the journal,
+  with the previous raw values (references kept as written) in the vault. If the redeploy
+  cannot start, the old values are put back and the change is journaled `FAILED`.
+- **The reconciler runs in every staging/production gateway process** (`AURA_CONTROL_RECONCILER`,
+  default on), started by the gateway's startup hook, never by a Celery worker. Railway's
+  status words map to health: `SUCCESS` (health check passed) is healthy, `FAILED`/`CRASHED`
+  failed, `REMOVED`/`SKIPPED` superseded. A change whose deployment was replaced by a newer one
+  (a merge to `main`, say) is closed without a rollback, which would undo the newer deployment
+  too.
+- **A rollback you choose is journaled, not watched.** Undoing it automatically would only pick
+  between two states a person has already rejected.
+- **Logs are masked:** every secret value of the service is replaced before a log line is
+  returned.
 - **"Deploy" means redeploy, restart, rollback, status and logs.** It never means "deploy any
   branch". Shipping code stays `main` → Railway, so the console cannot ship code that has not
   been merged.
@@ -127,7 +155,7 @@ them. The control center adds a way in; it removes none.
 | Stage | Scope | Built |
 |---|---|---|
 | S1 | Foundation: migration 0031; vault-backed tokens; step-up; journal, reconciler and audit; Settings with Overview, AURA settings (read-only) and Changes | yes (2026-11-21), not proven |
-| S2 | Railway: services, variables (edit with validation), redeploy, restart, rollback, logs; the reconciler turned on | no |
+| S2 | Railway: services, variables (edit with validation), redeploy, restart, rollback, logs; the reconciler turned on; AURA settings edited through the gateway's own Railway variables | yes (2026-11-22), not proven |
 | S3 | HF GPU Space: status, restart, hardware, variables | no |
 | S4 | Provider keys: create and revoke where the vendor allows (Cloudflare), replace-only (Groq), HF rotated on both sides | no |
 | S5 | Grafana Cloud (set up, status) and Qdrant Cloud (status, snapshots; restore needs step-up) | no |
