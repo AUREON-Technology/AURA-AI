@@ -25,6 +25,7 @@ are still found -- and still land in ``"shared"``.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import asdict, replace
 from typing import Any, Mapping, Sequence
@@ -33,6 +34,7 @@ from ..domain.errors import EmbeddingError, MemoryStoreError, ValidationError
 from ..domain.events import MemoryConsolidated, MemoryWritten
 from ..domain.identifiers import MemoryId, SessionId, UserId
 from ..domain.knowledge import IndexIdentity
+from ..domain.text import fold_arabic
 from ..domain.memory import (
     BASE_CONFIDENCE_METADATA_KEY,
     MEMORY_POLICIES,
@@ -54,6 +56,20 @@ from ..ports.storage import MemoryStore, VectorPoint, VectorStore
 __all__ = ["MemoryEngine"]
 
 logger = get_logger("memory")
+
+_NON_WORD = re.compile(r"[\W_]+", re.UNICODE)
+
+
+def _same_statement(a: str, b: str) -> bool:
+    """Whether two memory texts say the same thing in the same words.
+
+    Case, spacing, punctuation and Arabic diacritics aside. Anything more is a different
+    statement, which :meth:`MemoryEngine.remember` treats as the newer word on the fact.
+    """
+    def norm(text: str) -> str:
+        return _NON_WORD.sub(" ", fold_arabic(text).casefold()).strip()
+
+    return norm(a) == norm(b)
 
 
 class MemoryEngine:
@@ -137,19 +153,32 @@ class MemoryEngine:
         duplicate = await self._find_duplicate(
             owner_id, kind, embedding, threshold=policy.duplicate_threshold, scope=scope
         )
+        replacing: MemoryRecord | None = None
+        access_count = 0
         if duplicate is not None:
             # Restating a fact is reinforcement, not a second fact. Bumping access_count and
             # confidence is what makes repeated preferences outrank one-off mentions.
             touched = duplicate.touched(now=now)
             raised = round(min(1.0, max(touched.confidence, confidence) + 0.05), 6)
-            merged = replace(
-                touched,
-                confidence=raised,
-                metadata={**touched.metadata, BASE_CONFIDENCE_METADATA_KEY: raised},
-            )
-            await self._store.update(merged)
-            logger.info("memory reinforced", extra={"kind": str(kind), "memory_id": merged.id.value})
-            return merged
+            if _same_statement(duplicate.content, text):
+                merged = replace(
+                    touched,
+                    confidence=raised,
+                    metadata={**touched.metadata, BASE_CONFIDENCE_METADATA_KEY: raised},
+                )
+                await self._store.update(merged)
+                logger.info(
+                    "memory reinforced", extra={"kind": str(kind), "memory_id": merged.id.value}
+                )
+                return merged
+            # Close enough to be the same fact, but worded differently -- and a correction
+            # ("I moved to Alexandria" after "I live in Cairo") is exactly that. The old code kept
+            # the *old* text and raised its confidence, so the correction was lost and the stale
+            # fact grew surer (audit B4). The newest statement wins: it replaces the record,
+            # keeping the reinforcement it had earned, under its own provenance and vector.
+            replacing = duplicate
+            confidence = raised
+            access_count = touched.access_count
 
         record = MemoryRecord(
             id=MemoryId.new(),
@@ -171,7 +200,13 @@ class MemoryEngine:
             # the same source that later decays and ranks it.
             created_at=now,
             last_accessed_at=now,
-            metadata={**dict(metadata or {}), SCOPE_METADATA_KEY: scope or SHARED_MEMORY_SCOPE},
+            access_count=access_count,
+            metadata={
+                **dict(metadata or {}),
+                SCOPE_METADATA_KEY: scope or SHARED_MEMORY_SCOPE,
+                **({"replaces": replacing.id.value} if replacing is not None else {}),
+                **({BASE_CONFIDENCE_METADATA_KEY: confidence} if replacing is not None else {}),
+            },
         )
 
         await self._enforce_quota(owner_id)
@@ -196,6 +231,15 @@ class MemoryEngine:
                 )
             ],
         )
+
+        if replacing is not None:
+            # After the new record is stored: a failure in between leaves both, never neither.
+            await self._forget(replacing)
+            logger.info(
+                "memory replaced by a newer statement",
+                extra={"kind": str(kind), "memory_id": record.id.value,
+                       "replaced": replacing.id.value},
+            )
 
         if self._metrics is not None:
             self._metrics.memory_writes_total.labels(kind=str(kind)).inc()

@@ -30,7 +30,7 @@ import re
 import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Mapping, Sequence
+from typing import Any, AsyncIterator, Callable, Mapping, Sequence
 
 from ..context.engine import ContextEngine, ContextRequest, AssembledContext
 from ..domain.errors import (
@@ -67,7 +67,8 @@ from ..domain.llm import (
 )
 from ..domain.memory import MemoryHit, MemoryKind, MemoryQuery, readable_scopes
 from ..domain.output_schema import parse_structured
-from ..domain.messages import Conversation, Message
+from ..domain.messages import Conversation, Message, Role
+from ..domain.text import restates
 from ..domain.planning import StepKind, StepStatus
 from ..domain.reasoning import ReasoningStrategy
 from ..domain.tools import ToolSensitivity, intersect_tool_grants, tool_grant_permits
@@ -101,6 +102,8 @@ from ..prompts.library import AGENT_PROMPT_IDS
 from ..agents.registry import AgentRegistry, AgentSpec
 from ..reasoning.engine import ReasoningRequest
 from ..tools.personal_os import actions_from_tool_results
+from ..planning.engine import follow_up_goal
+from .claims import claims_completed_action, unbacked_action_note
 from .turn_scope import current_turn_lookups, turn_lookup_scope
 
 __all__ = ["AIKernel", "TurnRequest", "TurnResult", "KernelDependencies"]
@@ -526,6 +529,10 @@ class AIKernel:
             message = decision.text
             guard_records.extend(decision.report.summary())
             timings["guards_in"] = (time.perf_counter() - stage_start) * 1000.0
+            # From here on the guarded text *is* the message (audit B3): session history, the
+            # planner gate and the reasoner all read `request.message`, and before this they
+            # got what the input guard had redacted -- history then replayed it on every turn.
+            request = replace(request, message=message)
 
         # 1b. Images become DATA evidence before anything reads the turn (ADR-031) ----
         request, perception = await self._perceive_images(request, message)
@@ -536,6 +543,8 @@ class AIKernel:
             memories, retrieval, history, history_summary, goals, cag_prefix, history_tainted,
         ) = await self._gather_context(request, message)
         timings["memory"] = timings["retrieval"] = (time.perf_counter() - stage_start) * 1000.0
+        self._note_user_statements(request, message, history)
+        previous_reply = self._previous_reply(history)
         await self._classify_context(request, memories, retrieval, history, goals, cag_prefix)
 
         # 5. Guard retrieved content and recalled memories ----------------------------
@@ -570,12 +579,13 @@ class AIKernel:
         tools_tainted = False
 
         tool_declarations = await self._tool_declarations(request)
-        if resume is not None or self._should_plan(request, tool_declarations):
+        if resume is not None or self._should_plan(request, tool_declarations, previous_reply):
             stage_start = time.perf_counter()
             try:
                 with generation_purpose("planner"):
                     outcome = await self._plan_and_execute(
-                        request, message, tool_declarations, tainted,
+                        request, self._planner_message(message, previous_reply, resume),
+                        tool_declarations, tainted,
                         turn_id=turn_id, correlation=correlation, resume=resume,
                     )
             except Exception:
@@ -686,6 +696,18 @@ class AIKernel:
             if repair_usage is not None:
                 usage = (usage or TokenUsage(prompt_tokens=assembled.prompt_tokens)) + repair_usage
 
+        # 9c. Answers nothing backs (audit A1, C1) ------------------------------------
+        empty_generation_fallback = unbacked_claim = False
+        if request.response_schema is None:
+            if not answer.strip():
+                empty_generation_fallback = True
+                answer = self._empty_answer_text(needs_confirmation)
+            elif self._is_unbacked_claim(
+                answer, tool_telemetry, needs_confirmation, pending_tool_calls
+            ):
+                unbacked_claim = True
+                answer = self._with_unbacked_note(request, answer)
+
         # 10. Persist session state --------------------------------------------------
         # Awaited here: `run` returns one complete result, so nothing is gained by deferring it.
         await self._persist_exchange(request, answer, tainted=tainted or tools_tainted)
@@ -700,7 +722,9 @@ class AIKernel:
             outcome=TurnOutcome.SUCCESS,
             provider=provider,
             model=model,
-            fallback_count=fallbacks,
+            # Every generation of the turn the router served from a fallback (audit C2);
+            # `_generate`'s own count was a hard-coded 0.
+            fallback_count=max(fallbacks, budget.fallbacks),
             cache=CacheOutcome(hit=cached, tier=cache_tier),
             # Every generation the turn made -- planning, reasoning, the answer, a repair --
             # was charged to its budget (F30): its cost and, since KAN-106, its tokens.
@@ -723,6 +747,8 @@ class AIKernel:
             plan_revisions=plan_revisions,
             planning_failed=planning_failed,
             tool_output_dropped=bool(assembled.dropped_tools),
+            unbacked_action_claim=unbacked_claim,
+            empty_generation_fallback=empty_generation_fallback,
             confidence=confidence,
             groundedness=groundedness,
         )
@@ -804,6 +830,8 @@ class AIKernel:
                     message = decision.text
                     guard_records.extend(decision.report.summary())
                     timings["guards_in"] = (time.perf_counter() - stage_start) * 1000.0
+                    # As in `run` (audit B3): history keeps the guarded text, not the raw one.
+                    request = replace(request, message=message)
 
                 perception = None
                 if request.images:
@@ -830,6 +858,8 @@ class AIKernel:
                 timings["memory"] = timings["retrieval"] = (
                     time.perf_counter() - stage_start
                 ) * 1000.0
+                self._note_user_statements(request, message, history)
+                previous_reply = self._previous_reply(history)
                 await self._classify_context(
                     request, memories, retrieval, history, goals, cag_prefix
                 )
@@ -856,12 +886,15 @@ class AIKernel:
                 execution_notes: list[str] = []
                 planning_failed = False
                 outcome: ExecutionOutcome | None = None
-                if resume is not None or self._should_plan(request, tool_declarations):
+                if resume is not None or self._should_plan(
+                    request, tool_declarations, previous_reply
+                ):
                     stage_start = time.perf_counter()
                     try:
                         with generation_purpose("planner"):
                             async for item in self._iter_execution(
-                                request, message, tool_declarations, tainted,
+                                request, self._planner_message(message, previous_reply, resume),
+                                tool_declarations, tainted,
                                 turn_id=turn_id, correlation=correlation, resume=resume,
                             ):
                                 if isinstance(item, StepEvent):
@@ -978,22 +1011,20 @@ class AIKernel:
 
                 answer = "".join(collected)
                 empty_generation_fallback = False
-                if not answer.strip() and saw_tool_calls:
-                    # The model answered with a native tool-call and no text. Those calls are
-                    # informational only here (ADR-006) and were never executed, so without this
-                    # the turn would otherwise end as a bare "success" with an empty answer -- the
+                if not answer.strip():
+                    # No text: either native tool-calls only (informational here, ADR-006, never
+                    # executed) or nothing at all (audit C1). Either way the turn would otherwise
+                    # end as a bare "success" with an empty answer, persisted to history -- the
                     # client has no way to tell that apart from a genuine failure.
                     logger.warning(
-                        "generation returned tool-calls-only with no text; synthesizing fallback",
-                        extra={"needs_confirmation": bool(needs_confirmation)},
+                        "generation returned no text; synthesizing fallback",
+                        extra={
+                            "needs_confirmation": bool(needs_confirmation),
+                            "tool_calls_only": saw_tool_calls,
+                        },
                     )
                     empty_generation_fallback = True
-                    answer = (
-                        "I have a suggested action ready for your confirmation below."
-                        if needs_confirmation
-                        else "I wasn't able to put together a reply for that -- "
-                        "could you rephrase your message or try again?"
-                    )
+                    answer = self._empty_answer_text(needs_confirmation)
                     yield {"type": "token", "text": answer}
 
                 timings["generation"] = (time.perf_counter() - stage_start) * 1000.0
@@ -1037,6 +1068,19 @@ class AIKernel:
                         }
                         return
 
+                # An action claim nothing backs (audit A1): the text already streamed, so the
+                # correction goes out as a revision, and the corrected text is what history keeps.
+                unbacked_claim = not empty_generation_fallback and self._is_unbacked_claim(
+                    answer, tool_telemetry, needs_confirmation, pending_tool_calls
+                )
+                if unbacked_claim:
+                    answer = self._with_unbacked_note(request, answer)
+                    yield {
+                        "type": "revision",
+                        "reason": "unbacked_action_claim",
+                        "text": answer,
+                    }
+
                 # Fire-and-forget shadow, off the turn's critical path (PP-04): failures must not
                 # fail the turn, and its latency must not delay the `done` frame.
                 try:
@@ -1066,6 +1110,8 @@ class AIKernel:
                     outcome=TurnOutcome.SUCCESS,
                     provider=provider,
                     model=model,
+                    # A failover before the first token is invisible in the frames (audit C2).
+                    fallback_count=budget.fallbacks,
                     **usage_fields,
                     cost_usd=budget.cost_used_usd,
                     total_ms=(time.perf_counter() - started) * 1000.0,
@@ -1086,6 +1132,8 @@ class AIKernel:
                     plan_revisions=len(outcome.plan.revisions) if outcome is not None else 0,
                     planning_failed=planning_failed,
                     tool_output_dropped=bool(assembled.dropped_tools),
+                    unbacked_action_claim=unbacked_claim,
+                    empty_generation_fallback=empty_generation_fallback,
                 )
                 # Metrics and the span are in-process; the sink write, the event, the session
                 # append (which can run a whole summarising generation) and a clean mark go
@@ -1102,8 +1150,6 @@ class AIKernel:
                 degraded_reasons = list(telemetry.degraded_reasons)
                 if searched_empty and "empty_retrieval" not in degraded_reasons:
                     degraded_reasons.append("empty_retrieval")
-                if empty_generation_fallback:
-                    degraded_reasons.append("empty_generation_fallback")
                 lookups = current_turn_lookups()
                 if lookups is not None and lookups.skipped_private_context:
                     degraded_reasons.append("private_context_skipped")
@@ -1127,6 +1173,10 @@ class AIKernel:
                     "degraded_reasons": degraded_reasons,
                     "searched_but_empty": searched_empty,
                     "empty_generation_fallback": empty_generation_fallback,
+                    # What ran and whether it worked -- names and outcomes only, as `run`'s
+                    # telemetry reports them -- so the stream can be evaluated like `run`
+                    # (audit C4).
+                    "tools": [{"name": t.name, "ok": t.ok} for t in tool_telemetry],
                     "vision": perception.as_dict() if perception is not None else None,
                     "usage": {
                         **budget.usage.as_dict(),
@@ -1776,7 +1826,12 @@ class AIKernel:
             if tool_grant_permits(str(d.get("name", "")), allowed_tools, allowed_prefixes)
         )
 
-    def _should_plan(self, request: TurnRequest, tools: Sequence[Mapping[str, Any]]) -> bool:
+    def _should_plan(
+        self,
+        request: TurnRequest,
+        tools: Sequence[Mapping[str, Any]],
+        previous_reply: str | None = None,
+    ) -> bool:
         deps = self._deps
         if deps.planner is None or deps.executor is None or not tools:
             return False
@@ -1794,8 +1849,89 @@ class AIKernel:
                 # RESPOND step still falls through to the direct answer (`_compose_plan`).
                 force = True
         return deps.planner.needs_plan(
-            request.message, available_tools=[t.get("name", "") for t in tools], force=force
+            request.message, available_tools=[t.get("name", "") for t in tools], force=force,
+            previous_reply=previous_reply,
         )
+
+    @staticmethod
+    def _previous_reply(history: Any) -> str | None:
+        """The assistant's last message in this session's history, or ``None``."""
+        for message in reversed(tuple(history or ())):
+            if getattr(message, "role", None) is Role.ASSISTANT:
+                return message.content
+        return None
+
+    @staticmethod
+    def _planner_message(message: str, previous_reply: str | None, resume: Any) -> str:
+        """What the planner plans from: the message, plus its referent for a follow-up (A2).
+
+        A resumed confirmation runs its stored plan, so it is given the message unchanged.
+        """
+        if resume is not None:
+            return message
+        return follow_up_goal(message, previous_reply)
+
+    @staticmethod
+    def _note_user_statements(request: TurnRequest, message: str, history: Any) -> None:
+        """Record what the person wrote this session, for ``remember_fact`` (audit B5).
+
+        A delegated sub-turn keeps what it inherited: its message is a brief another model
+        wrote, and treating it as the person's words would reopen the hole this closes.
+        """
+        lookups = current_turn_lookups()
+        if lookups is None or request.delegation_depth > 0:
+            return
+        earlier = tuple(
+            m.content for m in (history or ()) if getattr(m, "role", None) is Role.USER
+        )
+        lookups.user_statements = (message, *earlier)
+
+    @staticmethod
+    def _user_stated() -> Callable[[str], bool] | None:
+        """A predicate: does a fact restate something the person wrote this session (B5)?
+
+        ``None`` outside a turn, which leaves ``remember_fact`` as it was. The tool gets the
+        predicate, never the words: a tool must not read the conversation.
+        """
+        lookups = current_turn_lookups()
+        if lookups is None:
+            return None
+        statements = lookups.user_statements
+        return lambda fact: restates(fact, statements)
+
+    @staticmethod
+    def _empty_answer_text(needs_confirmation: Sequence[str]) -> str:
+        """The fixed answer for a generation that returned no text (audit C1)."""
+        if needs_confirmation:
+            return "I have a suggested action ready for your confirmation below."
+        return (
+            "I wasn't able to put together a reply for that -- "
+            "could you rephrase your message or try again?"
+        )
+
+    @staticmethod
+    def _is_unbacked_claim(
+        answer: str,
+        tools: Sequence[ToolTelemetry],
+        needs_confirmation: Sequence[str],
+        pending_tool_calls: Sequence[Any],
+    ) -> bool:
+        """The answer claims a completed action, and nothing this turn did could back it (A1).
+
+        Backed means any tool ran and succeeded, or something awaits the person's confirmation.
+        Deliberately generous: a succeeded read-only tool also counts, so the check fires only
+        when no tool ran at all -- the case the audit found, and one with no false "backing".
+        """
+        if needs_confirmation or pending_tool_calls:
+            return False
+        if any(t.ok and t.allowed for t in tools):
+            return False
+        return claims_completed_action(answer)
+
+    @staticmethod
+    def _with_unbacked_note(request: TurnRequest, answer: str) -> str:
+        language = reply_language(request.message, request.preferred_language)
+        return f"{answer.rstrip()}\n\n{unbacked_action_note(language)}"
 
     def _tool_context(self, request: TurnRequest, tainted: bool) -> ToolContext:
         agent = self._resolve_agent(request)
@@ -1836,6 +1972,8 @@ class AIKernel:
             # doesn't carry one (e.g. a request with no `session_id`), which
             # `_SandboxSessionCache` treats as "isolation not possible, ignore the flag."
             metadata={
+                # A predicate, not the text (audit B5): see `_user_stated`.
+                "user_stated": self._user_stated(),
                 "session_id": str(request.session_id) if request.session_id else None,
                 "desktop_task_isolation": request.desktop_task_isolation,
                 "workspace_root": request.workspace_root,
@@ -2705,7 +2843,9 @@ class AIKernel:
                 result = None
         if result is not None:
             confidence = result.confidence.score if result.confidence else None
-            if cache is not None:
+            # Never cache an empty answer (audit C1): it would be served to every later turn
+            # the cache matches, each time as the kernel's fallback text instead of a reply.
+            if cache is not None and result.text.strip():
                 await cache.store(
                     completion,
                     CompletionResponse(
@@ -2726,7 +2866,7 @@ class AIKernel:
         except AllProvidersFailedError:
             raise
 
-        if cache is not None:
+        if cache is not None and response.text.strip():
             await cache.store(completion, response, namespace=namespace)
 
         return (

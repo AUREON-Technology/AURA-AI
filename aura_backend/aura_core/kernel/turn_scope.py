@@ -39,6 +39,11 @@ class TurnLookups:
     #: The private context sources this turn skipped because no provider could take them
     #: (KAN-112); empty when nothing was skipped.
     skipped_private_context: tuple[str, ...] = ()
+    #: What the person wrote, as the kernel guarded it: this turn's message and the session's
+    #: earlier user messages (audit B5). ``remember_fact`` stores only facts these restate. A
+    #: delegated sub-turn inherits its parent's: its own "message" is a brief the parent's model
+    #: wrote, not something the person said.
+    user_statements: tuple[str, ...] = ()
 
 
 _CURRENT: ContextVar[TurnLookups | None] = ContextVar("aura_turn_lookups", default=None)
@@ -57,7 +62,9 @@ def turn_lookup_scope() -> Iterator[TurnLookups]:
     cache then embed the message once between them.
     """
     parent = _CURRENT.get()
-    lookups = TurnLookups()
+    lookups = TurnLookups(
+        user_statements=parent.user_statements if parent is not None else ()
+    )
     token = _CURRENT.set(lookups)
     try:
         with embedding_memo_scope():

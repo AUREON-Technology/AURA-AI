@@ -183,6 +183,11 @@ class TurnTelemetry:
     #: A tool ran but its output did not fit the prompt (KAN-102). The model was told so by a
     #: pinned note; the turn still answered without what the tool returned.
     tool_output_dropped: bool = False
+    #: The answer said an action was done (created, sent, scheduled...) while no tool ran and
+    #: nothing awaits confirmation (audit A1). The kernel appended a correction to the answer.
+    unbacked_action_claim: bool = False
+    #: The model returned no text, and the kernel answered with a fixed fallback (audit C1).
+    empty_generation_fallback: bool = False
     confidence: float | None = None
     groundedness: float | None = None
 
@@ -208,6 +213,8 @@ class TurnTelemetry:
             or any(not t.ok for t in self.tools)
             or self.planning_failed
             or self.tool_output_dropped
+            or self.unbacked_action_claim
+            or self.empty_generation_fallback
         )
 
     @property
@@ -220,6 +227,8 @@ class TurnTelemetry:
             ("tool_failure", any(not t.ok for t in self.tools)),
             ("planning_failed", self.planning_failed),
             ("tool_output_dropped", self.tool_output_dropped),
+            ("unbacked_action_claim", self.unbacked_action_claim),
+            ("empty_generation_fallback", self.empty_generation_fallback),
         )
         return tuple(reason for reason, hit in reasons if hit)
 

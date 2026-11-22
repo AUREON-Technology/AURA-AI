@@ -290,13 +290,93 @@ def _ndcg(retrieved: Sequence[str], relevant: set[str]) -> float:
 # --------------------------------------------------------------------------------------
 
 
-class AnswerEvaluator:
-    """Scores end-to-end kernel answers."""
+#: How an evaluator drives the kernel. ``run`` is ``/api/v3/chat``; ``stream`` is
+#: ``/api/v3/chat/stream``, the only path the app uses -- and a different pipeline (no reasoner,
+#: no cache, revisions after the fact). Measuring only ``run`` measured what users never get
+#: (audit C4).
+TRANSPORTS = ("run", "stream")
 
-    def __init__(self, kernel: Any, *, metrics: Any = None, judge: "LLMJudge | None" = None) -> None:
+
+@dataclass(frozen=True, slots=True)
+class _EvalTurn:
+    """One turn as an evaluator scores it, whichever transport produced it."""
+
+    text: str
+    citations: tuple[Any, ...] = ()
+    confidence: float | None = None
+    #: Only ``run`` reports it: the stream's ``done`` frame carries no groundedness score.
+    groundedness: float | None = None
+    #: ``(tool name, succeeded)`` for every tool the turn ran.
+    tools: tuple[tuple[str, bool], ...] = ()
+    degraded_reasons: tuple[str, ...] = ()
+
+
+async def _take_turn(kernel: Any, request: Any, transport: str) -> _EvalTurn:
+    """Drive one turn over ``transport`` and collect what an evaluator scores."""
+    if transport == "run":
+        result = await kernel.run(request)
+        telemetry = result.telemetry
+        return _EvalTurn(
+            text=result.text,
+            citations=tuple(result.citations),
+            confidence=result.confidence,
+            groundedness=telemetry.groundedness,
+            tools=tuple((t.name, bool(t.ok)) for t in telemetry.tools),
+            degraded_reasons=tuple(telemetry.degraded_reasons),
+        )
+    if transport != "stream":
+        raise ValidationError(f"unknown eval transport {transport!r}; expected one of {TRANSPORTS}")
+    tokens: list[str] = []
+    text: str | None = None
+    citations: tuple[Any, ...] = ()
+    done: Mapping[str, Any] = {}
+    async for frame in kernel.stream(request):
+        kind = frame.get("type")
+        if kind == "token":
+            tokens.append(str(frame.get("text", "")))
+        elif kind == "revision":
+            # A revision replaces everything streamed so far, as it does on screen.
+            text = str(frame.get("text", ""))
+        elif kind == "citations":
+            citations = tuple(frame.get("citations") or ())
+        elif kind == "error":
+            raise EvaluationError(
+                f"streamed turn failed: {frame.get('error')}",
+                details={"message": frame.get("message")},
+            )
+        elif kind == "done":
+            done = frame
+    return _EvalTurn(
+        text=text if text is not None else "".join(tokens),
+        citations=tuple(done.get("citations") or citations),
+        confidence=done.get("confidence"),
+        tools=tuple((str(t.get("name")), bool(t.get("ok"))) for t in done.get("tools") or ()),
+        degraded_reasons=tuple(done.get("degraded_reasons") or ()),
+    )
+
+
+class AnswerEvaluator:
+    """Scores end-to-end kernel answers.
+
+    ``transport="stream"`` scores what the app shows (audit C4). The default stays ``run``
+    because the recorded gate baselines were measured on it, and groundedness is reported only
+    there; a baseline measured on one transport must not gate the other.
+    """
+
+    def __init__(
+        self,
+        kernel: Any,
+        *,
+        metrics: Any = None,
+        judge: "LLMJudge | None" = None,
+        transport: str = "run",
+    ) -> None:
+        if transport not in TRANSPORTS:
+            raise ValidationError(f"unknown eval transport {transport!r}")
         self._kernel = kernel
         self._metrics = metrics
         self._judge = judge
+        self._transport = transport
 
     async def run(self, suite: EvalSuite) -> SuiteResult:
         from ..domain.identifiers import UserId
@@ -307,12 +387,14 @@ class AnswerEvaluator:
 
         for case in suite.cases:
             case_started = time.perf_counter()
-            turn = await self._kernel.run(
+            turn = await _take_turn(
+                self._kernel,
                 TurnRequest(
                     message=case.query,
                     user_id=UserId(case.owner_id or "eval-user"),
                     route="eval",
-                )
+                ),
+                self._transport,
             )
             answer = turn.text
             scores: dict[str, float] = {}
@@ -344,8 +426,8 @@ class AnswerEvaluator:
 
             if turn.confidence is not None:
                 scores["confidence"] = turn.confidence
-            if turn.telemetry.groundedness is not None:
-                scores["groundedness"] = turn.telemetry.groundedness
+            if turn.groundedness is not None:
+                scores["groundedness"] = turn.groundedness
             scores["cited"] = 1.0 if turn.citations else 0.0
 
             if self._judge is not None and not case.should_refuse:
@@ -485,11 +567,15 @@ class AgentEvaluator:
         metrics: Any = None,
         max_turns: int = 10,
         timeout_s: float = 120.0,
+        transport: str = "run",
     ) -> None:
+        if transport not in TRANSPORTS:
+            raise ValidationError(f"unknown eval transport {transport!r}")
         self._kernel = kernel
         self._metrics = metrics
         self._max_turns = max_turns
         self._timeout_s = timeout_s
+        self._transport = transport
 
     async def run(self, cases: Sequence[AgentCase]) -> AgentSuiteResult:
         from ..domain.identifiers import UserId
@@ -512,30 +598,33 @@ class AgentEvaluator:
                 for turn_num in range(case.max_turns):
                     turns = turn_num + 1
                     turn = await asyncio.wait_for(
-                        self._kernel.run(
+                        _take_turn(
+                            self._kernel,
                             TurnRequest(
                                 message=case.query if turn_num == 0 else "Continue",
                                 user_id=UserId(case.owner_id or "eval-user"),
                                 route="eval_agent",
-                            )
+                            ),
+                            self._transport,
                         ),
                         timeout=self._timeout_s,
                     )
                     answer_text = f"{answer_text} {turn.text}" if answer_text else turn.text
 
+                    # `TurnResult.tool_calls` is a tuple of names; this used to read
+                    # `tc.tool_name`/`tc.args` off it, so any turn that ran a tool raised
+                    # AttributeError and the case was scored as an error. The per-tool outcome
+                    # comes from the turn's own tool telemetry (or the stream's `done.tools`).
                     trace.append({
                         "turn": turn_num + 1,
                         "text": turn.text[:500],
-                        "tool_calls": [
-                            {"tool": tc.tool_name, "args": tc.args, "error": getattr(tc, "error", None)}
-                            for tc in getattr(turn, "tool_calls", [])
-                        ],
+                        "tool_calls": [{"tool": name, "ok": ok} for name, ok in turn.tools],
                     })
 
-                    for tc in getattr(turn, "tool_calls", []):
-                        tools_used.append(tc.tool_name)
+                    for name, ok in turn.tools:
+                        tools_used.append(name)
                         tool_total += 1
-                        if not getattr(tc, "error", None):
+                        if ok:
                             tool_success_count += 1
 
                     if self._is_task_complete(answer_text, case):

@@ -3728,6 +3728,25 @@ class AppLocalizationsAr extends AppLocalizations {
   String get chatTurnUngrounded => 'من غير مصادر — مفيش مصادر مرفقة.';
 
   @override
+  String get chatTurnNoActionTaken =>
+      'مفيش أي إجراء اتنفّذ — متعملش ولا اتغيّر ولا اتبعت حاجة.';
+
+  @override
+  String get chatTurnToolsUnavailable =>
+      'AURA مقدرش يستخدم أدواته في الدور ده، فمفيش حاجة اتعملت.';
+
+  @override
+  String get chatTurnToolFailed =>
+      'أداة من اللي AURA استخدمها فشلت في الدور ده.';
+
+  @override
+  String get chatTurnEmptyReply => 'النموذج مرجّعش أي رد في الدور ده.';
+
+  @override
+  String get chatTurnToolOutputTrimmed =>
+      'نتيجة أداة كانت طويلة أوي ومتستخدمتش كلها.';
+
+  @override
   String chatMoreLines(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,
