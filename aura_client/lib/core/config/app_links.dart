@@ -7,12 +7,23 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../platform/browser_address.dart';
+
 const _appBaseUrl = String.fromEnvironment('APP_BASE_URL');
 
 String appBaseUrl() {
   if (_appBaseUrl.isNotEmpty) return _appBaseUrl.replaceAll(RegExp(r'/+$'), '');
-  if (kIsWeb) return Uri.base.origin;
+  if (kIsWeb) return webAppBaseUrl(Uri.base.origin, browserBasePath());
   return '';
+}
+
+/// Where a web build is served from: its origin plus the path in its `<base href>`, without a
+/// trailing slash. The app lives at `https://web.aureon-ai.tech/app/`, so a link built from the
+/// bare origin would point outside it (and 404 at the host).
+@visibleForTesting
+String webAppBaseUrl(String origin, String basePath) {
+  final path = basePath.replaceAll(RegExp(r'/+$'), '');
+  return path.isEmpty ? origin : '$origin${path.startsWith('/') ? path : '/$path'}';
 }
 
 /// [appBaseUrl] for widgets and notifiers, so a test can stand in a web app address the build

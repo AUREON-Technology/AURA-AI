@@ -1,4 +1,11 @@
-# AURA web service: the public install page for the Desktop IDE.
+# AURA web service: the AURA web app (/app/, the Flutter web build of the mobile app) and the
+# public install page for the Desktop IDE (/desktop-ide/).
+#
+# The two have different security policies on purpose. The install page ships its own CSS and JS
+# and nothing else, so it runs under `default-src 'none'` (security-headers.conf). The Flutter app
+# needs WebAssembly, a worker, the API and Firebase sign-in, so /app/ includes its own,
+# wider policy (security-headers-app.conf). A location that sets add_header drops the server-level
+# ones, so each location includes the snippet it wants.
 #
 # nginx-unprivileged renders this file through envsubst at start-up (docker-entrypoint), which
 # substitutes only variables that exist in the environment: ${PORT} comes from Railway; nginx's
@@ -17,14 +24,54 @@ server {
     absolute_redirect off;
 
     gzip on;
-    gzip_types text/css application/javascript application/json image/svg+xml;
+    gzip_types text/css application/javascript application/json application/wasm image/svg+xml;
 
     include /etc/nginx/snippets/security-headers.conf;
 
-    location = / { return 302 /desktop-ide/install; }
+    # The web app is the front door; the installer stays one link away.
+    location = / { return 302 /app/; }
     location = /desktop-ide { return 302 /desktop-ide/install; }
     location = /desktop-ide/ { return 302 /desktop-ide/install; }
     location = /desktop-ide/install/ { return 301 /desktop-ide/install; }
+
+    # ---- The web app: the Flutter web build, copied into the image from aura_web/app-build ----
+    # (filled by .github/workflows/web-app-main-channel.yml; with no build there, the image carries
+    # a plain "not built yet" page instead, so /app/ never 404s into the installer's 404 page).
+    # Hash routing means the browser never asks for a client-side route, so there is no general
+    # SPA fallback: a missing file is a real 404, not an HTML page served in place of a script.
+    # The exceptions are the two links that are opened as real paths from outside the app, which
+    # the app reads back into its router (router.dart `webDeepLinkLocation`): a team invite
+    # (/app/invite?token=...) and the desktop app's browser sign-in (/app/desktop-sign-in?...).
+    location = /app { return 301 /app/; }
+
+    location = /app/invite {
+        include /etc/nginx/snippets/security-headers-app.conf;
+        add_header Cache-Control "no-store" always;
+        try_files /app/index.html =404;
+    }
+    location = /app/desktop-sign-in {
+        include /etc/nginx/snippets/security-headers-app.conf;
+        add_header Cache-Control "no-store" always;
+        try_files /app/index.html =404;
+    }
+
+    # Dotfiles (.gitkeep, .last_build_id) are not served.
+    location ~ ^/app/\. { return 404; }
+
+    # Big, rarely changing, and named by the build: one day.
+    location ~ ^/app/(canvaskit|assets|icons)/ {
+        include /etc/nginx/snippets/security-headers-app.conf;
+        add_header Cache-Control "public, max-age=86400" always;
+        try_files $uri =404;
+    }
+
+    # The shell, the loader, the compiled app and the version stamp: always revalidated, so a new
+    # deploy is picked up on the next load and never mixes with an old main.dart.js.
+    location /app/ {
+        include /etc/nginx/snippets/security-headers-app.conf;
+        add_header Cache-Control "no-cache" always;
+        try_files $uri $uri/index.html =404;
+    }
 
     # Railway's health check; deliberately not under /desktop-ide.
     location = /healthz {
