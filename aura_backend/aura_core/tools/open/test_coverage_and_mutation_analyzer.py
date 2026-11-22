@@ -1,19 +1,61 @@
 import ast
 import json
+import math
+import os
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ._process import PYTEST_ENV, run_bounded
+from ._input import SourceReadError, read_source_bytes, read_source_file
+from ._ops_common import PathRefused, confine, run_group
+from ._process import PYTEST_ENV, scrubbed_env
 
 #: Not worth copying into the mutation workspace, and a venv or ``.git`` can be gigabytes.
 _COPY_IGNORE = shutil.ignore_patterns(
     ".git", "__pycache__", ".venv", "venv", "node_modules", ".mypy_cache", ".pytest_cache", "*.pyc"
 )
+#: The mutation workspace is a *copy* of working_dir. Pointing it at ``/`` or a home directory must
+#: fail fast, not copy the disk.
+_MAX_COPY_BYTES = 200 * 1024 * 1024
+_MAX_COPY_FILES = 20_000
+_SOURCE_PACKAGE_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.,/\\:\-]*$")
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _copy_ignore(directory: str, names: List[str]) -> set:
+    """``_COPY_IGNORE`` plus every symlink: a link must not be followed (or recreated) in the copy."""
+    skip = set(_COPY_IGNORE(directory, names))
+    skip.update(n for n in names if os.path.islink(os.path.join(directory, n)))
+    return skip
+
+
+def _copy_budget_error(root: Path) -> Optional[str]:
+    """Why ``root`` is too big to copy for mutation testing, or None."""
+    files = 0
+    size = 0
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        skip = _copy_ignore(dirpath, dirnames + filenames)
+        dirnames[:] = [d for d in dirnames if d not in skip]
+        for name in filenames:
+            if name in skip:
+                continue
+            files += 1
+            try:
+                size += os.lstat(os.path.join(dirpath, name)).st_size
+            except OSError:
+                continue
+            if files > _MAX_COPY_FILES or size > _MAX_COPY_BYTES:
+                return (
+                    f"working_dir is too large to copy for mutation testing (more than {_MAX_COPY_FILES} "
+                    f"files or {_MAX_COPY_BYTES // (1024 * 1024)} MB). Point it at the project's source folder."
+                )
+    return None
 
 
 class TestCoverageAndMutationAnalyzer:

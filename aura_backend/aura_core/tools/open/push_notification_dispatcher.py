@@ -1,12 +1,73 @@
+import base64
 import json
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional
 
+from ._ops_common import UrlRefused, open_guarded, redact_url
+
+_MAX_TITLE = 256
+_MAX_MESSAGE = 4000
+_MAX_EVENT = 100
+_MAX_PAYLOAD_BYTES = 256 * 1024
+
+
+def _text(value: Any, limit: int) -> str:
+    """``value`` as a stripped string of at most ``limit`` characters; None becomes ''."""
+    if value is None:
+        return ""
+    text = value if isinstance(value, str) else str(value)
+    return text.strip()[:limit]
+
+
+def _slack_escape(text: str) -> str:
+    """Slack's required escaping: without it ``<!channel>`` in a message pings the whole channel."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _http_url_or_none(url: Any) -> Optional[str]:
+    """``url`` if it is a plain http(s) link (no ``javascript:`` and the like), else None."""
+    if not isinstance(url, str) or not url.strip() or len(url) > 2000:
+        return None
+    try:
+        parts = urllib.parse.urlsplit(url.strip())
+    except ValueError:
+        return None
+    return url.strip() if parts.scheme in ("http", "https") and parts.hostname else None
+
+
+def _header_safe(value: str) -> str:
+    """A header value that cannot inject a second header and survives non-Latin-1 text.
+
+    HTTP header text is Latin-1 on the wire. Anything else (Arabic, emoji) is sent as an RFC 2047
+    encoded word, which ntfy decodes; unencoded it makes ``http.client`` raise.
+    """
+    cleaned = "".join(ch for ch in value if ch not in "\r\n\x00").strip()
+    try:
+        cleaned.encode("latin-1")
+        return cleaned
+    except UnicodeEncodeError:
+        return "=?UTF-8?B?" + base64.b64encode(cleaned.encode("utf-8")).decode("ascii") + "?="
+
 
 class PushNotificationDispatcher:
-    """Dispatcher for building and sending task, CI, and approval notifications to Webhooks, Slack, Discord, and ntfy."""
+    """Dispatcher for building and sending task, CI, and approval notifications to Webhooks, Slack, Discord, and ntfy.
+
+    Safety properties:
+
+    * a webhook is only called over http/https on a **public** host (``allow_private=True`` opts in
+      to loopback/private ranges), never ``file://`` and never a link-local/metadata address, and a
+      redirect is **not followed** (a POST that quietly became a GET elsewhere is a failure);
+    * webhook URLs embed their secret in the path (``hooks.slack.com/services/T0/B0/<secret>``), so
+      results show ``scheme://host/...`` only;
+    * ``dispatch`` without a ``webhook_url`` no longer reports ``delivered``: there is no local
+      notification centre behind it, so it says ``not_sent``;
+    * Slack text is escaped (``<!channel>`` cannot ping a channel) and Discord mentions are disabled.
+
+    Reads no files, so there is no PDF handling to do.
+    """
 
     ALLOWED_PRIORITIES = {"low", "normal", "high", "urgent"}
 
@@ -18,6 +79,12 @@ class PushNotificationDispatcher:
     }
 
     @classmethod
+    def _norm_priority(cls, priority: Any) -> str:
+        if isinstance(priority, str) and priority.strip().lower() in cls.ALLOWED_PRIORITIES:
+            return priority.strip().lower()
+        return "normal"
+
+    @classmethod
     def build_payload(
         cls,
         title: str,
@@ -26,12 +93,11 @@ class PushNotificationDispatcher:
         priority: str = "normal",
     ) -> Dict[str, Any]:
         """Construct a normalized notification payload."""
-        norm_priority = priority.lower() if priority.lower() in cls.ALLOWED_PRIORITIES else "normal"
         return {
-            "title": title.strip(),
-            "message": message.strip(),
-            "event_type": event_type.strip(),
-            "priority": norm_priority,
+            "title": _text(title, _MAX_TITLE),
+            "message": _text(message, _MAX_MESSAGE),
+            "event_type": _text(event_type, _MAX_EVENT),
+            "priority": cls._norm_priority(priority),
             "timestamp": time.time(),
         }
 
@@ -44,30 +110,37 @@ class PushNotificationDispatcher:
         priority: str = "normal",
         action_url: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Format notification as a rich Slack Block Kit payload."""
+        """Format notification as a rich Slack Block Kit payload.
+
+        ``action_url`` becomes a button only when it is an http(s) link; anything else is omitted.
+        """
+        norm = cls._norm_priority(priority)
+        header = f"[{norm.upper()}] {_text(title, _MAX_TITLE)}"[:150]
+        event = _text(event_type, _MAX_EVENT).replace("`", "'")
+        body = f"*Event:* `{_slack_escape(event)}`\n{_slack_escape(_text(message, _MAX_MESSAGE))}"
         blocks: List[Dict[str, Any]] = [
             {
                 "type": "header",
-                "text": {"type": "plain_text", "text": f"[{priority.upper()}] {title}", "emoji": True},
+                "text": {"type": "plain_text", "text": header, "emoji": True},
             },
             {
                 "type": "section",
-                "text": {"type": "mrkdwn", "text": f"*Event:* `{event_type}`\n{message}"},
+                "text": {"type": "mrkdwn", "text": body[:3000]},
             },
         ]
 
-        if action_url:
-            blocks.append({
-                "type": "actions",
-                "elements": [
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "View Details"},
-                        "url": action_url,
-                        "style": "primary" if priority in ("high", "urgent") else "default",
-                    }
-                ],
-            })
+        link = _http_url_or_none(action_url)
+        if link:
+            button: Dict[str, Any] = {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "View Details"},
+                "url": link,
+            }
+            # Slack accepts only "primary" or "danger"; the old "default" is not a valid style and
+            # can get the whole message rejected.
+            if norm in ("high", "urgent"):
+                button["style"] = "primary"
+            blocks.append({"type": "actions", "elements": [button]})
 
         return {"blocks": blocks}
 
@@ -80,22 +153,24 @@ class PushNotificationDispatcher:
         priority: str = "normal",
     ) -> Dict[str, Any]:
         """Format notification as a Discord embed object with priority color encoding."""
-        norm_priority = priority.lower() if priority.lower() in cls.ALLOWED_PRIORITIES else "normal"
+        norm_priority = cls._norm_priority(priority)
         color = cls.PRIORITY_COLORS.get(norm_priority, 0x3498DB)
 
         return {
+            # No @everyone / @here / role pings from text the caller did not write.
+            "allowed_mentions": {"parse": []},
             "embeds": [
                 {
-                    "title": title,
-                    "description": message,
+                    "title": _text(title, _MAX_TITLE),
+                    "description": _text(message, 4000),
                     "color": color,
                     "fields": [
                         {"name": "Priority", "value": norm_priority.upper(), "inline": True},
-                        {"name": "Event Type", "value": event_type, "inline": True},
+                        {"name": "Event Type", "value": _text(event_type, 1000) or "-", "inline": True},
                     ],
                     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 }
-            ]
+            ],
         }
 
     @classmethod
@@ -105,7 +180,11 @@ class PushNotificationDispatcher:
         priority: str = "normal",
         tags: Optional[List[str]] = None,
     ) -> Dict[str, str]:
-        """Generate headers for ntfy.sh push notification endpoints."""
+        """Generate headers for ntfy.sh push notification endpoints.
+
+        Safe for any title: line breaks are removed and non-Latin-1 text (Arabic, emoji) is sent as an
+        RFC 2047 encoded word instead of failing the request.
+        """
         ntfy_priority_map = {
             "low": "2",
             "normal": "3",
@@ -113,11 +192,13 @@ class PushNotificationDispatcher:
             "urgent": "5",
         }
         headers = {
-            "Title": title,
-            "Priority": ntfy_priority_map.get(priority.lower(), "3"),
+            "Title": _header_safe(_text(title, 250)),
+            "Priority": ntfy_priority_map[cls._norm_priority(priority)],
         }
-        if tags:
-            headers["Tags"] = ",".join(tags)
+        if isinstance(tags, (list, tuple)):
+            clean = [t.replace(",", " ").strip() for t in (str(x) for x in tags) if t.strip()]
+            if clean:
+                headers["Tags"] = _header_safe(",".join(clean))[:500]
         return headers
 
     @classmethod
@@ -127,26 +208,50 @@ class PushNotificationDispatcher:
         payload: Dict[str, Any],
         headers: Optional[Dict[str, str]] = None,
         timeout_seconds: float = 5.0,
+        *,
+        allow_private: bool = False,
     ) -> Dict[str, Any]:
-        """Send JSON payload to target webhook URL."""
+        """Send JSON payload to target webhook URL. Every failure is a returned result."""
+        shown = redact_url(url)
+
+        def failed(error: str, status: int = 0) -> Dict[str, Any]:
+            if isinstance(url, str) and url:
+                error = error.replace(url, shown)
+            return {"success": False, "status_code": status, "error": error, "url": shown}
+
         req_headers = {"Content-Type": "application/json"}
         if headers:
+            if not isinstance(headers, dict) or not all(
+                isinstance(k, str) and isinstance(v, str) for k, v in headers.items()
+            ):
+                return failed("headers must be a mapping of strings to strings.")
+            if any(("\r" in k or "\n" in k or "\r" in v or "\n" in v) for k, v in headers.items()):
+                return failed("Header names and values cannot contain line breaks.")
             req_headers.update(headers)
 
         try:
             body = json.dumps(payload).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            return failed(f"payload is not JSON-serializable: {exc}")
+        if len(body) > _MAX_PAYLOAD_BYTES:
+            return failed(f"payload is too large (limit {_MAX_PAYLOAD_BYTES} bytes).")
+
+        try:
             req = urllib.request.Request(url, data=body, headers=req_headers, method="POST")
-            with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+            with open_guarded(req, timeout=timeout_seconds, allow_loopback=allow_private,
+                              allow_private=allow_private, follow_redirects=False) as resp:
                 code = resp.getcode()
                 return {
-                    "success": 200 <= code < 300,
+                    "success": isinstance(code, int) and 200 <= code < 300,
                     "status_code": code,
-                    "url": url,
+                    "url": shown,
                 }
+        except UrlRefused as exc:
+            return failed(f"URL refused: {exc}")
         except urllib.error.HTTPError as exc:
-            return {"success": False, "status_code": exc.code, "error": str(exc), "url": url}
+            return failed(str(exc), exc.code)
         except Exception as exc:
-            return {"success": False, "status_code": 0, "error": f"{type(exc).__name__}: {exc}", "url": url}
+            return failed(f"{type(exc).__name__}: {exc}")
 
     @classmethod
     def dispatch(
@@ -157,8 +262,14 @@ class PushNotificationDispatcher:
         priority: str = "normal",
         webhook_url: Optional[str] = None,
         timeout_seconds: float = 5.0,
+        *,
+        allow_private: bool = False,
     ) -> Dict[str, Any]:
-        """Dispatch a notification locally or via an HTTP POST webhook if webhook_url is given."""
+        """Build a notification and POST it to ``webhook_url``.
+
+        Without a ``webhook_url`` nothing is sent: the result is ``dispatched: False`` /
+        ``status: "not_sent"`` and carries the payload, so the caller can deliver it itself.
+        """
         payload = cls.build_payload(
             title=title,
             message=message,
@@ -168,18 +279,21 @@ class PushNotificationDispatcher:
 
         if not webhook_url:
             return {
-                "dispatched": True,
-                "channel": "local_notification_center",
-                "status": "delivered",
+                "dispatched": False,
+                "channel": "none",
+                "status": "not_sent",
+                "error": "No webhook_url was given, so nothing was sent anywhere.",
                 "payload": payload,
             }
 
-        res = cls.dispatch_to_webhook(webhook_url, payload, timeout_seconds=timeout_seconds)
+        res = cls.dispatch_to_webhook(webhook_url, payload, timeout_seconds=timeout_seconds,
+                                      allow_private=allow_private)
         return {
             "dispatched": res["success"],
             "channel": "webhook",
             "status_code": res.get("status_code"),
             "status": "delivered" if res["success"] else "failed",
             "error": res.get("error"),
+            "destination": res.get("url"),
             "payload": payload,
         }

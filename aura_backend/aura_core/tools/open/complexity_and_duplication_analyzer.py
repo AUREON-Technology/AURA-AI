@@ -1,7 +1,8 @@
 import ast
+import math
 import sys
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 
 class ComplexityAndDuplicationAnalyzer:
@@ -52,44 +53,69 @@ class ComplexityAndDuplicationAnalyzer:
 
     @staticmethod
     def compute_max_nesting_depth(node: ast.AST, current_depth: int = 0) -> int:
-        """Compute maximum control-flow nesting depth inside an AST node."""
-        max_depth = current_depth
+        """Compute maximum control-flow nesting depth inside an AST node.
+
+        Iterative, so a pathologically deep expression cannot exhaust the interpreter stack.
+        """
         # Bug 6 fix: Removed ast.With and ast.AsyncWith — only count actual control-flow nesting.
-        nesting_types = (
-            ast.If,
-            ast.For,
-            ast.AsyncFor,
-            ast.While,
-            ast.Try,
-        )
-        for child in ast.iter_child_nodes(node):
-            # Bug 4 fix: elif is an ast.If in the orelse list of a parent ast.If.
-            # Treat elif at the same nesting level as its parent if.
-            is_elif = (
-                isinstance(child, ast.If)
-                and isinstance(node, ast.If)
-                and child in node.orelse
-            )
-            if is_elif:
-                next_depth = current_depth  # Same level — don't increase depth
-            elif isinstance(child, nesting_types):
-                next_depth = current_depth + 1
-            else:
-                next_depth = current_depth
-            child_max = ComplexityAndDuplicationAnalyzer.compute_max_nesting_depth(child, next_depth)
-            if child_max > max_depth:
-                max_depth = child_max
+        nesting_types: Tuple[type, ...] = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try)
+        if hasattr(ast, "TryStar"):
+            nesting_types += (ast.TryStar,)  # type: ignore[attr-defined]
+        max_depth = current_depth
+        stack: List[Tuple[ast.AST, int]] = [(node, current_depth)]
+        while stack:
+            parent, depth = stack.pop()
+            if depth > max_depth:
+                max_depth = depth
+            for child in ast.iter_child_nodes(parent):
+                # Bug 4 fix: elif is an ast.If in the orelse list of a parent ast.If.
+                # Treat elif at the same nesting level as its parent if.
+                is_elif = (
+                    isinstance(child, ast.If)
+                    and isinstance(parent, ast.If)
+                    and child in parent.orelse
+                )
+                if is_elif:
+                    next_depth = depth  # Same level — don't increase depth
+                elif isinstance(child, nesting_types):
+                    next_depth = depth + 1
+                else:
+                    next_depth = depth
+                stack.append((child, next_depth))
         return max_depth
+
+    @staticmethod
+    def _parse(source_code: Any) -> Tuple[Optional[ast.AST], Optional[str]]:
+        """``(tree, None)`` or ``(None, error)``; nothing raised for hostile or non-text input."""
+        if not isinstance(source_code, str):
+            return None, "source_code must be text."
+        try:
+            return ast.parse(source_code), None
+        except SyntaxError as exc:
+            return None, f"SyntaxError: {exc}"
+        except (ValueError, RecursionError, MemoryError) as exc:
+            return None, f"{type(exc).__name__}: {exc}"
+
+    @staticmethod
+    def _finite_threshold(*values: Any) -> bool:
+        return all(
+            isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in values
+        )
 
     @classmethod
     def analyze_functions(cls, source_code: str, max_complexity: int = 10, max_lines: int = 50) -> Dict[str, Any]:
         """Analyze each function and method for complexity, line count, nesting, and maintainability."""
-        try:
-            tree = ast.parse(source_code)
-        except SyntaxError as exc:
-            return {"valid_syntax": False, "error": f"SyntaxError: {exc}", "functions": []}
+        if not cls._finite_threshold(max_complexity, max_lines):
+            return {
+                "valid_syntax": False,
+                "status": "invalid_input",
+                "error": "max_complexity and max_lines must be finite numbers.",
+                "functions": [],
+            }
+        tree, error = cls._parse(source_code)
+        if tree is None:
+            return {"valid_syntax": False, "error": error, "functions": []}
 
-        lines = source_code.splitlines()
         results: List[Dict[str, Any]] = []
 
         for node in ast.walk(tree):
@@ -118,123 +144,123 @@ class ComplexityAndDuplicationAnalyzer:
             "functions": results,
         }
 
-    @staticmethod
-    def _merge_overlapping_spans(spans: List[tuple[int, int]]) -> List[tuple[int, int]]:
-        """Merge overlapping or adjacent (start, end) line spans into non-overlapping regions."""
-        if not spans:
-            return []
-        sorted_spans = sorted(spans, key=lambda s: (s[0], s[1]))
-        merged = [sorted_spans[0]]
-        for start, end in sorted_spans[1:]:
-            prev_start, prev_end = merged[-1]
-            # Overlapping or contiguous (adjacent means start <= prev_end + 1)
-            if start <= prev_end + 1:
-                merged[-1] = (prev_start, max(prev_end, end))
-            else:
-                merged.append((start, end))
-        return merged
+    #: Most duplicate groups / spans per group returned; ``truncated`` is set when more existed.
+    MAX_DUPLICATE_GROUPS = 100
+    MAX_SPANS_PER_GROUP = 20
 
     @staticmethod
     def detect_duplicate_blocks(source_code: str, window_size: int = 5) -> Dict[str, Any]:
-        """Detect repeated normalized line windows as a signal for code duplication."""
-        normalized_lines: List[tuple[int, str]] = []
+        """Detect repeated blocks of ``window_size`` or more consecutive (normalised) code lines.
+
+        Blank and ``#`` comment lines are ignored and indentation is stripped. Overlapping
+        windows that belong to one repeated block are reported once, as a block with every
+        place it occurs (``spans`` are 1-based ``(first_line, last_line)`` pairs). Two copies
+        that sit right next to each other are two occurrences, not one long block.
+        """
+        if not isinstance(source_code, str):
+            return {"has_duplication": False, "duplicates": [], "error": "source_code must be text."}
+        if isinstance(window_size, bool) or not isinstance(window_size, int) or window_size < 2:
+            return {
+                "has_duplication": False,
+                "duplicates": [],
+                "error": "window_size must be an integer >= 2.",
+            }
+
+        norm: List[Tuple[int, str]] = []
         for idx, raw in enumerate(source_code.splitlines(), start=1):
             stripped = raw.strip()
             if not stripped or stripped.startswith("#"):
                 continue
-            normalized_lines.append((idx, stripped))
+            norm.append((idx, stripped))
 
-        if len(normalized_lines) < window_size:
-            return {"has_duplication": False, "duplicates": []}
+        w = window_size
+        if len(norm) < w:
+            return {"has_duplication": False, "duplicates_count": 0, "duplicates": []}
 
-        windows: Dict[str, List[tuple[int, int]]] = defaultdict(list)
-        for i in range(len(normalized_lines) - window_size + 1):
-            chunk = normalized_lines[i : i + window_size]
-            key = "\n".join(text for _, text in chunk)
-            start_l = chunk[0][0]
-            end_l = chunk[-1][0]
-            windows[key].append((start_l, end_l))
+        # Intern each distinct line, so a window's key is a short tuple of ints.
+        ids: Dict[str, int] = {}
+        line_ids = [ids.setdefault(text, len(ids)) for _, text in norm]
+        starts_by_key: Dict[Tuple[int, ...], List[int]] = defaultdict(list)
+        for i in range(len(norm) - w + 1):
+            starts_by_key[tuple(line_ids[i:i + w])].append(i)
 
-        # Bug 5 fix: Merge overlapping/adjacent spans per duplicate key before reporting.
-        duplicates: List[Dict[str, Any]] = []
-        seen_merged_spans: set = set()
-        # Group all duplicate window spans by their content key, then merge.
-        all_dup_spans: Dict[str, List[tuple[int, int]]] = {}
-        for key, occurrences in windows.items():
-            if len(occurrences) > 1:
-                # Collect spans per key — but we need to merge across keys too,
-                # since overlapping windows of the same content produce multiple keys.
-                for span in occurrences:
-                    all_dup_spans.setdefault(key, []).append(span)
+        # A window is a duplicate when its content occurs at >= 2 non-overlapping places.
+        occurrences: Dict[Tuple[int, ...], Optional[Tuple[int, ...]]] = {}
+        for key, starts in starts_by_key.items():
+            kept: List[int] = []
+            last = -w
+            for s in starts:
+                if s >= last + w:
+                    kept.append(s)
+                    last = s
+            occurrences[key] = tuple(kept) if len(kept) >= 2 else None
+        sigs = [occurrences[tuple(line_ids[i:i + w])] for i in range(len(norm) - w + 1)]
 
-        # Now, group spans by their location — multiple window keys can contribute
-        # spans at the same location. We want to merge overlapping spans that come
-        # from the same duplicated content region.
-        # Strategy: for each set of occurrences with the same key, merge their spans.
-        # Then, across all keys, group by merged spans to avoid double-reporting.
-        merged_groups: Dict[tuple, Dict[str, Any]] = {}
-        for key, spans in all_dup_spans.items():
-            merged = ComplexityAndDuplicationAnalyzer._merge_overlapping_spans(spans)
-            merged_key = tuple(sorted(merged))
-            if merged_key not in merged_groups:
-                merged_groups[merged_key] = {
-                    "occurrences_count": len(merged),
-                    "spans": merged,
-                    "preview": key.splitlines()[0],
-                }
-            else:
-                # Update: prefer the group with larger spans (more context).
-                existing = merged_groups[merged_key]
-                if len(merged) > existing["occurrences_count"]:
-                    merged_groups[merged_key] = {
-                        "occurrences_count": len(merged),
-                        "spans": merged,
-                        "preview": key.splitlines()[0],
-                    }
+        shift_cache: Dict[Tuple[int, int], bool] = {}
 
-        # Further merge: group entries whose span sets overlap.
-        # Build final list by merging groups that share any span region.
-        final_groups: List[Dict[str, Any]] = []
-        used_span_sets: set = set()
-        for merged_key, info in merged_groups.items():
-            frozen = frozenset(merged_key)
-            if frozen in used_span_sets:
+        def continues(prev: Tuple[int, ...], nxt: Optional[Tuple[int, ...]]) -> bool:
+            if nxt is None or len(nxt) != len(prev) or nxt[0] != prev[0] + 1 or nxt[-1] != prev[-1] + 1:
+                return False
+            cached = shift_cache.get((id(prev), id(nxt)))
+            if cached is None:
+                cached = shift_cache[(id(prev), id(nxt))] = all(b == a + 1 for a, b in zip(prev, nxt))
+            return cached
+
+        # Maximal runs of consecutive duplicate windows whose occurrences all shift together.
+        runs: Dict[Tuple[Tuple[int, int], ...], int] = {}  # spans -> block length in lines
+        seen_runs: set = set()
+        i = 0
+        while i < len(sigs):
+            sig = sigs[i]
+            if sig is None:
+                i += 1
                 continue
-            # Find all groups whose spans overlap with this one.
-            combined_spans = list(merged_key)
-            changed = True
-            while changed:
-                changed = False
-                for other_key, other_info in merged_groups.items():
-                    other_frozen = frozenset(other_key)
-                    if other_frozen in used_span_sets:
-                        continue
-                    # Check overlap
-                    for s1 in combined_spans:
-                        for s2 in other_key:
-                            if s1[0] <= s2[1] + 1 and s2[0] <= s1[1] + 1:
-                                combined_spans.extend(other_key)
-                                combined_spans = ComplexityAndDuplicationAnalyzer._merge_overlapping_spans(combined_spans)
-                                used_span_sets.add(other_frozen)
-                                changed = True
-                                break
-                        if changed:
-                            break
-                    if changed:
-                        break
-            used_span_sets.add(frozen)
-            if len(combined_spans) > 1:
-                final_groups.append({
-                    "occurrences_count": len(combined_spans),
-                    "spans": combined_spans,
-                    "preview": info["preview"],
+            j = i
+            while j + 1 < len(sigs) and continues(sigs[j], sigs[j + 1]):
+                j += 1
+            # The same occurrences extended by the same amount were already reported (a file of
+            # repeated lines would otherwise rebuild one huge span list per window).
+            if (id(sig), j - i) in seen_runs:
+                i = j + 1
+                continue
+            seen_runs.add((id(sig), j - i))
+            length = (j - i) + w
+            spans = tuple((norm[s][0], norm[s + length - 1][0]) for s in sig)
+            runs.setdefault(spans, length)
+            i = j + 1
+
+        # Longest blocks first; drop a block whose every occurrence lies inside already-kept ones.
+        ordered = sorted(runs.items(), key=lambda kv: (-kv[1], kv[0][0][0]))
+        covered: set = set()
+        groups: List[Dict[str, Any]] = []
+        total = 0
+        first_line_to_idx = {line: idx for idx, (line, _) in enumerate(norm)}
+        for spans, length in ordered:
+            ranges = [
+                range(first_line_to_idx[a], first_line_to_idx[b] + 1) for a, b in spans
+            ]
+            if all(all(k in covered for k in r) for r in ranges):
+                continue
+            for r in ranges:
+                covered.update(r)
+            total += 1
+            if len(groups) < ComplexityAndDuplicationAnalyzer.MAX_DUPLICATE_GROUPS:
+                groups.append({
+                    "occurrences_count": len(spans),
+                    "spans": list(spans[:ComplexityAndDuplicationAnalyzer.MAX_SPANS_PER_GROUP]),
+                    "lines": length,
+                    "preview": norm[first_line_to_idx[spans[0][0]]][1],
                 })
 
-        return {
-            "has_duplication": len(final_groups) > 0,
-            "duplicates_count": len(final_groups),
-            "duplicates": final_groups,
+        groups.sort(key=lambda g: g["spans"][0][0])
+        result: Dict[str, Any] = {
+            "has_duplication": total > 0,
+            "duplicates_count": total,
+            "duplicates": groups,
         }
+        if total > len(groups) or any(g["occurrences_count"] > len(g["spans"]) for g in groups):
+            result["truncated"] = True
+        return result
 
     @classmethod
     def analyze_source(
@@ -245,22 +271,32 @@ class ComplexityAndDuplicationAnalyzer:
         dup_window: int = 5,
     ) -> Dict[str, Any]:
         """Unified complexity and duplication report for a Python source string."""
+        if not isinstance(source_code, str):
+            return {
+                "valid_syntax": False,
+                "error": "source_code must be text.",
+                "effective_lines": 0,
+            }
         effective_lines = [
             ln for ln in source_code.splitlines() if ln.strip() and not ln.strip().startswith("#")
         ]
         fn_report = cls.analyze_functions(source_code, max_complexity=max_complexity, max_lines=max_lines)
         if not fn_report["valid_syntax"]:
-            return {
+            report = {
                 "valid_syntax": False,
                 "error": fn_report["error"],
                 "effective_lines": len(effective_lines),
             }
+            if "status" in fn_report:
+                report["status"] = fn_report["status"]
+            return report
 
         dup_report = cls.detect_duplicate_blocks(source_code, window_size=dup_window)
         max_cc = max([f["cyclomatic_complexity"] for f in fn_report["functions"]], default=1)
-        maintainable = fn_report["flagged_count"] == 0 and not dup_report["has_duplication"]
+        dup_failed = "error" in dup_report
+        maintainable = fn_report["flagged_count"] == 0 and not dup_report["has_duplication"] and not dup_failed
 
-        return {
+        result = {
             "valid_syntax": True,
             "effective_lines": len(effective_lines),
             "max_cyclomatic_complexity": max_cc,
@@ -268,3 +304,6 @@ class ComplexityAndDuplicationAnalyzer:
             "functions_analysis": fn_report,
             "duplication_analysis": dup_report,
         }
+        if dup_failed:
+            result["error"] = f"duplication check not run: {dup_report['error']}"
+        return result
