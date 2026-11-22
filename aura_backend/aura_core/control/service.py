@@ -12,7 +12,7 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Awaitable, Callable, Mapping, Sequence
 
 from ..domain.connectors import Credential
 from ..domain.control import (
@@ -40,9 +40,18 @@ from ..ports.control_plane import (
     PlatformVerifier,
 )
 
-__all__ = ["ControlService", "Reconciler", "StepUpService", "STEP_UP_HEADER"]
+__all__ = ["ControlService", "Reconciler", "StepUpService", "STEP_UP_HEADER", "ON_SUCCESS_KEY", "SuccessHook"]
 
 logger = get_logger("control")
+
+#: The entry in a change's restore values (held in the vault, never the journal) that names a
+#: follow-up to run once the change has stayed healthy for its whole watch: ``{"action": ...}`` plus
+#: whatever that action needs. Stage 6: removing a Cloudflare provider revokes its token only then.
+#: A rollback discards it, and it is never written to the platform as a variable.
+ON_SUCCESS_KEY = "__on_success__"
+
+#: A follow-up handler: given its note, does the work and returns a sentence for the journal.
+SuccessHook = Callable[[Mapping[str, Any]], Awaitable[str]]
 
 #: The header a control-center write carries its step-up grant in.
 STEP_UP_HEADER = "x-aura-step-up"
@@ -337,10 +346,14 @@ class Reconciler:
         holder: str | None = None,
         now: Callable[[], datetime] = _utcnow,
         interval_s: float = 15.0,
+        success_hooks: Mapping[str, SuccessHook] | None = None,
     ) -> None:
         self._store = store
         self._vault = vault
         self._platforms = dict(platforms)
+        #: Follow-ups by action name (``ON_SUCCESS_KEY``). None by default: a change that carries
+        #: one with no handler registered is closed as succeeded and says it was not run.
+        self._hooks = dict(success_hooks or {})
         self._watch = timedelta(seconds=watch_s)
         self._holder = holder or f"gw-{uuid.uuid4().hex[:12]}"
         self._now = now
@@ -372,20 +385,57 @@ class Reconciler:
                 # Someone (or a merge to main) deployed again: this deployment is no longer the
                 # one serving, so its health says nothing more, and rolling back would undo the
                 # newer one too.
+                # Nothing proved the change healthy, so a follow-up that depends on that is not run.
                 closed.append(await self._close(
                     change, ChangeStatus.SUCCEEDED,
-                    "a newer deployment replaced it before the watch ended; not watched further",
+                    "a newer deployment replaced it before the watch ended; not watched further"
+                    + await self._skipped_follow_up(change),
                 ))
             elif health is DeploymentHealth.FAILED:
                 closed.append(await self._roll_back(change, platform, "the new deployment failed to start"))
             elif watched_long_enough and health is DeploymentHealth.HEALTHY:
-                closed.append(await self._close(change, ChangeStatus.SUCCEEDED, ""))
+                closed.append(await self._close(change, ChangeStatus.SUCCEEDED, await self._follow_up(change)))
             elif watched_long_enough:
                 closed.append(await self._roll_back(
                     change, platform,
                     f"the deployment was still {health.value} after {int(window.total_seconds() // 60)} minutes",
                 ))
         return closed
+
+    async def _note(self, change: ChangeRecord) -> Mapping[str, Any] | None:
+        """The follow-up a change carries, if any. A vault that cannot be read means no note: the
+        change still closes, and a follow-up that is not run is the safe direction."""
+        if not change.restore_ref:
+            return None
+        try:
+            values = json.loads((await self._vault.get(change.restore_ref)).reveal())
+        except Exception:
+            logger.warning("could not read a change's follow-up note")
+            return None
+        note = values.get(ON_SUCCESS_KEY) if isinstance(values, dict) else None
+        return note if isinstance(note, Mapping) else None
+
+    async def _follow_up(self, change: ChangeRecord) -> str:
+        """Run the change's follow-up after it stayed healthy. Its outcome is journaled in the
+        change's reason; a failure never undoes the change."""
+        note = await self._note(change)
+        if note is None:
+            return ""
+        action = str(note.get("action") or "")
+        hook = self._hooks.get(action)
+        if hook is None:
+            return f"its follow-up ({action or 'unnamed'}) has no handler here and was not run"
+        try:
+            return await hook(note)
+        except Exception as exc:
+            logger.warning("a change's follow-up failed", extra={"action": action, "error": type(exc).__name__})
+            return f"its follow-up ({action}) could not be completed ({type(exc).__name__}): finish it by hand"
+
+    async def _skipped_follow_up(self, change: ChangeRecord) -> str:
+        note = await self._note(change)
+        if note is None:
+            return ""
+        return f"; its follow-up ({note.get('action') or 'unnamed'}) was not run because the change was not seen healthy"
 
     async def _close(self, change: ChangeRecord, status: ChangeStatus, reason: str) -> ChangeRecord:
         if change.restore_ref:
@@ -408,6 +458,7 @@ class Reconciler:
             if change.restore_ref:
                 values = json.loads((await self._vault.get(change.restore_ref)).reveal())
                 companion = values.pop("__companion__", None)
+                values.pop(ON_SUCCESS_KEY, None)  # a note for the success path, never a variable
                 await platform.restore_variables(change.target, values)
             if change.previous_deployment_id:
                 await platform.rollback(change.target, change.previous_deployment_id)

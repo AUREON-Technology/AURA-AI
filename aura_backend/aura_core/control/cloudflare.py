@@ -14,8 +14,10 @@ with the old values if the gateway does not come back. Nothing here talks to Rai
 * **Replace** -- the model and the form fields of an existing Cloudflare provider. The key is kept
   unless a new one is asked for, and a new key goes into the variable the provider already reads.
 * **Remove** -- takes the name out of the list and deletes every variable the provider owns. It
-  names the token to revoke (``revoke_token_id``) when no other provider uses the same key; the
-  revoke itself happens only after the change succeeds, never before it.
+  names the token to revoke (``revoke_token_id``) when no other provider uses the same key, and
+  attaches a follow-up note to the change. The revoke itself is :meth:`revoke_after_success`, run by
+  the reconciler only once the change has stayed healthy for its whole watch, never before it: a
+  change that is rolled back must find its key still working.
 
 Only providers whose base URL is on the Cloudflare API root are listed or touched: Groq, the GPU
 Space and the local fallback are not editable from here. The typed confirmation for add, replace and
@@ -45,7 +47,10 @@ from ..ports.control_plane import CloudflareAccount, CloudflareTokens, ControlSt
 from .railway import RailwayService
 from .service import ControlService, _confirm
 
-__all__ = ["CloudflareControl", "CONSENT_FLAG", "PROVIDERS_VARIABLE"]
+__all__ = ["CloudflareControl", "CONSENT_FLAG", "PROVIDERS_VARIABLE", "REVOKE_ACTION"]
+
+#: The follow-up a removal attaches (``service.ON_SUCCESS_KEY``) and the reconciler dispatches on.
+REVOKE_ACTION = "cloudflare_revoke"
 
 logger = get_logger("control.cloudflare")
 
@@ -389,6 +394,10 @@ class CloudflareControl:
         return await self._railway.apply_variables(
             gateway, changes, actor=actor, confirm=service, action="remove_cloudflare_provider",
             extra_detail={"provider": name, "model": row["model"], "revoke_token_id": revoke_token_id},
+            on_success=(
+                {"action": REVOKE_ACTION, "token_id": revoke_token_id, "provider": name}
+                if revoke_token_id else None
+            ),
         )
 
     async def _token_to_revoke(self, environ: Mapping[str, str], row: Mapping[str, Any], others: Sequence[str]) -> str | None:
@@ -402,3 +411,32 @@ class CloudflareControl:
             if environ.get(other_env) == value:
                 return None
         return await self._tokens.identify(value)
+
+    async def revoke_after_success(self, note: Mapping[str, Any]) -> str:
+        """The reconciler's follow-up for a removed provider: revoke its Cloudflare token.
+
+        Run once the removal has stayed healthy for the whole watch. It re-checks, now, that no
+        Cloudflare provider on the gateway still reads that token (something may have taken the key
+        in the meantime), and it leaves the token alone whenever it cannot check. Only Cloudflare
+        providers' keys are ever sent to Cloudflare to be identified. An already revoked token counts
+        as done. Returns a sentence for the change's journal; raises on a failure, which the
+        reconciler records without undoing the change.
+        """
+        token_id = str(note.get("token_id") or "")
+        if not token_id:
+            return "no Cloudflare token was named for revoking"
+        gateway = await self._gateway()
+        if gateway is None:
+            return f"left Cloudflare token {token_id} active: Railway is not connected, so use could not be checked"
+        environ = await self._railway.environment(gateway)
+        for name in _names(environ.get(PROVIDERS_VARIABLE)):
+            if not self._is_cloudflare(environ, name):
+                continue
+            key = environ.get(environ.get(f"{provider_prefix(name)}_API_KEY_ENV") or key_variable(name)) or ""
+            if key and await self._tokens.identify(key) == token_id:
+                return f"left Cloudflare token {token_id} active: provider {name} still uses it"
+        try:
+            await self._tokens.revoke(token_id)
+        except NotFoundError:
+            return f"Cloudflare token {token_id} was already revoked"
+        return f"revoked Cloudflare token {token_id}"

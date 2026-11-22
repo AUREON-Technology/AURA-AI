@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
@@ -20,14 +20,20 @@ from aura_core.adapters.cloudflare_account import InMemoryCloudflareAccount
 from aura_core.config.external_inference import HOSTED_OPEN_WEIGHT_HOSTS, WORKERS_AI_API_ROOT
 from aura_core.config.settings import ProviderConfig
 from aura_core.control.cloudflare import CloudflareControl
+from aura_core.control.service import ON_SUCCESS_KEY, Reconciler
 from aura_core.domain.cloudflare_provider import (
     CloudflareProviderSpec,
     key_variable,
     provider_prefix,
     provider_variables,
 )
-from aura_core.domain.control import Platform, PlatformCredential
-from aura_core.domain.errors import ConfigurationError, NotFoundError, ValidationError
+from aura_core.domain.control import ChangeStatus, Platform, PlatformCredential
+from aura_core.domain.errors import (
+    ConfigurationError,
+    DependencyUnavailableError,
+    NotFoundError,
+    ValidationError,
+)
 from aura_core.ports.control_plane import CloudflareModel
 
 ROOT = "root@aura.ai"
@@ -512,3 +518,189 @@ class TestRemove:
         _env(container)[key_variable("cf-old")] = "a-key-cloudflare-does-not-know"
         change = await container.cf.remove_provider("cf-old", actor=ROOT, confirm="cf-old")
         assert change["detail"]["revoke_token_id"] is None
+
+
+class _Clock:
+    """A clock the test moves: the change is created now, and watched for five minutes."""
+
+    def __init__(self) -> None:
+        self.t = datetime.now(timezone.utc)
+
+    def now(self) -> datetime:
+        return self.t
+
+    def after_the_watch(self) -> None:
+        self.t = self.t + timedelta(seconds=400)
+
+
+def _reconciler(container, clock: _Clock, *, hooks="default") -> Reconciler:
+    if hooks == "default":
+        hooks = {"cloudflare_revoke": container.cf.revoke_after_success}
+    return Reconciler(
+        store=container.control_store, vault=container.control_vault,
+        platforms={Platform.RAILWAY: container.railway_api}, watch_s=300, now=clock.now,
+        success_hooks=hooks,
+    )
+
+
+async def _removed(container) -> dict:
+    await _ready(container)
+    return await container.cf.remove_provider("cf-old", actor=ROOT, confirm="cf-old")
+
+
+class TestRevokeAfterSuccess:
+    """Remove names the token to revoke; the reconciler revokes it only once the change has stayed
+    healthy for the whole watch, and re-checks at that moment that nothing still uses it."""
+
+    async def test_the_token_is_revoked_only_after_the_change_stays_healthy(self) -> None:
+        container = _container()
+        change = await _removed(container)
+        clock = _Clock()
+        reconciler = _reconciler(container, clock)
+        container.railway_api.set_status(change["deployment_id"], "SUCCESS")
+        assert await reconciler.tick() == []  # healthy, but not watched long enough yet
+        assert container.cloudflare_tokens.revoked == []
+        clock.after_the_watch()
+        (closed,) = await reconciler.tick()
+        assert closed.status is ChangeStatus.SUCCEEDED
+        assert container.cloudflare_tokens.revoked == [container.old_cf_id]
+        assert "revoked" in closed.reason and container.old_cf_id in closed.reason
+        assert closed.restore_ref is None  # the old key value is gone from the vault
+
+    async def test_the_follow_up_is_never_in_the_journal_or_the_response(self) -> None:
+        container = _container()
+        change = await _removed(container)
+        assert ON_SUCCESS_KEY not in json.dumps(change)
+        for record in await container.control_store.list_changes():
+            assert ON_SUCCESS_KEY not in json.dumps(dict(record.detail), default=str)
+        _never_leaked(container, change)
+
+    async def test_a_rollback_restores_the_provider_and_revokes_nothing(self) -> None:
+        container = _container()
+        change = await _removed(container)
+        container.railway_api.set_status(change["deployment_id"], "CRASHED")
+        (closed,) = await _reconciler(container, _Clock()).tick()
+        env = _env(container)
+        assert closed.status is ChangeStatus.ROLLED_BACK
+        assert container.cloudflare_tokens.revoked == []
+        assert env["AURA_LLM_PROVIDERS"] == "hosted1,cf-old,local"
+        assert env[key_variable("cf-old")] == OLD_CF
+        assert not [name for name in env if name.startswith("__")]  # the note is never a variable
+
+    async def test_a_change_replaced_before_its_watch_ended_revokes_nothing(self) -> None:
+        container = _container()
+        change = await _removed(container)
+        container.railway_api.set_status(change["deployment_id"], "REMOVED")  # a newer deploy replaced it
+        (closed,) = await _reconciler(container, _Clock()).tick()
+        assert closed.status is ChangeStatus.SUCCEEDED
+        assert "follow-up" in closed.reason and "not run" in closed.reason
+        assert container.cloudflare_tokens.revoked == []
+
+    async def test_a_token_another_provider_now_uses_is_left_alone(self) -> None:
+        container = _container()
+        change = await _removed(container)
+        env = _env(container)  # while the change was being watched, a second provider took the key
+        env.update(provider_variables(spec("cf-two"), api_root=WORKERS_AI_API_ROOT, account_id=ACCOUNT))
+        env[key_variable("cf-two")] = OLD_CF
+        env["AURA_LLM_PROVIDERS"] = env["AURA_LLM_PROVIDERS"] + ",cf-two"
+        container.railway_api.set_status(change["deployment_id"], "SUCCESS")
+        clock = _Clock()
+        reconciler = _reconciler(container, clock)
+        clock.after_the_watch()
+        (closed,) = await reconciler.tick()
+        assert closed.status is ChangeStatus.SUCCEEDED
+        assert container.cloudflare_tokens.revoked == []
+        assert "cf-two" in closed.reason
+
+    async def test_without_a_readable_gateway_nothing_is_revoked(self) -> None:
+        container = _container()
+        change = await _removed(container)
+        await container.control_store.delete_credential(Platform.RAILWAY)  # nothing to check against
+        container.railway_api.set_status(change["deployment_id"], "SUCCESS")
+        clock = _Clock()
+        reconciler = _reconciler(container, clock)
+        clock.after_the_watch()
+        (closed,) = await reconciler.tick()
+        assert closed.status is ChangeStatus.SUCCEEDED and container.cloudflare_tokens.revoked == []
+        assert "left" in closed.reason
+
+    async def test_a_revoke_that_fails_does_not_undo_the_change(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        container = _container()
+        change = await _removed(container)
+
+        async def refuse(token_id: str) -> None:
+            raise DependencyUnavailableError("down", dependency="cloudflare")
+
+        monkeypatch.setattr(container.cloudflare_tokens, "revoke", refuse)
+        container.railway_api.set_status(change["deployment_id"], "SUCCESS")
+        clock = _Clock()
+        reconciler = _reconciler(container, clock)
+        clock.after_the_watch()
+        (closed,) = await reconciler.tick()
+        assert closed.status is ChangeStatus.SUCCEEDED
+        assert "could not be completed" in closed.reason
+        assert _env(container)["AURA_LLM_PROVIDERS"] == "hosted1,local"  # the removal stands
+        assert [t.token_id for t in await container.cloudflare_tokens.list()] == [container.old_cf_id]
+
+    async def test_a_token_that_is_already_revoked_counts_as_done(self) -> None:
+        container = _container()
+        change = await _removed(container)
+        await container.cloudflare_tokens.revoke(container.old_cf_id)
+        container.cloudflare_tokens.revoked.clear()
+        container.railway_api.set_status(change["deployment_id"], "SUCCESS")
+        clock = _Clock()
+        reconciler = _reconciler(container, clock)
+        clock.after_the_watch()
+        (closed,) = await reconciler.tick()
+        assert closed.status is ChangeStatus.SUCCEEDED and "already revoked" in closed.reason
+
+    async def test_an_unknown_follow_up_is_reported_not_run(self) -> None:
+        container = _container()
+        change = await _removed(container)
+        container.railway_api.set_status(change["deployment_id"], "SUCCESS")
+        clock = _Clock()
+        reconciler = _reconciler(container, clock, hooks={})
+        clock.after_the_watch()
+        (closed,) = await reconciler.tick()
+        assert closed.status is ChangeStatus.SUCCEEDED and "no handler" in closed.reason
+        assert container.cloudflare_tokens.revoked == []
+
+    async def test_add_and_replace_carry_no_follow_up(self) -> None:
+        container = _container()
+        await _ready(container)
+        added = await container.cf.add_provider(spec(), key="create", actor=ROOT, confirm="cf-new")
+        container.railway_api.set_status(added["deployment_id"], "SUCCESS")
+        clock = _Clock()
+        reconciler = _reconciler(container, clock)
+        clock.after_the_watch()
+        (closed,) = await reconciler.tick()
+        assert closed.status is ChangeStatus.SUCCEEDED and closed.reason == ""
+        assert container.cloudflare_tokens.revoked == []
+
+    async def test_a_removal_with_no_token_to_revoke_is_a_plain_success(self) -> None:
+        container = _container()
+        await _ready(container)
+        _env(container)[key_variable("cf-old")] = "a-key-cloudflare-does-not-know"
+        change = await container.cf.remove_provider("cf-old", actor=ROOT, confirm="cf-old")
+        container.railway_api.set_status(change["deployment_id"], "SUCCESS")
+        clock = _Clock()
+        reconciler = _reconciler(container, clock)
+        clock.after_the_watch()
+        (closed,) = await reconciler.tick()
+        assert closed.status is ChangeStatus.SUCCEEDED and closed.reason == ""
+
+    async def test_a_redeploy_that_cannot_start_puts_everything_back_without_the_note(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        container = _container()
+        await _ready(container)
+        before = dict(_env(container))
+
+        async def cannot_start(service_id: str) -> str:
+            raise RuntimeError("no capacity")
+
+        monkeypatch.setattr(container.railway_api, "redeploy", cannot_start)
+        with pytest.raises(RuntimeError):
+            await container.cf.remove_provider("cf-old", actor=ROOT, confirm="cf-old")
+        assert _env(container) == before
+        assert not [name for name in _env(container) if name.startswith("__")]
