@@ -74,17 +74,21 @@ With no build in `aura_web/app-build/`, `/app/` answers a plain "not built yet" 
 - `client-ci.yml` has a `build-web` job: every client change proves the web target still compiles
   with the published flags.
 - **Railway's own GitHub deploy is on, and it is not a publisher you want here.** Observed through
-  Railway's API on 2026-11-22 (read-only): `AURA-Web` has a GitHub deployment trigger on `main`; its
-  settings are root directory `/aura_client`, builder Railpack, and the variable
-  `RAILWAY_DOCKERFILE_PATH=aura_web/Dockerfile`. The merge of #288 (commit `aa0a391`, which touched
-  `aura_client/`) started a GitHub-triggered build that **FAILED** with
-  `COPY aura_web/nginx/default.conf.template: not found`, although that file is tracked in git. The
-  previous successful deployment (2026-11-21, a CLI upload) stayed live. The cause is not proven;
-  the likeliest one is the root directory: `aura_web/Dockerfile` says to leave it empty, because the
-  build context is the repository root. Even once it builds, a build from git has empty
-  `aura_web/app-build/` and `aura_web/build-assets/`, so it would replace the app and the installer
-  with their "not built yet" states until the next workflow deploy lands. The workflows are the only
-  deploys that carry the app and the installer; keep this trigger off (setup step 5).
+  Railway's API on 2026-11-22 (read-only), `AURA-Web` has a GitHub deployment trigger on `main`.
+  - The first build from git failed. The merge of #288 (`aa0a391`, 15:53 UTC) and then the merge of
+    #289 (`2ff6282`, 16:00 UTC) both ran with root directory `/aura_client` and **FAILED**
+    (the first with `COPY aura_web/nginx/default.conf.template: not found`, although that file is
+    tracked in git; the second's log was not read). After the owner set the root directory to `/`,
+    the same commit `2ff6282` built and went **SUCCESS** at 16:02 UTC. So the root directory was the
+    cause: `aura_web/Dockerfile` says to leave it empty, because its build context is the
+    repository root.
+  - The settings now: root directory `/`, `RAILWAY_DOCKERFILE_PATH=aura_web/Dockerfile`. The
+    service's builder field still reads Railpack, but the build log shows the Dockerfile being used.
+  - **The trigger is still on, and any merge to `main` starts a build**, even a docs-only one (#289
+    did). A build from git has an empty `aura_web/app-build/` and `aura_web/build-assets/`, so it
+    replaces the web app and the installer with their "not built yet" states until the next
+    workflow deploy lands. The workflows are the only deploys that carry the app and the installer;
+    keep this trigger off (setup step 5).
 
 ## Owner setup (nothing here can be done from the repository)
 
@@ -100,13 +104,16 @@ With no build in `aura_web/app-build/`, `/app/` answers a plain "not built yet" 
 4. **Backend `AURA_APP_BASE_URL`** = `https://web.aureon-ai.tech/app`, so server-built links match
    the client's `APP_BASE_URL`.
 5. **The `AURA-Web` service settings in Railway** (Settings, then Source and Build):
-   - disconnect the GitHub trigger (or leave the repository connected with automatic deploys off),
-     so the workflows are the only publishers and a merge no longer starts a build that fails;
-   - **clear the root directory** (`/aura_client` today) and set the builder to Dockerfile with
-     `aura_web/Dockerfile`, as the Dockerfile's header says. Whether the workflow's `railway up`
-     (which uploads a staged tree, not the git checkout) is affected by the current root directory
-     is not known: earlier CLI deployments show none, but that is not proof;
-   - check the result: the next deployment in Railway is `SUCCESS`, and
+   - **done (2026-11-22):** the root directory is `/` and the build uses `aura_web/Dockerfile`;
+   - **still to do:** disconnect the GitHub trigger (or leave the repository connected with automatic
+     deploys off), so the workflows are the only publishers. Until then, publishing the app (by the
+     workflow or `railway up`) lasts only until the next merge to `main`, which rebuilds the service
+     from git without it;
+   - optional: set the builder to Dockerfile in the dashboard, so the settings say what the build
+     does. Whether the workflow's `railway up` (which uploads a staged tree, not the git checkout)
+     is affected by the root directory is not known: earlier CLI deployments show none, but that is
+     not proof;
+   - check the result: the latest deployment in Railway is `SUCCESS`, and
      `curl -fsS https://web.aureon-ai.tech/app/app-version.json` names the commit that was deployed.
 
 ## Security policy of `/app/`
@@ -150,8 +157,17 @@ Firebase's handler popup and its hosts load under the policy; an invite link ope
 removes its token from the address bar; `/` redirects, the installer page is untouched, a missing
 file is a 404. `flutter analyze` clean and `flutter test` green (counts in the status note).
 
-**Not proven:** a real Google/Apple/email sign-in (needs the owner's Firebase project); the image
-built and run by Docker (no Docker daemon in the session: `nginx -t` and the routes were checked
-with the same config on a local nginx instead); the Railway deploy and the two-workflow handover;
-Fawry checkout; Arabic rendering on each OS; screen readers; behaviour on Safari and Firefox
-(Chromium only); real-network performance of the ~6 MB `main.dart.js` plus CanvasKit.
+Observed live on 2026-11-22 (16:02 UTC deployment, commit `2ff6282`, built by Railway from git):
+`aura_web/Dockerfile` builds and runs (so the image, `nginx -t` included, is proven by Railway, not
+only by a local nginx); `/` redirects to `/app/` (302); `/app/` answers 200 with the "not built yet"
+page (no app has been published) under the app's own CSP and `no-cache`; `/app/invite` answers 200
+(the deep-link fallback); `/desktop-ide/install` answers 200 with its new "Open the web app" link;
+`/healthz` answers 200. `/app/app-version.json` and `/desktop-ide/download/latest.json` answer 404
+(no app and no installer have been published).
+
+**Not proven:** the web app itself on the live host (it has not been published: the only run of
+`web-app-main-channel.yml` failed in seconds on the no-runner problem, CB-44); a real
+Google/Apple/email sign-in (needs the owner's Firebase project); the Railway deploy from the
+workflow (`railway up`) and the two-workflow handover; Fawry checkout; Arabic rendering on each OS;
+screen readers; behaviour on Safari and Firefox (Chromium only); real-network performance of the
+~6 MB `main.dart.js` plus CanvasKit.
