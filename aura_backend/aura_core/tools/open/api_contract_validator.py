@@ -1,4 +1,5 @@
 import json
+import math
 from typing import Any, Dict, List, Optional, Set
 
 
@@ -68,7 +69,15 @@ class ApiContractValidator:
         for key, expected_label in (field_types or {}).items():
             if key in payload:
                 py_types = type_map.get(expected_label.lower())
-                if py_types is not None and not isinstance(payload[key], py_types):
+                value = payload[key]
+                # bool is a subclass of int, and NaN/inf are floats: neither is a valid number here.
+                numeric = py_types in (int, (int, float))
+                wrong = py_types is not None and (
+                    not isinstance(value, py_types)
+                    or (numeric and isinstance(value, bool))
+                    or (numeric and isinstance(value, float) and not math.isfinite(value))
+                )
+                if wrong:
                     type_mismatches.append({
                         "field": key,
                         "expected": expected_label,
@@ -94,14 +103,27 @@ class ApiContractValidator:
                 "removed_paths": [],
             }
 
-        old_paths = set((old_p["spec"].get("paths") or {}).keys())
-        new_paths = set((new_p["spec"].get("paths") or {}).keys())
+        old_map = old_p["spec"].get("paths") or {}
+        new_map = new_p["spec"].get("paths") or {}
+        old_paths = set(old_map.keys())
+        new_paths = set(new_map.keys())
         removed = sorted(old_paths - new_paths)
         added = sorted(new_paths - old_paths)
 
+        # Dropping one HTTP method from a path that still exists breaks callers just as much.
+        http = {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
+
+        def methods(path_item: Any) -> set:
+            return {m.lower() for m in path_item if m.lower() in http} if isinstance(path_item, dict) else set()
+
+        removed_operations = sorted(
+            f"{m.upper()} {p}" for p in old_paths & new_paths for m in methods(old_map[p]) - methods(new_map[p])
+        )
+
         return {
-            "compatible": len(removed) == 0,
+            "compatible": not removed and not removed_operations,
             "removed_paths": removed,
+            "removed_operations": removed_operations,
             "added_paths": added,
         }
 
