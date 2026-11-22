@@ -120,6 +120,22 @@ It is what has to be true before the gateway agrees to act.
   between two states a person has already rejected.
 - **Logs are masked:** every secret value of the service is replaced before a log line is
   returned.
+- **The GPU Space (stage 3, `control/space.py`) is the Space its token was connected for**
+  (the HF credential's `owner/name`), so no setting points the token anywhere else. The Hub
+  restarts a Space by itself whenever a variable or secret changes, so the rules differ from
+  Railway's:
+  - **Variables** are checked, written and watched with the Space's own window
+    (`AURA_CONTROL_SPACE_WATCH_S`, 20 minutes by default), because a rebuild reloads the model
+    on the GPU. A failed or still-not-running Space gets its old values back, which restarts
+    it. A variable whose name or value looks secret is refused: it belongs in the Space's
+    secrets.
+  - **Secrets** are write-only, as on the Hub, and journaled as not restorable: the Hub never
+    returns a value, so nothing can be put back. The console says so before every change.
+  - **Hardware** (billed per hour), sleep time, pause, restart and rebuild are journaled, not
+    watched. Rolling back hardware automatically could put the Space back on the hardware
+    that was failing.
+  - The reconciler reads the Space's stage: `RUNNING` is healthy, `*_ERROR` failed, and
+    `PAUSED`/`STOPPED` superseded (someone stopped it on purpose).
 - **"Deploy" means redeploy, restart, rollback, status and logs.** It never means "deploy any
   branch". Shipping code stays `main` → Railway, so the console cannot ship code that has not
   been merged.
@@ -156,7 +172,7 @@ them. The control center adds a way in; it removes none.
 |---|---|---|
 | S1 | Foundation: migration 0031; vault-backed tokens; step-up; journal, reconciler and audit; Settings with Overview, AURA settings (read-only) and Changes | yes (2026-11-21), not proven |
 | S2 | Railway: services, variables (edit with validation), redeploy, restart, rollback, logs; the reconciler turned on; AURA settings edited through the gateway's own Railway variables | yes (2026-11-22), not proven |
-| S3 | HF GPU Space: status, restart, hardware, variables | no |
+| S3 | HF GPU Space: status, pause/resume, restart, rebuild, hardware, sleep time, variables (watched), secrets (write-only), logs | yes (2026-11-22), not proven |
 | S4 | Provider keys: create and revoke where the vendor allows (Cloudflare), replace-only (Groq), HF rotated on both sides | no |
 | S5 | Grafana Cloud (set up, status) and Qdrant Cloud (status, snapshots; restore needs step-up) | no |
 

@@ -1702,7 +1702,7 @@ gaps:
     component: console/control-center
     severity: P2
     current_state: >-
-      Stages 1 and 2 built, not proven (ADR-037, docs/plans/console-control-center-plan.md). The
+      Stages 1-3 built, not proven (ADR-037, docs/plans/console-control-center-plan.md). The
       console's Settings page is Super-Admin-only (nav item hidden, page refuses, every
       /api/v3/admin/control/* route 403s below SuperAdmin). Platform tokens for Railway, the HF GPU
       Space, Grafana, Qdrant and Cloudflare are entered in the console, verified where the vendor
@@ -1716,8 +1716,11 @@ gaps:
       is validated in a child process first, then written with skipDeploys and redeployed once
       (same image). The Reconciler runs in staging/production gateways and rolls back a failed
       or still-unhealthy deployment after 5 minutes, restoring raw values. The AURA settings tab
-      edits the gateway's own Railway variables. Space, key, Grafana and Qdrant operations are
-      stages 3-5, not built.
+      edits the gateway's own Railway variables. Stage 3 adds the GPU Space (the one named when
+      its token was connected): status, pause/resume, restart, rebuild, hardware and sleep time
+      (journaled), variables (watched for AURA_CONTROL_SPACE_WATCH_S, 20 min, and put back if the
+      Space errors), write-only secrets journaled as not restorable, and logs. Key, Grafana and
+      Qdrant operations are stages 4-5, not built.
     target_state: >-
       The Super Admin runs every platform operation the plan lists (Railway variables, redeploy,
       restart, rollback, logs; Space status, restart, hardware; key create, revoke and rotate;
@@ -1731,7 +1734,9 @@ gaps:
       responses and audit events, write cap, catalog completeness, reconciler rollback and lease)
       and tests/unit/test_control_railway.py (Railway refusals, apply/watch/rollback against
       InMemoryRailway, RailwayPlatform against recorded GraphQL exchanges, the real settings
-      check in a child process).
+      check in a child process) and tests/unit/test_control_space.py (Space refusals, the watch
+      window, variables put back on RUNTIME_ERROR, write-only secrets, runtime actions, stage to
+      health, HfSpaceHost against a stand-in HfApi).
       Opt-in: tests/load/test_control_store_postgres.py and the migration round trip on Postgres.
       Console: tests/e2e/control-center.spec.ts against the mock gateway. Nothing here exercises
       real Google, a real platform API or a deployed gateway.
@@ -1742,5 +1747,6 @@ gaps:
       docs/reports/control-center-*.md committed showing, on the live console: (1) the Super Admin
       opens Settings and an Admin is refused in the UI and at the API; (2) a real Google step-up
       round trip; (3) a platform token saved and verified with no response containing it; and,
-      from stage 2, (4) one change rolled back automatically after a forced unhealthy deploy.
+      from stage 2, (4) one change rolled back automatically after a forced unhealthy deploy; and,
+      from stage 3, (5) the GPU Space paused and resumed and its sleep time changed from Settings.
     status: built_not_proven

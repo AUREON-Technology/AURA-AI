@@ -337,6 +337,32 @@ this section wins:
 - **Not built yet.** Stage 2 has no live contract test (`tests/load/test_control_live.py`); the
   owner's live checks below stand in for it.
 
+## Stage 3 as built (2026-11-22)
+
+Built and tested locally, not proven (ADR-037, GAP-067). Where it differs from the design above,
+this section wins:
+
+- **Hub client.** `huggingface_hub` 1.28, already locked. Every method used was checked against
+  its signatures: `get_space_runtime`, `get_space_variables`, `add_space_variable`,
+  `delete_space_variable`, `get_space_secrets`, `add_space_secret`, `delete_space_secret`,
+  `pause_space`, `restart_space(factory_reboot=)`, `request_space_hardware`,
+  `set_space_sleep_time` and `fetch_space_logs(follow=False)`. The token is passed per call,
+  never set on a shared client.
+- **Which Space.** The one named on the HF card when its token was connected (`owner/name`).
+  Writes ask for the Space's short name (`aura-inference`).
+- **No deploy step.** The Hub restarts the Space on every variable or secret change.
+  - Variables are watched for 20 minutes (`AURA_CONTROL_SPACE_WATCH_S`). If the Space errors
+    or is not running in time, the old values are put back.
+  - Secrets cannot be restored, because the Hub never returns them. Their changes are
+    journaled and the console warns first.
+  - A secret-looking variable is refused.
+- **Hardware and sleep time are journaled, not watched.**
+  - The hardware list is a fixed copy of `SpaceHardware`, in `domain/control.py`.
+  - The sleep times offered are -1 (never), 5, 15 and 30 minutes, and 1, 3, 10, 24 and 48
+    hours.
+- **Pause and resume.** Resume is the Hub's restart of a paused Space.
+- **Not in this stage.** Rotating the HF key on both sides is stage 4.
+
 ## Delivery: five stages, each its own PR, each usable on its own
 
 | Stage | Contents | Proof needed before calling it done |

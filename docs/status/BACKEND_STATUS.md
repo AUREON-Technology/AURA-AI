@@ -275,6 +275,19 @@ That needs a check in the Firebase console.
 
   Not CI-run (CB-44). Not proven: no live Railway call has been made with a real project token.
 
+- 2026-11-22, same branch (#278), unmerged: control center stage 3, the GPU Space (ADR-037,
+  GAP-067). It adds:
+  - `/api/v3/admin/control/space/*`: status, variables (watched for
+    `AURA_CONTROL_SPACE_WATCH_S`, 20 minutes, and put back if the Space errors), write-only
+    secrets journaled as not restorable, pause/resume, restart, rebuild, hardware, sleep time
+    and logs.
+  - `adapters/hf_space.py` on `huggingface_hub` 1.28.
+  - The reconciler now watches the Space too.
+
+  TESTED locally after merging `main` at `f880826a`: `pytest` 7035 passed, 0 failed, 55
+  skipped; legacy `unittest` 148 OK. Not CI-run (CB-44). Not proven: no live Hub call has been
+  made from the gateway.
+
 ## Next steps
 
 0. ~~After the ADR-032 merge deploys: check that `/health/ready` reports `schema.revision 0019`~~ (done: live `0019` on 2026-11-07), then
