@@ -1,10 +1,13 @@
 import ast
 import builtins
-import importlib
-import importlib.util
+import importlib.machinery
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+#: Parse failures that must come back as a result, never as an exception (NUL bytes raise
+#: ValueError before Python 3.12; pathological nesting raises RecursionError).
+_PARSE_ERRORS = (SyntaxError, ValueError, RecursionError, MemoryError)
 
 
 class SymbolAndImportVerifier:
@@ -32,6 +35,12 @@ class SymbolAndImportVerifier:
                 "valid_syntax": False,
                 "tree": None,
                 "error": f"SyntaxError at line {exc.lineno}: {exc.msg}",
+            }
+        except (ValueError, RecursionError, MemoryError) as exc:
+            return {
+                "valid_syntax": False,
+                "tree": None,
+                "error": f"Source code could not be parsed: {type(exc).__name__}",
             }
 
     @classmethod
@@ -379,31 +388,109 @@ class SymbolAndImportVerifier:
         return None
 
     @staticmethod
-    def check_module_resolvable(module_name: str, search_paths: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Check whether a Python module can be found in sys.path or extra search paths."""
+    def _locate(
+        module_name: str, search_paths: Optional[List[str]] = None
+    ) -> Optional[importlib.machinery.ModuleSpec]:
+        """Find ``module_name``'s spec WITHOUT importing it or any parent package.
+
+        ``importlib.util.find_spec("a.b")`` imports ``a`` to read its ``__path__``, i.e. it runs
+        third-party ``__init__`` code on behalf of whatever source is being verified. Here each
+        segment is located with the meta-path finders directly, passing the parent's
+        ``submodule_search_locations`` instead.
+        """
+        parts = module_name.split(".")
+        if not all(p.isidentifier() for p in parts):
+            return None
+
+        spec: Optional[importlib.machinery.ModuleSpec] = None
+        for depth in range(1, len(parts) + 1):
+            fullname = ".".join(parts[:depth])
+            path = None if depth == 1 else spec.submodule_search_locations  # type: ignore[union-attr]
+            if depth > 1 and path is None:
+                return None  # parent is a plain module, so it has no submodules
+            found = None
+            for finder in sys.meta_path:
+                find = getattr(finder, "find_spec", None)
+                if find is None:
+                    continue
+                try:
+                    found = find(fullname, path)
+                except Exception:
+                    found = None
+                if found is not None:
+                    break
+            if found is None and depth == 1 and search_paths:
+                found = importlib.machinery.PathFinder.find_spec(fullname, list(search_paths))
+            elif found is None and depth > 1 and search_paths:
+                found = importlib.machinery.PathFinder.find_spec(fullname, path)
+            if found is None:
+                return None
+            if found.origin in ("frozen", "built-in") and fullname == module_name:
+                # Frozen stdlib modules (``os`` on 3.11+) have no file in their spec, but the same
+                # source sits on disk; prefer it so the module's names can be read.
+                on_disk = importlib.machinery.PathFinder.find_spec(fullname, path)
+                if on_disk is not None and (on_disk.origin or "").endswith(".py"):
+                    found = on_disk
+            spec = found
+        return spec
+
+    @classmethod
+    def check_module_resolvable(cls, module_name: str, search_paths: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Check whether a module can be found in sys.path or extra search paths (never imports it)."""
         if not module_name:
             return {"module": module_name, "resolvable": False, "origin": None}
 
         try:
-            spec = importlib.util.find_spec(module_name)
-            if spec is not None:
-                return {
-                    "module": module_name,
-                    "resolvable": True,
-                    "origin": spec.origin,
-                }
-        except (ModuleNotFoundError, ValueError):
-            pass
-
-        for sp in search_paths or []:
-            candidate_file = Path(sp) / Path(*module_name.split(".")).with_suffix(".py")
-            candidate_pkg = Path(sp) / Path(*module_name.split(".")) / "__init__.py"
-            if candidate_file.exists():
-                return {"module": module_name, "resolvable": True, "origin": str(candidate_file)}
-            if candidate_pkg.exists():
-                return {"module": module_name, "resolvable": True, "origin": str(candidate_pkg)}
-
+            spec = cls._locate(module_name, search_paths)
+        except (ValueError, ImportError, OSError):
+            spec = None
+        if spec is not None:
+            return {"module": module_name, "resolvable": True, "origin": spec.origin}
         return {"module": module_name, "resolvable": False, "origin": None}
+
+    @classmethod
+    def _module_names(cls, origin: Optional[str]) -> Optional[Tuple[Set[str], bool]]:
+        """Names a ``.py`` module defines, read statically. ``None`` when that cannot be known.
+
+        Returns ``(names, has_star_import)``. A module that re-exports with ``from x import *`` or
+        has no Python source (builtin, C extension) cannot be judged without executing it, and
+        executing arbitrary modules to answer a lint question is not acceptable, so those are
+        reported as unverifiable rather than as missing.
+        """
+        if not origin or not origin.endswith(".py"):
+            return None
+        try:
+            tree = ast.parse(Path(origin).read_text(encoding="utf-8", errors="ignore"))
+        except (OSError, *_PARSE_ERRORS):
+            return None
+
+        names: Set[str] = set()
+        star = False
+        # Module scope only: descend through if/try/with/for/while (conditional definitions are
+        # still module attributes) but not into function or class bodies, whose names are local.
+        pending: List[ast.AST] = list(tree.body)
+        while pending:
+            node = pending.pop()
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(node.name)
+                continue
+            if isinstance(node, ast.Lambda):
+                continue
+            if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+                names.add(node.id)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    names.add(alias.asname or alias.name.split(".")[0])
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name == "*":
+                        star = True
+                    else:
+                        names.add(alias.asname or alias.name)
+            elif isinstance(node, ast.Global):
+                names.update(node.names)
+            pending.extend(ast.iter_child_nodes(node))
+        return names, star
 
     @classmethod
     def verify_imported_symbols_exist_in_env(
@@ -411,7 +498,12 @@ class SymbolAndImportVerifier:
         source_code: str,
         search_paths: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Verify imported modules and imported attributes/submodules actually exist in runtime."""
+        """Verify imported modules and imported names exist, WITHOUT importing or executing anything.
+
+        Modules are located on disk and their source is read with ``ast``. A name that cannot be
+        checked statically (C extension, builtin, ``import *`` re-export) is listed in
+        ``unverified_symbols`` and does not make the result invalid.
+        """
         imp_data = cls.extract_imports(source_code)
         if not imp_data["valid_syntax"]:
             return {
@@ -419,68 +511,74 @@ class SymbolAndImportVerifier:
                 "error": imp_data["error"],
                 "missing_modules": [],
                 "missing_symbols": [],
+                "unverified_symbols": [],
             }
 
         missing_modules: List[Dict[str, Any]] = []
         missing_symbols: List[Dict[str, Any]] = []
+        unverified: List[Dict[str, Any]] = []
+        names_cache: Dict[str, Optional[Tuple[Set[str], bool]]] = {}
 
-        extra_paths = [p for p in (search_paths or []) if p not in sys.path]
-        sys.path[:0] = extra_paths
+        for item in imp_data["imports"]:
+            mod_name = item["module"]
+            res = cls.check_module_resolvable(mod_name, search_paths=search_paths)
+            if not res["resolvable"]:
+                missing_modules.append({
+                    "module": mod_name,
+                    "line": item["line"],
+                })
 
-        try:
-            for item in imp_data["imports"]:
-                mod_name = item["module"]
-                res = cls.check_module_resolvable(mod_name, search_paths=search_paths)
-                if not res["resolvable"]:
-                    missing_modules.append({
-                        "module": mod_name,
-                        "line": item["line"],
-                    })
+        for item in imp_data["from_imports"]:
+            if item["level"] > 0 or item["name"] == "*":
+                continue
+            mod_name = item["module"]
+            sym_name = item["name"]
+            res = cls.check_module_resolvable(mod_name, search_paths=search_paths)
+            if not res["resolvable"]:
+                missing_modules.append({
+                    "module": mod_name,
+                    "line": item["line"],
+                })
+                continue
 
-            for item in imp_data["from_imports"]:
-                if item["level"] > 0 or item["name"] == "*":
-                    continue
-                mod_name = item["module"]
-                sym_name = item["name"]
-                res = cls.check_module_resolvable(mod_name, search_paths=search_paths)
-                if not res["resolvable"]:
-                    missing_modules.append({
-                        "module": mod_name,
-                        "line": item["line"],
-                    })
-                    continue
+            # ``from pkg import submodule`` is valid without the package defining the name.
+            if cls.check_module_resolvable(f"{mod_name}.{sym_name}", search_paths=search_paths)["resolvable"]:
+                continue
 
-                submod_res = cls.check_module_resolvable(
-                    f"{mod_name}.{sym_name}",
-                    search_paths=search_paths,
-                )
-                if submod_res["resolvable"]:
-                    continue
-
-                try:
-                    mod_obj = importlib.import_module(mod_name)
-                    if not hasattr(mod_obj, sym_name):
-                        missing_symbols.append({
-                            "module": mod_name,
-                            "symbol": sym_name,
-                            "line": item["line"],
-                        })
-                except Exception as exc:
-                    missing_symbols.append({
-                        "module": mod_name,
-                        "symbol": sym_name,
-                        "line": item["line"],
-                        "import_error": str(exc),
-                    })
-        finally:
-            for p in reversed(extra_paths):
-                if p in sys.path:
-                    sys.path.remove(p)
+            origin = res["origin"]
+            if origin not in names_cache:
+                names_cache[origin] = cls._module_names(origin)
+            known = names_cache[origin]
+            if known is None:
+                unverified.append({
+                    "module": mod_name,
+                    "symbol": sym_name,
+                    "line": item["line"],
+                    "reason": "module has no Python source to inspect",
+                })
+                continue
+            names, star = known
+            if sym_name in names:
+                continue
+            if star or "__getattr__" in names:
+                unverified.append({
+                    "module": mod_name,
+                    "symbol": sym_name,
+                    "line": item["line"],
+                    "reason": "module resolves names dynamically ('import *' or module __getattr__)",
+                })
+                continue
+            missing_symbols.append({
+                "module": mod_name,
+                "symbol": sym_name,
+                "line": item["line"],
+            })
 
         return {
             "valid": len(missing_modules) == 0 and len(missing_symbols) == 0,
             "missing_modules": missing_modules,
             "missing_symbols": missing_symbols,
+            "unverified_symbols": unverified,
         }
 
     @classmethod
@@ -505,15 +603,23 @@ class SymbolAndImportVerifier:
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                 fname = node.func.id
                 if fname in specs:
+                    # ``f(*a)`` / ``f(**kw)`` pass a number of arguments nobody can know statically.
+                    if any(isinstance(a, ast.Starred) for a in node.args) or any(
+                        kw.arg is None for kw in node.keywords
+                    ):
+                        continue
                     positional_count = len(node.args)
+                    # Keyword arguments fill parameters too, so the spec bounds the TOTAL passed.
+                    total_count = positional_count + len(node.keywords)
                     min_args = specs[fname].get("min_args", 0)
                     max_args = specs[fname].get("max_args")
-                    if positional_count < min_args or (
-                        max_args is not None and positional_count > max_args
+                    if total_count < min_args or (
+                        max_args is not None and total_count > max_args
                     ):
                         mismatches.append({
                             "function": fname,
                             "line": getattr(node, "lineno", 0),
+                            "total_args_passed": total_count,
                             "positional_args_passed": positional_count,
                             "expected_min": min_args,
                             "expected_max": max_args,

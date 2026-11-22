@@ -103,6 +103,14 @@ class AutomatedTestGeneratorAndVerifier:
                 "classes": [],
                 "imports": [],
             }
+        except (ValueError, RecursionError, MemoryError) as e:
+            return {
+                "valid_syntax": False,
+                "error": f"Source code could not be parsed: {type(e).__name__}",
+                "functions": [],
+                "classes": [],
+                "imports": [],
+            }
 
         func_types = (ast.FunctionDef, ast.AsyncFunctionDef)
         functions = [
@@ -372,6 +380,13 @@ class AutomatedTestGeneratorAndVerifier:
                 "line": e.lineno,
                 "test_functions": [],
             }
+        except (ValueError, RecursionError, MemoryError) as e:
+            return {
+                "valid": False,
+                "error": f"Test code could not be parsed: {type(e).__name__}",
+                "line": None,
+                "test_functions": [],
+            }
 
         test_funcs = [
             node.name
@@ -465,6 +480,30 @@ class AutomatedTestGeneratorAndVerifier:
                     "duration_ms": 0,
                 }
 
+    #: The only pytest options ``run_existing_tests`` forwards. ``-p``, ``-c``, ``-o``,
+    #: ``--rootdir``, ``--confcutdir``, ``--pyargs`` and friends load plugins, configuration or
+    #: modules from places the caller never named, i.e. they run code of the caller's choosing.
+    _SAFE_FLAGS = frozenset({"-x", "-q", "-v", "-vv", "-s", "--lf", "--ff", "--co", "--collect-only"})
+    _SAFE_VALUE_FLAGS = frozenset({"-k", "-m"})
+
+    @classmethod
+    def _safe_pytest_args(cls, extra_args: Optional[List[str]]) -> List[str]:
+        """Validate ``extra_args`` against the allowlist. Raises ``ValueError`` on anything else."""
+        accepted: List[str] = []
+        items = [str(a) for a in (extra_args or [])]
+        i = 0
+        while i < len(items):
+            arg = items[i]
+            if arg in cls._SAFE_FLAGS or re.fullmatch(r"--maxfail=\d{1,4}", arg):
+                accepted.append(arg)
+            elif arg in cls._SAFE_VALUE_FLAGS and i + 1 < len(items) and not items[i + 1].startswith("-"):
+                accepted.extend([arg, items[i + 1]])
+                i += 1
+            else:
+                raise ValueError(f"pytest option not allowed: {arg!r}")
+            i += 1
+        return accepted
+
     @classmethod
     def run_existing_tests(
         cls,
@@ -473,10 +512,41 @@ class AutomatedTestGeneratorAndVerifier:
         extra_args: Optional[List[str]] = None,
         timeout_seconds: int = 60,
     ) -> Dict[str, Any]:
-        cwd = working_dir or os.getcwd()
-        cmd = [sys.executable, "-m", "pytest", target_path, "-q", "--tb=short"]
-        if extra_args:
-            cmd.extend(extra_args)
+        def refuse(message: str) -> Dict[str, Any]:
+            return {
+                "passed": False,
+                "exit_code": -1,
+                "target_path": target_path,
+                "error": message,
+                "stdout": "",
+                "stderr": "",
+                "duration_ms": 0,
+            }
+
+        try:
+            cwd_path = Path(working_dir).resolve() if working_dir else Path.cwd().resolve()
+        except (OSError, ValueError):
+            return refuse("Invalid working directory.")
+        if not cwd_path.is_dir():
+            return refuse(f"Working directory not found: {working_dir}")
+        # ``target_path`` is handed to pytest as a positional argument, so a value such as
+        # ``--version`` or ``-p evil`` would be read as an option. Resolve it against the working
+        # directory instead and require it to stay inside: what runs is a test the caller named,
+        # not whatever a ``../`` or an absolute path points at.
+        try:
+            target = (cwd_path / str(target_path)).resolve()
+            target.relative_to(cwd_path)
+        except (ValueError, OSError):
+            return refuse("target_path must be inside the working directory.")
+        if not target.exists():
+            return refuse(f"Test path not found: {target_path}")
+        try:
+            safe_extra = cls._safe_pytest_args(extra_args)
+        except ValueError as exc:
+            return refuse(str(exc))
+
+        cwd = str(cwd_path)
+        cmd = [sys.executable, "-m", "pytest", str(target), "-q", "--tb=short", *safe_extra]
 
         start_time = time.time()
         try:
