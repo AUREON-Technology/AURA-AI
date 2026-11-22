@@ -83,6 +83,13 @@ _CLONE_CONCURRENCY = 6
 #: without bound while its output is still arriving.
 _RUN_COMMAND_STREAM_CAP_CHARS = 200_000
 
+#: ``run_command``'s declared argument bounds. The tool's schema and the checks inside the tool
+#: both read these, so a direct call (which skips the registry's validation) cannot run what the
+#: registry would have refused.
+_RUN_COMMAND_MAX_CHARS = 2_000
+_RUN_COMMAND_MIN_TIMEOUT_S = 1
+_RUN_COMMAND_MAX_TIMEOUT_S = 600
+
 #: Paths per `github_list_repository_files` response. A large repository's full tree is tens of
 #: thousands of paths -- more context than the listing is worth, and `max_result_chars` would
 #: truncate it mid-path anyway; the tool says how many it withheld and how to narrow the listing.
@@ -450,6 +457,23 @@ async def _drain_streaming_run(
     return SandboxResult(stdout="".join(stdout_parts), stderr=stderr, exit_code=exit_code)
 
 
+def _cap_run_result(result: SandboxResult) -> SandboxResult:
+    """Apply ``_RUN_COMMAND_STREAM_CAP_CHARS`` to a non-streaming runner's finished result.
+
+    A streaming runner is capped while its output arrives (``_drain_streaming_run``); a
+    non-streaming one hands back one string, so the same total is enforced here and the same
+    note is added, which keeps the two paths returning the same shape.
+    """
+    if len(result.stdout) + len(result.stderr) <= _RUN_COMMAND_STREAM_CAP_CHARS:
+        return result
+    stdout = result.stdout[:_RUN_COMMAND_STREAM_CAP_CHARS]
+    stderr = result.stderr[: _RUN_COMMAND_STREAM_CAP_CHARS - len(stdout)]
+    stderr += (
+        f"\n[aura] output truncated after {_RUN_COMMAND_STREAM_CAP_CHARS} characters"
+    )
+    return SandboxResult(stdout=stdout, stderr=stderr, exit_code=result.exit_code)
+
+
 
 def build_sandbox_tools(
     sandbox_runner: Any,
@@ -593,9 +617,10 @@ def build_sandbox_tools(
         "on their own machine -- their real network, subject to the daemon's own path "
         "containment and command policy. Otherwise it runs in an ephemeral, network-restricted "
         "sandbox container that cannot reach the user's real network or host.",
-        param("command", "string", "The shell command to run, e.g. 'pytest -q'.", max_length=2000),
+        param("command", "string", "The shell command to run, e.g. 'pytest -q'.",
+              max_length=_RUN_COMMAND_MAX_CHARS),
         param("timeout_s", "number", "Max seconds to allow the command to run.", required=False,
-              minimum=1, maximum=600, default=60),
+              minimum=_RUN_COMMAND_MIN_TIMEOUT_S, maximum=_RUN_COMMAND_MAX_TIMEOUT_S, default=60),
         category=ToolCategory.DEVELOPMENT,
         sensitivity=ToolSensitivity.SYSTEM,
         side_effecting=True,
@@ -612,6 +637,21 @@ def build_sandbox_tools(
         workspace_local=True,
     )
     async def run_command(command: str, context: ToolContext, timeout_s: float = 60.0) -> str:
+        # The registry has already enforced the schema for a routed call; these checks make the
+        # same limits hold for a direct one, and refuse a blank command rather than run `sh -c ""`.
+        if not command.strip():
+            raise ToolExecutionError("command must not be empty", tool="run_command")
+        if len(command) > _RUN_COMMAND_MAX_CHARS:
+            raise ToolExecutionError(
+                f"command must be at most {_RUN_COMMAND_MAX_CHARS} characters, got {len(command)}",
+                tool="run_command",
+            )
+        if not (_RUN_COMMAND_MIN_TIMEOUT_S <= timeout_s <= _RUN_COMMAND_MAX_TIMEOUT_S):
+            raise ToolExecutionError(
+                f"timeout_s must be between {_RUN_COMMAND_MIN_TIMEOUT_S} and "
+                f"{_RUN_COMMAND_MAX_TIMEOUT_S} seconds, got {timeout_s}",
+                tool="run_command",
+            )
         handle = await sessions.handle(context)
         if isinstance(sandbox_runner, StreamingSandboxRunner):
             # Streaming and non-streaming runners return the same shape either way -- the
@@ -624,7 +664,9 @@ def build_sandbox_tools(
                 sandbox_runner, handle, ["sh", "-c", command], timeout_s=timeout_s
             )
         else:
-            result = await sandbox_runner.run(handle, ["sh", "-c", command], timeout_s=timeout_s)
+            result = _cap_run_result(
+                await sandbox_runner.run(handle, ["sh", "-c", command], timeout_s=timeout_s)
+            )
         return (
             f"exit_code={result.exit_code}\n"
             f"--- stdout ---\n{result.stdout}\n"
