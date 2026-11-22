@@ -73,12 +73,18 @@ With no build in `aura_web/app-build/`, `/app/` answers a plain "not built yet" 
   fragile, the fallback is a separate Railway service for the app.
 - `client-ci.yml` has a `build-web` job: every client change proves the web target still compiles
   with the published flags.
-- **If `AURA-Web` is also connected to Railway's GitHub auto-deploy** (not verifiable from the
-  repository; check the service's settings), that deploy builds the image from git, where
-  `aura_web/app-build/` and `aura_web/build-assets/` are empty. It would replace the app, and the
-  installer, with their "not built yet" states until the next workflow deploy lands. The desktop
-  workflow's header already says Railway only *hosts* the result; keep auto-deploy off for this
-  service so the workflows are the only publishers.
+- **Railway's own GitHub deploy is on, and it is not a publisher you want here.** Observed through
+  Railway's API on 2026-11-22 (read-only): `AURA-Web` has a GitHub deployment trigger on `main`; its
+  settings are root directory `/aura_client`, builder Railpack, and the variable
+  `RAILWAY_DOCKERFILE_PATH=aura_web/Dockerfile`. The merge of #288 (commit `aa0a391`, which touched
+  `aura_client/`) started a GitHub-triggered build that **FAILED** with
+  `COPY aura_web/nginx/default.conf.template: not found`, although that file is tracked in git. The
+  previous successful deployment (2026-11-21, a CLI upload) stayed live. The cause is not proven;
+  the likeliest one is the root directory: `aura_web/Dockerfile` says to leave it empty, because the
+  build context is the repository root. Even once it builds, a build from git has empty
+  `aura_web/app-build/` and `aura_web/build-assets/`, so it would replace the app and the installer
+  with their "not built yet" states until the next workflow deploy lands. The workflows are the only
+  deploys that carry the app and the installer; keep this trigger off (setup step 5).
 
 ## Owner setup (nothing here can be done from the repository)
 
@@ -93,6 +99,15 @@ With no build in `aura_web/app-build/`, `/app/` answers a plain "not built yet" 
 3. **Deploy token.** The repository secret `RAILWAY_WEB_TOKEN` (the desktop workflow needs the same).
 4. **Backend `AURA_APP_BASE_URL`** = `https://web.aureon-ai.tech/app`, so server-built links match
    the client's `APP_BASE_URL`.
+5. **The `AURA-Web` service settings in Railway** (Settings, then Source and Build):
+   - disconnect the GitHub trigger (or leave the repository connected with automatic deploys off),
+     so the workflows are the only publishers and a merge no longer starts a build that fails;
+   - **clear the root directory** (`/aura_client` today) and set the builder to Dockerfile with
+     `aura_web/Dockerfile`, as the Dockerfile's header says. Whether the workflow's `railway up`
+     (which uploads a staged tree, not the git checkout) is affected by the current root directory
+     is not known: earlier CLI deployments show none, but that is not proof;
+   - check the result: the next deployment in Railway is `SUCCESS`, and
+     `curl -fsS https://web.aureon-ai.tech/app/app-version.json` names the commit that was deployed.
 
 ## Security policy of `/app/`
 
