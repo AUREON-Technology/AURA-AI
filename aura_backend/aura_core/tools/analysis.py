@@ -34,6 +34,9 @@ from .open.database_intelligence_tool import DatabaseIntelligenceTool
 from .open.dependency_license_compliance_scanner import DependencyLicenseComplianceScanner
 from .open.dependency_manager_validator import DependencyManagerValidator
 from .open.deployment_release_manager import DeploymentReleaseManager
+from .open.diagram_ext import (
+    architecture_from_modules, er_from_sql, flowchart_from_source, sequence_from_source, validate_deep,
+)
 from .open.mermaid_diagram_generator import MermaidDiagramGenerator
 from .open.model_drift_and_performance_monitor import ModelDriftAndPerformanceMonitor
 from .open.observability_incident_analyzer import ObservabilityIncidentAnalyzer
@@ -390,13 +393,18 @@ async def analyze_change_impact(
 
 @tool(
     "generate_diagram",
-    "Produce Mermaid diagram text. diagram_type: class_from_source (from Python source), class, "
-    "flowchart, sequence, er, or validate (check diagram_code). Identifiers and labels are "
-    "sanitised.",
+    "Produce Mermaid text. diagram_type: class_from_source, er_from_sql (DDL/Alembic in source_code), "
+    "flowchart_from_source and sequence_from_source (source_code + function), architecture_from_modules "
+    "({path: source} in modules), or from a spec you write: class, flowchart, sequence, er; validate "
+    "checks diagram_code.",
     param("diagram_type", "string", "Which diagram to produce.",
-          enum=("class_from_source", "class", "flowchart", "sequence", "er", "validate")),
-    param("source_code", "string", "Python source (class_from_source).", required=False,
+          enum=("class_from_source", "er_from_sql", "flowchart_from_source", "sequence_from_source",
+                "architecture_from_modules", "class", "flowchart", "sequence", "er", "validate")),
+    param("source_code", "string", "Python source, or SQL/Alembic text for er_from_sql.", required=False,
           max_length=_MAX_TEXT),
+    param("function", "string", "Function to draw (flowchart/sequence_from_source).", required=False,
+          max_length=200),
+    param("modules", "object", "{path: Python source} (architecture_from_modules).", required=False),
     param("spec", "object",
           "class: {class_names?, relations? [{from,to,type}], class_details? [{name,attributes,methods}]}. "
           "flowchart: {nodes [{id,label,shape}], edges [{from,to,label}], direction?}. "
@@ -411,6 +419,8 @@ async def generate_diagram(
     source_code: str | None = None,
     spec: dict | None = None,
     diagram_code: str | None = None,
+    function: str | None = None,
+    modules: dict | None = None,
 ) -> str:
     name = "generate_diagram"
     spec = _bounded(name, "spec", spec) or {}
@@ -446,7 +456,18 @@ async def generate_diagram(
         return await _run(MermaidDiagramGenerator.generate_class_diagram_from_source, source_code)
     if diagram_type == "validate":
         _need(name, diagram_code=diagram_code)
-        return await _run(MermaidDiagramGenerator.validate_mermaid_syntax, diagram_code)
+        return await _run(validate_deep, diagram_code)
+    if diagram_type in ("er_from_sql", "flowchart_from_source", "sequence_from_source"):
+        _need(name, source_code=source_code)
+        derive = {"er_from_sql": lambda: er_from_sql(source_code),
+                  "flowchart_from_source": lambda: flowchart_from_source(source_code, function),
+                  "sequence_from_source": lambda: sequence_from_source(source_code, function)}[diagram_type]
+        return await _run(derive)
+    if diagram_type == "architecture_from_modules":
+        found = _bounded(name, "modules", modules)
+        if not isinstance(found, dict) or not found or not all(isinstance(v, str) for v in found.values()):
+            raise ToolExecutionError("architecture_from_modules needs modules as {path: source text}", tool=name)
+        return await _run(architecture_from_modules, {str(k): v for k, v in found.items()})
 
     def build() -> dict:
         gen = MermaidDiagramGenerator
