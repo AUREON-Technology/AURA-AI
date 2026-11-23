@@ -96,6 +96,10 @@ COVERED = {
         "TestKnowledgeGraph::test_bob_cannot_read_alices_entity_by_key",
     ("DELETE", "/api/v3/memory/{memory_id}"):
         "TestMemory::test_bob_cannot_delete_alices_memory",
+    ("POST", "/api/v3/memory/lessons/{memory_id}/approve"):
+        "TestMemory::test_bob_cannot_approve_alices_pending_lesson",
+    ("POST", "/api/v3/memory/lessons/{memory_id}/reject"):
+        "TestMemory::test_bob_cannot_reject_alices_pending_lesson",
     ("DELETE", "/api/v3/sessions/{session_id}"):
         "TestConversations::test_bob_cannot_delete_alices_conversation_by_session_id",
     ("GET", "/api/v3/sessions/{session_id}/checkpoint"):
@@ -386,6 +390,33 @@ class TestMemory:
         assert response.status_code == 404
         mine = client.get("/api/v3/memory", headers=AUTH_A).json()["memories"]
         assert [m["id"] for m in mine] == [memory_id]
+
+    def _alice_pending_lesson(self, container) -> str:
+        from aura_core.domain.lessons import ENGINEER_SCOPE, LESSON_SOURCE, LESSON_SUBJECT, pending_scope
+        from aura_core.domain.memory import MemoryKind
+
+        record = asyncio.run(container.memory.remember(
+            owner_id=UserId(ALICE), content="Decision: keep the Lisbon locker code PELICAN-7731 in the vault.",
+            kind=MemoryKind.PROCEDURAL, subject=LESSON_SUBJECT, source=LESSON_SOURCE,
+            scope=pending_scope(ENGINEER_SCOPE), metadata={"review": "pending"},
+        ))
+        return record.id.value
+
+    def test_bob_cannot_approve_alices_pending_lesson(self, client, container) -> None:
+        lesson_id = self._alice_pending_lesson(container)
+        assert client.get("/api/v3/memory/lessons", headers=AUTH_B).json()["lessons"] == []
+        response = client.post(f"/api/v3/memory/lessons/{lesson_id}/approve", headers=AUTH_B)
+        assert response.status_code == 404
+        mine = client.get("/api/v3/memory/lessons", headers=AUTH_A).json()["lessons"]
+        assert [m["id"] for m in mine] == [lesson_id], "Bob's approval must leave it pending for Alice"
+
+    def test_bob_cannot_reject_alices_pending_lesson(self, client, container) -> None:
+        lesson_id = self._alice_pending_lesson(container)
+        response = client.post(f"/api/v3/memory/lessons/{lesson_id}/reject", headers=AUTH_B)
+        assert response.status_code == 404
+        mine = client.get("/api/v3/memory/lessons", headers=AUTH_A).json()["lessons"]
+        assert [m["id"] for m in mine] == [lesson_id], "Bob's rejection must not delete Alice's lesson"
+
 
 
 # --------------------------------------------------------------------------------------

@@ -611,6 +611,10 @@ class Container:
             self.blueprint_compiler = self._build_compiler(use_postgres=use_postgres)
             self.blueprint_deployment = self._build_deployment()
 
+        # ADR-038 (row 60): lesson extraction after Engineer turns. None unless
+        # AURA_AUTO_LESSONS_ENABLED (and memory on): the kernel then does nothing extra.
+        self.lesson_sink = self._build_lesson_sink()
+
         self.kernel = AIKernel(
             KernelDependencies(
                 router=self.router,
@@ -643,6 +647,7 @@ class Container:
                 # production), so any replica can resume the exact turn the user approved.
                 tool_confirmations=PendingConfirmationStore(self.cache_backend),
                 vision=self.vision,
+                lesson_sink=self.lesson_sink,
             )
         )
         # After kernel exists, same reason as live_voice below: `delegate_to_agent`
@@ -1760,6 +1765,37 @@ class Container:
             )
         )
         return registry
+
+    def _build_lesson_sink(self) -> Any:
+        """``async (LessonTurn) -> None`` queueing an Engineer turn's lessons for review, or ``None``.
+
+        Candidates are screened with the same context guards retrieved chunks pass (an injection
+        in a "lesson" is dropped, not stored), checked for secrets and duplicates, and written to
+        the engineer scope's *pending* partition (``learning/jobs.py``). Nothing here promotes them.
+        """
+        if not self.settings.learning.auto_lessons_enabled or self.memory is None:
+            return None
+        from .learning.jobs import run_engineer_lesson_extraction
+
+        safety = self.safety if self.settings.safety.enabled else None
+
+        async def screen(text: str) -> bool:
+            if safety is None:
+                return True
+            _accepted, quarantined, _tainted = await safety.guard_context_items([("lesson", text)])
+            return not quarantined
+
+        async def sink(turn: Any) -> None:
+            checkpoint = None
+            if turn.session_id:
+                # The saved one, never a fresh model call: this runs after every Engineer turn.
+                checkpoint = await self.episodic.latest_checkpoint(SessionId(turn.session_id), turn.user_id)
+            report = await run_engineer_lesson_extraction(
+                self.memory, turn, checkpoint=checkpoint, enabled=True, screen=screen,
+            )
+            logger.info("engineer lessons", extra={"report": report})
+
+        return sink
 
     def _build_sandbox_runner(self) -> Any:
         """Always a `CompositeSandboxRunner` (`adapters/host_agent.py`) wrapping the desktop

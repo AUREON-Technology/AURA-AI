@@ -1499,6 +1499,85 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             raise HTTPException(status_code=404, detail={"error": "not_found"})
         return JSONResponse(content={"deleted": True})
 
+    # -- automatic lessons awaiting review (ADR-038, row 60; ADR-008's human promotion) ------
+
+    def _lessons_engine(caller: Principal) -> Any:
+        if caller.is_service:
+            # Memory is a person's (AR-4): a service key has none, so it has no lessons to review.
+            raise HTTPException(status_code=403, detail={"error": "forbidden"})
+        if container.memory is None:
+            raise HTTPException(status_code=503, detail={"error": "memory_disabled"})
+        return container.memory
+
+    @router.get("/memory/lessons")
+    async def list_pending_lessons(
+        request: Request, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """The caller's Engineer lessons waiting for approval, newest first.
+
+        Written by the lesson-extraction job after Engineer turns (``AURA_AUTO_LESSONS_ENABLED``);
+        until approved they sit in a scope no persona's recall reads.
+        """
+        await enforce_rate_limit(request, caller, "read")
+        from ..domain.lessons import ENGINEER_SCOPE
+
+        records = await _lessons_engine(caller).list_pending_lessons(caller.user_id, scope=ENGINEER_SCOPE)
+        return JSONResponse(content={"lessons": [
+            {
+                "id": r.id.value,
+                "content": r.content,
+                "kind": r.metadata.get("lesson_kind"),
+                "turn_outcome": r.metadata.get("turn_outcome"),
+                "created_at": r.created_at.isoformat(),
+                "expires_at": r.expires_at.isoformat() if r.expires_at else None,
+            }
+            for r in records
+        ]})
+
+    @router.post("/memory/lessons/{memory_id}/approve", dependencies=idempotent)
+    async def approve_lesson(
+        request: Request, memory_id: str, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Promote one pending lesson into the Engineer's memory. The approval names the caller
+        and the time, on the record and in the audit log. Not the caller's lesson: 404."""
+        await enforce_rate_limit(request, caller, "read")
+        from ..domain.identifiers import MemoryId
+        from ..domain.lessons import ENGINEER_SCOPE
+
+        engine = _lessons_engine(caller)
+        approver = caller.email or caller.user_id.value
+        try:
+            lesson_id = MemoryId(memory_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail={"error": "not_found"}) from None
+        record = await engine.approve_lesson(
+            lesson_id, owner_id=caller.user_id, scope=ENGINEER_SCOPE, approved_by=approver,
+        )
+        if record is None:
+            raise HTTPException(status_code=404, detail={"error": "not_found"})
+        await audit_admin(request, caller, "memory.lesson.approve", f"memory:{record.id.value}", "success")
+        return JSONResponse(content={"id": record.id.value, "approved": True, "content": record.content})
+
+    @router.post("/memory/lessons/{memory_id}/reject", dependencies=idempotent)
+    async def reject_lesson(
+        request: Request, memory_id: str, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Discard one pending lesson. Not the caller's lesson: 404."""
+        await enforce_rate_limit(request, caller, "read")
+        from ..domain.identifiers import MemoryId
+        from ..domain.lessons import ENGINEER_SCOPE
+
+        engine = _lessons_engine(caller)
+        try:
+            lesson_id = MemoryId(memory_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail={"error": "not_found"}) from None
+        deleted = await engine.reject_lesson(lesson_id, owner_id=caller.user_id, scope=ENGINEER_SCOPE)
+        if not deleted:
+            raise HTTPException(status_code=404, detail={"error": "not_found"})
+        await audit_admin(request, caller, "memory.lesson.reject", f"memory:{memory_id}", "success")
+        return JSONResponse(content={"id": memory_id, "rejected": True})
+
     # -- personal data key (ADR-032) ---------------------------------------------------
 
     #: Own budget, independent of the general limiter (which may be disabled): a DEK changes

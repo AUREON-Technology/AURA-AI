@@ -538,7 +538,7 @@ def _all_tools() -> dict[str, ToolSpec]:
         sandbox_runner=object(), github_client_resolver=resolver, github_default_repo="a/b",
         workspace_manager=object(), host_git=object(), github_token_resolver=resolver,
         host_agent_registry=object(), enable_analysis_tools=True, enable_open_exec_tools=True,
-        enable_desktop_ops_tools=True,
+        enable_desktop_ops_tools=True, episodic_memory=object(),
     )
     agents = build_default_agent_registry()
     tools += build_delegation_tools(agents=agents, kernel=lambda: None)

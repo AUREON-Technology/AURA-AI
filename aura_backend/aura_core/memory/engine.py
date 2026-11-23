@@ -27,12 +27,14 @@ from __future__ import annotations
 
 import time
 from dataclasses import asdict, replace
+from datetime import timedelta
 from typing import Any, Mapping, Sequence
 
 from ..domain.errors import EmbeddingError, MemoryStoreError, ValidationError
 from ..domain.events import MemoryConsolidated, MemoryWritten
 from ..domain.identifiers import MemoryId, SessionId, UserId
 from ..domain.knowledge import IndexIdentity
+from ..domain.lessons import LESSON_SOURCE, LESSON_SUBJECT, pending_scope
 from ..domain.memory import (
     BASE_CONFIDENCE_METADATA_KEY,
     MEMORY_POLICIES,
@@ -118,6 +120,7 @@ class MemoryEngine:
         document_ref: str | None = None,
         metadata: Mapping[str, Any] | None = None,
         scope: str = SHARED_MEMORY_SCOPE,
+        ttl: timedelta | None = None,
     ) -> MemoryRecord:
         """Write one memory, merging with a near-duplicate if one exists.
 
@@ -165,7 +168,10 @@ class MemoryEngine:
                 extractor_version=extractor_version,
                 document_ref=document_ref,
             ),
-            expires_at=(now + policy.ttl) if policy.ttl else None,
+            # ``ttl`` overrides the kind's own: a record that must be reviewed (an automatic lesson
+            # awaiting approval) should not outlive the review window just because its kind is
+            # permanent.
+            expires_at=(now + ttl) if ttl is not None else ((now + policy.ttl) if policy.ttl else None),
             # From the injected clock, not wall time: a record's age must be measured against
             # the same source that later decays and ranks it.
             created_at=now,
@@ -416,6 +422,84 @@ class MemoryEngine:
         )
         logger.info("memory consolidated", extra=asdict(outcome))
         return outcome
+
+    # -- lesson review (ADR-038; ADR-008's human promotion) ------------------------------------
+
+    async def list_pending_lessons(self, owner_id: UserId, *, scope: str) -> list[MemoryRecord]:
+        """The owner's automatic lessons awaiting review for persona scope ``scope``, newest first."""
+        pending = pending_scope(scope)
+        rows = await self._store.list_for_owner(
+            owner_id, kinds=(MemoryKind.PROCEDURAL,), subject=LESSON_SUBJECT, limit=200,
+        )
+        return [
+            r for r in rows
+            if r.scope == pending and r.provenance.source == LESSON_SOURCE and r.is_active
+        ]
+
+    async def _pending_lesson(self, memory_id: MemoryId, owner_id: UserId, scope: str) -> MemoryRecord | None:
+        record = await self._store.get(memory_id)
+        if (
+            record is None or record.owner_id != owner_id or not record.is_active
+            or record.scope != pending_scope(scope) or record.provenance.source != LESSON_SOURCE
+        ):
+            return None
+        return record
+
+    async def approve_lesson(
+        self, memory_id: MemoryId, *, owner_id: UserId, scope: str, approved_by: str
+    ) -> MemoryRecord | None:
+        """Promote a pending lesson into ``scope``'s trusted memory.
+
+        Only a pending ``auto_lesson`` record of this owner qualifies; anything else is ``None``.
+        The approval names a person and a time (ADR-008: "approval by configuration flag is not an
+        audit trail") in the record's own metadata, and the review window's expiry is lifted.
+        """
+        record = await self._pending_lesson(memory_id, owner_id, scope)
+        if record is None:
+            return None
+        now = self._now()
+        confidence = round(max(record.confidence, 0.7), 6)
+        promoted = replace(
+            record,
+            confidence=confidence,
+            expires_at=None,
+            metadata={
+                **record.metadata,
+                SCOPE_METADATA_KEY: scope,
+                BASE_CONFIDENCE_METADATA_KEY: confidence,
+                "review": "approved",
+                "approved_by": approved_by,
+                "approved_at": now.isoformat(),
+            },
+        )
+        await self._store.update(promoted)
+        try:
+            # Keep the vector payload's scope in step with the row (recall filters on the row, but
+            # nothing else should read a stale scope).
+            await self._ensure_index()
+            await self._vectors.upsert(
+                self._identity,
+                [VectorPoint(
+                    id=promoted.id.value,
+                    vector=await self._embed(promoted.content),
+                    payload={
+                        "memory_id": promoted.id.value, "kind": str(promoted.kind),
+                        "owner_id": owner_id.value,
+                        **({"subject": promoted.subject or ""} if self.payload_content else {}),
+                        "scope": scope, "source": LESSON_SOURCE,
+                    },
+                )],
+            )
+        except Exception:
+            logger.warning("could not refresh an approved lesson's vector payload", exc_info=True)
+        logger.info("lesson approved", extra={"memory_id": promoted.id.value})
+        return promoted
+
+    async def reject_lesson(self, memory_id: MemoryId, *, owner_id: UserId, scope: str) -> bool:
+        """Delete a pending lesson (row and vector). ``False`` when it is not one of the owner's."""
+        if await self._pending_lesson(memory_id, owner_id, scope) is None:
+            return False
+        return await self.forget(memory_id, owner_id=owner_id)
 
     # -- deletion ----------------------------------------------------------------------
 

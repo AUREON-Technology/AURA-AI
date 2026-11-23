@@ -55,6 +55,7 @@ from ..domain.context import user_facing_citations
 from ..domain.engineering import ENGINEER_CONSENT_NOTICE_VERSION, EngineerRun, EngineerRunStatus
 from ..domain.identifiers import CorrelationId, EngineerRunId, SessionId, TurnId, UserId
 from ..domain.knowledge import RetrievalResult, RetrievedChunk
+from ..domain.lessons import LessonStep, LessonTurn
 from ..domain.llm import (
     CompletionRequest,
     CompletionResponse,
@@ -104,6 +105,8 @@ logger = get_logger("kernel")
 # above `tools/` in the layering and must not import a concrete tool module.
 _ENGINEER_AGENT_CAPABILITY = "engineer_agent"
 _URL_RE = re.compile(r"https?://\S+")
+#: One line of a replanned goal's "Progress so far" block (`PlanningEngine.replan`).
+_FAILED_LINE = re.compile(r"^Failed: (.{1,200}?) \(([a-z_]{1,48})\)\s*$", re.M)
 # `github_create_branch`'s result text ends "... (<sha[:7]>)" -- best-effort extraction, not a
 # guarantee every tool's prose embeds a SHA in this exact shape.
 _SHA_RE = re.compile(r"\(([0-9a-f]{7,40})\)\s*$")
@@ -322,6 +325,10 @@ class KernelDependencies:
     #: `VisionEngine` (`vision/engine.py`, ADR-031). `None` means image turns fail with
     #: `dependency_unavailable`; text turns are unaffected.
     vision: Any = None
+    #: ADR-038 (row 60): ``async (LessonTurn) -> Any``, called in the background after an Engineer
+    #: turn completes so lessons can be derived and queued for the owner's review. ``None`` -- the
+    #: default, and what the container wires unless ``AURA_AUTO_LESSONS_ENABLED`` -- does nothing.
+    lesson_sink: Any = None
 
 
 #: Told to the model when planning or tool execution failed (CB-14). Without it the model saw
@@ -430,6 +437,8 @@ class AIKernel:
         #: The one shadow generation allowed in flight (see `_dispatch_shadow`). Holding the
         #: reference also keeps the task from being garbage-collected mid-run.
         self._shadow_task: asyncio.Task[None] | None = None
+        #: Lesson-extraction tasks in flight (strong references; see `_dispatch_lessons`).
+        self._lesson_tasks: set[asyncio.Task[None]] = set()
 
     # -- public API --------------------------------------------------------------------
 
@@ -558,6 +567,7 @@ class AIKernel:
         plan_steps = plan_revisions = 0
         agent_run_id: str | None = None
         planning_failed = False
+        plan_outcome: Any = None
 
         tool_declarations = await self._tool_declarations(request)
         if resume is not None or self._should_plan(request, tool_declarations):
@@ -574,6 +584,7 @@ class AIKernel:
                 execution_notes.append(PLANNING_FAILED_NOTE)
             timings["planning"] = (time.perf_counter() - stage_start) * 1000.0
             if outcome is not None:
+                plan_outcome = outcome
                 agent_run_id = getattr(outcome, "run_id", None)
                 tool_results = outcome.summary_for_context()
                 plan_steps = len(outcome.plan.steps)
@@ -685,6 +696,11 @@ class AIKernel:
                 # Losing session persistence degrades the next turn; failing this one would be
                 # a worse trade.
                 logger.warning("failed to persist session state")
+
+        self._dispatch_lessons(
+            request, resolved_agent, answer, plan_outcome,
+            tainted=tainted, planning_failed=planning_failed, turn_id=turn_id,
+        )
 
         telemetry = TurnTelemetry(
             correlation_id=correlation,
@@ -1043,6 +1059,11 @@ class AIKernel:
                     except Exception:
                         logger.warning("failed to persist session state")
 
+                self._dispatch_lessons(
+                    request, resolved_agent, answer, outcome,
+                    tainted=tainted, planning_failed=planning_failed, turn_id=turn_id,
+                )
+
                 # Fire-and-forget shadow, off the turn's critical path (PP-04): failures must not
                 # fail the turn, and its latency must not delay the `done` frame.
                 try:
@@ -1145,6 +1166,87 @@ class AIKernel:
             finally:
                 if self._metrics is not None:
                     self._metrics.turns_in_flight.dec()
+
+    # -- lessons (ADR-038, row 60) ------------------------------------------------------
+
+    def _dispatch_lessons(
+        self,
+        request: TurnRequest,
+        resolved_agent: str,
+        answer: str,
+        outcome: Any,
+        *,
+        tainted: bool,
+        planning_failed: bool,
+        turn_id: TurnId,
+    ) -> None:
+        """Hand a finished Engineer turn to the lesson sink, in the background. Never raises.
+
+        Off the turn's path -- the answer is already written -- and a no-op unless a sink is wired
+        (``AURA_AUTO_LESSONS_ENABLED``). The record carries the *shape* of the plan (tool names,
+        step descriptions, statuses, error kinds), never a step's arguments or output: those hold
+        third-party text. A resumed or delegated turn counts like any other; a turn whose context
+        was tainted is flagged so the extractor skips it.
+        """
+        sink = self._deps.lesson_sink
+        if sink is None or resolved_agent != "engineer":
+            return
+        try:
+            steps: list[LessonStep] = []
+            revisions = 0
+            plan = getattr(outcome, "plan", None)
+            if plan is not None:
+                revisions = len(plan.revisions)
+                steps = [
+                    LessonStep(
+                        tool=str(step.tool), description=str(step.description),
+                        status=str(step.status), error_kind=step.error_kind, attempts=int(step.attempts),
+                    )
+                    for step in plan.steps if step.kind is StepKind.TOOL and step.tool
+                ]
+            failed = planning_failed or any(s.status == "failed" for s in steps)
+            if plan is not None:
+                # The agent loop builds a *new* plan on each replan, so a pass that failed and was
+                # fixed is no longer among `plan.steps` (and the new plan carries no revisions);
+                # its goal still names the failure ("Failed: <description> (<error_kind>)", written
+                # by `PlanningEngine.replan`). Only that structured shape is taken: the step's own
+                # description and its error kind. A goal that names one is a replanned goal.
+                named: dict[tuple[str, str], None] = {}
+                for text in (str(plan.goal.description), *(str(st.description) for st in plan.steps)):
+                    for description, kind in _FAILED_LINE.findall(text):
+                        named.setdefault((description.strip(), kind))
+                for description, kind in named:
+                    steps.append(LessonStep(
+                        tool="", description=description, status="failed", error_kind=kind,
+                    ))
+                if named:
+                    revisions = max(revisions, 1)
+            turn = LessonTurn(
+                user_id=request.user_id, agent_id=resolved_agent, message=request.message,
+                answer=answer, outcome="failure" if failed else "success",
+                session_id=request.session_id.value if request.session_id else None,
+                turn_id=turn_id.value, steps=tuple(steps), revisions=revisions, tainted=tainted,
+            )
+            task = asyncio.get_running_loop().create_task(self._run_lesson_sink(sink, turn))
+        except Exception:
+            logger.debug("lesson dispatch failed", exc_info=True)
+            return
+        self._lesson_tasks.add(task)
+        task.add_done_callback(self._lesson_tasks.discard)
+
+    @staticmethod
+    async def _run_lesson_sink(sink: Any, turn: LessonTurn) -> None:
+        try:
+            await sink(turn)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("lesson extraction failed", exc_info=True)
+
+    async def wait_for_lessons(self) -> None:
+        """Wait for lesson extraction in flight (tests, graceful shutdown)."""
+        while self._lesson_tasks:
+            await asyncio.gather(*list(self._lesson_tasks), return_exceptions=True)
 
     # -- stages ------------------------------------------------------------------------
 
