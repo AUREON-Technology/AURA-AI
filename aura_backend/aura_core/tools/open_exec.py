@@ -38,6 +38,7 @@ from ..ports.runtime import Tool
 from .base import param, tool
 from .open.automated_test_generator_and_verifier import AutomatedTestGeneratorAndVerifier
 from .open.test_coverage_and_mutation_analyzer import TestCoverageAndMutationAnalyzer
+from .open.testgen_ext import generate_and_verify_with_behaviour
 
 __all__ = ["build_open_exec_tools", "OPEN_EXEC_TOOL_NAMES"]
 
@@ -108,6 +109,10 @@ def _module_path(name: str, value: str | None) -> str | None:
     param("include_call_smoke", "boolean", "Also CALL every no-argument function and instantiate "
           "no-argument classes (default false; only for code with no side effects).",
           required=False, default=False),
+    param("include_behavior_tests", "boolean", "Also assert behaviour (default true): run each "
+          "function's docstring examples, and for pure functions with simple type hints check the "
+          "return type, determinism, no argument mutation and that only declared exceptions escape.",
+          required=False, default=True),
     param("timeout_s", "number", "Hard limit in seconds for the test run (default 30).",
           required=False, default=30, minimum=5, maximum=60),
     timeout_s=95.0,
@@ -119,9 +124,20 @@ async def generate_and_run_tests(
     custom_test_code: str | None = None,
     include_call_smoke: bool = False,
     timeout_s: float = 30,
+    include_behavior_tests: bool = True,
 ) -> str:
     name = "generate_and_run_tests"
     module = _module_path(name, module_import_path)
+    if include_behavior_tests and custom_test_code is None:
+        return await asyncio.to_thread(
+            _in_slot,
+            name,
+            generate_and_verify_with_behaviour,
+            source_code,
+            module_import_path=module,
+            include_call_smoke=include_call_smoke,
+            timeout_seconds=int(timeout_s),
+        )
     return await asyncio.to_thread(
         _in_slot,
         name,

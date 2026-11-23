@@ -40,6 +40,8 @@ from .open.observability_incident_analyzer import ObservabilityIncidentAnalyzer
 from .open.peer_code_reviewer_agent import PeerCodeReviewerAgent
 from .open.quality_gate_aggregator import QualityGateAggregator
 from .open.regression_impact_analyzer import RegressionImpactAnalyzer
+from .open.review_ext import deep_review
+from .open.sql_schema_ext import generate_select, parse_schema, query_smells, schema_report
 from .open.security_vulnerability_scanner import SecurityVulnerabilityScanner
 from .open.symbol_and_import_verifier import SymbolAndImportVerifier
 
@@ -270,24 +272,67 @@ async def verify_python_symbols(
 
 @tool(
     "review_code_diff",
-    "Rule-based review of a unified git diff and/or Python source: debug prints, TODO markers, "
-    "broad `except Exception`, missing docstrings. A checklist pass, not a substitute for reading "
-    "the change.",
-    param("diff_text", "string", "A unified diff (e.g. the output of git_diff).",
+    "Rule-based review of a unified diff and/or Python source: debug prints, TODO markers, "
+    "broad `except Exception`, missing docstrings and (deep, default on) bug patterns found on the "
+    "AST (mutable defaults, == None, swallowed exceptions, unreachable code, ...), complexity over "
+    "the limits and layer-import violations, each with a line number. A rule engine, not an "
+    "independent reviewer: it does not replace reading the change.",
+    param("diff_text", "string", "A unified diff (e.g. the output of the diff tool).",
           required=False, max_length=_MAX_TEXT),
     param("source_code", "string", "Python source to check for convention issues.",
           required=False, max_length=_MAX_TEXT),
-    param("filename", "string", "Name to report findings against (default '<string>').",
+    param("filename", "string", "Name to report findings against (default '<string>'). A relative "
+          "path like aura_core/domain/x.py also names the module for the layer check.",
           required=False, default="<string>", max_length=500),
+    param("deep", "boolean", "Add bug-pattern, complexity and architecture findings (default true).",
+          required=False, default=True),
+    param("module_name", "string", "Dotted module name for the layer check when filename does not "
+          "give it.", required=False, max_length=300),
+    param("layer_rules", "object", "Forbidden imports per layer, {layer: [layers it may not import]}; "
+          "default is the platform's own rules.", required=False),
+    param("max_complexity", "integer", "Cyclomatic complexity above which a function is flagged "
+          "(default 10).", required=False, default=10, minimum=1, maximum=200),
     **_CODE,
 )
 async def review_code_diff(
-    diff_text: str | None = None, source_code: str | None = None, filename: str = "<string>"
+    diff_text: str | None = None,
+    source_code: str | None = None,
+    filename: str = "<string>",
+    deep: bool = True,
+    module_name: str | None = None,
+    layer_rules: dict | None = None,
+    max_complexity: int = 10,
 ) -> str:
-    _need("review_code_diff", diff_text=diff_text, source_code=source_code)
-    return await _run(
-        PeerCodeReviewerAgent.full_review, diff_text=diff_text, source_code=source_code, filename=filename
-    )
+    name = "review_code_diff"
+    _need(name, diff_text=diff_text, source_code=source_code)
+    rules = _bounded(name, "layer_rules", layer_rules)
+    if rules is not None and not (isinstance(rules, dict) and all(
+            isinstance(v, list) for v in rules.values())):
+        raise ToolExecutionError("layer_rules must be {layer: [forbidden layers]}", tool=name)
+
+    def review() -> dict:
+        result = PeerCodeReviewerAgent.full_review(
+            diff_text=diff_text, source_code=source_code, filename=filename)
+        if deep:
+            extra = deep_review(
+                source_code=source_code, diff_text=diff_text, filename=filename, module_name=module_name,
+                layer_rules={str(k): [str(x) for x in v] for k, v in rules.items()} if rules else None,
+                max_complexity=max_complexity)
+            known = {(f.get("file"), f.get("line"), f.get("code")) for f in result["findings"]}
+            fresh = [f for f in extra["findings"] if (f["file"], f["line"], f["code"]) not in known]
+            result["deep_review"] = {**extra, "findings": fresh}
+            blocking = sum(1 for f in fresh if f["severity"] in ("MAJOR", "CRITICAL"))
+            result["major_issues"] += sum(1 for f in fresh if f["severity"] == "MAJOR")
+            result["critical_issues"] += sum(1 for f in fresh if f["severity"] == "CRITICAL")
+            result["total_findings"] += len(fresh)
+            if blocking:
+                result["approved"] = False
+            if extra["errors"]:
+                errs = result.setdefault("errors", [])
+                errs.extend(e for e in extra["errors"] if e not in errs)
+        return result
+
+    return await _run(review)
 
 
 @tool(
@@ -540,19 +585,63 @@ async def compare_api_specs(
 
 @tool(
     "inspect_sql",
-    "Lint a SQL statement or script with patterns only (it never connects to a database): flags "
-    "DROP/TRUNCATE, DELETE/UPDATE without WHERE and SELECT *, lists referenced tables, and "
-    "suggests indexes for WHERE and JOIN columns.",
-    param("query", "string", "The SQL text.", max_length=_MAX_TEXT),
-    param("schema_info", "string", "Optional schema text (DDL or table list) to match the "
-          "referenced tables against.", required=False, max_length=_MAX_TEXT),
+    "Analyse SQL text only (never connects, so no EXPLAIN plans). operation: lint (default: unsafe "
+    "statements, tables, index hints, query smells), schema (parse DDL/Alembic text: tables, "
+    "relationships, indexes, missing FK indexes), smells (vs schema_info), generate_select.",
+    param("query", "string", "The SQL text (schema: the DDL).", required=False, max_length=_MAX_TEXT),
+    param("schema_info", "string", "Schema as SQL DDL or Alembic source.", required=False,
+          max_length=_MAX_TEXT),
+    param("operation", "string", "What to do (default lint).", required=False, default="lint",
+          enum=("lint", "schema", "smells", "generate_select")),
+    param("table", "string", "generate_select: table.", required=False, max_length=200),
+    param("columns", "array", "generate_select: columns.", required=False, item_type="string"),
+    param("filters", "array", "generate_select: equality-filter columns (bound parameters).",
+          required=False, item_type="string"),
+    param("order_by", "string", "generate_select: order column.", required=False, max_length=200),
+    param("limit", "integer", "generate_select: row limit.", required=False, default=100,
+          minimum=1, maximum=10000),
     **_DATA,
 )
-async def inspect_sql(query: str, schema_info: str | None = None) -> str:
+async def inspect_sql(
+    query: str | None = None,
+    schema_info: str | None = None,
+    operation: str = "lint",
+    table: str | None = None,
+    columns: list | None = None,
+    filters: list | None = None,
+    order_by: str | None = None,
+    limit: int = 100,
+) -> str:
+    name = "inspect_sql"
+    if operation == "schema":
+        text = schema_info if schema_info is not None else query
+        if text is None:
+            raise ToolExecutionError("schema needs the DDL in 'query' or 'schema_info'", tool=name)
+        return await _run(schema_report, text)
+    if operation == "generate_select":
+        if schema_info is None or not table:
+            raise ToolExecutionError("generate_select needs schema_info and table", tool=name)
+        return await _run(
+            lambda: generate_select(
+                parse_schema(schema_info), table, [str(c) for c in _items(name, "columns", columns)] or None,
+                [str(f) for f in _items(name, "filters", filters)] or None, order_by, limit))
+    if query is None:
+        raise ToolExecutionError("provide 'query'", tool=name)
+
     def lint() -> dict:
+        schema = parse_schema(schema_info) if schema_info else None
+        if operation == "smells":
+            smells = query_smells(query, schema if schema and schema["tables"] else None)
+            return {"smells": smells, "smells_count": len(smells), "schema_tables": sorted(schema["tables"]) if schema else [],
+                    "plan_available": False}
         result = DatabaseIntelligenceTool.inspect_sql(query, schema_info)
         result["all_tables"] = DatabaseIntelligenceTool.extract_table_names(query)
         result["index_hints"] = DatabaseIntelligenceTool.suggest_index_hints(query)
+        smells = query_smells(query, schema if schema and schema["tables"] else None)
+        result["smells"] = smells
+        result["plan_available"] = False
+        if any(s["code"] == "explain_analyze_executes" for s in smells):
+            result["is_safe_sql"] = False
         return result
 
     return await _run(lint)
