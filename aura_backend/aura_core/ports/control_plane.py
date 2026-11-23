@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
 from ..domain.control import ChangeRecord, ChangeStatus, Platform, PlatformCredential, StepUpGrant
@@ -25,8 +25,14 @@ __all__ = [
     "SpaceApi",
     "SpaceSecretInfo",
     "SpaceStatus",
+    "CloudflareAccount",
+    "CloudflareBucket",
+    "CloudflareModel",
+    "CloudflareModelPage",
+    "CloudflareR2",
     "CloudflareToken",
     "CloudflareTokens",
+    "CloudflareUsage",
     "GrafanaStack",
     "ObservabilityStack",
     "VectorAdmin",
@@ -331,6 +337,48 @@ class CloudflareModelPage:
     per_page: int = 100
 
 
+@dataclass(frozen=True, slots=True)
+class CloudflareUsage:
+    """Workers AI usage for one UTC day (console plan, stage 6).
+
+    ``state`` is ``ok``, ``no_permission`` (the token lacks ``Account Analytics: Read``) or
+    ``unavailable`` (Cloudflare could not be read; ``reason`` is a short code, never vendor text).
+    ``neurons`` is ``None`` when Cloudflare names no neuron field to read; ``neurons_field`` is the
+    GraphQL field it came from. These are Cloudflare's analytics figures, not a billing record.
+    """
+
+    state: str
+    day: str = ""
+    requests: int | None = None
+    neurons: float | None = None
+    neurons_field: str = ""
+    reason: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class CloudflareBucket:
+    """One R2 bucket. ``lock_rules`` is the number of bucket lock rules, or ``None`` when Cloudflare
+    would not say (that lookup is best effort and never an error)."""
+
+    name: str
+    created: str = ""
+    location: str = ""
+    storage_class: str = ""
+    lock_rules: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CloudflareR2:
+    """The account's R2 buckets, or why they cannot be listed: ``ok``, ``not_enabled`` (R2 has not
+    been turned on in the dashboard), ``no_permission`` or ``unavailable``. ``more`` is true when
+    Cloudflare says there are buckets beyond this page."""
+
+    state: str
+    buckets: tuple[CloudflareBucket, ...] = ()
+    reason: str = ""
+    more: bool = False
+
+
 @runtime_checkable
 class CloudflareAccount(Protocol):
     """The Cloudflare account behind the console's Cloudflare tab, reached with the stored token."""
@@ -340,6 +388,15 @@ class CloudflareAccount(Protocol):
     ) -> CloudflareModelPage:
         """One page of the Workers AI catalog. Raises on a refusal or an unreadable answer: an
         empty page always means the catalog really is empty."""
+        ...
+
+    async def usage(self, account_id: str, *, day: date | None = None) -> CloudflareUsage:
+        """Workers AI usage since 00:00 UTC of ``day`` (default: today). Every Cloudflare-side
+        outcome is a named state of the result; only a malformed call raises."""
+        ...
+
+    async def r2_buckets(self, account_id: str) -> CloudflareR2:
+        """The account's R2 buckets, read-only. Every Cloudflare-side outcome is a named state."""
         ...
 
 

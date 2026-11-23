@@ -319,6 +319,26 @@ That needs a check in the Firebase console.
   `unittest` 148 OK. Not CI-run (CB-44). Not proven: no live Grafana or Qdrant call has been
   made from the gateway, and the Cloud restore path is unconfirmed.
 
+- 2026-11-23, branch `anas/cf-tab-c3-usage-r2-02d523` (on `anas/console-cloudflare-tab`, unmerged): the
+  Cloudflare tab's read-only usage and R2 views (console plan stage 6, C3; GAP-067). It adds:
+  - `CloudflareAccount.usage()` and `.r2_buckets()` (`adapters/cloudflare_account.py`), and
+    `CloudflareControl.usage()` / `.r2()`, answering `ok`, `not_enabled`, `no_permission` or
+    `unavailable` as a named state, never an exception and never a zero.
+  - `GET /api/v3/admin/control/cloudflare/usage` and `.../r2` (Super Admin only, no-store).
+  - Usage reads the GraphQL dataset `aiInferenceAdaptiveGroups` for the UTC day and reports the
+    10,000-neuron figure as the free-plan allowance. R2 reads the bucket list (error 10042 is
+    `not_enabled`) plus each bucket's lock rules, best effort.
+
+  TESTED locally on Python 3.14 (not the locked 3.11, not CI-run): the two new test files 87 passed,
+  and the Cloudflare, control-center and architecture suites 857 passed, 1 failed of 858. The one
+  failure is the pubspec scan in `test_no_external_inference.py`, which skips any path under
+  `.claude/` and so fails in a worktree (it is a path artifact, not a change); the reachability
+  matrix was stale at the first run and passes after `scripts/api_reachability.py`. Console: `tsc`,
+  `lint` (warnings fail) and `build` clean, Playwright 43 of 44 (the one, a Vector DB test, timed
+  out under load and passed 2 of 2 on its own re-run). **Not proven:** nothing
+  has run against real Cloudflare. The neuron field name is unconfirmed (without one the view shows
+  requests only), and the bucket lock endpoint and the bucket cursor are unverified.
+
 ## Next steps
 
 0. ~~After the ADR-032 merge deploys: check that `/health/ready` reports `schema.revision 0019`~~ (done: live `0019` on 2026-11-07), then

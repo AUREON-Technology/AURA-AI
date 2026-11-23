@@ -25,6 +25,7 @@ const SERVICE_ACTIONS = new Set([
   "set_variables", "redeploy", "restart", "rollback",
   "space_variables", "space_secrets", "space_pause", "space_restart", "space_rebuild", "space_hardware", "space_sleep_time",
   "replace_key", "rotate_key", "revoke_key",
+  "add_cloudflare_provider", "replace_cloudflare_provider", "remove_cloudflare_provider",
   "grafana_apply", "vector_snapshot", "vector_restore",
 ]);
 
@@ -48,9 +49,11 @@ export default function ChangesPage() {
       const service =
         typeof row.detail.slot === "string"
           ? row.detail.slot
-          : typeof row.detail.service === "string"
-            ? row.detail.service
-            : row.target;
+          : typeof row.detail.provider === "string"
+            ? row.detail.provider
+            : typeof row.detail.service === "string"
+              ? row.detail.service
+              : row.target;
       const variables = Array.isArray(row.detail.variables)
         ? (row.detail.variables as { name?: string }[]).map((v) => v.name).filter(Boolean).join(", ")
         : "";

@@ -170,8 +170,356 @@ const KEY_SLOTS = [
 function freshCloudflare() {
   return {
     seq: 1,
+    // Keys a person pasted into Add or Replace, so a test can prove they reached the gateway.
+    pasted: [],
     tokens: [{ token_id: "cf-1", name: "aura-workersai-old", status: "active", issued_on: "2026-11-01T09:00:00Z", value: "cf-old-key-never-shown" }],
   };
+}
+
+// -- The Cloudflare tab's models and providers (C2; aura_core/control/cloudflare.py and
+// domain/cloudflare_provider.py). A provider is a set of gateway variables, so the overview is read
+// from them and the three writes edit them; no key value is ever returned.
+const CF_API_ROOT = "https://cloudflare.mock/client/v4";
+const cfPrice = (input, output) => [
+  { unit: "per M input tokens", price: input, currency: "USD" },
+  { unit: "per M output tokens", price: output, currency: "USD" },
+];
+const CF_MODELS = [
+  { model: "@cf/openai/gpt-oss-20b", task: "Text Generation", description: "An open-weight 20B reasoning model.",
+    context_window: 128000, vision: false, function_calling: true, reasoning: true, paid_only: false, price: cfPrice(0.2, 0.3) },
+  { model: "@cf/meta/llama-3.2-11b-vision-instruct", task: "Text Generation", description: "A vision model that reads images and text.",
+    context_window: 131072, vision: true, function_calling: false, reasoning: false, paid_only: false, price: cfPrice(0.049, 0.68) },
+  { model: "@cf/meta/llama-4-scout-17b-16e-instruct", task: "Text Generation", description: "A mixture-of-experts model on the paid plan.",
+    context_window: 131000, vision: false, function_calling: true, reasoning: false, paid_only: true, price: cfPrice(0.27, 0.85) },
+  { model: "@cf/cloudflare/clairic", task: "Text Generation", description: "A closed extraction model: not open weight.",
+    context_window: 32000, vision: false, function_calling: false, reasoning: false, paid_only: false, price: [] },
+  { model: "@cf/baai/bge-m3", task: "Text Embeddings", description: "Multilingual embeddings.",
+    context_window: 8192, vision: false, function_calling: false, reasoning: false, paid_only: false, price: cfPrice(0.012, 0) },
+  // Enough usable models for a second page at 20 a page.
+  ...Array.from({ length: 22 }, (_, i) => ({
+    model: `@cf/qwen/qwen-filler-${String(i + 1).padStart(2, "0")}`, task: "Text Generation",
+    description: `A filler model so the list has a second page (${i + 1}).`, context_window: 32768,
+    vision: false, function_calling: false, reasoning: false, paid_only: false, price: [],
+  })),
+];
+// Mirrors OPEN_WEIGHT_MODEL_PATTERNS and the closed-tier rule in config/external_inference.py.
+const CF_OPEN_WEIGHT = [
+  /^(?:(openai\/)?gpt-oss-)/, /^(?:(google\/)?gemma-)/, /^(?:(meta-llama\/|meta\/)?(meta-)?llama-)/, /^(?:(qwen\/)?(qwen|qwq))/,
+  /^(?:(deepseek-ai\/|deepseek\/)?deepseek-)/, /^(?:nvidia\/[\w.-]*nemotron)/,
+  /^(?:(mistralai\/|mistral\/)?(mistral-small|mistral-nemo|mistral-7b|mixtral|ministral))/,
+  /^(?:(microsoft\/)?phi-)/, /^(?:(moonshotai\/)?kimi-k2)/, /^(?:(zai-org\/|z-ai\/|thudm\/)?glm-)/,
+];
+function cfOpenWeight(model) {
+  let name = String(model || "").trim().toLowerCase();
+  for (const prefix of ["@cf/", "@hf/"]) if (name.startsWith(prefix)) name = name.slice(prefix.length);
+  name = name.split(":")[0];
+  if (!name || /(?:^|[-/._])(?:max|plus|turbo)(?:[-._]|$)/.test(name)) return false;
+  return CF_OPEN_WEIGHT.some((re) => re.test(name));
+}
+const cfPrefix = (name) => "AURA_PROVIDER_" + name.toUpperCase().replace(/-/g, "_");
+const CF_OPTIONAL_TAILS = ["RPM", "RPD", "TPM", "TPD", "TOKENS_PER_SECOND"];
+const CF_TRUE = new Set(["1", "true", "yes", "on"]);
+const cfList = (vars) => (vars.AURA_LLM_PROVIDERS ?? "hfspace,local").split(",").map((s) => s.trim()).filter(Boolean);
+const cfIsCloudflare = (vars, name) => {
+  const base = vars[`${cfPrefix(name)}_BASE_URL`] || "";
+  return base.startsWith(`${CF_API_ROOT}/accounts/`);
+};
+
+function cfRow(vars, name) {
+  const p = cfPrefix(name);
+  const keyEnv = vars[`${p}_API_KEY_ENV`] || `${p}_API_KEY`;
+  const whole = (v) => (v === undefined || v === "" ? null : Number.parseInt(v, 10));
+  return {
+    name, model: vars[`${p}_MODEL`] || "", account_id: (vars[`${p}_BASE_URL`] || "").split("/accounts/")[1]?.split("/")[0] || "",
+    enabled: !["0", "false", "no", "off"].includes((vars[`${p}_ENABLED`] || "true").toLowerCase()),
+    key_env: keyEnv, key_set: Boolean(vars[keyEnv]), health_probe: (vars[`${p}_HEALTH_PROBE`] || "active").toLowerCase(),
+    quality_tier: whole(vars[`${p}_QUALITY_TIER`]), context_window: whole(vars[`${p}_CONTEXT_WINDOW`]),
+    max_output_tokens: whole(vars[`${p}_MAX_OUTPUT_TOKENS`]),
+    rpm: whole(vars[`${p}_RPM`]) || 0, rpd: whole(vars[`${p}_RPD`]) || 0, tpm: whole(vars[`${p}_TPM`]) || 0, tpd: whole(vars[`${p}_TPD`]) || 0,
+    tokens_per_second: Number.parseFloat(vars[`${p}_TOKENS_PER_SECOND`] || "0") || 0,
+    json_mode: CF_TRUE.has((vars[`${p}_SUPPORTS_JSON_MODE`] || "").toLowerCase()),
+    vision: (vars[`${p}_MODALITIES`] || "").toLowerCase().split(",").includes("image"),
+    healthy: true, state: "closed",
+  };
+}
+
+function cfOverview(control) {
+  const credential = control.platforms.cloudflare;
+  const gateway = Boolean(control.platforms.railway);
+  const vars = control.railway.services["svc-gw"].vars;
+  return {
+    connected: Boolean(credential), account_id: credential?.target || "", api_root: CF_API_ROOT, gateway_ready: gateway,
+    hosted_inference_allowed: gateway ? CF_TRUE.has((vars.AURA_ALLOW_HOSTED_INFERENCE || "").toLowerCase()) : null,
+    providers: gateway ? cfList(vars).filter((name) => cfIsCloudflare(vars, name)).map((name) => cfRow(vars, name)) : [],
+  };
+}
+
+// The provider routes. Returns true when the request was one of them. The refusals and the strict
+// body rules are those of CloudflareProviderRequest (api/admin_control.py) and
+// CloudflareProviderSpec; the order of the engine's checks is kept.
+async function cfProviderRoute({ method, path, request, response, control, who, now, requireGrant }) {
+  const root = "/api/v3/admin/control/cloudflare";
+  const refuse = (message, reason, extra = {}) =>
+    auraError(response, 422, "validation_error", message, false, { reason, ...extra });
+  const credential = control.platforms.cloudflare;
+  const svc = control.railway.services["svc-gw"];
+  const vars = svc.vars;
+
+  if (method === "GET" && path === `${root}/models`) {
+    if (!credential) return refuse("connect Cloudflare first, in Settings", "cloudflare_not_connected"), true;
+    if (!credential.target) return refuse("Cloudflare is connected without an account id: reconnect it with the account id", "no_account"), true;
+    const q = new URL(request.url, "http://mock").searchParams;
+    const task = q.get("task") ?? "Text Generation";
+    const search = (q.get("search") || "").trim().toLowerCase();
+    const page = Math.max(Number.parseInt(q.get("page") || "1", 10) || 1, 1);
+    const perPage = Math.min(Math.max(Number.parseInt(q.get("per_page") || "100", 10) || 100, 1), 100);
+    const matching = CF_MODELS.filter((m) => (!task || m.task === task)
+      && (!search || m.model.toLowerCase().includes(search) || m.description.toLowerCase().includes(search)));
+    const models = matching.slice((page - 1) * perPage, page * perPage).map((m) => {
+      const chat = m.task === "Text Generation";
+      const open = cfOpenWeight(m.model);
+      return { ...m, chat, open_weight: open, can_add: chat && open, refusal: chat && open ? "" : (!chat ? "not_chat" : "not_open_weight") };
+    });
+    json(response, 200, { account_id: credential.target, models, page, per_page: perPage, total: matching.length });
+    return true;
+  }
+
+  const validate = method === "POST" && path === `${root}/providers/validate`;
+  const add = method === "POST" && path === `${root}/providers`;
+  const target = method === "POST" ? path.match(/^\/api\/v3\/admin\/control\/cloudflare\/providers\/([^/]+)\/(replace|remove)$/) : null;
+  if (!validate && !add && !target) return false;
+  if (!validate && !requireGrant()) return true;
+  const body = await readBody(request);
+
+  // FastAPI's own 422 for a strict body: a wrong type or an unknown field, as a list.
+  const allowed = new Set(["model", "context_window", "quality_tier", "max_output_tokens", "enabled", "rpm", "rpd", "tpm", "tpd",
+    "tokens_per_second", "json_mode", "vision", "key", "key_value", "enable_consent", "confirm"]);
+  if (add || validate) allowed.add("name");
+  if (validate) allowed.add("operation");
+  if (target?.[2] === "remove") for (const k of [...allowed]) if (k !== "confirm") allowed.delete(k);
+  const isInt = (v) => typeof v === "number" && Number.isInteger(v);
+  const kinds = {
+    model: (v) => v === null || typeof v === "string", context_window: (v) => v === null || isInt(v), quality_tier: isInt,
+    max_output_tokens: isInt, enabled: (v) => typeof v === "boolean", rpm: isInt, rpd: isInt, tpm: isInt, tpd: isInt,
+    tokens_per_second: (v) => typeof v === "number", json_mode: (v) => typeof v === "boolean", vision: (v) => typeof v === "boolean",
+    key: (v) => v === null || typeof v === "string", key_value: (v) => v === null || typeof v === "string",
+    enable_consent: (v) => typeof v === "boolean", confirm: (v) => typeof v === "string", name: (v) => typeof v === "string",
+    operation: (v) => ["add", "replace", "remove"].includes(v),
+  };
+  const problems = [];
+  for (const [field, value] of Object.entries(body)) {
+    if (!allowed.has(field)) problems.push({ loc: ["body", field], msg: "Extra inputs are not permitted", type: "extra_forbidden" });
+    else if (!kinds[field](value)) problems.push({ loc: ["body", field], msg: "Input should be a valid value of the right type (strict)", type: "strict_type" });
+  }
+  if (problems.length) return json(response, 422, { detail: problems }), true;
+
+  const name = add || validate ? String(body.name || "") : decodeURIComponent(target[1]);
+  const operation = validate ? body.operation : add ? "add" : target[2];
+
+  // A spec the real CloudflareProviderSpec would refuse: answers and returns true.
+  const specRefused = () => {
+    const bad = (message, field) => (auraError(response, 422, "validation_error", message, false, { field }), true);
+    if (!/^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(name) || ["local", "echo"].includes(name)) {
+      return bad("a provider name is 1 to 32 lower-case letters, digits or '-', starts with a letter, does not end with '-', and is not 'local' or 'echo'", "name");
+    }
+    if (typeof body.model !== "string" || !/^@cf\/[A-Za-z0-9][A-Za-z0-9._/-]{0,150}$/.test(body.model)) {
+      return bad("the model must be a Workers AI model id such as @cf/openai/gpt-oss-20b", "model");
+    }
+    const tier = body.quality_tier ?? 2, context = body.context_window, output = body.max_output_tokens ?? 2048;
+    if (!(tier >= 1 && tier <= 3)) return bad("quality_tier must be a whole number from 1 to 3", "quality_tier");
+    if (!isInt(context) || context < 512 || context > 4_000_000) return bad("context_window must be a whole number from 512 to 4000000", "context_window");
+    if (output < 16 || output > 262_144) return bad("max_output_tokens must be a whole number from 16 to 262144", "max_output_tokens");
+    if (output > context) return bad("max_output_tokens cannot exceed the context window", "max_output_tokens");
+    for (const f of ["rpm", "rpd", "tpm", "tpd"]) {
+      if ((body[f] ?? 0) < 0 || (body[f] ?? 0) > 2_000_000_000) return bad(`${f} must be a whole number from 0 to 2000000000`, f);
+    }
+    const speed = body.tokens_per_second ?? 0;
+    if (!(speed >= 0 && speed <= 5000)) return bad("tokens_per_second must be a number from 0 to 5000", "tokens_per_second");
+    return false;
+  };
+  const spec = () => ({
+    name, model: body.model, context_window: body.context_window, quality_tier: body.quality_tier ?? 2,
+    max_output_tokens: body.max_output_tokens ?? 2048, enabled: body.enabled ?? true,
+    rpm: body.rpm ?? 0, rpd: body.rpd ?? 0, tpm: body.tpm ?? 0, tpd: body.tpd ?? 0,
+    tokens_per_second: body.tokens_per_second ?? 0, json_mode: body.json_mode ?? false, vision: body.vision ?? false,
+  });
+  const variables = (s, account, keyEnv) => {
+    const p = cfPrefix(s.name);
+    const env = {
+      [`${p}_KIND`]: "openai_compatible", [`${p}_BASE_URL`]: `${CF_API_ROOT}/accounts/${account}/ai/v1`, [`${p}_MODEL`]: s.model,
+      [`${p}_API_KEY_ENV`]: keyEnv, [`${p}_QUALITY_TIER`]: String(s.quality_tier), [`${p}_CONTEXT_WINDOW`]: String(s.context_window),
+      [`${p}_MAX_OUTPUT_TOKENS`]: String(s.max_output_tokens), [`${p}_ENABLED`]: s.enabled ? "true" : "false",
+      [`${p}_HEALTH_PROBE`]: "passive", [`${p}_SUPPORTS_JSON_MODE`]: s.json_mode ? "true" : "false",
+      [`${p}_MODALITIES`]: s.vision ? "text,image" : "text",
+    };
+    for (const tail of ["rpm", "rpd", "tpm", "tpd"]) if (s[tail]) env[`${p}_${tail.toUpperCase()}`] = String(s[tail]);
+    if (s.tokens_per_second) env[`${p}_TOKENS_PER_SECOND`] = String(s.tokens_per_second);
+    return env;
+  };
+  const redacted = (changes) => Object.keys(changes).sort().map((n) => ({
+    name: n, secret: isSecret(n, changes[n]), deleted: changes[n] === null, added: !(n in vars),
+  }));
+  // The typed confirmation is supplied by the dry run itself (nothing is changed), as in the route.
+  const confirmRefused = () => {
+    if (validate || (body.confirm || "").trim() === name) return false;
+    refuse(`type '${name}' to confirm`, "confirmation_required", { expected: name });
+    return true;
+  };
+  const keyMode = (given, modes) => {
+    if (!modes.includes(given)) return refuse(`the key is one of: ${modes.join(", ")}`, "bad_key_mode", { allowed: modes }), null;
+    if (given === "paste" && !String(body.key_value || "").trim() && !validate) return refuse("paste the key", "value_required"), null;
+    return given;
+  };
+  const gatewayRefused = () => {
+    if (control.platforms.railway) return false;
+    refuse("connect Railway first: a provider lives in the gateway's Railway variables", "railway_not_connected");
+    return true;
+  };
+  const busy = () => control.changes.some((c) => c.target === "svc-gw" && c.status === "watching");
+  const busyRefused = () => {
+    if (!busy()) return false;
+    refuse("a change to gateway is still being watched; wait for it to finish", "change_in_progress");
+    return true;
+  };
+  const record = (action, detail, changes) => {
+    const deploymentId = `dep-${++control.railway.seq}`;
+    svc.deployments.unshift({ deployment_id: deploymentId, status: "DEPLOYING", created_at: new Date(now).toISOString(),
+      can_rollback: true, can_redeploy: true, commit: "85258222c84c", message: action });
+    const change = {
+      change_id: `chg_${control.changes.length + 1}`, actor: who.email, platform: "railway", target: "svc-gw", action,
+      status: "watching", detail: { service: svc.name, ...detail, variables: redacted(changes) },
+      deployment_id: deploymentId, previous_deployment_id: null, reason: "",
+      created_at: new Date(now).toISOString(), updated_at: new Date(now).toISOString(),
+    };
+    control.railway.applied.push(Object.keys(changes));
+    control.changes.unshift(change);
+    json(response, 200, change);
+  };
+  const apply = (changes) => {
+    for (const [n, value] of Object.entries(changes)) {
+      if (value === null) delete vars[n];
+      else vars[n] = value;
+    }
+  };
+  const dryRun = (changes, extra = {}) => json(response, 200, { ok: true, settings_checked: true, variables: redacted(changes), ...extra });
+  const missingRefused = () => {
+    if (!cfList(vars).includes(name)) return auraError(response, 404, "not_found", `the gateway has no provider named ${name}`), true;
+    if (!cfIsCloudflare(vars, name)) {
+      return refuse(`${name} is not a Cloudflare provider, so it cannot be changed from this tab`, "not_a_cloudflare_provider", { provider: name }), true;
+    }
+    return false;
+  };
+  const newToken = (suffix) => {
+    const id = `cf-${++control.cf.seq}`;
+    const value = `cf-new-${control.cf.seq}`;
+    control.cf.tokens.push({ token_id: id, name: `aura-${name}-${suffix}`, status: "active", issued_on: new Date(now).toISOString(), value });
+    return [id, value];
+  };
+
+  if (operation === "remove") {
+    if (confirmRefused() || gatewayRefused() || missingRefused()) return true;
+    const names = cfList(vars);
+    const remaining = names.filter((n) => n !== name);
+    if (!remaining.length) return refuse("the gateway needs at least one provider", "last_provider", { provider: name }), true;
+    const mine = `${cfPrefix(name)}_`;
+    const longer = remaining.filter((o) => cfPrefix(o).length > cfPrefix(name).length).map((o) => `${cfPrefix(o)}_`);
+    const keyEnv = vars[`${cfPrefix(name)}_API_KEY_ENV`] || `${cfPrefix(name)}_API_KEY`;
+    const owned = Object.keys(vars).filter((v) => v.startsWith(mine) && !longer.some((l) => v.startsWith(l)));
+    if (!keyEnv.startsWith(mine) && keyEnv in vars && !remaining.some((o) => vars[`${cfPrefix(o)}_API_KEY_ENV`] === keyEnv)) owned.push(keyEnv);
+    const changes = { AURA_LLM_PROVIDERS: remaining.join(",") };
+    for (const v of new Set(owned)) changes[v] = null;
+    const value = vars[keyEnv] || "";
+    const shared = remaining.some((o) => vars[vars[`${cfPrefix(o)}_API_KEY_ENV`] || `${cfPrefix(o)}_API_KEY`] === value);
+    const revoke = value && !shared ? (control.cf.tokens.find((tok) => tok.value === value)?.token_id ?? null) : null;
+    if (validate) return dryRun(changes, { revoke_token_id: revoke }), true;
+    if (busyRefused()) return true;
+    const model = vars[`${cfPrefix(name)}_MODEL`];
+    apply(changes);
+    record("remove_cloudflare_provider", { provider: name, model, revoke_token_id: revoke }, changes);
+    return true;
+  }
+
+  if (specRefused()) return true;
+  const s = spec();
+  if (confirmRefused()) return true;
+
+  if (operation === "add") {
+    const mode = keyMode(body.key ?? "create", ["create", "paste"]);
+    if (!mode || gatewayRefused()) return true;
+    if (!credential) return refuse("connect Cloudflare first, in Settings", "cloudflare_not_connected"), true;
+    if (!credential.target) return refuse("Cloudflare is connected without an account id: reconnect it with the account id", "no_account"), true;
+    if (!cfOpenWeight(s.model)) {
+      return refuse(`${s.model} is not a recognised open-weight model; a hosted provider may only serve open-weight models (ADR-030)`, "not_open_weight", { model: s.model }), true;
+    }
+    const names = cfList(vars);
+    if (names.includes(name)) return refuse(`${name} is already a provider on the gateway`, "provider_exists", { provider: name }), true;
+    if (names.some((n) => cfPrefix(n) === cfPrefix(name))) {
+      return refuse(`${name} would share its settings with an existing provider`, "provider_name_collision", { provider: name }), true;
+    }
+    const consented = CF_TRUE.has((vars.AURA_ALLOW_HOSTED_INFERENCE || "").toLowerCase());
+    if (!consented && !body.enable_consent) {
+      return refuse(`hosted inference is not enabled: a third party would read prompts sent to ${name}. Confirm the consent to add it`, "hosted_inference_not_consented"), true;
+    }
+    const keyVar = `${cfPrefix(name)}_API_KEY`;
+    const changes = { ...variables(s, credential.target, keyVar) };
+    const list = [...names];
+    list.splice(list.includes("local") ? list.indexOf("local") : list.length, 0, name);
+    changes.AURA_LLM_PROVIDERS = list.join(",");
+    if (!consented) changes.AURA_ALLOW_HOSTED_INFERENCE = "true";
+    if (validate) return dryRun({ ...changes, [keyVar]: "dry-run" }, { creates_key: mode === "create", enables_consent: !consented }), true;
+    if (busyRefused()) return true;
+    let tokenId = null;
+    if (mode === "create") {
+      [tokenId, changes[keyVar]] = newToken("20261123-1200");
+    } else {
+      control.cf.pasted.push(String(body.key_value).trim());
+      changes[keyVar] = String(body.key_value).trim();
+    }
+    apply(changes);
+    record("add_cloudflare_provider", {
+      provider: name, model: s.model, key: tokenId ? "created" : "pasted", consent_enabled: !consented,
+      ...(tokenId ? { cloudflare_token_id: tokenId } : {}),
+    }, changes);
+    return true;
+  }
+
+  // replace
+  const mode = keyMode(body.key ?? "keep", ["create", "paste", "keep"]);
+  if (!mode || gatewayRefused() || missingRefused()) return true;
+  const row = cfRow(vars, name);
+  if (!cfOpenWeight(s.model)) {
+    return refuse(`${s.model} is not a recognised open-weight model; a hosted provider may only serve open-weight models (ADR-030)`, "not_open_weight", { model: s.model }), true;
+  }
+  if (mode === "create" && !credential) return refuse("connect Cloudflare first, in Settings", "cloudflare_not_connected"), true;
+  const changes = { ...variables(s, row.account_id, row.key_env) };
+  const p = cfPrefix(name);
+  for (const tail of CF_OPTIONAL_TAILS) if (`${p}_${tail}` in vars && !(`${p}_${tail}` in changes)) changes[`${p}_${tail}`] = null;
+  if (validate) {
+    if (mode !== "keep") changes[row.key_env] = "dry-run";
+    return dryRun(changes, { creates_key: mode === "create" }), true;
+  }
+  if (busyRefused()) return true;
+  let tokenId = null;
+  if (mode === "create") {
+    [tokenId, changes[row.key_env]] = newToken("20261123-1201");
+  } else if (mode === "paste") {
+    control.cf.pasted.push(String(body.key_value).trim());
+    changes[row.key_env] = String(body.key_value).trim();
+  }
+  apply(changes);
+  record("replace_cloudflare_provider", {
+    provider: name, model: s.model, key: { keep: "kept", create: "created", paste: "pasted" }[mode],
+    ...(tokenId ? { cloudflare_token_id: tokenId } : {}),
+  }, changes);
+  return true;
+}
+
+// The Cloudflare usage and R2 views' simulated states (C3), created on first use so that
+// /__test/reset-control, which replaces state.control, resets them. usage: ok | no_neurons |
+// near_limit | no_permission | unavailable. r2: not_enabled | ok | empty | no_permission | unavailable.
+function cfViews(control) {
+  control.cfViews ??= { usage: "ok", r2: "not_enabled" };
+  return control.cfViews;
 }
 
 // Grafana Cloud and Qdrant Cloud (aura_core/control/monitoring.py and vector.py).
@@ -441,6 +789,10 @@ const server = http.createServer(async (request, response) => {
         groq: state.control.railway.services["svc-gw"].vars.AURA_GROQ_KEY,
       },
       cf_tokens: state.control.cf.tokens.map((tok) => tok.name),
+      // The gateway variables a Cloudflare provider is made of (a test may read key values; the API never returns them).
+      provider_vars: Object.fromEntries(Object.entries(state.control.railway.services["svc-gw"].vars)
+        .filter(([name]) => /^AURA_(PROVIDER_CF|LLM_PROVIDERS|ALLOW_HOSTED)/.test(name))),
+      pasted_keys: state.control.cf.pasted,
       grafana_loaded: state.control.grafana.loaded,
       qdrant_points: state.control.qdrant.points,
     });
@@ -453,6 +805,33 @@ const server = http.createServer(async (request, response) => {
       state.control.railway.services["svc-gw"].healthcheck = "";
     }
     json(response, 200, { ok: true });
+    return;
+  }
+  // The end of the five-minute watch: every watched change succeeded. A removed provider's token is
+  // revoked only now, and only when no provider reads it any more (Reconciler + revoke_after_success).
+  if (method === "POST" && path === "/__test/finish-changes") {
+    const control = state.control;
+    const vars = control.railway.services["svc-gw"].vars;
+    for (const change of control.changes) {
+      if (change.status !== "watching") continue;
+      change.status = "succeeded";
+      const tokenId = change.detail?.revoke_token_id;
+      const token = tokenId && control.cf.tokens.find((tok) => tok.token_id === tokenId);
+      if (token && !Object.values(vars).includes(token.value)) {
+        control.cf.tokens = control.cf.tokens.filter((tok) => tok !== token);
+      }
+    }
+    json(response, 200, { finished: true });
+    return;
+  }
+  // Which state the Cloudflare usage and R2 views simulate. It lives on state.control, so
+  // /__test/reset-control returns both to their defaults (usage ok, R2 not enabled: this account).
+  if (method === "POST" && path === "/__test/cloudflare-views") {
+    const body = await readBody(request);
+    const views = cfViews(state.control);
+    if (typeof body.usage === "string") views.usage = body.usage;
+    if (typeof body.r2 === "string") views.r2 = body.r2;
+    json(response, 200, { ...views });
     return;
   }
   if (method === "POST" && path === "/__test/reset-customers") {
@@ -758,17 +1137,56 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
-    // -- The Cloudflare tab (stage 6; aura_core/control/cloudflare.py) -----------------------------
-    if (path.startsWith("/api/v3/admin/control/cloudflare")) {
+    // -- Cloudflare usage and R2 (stage 6, C3; control/cloudflare.py usage() and r2()) ---------------
+    // Read-only. Every outcome is a `state` in a 200; the view modes are set by /__test/cloudflare-views.
+    if (method === "GET" && (path === "/api/v3/admin/control/cloudflare/usage" || path === "/api/v3/admin/control/cloudflare/r2")) {
       const credential = control.platforms.cloudflare;
-      if (method === "GET" && path === "/api/v3/admin/control/cloudflare") {
-        json(response, 200, {
-          connected: Boolean(credential), account_id: credential?.target || "",
-          api_root: "https://cloudflare.mock/client/v4", gateway_ready: Boolean(control.platforms.railway),
-          hosted_inference_allowed: control.platforms.railway ? true : null, providers: [],
-        });
+      if (!credential) {
+        auraError(response, 422, "validation_error", "connect Cloudflare first, in Settings", false, { reason: "cloudflare_not_connected" });
         return;
       }
+      const views = cfViews(control);
+      if (path.endsWith("/usage")) {
+        const mode = views.usage;
+        const base = {
+          state: "ok", account_id: credential.target, day: new Date(now).toISOString().slice(0, 10),
+          resets_at: `${new Date(now + 86_400_000).toISOString().slice(0, 10)}T00:00:00Z`,
+          requests: null, neurons: null, neurons_available: false, neurons_field: "", reason: "",
+          allowance_neurons: 10000, allowance_basis: "free_plan", permission: "Account Analytics: Read",
+        };
+        if (mode === "no_permission") json(response, 200, { ...base, state: "no_permission" });
+        else if (mode === "unavailable") json(response, 200, { ...base, state: "unavailable", reason: "http_502" });
+        else if (mode === "no_neurons") json(response, 200, { ...base, requests: 128 });
+        else if (mode === "near_limit") json(response, 200, { ...base, requests: 910, neurons: 8650.5, neurons_available: true, neurons_field: "totalNeurons" });
+        else json(response, 200, { ...base, requests: 128, neurons: 2840.5, neurons_available: true, neurons_field: "totalNeurons" });
+        return;
+      }
+      const mode = views.r2;
+      const base = { state: "ok", account_id: credential.target, reason: "", permission: "Workers R2 Storage: Read", more: false, buckets: [] };
+      if (mode === "not_enabled" || mode === "no_permission" || mode === "unavailable") {
+        json(response, 200, { ...base, state: mode, reason: mode === "unavailable" ? "http_502" : "" });
+      } else if (mode === "empty") {
+        json(response, 200, base);
+      } else {
+        json(response, 200, {
+          ...base,
+          buckets: [
+            { name: "aura-backups", created: "2026-10-01T09:30:00.000Z", location: "WEUR", storage_class: "Standard", lock_rules: 1 },
+            { name: "aura-scratch", created: "2026-11-02T00:00:00.000Z", location: "", storage_class: "", lock_rules: 0 },
+            { name: "aura-archive", created: "2026-11-03T00:00:00.000Z", location: "ENAM", storage_class: "Standard", lock_rules: null },
+          ],
+        });
+      }
+      return;
+    }
+
+    // -- The Cloudflare tab (stage 6; aura_core/control/cloudflare.py) -----------------------------
+    if (path.startsWith("/api/v3/admin/control/cloudflare")) {
+      if (method === "GET" && path === "/api/v3/admin/control/cloudflare") {
+        json(response, 200, cfOverview(control));
+        return;
+      }
+      if (await cfProviderRoute({ method, path, request, response, control, who, now, requireGrant })) return;
       auraError(response, 404, "not_found", "no such route");
       return;
     }

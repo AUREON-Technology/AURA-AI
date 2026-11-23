@@ -393,3 +393,107 @@ export type VectorOverview = {
 };
 
 export type VectorSnapshotRow = { name: string; created_at: string | null; size: number | null };
+
+// -- The Cloudflare tab: the model catalog and provider changes (C2) -----------------------------
+
+/** One Workers AI model from the live catalog, with what AURA will admit (control/cloudflare.py). */
+export type CloudflareCatalogRow = {
+  model: string;
+  description: string;
+  task: string;
+  context_window: number | null;
+  vision: boolean;
+  function_calling: boolean;
+  reasoning: boolean;
+  /** Needs a paid Workers plan: the free daily allowance does not cover it. */
+  paid_only: boolean;
+  /** Cloudflare's own list of {unit, price, currency}, kept as it came: for display only. */
+  price: { unit?: string; price?: number | string; currency?: string }[];
+  chat: boolean;
+  open_weight: boolean;
+  can_add: boolean;
+  /** "" when AURA can use the model, else why not. */
+  refusal: "" | "not_chat" | "not_open_weight";
+};
+
+export type CloudflareCatalog = {
+  account_id: string;
+  models: CloudflareCatalogRow[];
+  page: number;
+  per_page: number;
+  total: number;
+};
+
+export type CloudflareKeyMode = "create" | "paste" | "keep";
+
+/** The body of Add and Replace. Strict on the gateway: numbers are numbers, never strings. */
+export type CloudflareProviderBody = {
+  model: string;
+  context_window: number;
+  quality_tier: number;
+  max_output_tokens: number;
+  enabled: boolean;
+  rpm: number;
+  rpd: number;
+  tpm: number;
+  tpd: number;
+  tokens_per_second: number;
+  json_mode: boolean;
+  vision: boolean;
+  key: CloudflareKeyMode;
+  key_value?: string;
+  enable_consent: boolean;
+};
+
+/** A dry run of a provider change: the variable names it would write (never a value) and the verdict. */
+export type CloudflareValidateResult = {
+  ok: boolean;
+  settings_checked: boolean;
+  variables: { name: string; secret: boolean; deleted: boolean; added: boolean }[];
+  creates_key?: boolean;
+  enables_consent?: boolean;
+  revoke_token_id?: string | null;
+};
+
+// -- Cloudflare usage and R2 (stage 6, C3) ------------------------------------------------------
+// Read-only views. Every Cloudflare-side outcome is a `state` in a 200, never an error.
+
+export type CloudflareUsage = {
+  state: "ok" | "no_permission" | "unavailable";
+  account_id: string;
+  /** The UTC day the figures are for (YYYY-MM-DD) and when the allowance resets (ISO, 00:00 UTC). */
+  day: string;
+  resets_at: string;
+  requests: number | null;
+  /** null when Cloudflare names no neuron field (neurons_available is false). */
+  neurons: number | null;
+  neurons_available: boolean;
+  /** The GraphQL field the neurons came from: empty when there are none. */
+  neurons_field: string;
+  /** A short code for why it is unavailable; never Cloudflare's own text. */
+  reason: string;
+  /** The free-plan allowance: the plan tier is not known to the console. */
+  allowance_neurons: number;
+  allowance_basis: "free_plan";
+  /** The token permission the view needs, named when it is missing. */
+  permission: string;
+};
+
+export type CloudflareBucketRow = {
+  name: string;
+  created: string;
+  location: string;
+  storage_class: string;
+  /** The number of lock rules, or null when Cloudflare would not say. */
+  lock_rules: number | null;
+};
+
+export type CloudflareR2 = {
+  state: "ok" | "not_enabled" | "no_permission" | "unavailable";
+  account_id: string;
+  reason: string;
+  permission: string;
+  /** More buckets exist than this list shows. */
+  more: boolean;
+  buckets: CloudflareBucketRow[];
+};

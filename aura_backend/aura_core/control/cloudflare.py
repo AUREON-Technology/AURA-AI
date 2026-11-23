@@ -26,7 +26,7 @@ remove is the provider's name. No key value is ever returned or journaled.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import urlsplit
 
@@ -41,13 +41,22 @@ from ..domain.cloudflare_provider import (
     providers_without,
 )
 from ..domain.control import Platform
-from ..domain.errors import NotFoundError, ValidationError
+from ..domain.errors import DependencyUnavailableError, NotFoundError, ValidationError
 from ..observability.logging import get_logger
-from ..ports.control_plane import CloudflareAccount, CloudflareTokens, ControlStore
+from ..ports.control_plane import CloudflareAccount, CloudflareR2, CloudflareTokens, CloudflareUsage, ControlStore
 from .railway import RailwayService
 from .service import ControlService, _confirm
 
-__all__ = ["CloudflareControl", "CONSENT_FLAG", "PROVIDERS_VARIABLE", "REVOKE_ACTION"]
+__all__ = [
+    "CloudflareControl", "CONSENT_FLAG", "FREE_ALLOWANCE_NEURONS", "PROVIDERS_VARIABLE", "REVOKE_ACTION",
+]
+
+#: Cloudflare's free Workers AI allowance: 10,000 neurons a day, reset at 00:00 UTC. It is the
+#: free-plan figure; the account's plan tier is not known to the console.
+FREE_ALLOWANCE_NEURONS = 10_000
+#: What the token needs for each view, named in the console's "no permission" state.
+USAGE_PERMISSION = "Account Analytics: Read"
+R2_PERMISSION = "Workers R2 Storage: Read"
 
 #: The follow-up a removal attaches (``service.ON_SUCCESS_KEY``) and the reconciler dispatches on.
 REVOKE_ACTION = "cloudflare_revoke"
@@ -215,6 +224,48 @@ class CloudflareControl:
             })
         return {"account_id": account, "models": rows, "page": result.page,
                 "per_page": result.per_page, "total": result.total}
+
+    # -- usage and R2 (read-only; every outcome is a named state) ------------------------------------
+    async def usage(self) -> dict[str, Any]:
+        """Today's Workers AI usage against the free allowance.
+
+        ``state`` is ``ok``, ``no_permission`` or ``unavailable``, never an exception. ``neurons`` is
+        ``None`` (``neurons_available`` false) when Cloudflare names no neuron field. The allowance is
+        the free-plan figure: the plan tier is not known, and Cloudflare's analytics are not a bill.
+        """
+        account = await self._require_account()
+        day = self._now().astimezone(timezone.utc).date()
+        try:
+            result = await self._account.usage(account, day=day)
+        except DependencyUnavailableError:
+            result = CloudflareUsage(state="unavailable", day=day.isoformat(), reason="unreachable")
+        resets = datetime.combine(day + timedelta(days=1), time.min, tzinfo=timezone.utc)
+        return {
+            "state": result.state, "account_id": account, "day": result.day or day.isoformat(),
+            "requests": result.requests, "neurons": result.neurons,
+            "neurons_available": result.neurons is not None, "neurons_field": result.neurons_field,
+            "reason": result.reason,
+            "allowance_neurons": FREE_ALLOWANCE_NEURONS, "allowance_basis": "free_plan",
+            "resets_at": resets.strftime("%Y-%m-%dT%H:%M:%SZ"), "permission": USAGE_PERMISSION,
+        }
+
+    async def r2(self) -> dict[str, Any]:
+        """The account's R2 buckets, read-only: ``ok``, ``not_enabled``, ``no_permission`` or
+        ``unavailable``. Nothing here creates, deletes or locks anything."""
+        account = await self._require_account()
+        try:
+            result = await self._account.r2_buckets(account)
+        except DependencyUnavailableError:
+            result = CloudflareR2(state="unavailable", reason="unreachable")
+        return {
+            "state": result.state, "account_id": account, "reason": result.reason,
+            "permission": R2_PERMISSION, "more": result.more,
+            "buckets": [
+                {"name": b.name, "created": b.created, "location": b.location,
+                 "storage_class": b.storage_class, "lock_rules": b.lock_rules}
+                for b in result.buckets
+            ],
+        }
 
     # -- shared checks and application ---------------------------------------------------------
     @staticmethod
