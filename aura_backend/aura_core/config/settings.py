@@ -1636,6 +1636,10 @@ class LearningSettings:
     #: conventions) and store them as ``auto_lesson`` memories in the engineer scope's *pending*
     #: partition. Nothing reaches recall until the owner approves it. Off by default.
     auto_lessons_enabled: bool = False
+    #: ADR-045 (row 60). With ``auto_lessons_enabled``, ask a *local* model to write the lessons
+    #: (strict JSON, validated) instead of only extracting them by keyword; any failure falls back
+    #: to the keyword extractor, and lessons still wait in the owner's review queue. Off by default.
+    auto_lessons_model_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> "LearningSettings":
@@ -1671,6 +1675,7 @@ class LearningSettings:
                 "LEARNING_FINETUNE_CANARY_MAX_COVERAGE_DROP", 0.05, minimum=0.0, maximum=1.0
             ),
             auto_lessons_enabled=_bool("AUTO_LESSONS_ENABLED", False),
+            auto_lessons_model_enabled=_bool("AUTO_LESSONS_MODEL", False),
         )
 
 
