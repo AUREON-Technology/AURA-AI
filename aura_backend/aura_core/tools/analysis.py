@@ -46,6 +46,7 @@ from .open.peer_code_reviewer_agent import PeerCodeReviewerAgent
 from .open.quality_gate_aggregator import QualityGateAggregator
 from .open.regression_impact_analyzer import RegressionImpactAnalyzer
 from .open.release_ext import release_checklist
+from .open.telemetry_ext import analyze_incident, parse_structured_logs
 from .open.review_ext import deep_review
 from .open.sql_schema_ext import generate_select, parse_schema, query_smells, schema_report
 from .open.security_vulnerability_scanner import SecurityVulnerabilityScanner
@@ -706,11 +707,16 @@ async def inspect_sql(
 
 @tool(
     "analyze_logs",
-    "Analyse log lines you pass in. operation: errors (lines with ERROR/CRITICAL/FATAL/Traceback "
-    "and the most common exception types), root_cause (first incident and the dominant exception), "
-    "latency (outliers above threshold_ms in `latencies_ms`).",
-    param("operation", "string", "What to do.", enum=("errors", "root_cause", "latency")),
-    param("logs", "array", "Log lines (errors, root_cause).", required=False, item_type="string"),
+    "Analyse log lines and metrics you pass in (no live telemetry access). operation: incident "
+    "(logs and/or Prometheus text: ranked root-cause hypotheses with evidence lines), structured "
+    "(JSON/logfmt logs: levels, error signatures, bursts, traces), metrics (Prometheus text anomalies), "
+    "errors, root_cause (first incident), latency (outliers).",
+    param("operation", "string", "What to do.",
+          enum=("incident", "structured", "metrics", "errors", "root_cause", "latency")),
+    param("logs", "array", "Log lines.", required=False, item_type="string"),
+    param("metrics_text", "string", "Prometheus /metrics text.", required=False, max_length=_MAX_TEXT),
+    param("baseline_metrics_text", "string", "Earlier /metrics text to diff against.", required=False,
+          max_length=_MAX_TEXT),
     param("latencies_ms", "array", "Latency samples in ms (latency).", required=False, item_type="number"),
     param("threshold_ms", "number", "Outlier threshold in ms (default 1000).", required=False,
           default=1000.0, minimum=0),
@@ -721,6 +727,8 @@ async def analyze_logs(
     logs: list | None = None,
     latencies_ms: list | None = None,
     threshold_ms: float = 1000.0,
+    metrics_text: str | None = None,
+    baseline_metrics_text: str | None = None,
 ) -> str:
     name = "analyze_logs"
     if operation == "latency":
@@ -730,8 +738,22 @@ async def analyze_logs(
             [float(v) for v in _items(name, "latencies_ms", latencies_ms)],
             threshold_ms=threshold_ms,
         )
+    if operation in ("incident", "metrics"):
+        if logs is None and metrics_text is None:
+            raise ToolExecutionError("provide at least one of: logs, metrics_text", tool=name)
+        lines = [str(line) for line in _items(name, "logs", logs)] if operation == "incident" else None
+        if operation == "metrics" and metrics_text is None:
+            raise ToolExecutionError("metrics needs metrics_text", tool=name)
+        return await _run(analyze_incident, lines, metrics_text, baseline_metrics_text, slow_s=threshold_ms / 1000.0)
     _need(name, logs=logs)
     lines = [str(line) for line in _items(name, "logs", logs)]
+    if operation == "structured":
+        def structured() -> dict:
+            result = parse_structured_logs(lines)
+            result.pop("_records", None)
+            return result
+
+        return await _run(structured)
     if operation == "root_cause":
         return await _run(ObservabilityIncidentAnalyzer.identify_root_cause, lines)
     return await _run(ObservabilityIncidentAnalyzer.parse_error_logs, lines)
