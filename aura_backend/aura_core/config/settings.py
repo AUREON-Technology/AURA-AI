@@ -226,6 +226,48 @@ def _list(key: str, default: Sequence[str] = ()) -> tuple[str, ...]:
     return tuple(item.strip() for item in raw.split(",") if item.strip())
 
 
+def _host_list(key: str) -> tuple[str, ...]:
+    """Like :func:`_list`, but whitespace and newlines separate entries too -- the same split
+    ``deploy/scripts/render-sandbox-filter.sh`` applies to the same variable."""
+    raw = _env(key)
+    if raw is None:
+        return ()
+    return tuple(item for item in re.split(r"[,\s]+", raw) if item)
+
+
+def egress_host_problem(host: str) -> str | None:
+    """Why ``host`` is not an acceptable sandbox egress host, or ``None`` when it is.
+
+    The same rules as ``deploy/scripts/render-sandbox-filter.sh``, which is what turns the
+    setting into the proxy's allowlist (``tests/unit/test_render_sandbox_filter.py`` runs both over
+    one corpus and requires them to agree). Here it is the start-up check: a value the renderer
+    would refuse must stop the gateway too, not be discovered when the proxy container exits.
+    """
+    h = host.strip().lower()
+    if "*" in h:
+        return "wildcards are not supported; list each host"
+    if "://" in h or "/" in h:
+        return "give a bare host name, not a URL or a path"
+    if "@" in h:
+        return "credentials are not allowed in a host"
+    if ":" in h:
+        return "a port is not allowed (the proxy only ever connects to 443)"
+    if not h or not re.fullmatch(r"[a-z0-9.-]+", h):
+        return "only letters, digits, hyphens and dots are allowed"
+    if h.startswith((".", "-")) or h.endswith((".", "-")) or ".." in h or ".-" in h or "-." in h:
+        return "malformed (empty label, or a label starting or ending with a hyphen)"
+    if len(h) > 253:
+        return "longer than 253 characters"
+    labels = h.split(".")
+    if len(labels) < 2:
+        return "needs at least two labels (a single name such as 'localhost' is an internal host)"
+    if any(len(label) > 63 for label in labels):
+        return "a label is longer than 63 characters"
+    if labels[-1].isdigit():
+        return "an IP address is not a host name"
+    return None
+
+
 def _redact_url_userinfo(value: str) -> str:
     """Replace username/password in a URL so DSNs can be shown without leaking secrets.
 
@@ -1837,7 +1879,7 @@ class SandboxSettings:
             memory_limit=_env("SANDBOX_MEMORY_LIMIT", "512m") or "512m",
             cpu_limit=_float("SANDBOX_CPU_LIMIT", 1.0, minimum=0.1, maximum=8.0),
             timeout_s=_float("SANDBOX_TIMEOUT_S", 120.0, minimum=1.0, maximum=1800.0),
-            allowed_egress_hosts=_list("SANDBOX_ALLOWED_EGRESS_HOSTS"),
+            allowed_egress_hosts=_host_list("SANDBOX_ALLOWED_EGRESS_HOSTS"),
             host_root=_env("SANDBOX_HOST_ROOT", "") or "",
             workspace_ttl_hours=_float(
                 "SANDBOX_WORKSPACE_TTL_HOURS", 72.0, minimum=0.25, maximum=8760.0
@@ -2431,6 +2473,12 @@ class AuraSettings:
             problems.append("AURA_TOOL_POLICY_FILE must be an absolute path")
         if self.tools.autonomy_default not in ("strict", "standard"):
             problems.append("AURA_AUTONOMY_DEFAULT must be 'strict' or 'standard'")
+        for host in self.sandbox.allowed_egress_hosts:
+            problem = egress_host_problem(host)
+            if problem:
+                problems.append(f"AURA_SANDBOX_ALLOWED_EGRESS_HOSTS entry {host!r}: {problem}")
+        if len(self.sandbox.allowed_egress_hosts) > 100:
+            problems.append("AURA_SANDBOX_ALLOWED_EGRESS_HOSTS lists more than 100 hosts")
         for host in self.tools.http_allowed_hosts:
             if "://" in host or "/" in host or "*" in host or ":" in host:
                 problems.append(

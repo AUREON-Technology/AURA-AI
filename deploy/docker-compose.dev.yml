@@ -217,6 +217,8 @@ volumes:
   redis_data_dev:
   aura_workspace_dev:
   aura_datasets_dev:
+  # Written by `sandbox-proxy-filter`, read by `sandbox-proxy` (ADR-039).
+  sandbox_filter_dev:
 
 secrets:
   postgres_password:
@@ -460,6 +462,8 @@ services:
       AURA_SANDBOX_HOT_IDLE_S: ${AURA_SANDBOX_HOT_IDLE_S:-900}
       AURA_SANDBOX_WORKSPACE_DISK_QUOTA_MB: ${AURA_SANDBOX_WORKSPACE_DISK_QUOTA_MB:-2048}
       AURA_SANDBOX_MIN_FREE_MEMORY_MB: ${AURA_SANDBOX_MIN_FREE_MEMORY_MB:-1024}
+      # Same as prod: validated here, applied to the proxy by `sandbox-proxy-filter`.
+      AURA_SANDBOX_ALLOWED_EGRESS_HOSTS: ${AURA_SANDBOX_ALLOWED_EGRESS_HOSTS:-}
       # Its own root, never prod's: the dev stack shares this host with prod, and one directory
       # for both would let a dev workspace collide with a production one. Bind-mounted at the
       # same path -- see docker-compose.prod.yml's AURA_SANDBOX_HOST_ROOT for why that matters.
@@ -608,6 +612,34 @@ services:
       resources:
         limits: {cpus: "0.5", memory: 256M}
 
+  # Renders the proxy's `filter` before the proxy starts (ADR-039): the static
+  # deploy/sandbox/filter (GitHub, PyPI, npm) plus every host in AURA_SANDBOX_ALLOWED_EGRESS_HOSTS,
+  # validated and regex-escaped by deploy/scripts/render-sandbox-filter.sh. With the variable unset
+  # the output is that static file byte for byte, so nothing changes until someone sets it. A host
+  # the script refuses (a wildcard, a URL, an IP address) makes this container exit non-zero, and
+  # the proxy then does not start -- no egress at all, never an allowlist wider than written.
+  # No network, read-only root, nothing but the rendered volume writable.
+  sandbox-proxy-filter:
+    profiles: [sandbox]
+    image: ${AURA_SANDBOX_PROXY_IMAGE:-vimagick/tinyproxy:latest@sha256:72b441b95ee1e641af948f68f09492f9f795ead72b73954414e339168c98ad8c}
+    entrypoint: ["sh", "/render/render-sandbox-filter.sh", "--base", "/render/filter", "--out", "/rendered/filter"]
+    environment:
+      AURA_SANDBOX_ALLOWED_EGRESS_HOSTS: ${AURA_SANDBOX_ALLOWED_EGRESS_HOSTS:-}
+    volumes:
+      - ./scripts/render-sandbox-filter.sh:/render/render-sandbox-filter.sh:ro
+      - ./sandbox/filter:/render/filter:ro
+      - sandbox_filter_dev:/rendered
+    user: "0:0"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: "no"
+    logging: *logging
+    deploy:
+      resources:
+        limits: {cpus: "0.1", memory: 16M}
+
   sandbox-proxy:
     profiles: [sandbox]
     image: ${AURA_SANDBOX_PROXY_IMAGE:-vimagick/tinyproxy:latest@sha256:72b441b95ee1e641af948f68f09492f9f795ead72b73954414e339168c98ad8c}
@@ -615,7 +647,11 @@ services:
     logging: *logging
     volumes:
       - ./sandbox/tinyproxy.conf:/etc/tinyproxy/tinyproxy.conf:ro
-      - ./sandbox/filter:/etc/tinyproxy/filter:ro
+      # The rendered filter (tinyproxy.conf's `Filter` points here), not the static file.
+      - sandbox_filter_dev:/etc/tinyproxy/rendered:ro
+    depends_on:
+      sandbox-proxy-filter:
+        condition: service_completed_successfully
     networks: [sandbox_egress, egress]
     deploy:
       resources:

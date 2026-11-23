@@ -268,6 +268,8 @@ volumes:
   loki_data:
   aura_workspace:
   aura_datasets:
+  # Written by `sandbox-proxy-filter`, read by `sandbox-proxy` (ADR-039).
+  sandbox_filter:
   nginx_certs:
   backup_textfile:
 
@@ -693,6 +695,10 @@ services:
       AURA_SANDBOX_WORKSPACE_DISK_QUOTA_MB: ${AURA_SANDBOX_WORKSPACE_DISK_QUOTA_MB:-2048}
       AURA_SANDBOX_MIN_FREE_MEMORY_MB: ${AURA_SANDBOX_MIN_FREE_MEMORY_MB:-1024}
       AURA_SANDBOX_IN_CONTAINER_GIT: ${AURA_SANDBOX_IN_CONTAINER_GIT:-false}
+      # Extra hosts the workspace proxy may reach, on top of deploy/sandbox/filter. The gateway
+      # validates it at start-up (the same rules as deploy/scripts/render-sandbox-filter.sh, which
+      # applies it to the proxy). Empty = the static list alone.
+      AURA_SANDBOX_ALLOWED_EGRESS_HOSTS: ${AURA_SANDBOX_ALLOWED_EGRESS_HOSTS:-}
       # docker-py's `docker.from_env()` reads this. It names sandbox-broker, never the socket
       # proxy or the socket: the broker refuses any container the sandbox would not create (see
       # its service below and `sandbox_ctl` above).
@@ -877,9 +883,38 @@ services:
       resources:
         limits: {cpus: "0.5", memory: 256M}
 
+  # Renders the proxy's `filter` before the proxy starts (ADR-039): the static
+  # deploy/sandbox/filter (GitHub, PyPI, npm) plus every host in AURA_SANDBOX_ALLOWED_EGRESS_HOSTS,
+  # validated and regex-escaped by deploy/scripts/render-sandbox-filter.sh. With the variable unset
+  # the output is that static file byte for byte, so nothing changes until someone sets it. A host
+  # the script refuses (a wildcard, a URL, an IP address) makes this container exit non-zero, and
+  # the proxy then does not start -- no egress at all, never an allowlist wider than written.
+  # No network, read-only root, nothing but the rendered volume writable.
+  sandbox-proxy-filter:
+    profiles: [sandbox]
+    image: ${AURA_SANDBOX_PROXY_IMAGE:-vimagick/tinyproxy:latest@sha256:72b441b95ee1e641af948f68f09492f9f795ead72b73954414e339168c98ad8c}
+    entrypoint: ["sh", "/render/render-sandbox-filter.sh", "--base", "/render/filter", "--out", "/rendered/filter"]
+    environment:
+      AURA_SANDBOX_ALLOWED_EGRESS_HOSTS: ${AURA_SANDBOX_ALLOWED_EGRESS_HOSTS:-}
+    volumes:
+      - ./scripts/render-sandbox-filter.sh:/render/render-sandbox-filter.sh:ro
+      - ./sandbox/filter:/render/filter:ro
+      - sandbox_filter:/rendered
+    user: "0:0"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: "no"
+    logging: *logging
+    deploy:
+      resources:
+        limits: {cpus: "0.1", memory: 16M}
+
   # The only route out of `sandbox_egress`, which is `internal: true`. Workspaces get
   # HTTP(S)_PROXY pointing here (AURA_SANDBOX_PROXY_URL), and this forwards only to the hosts in
-  # AURA_SANDBOX_ALLOWED_EGRESS_HOSTS -- enough to clone a repository and install packages, and
+  # the rendered filter (deploy/sandbox/filter plus AURA_SANDBOX_ALLOWED_EGRESS_HOSTS, see
+  # `sandbox-proxy-filter` above) -- enough to clone a repository and install packages, and
   # nothing else. Before this existed the choice was between a workspace with no network (unable
   # to do the job) and one with the whole internet (a model-chosen command exfiltrating a
   # checkout); neither was acceptable for a container that lives for days.
@@ -893,7 +928,11 @@ services:
     logging: *logging
     volumes:
       - ./sandbox/tinyproxy.conf:/etc/tinyproxy/tinyproxy.conf:ro
-      - ./sandbox/filter:/etc/tinyproxy/filter:ro
+      # The rendered filter (tinyproxy.conf's `Filter` points here), not the static file.
+      - sandbox_filter:/etc/tinyproxy/rendered:ro
+    depends_on:
+      sandbox-proxy-filter:
+        condition: service_completed_successfully
     # sandbox_egress to be reachable by workspaces; egress to actually reach the allowed hosts.
     # Deliberately not on `data` or `edge`: a proxy that could reach Postgres would hand every
     # workspace a route to it.
