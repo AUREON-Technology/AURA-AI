@@ -33,6 +33,7 @@ from uuid import uuid4
 from ..agents.handoff import (
     HandoffStore,
     build_handoff,
+    new_handoff_id,
     outcome_from_result,
     render_handoff,
 )
@@ -91,7 +92,9 @@ def build_delegation_tools(
     """
     use_handoff = bool(structured_handoff and handoffs is not None)
 
-    async def _make_handoff(*, context: ToolContext, target_spec: Any, subtask: str) -> Any:
+    async def _make_handoff(
+        *, context: ToolContext, target_spec: Any, subtask: str, handoff_id: str | None = None
+    ) -> Any:
         """The stored handoff record for this delegation, or ``None``. Never fails the call: a
         handoff is context for the child, and a delegation without it is still a delegation."""
         try:
@@ -107,6 +110,7 @@ def build_delegation_tools(
                 to_agent=target_spec.id, goal=subtask, checkpoint=checkpoint,
                 parent_session_id=context.session_id,
                 delegation_depth=context.delegation_depth + 1,
+                handoff_id=handoff_id,
             )
             await handoffs.put(record)
             return record
@@ -254,29 +258,38 @@ def build_delegation_tools(
                               if key.startswith(CONNECTOR_TOKEN_PREFIX)},
         )
 
+        def with_handoff(request: Any, record: Any) -> Any:
+            # DATA channel, as context: fenced with the child turn's nonce and put through the
+            # context guards like a retrieved chunk. Never `message` (USER) and never the system
+            # prompt. Kept off `caller_context` itself, which taints a turn by being present: the
+            # child already inherits its parent's taint above, and the kernel taints it further if
+            # the guards quarantine this block.
+            return dataclasses.replace(
+                request,
+                handoff_context=(
+                    CallerContext.of(
+                        id=f"handoff:{record.id}", text=render_handoff(record), source="handoff",
+                    ),
+                ),
+            )
+
         handoff = None
-        if use_handoff:
+        # A background call hands its id out at once, so the record -- which may need a model call
+        # for the parent's checkpoint -- is built inside the task, not before the tool returns.
+        preassigned = new_handoff_id() if (use_handoff and background) else None
+        if use_handoff and not background:
             handoff = await _make_handoff(context=context, target_spec=target_spec, subtask=subtask)
             if handoff is not None:
-                # DATA channel, as context: fenced with the child turn's nonce and put through the
-                # context guards like a retrieved chunk. Never `message` (USER) and never the
-                # system prompt. Kept off `caller_context` itself, which taints a turn by being
-                # present: the child already inherits its parent's taint above, and the kernel
-                # taints it further if the guards quarantine this block.
-                child_request = dataclasses.replace(
-                    child_request,
-                    handoff_context=(
-                        CallerContext.of(
-                            id=f"handoff:{handoff.id}", text=render_handoff(handoff), source="handoff",
-                        ),
-                    ),
-                )
+                child_request = with_handoff(child_request, handoff)
 
         owner = context.user_id.value
 
         async def finish(result: Any, *, error: str | None = None) -> None:
-            if handoff is not None:
-                await _record_outcome(handoffs, owner, handoff.id, result, error=error)
+            known = handoff_ref[0]
+            if known is not None:
+                await _record_outcome(handoffs, owner, known.id, result, error=error)
+
+        handoff_ref: list[Any] = [handoff]
 
         def nested_refusal(result: Any) -> str:
             pending = ", ".join(result.needs_confirmation) or "a pending action"
@@ -287,11 +300,19 @@ def build_delegation_tools(
 
         if background:
             async def runner() -> TaskResult:
+                request = child_request
+                if preassigned is not None:
+                    record = await _make_handoff(
+                        context=context, target_spec=target_spec, subtask=subtask, handoff_id=preassigned,
+                    )
+                    if record is not None:
+                        handoff_ref[0] = record
+                        request = with_handoff(request, record)
                 try:
-                    result = await kernel().run(child_request)
+                    result = await kernel().run(request)
                 except asyncio.CancelledError:
-                    if handoff is not None:
-                        await _record_cancelled(handoffs, owner, handoff.id)
+                    if handoff_ref[0] is not None:
+                        await _record_cancelled(handoffs, owner, handoff_ref[0].id)
                     raise
                 except Exception as exc:
                     await finish(None, error=str(getattr(exc, "message", None) or type(exc).__name__))
@@ -310,15 +331,13 @@ def build_delegation_tools(
             try:
                 task = await tasks.submit(
                     owner_id=owner, agent_id=target_spec.id, subtask=subtask, runner=runner,
-                    handoff_id=handoff.id if handoff is not None else None,
+                    handoff_id=preassigned,
                 )
             except AgentTaskLimitError as exc:
-                if handoff is not None:
-                    await _record_cancelled(handoffs, owner, handoff.id)
                 raise ToolExecutionError(str(exc), tool="delegate_to_agent") from exc
             return json.dumps({
                 "agent_task_id": task.id, "status": task.status, "agent": task.agent_id,
-                **({"handoff_id": handoff.id} if handoff is not None else {}),
+                **({"handoff_id": preassigned} if preassigned is not None else {}),
                 "next": "call get_agent_task with this id to read the result when it is done",
             })
 

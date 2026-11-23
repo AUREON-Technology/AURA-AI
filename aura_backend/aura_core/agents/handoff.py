@@ -45,6 +45,7 @@ __all__ = [
     "outcome_from_result",
     "render_handoff",
     "extract_paths",
+    "new_handoff_id",
 ]
 
 logger = get_logger("agents.handoff")
@@ -81,6 +82,10 @@ def _items(values: Any, limit: int = MAX_LIST_ITEMS) -> tuple[str, ...]:
         if len(out) >= limit:
             break
     return tuple(out)
+
+
+def new_handoff_id() -> str:
+    return f"ho_{uuid.uuid4().hex[:20]}"
 
 
 def extract_paths(*texts: str) -> tuple[str, ...]:
@@ -190,15 +195,19 @@ def build_handoff(
     extra_text: Sequence[str] = (),
     delegation_depth: int = 0,
     background_task_id: str | None = None,
+    handoff_id: str | None = None,
 ) -> HandoffRecord:
-    """A record from the parent's checkpoint (any object with the four lists; ``None`` is fine)."""
+    """A record from the parent's checkpoint (any object with the four lists; ``None`` is fine).
+
+    ``handoff_id`` lets a caller hand the id out before the record exists (background delegation
+    returns it at once and builds the record, which may need a model call, in the task)."""
     decisions = _items(getattr(checkpoint, "decisions", ()))
     completed = _items(getattr(checkpoint, "completed", ()))
     blockers = _items(getattr(checkpoint, "blockers", ()))
     pending = _items(getattr(checkpoint, "next_steps", ()))
     paths = extract_paths(goal, *extra_text, *decisions, *completed, *blockers, *pending)
     return HandoffRecord(
-        id=f"ho_{uuid.uuid4().hex[:20]}",
+        id=handoff_id or new_handoff_id(),
         owner_id=owner_id, from_agent=from_agent, to_agent=to_agent,
         goal=_clip(goal, MAX_GOAL_CHARS),
         decisions=decisions, completed=completed, blockers=blockers, pending=pending,

@@ -22,7 +22,7 @@ from dataclasses import replace
 import json
 import os
 from datetime import datetime, timedelta
-from typing import Any, AsyncIterator, Mapping
+from typing import Any, AsyncIterator, Literal, Mapping
 
 from ..domain.errors import (
     AuraError,
@@ -272,6 +272,12 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         use_memory: bool = True
         use_tools: bool = True
         plan: bool | None = None
+        #: ADR-038 (row 63): ``auto`` | ``plan`` | ``fast`` | ``review``. Wins over ``plan`` (kept:
+        #: ``true`` means ``plan``, ``false`` means ``fast``). ``review`` plans and then returns the
+        #: planned steps with ``approval_id``s instead of running them; send those ids back in
+        #: ``approval_ids`` to run the stored plan. Absent (with no ``plan``) is today's behaviour.
+        #: The response's ``plan_mode`` says what was decided and why.
+        plan_mode: Literal["auto", "plan", "fast", "review"] | None = None
         strategy: str | None = None
         routing_policy: str | None = None
         require_local: bool = False
@@ -644,6 +650,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             use_memory=payload.use_memory and caller.knowledge_owner == caller.user_id,
             use_tools=payload.use_tools,
             plan=payload.plan,
+            plan_mode=payload.plan_mode,
             strategy=_parse_enum(ReasoningStrategy, payload.strategy),
             routing_policy=_parse_enum(RoutingPolicy, payload.routing_policy),
             require_local=payload.require_local,
@@ -810,6 +817,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "needs_confirmation": list(result.needs_confirmation),
                 "pending_tool_calls": list(result.pending_tool_calls),
                 "plan": list(result.plan_summary),
+                "plan_mode": result.plan_mode,
                 "resolved_agent": result.resolved_agent,
                 "agent_run_id": result.agent_run_id,
                 "correlation_id": result.telemetry.correlation_id.value,

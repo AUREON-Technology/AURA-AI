@@ -276,6 +276,33 @@ class TestFollowingAndStopping:
         record = await store.get(ALICE.value, started["handoff_id"])
         assert record.to_agent == "research_agent"
 
+    async def test_the_background_call_does_not_wait_for_the_parents_checkpoint(self, cache) -> None:
+        """Found by running the real path: with a model-written checkpoint the handoff record can
+        take seconds, and building it before returning made ``background=true`` block on it."""
+        gate = asyncio.Event()
+
+        async def slow_checkpoint(owner, session_id):
+            await gate.wait()
+            return SessionCheckpoint(decisions=("Use Alembic",), source="model")
+
+        kernel = _InstantKernel()
+        manager = AgentTaskManager(cache)
+        store = HandoffStore(cache)
+        tools = {t.spec.name: t for t in build_delegation_tools(
+            agents=build_default_agent_registry(), kernel=lambda: kernel, tasks=manager, handoffs=store,
+            checkpoint_provider=slow_checkpoint, structured_handoff=True,
+        )}
+        started = await asyncio.wait_for(json_of(_delegate(tools, background=True)), timeout=1.0)
+        assert started["handoff_id"].startswith("ho_") and kernel.requests == [], "returned before the child ran"
+        assert await store.get(ALICE.value, started["handoff_id"]) is None, "the record is built in the task"
+
+        gate.set()
+        await manager.drain()
+        record = await store.get(ALICE.value, started["handoff_id"])
+        assert record is not None and record.decisions == ("Use Alembic",) and record.checkpoint_source == "model"
+        assert "Use Alembic" in kernel.requests[0].handoff_context[0].content()
+        assert (await store.outcome(ALICE.value, started["handoff_id"])).status == "succeeded"
+
     async def test_a_cancelled_task_records_a_cancelled_handoff_outcome(self, cache) -> None:
         kernel = _HeldKernel()
         tools, manager, store = _build(kernel, cache, structured=True)

@@ -127,7 +127,8 @@ class TestJob:
             assert record.provenance.source == LESSON_SOURCE
             assert record.scope == pending_scope(ENGINEER_SCOPE) and record.kind is MemoryKind.PROCEDURAL
             assert record.metadata["review"] == "pending" and record.expires_at is not None
-            assert record.session_id == SessionId("s-1")
+            assert record.session_id is None, "a lesson is not one conversation's memory"
+            assert record.metadata["source_session"] == "s-1"
 
         # Not in the engineer's own recall, not in shared, not for anyone else.
         for scopes in (readable_scopes(ENGINEER_SCOPE), readable_scopes("shared"), None):
@@ -216,6 +217,19 @@ class TestReview:
         assert not any(h.record.id == target.id for h in other_persona), "and it stays the Engineer's"
         assert target.id not in {r.id for r in await _pending(memory)}
 
+    async def test_an_approved_lesson_is_recalled_in_a_different_conversation(self, memory) -> None:
+        """Found by running the real path: a lesson stamped with its source session was filtered out
+        of every other session's recall, so approving it changed nothing for the next conversation."""
+        pending = await self._queue(memory)
+        target = next(r for r in pending if "Alembic" in r.content)
+        await memory.approve_lesson(target.id, owner_id=ALICE, scope=ENGINEER_SCOPE, approved_by="alice")
+        hits = await memory.recall(MemoryQuery(
+            owner_id=ALICE, text="We always use Alembic for schema changes.", session_id=SessionId("a-later-chat"),
+            kinds=(MemoryKind.SEMANTIC, MemoryKind.PROCEDURAL, MemoryKind.ENTITY),
+            scopes=readable_scopes(ENGINEER_SCOPE),
+        ))
+        assert any(h.record.id == target.id for h in hits)
+
     async def test_rejection_deletes_it(self, memory) -> None:
         target = (await self._queue(memory))[0]
         assert await memory.reject_lesson(target.id, owner_id=ALICE, scope=ENGINEER_SCOPE) is True
@@ -246,7 +260,11 @@ class TestReview:
 def _container(enabled: bool) -> Container:
     base = load_settings(refresh=True, validate=False)
     return Container(dataclasses.replace(
-        base, learning=dataclasses.replace(base.learning, auto_lessons_enabled=enabled)))
+        base, learning=dataclasses.replace(base.learning, auto_lessons_enabled=enabled),
+        # The CPU default caps the whole prompt at 400 tokens, which the Engineer's own system prompt
+        # nearly fills; a hosted slot raises it, and so does this test, so memory has room to appear.
+        llm=dataclasses.replace(base.llm, max_prompt_tokens=4000),
+    ))
 
 
 class _FixedPlanner:
@@ -325,6 +343,29 @@ class TestThroughTheKernel:
             kinds=(MemoryKind.PROCEDURAL, MemoryKind.SEMANTIC), scopes=readable_scopes(ENGINEER_SCOPE),
         ))
         assert hits == []
+
+    async def test_the_engineers_next_conversation_sees_a_lesson_only_after_approval(self) -> None:
+        container = _container(True)
+        await _engineer_turn(container, self.MESSAGE)
+        pending = await container.memory.list_pending_lessons(ALICE, scope=ENGINEER_SCOPE)
+        target = next(r for r in pending if "always use Alembic" in r.content)
+        question = "We always use Alembic for schema changes."
+        echo = container.providers[0]
+
+        async def lesson_in_context() -> bool:
+            before = len(echo.calls)
+            await container.kernel.run(TurnRequest(
+                message=question, user_id=ALICE, session_id=SessionId("a-different-chat"), agent="engineer",
+                capabilities=("engineer_agent",), plan=False,
+            ))
+            return any(
+                "always use Alembic for schema changes" in m.content and "<<<AURA-DATA" in m.content
+                for call in echo.calls[before:] for m in call.conversation if m.role.value == "system"
+            )
+
+        assert await lesson_in_context() is False, "pending: not part of the Engineer's memory"
+        await container.memory.approve_lesson(target.id, owner_id=ALICE, scope=ENGINEER_SCOPE, approved_by="alice")
+        assert await lesson_in_context() is True, "approved: recalled, fenced as data, in a conversation it did not come from"
 
     async def test_off_by_default_nothing_is_written(self) -> None:
         container = _container(False)

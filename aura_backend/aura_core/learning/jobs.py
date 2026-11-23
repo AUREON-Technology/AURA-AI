@@ -11,7 +11,7 @@ from datetime import timedelta
 from typing import Any, Awaitable, Callable, Iterable, Sequence
 
 from ..domain.events import DomainEvent
-from ..domain.identifiers import SessionId, UserId
+from ..domain.identifiers import UserId
 from ..domain.lessons import ENGINEER_SCOPE, LESSON_SOURCE, LESSON_SUBJECT, LessonTurn, pending_scope
 from ..domain.memory import MemoryKind, MemoryQuery
 from ..domain.outbox import OutboxEntry
@@ -164,12 +164,15 @@ async def run_engineer_lesson_extraction(
                 subject=LESSON_SUBJECT,
                 confidence=0.5,
                 source=LESSON_SOURCE,
-                session_id=SessionId(turn.session_id) if turn.session_id else None,
+                # No ``session_id``: recall treats a record with one as that conversation's own, so a
+                # lesson stamped with its session would never be seen by the next one. Where it came
+                # from is kept in the metadata instead.
                 extractor="engineer_lessons",
                 extractor_version="1",
                 metadata={
                     "review": "pending", "lesson_kind": candidate.kind,
                     "turn_id": turn.turn_id, "turn_outcome": turn.outcome,
+                    "source_session": turn.session_id,
                 },
                 scope=pending,
                 ttl=PENDING_LESSON_TTL,
