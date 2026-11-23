@@ -50,6 +50,9 @@ from .context.engine import ContextEngine
 from .context.tokenizer import get_tokenizer
 from .domain.errors import ConfigurationError
 from .execution.agentic_loop import AgenticExecutor
+from .execution.critic import Critic, LLMCritic
+from .execution.recovery import RecoveryPolicy
+from .execution.stuck import StuckConfig
 from .execution.confirmations import PendingConfirmationStore
 from .execution.engine import ExecutionEngine
 from .knowledge.chunking import ChunkingConfig
@@ -247,7 +250,9 @@ class Container:
         self.prompt_pins = self._build_prompt_pins()
         self.prompts = build_default_registry(pins=self.prompt_pins)
         self._prompt_pin_sync_task: asyncio.Task[None] | None = None
-        self.agents = build_default_agent_registry()
+        self.agents = build_default_agent_registry(
+            engineer_token_budget=settings.reasoning.engineer_token_budget
+        )
         if settings.adaptation.enabled:
             # Track AP7: the same registry interface, over a snapshot a blueprint deploy can swap
             # atomically. Wrapped here, before the kernel and the delegation tools capture it.
@@ -484,18 +489,46 @@ class Container:
             verification_enabled=settings.reasoning.verification_enabled,
             metrics=self.metrics,
         )
+        # ADR-037: failure-kind-aware retries, only when the operator turns them on; the engine
+        # otherwise keeps its original "retry any failed read-only step" rule.
         self.executor = ExecutionEngine(
             tools=self.tools,
             max_parallel=settings.tools.max_parallel,
             metrics=self.metrics,
             event_bus=self.events,
+            recovery=(
+                RecoveryPolicy(backoff_base_s=settings.reasoning.loop_recovery_backoff_s)
+                if settings.reasoning.loop_recovery_policy_enabled else None
+            ),
         )
         # The engineer agent's bounded plan-execute-observe-replan loop (execution/agentic_loop.py)
         # -- `None` when planning itself is disabled, since there is nothing to loop.
+        reasoning = settings.reasoning
         self.agentic_executor = (
             AgenticExecutor(
                 planner=self.planner, executor=self.executor, metrics=self.metrics,
                 clock=self.clock, runs=self.agent_runs,
+                # ADR-037. Each piece is settings-driven; the loop only applies them to a
+                # persona that replans (today: engineer), so single-pass personas are untouched.
+                stuck=StuckConfig(
+                    enabled=reasoning.loop_stuck_detection_enabled,
+                    identical_calls=reasoning.loop_stuck_identical_calls,
+                    same_error=reasoning.loop_stuck_same_error,
+                    no_progress=reasoning.loop_stuck_no_progress,
+                ),
+                recovery=(
+                    RecoveryPolicy(backoff_base_s=reasoning.loop_recovery_backoff_s)
+                    if reasoning.loop_recovery_policy_enabled else None
+                ),
+                critic=Critic(
+                    enabled=reasoning.critic_enabled,
+                    llm=(
+                        LLMCritic(router=self.router, timeout_s=min(30.0, settings.llm.request_timeout_s))
+                        if reasoning.critic_enabled and reasoning.critic_llm_enabled else None
+                    ),
+                ),
+                test_signals=reasoning.loop_test_signals_enabled,
+                pressure_threshold=reasoning.context_pressure_threshold,
             )
             if self.planner is not None
             else None

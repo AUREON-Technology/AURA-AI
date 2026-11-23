@@ -120,8 +120,10 @@ class AgentRunStatus:
     AWAITING_APPROVAL = "awaiting_approval"
     #: A budget (``exhausted_budget`` says which) stopped the run before it finished.
     BUDGET_EXHAUSTED = "budget_exhausted"
+    #: The loop was repeating itself and stopped on purpose (ADR-037, ``execution/stuck.py``).
+    STUCK = "stuck"
 
-    TERMINAL = frozenset({COMPLETED, PARTIAL, FAILED, AWAITING_APPROVAL, BUDGET_EXHAUSTED})
+    TERMINAL = frozenset({COMPLETED, PARTIAL, FAILED, AWAITING_APPROVAL, BUDGET_EXHAUSTED, STUCK})
 
 
 class AgentStepKind:

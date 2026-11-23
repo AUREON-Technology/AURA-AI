@@ -28,6 +28,23 @@ Five bounds, all data on the persona's :class:`~aura_core.domain.agent_runs.Agen
 Each iteration also still respects the execution engine's own per-pass step and deadline budget.
 When a run context is supplied, :class:`~aura_core.execution.run_recorder.RunRecorder` persists
 the run and its steps through the ``AgentRunStore`` port.
+
+ADR-037 adds the loop's *intelligence* around that skeleton, each piece optional (``None`` = off,
+which is what a bare ``AgenticExecutor(planner=..., executor=...)`` gets) and wired from settings by
+the container:
+
+* the transitions are an explicit graph (``state_graph.py``): PLAN, EXECUTE, OBSERVE, REPLAN,
+  VERIFY, and the terminal DONE / STUCK / ESCALATE, with :func:`~.state_graph.classify` deciding
+  what OBSERVE does from a :class:`~.state_graph.Signals` snapshot;
+* test results are an input to it (``runner_output.py``): a run whose tests failed is not done;
+* a :class:`~.stuck.StuckDetector` stops a loop that is repeating itself, with an explanation;
+* a :class:`~.recovery.RecoveryPolicy` decides, per failure kind, whether to retry, replan, surface
+  or stop;
+* a :class:`~.critic.Critic` checks the plan before it runs and the outcome before it is claimed;
+* a :class:`~.token_monitor.TokenMonitor` reports budget use each pass and compresses older tool
+  output once when context pressure builds.
+
+None of it dispatches a tool: the loop still only ever calls ``ExecutionEngine`` and the planner.
 """
 
 from __future__ import annotations
@@ -38,14 +55,21 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Mapping, Sequence
 
 from ..domain.agent_runs import AgentBudget, BudgetKind, risk_cost
-from ..domain.planning import Plan, PlanStep, StepStatus
+from ..domain.planning import Plan, PlanStep, StepKind, StepStatus
 from ..observability.logging import get_logger
 from ..ports.runtime import ToolContext
 from .confirmations import ConfirmationGrant
+from .critic import Critic, critique_outcome, feedback_lines
 from .engine import ExecutionEngine, ExecutionOutcome, StepEvent
+from .loop_events import LoopEvent, LoopReport
+from .recovery import RecoveryAction, RecoveryPolicy
 from .run_recorder import AgentRunContext, RunRecorder
+from .runner_output import observe_plan, unresolved_failures
+from .state_graph import LoopState, Signals, classify, transition
+from .stuck import CallRecord, StuckConfig, StuckDetector, StuckVerdict, digest, escalation_message
+from .token_monitor import RECOMMENDATIONS, TokenMonitor, compress_results
 
-__all__ = ["AgenticExecutor", "AgentRunContext", "RunBudgetGate", "BudgetRefusal"]
+__all__ = ["AgenticExecutor", "AgentRunContext", "RunBudgetGate", "BudgetRefusal", "LoopEvent"]
 
 logger = get_logger("agentic_loop")
 
@@ -172,6 +196,11 @@ class AgenticExecutor:
         metrics: Any = None,
         clock: Any = None,
         runs: Any = None,
+        stuck: StuckConfig | None = None,
+        recovery: RecoveryPolicy | None = None,
+        critic: Critic | None = None,
+        test_signals: bool = False,
+        pressure_threshold: float = 0.8,
     ) -> None:
         self._planner = planner
         self._executor = executor
@@ -180,42 +209,29 @@ class AgenticExecutor:
         #: ``AgentRunStore`` (``ports/coding.py``); ``None`` records nothing durable (metrics
         #: are still emitted when a run context is given).
         self._runs = runs
+        #: ADR-037 pieces. All optional; ``None`` / ``False`` is the loop as it was before them.
+        self._stuck = stuck
+        self._recovery = recovery
+        self._critic = critic
+        self._test_signals = bool(test_signals)
+        self._pressure_threshold = pressure_threshold
         self._gate_execute = _accepts(getattr(executor, "execute", None), "gate")
         self._gate_stream = _accepts(getattr(executor, "stream", None), "gate")
+        self._replan_takes_feedback = _accepts(getattr(planner, "replan", None), "feedback")
 
     def _monotonic(self) -> float:
         if self._clock is not None and hasattr(self._clock, "monotonic"):
             return float(self._clock.monotonic())
         return time.monotonic()
 
-    # -- evaluate --------------------------------------------------------------------------
-
-    def _evaluate(
-        self,
-        outcome: ExecutionOutcome,
-        *,
-        deadline: float,
-        max_iterations: int,
-        tokens_used: int,
-        budget: AgentBudget,
-    ) -> tuple[str | None, str | None]:
-        """``(stop_reason, exhausted_budget)``, or ``(None, None)`` to replan."""
-        if outcome.succeeded:
-            return "completed", None
-        if self._monotonic() > deadline:
-            return "time_budget_exhausted", BudgetKind.TIME
-        if outcome.blocked_reason in _TERMINAL_BLOCKS:
-            return outcome.blocked_reason, _BLOCK_BUDGET.get(outcome.blocked_reason)
-        if not outcome.plan.failed_steps and not self._repairable(outcome.plan):
-            # Nothing a revised plan could repair.
-            return "nothing_to_repair", None
-        if max_iterations <= 0:
-            return "single_pass", None
-        if budget.token_budget is not None and tokens_used >= budget.token_budget:
-            return "token_budget_exhausted", BudgetKind.TOKENS
-        if not self._planner.can_replan(outcome.plan, limit=max_iterations):
-            return "iteration_budget_exhausted", BudgetKind.ITERATIONS
-        return None, None
+    def _spec_for(self, tool: str | None) -> Any:
+        fn = getattr(self._executor, "spec_for", None)
+        if fn is None or not tool:
+            return None
+        try:
+            return fn(tool)
+        except Exception:
+            return None
 
     @staticmethod
     def _repairable(plan: Plan) -> bool:
@@ -239,19 +255,25 @@ class AgenticExecutor:
         """
         return any(s.status is StepStatus.BLOCKED for s in plan.steps)
 
-    async def _next_plan(
+    async def _replan(
         self,
-        outcome: ExecutionOutcome,
+        plan: Plan,
         *,
+        reason: str,
         available_tools: Sequence[Mapping[str, Any]],
         max_iterations: int,
+        feedback: Sequence[str] = (),
     ) -> Plan | None:
+        kwargs: dict[str, Any] = {}
+        if feedback and self._replan_takes_feedback:
+            kwargs["feedback"] = list(feedback)
         try:
             return await self._planner.replan(
-                outcome.plan,
-                reason=_replan_reason(outcome),
+                plan,
+                reason=reason,
                 available_tools=available_tools,
                 limit=max_iterations,
+                **kwargs,
             )
         except Exception:
             logger.warning("replan failed; stopping the agentic loop")
@@ -285,6 +307,114 @@ class AgenticExecutor:
             common["gate"] = gate
         yield await self._executor.execute(plan, on_event=on_event, **common)
 
+    # -- observation helpers -------------------------------------------------------------------
+
+    @staticmethod
+    def _executed(before: Plan, after: Plan) -> list[PlanStep]:
+        """Steps this pass actually dispatched: pending going in, succeeded or failed coming out."""
+        pending = {s.id.value for s in before.steps if s.status is StepStatus.PENDING}
+        return [
+            s for s in after.steps
+            if s.id.value in pending and s.status in (StepStatus.SUCCEEDED, StepStatus.FAILED)
+        ]
+
+    @staticmethod
+    def _call_records(steps: Sequence[PlanStep], outcome: ExecutionOutcome) -> list[CallRecord]:
+        records: list[CallRecord] = []
+        for step in steps:
+            if step.kind is not StepKind.TOOL or not step.tool:
+                continue
+            ok = step.status is StepStatus.SUCCEEDED
+            body = step.result if ok else outcome.failure_messages.get(step.id.value, "")
+            records.append(CallRecord(
+                tool=step.tool, args_digest=digest(dict(step.arguments or {})), ok=ok,
+                error_kind=None if ok else step.error_kind,
+                result_digest=digest(body or ""), description=(step.description or "")[:100],
+            ))
+        return records
+
+    def _side_effecting(self, step: PlanStep) -> bool:
+        spec = self._spec_for(step.tool)
+        return bool(getattr(spec, "side_effecting", True)) if spec is not None else True
+
+    def _recovery_signals(
+        self, outcome: ExecutionOutcome, replans_by_kind: Mapping[str, int],
+    ) -> tuple[str | None, str | None, str | None, list[str], list[str]]:
+        """``(stop, surface, escalate, replan_notes, unknown_kinds)`` from the failed steps."""
+        if self._recovery is None:
+            return None, None, None, [], []
+        stop = escalate = None
+        decisions = []
+        notes: list[str] = []
+        unknown: list[str] = []
+        for step in outcome.plan.failed_steps:
+            kind = step.error_kind or "failed"
+            message = outcome.failure_messages.get(step.id.value, "")
+            decision = self._recovery.decide(
+                step.error_kind, message=message, attempt=step.attempts,
+                max_attempts=step.max_attempts, side_effecting=self._side_effecting(step),
+                prior_replans_for_kind=replans_by_kind.get(kind, 0),
+            )
+            decisions.append(decision)
+            if decision.action is RecoveryAction.STOP and stop is None:
+                stop = kind
+            if decision.action is RecoveryAction.ESCALATE and escalate is None:
+                escalate = kind
+            if decision.action is RecoveryAction.REPLAN and decision.failure_class.value == "unknown":
+                unknown.append(kind)
+            if message:
+                notes.append(f"Step {step.id.value} failed ({kind}): {message[:300]}")
+            if decision.action is RecoveryAction.SURFACE:
+                notes.append(
+                    f"Step {step.id.value} was refused ({kind}); that is a decision, so do not "
+                    "plan the same call again or a way around it"
+                )
+        surface = None
+        if decisions and all(d.action is RecoveryAction.SURFACE for d in decisions):
+            surface = outcome.plan.failed_steps[0].error_kind or "refused"
+        return stop, surface, escalate, notes, unknown
+
+    @staticmethod
+    def _escalation(
+        stop_reason: str | None, verdict: StuckVerdict | None,
+        unresolved: Sequence[tuple[str, Any]], outcome: ExecutionOutcome | None,
+    ) -> str:
+        """What the user is told when the loop gave up. Empty where the existing end-of-run
+        notes (a pending confirmation, an exhausted budget) already say it."""
+        if stop_reason == "stuck" and verdict is not None:
+            return escalation_message(verdict)
+        if outcome is None or stop_reason in (None, "completed"):
+            return ""
+        if stop_reason.startswith("unrecoverable:"):
+            return (
+                f"I stopped without retrying: a safety guard withheld a result "
+                f"({stop_reason.split(':', 1)[1]}), and that is not something to attempt again. "
+                "Nothing further was attempted."
+            )
+        if stop_reason.startswith("escalated:"):
+            return (
+                "I stopped after one revised plan: the same unexpected failure "
+                f"({stop_reason.split(':', 1)[1]}) came back, so another attempt would most "
+                "likely fail the same way. Please look at what that step needs (access, a "
+                "missing file, a service that is down) or tell me what to change."
+            )
+        if stop_reason.startswith("not_retried:"):
+            return (
+                "I did not retry: the step was refused by policy or needs your confirmation "
+                f"({stop_reason.split(':', 1)[1]}). That is your call to make, not something to "
+                "work around."
+            )
+        if unresolved and stop_reason in (
+            "iteration_budget_exhausted", "token_budget_exhausted", "time_budget_exhausted",
+            "single_pass", "replan_failed",
+        ):
+            sid, obs = unresolved[0]
+            return (
+                f"The work is not finished: the last test run (step {sid}) is still failing "
+                f"({obs.summary}). I ran out of attempts before fixing it."
+            )
+        return ""
+
     # -- the loop ----------------------------------------------------------------------------
 
     async def _drive(
@@ -301,7 +431,7 @@ class AgenticExecutor:
         on_event: Callable[[StepEvent], Any] | None,
         budget: AgentBudget | None,
         run_context: AgentRunContext | None,
-    ) -> AsyncIterator[StepEvent | ExecutionOutcome]:
+    ) -> AsyncIterator[StepEvent | LoopEvent | ExecutionOutcome]:
         budget = budget or AgentBudget(max_iterations=max(0, max_iterations))
         time_limit = deadline_s
         if budget.time_budget_s is not None:
@@ -315,6 +445,33 @@ class AgenticExecutor:
             )
             if run_context is not None else None
         )
+        looping = max_iterations > 0
+        tool_names = {str(t.get("name", "")) for t in available_tools if t.get("name")}
+        detector = (
+            StuckDetector(self._stuck)
+            if looping and self._stuck is not None and self._stuck.enabled else None
+        )
+        monitor = TokenMonitor(budget.token_budget, threshold=self._pressure_threshold)
+        critic = self._critic if looping and self._critic is not None and self._critic.enabled else None
+        report = LoopReport(critic_active=critic is not None)
+        state = LoopState.PLAN
+        report.trace.append(state.value)
+        replans_by_kind: dict[str, int] = {}
+        plan_revisions = corrective_passes = 0
+        verdict_stuck: StuckVerdict | None = None
+        unresolved: list[tuple[str, Any]] = []
+
+        def go(event: str) -> LoopState:
+            nonlocal state
+            state = transition(state, event)
+            report.trace.append(state.value)
+            return state
+
+        def emit(kind: str, **data: Any) -> LoopEvent:
+            event = LoopEvent(kind, **data)
+            report.events.append(event.as_frame())
+            return event
+
         tokens_used = int(plan.generation_tokens)
         stop_reason: str | None = None
         exhausted: str | None = None
@@ -325,8 +482,41 @@ class AgenticExecutor:
             if recorder is not None:
                 await recorder.start()
                 await recorder.planned(plan, iteration=1)
+
+            # PLAN: the critic's look at the plan before anything runs --------------------------
+            if critic is not None:
+                findings = await critic.plan_findings(
+                    current, available_tools=tool_names, spec_for=self._spec_for
+                )
+                if findings:
+                    report.findings.extend(f.as_dict() for f in findings)
+                    yield emit("critic", stage="plan", findings=[f.as_dict() for f in findings])
+                blocking = [f for f in findings if f.blocking]
+                if (
+                    blocking and plan_revisions < critic.max_plan_revisions
+                    and self._planner.can_replan(current, limit=max_iterations)
+                    and not (budget.token_budget is not None and tokens_used >= budget.token_budget)
+                ):
+                    revised = await self._replan(
+                        current, reason="critic_review", available_tools=available_tools,
+                        max_iterations=max_iterations, feedback=feedback_lines(blocking),
+                    )
+                    if revised is not None:
+                        plan_revisions += 1
+                        go("critic_revise")
+                        tokens_used += int(revised.generation_tokens)
+                        if recorder is not None:
+                            await recorder.planned(
+                                revised, iteration=1, replan_reason="critic_review"
+                            )
+                        current = revised
+                        go("replanned")
+            if state is LoopState.PLAN:
+                go("planned")
+
             while True:
                 iteration += 1
+                before = current
                 succeeded_before = frozenset(
                     s.id.value for s in current.steps if s.status is StepStatus.SUCCEEDED
                 )
@@ -343,30 +533,149 @@ class AgenticExecutor:
                 if outcome is None:
                     stop_reason = "no_outcome"
                     break
+                go("executed")
                 if recorder is not None:
                     await recorder.observed(
                         outcome, iteration=iteration, gate=gate,
                         succeeded_before=succeeded_before,
                     )
-                stop_reason, exhausted = self._evaluate(
-                    outcome, deadline=deadline, max_iterations=max_iterations,
-                    tokens_used=tokens_used, budget=budget,
+
+                # OBSERVE: read what the pass actually showed ---------------------------------
+                observations = observe_plan(outcome.plan) if looping else []
+                unresolved = unresolved_failures(observations)
+                executed = self._executed(before, outcome.plan)
+                verdict_stuck = None
+                if detector is not None:
+                    verdict_stuck = detector.record_pass(
+                        self._call_records(executed, outcome),
+                        new_success=any(s.status is StepStatus.SUCCEEDED for s in executed),
+                        failure_signals=[f"{o.kind}:{o.signature}" for _, o in unresolved],
+                    )
+                stop_kind, surface_kind, escalate_kind, recovery_notes, unknown_kinds = (
+                    self._recovery_signals(outcome, replans_by_kind)
                 )
-                if recorder is not None:
-                    await recorder.evaluated(iteration=iteration, stop_reason=stop_reason)
-                if stop_reason is not None:
+
+                status = monitor.status(
+                    outcome.plan, generation_tokens=tokens_used, iteration=iteration
+                )
+                if status is not None:
+                    report.budget = status.as_dict()
+                    yield emit("budget", **status.as_dict())
+                    if monitor.pressure_due(status):
+                        keep = frozenset(s.id.value for s in executed)
+                        new_plan, new_results, saved = compress_results(
+                            outcome.plan, outcome.results, keep_step_ids=keep
+                        )
+                        if saved:
+                            outcome.plan, outcome.results = new_plan, new_results
+                        pressure = emit(
+                            "context_pressure", percent=status.percent, used=status.used,
+                            budget=status.budget, threshold=self._pressure_threshold,
+                            recommendations=list(RECOMMENDATIONS),
+                            action="compressed_tool_output" if saved else "nothing_to_compress",
+                            characters_saved=saved, iteration=iteration,
+                        )
+                        # Kept on the report too: the kernel acts on it once the loop is done
+                        # (it folds the session's older history into its summary).
+                        report.pressure = pressure.as_frame()
+                        yield pressure
+
+                tests_input = self._test_signals and bool(unresolved)
+                signals = Signals(
+                    succeeded=outcome.succeeded,
+                    past_deadline=self._monotonic() > deadline,
+                    blocked_reason=outcome.blocked_reason,
+                    terminal_blocks=_TERMINAL_BLOCKS,
+                    block_budgets=_BLOCK_BUDGET,
+                    unresolved_tests=tests_input,
+                    repairable=bool(outcome.plan.failed_steps) or self._repairable(outcome.plan),
+                    max_iterations=max_iterations,
+                    stuck=verdict_stuck is not None,
+                    recovery_stop=stop_kind,
+                    recovery_surface=surface_kind,
+                    recovery_escalate=escalate_kind,
+                    tokens_exhausted=(
+                        budget.token_budget is not None and tokens_used >= budget.token_budget
+                    ),
+                    can_replan=self._planner.can_replan(outcome.plan, limit=max_iterations),
+                )
+                verdict = classify(signals)
+                feedback: list[str] = []
+                replan_reason = _replan_reason(outcome)
+                recorded_reason = outcome.blocked_reason or "step_failed"
+
+                if verdict.event == "success":
+                    go("success")  # OBSERVE -> VERIFY
+                    findings = (
+                        await critic.outcome_findings(outcome.plan, observations)
+                        if critic is not None else []
+                    )
+                    if findings:
+                        report.findings.extend(f.as_dict() for f in findings)
+                        yield emit("critic", stage="outcome", findings=[f.as_dict() for f in findings])
+                    blocking = [f for f in findings if f.blocking]
+                    if (
+                        blocking and critic is not None
+                        and corrective_passes < critic.max_corrective_passes
+                        and signals.can_replan and not signals.tokens_exhausted
+                        and self._monotonic() <= deadline
+                    ):
+                        corrective_passes += 1
+                        go("corrective")  # VERIFY -> REPLAN: one more pass, with the critic's words
+                        feedback = feedback_lines(blocking)
+                        replan_reason = "critic_corrective (" + ", ".join(f.code for f in blocking) + ")"
+                        recorded_reason = "critic_corrective"
+                    else:
+                        go("verified")
+                        stop_reason, exhausted = "completed", None
+                        if recorder is not None:
+                            await recorder.evaluated(iteration=iteration, stop_reason=stop_reason)
+                        break
+                elif verdict.event == "replan":
+                    go("replan")
+                    if tests_input and unresolved:
+                        feedback.extend(
+                            f"Step {sid} ran `{o.tool}` and {o.summary}" for sid, o in unresolved
+                        )
+                        if not outcome.plan.failed_steps:
+                            replan_reason = "tests_failed (" + "; ".join(
+                                o.summary for _, o in unresolved
+                            )[:160] + ")"
+                            recorded_reason = "tests_failed"
+                    feedback.extend(recovery_notes)
+                    if critic is not None:
+                        # Rules only (no model call per replan): an unresolved test failure is
+                        # the finding worth putting in front of the planner.
+                        findings = critique_outcome(outcome.plan, observations)
+                        notable = [f for f in findings if f.severity == "error"]
+                        if notable:
+                            report.findings.extend(f.as_dict() for f in notable)
+                            feedback.extend(feedback_lines(notable))
+                            yield emit("critic", stage="outcome", findings=[f.as_dict() for f in notable])
+                    for kind in unknown_kinds:
+                        replans_by_kind[kind] = replans_by_kind.get(kind, 0) + 1
+                else:
+                    go(verdict.event)  # stuck | escalate
+                    stop_reason, exhausted = verdict.stop_reason, verdict.exhausted_budget
+                    if recorder is not None:
+                        await recorder.evaluated(iteration=iteration, stop_reason=stop_reason)
                     break
-                revised = await self._next_plan(
-                    outcome, available_tools=available_tools, max_iterations=max_iterations
+
+                if recorder is not None:
+                    await recorder.evaluated(iteration=iteration, stop_reason=None)
+                revised = await self._replan(
+                    outcome.plan, reason=replan_reason, available_tools=available_tools,
+                    max_iterations=max_iterations, feedback=feedback,
                 )
                 if revised is None:
-                    stop_reason = "replan_failed"
+                    go("replan_failed")
+                    stop_reason, exhausted = "replan_failed", None
                     break
+                go("replanned")
                 tokens_used += int(revised.generation_tokens)
                 if recorder is not None:
                     await recorder.planned(
-                        revised, iteration=iteration + 1,
-                        replan_reason=outcome.blocked_reason or "step_failed",
+                        revised, iteration=iteration + 1, replan_reason=recorded_reason,
                     )
                 current = revised
         except BaseException as exc:
@@ -376,6 +685,22 @@ class AgenticExecutor:
                 except Exception:  # pragma: no cover - recording must never mask the error
                     logger.debug("recording a crashed run failed", exc_info=True)
             raise
+
+        if outcome is not None:
+            report.stop_reason = stop_reason
+            report.observations = [o.as_dict() | {"step_id": sid} for sid, o in observe_plan(outcome.plan)]
+            if verdict_stuck is not None and stop_reason == "stuck":
+                report.stuck = verdict_stuck.as_dict()
+            report.escalation = self._escalation(stop_reason, verdict_stuck, unresolved, outcome)
+            outcome.loop = report
+            if stop_reason == "stuck":
+                yield emit(
+                    "stuck", rule=verdict_stuck.rule if verdict_stuck else None,
+                    detail=verdict_stuck.detail if verdict_stuck else "",
+                    count=verdict_stuck.count if verdict_stuck else 0,
+                    tool=verdict_stuck.tool if verdict_stuck else None,
+                    escalation=report.escalation, iterations=iteration,
+                )
         if recorder is not None:
             await recorder.finish(outcome, stop_reason=stop_reason, exhausted_budget=exhausted)
             if outcome is not None:
@@ -421,14 +746,15 @@ class AgenticExecutor:
         deadline_s: float = 600.0,
         budget: AgentBudget | None = None,
         run_context: AgentRunContext | None = None,
-    ) -> AsyncIterator[StepEvent | ExecutionOutcome]:
+    ) -> AsyncIterator[StepEvent | LoopEvent | ExecutionOutcome]:
         """Stream step progress across every iteration, then yield the final outcome.
 
-        Intermediate outcomes are not yielded -- only :class:`StepEvent`s during each pass and the
-        loop's final :class:`ExecutionOutcome` at the end, matching
-        :meth:`~aura_core.execution.engine.ExecutionEngine.stream`'s own "progress, then the
-        outcome" contract so callers (``AIKernel._iter_execution``) need no special case for the
-        looping path.
+        Intermediate outcomes are not yielded -- only :class:`StepEvent`s during each pass,
+        :class:`LoopEvent`s (``budget``, ``context_pressure``, ``critic``, ``stuck``; ADR-037) when
+        the loop has something to say, and the loop's final :class:`ExecutionOutcome` at the end,
+        matching :meth:`~aura_core.execution.engine.ExecutionEngine.stream`'s own "progress, then
+        the outcome" contract so callers (``AIKernel._iter_execution``) need no special case for
+        the looping path.
         """
         async for item in self._drive(
             plan, streaming=True, context=context, capabilities=capabilities,

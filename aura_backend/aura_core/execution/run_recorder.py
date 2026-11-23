@@ -323,12 +323,16 @@ class RunRecorder:
         """Completion or failure: the terminal status, and the run-level metrics."""
         if outcome is None:
             status = AgentRunStatus.FAILED
-        elif outcome.succeeded:
+        elif outcome.succeeded and stop_reason in (None, "completed"):
+            # Every step ran *and* the loop agreed it was done: with test results as a loop input
+            # a pass whose steps all ran can still end unfinished (tests red, out of attempts).
             status = AgentRunStatus.COMPLETED
         elif outcome.blocked_reason == "needs_confirmation":
             status = AgentRunStatus.AWAITING_APPROVAL
         elif exhausted_budget is not None:
             status = AgentRunStatus.BUDGET_EXHAUSTED
+        elif stop_reason == "stuck":
+            status = AgentRunStatus.STUCK
         elif self.run.plan_steps_succeeded > 0:
             status = AgentRunStatus.PARTIAL
         else:

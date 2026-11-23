@@ -172,7 +172,7 @@ _ENGINEER_OPEN_TOOLS = frozenset({
 })
 
 
-def build_default_agent_registry() -> AgentRegistry:
+def build_default_agent_registry(*, engineer_token_budget: int | None = None) -> AgentRegistry:
     """The seven personas :data:`AGENT_PROMPT_IDS` used to define, now with real grants.
 
     Prompt template ids are read from ``AGENT_PROMPT_IDS`` rather than repeated here, so which
@@ -181,6 +181,10 @@ def build_default_agent_registry() -> AgentRegistry:
     persona's prompt already claims to do -- narrowing later, as more tools exist, is the expected
     direction; broadening a persona's grant is a decision to make deliberately, not a default to
     fall into.
+
+    ``engineer_token_budget`` (``AURA_ENGINEER_TOKEN_BUDGET``, ADR-037) gives the Engineer a run
+    token budget; ``None`` or ``0`` leaves it unset, which is what a caller that passes nothing
+    (tests, ``evaluation/agent_runs.py``) has always got.
     """
     return AgentRegistry(
         [
@@ -301,6 +305,7 @@ def build_default_agent_registry() -> AgentRegistry:
                 # evidence says; token and time stay unset (the settings deadline governs time).
                 tool_budget=216,
                 risk_budget=864,
+                token_budget=engineer_token_budget or None,
                 memory_scope="engineer",
             ),
         ]
