@@ -384,6 +384,8 @@ class TestKernelWiring:
             # which this default container configures (`test_media_tools` registers them for real).
             "web_search", "ocr_image", "inspect_spreadsheet", "parse_document", "transcribe_audio",
             "analyze_image_requirements",
+            # `engineer_agent`-gated like the other sandbox tools (registered in build_sandbox_tools).
+            "lint_code", "check_format",
         }
         # The sandbox/git tools (minus `clone_repository`, which additionally needs a GitHub
         # resolver this default container does not configure) are unconditionally *registered*
