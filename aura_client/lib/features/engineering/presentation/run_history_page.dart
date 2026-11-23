@@ -308,7 +308,7 @@ class _TimelineBody extends StatelessWidget {
     final fmt = DateFormat.Hms();
 
     Widget metric(String label, String value) => Padding(
-          padding: const EdgeInsets.only(right: AuraSpacing.lg),
+          padding: const EdgeInsetsDirectional.only(end: AuraSpacing.lg),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
