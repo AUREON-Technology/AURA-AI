@@ -82,6 +82,7 @@ from .prompts import PIN_SYNC_INTERVAL_S, build_default_registry
 from .reasoning.engine import ReasoningEngine
 from .safety.pipeline import SafetyPipeline
 from .execution.cancellation import RunCancellation
+from .execution.runtime_presence import RuntimePresence
 from .security.owner_ref import owner_ref_maker
 from .tools.builtin import default_tools
 from .tools.policy import ToolPolicy
@@ -185,6 +186,8 @@ class Container:
         # Cancel-by-id for live agent runs: a request is a cache key every worker polls for the
         # runs it is executing (``execution/cancellation.py``).
         self.run_cancellation = RunCancellation(self.cache_backend)
+        # Which paired computer is connected, visible to every worker (best-effort; see the module).
+        self.runtime_presence = RuntimePresence(self.cache_backend)
         # GAP-024: the same store, under the name of the port it now fully implements
         # (`AgentRunStore` extends `EngineerRunStore`) -- one adapter, one pool, both ledgers.
         self.agent_runs = self.engineer_runs

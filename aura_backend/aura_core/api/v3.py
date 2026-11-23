@@ -162,7 +162,7 @@ class Principal:
 
     __slots__ = (
         "user_id", "email", "role", "capabilities", "service_key", "workspace", "client_platform",
-        "email_verified",
+        "email_verified", "device_id",
     )
 
     def __init__(
@@ -176,6 +176,7 @@ class Principal:
         workspace: WorkspaceContext | None = None,
         client_platform: str | None = None,
         email_verified: bool = False,
+        device_id: str | None = None,
     ) -> None:
         self.user_id = user_id
         self.email = email
@@ -194,6 +195,10 @@ class Principal:
         # WP8: ``"desktop"`` only when the access token was issued to the desktop app (a signed
         # claim the authenticator copies); ``None`` for phone, web and every other caller.
         self.client_platform = client_platform
+        # The paired device the access token was issued to (a signed claim the authenticator
+        # copies), or ``None`` for a token that names none. Lets the host-agent socket say which
+        # computer is connected (``execution/runtime_presence.py``).
+        self.device_id = device_id
 
     @property
     def origin(self) -> str:
@@ -2006,6 +2011,37 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             "connected": True,
             "remote_control": bool(payload.get("remote_control", False)),
             "roots": roots,
+        })
+
+    @router.get("/runtime/status")
+    async def runtime_status(caller: Principal = Depends(principal)) -> JSONResponse:
+        """Whether the caller's computer (``aura_hostd``) is connected right now, and which one.
+
+        ``connected`` is the registry's own answer -- a live session, on this worker or another --
+        so it is true exactly when a tool call could reach the computer. ``device_id`` and
+        ``connected_since`` come from a best-effort shared record (``execution/runtime_presence.py``)
+        and are ``null`` when it is missing, which does **not** mean disconnected. Match
+        ``device_id`` against ``GET /api/v2/auth/desktop/devices`` for the name. For the folders the
+        computer allows and whether it takes control from other devices, ``GET /host/folders``.
+
+        Nothing here is a heartbeat reading: the daemon's keep-alive is a WebSocket ping the server
+        library answers, so there is no "last seen" to report.
+        """
+        if not await engineer_granted(caller):
+            raise HTTPException(
+                status_code=403,
+                detail=AuthorizationError("the Engineer is not available to this account").to_dict(),
+            )
+        registry = getattr(container, "host_agent_registry", None)
+        session = await registry.resolve(caller.user_id) if registry is not None else None
+        if session is None:
+            return JSONResponse(content={"connected": False, "device_id": None, "connected_since": None})
+        presence = getattr(container, "runtime_presence", None)
+        known = await presence.get(caller.user_id.value) if presence is not None else None
+        return JSONResponse(content={
+            "connected": True,
+            "device_id": known["device_id"] if known else None,
+            "connected_since": known["connected_since"] if known else None,
         })
 
     class GitInitRequest(BaseModel):
