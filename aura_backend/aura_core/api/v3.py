@@ -2658,6 +2658,13 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         JSONResponse=JSONResponse, enforce_rate_limit=enforce_rate_limit, Request=Request,
     )
 
+    from .export import register_export_ops
+
+    register_export_ops(
+        router, container, principal=principal, idempotent=idempotent, Depends=Depends,
+        JSONResponse=JSONResponse, enforce_rate_limit=enforce_rate_limit, Request=Request,
+    )
+
     from .notifications import register_notification_ops
 
     register_notification_ops(

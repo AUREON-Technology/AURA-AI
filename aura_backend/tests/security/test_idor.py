@@ -98,6 +98,8 @@ COVERED = {
         "TestKnowledgeGraph::test_bob_cannot_read_alices_entity_by_key",
     ("DELETE", "/api/v3/memory/{memory_id}"):
         "TestMemory::test_bob_cannot_delete_alices_memory",
+    ("GET", "/api/v3/sessions/{session_id}/export"):
+        "TestSessionExport::test_bob_cannot_export_alices_conversation_or_find_it_in_his_bundle",
     ("DELETE", "/api/v3/sessions/{session_id}"):
         "TestConversations::test_bob_cannot_delete_alices_conversation_by_session_id",
     ("GET", "/api/v3/turns/{turn_id}/usage"):
@@ -731,6 +733,31 @@ class TestConversations:
         assert response.status_code == 200  # idempotent: Bob's (empty) session is cleared
         history, _ = asyncio.run(container.episodic.history(session, UserId(ALICE)))
         assert any("14th" in m.content for m in history), "Bob's delete erased Alice's conversation"
+
+
+class TestSessionExport:
+    """``GET /api/v3/sessions/{id}/export`` and ``/me/export``: a session id is not a capability."""
+
+    def test_bob_cannot_export_alices_conversation_or_find_it_in_his_bundle(self, container) -> None:
+        from fastapi.testclient import TestClient
+
+        from aura_core.domain.identifiers import SessionId
+
+        session = SessionId("shared-guessable-id")
+        asyncio.run(container.episodic.append(
+            session, UserId(ALICE), user_message="My flight is on the 14th.", assistant_message="Noted.",
+        ))
+        with TestClient(_app(container)) as client:
+            as_bob = client.get(f"/api/v3/sessions/{session.value}/export", headers=AUTH_B)
+            as_bob_md = client.get(f"/api/v3/sessions/{session.value}/export?format=markdown", headers=AUTH_B)
+            nothing = client.get("/api/v3/sessions/no-such-session/export", headers=AUTH_B)
+            bundle = client.get("/api/v3/me/export", headers=AUTH_B)
+            as_alice = client.get(f"/api/v3/sessions/{session.value}/export", headers=AUTH_A)
+
+        assert as_bob.status_code == as_bob_md.status_code == nothing.status_code == 404
+        assert "14th" not in as_bob.text + as_bob_md.text + bundle.text, "Alice's words reached Bob"
+        assert (as_bob.json()["error"], as_bob.json()["message"]) == (nothing.json()["error"], nothing.json()["message"])
+        assert as_alice.status_code == 200 and "14th" in as_alice.text
 
 
 class TestTurnUsage:

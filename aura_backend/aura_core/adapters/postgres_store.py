@@ -402,7 +402,7 @@ class PostgresDocumentStore:
                         """
                         SELECT * FROM aura_documents
                         WHERE status = 'active' AND owner_id IS NULL
-                        ORDER BY updated_at DESC LIMIT $1 OFFSET $2
+                        ORDER BY updated_at DESC, id LIMIT $1 OFFSET $2
                         """,
                         limit,
                         offset,
@@ -412,7 +412,7 @@ class PostgresDocumentStore:
                         """
                         SELECT * FROM aura_documents
                         WHERE status = 'active' AND owner_id = $1
-                        ORDER BY updated_at DESC LIMIT $2 OFFSET $3
+                        ORDER BY updated_at DESC, id LIMIT $2 OFFSET $3
                         """,
                         owner_id.value,
                         limit,
@@ -1014,7 +1014,7 @@ class PostgresMemoryStore:
         params.extend([limit, offset])
         sql = (
             f"SELECT * FROM aura_memories WHERE {' AND '.join(clauses)} "
-            f"ORDER BY created_at DESC LIMIT ${len(params) - 1} OFFSET ${len(params)}"
+            f"ORDER BY created_at DESC, id LIMIT ${len(params) - 1} OFFSET ${len(params)}"
         )
         pool = await self._pool._get_pool()
         try:
