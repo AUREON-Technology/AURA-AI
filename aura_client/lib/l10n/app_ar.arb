@@ -1461,5 +1461,7 @@
   "desktopSignInServerUnreachable": "مقدرناش نوصل لسيرفر AURA. اتأكد من الاتصال وجرّب تاني.",
   "desktopSignInServerFailed": "سيرفر AURA مقدرش يوصّل تسجيل الدخول ده لتطبيق الكمبيوتر (HTTP {status}).",
   "desktopSignInNoIdentityToken": "خدمة تسجيل الدخول مرجّعتش identity token للحساب ده. جرّب تاني.",
-  "desktopSignInReturnFailed": "مقدرناش نرجع لتطبيق الكمبيوتر. اتأكد إنه لسه مستنيك، وبعدين ابدأ تاني منه."
+  "desktopSignInReturnFailed": "مقدرناش نرجع لتطبيق الكمبيوتر. اتأكد إنه لسه مستنيك، وبعدين ابدأ تاني منه.",
+  "chatToolAsksApproval": "بيطلب موافقتك قبل ما يتنفّذ",
+  "chatToolChangesThings": "الإجراء ده بيغيّر حاجات برّه الشات."
 }

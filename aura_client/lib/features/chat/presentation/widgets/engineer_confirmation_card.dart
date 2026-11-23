@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/features/chat/data/chat_repository.dart';
+import 'package:aura_client/features/chat/data/tool_catalog_repository.dart';
 import 'package:aura_client/features/chat/data/turn_meta.dart';
 import 'package:aura_client/features/chat/presentation/chat_view_model.dart';
 import 'package:aura_client/l10n/l10n.dart';
@@ -164,15 +165,16 @@ class _PendingCallRow extends StatelessWidget {
   }
 }
 
-/// Dispatches to a per-tool sub-card by `call.tool`, falling back to a generic
-/// name+arguments table for anything unrecognized.
-class _PendingCallSummary extends StatelessWidget {
+/// Dispatches to a per-tool sub-card by `call.tool`, falling back to a generic card built from
+/// `GET /api/v3/tools` (the tool's own description and argument descriptions) for anything the
+/// client has no purpose-built card for.
+class _PendingCallSummary extends ConsumerWidget {
   const _PendingCallSummary({required this.call});
 
   final PendingToolCall call;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     switch (call.tool) {
       case 'github_create_draft_pull_request':
         return _DraftPrSummary(call: call);
@@ -204,7 +206,10 @@ class _PendingCallSummary extends StatelessWidget {
           ],
         );
       default:
-        return _GenericToolSummary(call: call);
+        return _GenericToolSummary(
+          call: call,
+          info: (ref.watch(toolCatalogProvider).value ?? ToolCatalog.empty)[call.tool],
+        );
     }
   }
 }
@@ -413,24 +418,48 @@ class _GitCommitSummary extends StatelessWidget {
 }
 
 class _GenericToolSummary extends StatelessWidget {
-  const _GenericToolSummary({required this.call});
+  const _GenericToolSummary({required this.call, this.info});
 
   final PendingToolCall call;
 
+  /// What the server says this tool is. `null` (catalog not fetched, or the tool is not listed)
+  /// renders the plain name-and-arguments table this card always was.
+  final ToolInfo? info;
+
   @override
   Widget build(BuildContext context) {
+    final info = this.info;
+    final palette = AuraPalette.of(context);
+    final textTheme = Theme.of(context).textTheme;
     return _SummaryShell(
-      icon: Icons.build_outlined,
-      title: call.tool,
+      icon: info == null ? Icons.build_outlined : iconForToolCategory(info.category),
+      title: info == null ? call.tool : prettyToolName(call.tool),
       children: [
+        if (info != null && info.summary.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(info.summary, style: textTheme.bodySmall?.copyWith(color: palette.textSecondary)),
+          ),
         for (final entry in call.arguments.entries)
           Padding(
             padding: const EdgeInsets.only(top: 2),
+            child: Tooltip(
+              // The schema's own description of this argument, when the tool declares one.
+              message: info?.parameterDescriptions[entry.key] ?? '',
+              child: Text(
+                '${entry.key}: ${entry.value}',
+                style: textTheme.bodySmall,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+        if (info != null && info.sideEffecting)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
             child: Text(
-              '${entry.key}: ${entry.value}',
-              style: Theme.of(context).textTheme.bodySmall,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+              context.l10n.chatToolChangesThings,
+              style: textTheme.labelSmall?.copyWith(color: palette.warning),
             ),
           ),
       ],

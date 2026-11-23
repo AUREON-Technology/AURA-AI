@@ -5299,4 +5299,11 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get desktopSignInReturnFailed =>
       'Couldn\'t go back to the desktop app. Make sure it\'s still waiting for you, then start again from it.';
+
+  @override
+  String get chatToolAsksApproval => 'Asks for your approval before it runs';
+
+  @override
+  String get chatToolChangesThings =>
+      'This action changes things outside the chat.';
 }

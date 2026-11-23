@@ -7078,5 +7078,13 @@
   "desktopSignInReturnFailed": "Couldn't go back to the desktop app. Make sure it's still waiting for you, then start again from it.",
   "@desktopSignInReturnFailed": {
     "description": "Web desktop sign-in page: the browser would not navigate back to the desktop app's local address"
+  },
+  "chatToolAsksApproval": "Asks for your approval before it runs",
+  "@chatToolAsksApproval": {
+    "description": "Tool chip tooltip: the server holds a call to this tool for the user's approval"
+  },
+  "chatToolChangesThings": "This action changes things outside the chat.",
+  "@chatToolChangesThings": {
+    "description": "Confirmation card: caption on a pending tool call that has side effects"
   }
 }

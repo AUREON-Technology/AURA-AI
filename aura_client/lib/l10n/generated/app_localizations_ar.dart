@@ -5323,4 +5323,10 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get desktopSignInReturnFailed =>
       'مقدرناش نرجع لتطبيق الكمبيوتر. اتأكد إنه لسه مستنيك، وبعدين ابدأ تاني منه.';
+
+  @override
+  String get chatToolAsksApproval => 'بيطلب موافقتك قبل ما يتنفّذ';
+
+  @override
+  String get chatToolChangesThings => 'الإجراء ده بيغيّر حاجات برّه الشات.';
 }

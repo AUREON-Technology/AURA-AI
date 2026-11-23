@@ -24,6 +24,7 @@ import 'persona_badge.dart';
 import 'incomplete_plan_notice.dart';
 import 'step_log_panel.dart';
 import 'streaming_message_skeleton.dart';
+import '../../data/tool_catalog_repository.dart';
 import 'tool_call_chip.dart';
 import 'turn_status_row.dart';
 import 'user_facing_citations.dart';
@@ -337,7 +338,10 @@ class MessageBubble extends ConsumerWidget {
                       ),
                     if (toolCalls.isNotEmpty) ...[
                       const SizedBox(height: AuraSpacing.sm),
-                      ToolCallChips(toolCalls: toolCalls),
+                      ToolCallChips(
+                        toolCalls: toolCalls,
+                        catalog: ref.watch(toolCatalogProvider).value ?? ToolCatalog.empty,
+                      ),
                     ],
                     if (turnMeta.steps.isNotEmpty) ...[
                       const SizedBox(height: AuraSpacing.sm),

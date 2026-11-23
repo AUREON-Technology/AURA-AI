@@ -8873,6 +8873,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Couldn\'t go back to the desktop app. Make sure it\'s still waiting for you, then start again from it.'**
   String get desktopSignInReturnFailed;
+
+  /// Tool chip tooltip: the server holds a call to this tool for the user's approval
+  ///
+  /// In en, this message translates to:
+  /// **'Asks for your approval before it runs'**
+  String get chatToolAsksApproval;
+
+  /// Confirmation card: caption on a pending tool call that has side effects
+  ///
+  /// In en, this message translates to:
+  /// **'This action changes things outside the chat.'**
+  String get chatToolChangesThings;
 }
 
 class _AppLocalizationsDelegate
