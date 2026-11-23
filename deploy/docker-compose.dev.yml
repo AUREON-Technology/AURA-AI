@@ -490,6 +490,19 @@ services:
       AURA_TOOLS_HTTP_ALLOWED_HOSTS: ${AURA_TOOLS_HTTP_ALLOWED_HOSTS:-}
       AURA_OPEN_EXEC_TOOLS_ENABLED: ${AURA_OPEN_EXEC_TOOLS_ENABLED:-false}
       AURA_DESKTOP_OPS_TOOLS_ENABLED: ${AURA_DESKTOP_OPS_TOOLS_ENABLED:-true}
+      # ADR-039. All off or empty by default: nothing here changes a turn until an operator sets it.
+      # A JSON/YAML file of tool-call rules (deny / require confirmation by argument pattern); the
+      # path is *inside* the container, so mount the file there. Validated at start-up.
+      AURA_TOOL_POLICY_FILE: ${AURA_TOOL_POLICY_FILE:-}
+      # Whether a user may choose the `autonomous` review profile, and the profile (strict|standard)
+      # a user who chose none gets.
+      AURA_AUTONOMY_ALLOW_AUTONOMOUS: ${AURA_AUTONOMY_ALLOW_AUTONOMOUS:-false}
+      AURA_AUTONOMY_DEFAULT: ${AURA_AUTONOMY_DEFAULT:-standard}
+      # Redact credential-shaped text from what the model sees (context: documents, memories,
+      # loaded history; input: the user's own message) and from what session history stores.
+      AURA_SAFETY_REDACT_CONTEXT_SECRETS: ${AURA_SAFETY_REDACT_CONTEXT_SECRETS:-false}
+      AURA_SAFETY_REDACT_INPUT_SECRETS: ${AURA_SAFETY_REDACT_INPUT_SECRETS:-false}
+      AURA_SAFETY_REDACT_HISTORY_SECRETS: ${AURA_SAFETY_REDACT_HISTORY_SECRETS:-false}
       # Track AP connectors (ADR-021), off by default. Credentials are vaulted under the
       # secrets_encryption_key mounted above; without it a credentialed connector is refused.
       AURA_ADAPTATION_ENABLED: ${AURA_ADAPTATION_ENABLED:-false}

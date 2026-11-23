@@ -104,6 +104,11 @@ Environment variables (see `aura_core/config/settings.py`):
 - `AURA_TOOLS_FILES_ROOT` / `AURA_TOOLS_HTTP_ALLOWED_HOSTS` — switch on the read-only `list_files`/`read_file` (confined to that directory) and the host-allowlisted `fetch_url`; both off while empty
 - `AURA_OPEN_EXEC_TOOLS_ENABLED` — `generate_and_run_tests` / `analyze_test_quality`, which run pytest in a child of the gateway; `engineer_agent` + confirmation, no container (default: false; ADR-036)
 - `AURA_DESKTOP_OPS_TOOLS_ENABLED` — `docker_build` / `docker_compose` / `profile_python` on a paired desktop only (default: true; ADR-036)
+- `AURA_TOOL_POLICY_FILE` — JSON/YAML file of declarative tool-call rules (deny / require confirmation by tool name and argument pattern, scoped by persona and sensitivity); validated at start-up, can only tighten the policy (default: none; ADR-039)
+- `AURA_AUTONOMY_ALLOW_AUTONOMOUS` / `AURA_AUTONOMY_DEFAULT` — whether users may pick the `autonomous` review profile, and the default (`strict`|`standard`) for users who picked none; the profile is read and set through `GET`/`PUT /api/v3/engineering/policy` (default: off / `standard`; ADR-039)
+- `AURA_SAFETY_REDACT_CONTEXT_SECRETS` / `AURA_SAFETY_REDACT_INPUT_SECRETS` / `AURA_SAFETY_REDACT_HISTORY_SECRETS` — redact credential-shaped text from documents, memories and loaded history; from the user's own message; and from persisted session history (default: all off; ADR-039)
+- `AURA_SANDBOX_ALLOWED_EGRESS_HOSTS` — extra bare host names the workspace proxy may reach, added to `deploy/sandbox/filter` by `deploy/scripts/render-sandbox-filter.sh`; wildcards, URLs, ports and IP addresses are refused (default: none; ADR-039)
+- `POST /api/v3/agents/stop-all` — the kill switch: cancels the caller's in-flight turns, closes their paired-desktop connection, and with `{"revoke_devices": true}` revokes their paired daemons (ADR-039)
 - `AURA_ALLOW_REMOTE_INFERENCE` — gate remote inference (default: false)
 - `AURA_LEARNING_REFRESH_CRON` — knowledge refresh schedule (default: `0 2 * * *`)
 - `OLLAMA_NUM_PARALLEL` — model concurrency (default: 1)
