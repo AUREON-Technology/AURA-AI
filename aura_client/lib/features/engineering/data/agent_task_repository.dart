@@ -86,8 +86,8 @@ class AgentTaskRepository {
       idempotencyKey: clientRequestId,
       body: {
         'goal': goal,
-        if (persona != null) 'persona': persona,
-        if (priority != null) 'priority': priority,
+        'persona': ?persona,
+        'priority': ?priority,
         'client_request_id': clientRequestId,
       },
     );

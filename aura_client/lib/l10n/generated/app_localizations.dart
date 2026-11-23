@@ -8885,6 +8885,438 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This action changes things outside the chat.'**
   String get chatToolChangesThings;
+
+  /// Engineer history: app bar button to the agent tasks screen
+  ///
+  /// In en, this message translates to:
+  /// **'Agent tasks'**
+  String get engineeringTasksTooltip;
+
+  /// Engineer history: app bar button to run search
+  ///
+  /// In en, this message translates to:
+  /// **'Search runs'**
+  String get engineeringRunSearchTooltip;
+
+  /// Engineer history: app bar button to the usage screen
+  ///
+  /// In en, this message translates to:
+  /// **'Usage and cost'**
+  String get engineeringUsageTooltip;
+
+  /// Agent tasks screen title
+  ///
+  /// In en, this message translates to:
+  /// **'Agent tasks'**
+  String get agentTasksTitle;
+
+  /// Agent tasks: goal field hint
+  ///
+  /// In en, this message translates to:
+  /// **'Describe the task for the agent'**
+  String get agentTasksGoalHint;
+
+  /// Agent tasks: send button
+  ///
+  /// In en, this message translates to:
+  /// **'Send task'**
+  String get agentTasksSend;
+
+  /// Agent tasks: label on a queued submission not yet accepted
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting to send'**
+  String get agentTasksWaiting;
+
+  /// Agent tasks: label on a submission whose request is in flight
+  ///
+  /// In en, this message translates to:
+  /// **'Sending…'**
+  String get agentTasksSending;
+
+  /// Agent tasks: label on a submission the server refused for good
+  ///
+  /// In en, this message translates to:
+  /// **'Not sent'**
+  String get agentTasksNotSent;
+
+  /// Agent tasks: a waiting submission that has failed before
+  ///
+  /// In en, this message translates to:
+  /// **'Attempt {count} failed. Will retry on its own.'**
+  String agentTasksRetryingIn(int count);
+
+  /// Agent tasks: snackbar after a submission could not be sent yet
+  ///
+  /// In en, this message translates to:
+  /// **'Saved. It will be sent when you are back online.'**
+  String get agentTasksQueuedOffline;
+
+  /// Agent tasks: snackbar after the server accepted a submission
+  ///
+  /// In en, this message translates to:
+  /// **'Task sent.'**
+  String get agentTasksSentSnack;
+
+  /// Agent tasks: snackbar when the server recognised a replayed submission
+  ///
+  /// In en, this message translates to:
+  /// **'That task had already been received. Nothing was run twice.'**
+  String get agentTasksAlreadySentSnack;
+
+  /// Agent tasks: snackbar after a submission was refused for good
+  ///
+  /// In en, this message translates to:
+  /// **'The server refused this task. See the reason on the list.'**
+  String get agentTasksNotSentSnack;
+
+  /// Agent tasks: snackbar when the local queue is full
+  ///
+  /// In en, this message translates to:
+  /// **'Too many unsent tasks. Wait for some to be sent or dismiss them.'**
+  String get agentTasksQueueFull;
+
+  /// Agent tasks: button to replay the queue now
+  ///
+  /// In en, this message translates to:
+  /// **'Retry now'**
+  String get agentTasksRetryNow;
+
+  /// Agent tasks: button to remove a queued submission
+  ///
+  /// In en, this message translates to:
+  /// **'Dismiss'**
+  String get agentTasksDismiss;
+
+  /// Agent tasks: button on a refused submission
+  ///
+  /// In en, this message translates to:
+  /// **'Send again as a new task'**
+  String get agentTasksSendAgain;
+
+  /// Agent tasks: header of the list the server holds
+  ///
+  /// In en, this message translates to:
+  /// **'Recent tasks'**
+  String get agentTasksSentTitle;
+
+  /// Agent tasks: empty state title
+  ///
+  /// In en, this message translates to:
+  /// **'No tasks yet'**
+  String get agentTasksNoneYet;
+
+  /// Agent tasks: empty state message
+  ///
+  /// In en, this message translates to:
+  /// **'Tasks you send show up here with their status.'**
+  String get agentTasksNoneYetMessage;
+
+  /// Agent tasks: a 409 idempotency_key_reused refusal
+  ///
+  /// In en, this message translates to:
+  /// **'This request was already used with different contents, so it was not sent.'**
+  String get agentTasksConflict;
+
+  /// Agent task status
+  ///
+  /// In en, this message translates to:
+  /// **'Queued'**
+  String get agentTaskStatusQueued;
+
+  /// Agent task status
+  ///
+  /// In en, this message translates to:
+  /// **'Running'**
+  String get agentTaskStatusRunning;
+
+  /// Agent task status
+  ///
+  /// In en, this message translates to:
+  /// **'Needs your approval'**
+  String get agentTaskStatusAwaitingApproval;
+
+  /// Agent task status
+  ///
+  /// In en, this message translates to:
+  /// **'Done'**
+  String get agentTaskStatusSucceeded;
+
+  /// Agent task status
+  ///
+  /// In en, this message translates to:
+  /// **'Failed'**
+  String get agentTaskStatusFailed;
+
+  /// Agent task status
+  ///
+  /// In en, this message translates to:
+  /// **'Cancelled'**
+  String get agentTaskStatusCancelled;
+
+  /// Run search screen title
+  ///
+  /// In en, this message translates to:
+  /// **'Run history'**
+  String get runSearchTitle;
+
+  /// Run search: field hint
+  ///
+  /// In en, this message translates to:
+  /// **'Search by agent, status or tool'**
+  String get runSearchHint;
+
+  /// Run search: button
+  ///
+  /// In en, this message translates to:
+  /// **'Search'**
+  String get runSearchButton;
+
+  /// Run search: result count
+  ///
+  /// In en, this message translates to:
+  /// **'{count} runs'**
+  String runSearchResults(int count);
+
+  /// Run search: empty state title
+  ///
+  /// In en, this message translates to:
+  /// **'No runs match'**
+  String get runSearchEmpty;
+
+  /// Run search: empty state message
+  ///
+  /// In en, this message translates to:
+  /// **'Try a different word, or clear the search to see the newest runs.'**
+  String get runSearchEmptyMessage;
+
+  /// Agent run status
+  ///
+  /// In en, this message translates to:
+  /// **'Failed'**
+  String get runStatusFailed;
+
+  /// Agent run status
+  ///
+  /// In en, this message translates to:
+  /// **'Completed'**
+  String get runStatusCompleted;
+
+  /// Agent run status
+  ///
+  /// In en, this message translates to:
+  /// **'Partly done'**
+  String get runStatusPartial;
+
+  /// Agent run status
+  ///
+  /// In en, this message translates to:
+  /// **'Running'**
+  String get runStatusRunning;
+
+  /// Agent run status
+  ///
+  /// In en, this message translates to:
+  /// **'Needs approval'**
+  String get runStatusAwaitingApproval;
+
+  /// Agent run status
+  ///
+  /// In en, this message translates to:
+  /// **'Stopped at its limit'**
+  String get runStatusBudgetExhausted;
+
+  /// Run tile: counts
+  ///
+  /// In en, this message translates to:
+  /// **'{steps} plan steps, {tools} tool calls'**
+  String runSummaryLine(int steps, int tools);
+
+  /// Run timeline sheet title
+  ///
+  /// In en, this message translates to:
+  /// **'Run timeline'**
+  String get runTimelineTitle;
+
+  /// Run timeline: empty
+  ///
+  /// In en, this message translates to:
+  /// **'No steps were recorded for this run.'**
+  String get runTimelineNoSteps;
+
+  /// Run timeline: iteration heading
+  ///
+  /// In en, this message translates to:
+  /// **'Pass {n}'**
+  String runTimelineIteration(int n);
+
+  /// Run timeline: step failed
+  ///
+  /// In en, this message translates to:
+  /// **'Failed'**
+  String get runTimelineStepFailed;
+
+  /// Run detail metric label
+  ///
+  /// In en, this message translates to:
+  /// **'Elapsed'**
+  String get runMetricElapsed;
+
+  /// Run detail metric label
+  ///
+  /// In en, this message translates to:
+  /// **'Tokens'**
+  String get runMetricTokens;
+
+  /// Run detail metric label
+  ///
+  /// In en, this message translates to:
+  /// **'Tool calls'**
+  String get runMetricToolCalls;
+
+  /// Run detail metric label
+  ///
+  /// In en, this message translates to:
+  /// **'Passes'**
+  String get runMetricIterations;
+
+  /// Duration in seconds
+  ///
+  /// In en, this message translates to:
+  /// **'{seconds} s'**
+  String runSeconds(String seconds);
+
+  /// Usage screen title
+  ///
+  /// In en, this message translates to:
+  /// **'Usage and cost'**
+  String get usageTitle;
+
+  /// Usage period switch
+  ///
+  /// In en, this message translates to:
+  /// **'24 hours'**
+  String get usagePeriodDay;
+
+  /// Usage period switch
+  ///
+  /// In en, this message translates to:
+  /// **'7 days'**
+  String get usagePeriodWeek;
+
+  /// Usage period switch
+  ///
+  /// In en, this message translates to:
+  /// **'30 days'**
+  String get usagePeriodMonth;
+
+  /// Usage group-by switch
+  ///
+  /// In en, this message translates to:
+  /// **'By day'**
+  String get usageGroupDay;
+
+  /// Usage group-by switch
+  ///
+  /// In en, this message translates to:
+  /// **'By agent'**
+  String get usageGroupAgent;
+
+  /// Usage group-by switch
+  ///
+  /// In en, this message translates to:
+  /// **'By task'**
+  String get usageGroupTask;
+
+  /// Usage total label
+  ///
+  /// In en, this message translates to:
+  /// **'Turns'**
+  String get usageTotalTurns;
+
+  /// Usage total label
+  ///
+  /// In en, this message translates to:
+  /// **'Tokens in'**
+  String get usageTotalTokensIn;
+
+  /// Usage total label
+  ///
+  /// In en, this message translates to:
+  /// **'Tokens out'**
+  String get usageTotalTokensOut;
+
+  /// Usage total label
+  ///
+  /// In en, this message translates to:
+  /// **'Cost'**
+  String get usageTotalCost;
+
+  /// Usage: failed turns in a row
+  ///
+  /// In en, this message translates to:
+  /// **'{count} failed'**
+  String usageFailedTurns(int count);
+
+  /// Usage: a cost in US dollars
+  ///
+  /// In en, this message translates to:
+  /// **'{amount} USD'**
+  String usageCostValue(String amount);
+
+  /// Usage: truncated window note
+  ///
+  /// In en, this message translates to:
+  /// **'Totals may be incomplete: the server keeps only the most recent turns.'**
+  String get usageTruncated;
+
+  /// Usage: recording is off
+  ///
+  /// In en, this message translates to:
+  /// **'Usage is not recorded on this server.'**
+  String get usageDisabled;
+
+  /// Usage: empty
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing recorded in this period'**
+  String get usageNoData;
+
+  /// Usage: group label for turns outside a task
+  ///
+  /// In en, this message translates to:
+  /// **'No task'**
+  String get usageNoTask;
+
+  /// Usage: bars section header
+  ///
+  /// In en, this message translates to:
+  /// **'Breakdown'**
+  String get usageBreakdown;
+
+  /// Usage: recent turns header
+  ///
+  /// In en, this message translates to:
+  /// **'Recent turns'**
+  String get usageRecentTurns;
+
+  /// Usage: one turn line
+  ///
+  /// In en, this message translates to:
+  /// **'{tokens} tokens, {seconds} s'**
+  String usageTurnLine(int tokens, String seconds);
+
+  /// Usage: turn failed label
+  ///
+  /// In en, this message translates to:
+  /// **'Failed'**
+  String get usageTurnFailed;
+
+  /// Usage: turn answered from cache
+  ///
+  /// In en, this message translates to:
+  /// **'Cached'**
+  String get usageTurnCached;
 }
 
 class _AppLocalizationsDelegate

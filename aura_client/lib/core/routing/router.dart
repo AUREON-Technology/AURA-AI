@@ -17,7 +17,10 @@ import '../../features/chat/presentation/widgets/capture_sheet.dart';
 import '../../features/command_palette/command_palette.dart';
 import '../platform/browser_address.dart';
 import '../sync/sync_alert_banner.dart';
+import '../../features/engineering/presentation/agent_tasks_page.dart';
 import '../../features/engineering/presentation/engineer_history_page.dart';
+import '../../features/engineering/presentation/run_history_page.dart';
+import '../../features/engineering/presentation/usage_page.dart';
 import '../../features/engineering/presentation/github_connection_page.dart';
 import '../../features/engineering/presentation/host_daemon_page.dart';
 import '../../features/engineering/presentation/host_file_browser_page.dart';
@@ -93,6 +96,9 @@ class ShellLayout extends ConsumerWidget {
   /// Engineer's pages, which the Engineer tab opens.
   static bool _isEngineerPath(String path) =>
       path.startsWith('/engineer-history') ||
+      path.startsWith('/engineer-tasks') ||
+      path.startsWith('/engineer-runs') ||
+      path.startsWith('/usage') ||
       path.startsWith('/github-connect') ||
       path.startsWith('/engineer-daemon');
 
@@ -676,6 +682,18 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: '/engineer-history',
             builder: (context, state) => const EngineerHistoryPage(),
+          ),
+          GoRoute(
+            path: '/engineer-tasks',
+            builder: (context, state) => const AgentTasksPage(),
+          ),
+          GoRoute(
+            path: '/engineer-runs',
+            builder: (context, state) => const RunHistoryPage(),
+          ),
+          GoRoute(
+            path: '/usage',
+            builder: (context, state) => const UsagePage(),
           ),
           GoRoute(
             path: '/github-connect',

@@ -39,6 +39,24 @@ class EngineerHistoryPage extends ConsumerWidget {
         title: Text(context.l10n.settingsEngineerTitle),
         actions: [
           IconButton(
+            key: const ValueKey('engineer-tasks-button'),
+            tooltip: context.l10n.engineeringTasksTooltip,
+            icon: const Icon(Icons.task_alt_outlined),
+            onPressed: () => context.push('/engineer-tasks'),
+          ),
+          IconButton(
+            key: const ValueKey('engineer-run-search-button'),
+            tooltip: context.l10n.engineeringRunSearchTooltip,
+            icon: const Icon(Icons.manage_search),
+            onPressed: () => context.push('/engineer-runs'),
+          ),
+          IconButton(
+            key: const ValueKey('engineer-usage-button'),
+            tooltip: context.l10n.engineeringUsageTooltip,
+            icon: const Icon(Icons.bar_chart_outlined),
+            onPressed: () => context.push('/usage'),
+          ),
+          IconButton(
             tooltip: context.l10n.engineeringDesktopDaemonTooltip,
             icon: const Icon(Icons.dns_outlined),
             onPressed: () => context.push('/engineer-daemon'),
