@@ -88,7 +88,7 @@ class SafetyPipeline:
             GuardStage.TOOL_RESULT: tuple(
                 g
                 for g in (context_guards if context_guards is not None else default_context_guards())
-                if getattr(g, "name", "") != "size"
+                if getattr(g, "name", "") not in ("size", "secret")
             ) + (SecretGuard(block=False),),
             GuardStage.OUTPUT: tuple(
                 output_guards if output_guards is not None else default_output_guards()
@@ -108,12 +108,14 @@ class SafetyPipeline:
                 max_chars=settings.max_input_chars,
                 injection_threshold=settings.injection_threshold,
                 jailbreak_threshold=settings.jailbreak_threshold,
+                redact_secrets=getattr(settings, "redact_secrets_in_input", False),
             )
             if settings.input_guards_enabled
             else [],
             context_guards=default_context_guards(
                 max_chars=settings.max_input_chars,
                 injection_threshold=settings.injection_threshold,
+                redact_secrets=getattr(settings, "redact_secrets_in_context", False),
             )
             if settings.context_guards_enabled
             else [],

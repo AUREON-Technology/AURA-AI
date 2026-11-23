@@ -1095,6 +1095,18 @@ class SafetySettings:
     block_on_secret_leak: bool = True
     max_input_chars: int = 32_000
     groundedness_min: float = 0.4
+    #: Redact credential-shaped text (``safety/guards.py::SecretGuard``, redact-only, never block)
+    #: from what the model is shown, and from what a session keeps. Three switches because they
+    #: change three different things, and all default off -- today's behaviour:
+    #:   *context*: retrieved chunks, recalled memories and the loaded session history, in the
+    #:   prompt (a key planted in a document does not reach the model);
+    #:   *input*: the user's own message (a key they pasted does not reach the model -- which also
+    #:   means the model cannot use it, so a user asking the agent to configure that key must
+    #:   leave this off);
+    #:   *history*: what is written to session history (the stored transcript is redacted).
+    redact_secrets_in_context: bool = False
+    redact_secrets_in_input: bool = False
+    redact_secrets_in_history: bool = False
 
     @classmethod
     def from_env(cls) -> "SafetySettings":
@@ -1110,6 +1122,9 @@ class SafetySettings:
             block_on_secret_leak=_bool("SAFETY_BLOCK_ON_SECRET_LEAK", True),
             max_input_chars=_int("SAFETY_MAX_INPUT_CHARS", 32_000, minimum=100),
             groundedness_min=_float("SAFETY_GROUNDEDNESS_MIN", 0.4, minimum=0.0, maximum=1.0),
+            redact_secrets_in_context=_bool("SAFETY_REDACT_CONTEXT_SECRETS", False),
+            redact_secrets_in_input=_bool("SAFETY_REDACT_INPUT_SECRETS", False),
+            redact_secrets_in_history=_bool("SAFETY_REDACT_HISTORY_SECRETS", False),
         )
 
 

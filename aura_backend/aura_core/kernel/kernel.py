@@ -95,6 +95,7 @@ from ..prompts.language import reply_language
 from ..prompts.library import AGENT_PROMPT_IDS
 from ..agents.registry import AgentRegistry, AgentSpec
 from ..reasoning.engine import ReasoningRequest
+from ..safety.guards import redact_secrets
 from ..tools.personal_os import actions_from_tool_results
 from .active_turns import ActiveTurns
 
@@ -706,7 +707,8 @@ class AIKernel:
             try:
                 await deps.episodic.append(
                     request.session_id, request.user_id,
-                    user_message=self._history_message(request), assistant_message=answer,
+                    user_message=self._persistable(self._history_message(request)),
+                    assistant_message=self._persistable(answer),
                 )
             except Exception:
                 # Losing session persistence degrades the next turn; failing this one would be
@@ -1092,8 +1094,8 @@ class AIKernel:
                     try:
                         await deps.episodic.append(
                             request.session_id, request.user_id,
-                            user_message=self._history_message(request),
-                            assistant_message=answer,
+                            user_message=self._persistable(self._history_message(request)),
+                            assistant_message=self._persistable(answer),
                         )
                     except Exception:
                         logger.warning("failed to persist session state")
@@ -1259,10 +1261,11 @@ class AIKernel:
             if deps.episodic is None or request.session_id is None:
                 return Conversation(), ""
             try:
-                return await deps.episodic.history(request.session_id, request.user_id)
+                loaded = await deps.episodic.history(request.session_id, request.user_id)
             except Exception:
                 logger.warning("session history load failed; continuing without it")
                 return Conversation(), ""
+            return self._redact_loaded_history(*loaded)
 
         async def load_goals() -> Sequence[GoalSnapshot]:
             if deps.goals is None:
@@ -1308,6 +1311,29 @@ class AIKernel:
             )
         perception = await vision.perceive(request.images, message)
         return replace(request, caller_context=request.caller_context + perception.entries), perception
+
+    def _safety_setting(self, name: str) -> bool:
+        return bool(getattr(getattr(self._deps.settings, "safety", None), name, False))
+
+    def _redact_loaded_history(self, history: Conversation, summary: str) -> tuple[Conversation, str]:
+        """Session history as the prompt sees it, with credentials redacted when
+        ``AURA_SAFETY_REDACT_CONTEXT_SECRETS`` is on. History written before the persisted-
+        transcript switch existed still holds whatever was typed then; this is what keeps it from
+        reaching the model."""
+        if not self._safety_setting("redact_secrets_in_context") or self._deps.safety is None:
+            return history, summary
+        messages = []
+        for message in history.messages:
+            cleaned, _ = redact_secrets(message.content)
+            messages.append(message if cleaned == message.content else replace(message, content=cleaned))
+        return Conversation(tuple(messages)), redact_secrets(summary)[0] if summary else summary
+
+    def _persistable(self, text: str) -> str:
+        """``text`` as session history stores it: credentials redacted when
+        ``AURA_SAFETY_REDACT_HISTORY_SECRETS`` is on, unchanged otherwise."""
+        if not self._safety_setting("redact_secrets_in_history"):
+            return text
+        return redact_secrets(text)[0]
 
     @staticmethod
     def _history_message(request: TurnRequest) -> str:
