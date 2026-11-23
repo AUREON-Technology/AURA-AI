@@ -1965,6 +1965,21 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             }
         )
 
+    # -- agent tasks (ADR-041) ----------------------------------------------------------
+    from .agent_tasks import register_agent_task_ops
+
+    async def build_task_turn(fields: dict[str, Any], caller: Principal, request: Request) -> TurnRequest:
+        """A task's request, validated by exactly the code ``/chat`` uses (``to_turn``). A
+        background task has no live caller to hold a connector sign-in, so none is carried."""
+        turn = await to_turn(ChatRequest(**fields), caller, request)
+        return replace(turn, connector_tokens=None)
+
+    register_agent_task_ops(
+        router, container, principal=principal, enforce_rate_limit=enforce_rate_limit,
+        build_turn=build_task_turn, admit_turn=admit_turn, release_turn=release_turn,
+        Depends=Depends, JSONResponse=JSONResponse, Query=Query, Request=Request,
+    )
+
     # -- usage dashboard and run history (ADR-041) -------------------------------------
     # Before ``/agents/runs/{run_id}``: a path parameter would swallow "search" and "timeline".
     from .usage_history import register_usage_history
