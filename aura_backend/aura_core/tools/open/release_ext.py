@@ -38,7 +38,9 @@ _DESTRUCTIVE = re.compile(
     r"\bdrop\s+(?:table|column|index|constraint|schema)\b|\btruncate\b|op\.drop_(?:table|column|constraint)\b|"
     r"\balter\s+column\s+\S+\s+(?:type|set\s+not\s+null)\b|\brename\s+(?:table|column)\b|op\.alter_column\(|op\.rename_table\(",
     re.IGNORECASE)
-_NOT_NULL_NO_DEFAULT = re.compile(r"add\s+column\s+\S+\s+[\w()]+\s+not\s+null(?!.*default)", re.IGNORECASE)
+_NOT_NULL_NO_DEFAULT = re.compile(
+    r"add\s+column\s+\S+\s+[\w()]+\s+not\s+null(?!.*default)"
+    r"|op\.add_column\((?:(?!server_default)[^)])*nullable\s*=\s*False(?:(?!server_default)[^)])*\)", re.IGNORECASE | re.DOTALL)
 
 
 def parse_changelog(text: str) -> dict[str, Any]:

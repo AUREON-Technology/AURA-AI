@@ -169,7 +169,8 @@ def build_drift_tools(cache: Cache) -> list[Tool]:
                 return json.dumps({"baseline_set": True, "baseline": data["baseline"], "entries": len(data["entries"])})
             if (value is None) == (values is None):
                 raise ToolExecutionError("record needs exactly one of value or values", tool=name)
-            entry: dict[str, Any] = {"t": round(time.time(), 3)}
+            data["seq"] = int(data.get("seq", 0)) + 1  # identity of an observation (two can share a millisecond)
+            entry: dict[str, Any] = {"t": round(time.time(), 3), "seq": data["seq"]}
             if value is not None:
                 entry["value"] = _clean_numbers(name, [value])[0]
             else:
@@ -226,7 +227,7 @@ def build_drift_tools(cache: Cache) -> list[Tool]:
             return json.dumps(result)
         current = entries[-1]
         reference = baseline if baseline is not None else entries[0]
-        if reference.get("t") == current.get("t"):
+        if reference.get("seq") == current.get("seq"):
             result.update({"status": "insufficient_history", "drift_detected": None,
                            "message": "The baseline is the latest observation; record a newer one."})
             return json.dumps(result)

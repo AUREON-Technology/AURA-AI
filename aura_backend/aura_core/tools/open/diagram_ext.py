@@ -9,8 +9,7 @@ These functions *derive* the spec from what the caller supplies:
   edges), loops (with a back edge), returns and raises.
 * ``sequence_from_source`` -- who calls whom, starting from one function: calls to functions in the
   same module and to ``obj.method()`` receivers, in source order, to a bounded depth.
-* ``architecture_from_modules`` -- the import graph of several supplied files, grouped by top-level
-  package, with external libraries collapsed into one node per package.
+* ``architecture_from_modules`` -- the import graph of several supplied files, grouped by package, with external libraries collapsed into one node per package.
 * ``validate_deep`` -- ``validate_mermaid_syntax`` plus the structural mistakes that make Mermaid
   refuse a diagram (unbalanced brackets and quotes, relations to undeclared entities, messages
   between undeclared participants, edges to nodes never defined).
@@ -276,7 +275,9 @@ def architecture_from_modules(modules: dict[str, str], direction: str = "LR") ->
             if isinstance(node, ast.Import):
                 targets = [a.name for a in node.names]
             elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                targets = [node.module]
+                # `from pkg import mod` depends on the module pkg.mod when it is one of the supplied files
+                targets = [f"{node.module}.{a.name}" if f"{node.module}.{a.name}" in names else node.module
+                           for a in node.names]
             for target in targets:
                 match = next((m for m in sorted(names, key=len, reverse=True)
                               if target == m or target.startswith(m + ".") or m.startswith(target + ".")), None)
@@ -290,7 +291,7 @@ def architecture_from_modules(modules: dict[str, str], direction: str = "LR") ->
     lines = [f"flowchart {direction if direction in ('TD', 'TB', 'BT', 'LR', 'RL') else 'LR'}"]
     groups: dict[str, list[str]] = {}
     for module in names:
-        groups.setdefault(module.split(".")[0] if "." in module else "(root)", []).append(module)
+        groups.setdefault(module.rpartition(".")[0] or "(root)", []).append(module)
     for group, members in groups.items():
         if len(groups) > 1:
             lines.append(f'    subgraph {ids.get("g_" + group)}["{M.escape_label(group)}"]')

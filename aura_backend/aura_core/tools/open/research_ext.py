@@ -73,7 +73,9 @@ def parse_web_results(payload: dict[str, Any]) -> list[dict[str, str]]:
 
 def _tokens(text: str) -> frozenset[str]:
     words = re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}", text.lower())
-    return frozenset(w for w in words if w not in _STOP)
+    # a light suffix strip so "opens"/"open" and "retried"/"retries" count as the same word
+    return frozenset(re.sub(r"(ing|ied|ies|ed|es|s)$", "", w) if len(w) > 5 else re.sub(r"s$", "", w)
+                     for w in words if w not in _STOP)
 
 
 def _numbers(text: str) -> list[tuple[float, str]]:
