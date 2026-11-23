@@ -654,3 +654,100 @@ test("Vector DB: Arabic reads right to left", async ({ page, context }) => {
   await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
   await expect(page.getByText("الـ Collection")).toBeVisible();
 });
+
+// -- Cloudflare usage and R2 (stage 6, C3). Read-only views; the mock simulates what Cloudflare can
+// answer through /__test/cloudflare-views (usage: ok | no_neurons | near_limit | no_permission |
+// unavailable; r2: not_enabled | ok | empty | no_permission | unavailable). Kept at the end of the
+// file, apart from the "Cloudflare tab:" tests above.
+async function cloudflareViews(request: APIRequestContext, views: { usage?: string; r2?: string }) {
+  await request.post(`${gateway}/__test/cloudflare-views`, { data: views });
+}
+
+test("Cloudflare usage: today's requests and neurons against the free allowance, and it is not for billing", async ({ page, request }) => {
+  await openCloudflare(page, [["cloudflare", ACCOUNT_ID]]);
+  const usage = page.getByTestId("cf-usage");
+  await expect(usage.getByTestId("usage-requests")).toHaveText("128");
+  await expect(usage.getByTestId("usage-neurons")).toHaveText("2,840.5");
+  await expect(usage.getByTestId("usage-allowance")).toHaveText("2,840.5 of 10,000 neurons (free plan)");
+  await expect(usage.getByTestId("usage-percent")).toHaveText("28% used");
+  await expect(usage.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "2840.5");
+  await expect(usage).toContainText("free-plan figure");
+  await expect(usage.getByTestId("usage-not-for-billing")).toContainText("not for billing");
+  await expect(usage.getByTestId("usage-no-permission")).toHaveCount(0);
+
+  await cloudflareViews(request, { usage: "near_limit" });
+  await usage.getByRole("button", { name: "Refresh usage" }).click();
+  await expect(usage.getByTestId("usage-neurons")).toHaveText("8,650.5");
+  await expect(usage.getByTestId("usage-percent")).toHaveText("87% used");
+});
+
+test("Cloudflare usage: a token without analytics permission is said in words, never shown as zero", async ({ page, request }) => {
+  await cloudflareViews(request, { usage: "no_permission" });
+  await openCloudflare(page, [["cloudflare", ACCOUNT_ID]]);
+  const usage = page.getByTestId("cf-usage");
+  await expect(usage.getByTestId("usage-no-permission")).toContainText("Account Analytics: Read");
+  await expect(usage.getByTestId("usage-requests")).toHaveCount(0);
+  await expect(usage.getByRole("progressbar")).toHaveCount(0);
+  await expect(usage.getByTestId("usage-not-for-billing")).toBeVisible();
+});
+
+test("Cloudflare usage: with no neuron figure it shows requests only and says so; an outage is a state", async ({ page, request }) => {
+  await cloudflareViews(request, { usage: "no_neurons" });
+  await openCloudflare(page, [["cloudflare", ACCOUNT_ID]]);
+  const usage = page.getByTestId("cf-usage");
+  await expect(usage.getByTestId("usage-requests")).toHaveText("128");
+  await expect(usage.getByTestId("usage-no-neurons")).toContainText("only requests are shown");
+  await expect(usage.getByTestId("usage-neurons")).toHaveCount(0);
+  await expect(usage.getByRole("progressbar")).toHaveCount(0);
+
+  await cloudflareViews(request, { usage: "unavailable" });
+  await usage.getByRole("button", { name: "Refresh usage" }).click();
+  await expect(usage.getByTestId("usage-unavailable")).toContainText("http_502");
+  await expect(usage.getByTestId("usage-requests")).toHaveCount(0);
+});
+
+test("Cloudflare R2: not enabled on the account is a clear state, not an error", async ({ page }) => {
+  await openCloudflare(page, [["cloudflare", ACCOUNT_ID]]);
+  const r2 = page.getByTestId("cf-r2");
+  await expect(r2.getByTestId("r2-not-enabled")).toContainText("R2 is not enabled on this account");
+  await expect(r2.getByTestId(/^bucket-/)).toHaveCount(0);
+  await expect(r2.getByRole("alert")).toHaveCount(0);
+  await expect(r2).toContainText("Nothing here creates, changes or deletes a bucket");
+});
+
+test("Cloudflare R2: the buckets, with lock rules where Cloudflare says; a missing permission names itself", async ({ page, request }) => {
+  await cloudflareViews(request, { r2: "ok" });
+  await openCloudflare(page, [["cloudflare", ACCOUNT_ID]]);
+  const r2 = page.getByTestId("cf-r2");
+  await expect(r2.getByTestId(/^bucket-/)).toHaveCount(3);
+  await expect(r2.getByTestId("bucket-aura-backups")).toContainText("WEUR");
+  await expect(r2.getByTestId("bucket-aura-backups")).toContainText("1 rules");
+  await expect(r2.getByTestId("bucket-aura-scratch")).toContainText("no rules");
+  await expect(r2.getByTestId("bucket-aura-archive")).toContainText("unknown");
+  await expect(r2.getByTestId("r2-not-enabled")).toHaveCount(0);
+
+  await cloudflareViews(request, { r2: "no_permission" });
+  await r2.getByRole("button", { name: "Refresh buckets" }).click();
+  await expect(r2.getByTestId("r2-no-permission")).toContainText("Workers R2 Storage: Read");
+  await expect(r2.getByTestId(/^bucket-/)).toHaveCount(0);
+
+  await cloudflareViews(request, { r2: "empty" });
+  await r2.getByRole("button", { name: "Refresh buckets" }).click();
+  await expect(r2.getByTestId("r2-empty")).toHaveText("No buckets in this account.");
+});
+
+test("Cloudflare usage and R2: Arabic reads right to left and numbers and ids stay left to right", async ({ page, request, context }) => {
+  await cloudflareViews(request, { r2: "ok" });
+  await openCloudflare(page, [["cloudflare", ACCOUNT_ID]]);
+  await context.addCookies([{ name: "aura_console_lang", value: "ar", url: process.env.PLAYWRIGHT_BASE_URL! }]);
+  await page.goto("/settings/cloudflare");
+  await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+  await expect(page.getByText("استخدام Workers AI النهارده")).toBeVisible();
+  await expect(page.getByTestId("usage-not-for-billing")).toContainText("مش للفوترة");
+  await expect(page.getByTestId("usage-requests")).toHaveAttribute("dir", "ltr");
+  await expect(page.getByTestId("usage-requests")).toHaveText("128");
+  await expect(page.getByTestId("usage-allowance")).toContainText("10,000");
+  await expect(page.getByText("الـ Buckets بتاعة R2 للنسخ الاحتياطي")).toBeVisible();
+  await expect(page.getByTestId("bucket-aura-backups").locator("code")).toHaveAttribute("dir", "ltr");
+  await expect(page.getByTestId("bucket-aura-backups")).toContainText("1 قاعدة");
+});
