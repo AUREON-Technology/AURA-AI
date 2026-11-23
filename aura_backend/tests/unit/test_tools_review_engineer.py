@@ -1578,13 +1578,13 @@ class TestDesktopOps:
                           "Microsoft Store", 9009),
             SandboxResult("  ncalls  tottime", "", 0),
         )
-        out = await _ops(runner)["profile_python"].execute({"code": "1"}, _ctx())
+        out = await _ops(runner)["profile_python"].execute({"source_code": "1"}, _ctx())
         assert [c[0] for c in runner.calls] == ["python3", "python"]
         assert "ncalls" in out
 
     async def test_a_snippet_that_exits_nonzero_is_not_rerun(self) -> None:
         runner = _FakeRunner(SandboxResult("", "Traceback...", 9009 - 9008))
-        await _ops(runner)["profile_python"].execute({"code": "raise SystemExit(1)"}, _ctx())
+        await _ops(runner)["profile_python"].execute({"source_code": "raise SystemExit(1)"}, _ctx())
         assert [c[0] for c in runner.calls] == ["python3"]
 
     @pytest.mark.parametrize("code,expected_rc", [

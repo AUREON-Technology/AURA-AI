@@ -838,11 +838,11 @@ def build_sandbox_tools(
 
     @tool(
         "write_file",
-        "Write a UTF-8 text file inside the engineer agent's workspace: the user's own machine, "
-        "inside whatever folder they have granted, if they have a paired desktop app connected "
-        "(AURA Desktop) -- otherwise an ephemeral sandbox container's scratch directory, torn "
-        "down after the task. Overwrites the file if it already exists; creates parent "
-        "directories as needed. Text only: refuses .pdf and other binary paths.",
+        "Write one UTF-8 text file in the workspace: the user's own folder when a paired desktop app "
+        "(AURA Desktop) is connected, otherwise a throwaway sandbox directory torn down after the task. "
+        "Creates missing parent directories and OVERWRITES an existing file. Text only: .pdf "
+        "and other binary paths are refused. For a small change to an existing file use "
+        "edit_file; for several files in one step use write_files.",
         param("path", "string", "Path relative to the workspace root.", max_length=300),
         param("content", "string", "The file's full new content.", max_length=200_000),
         category=ToolCategory.DEVELOPMENT,
@@ -873,9 +873,10 @@ def build_sandbox_tools(
 
     @tool(
         "edit_file",
-        "Replace one exact occurrence of `find` with `replace` in a file inside the engineer "
-        "agent's workspace. Fails if `find` is not present exactly once -- read the file "
-        "first (e.g. via run_command 'cat path') to get the exact text.",
+        "Replace one exact piece of text in a workspace file. `find` must occur exactly once in "
+        "the file, otherwise nothing changes and the error says why -- read the file first "
+        "(e.g. run_command 'cat <path>') so you copy the text exactly. For several edits in "
+        "one step use write_files.",
         param("path", "string", "Path relative to the workspace root.", max_length=300),
         param("find", "string", "Exact text to replace; must occur exactly once in the file.",
               max_length=50_000),
@@ -932,17 +933,15 @@ def build_sandbox_tools(
 
     @tool(
         "write_files",
-        "Atomically write or find/replace-edit multiple files in the engineer agent's workspace "
-        "in one call. Every operation is validated first (path resolves inside the workspace, "
-        "and each find/replace operation's `find` text is present in its target exactly once) "
-        "before anything is written -- if any operation fails validation, nothing in this call "
-        "is written, including the other, otherwise-valid operations in the same call.",
+        "Write or edit several workspace files in one call, all or nothing. Every operation is "
+        "validated first (the path is inside the workspace; each find/replace's `find` text is "
+        "present in its file exactly once) and if any fails, nothing in the call is written -- "
+        "not even the valid operations.",
         param(
             "operations", "array",
-            "Each item is an object with `path` and either `content` (full overwrite, same as "
-            "write_file) or both `find` and `replace` (find/replace edit, same rule as "
-            "edit_file: `find` must occur exactly once in the current file). A given item uses "
-            "exactly one shape.",
+            "The operations, in order. Each is an object with `path` and either `content` (full "
+            "overwrite, as write_file) or both `find` and `replace` (an edit, as edit_file: "
+            "`find` must occur exactly once in the current file) -- never a mix.",
             item_type="object",
         ),
         category=ToolCategory.DEVELOPMENT,
@@ -1111,13 +1110,12 @@ def build_sandbox_tools(
 
     @tool(
         "run_command",
-        "Run a shell command inside the engineer agent's workspace and return its "
-        "stdout/stderr/exit code. Use for running tests, linters, builds, or inspecting the "
-        "workspace's files. If the user has a paired desktop app connected, this runs directly "
-        "on their own machine -- their real network, subject to the daemon's own path "
-        "containment and command policy. Otherwise it runs in an ephemeral, network-restricted "
-        "sandbox container that cannot reach the user's real network or host. Long output keeps "
-        "its start and end. `cat file.pdf` alone returns the PDF's full text.",
+        "Run a shell command in the workspace and return its stdout, stderr and exit code. Use "
+        "it to run tests, builds and linters or to inspect files. With a paired desktop app "
+        "(AURA Desktop) connected it runs on the user's own machine (their real network, under the daemon's own path "
+        "containment and command policy); otherwise in a throwaway, network-restricted sandbox "
+        "container that cannot reach the user's network or host. Long output keeps its start "
+        "and end. `cat file.pdf` alone returns the PDF's full text.",
         param("command", "string", "The shell command to run, e.g. 'pytest -q'.", max_length=2000),
         param("timeout_s", "number", "Max seconds to allow the command to run.", required=False,
               minimum=1, maximum=600, default=60),
@@ -1183,7 +1181,7 @@ def build_sandbox_tools(
 
     @tool(
         "git_diff",
-        "Show the workspace's git diff against HEAD (staged and unstaged) and list untracked files.",
+        "Show the workspace's uncommitted changes against HEAD (staged and unstaged) and list untracked files.",
         category=ToolCategory.DEVELOPMENT,
         sensitivity=ToolSensitivity.PERSONAL,
         required_capability=_ENGINEER_CAPABILITY,
@@ -1231,7 +1229,7 @@ def build_sandbox_tools(
 
     @tool(
         "git_commit",
-        "Stage all changes in the workspace and commit them with the given message.",
+        "Stage every change in the workspace (new files included) and commit it with `message`. The commit stays local until git_push.",
         param("message", "string", "Commit message.", max_length=2000),
         category=ToolCategory.DEVELOPMENT,
         sensitivity=ToolSensitivity.PERSONAL,
@@ -1265,7 +1263,7 @@ def build_sandbox_tools(
 
     @tool(
         "git_checkout_branch",
-        "Create (or switch to) a git branch in the workspace; an existing branch is never reset.",
+        "Create a git branch in the workspace and switch to it, or just switch if it already exists. An existing branch is never reset.",
         param("branch", "string", "Branch name.", max_length=200),
         category=ToolCategory.DEVELOPMENT,
         sensitivity=ToolSensitivity.PERSONAL,
@@ -1300,10 +1298,9 @@ def build_sandbox_tools(
 
     @tool(
         "open_workspace",
-        "Open (or resume) your persistent workspace for a repository, without cloning it. The "
-        "workspace keeps its files between turns and for 3 days after your last action, so a "
-        "task can continue across several messages. Use this to go back to a repository you "
-        "were already working on.",
+        "Open (or resume) your persistent workspace for a repository, without cloning it. Its "
+        "files persist between turns and for 3 days after your last action, so a task can span "
+        "several messages. Use it to go back to a repository you already worked on.",
         param("repo", "string", "Repository this workspace is for, as 'owner/name'.",
               max_length=400, format="github_repo"),
         category=ToolCategory.DEVELOPMENT,
@@ -1331,9 +1328,8 @@ def build_sandbox_tools(
 
     @tool(
         "list_workspaces",
-        "List your persistent workspaces: which repository each is for, whether it is running, "
-        "and when it was last used. A workspace is removed automatically after 3 days without "
-        "activity.",
+        "List your persistent workspaces: the repository each is for, whether it is running, "
+        "and when it was last used. A workspace is removed after 3 days without activity.",
         category=ToolCategory.DEVELOPMENT,
         sensitivity=ToolSensitivity.PERSONAL,
         required_capability=_ENGINEER_CAPABILITY,
@@ -1353,8 +1349,9 @@ def build_sandbox_tools(
 
     @tool(
         "destroy_workspace",
-        "Delete one of your persistent workspaces and everything in it, including any "
-        "uncommitted work. Use when a task is finished or the checkout should be started fresh.",
+        "Permanently delete one of your persistent workspaces and everything in it, including "
+        "uncommitted work. Use it when the task is finished or the checkout should start "
+        "fresh. The user is always asked first.",
         param("repo", "string", "Repository whose workspace should be deleted.", max_length=400,
               format="github_repo"),
         category=ToolCategory.DEVELOPMENT,
@@ -1385,7 +1382,7 @@ def build_sandbox_tools(
 
     @tool(
         "git_status",
-        "Show the workspace checkout's git status: current branch, staged and unstaged changes.",
+        "Show the workspace's git status: the current branch plus staged and unstaged changes.",
         category=ToolCategory.DEVELOPMENT,
         sensitivity=ToolSensitivity.PERSONAL,
         required_capability=_ENGINEER_CAPABILITY,
@@ -1404,12 +1401,12 @@ def build_sandbox_tools(
 
     @tool(
         "git_push",
-        "Push the workspace's current branch to GitHub. Always asks the user to confirm first, "
-        "and refuses to push to the repository's default branch -- open a pull request from a "
-        "feature branch instead. Commit your work with git_commit before calling this.",
-        param("branch", "string", "Branch to push. Must not be the default branch.",
+        "Push a branch of the workspace to GitHub. The user is always asked to confirm first, "
+        "and the repository's default branch is refused -- open a pull request from a feature "
+        "branch instead. Commit with git_commit before pushing.",
+        param("branch", "string", "Branch to push; must not be the default branch.",
               max_length=200),
-        param("repo", "string", "Repository, as 'owner/name'. Defaults to the one you cloned.",
+        param("repo", "string", "Repository as 'owner/name'. Defaults to the one you cloned.",
               required=False, max_length=400, format="github_repo"),
         category=ToolCategory.DEVELOPMENT,
         # The one tool here that publishes anything. CONFIDENTIAL + side_effecting makes
@@ -1676,10 +1673,10 @@ def build_sandbox_tools(
 
     @tool(
         "clone_repository",
-        "Copy a GitHub repository's files into the engineer agent's workspace, so they "
-        "can be explored, searched, built, or tested with run_command. Use this when asked to "
-        "clone, analyse, review, or work on a repository. Text files only, up to a size and "
-        "count budget -- binaries and oversized files are skipped and the skips are reported.",
+        "Copy a GitHub repository's text files into the workspace so you can explore, search, "
+        "build or test them with run_command. Use it when asked to clone, analyse, review or "
+        "work on a repository. Binaries and oversized files are skipped, up to a size and "
+        "count budget, and every skip is reported.",
         param("repo", "string",
               "Repository to copy, as 'owner/name' or its GitHub URL.", max_length=400,
               format="github_repo"),
@@ -1967,9 +1964,9 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
 
     @tool(
         "github_list_repository_files",
-        "List the file paths in a GitHub repository. Use this first when asked to explore, "
-        "analyse, or review a repository -- it is what turns a bare repository URL into paths "
-        "github_get_file_contents can then read. Works without a sandbox.",
+        "List the file paths in a GitHub repository, without a sandbox. Use it first when asked "
+        "to explore, analyse or review a repository: it turns a bare repository URL into paths "
+        "that github_get_file_contents can read.",
         _repo_param,
         param("ref", "string", "Branch, tag, or commit SHA. Omit for the default branch.",
               required=False, max_length=200),
@@ -2016,8 +2013,9 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
 
     @tool(
         "github_get_file_contents",
-        "Read a file from a GitHub repository. A PDF is read in full (every page; scanned pages "
-        "named). A long file comes in parts: continue with `offset` as the result says.",
+        "Read one file from a GitHub repository, without a sandbox. A PDF is read in full (every "
+        "page; scanned pages are named). A long file arrives in parts: continue with `offset` "
+        "as the result says.",
         param("path", "string", "File path within the repo.", max_length=500),
         _repo_param,
         param("ref", "string", "Branch, tag, or commit SHA. Omit for the default branch.",
@@ -2064,7 +2062,7 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
 
     @tool(
         "github_get_issue",
-        "Read a GitHub issue's title, state, and description.",
+        "Read a GitHub issue's title, state and description.",
         param("number", "integer", "Issue number.", minimum=1),
         _repo_param,
         category=ToolCategory.DEVELOPMENT,
@@ -2080,7 +2078,7 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
 
     @tool(
         "github_get_pull_request",
-        "Read a GitHub pull request's title, state, branches, and description.",
+        "Read a GitHub pull request's title, state, head and base branches, and description.",
         param("number", "integer", "Pull request number.", minimum=1),
         _repo_param,
         category=ToolCategory.DEVELOPMENT,
@@ -2098,9 +2096,9 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
 
     @tool(
         "github_create_branch",
-        "Create a new branch in a GitHub repository from an existing ref.",
+        "Create a new branch in a GitHub repository, without a sandbox, starting from an existing branch, tag or commit.",
         param("branch", "string", "New branch name.", max_length=200),
-        param("from_ref", "string", "Existing branch to branch from, e.g. 'main'.", max_length=200),
+        param("from_ref", "string", "Existing branch, tag or commit to start from, e.g. 'main'.", max_length=200),
         _repo_param,
         category=ToolCategory.DEVELOPMENT,
         sensitivity=ToolSensitivity.CONFIDENTIAL,
@@ -2187,8 +2185,8 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
 
     @tool(
         "github_commit_files",
-        "Commit one or more file changes to a feature branch in a GitHub repository, as one "
-        "commit. The repository's default branch is refused: open a pull request instead.",
+        "Commit one or more files to a feature branch of a GitHub repository as a single "
+        "commit. The default branch is refused: open a pull request instead.",
         param("branch", "string", "Branch to commit to.", max_length=200),
         param("message", "string", "Commit message.", max_length=2000),
         param("files", "object", "Mapping of file path to its full new text content."),
@@ -2259,9 +2257,9 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
 
     @tool(
         "github_create_draft_pull_request",
-        "Open a draft pull request in a GitHub repository. Always opens as a draft, never "
-        "ready-for-review -- a human decides when it is ready to merge.",
-        param("branch", "string", "Head branch (the branch with the changes).", max_length=200),
+        "Open a draft pull request in a GitHub repository. It is always a draft, never ready "
+        "for review: a human decides when it can merge.",
+        param("branch", "string", "Head branch (the one with the changes).", max_length=200),
         param("base", "string", "Base branch to merge into, e.g. 'main'.", max_length=200),
         param("title", "string", "Pull request title.", max_length=300),
         param("body", "string", "Pull request description.", max_length=10_000),

@@ -188,7 +188,7 @@ class TestLintCode:
         by_name, _ = tools
         await _write(by_name, ctx, "many.py", "".join(f"import mod{i}\n" for i in range(30)))
         report = json.loads(await by_name["lint_code"].execute(
-            {"linter": "ruff", "max_diagnostics": 5}, ctx))
+            {"linter": "ruff", "limit": 5}, ctx))
         assert report["summary"]["shown"] == 5 and len(report["diagnostics"]) == 5
         assert report["summary"]["truncated"] is True
         assert report["summary"]["withheld"] == report["summary"]["total"] - 5 > 0

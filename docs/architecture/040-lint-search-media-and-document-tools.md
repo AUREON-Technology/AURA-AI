@@ -86,7 +86,7 @@ the tool degrades in stated steps and records them under `trimmed`.
   normalisation moved from the files connector into `knowledge/tabular.py` and both now import it, so
   a column has the same type whichever door it came in by (pinned by a test).
 * **`ocr_image`** (76) -- text, mean confidence, per-line text/confidence/box, word boxes (capped),
-  low-confidence words flagged, per-call `lang`. The container injects the OCR engine; `tools/`
+  low-confidence words flagged, per-call `language`. The container injects the OCR engine; `tools/`
   imports no adapter. Refuses non-images (PDFs are pointed at `parse_document`) and images over 30
   megapixels with the reason. An image with no text has `mean_confidence: null`, not 0.
 * **`analyze_image_requirements`** (64) -- screens, regions, components, texts and open questions as

@@ -575,7 +575,7 @@ class TestOcrImage:
         assert out["structured"] is True and out["image"] == {"format": "PNG", "width": 900, "height": 500}
         assert "Sign in to AURA" in out["text"] and "LOGIN" in out["text"]
         assert out["mean_confidence"] > 80 and out["line_count"] >= 5
-        assert out["lang"] == "eng" and out["engine"].startswith("tesseract")
+        assert out["language"] == "eng" and out["engine"].startswith("tesseract")
         for line in out["lines"]:
             left, top, width, height = line["box"]
             assert 0 <= left and left + width <= 900 and 0 <= top and top + height <= 500
@@ -607,8 +607,8 @@ class TestOcrImage:
         engine = TesseractOcrEngine(lang="eng")
         if not {"ara", "eng"} <= set(engine.installed_languages()):
             pytest.skip("tesseract Arabic data is not installed")
-        out = await call(make(root, ocr_engine=engine), "ocr_image", ctx, path="ar.png", lang="ara+eng")
-        assert out["lang"] == "ara+eng" and out["structured"] is True
+        out = await call(make(root, ocr_engine=engine), "ocr_image", ctx, path="ar.png", language="ara+eng")
+        assert out["language"] == "ara+eng" and out["structured"] is True
         assert isinstance(out["text"], str) and isinstance(out["lines"], list)
         assert out["mean_confidence"] is None or 0 <= out["mean_confidence"] <= 100
         assert out["word_count"] == len(out["words"])
@@ -617,11 +617,11 @@ class TestOcrImage:
     async def test_a_two_letter_code_and_an_uninstalled_language(self, root, ctx) -> None:
         put(root, "mock.png", MOCKUP)
         tools = make(root, ocr_engine=TesseractOcrEngine(lang="eng"))
-        assert (await call(tools, "ocr_image", ctx, path="mock.png", lang="en"))["lang"] == "eng"
+        assert (await call(tools, "ocr_image", ctx, path="mock.png", language="en"))["language"] == "eng"
         with pytest.raises(ToolExecutionError, match="not installed.*installed:"):
-            await tools["ocr_image"].execute({"path": "mock.png", "lang": "jpn"}, ctx)
+            await tools["ocr_image"].execute({"path": "mock.png", "language": "jpn"}, ctx)
         with pytest.raises(ToolExecutionError, match="not a tesseract language code"):
-            await tools["ocr_image"].execute({"path": "mock.png", "lang": "english please"}, ctx)
+            await tools["ocr_image"].execute({"path": "mock.png", "language": "english please"}, ctx)
 
     async def test_low_confidence_words_and_the_mean_are_flagged(self, root, ctx) -> None:
         """Scripted OCR: the confidence rules, with figures chosen to cross the threshold."""
@@ -652,7 +652,7 @@ class TestOcrImage:
         assert out["structured"] is False and out["text"] == "just text"
         assert "text only" in out["warnings"][0]
         with pytest.raises(ToolExecutionError, match="cannot change language"):
-            await make(root, ocr_engine=TextOnly())["ocr_image"].execute({"path": "a.png", "lang": "eng"}, ctx)
+            await make(root, ocr_engine=TextOnly())["ocr_image"].execute({"path": "a.png", "language": "eng"}, ctx)
 
     async def test_a_large_result_degrades_in_stated_steps(self, root, ctx) -> None:
         lines = [(" ".join(f"w{i}x{j}" for j in range(12)), 55.0) for i in range(260)]

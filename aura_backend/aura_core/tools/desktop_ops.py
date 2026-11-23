@@ -229,8 +229,8 @@ def build_desktop_ops_tools(sandbox_runner: Any, sessions: Any, host_agent_regis
         "Run a Python snippet under cProfile on the user's own machine (needs AURA Desktop "
         "connected) and return its hottest functions by own time. RUNS THE CODE with the user's "
         "permissions; nothing is written to their folder.",
-        param("code", "string", "The Python code to run.", max_length=20_000),
-        param("top_n", "integer", "How many functions to list (default 15).", required=False,
+        param("source_code", "string", "The Python code to profile.", max_length=20_000),
+        param("limit", "integer", "How many of the hottest functions to list (default 15).", required=False,
               default=15, minimum=1, maximum=50),
         param("timeout_s", "number", "Max seconds (default 60).", required=False, default=60,
               minimum=1, maximum=300),
@@ -238,7 +238,7 @@ def build_desktop_ops_tools(sandbox_runner: Any, sessions: Any, host_agent_regis
         **_COMMON,
     )
     async def profile_python(
-        code: str, context: ToolContext, top_n: int = 15, timeout_s: float = 60.0
+        source_code: str, context: ToolContext, limit: int = 15, timeout_s: float = 60.0
     ) -> str:
         name = "profile_python"
         await require_desktop(name, context)
@@ -246,7 +246,7 @@ def build_desktop_ops_tools(sandbox_runner: Any, sessions: Any, host_agent_regis
         result = None
         for interpreter in ("python3", "python"):
             result = await sandbox_runner.run(
-                handle, [interpreter, "-c", _PROFILE_WRAPPER, code, str(top_n)], timeout_s=timeout_s
+                handle, [interpreter, "-c", _PROFILE_WRAPPER, source_code, str(limit)], timeout_s=timeout_s
             )
             if not _missing_executable(result, interpreter):
                 break

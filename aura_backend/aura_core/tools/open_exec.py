@@ -108,7 +108,7 @@ def _module_path(name: str, value: str | None) -> str | None:
     param("include_call_smoke", "boolean", "Also CALL every no-argument function and instantiate "
           "no-argument classes (default false; only for code with no side effects).",
           required=False, default=False),
-    param("timeout_seconds", "integer", "Hard limit for the test run (default 30).",
+    param("timeout_s", "number", "Hard limit in seconds for the test run (default 30).",
           required=False, default=30, minimum=5, maximum=60),
     timeout_s=95.0,
     **_COMMON,
@@ -118,7 +118,7 @@ async def generate_and_run_tests(
     module_import_path: str | None = None,
     custom_test_code: str | None = None,
     include_call_smoke: bool = False,
-    timeout_seconds: int = 30,
+    timeout_s: float = 30,
 ) -> str:
     name = "generate_and_run_tests"
     module = _module_path(name, module_import_path)
@@ -130,7 +130,7 @@ async def generate_and_run_tests(
         custom_test_code=custom_test_code,
         module_import_path=module,
         include_call_smoke=include_call_smoke,
-        timeout_seconds=timeout_seconds,
+        timeout_seconds=int(timeout_s),
     )
 
 
@@ -177,7 +177,7 @@ def _quality(
           enum=("coverage", "mutation", "both"), default="both"),
     param("coverage_threshold", "number", "Coverage percentage that counts as passing "
           "(default 80).", required=False, default=80.0, minimum=0, maximum=100),
-    param("timeout_seconds", "integer", "Hard limit for EACH pytest run (default 15).",
+    param("timeout_s", "number", "Hard limit in seconds for EACH pytest run (default 15).",
           required=False, default=15, minimum=5, maximum=20),
     timeout_s=270.0,
     **_COMMON,
@@ -188,7 +188,7 @@ async def analyze_test_quality(
     module_name: str = "module_under_test",
     operations: str = "both",
     coverage_threshold: float = 80.0,
-    timeout_seconds: int = 15,
+    timeout_s: float = 15,
 ) -> str:
     name = "analyze_test_quality"
     if "." in module_name or _module_path(name, module_name) is None:
@@ -210,7 +210,7 @@ async def analyze_test_quality(
         module_name,
         operations,
         coverage_threshold,
-        timeout_seconds,
+        int(timeout_s),
     )
 
 

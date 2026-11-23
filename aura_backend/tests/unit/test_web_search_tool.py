@@ -140,7 +140,7 @@ class TestResults:
             {"title": "third", "url": "https://c.example/z", "content": "ok", "engine": "ddg"},
         ]
         out = json.loads(await tool_with(lambda r: httpx.Response(200, json=payload)).execute(
-            {"query": "q", "max_results": 2}, ctx))
+            {"query": "q", "limit": 2}, ctx))
         assert out["count"] == 2
         first, second = out["results"]
         assert first["title"] == "Good title with whitespace"
@@ -154,7 +154,7 @@ class TestResults:
 
     async def test_max_results_is_clamped(self, ctx) -> None:
         out = json.loads(await tool_with(lambda r: httpx.Response(200, json=searx_payload(30))).execute(
-            {"query": "q", "max_results": 99}, ctx))
+            {"query": "q", "limit": 99}, ctx))
         assert out["count"] == 10
 
     async def test_no_results_is_an_empty_list_not_an_error(self, ctx) -> None:

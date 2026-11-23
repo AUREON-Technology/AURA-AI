@@ -419,7 +419,7 @@ def build_devtools(sandbox_runner: Any, sessions: Any) -> list[Tool]:
               required=False, item_type="string"),
         param("linter", "string", "Which linter to run.", required=False, default="auto",
               enum=("auto", "ruff", "pyflakes", "mypy", "eslint")),
-        param("max_diagnostics", "integer", "Most findings to list (default 200); the rest are counted.",
+        param("limit", "integer", "Most findings to list (default 200); the rest are counted.",
               required=False, default=_DEFAULT_MAX_DIAGNOSTICS, minimum=1, maximum=_HARD_MAX_DIAGNOSTICS),
         param("timeout_s", "number", "Max seconds per linter (default 120).", required=False, default=120,
               minimum=5, maximum=300),
@@ -430,7 +430,7 @@ def build_devtools(sandbox_runner: Any, sessions: Any) -> list[Tool]:
         context: ToolContext,
         paths: list | None = None,
         linter: str = "auto",
-        max_diagnostics: int = _DEFAULT_MAX_DIAGNOSTICS,
+        limit: int = _DEFAULT_MAX_DIAGNOSTICS,
         timeout_s: float = 120.0,
     ) -> str:
         name = "lint_code"
@@ -474,7 +474,7 @@ def build_devtools(sandbox_runner: Any, sessions: Any) -> list[Tool]:
             "files": len({d["file"] for d in diagnostics}),
             "total": len(diagnostics),
         }
-        shown = diagnostics[: int(max_diagnostics)]
+        shown = diagnostics[: int(limit)]
         # `clean` needs every linter that applies to have run and found nothing. A ruff that was
         # missing but replaced by pyflakes (the 'auto' fallback) does not veto it; a missing linter
         # that nothing replaced does.
@@ -499,7 +499,7 @@ def build_devtools(sandbox_runner: Any, sessions: Any) -> list[Tool]:
               required=False, item_type="string"),
         param("formatter", "string", "Which formatter to run (auto: ruff for Python, prettier when the "
               "paths name JS/TS files).", required=False, default="auto", enum=("auto", "ruff", "prettier")),
-        param("max_files", "integer", "Most files to list (default 200); the rest are counted.",
+        param("limit", "integer", "Most files to list (default 200); the rest are counted.",
               required=False, default=_DEFAULT_MAX_DIAGNOSTICS, minimum=1, maximum=_HARD_MAX_DIAGNOSTICS),
         param("timeout_s", "number", "Max seconds per formatter (default 120).", required=False, default=120,
               minimum=5, maximum=300),
@@ -510,7 +510,7 @@ def build_devtools(sandbox_runner: Any, sessions: Any) -> list[Tool]:
         context: ToolContext,
         paths: list | None = None,
         formatter: str = "auto",
-        max_files: int = _DEFAULT_MAX_DIAGNOSTICS,
+        limit: int = _DEFAULT_MAX_DIAGNOSTICS,
         timeout_s: float = 120.0,
     ) -> str:
         name = "check_format"
@@ -585,7 +585,7 @@ def build_devtools(sandbox_runner: Any, sessions: Any) -> list[Tool]:
         if any(str(item.get("file") or "").startswith("/") for item in files):
             _relativise(files, await _workspace_root(sandbox_runner, handle))
         files.sort(key=_sort_key)
-        shown = files[: int(max_files)]
+        shown = files[: int(limit)]
         return json.dumps({
             "formatted": bool(report) and all(e["status"] == "ok" for e in report),
             "summary": {

@@ -678,7 +678,7 @@ def _ocr_report(shown: str, info: dict[str, Any], engine: Any, result: Any, stru
                 include_words: bool, min_confidence: float) -> dict[str, Any]:
     report: dict[str, Any] = {
         "path": shown, "image": info, "engine": getattr(engine, "name", "ocr"),
-        "lang": lang or getattr(engine, "lang", None),
+        "language": lang or getattr(engine, "lang", None),
     }
     if not structured:
         text = str(result)
@@ -945,12 +945,13 @@ def build_media_tools(
             "ocr_image",
             "Read the text in an image file (PNG, JPEG, WebP, GIF, BMP, TIFF) from the user's workspace with OCR. "
             "Returns the text, the mean confidence (0-100), every line with its confidence and pixel box, word "
-            "boxes, and the words recognised with low confidence (which may be misread). Use lang for a specific "
+            "boxes, and the words recognised with low confidence (which may be misread). Use language for a specific "
             "language (e.g. 'ara', 'ara+eng'); the default is the deployment's. A file that is not an image, or "
             "is too large, is refused with a reason.",
             param("path", "string", "Path relative to the workspace root.", max_length=300),
-            param("lang", "string", "Tesseract language code(s), e.g. 'eng', 'ara+eng' (default: the "
-                  "deployment's).", required=False, max_length=40),
+            param("language", "string", "Tesseract language code(s), e.g. 'eng', 'ara+eng' (default: the "
+                  "deployment's). These are tesseract's 3-letter codes, not the ISO-639-1 ones transcribe_audio takes.",
+                  required=False, max_length=40),
             param("include_words", "boolean", "Include per-word boxes (default true).", required=False,
                   default=True),
             param("min_confidence", "number", "Words below this confidence (0-100) are flagged (default 60).",
@@ -959,9 +960,9 @@ def build_media_tools(
             max_result_chars=40_000,
             **common,
         )
-        async def ocr_image(path: str, lang: str | None = None, include_words: bool = True,
+        async def ocr_image(path: str, language: str | None = None, include_words: bool = True,
                             min_confidence: float = 60.0) -> str:
-            code = _ocr_lang(lang)
+            code = _ocr_lang(language)
             target = locate(path, "ocr_image")
             data = await asyncio.to_thread(_read_limited, target, _MAX_IMAGE_BYTES, path, "ocr_image", "an image")
             info = await asyncio.to_thread(_inspect_image, data, path, "ocr_image", max_pixels=_MAX_OCR_PIXELS)
