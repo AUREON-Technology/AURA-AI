@@ -562,6 +562,12 @@ def _all_tools() -> dict[str, ToolSpec]:
     )
     agents = build_default_agent_registry()
     tools += build_delegation_tools(agents=agents, kernel=lambda: None)
+    # ADR-044: the two groups the Container registers itself because they need its cache / registry.
+    from aura_core.llm.cache import InMemoryCache
+    from aura_core.tools.drift import build_drift_tools
+    from aura_core.tools.research import build_research_tools
+
+    tools += build_drift_tools(InMemoryCache()) + build_research_tools(lambda: None)
     return {t.spec.name: t.spec for t in tools}
 
 
