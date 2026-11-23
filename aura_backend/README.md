@@ -104,6 +104,10 @@ Environment variables (see `aura_core/config/settings.py`):
 - `AURA_TOOLS_FILES_ROOT` / `AURA_TOOLS_HTTP_ALLOWED_HOSTS` — switch on the read-only `list_files`/`read_file` (confined to that directory) and the host-allowlisted `fetch_url`; both off while empty
 - `AURA_OPEN_EXEC_TOOLS_ENABLED` — `generate_and_run_tests` / `analyze_test_quality`, which run pytest in a child of the gateway; `engineer_agent` + confirmation, no container (default: false; ADR-036)
 - `AURA_DESKTOP_OPS_TOOLS_ENABLED` — `docker_build` / `docker_compose` / `profile_python` on a paired desktop only (default: true; ADR-036)
+- `AURA_AGENT_TASKS_ENABLED` (default: true) and `AURA_AGENT_TASKS_MAX_CONCURRENT` / `_MAX_CONCURRENT_PER_USER` / `_MAX_QUEUED` / `_MAX_QUEUED_PER_USER` / `_MAX_SCHEDULE_AHEAD_S` / `_TIMEOUT_S` / `_RECORD_TTL_S` / `_HEARTBEAT_S` / `_STALE_AFTER_S` / `_AGING_S` / `_IDEMPOTENCY_TTL_S` — the agent task gateway and its per-process queue (`POST /api/v3/agents/tasks`, ADR-041); additive, `/chat` is unchanged, records live in the cache port (no table)
+- `AURA_USAGE_LEDGER_ENABLED` / `_TTL_DAYS` / `_MAX_PER_USER` — per-turn usage records behind `GET /api/v3/usage/summary` and `/usage/turns` (default: on; ADR-041)
+- `AURA_AGENT_RUNS_STORE_PREVIEW` (default: **false**) / `AURA_AGENT_RUNS_PREVIEW_TTL_S` / `AURA_AGENT_RUNS_SEARCH_SCAN` — opt in to a 200-character, secret-redacted goal preview per agent run (kept in the cache, not the run store) so `GET /api/v3/agents/runs/search?q=` can match goal text; off, a run stores only a digest of its goal and search covers agent, status, tool names and dates
+- `AURA_VOICE_TASK_REFINE` — let `POST /api/v3/voice/task` refine its deterministic extraction with a model (default: true; the transcript goes only to a provider cleared for personal data)
 - `AURA_ALLOW_REMOTE_INFERENCE` — gate remote inference (default: false)
 - `AURA_LEARNING_REFRESH_CRON` — knowledge refresh schedule (default: `0 2 * * *`)
 - `OLLAMA_NUM_PARALLEL` — model concurrency (default: 1)
