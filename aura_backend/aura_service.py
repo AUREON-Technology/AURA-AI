@@ -315,6 +315,8 @@ def _apply_http_limits(app, settings) -> None:
         "/api/v3/knowledge/documents/": _DEFAULT_BODY_BYTES,
         "/api/v3/knowledge/documents": document_body_limit(settings.knowledge),
         "/api/v3/voice/transcribe": transcribe_body_limit(),
+        # Same audio, same ceiling: /voice/task transcribes the upload before extracting a task.
+        "/api/v3/voice/task": transcribe_body_limit(),
     }
     chat_limit = chat_body_limit(settings.vision)
     if chat_limit is not None:

@@ -110,6 +110,20 @@ COVERED = {
         "TestEngineering::test_bob_cannot_delete_alices_workspace",
     ("GET", "/api/v3/agents/runs/{run_id}"):
         "TestAgentRuns::test_bob_cannot_read_alices_agent_run",
+    ("GET", "/api/v3/agents/tasks/{task_id}"):
+        "TestAgentTasks::test_bob_cannot_read_alices_task",
+    ("POST", "/api/v3/agents/tasks/{task_id}/cancel"):
+        "TestAgentTasks::test_bob_cannot_cancel_alices_task",
+    ("POST", "/api/v3/agents/tasks/{task_id}/approve"):
+        "TestAgentTasks::test_bob_cannot_approve_alices_task",
+    ("POST", "/api/v3/engineering/workspaces/{workspace_id}/start"):
+        "TestEngineeringLifecycle::test_bob_cannot_start_stop_restart_or_stat_alices_workspace",
+    ("POST", "/api/v3/engineering/workspaces/{workspace_id}/stop"):
+        "TestEngineeringLifecycle::test_bob_cannot_start_stop_restart_or_stat_alices_workspace",
+    ("POST", "/api/v3/engineering/workspaces/{workspace_id}/restart"):
+        "TestEngineeringLifecycle::test_bob_cannot_start_stop_restart_or_stat_alices_workspace",
+    ("GET", "/api/v3/engineering/workspaces/{workspace_id}/stats"):
+        "TestEngineeringLifecycle::test_bob_cannot_start_stop_restart_or_stat_alices_workspace",
     ("DELETE", "/api/v3/workspaces/{workspace_id}"):
         "TestWorkspaces::test_bob_cannot_delete_alices_team",
     ("GET", "/api/v3/workspaces/{workspace_id}/members"):
@@ -465,6 +479,74 @@ class TestEngineering:
         with TestClient(_app(container)) as client:
             assert client.get("/api/v3/engineering/runs", headers=AUTH_B).json()["runs"] == []
             assert len(client.get("/api/v3/engineering/runs", headers=AUTH_A).json()["runs"]) == 1
+
+
+class TestEngineeringLifecycle:
+    """ADR-041: starting, stopping, restarting or reading the stats of a workspace is its owner's."""
+
+    def test_bob_cannot_start_stop_restart_or_stat_alices_workspace(self, container) -> None:
+        from fastapi.testclient import TestClient
+
+        from aura_core.adapters.coding_fakes import InMemorySandboxRunner
+        from aura_core.tools.workspaces import WorkspaceManager
+
+        container.workspace_manager = WorkspaceManager(
+            runner=InMemorySandboxRunner(), store=container.workspaces, min_free_memory_mb=0
+        )
+        victim = asyncio.run(container.workspace_manager.open(UserId(ALICE), "acme/private"))
+        wid = victim.record.id.value
+        base = "/api/v3/engineering/workspaces"
+        with TestClient(_app(container)) as client:
+            for verb in ("start", "stop", "restart"):
+                assert client.post(f"{base}/{wid}/{verb}", headers=AUTH_B).status_code == 404, verb
+            assert client.get(f"{base}/{wid}/stats", headers=AUTH_B).status_code == 404
+            rows = client.get(base, headers=AUTH_A).json()["workspaces"]
+            assert [(w["repo"], w["status"]) for w in rows] == [("acme/private", "hot")]
+
+
+class TestAgentTasks:
+    """ADR-041: a task is its owner's. Another person's id reads as absent on every verb."""
+
+    @staticmethod
+    def _alice_task(client) -> str:
+        from datetime import datetime, timedelta, timezone
+
+        later = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        response = client.post(
+            "/api/v3/agents/tasks", headers=AUTH_A,
+            json={"goal": "alice private goal PELICAN-7731", "run_at": later, "use_tools": False},
+        )
+        assert response.status_code == 202, response.text
+        return response.json()["task"]["id"]
+
+    def test_bob_cannot_read_alices_task(self, client) -> None:
+        task_id = self._alice_task(client)
+        assert client.get(f"/api/v3/agents/tasks/{task_id}", headers=AUTH_B).status_code == 404
+        assert client.get("/api/v3/agents/tasks", headers=AUTH_B).json()["tasks"] == []
+        mine = client.get(f"/api/v3/agents/tasks/{task_id}", headers=AUTH_A)
+        assert mine.status_code == 200 and "PELICAN" in mine.json()["task"]["goal"]
+
+    def test_bob_cannot_cancel_alices_task(self, client) -> None:
+        task_id = self._alice_task(client)
+        assert client.post(f"/api/v3/agents/tasks/{task_id}/cancel", headers=AUTH_B).status_code == 404
+        assert client.get(f"/api/v3/agents/tasks/{task_id}", headers=AUTH_A).json()["task"]["status"] == "queued"
+
+    def test_bob_cannot_approve_alices_task(self, client) -> None:
+        task_id = self._alice_task(client)
+        refused = client.post(f"/api/v3/agents/tasks/{task_id}/approve", headers=AUTH_B,
+                              json={"approval_ids": ["x"]})
+        assert refused.status_code == 404
+
+    def test_bob_cannot_replay_alices_idempotency_key_into_her_task(self, client) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        later = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        first = client.post("/api/v3/agents/tasks", headers=AUTH_A, json={
+            "goal": "same goal", "run_at": later, "use_tools": False, "client_request_id": "shared"})
+        second = client.post("/api/v3/agents/tasks", headers=AUTH_B, json={
+            "goal": "same goal", "run_at": later, "use_tools": False, "client_request_id": "shared"})
+        assert first.json()["task"]["id"] != second.json()["task"]["id"]
+        assert second.json()["idempotent_replay"] is False
 
 
 class TestAgentRuns:

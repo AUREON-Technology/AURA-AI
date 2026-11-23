@@ -233,6 +233,10 @@ class TurnRequest:
     #: when the message has no clear language (a link, a number, code). ``None`` -- an old app,
     #: a service key -- leaves such a message to the model, as before.
     preferred_language: str | None = None
+    #: The agent task (``aura_core/tasks``, ADR-041) this turn runs for, set only by the task
+    #: queue. It changes nothing about how the turn runs; it is carried onto the turn's usage
+    #: record so spend can be grouped by task.
+    task_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,6 +357,12 @@ class KernelDependencies:
     #: `AutonomyStore` (`tools/autonomy.py`, ADR-039): the user's review profile, read once per
     #: turn into `ToolContext.autonomy`. `None` means every turn runs as `standard`.
     autonomy: Any = None
+    #: `UsageLedger` (`history/usage.py`, ADR-041): one compact per-user record per finished turn,
+    #: for the usage API. `None` records nothing. Writing never fails a turn.
+    usage_ledger: Any = None
+    #: `RunSearchIndex` (`history/run_search.py`, ADR-041): keeps the opt-in redacted goal preview
+    #: of an agent run (`AURA_AGENT_RUNS_STORE_PREVIEW`). `None`, or the setting off, stores nothing.
+    run_index: Any = None
 
 
 #: Told to the model when planning or tool execution failed (CB-14). Without it the model saw
@@ -683,6 +693,7 @@ class AIKernel:
                 agent_run_id = getattr(outcome, "run_id", None)
                 await self._relieve_pressure(request, outcome)
                 agent_loop = self._loop_summary(outcome)
+                await self._index_run(request, agent_run_id, message)
                 tool_results = outcome.summary_for_context()
                 plan_steps = len(outcome.plan.steps)
                 plan_revisions = len(outcome.plan.revisions)
@@ -847,7 +858,7 @@ class AIKernel:
             confidence=confidence,
             groundedness=groundedness,
         )
-        await self._record(telemetry)
+        await self._record(telemetry, request)
 
         return TurnResult(
             text=answer,
@@ -1046,6 +1057,7 @@ class AIKernel:
                         execution_notes.append(PLANNING_FAILED_NOTE)
                     timings["planning"] = (time.perf_counter() - stage_start) * 1000.0
                 if outcome is not None:
+                    await self._index_run(request, getattr(outcome, "run_id", None), message)
                     tool_results = outcome.summary_for_context()
                     # ADR-037: what the loop learned (stopped as stuck, tests still red) -- only
                     # the loop's own notes; the step notes are `_run_turn`'s, unchanged here.
@@ -1289,7 +1301,7 @@ class AIKernel:
                     plan_revisions=len(outcome.plan.revisions) if outcome is not None else 0,
                     planning_failed=planning_failed,
                 )
-                await self._record(telemetry)
+                await self._record(telemetry, request)
                 degraded_reasons = list(telemetry.degraded_reasons)
                 if searched_empty and "empty_retrieval" not in degraded_reasons:
                     degraded_reasons.append("empty_retrieval")
@@ -1733,6 +1745,25 @@ class AIKernel:
                 "The Engineer sends your code to Anthropic; agree to that in the app first.",
                 details={"current_version": ENGINEER_CONSENT_NOTICE_VERSION},
             )
+
+    async def preflight(self, request: TurnRequest) -> None:
+        """Refuse, before anything is queued or run, a turn the kernel would refuse at its start:
+        today an Engineer turn without a current consent (D-03). Used by the agent task gateway
+        (ADR-041), which accepts a task now and runs it later -- a person who has not agreed
+        should hear so when they submit, not find a failed task afterwards. The turn itself still
+        re-checks when it runs. Raises the same :class:`ConsentRequiredError` the turn would."""
+        await self._require_engineer_consent(request)
+
+    async def _index_run(self, request: TurnRequest, run_id: str | None, goal: str) -> None:
+        """Hand the run's goal to the opt-in preview index (ADR-041). A no-op unless the operator
+        enabled previews; never raises."""
+        index = self._deps.run_index
+        if index is None or not run_id:
+            return
+        try:
+            await index.note(request.user_id, run_id, goal)
+        except Exception:  # pragma: no cover - the index already swallows its own failures
+            logger.debug("run preview not stored", exc_info=True)
 
     def _resolve_agent(self, request: TurnRequest) -> AgentSpec | None:
         """The turn's resolved persona (Phase C1), or ``None`` with no registry configured.
@@ -3055,7 +3086,7 @@ class AIKernel:
         logger.warning(
             "turn failed", extra={"error": exc.kind, "outcome": str(outcome)}
         )
-        asyncio.ensure_future(self._record(telemetry))
+        asyncio.ensure_future(self._record(telemetry, request))
         asyncio.ensure_future(
             self._publish(
                 TurnFailed(
@@ -3073,8 +3104,12 @@ class AIKernel:
             ),
         )
 
-    async def _record(self, telemetry: TurnTelemetry) -> None:
+    async def _record(self, telemetry: TurnTelemetry, request: TurnRequest | None = None) -> None:
         _trace_turn(telemetry)
+        ledger = self._deps.usage_ledger
+        if ledger is not None and request is not None:
+            # Per user, which the content-free telemetry above deliberately is not. Never raises.
+            await ledger.record(request.user_id.value, telemetry, task_id=request.task_id)
         if self._metrics is not None:
             try:
                 self._metrics.observe_turn(telemetry)

@@ -1353,38 +1353,13 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     # -- voice (Phase F2) ----------------------------------------------------------------
 
-    @router.post("/voice/transcribe")
-    async def transcribe_audio(
-        request: Request,
-        file: UploadFile = File(...),
-        language: str | None = Form(default=None, max_length=40),
-        detail: str = Form(default="text", max_length=16),
-        words: bool = Form(default=True),
-        caller: Principal = Depends(principal),
-    ) -> JSONResponse:
-        """Speech to text via the container's `SpeechToText` engine (self-hosted
-        `faster-whisper`, Phase F2). 503s with a clear `dependency_unavailable` body when no
-        engine is configured, rather than pretending an empty transcript is a real answer.
-
-        ``language`` (optional, ISO-639-1 such as ``ar``; ``AR-eg`` folds to ``ar``) is a hint
-        for a multilingual model, validated exactly as a live-voice start frame is; an unknown
-        code is a 422. Without it the model detects the language itself. An English-only
-        (``*.en``) model ignores the hint, exactly as before the field existed: clients already
-        in use send ``ar`` whenever the app is in Arabic, and must keep getting a transcript
-        (docs/plans/arabic-language_plan.md, stage 4).
-
-        The response's ``language`` (Phase V, additive) is the language the engine used --
-        the hint it honoured, or the one it detected -- or ``null`` when it cannot say.
-
-        ``detail=segments`` (ADR-040, additive; the default ``text`` is unchanged) returns the
-        timestamped transcript: ``segments`` with ``start``/``end`` seconds, ``text``,
-        ``confidence`` (0-1, from the engine's own figures) and, unless ``words=false``, per-word
-        times and probabilities, plus the clip ``duration`` and ``language_probability``. Every
-        segment's ``speaker`` is ``null`` and ``diarization.available`` is ``false``: the engine
-        cannot say who is talking, and labels are never invented. An engine that cannot report
-        timestamps answers 503 ``dependency_unavailable`` rather than returning an untimed
-        transcript as if it were timed.
-        """
+    async def transcribe_upload(
+        file: Any, language: str | None, *, detail: str = "text", words: bool = True
+    ) -> tuple[Any, str | None, Any]:
+        """Speech to text for one uploaded file: ``(result, language used, engine)``. The one
+        place the STT engine is checked, the language hint validated and the size limit
+        enforced, so ``/voice/transcribe`` and ``/voice/task`` cannot drift apart. ``result`` is
+        the transcript text, or -- for ``detail="segments"`` (ADR-040) -- the response body."""
         from ..ports.speech import LanguageAwareSpeechToText, TimestampedSpeechToText
         from ..voice.session import normalise_language
 
@@ -1393,8 +1368,6 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "detail must be 'text' or 'segments'",
                 details={"field": "detail", "reason": "detail_unsupported"},
             )
-
-        await enforce_rate_limit(request, caller, "voice")
         engine = container.stt_engine
         if engine is None:
             raise DependencyUnavailableError(
@@ -1432,7 +1405,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             body = transcript.as_dict(include_words=words)
             if english_only:
                 body["language"] = "en"
-            return JSONResponse(content={
+            body = {
                 **body,
                 "engine": engine.name,
                 "detail": "segments",
@@ -1440,14 +1413,51 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                     "available": False,
                     "reason": "the speech engine does not identify speakers; every segment's speaker is null",
                 },
-            })
+            }
+            return body, body.get("language"), engine
         if language_aware:
             text, used = await engine.transcribe_detect(data, language=hint)
         else:
             text, used = await engine.transcribe(data, language=hint), hint
         if english_only:
             used = "en"
-        return JSONResponse(content={"text": text, "engine": engine.name, "language": used})
+        return text, used, engine
+
+    @router.post("/voice/transcribe")
+    async def transcribe_audio(
+        request: Request,
+        file: UploadFile = File(...),
+        language: str | None = Form(default=None, max_length=40),
+        detail: str = Form(default="text", max_length=16),
+        words: bool = Form(default=True),
+        caller: Principal = Depends(principal),
+    ) -> JSONResponse:
+        """Speech to text via the container's `SpeechToText` engine (self-hosted
+        `faster-whisper`, Phase F2). 503s with a clear `dependency_unavailable` body when no
+        engine is configured, rather than pretending an empty transcript is a real answer.
+
+        ``language`` (optional, ISO-639-1 such as ``ar``; ``AR-eg`` folds to ``ar``) is a hint
+        for a multilingual model, validated exactly as a live-voice start frame is; an unknown
+        code is a 422. Without it the model detects the language itself. An English-only
+        (``*.en``) model ignores the hint, exactly as before the field existed: clients already
+        in use send ``ar`` whenever the app is in Arabic, and must keep getting a transcript
+        (docs/plans/arabic-language_plan.md, stage 4).
+
+        The response's ``language`` (Phase V, additive) is the language the engine used --
+        the hint it honoured, or the one it detected -- or ``null`` when it cannot say.
+
+        ``detail=segments`` (ADR-040, additive; the default ``text`` is unchanged) returns the
+        timestamped transcript: ``segments`` with ``start``/``end`` seconds, ``text``,
+        ``confidence`` (0-1) and, unless ``words=false``, per-word times and probabilities.
+        Every segment's ``speaker`` is ``null`` and ``diarization.available`` is ``false``: the
+        engine cannot say who is talking, and labels are never invented. An engine that cannot
+        report timestamps answers 503 ``dependency_unavailable``.
+        """
+        await enforce_rate_limit(request, caller, "voice")
+        result, used, engine = await transcribe_upload(file, language, detail=detail, words=words)
+        if detail == "segments":
+            return JSONResponse(content=result)
+        return JSONResponse(content={"text": result, "engine": engine.name, "language": used})
 
     @router.post("/voice/speak")
     async def synthesize_speech(
@@ -1470,6 +1480,73 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             content=audio, media_type="audio/wav",
             headers={"X-Engine": container.tts_engine.name},
         )
+
+    @router.post("/voice/task")
+    async def voice_to_task(
+        request: Request,
+        file: UploadFile | None = File(default=None),
+        text: str | None = Form(default=None, max_length=8000),
+        language: str | None = Form(default=None, max_length=40),
+        refine: bool = Form(default=True),
+        caller: Principal = Depends(principal),
+    ) -> JSONResponse:
+        """Spoken (``file``) or typed (``text``) request -> a structured task, **never started**.
+
+        Send exactly one of ``file`` (audio, transcribed as ``/voice/transcribe`` does) or
+        ``text`` (a transcript the client already has) as ``multipart/form-data`` or
+        ``application/x-www-form-urlencoded``; ``language`` is the usual ``en``/``ar`` hint and
+        ``refine=false`` skips the optional model refinement.
+
+        The body is ``{goal, constraints[], repository, deliverable, priority, ambiguities[],
+        needs_clarification, questions[]}`` plus ``transcript``, ``language``, ``source``
+        (``deterministic`` or ``llm``), ``refinement`` (what the model stage did), ``assumptions``
+        and -- only when nothing needs asking -- ``suggested_request``, a body for
+        ``POST /api/v3/agents/tasks``. A gap (no goal, a code task with no repository, a repository
+        without its owner, a goal that is only "fix it", a request with no stated deliverable) is
+        never guessed: it becomes an ambiguity and a localized question, and
+        ``needs_clarification`` is true. The client asks, then submits the task itself; this route
+        starts nothing (``started`` is always false)."""
+        from ..text.language import normalize_language
+        from ..voice.task_extractor import TaskExtractor, task_goal_text
+
+        await enforce_rate_limit(request, caller, "voice")
+        typed = (text or "").strip()
+        if file is not None and typed:
+            raise ValidationError("send audio or text, not both", details={"field": "file"})
+        if file is None and not typed:
+            raise ValidationError("send audio in `file` or a transcript in `text`",
+                                  details={"field": "text"})
+        hint = normalize_language(language) if language else None
+        if language and language.strip() and hint is None:
+            raise ValidationError(
+                "language is not a supported language code; send an ISO-639-1 code such as en or ar",
+                details={"field": "language", "reason": "language_unsupported"},
+            )
+        transcript = typed
+        spoken_language: str | None = None
+        if file is not None:
+            transcript, spoken_language, _engine = await transcribe_upload(file, language)
+        extractor = TaskExtractor(
+            container.router if settings.voice.task_refine_enabled else None,
+        )
+        task, refinement = await extractor.extract(
+            transcript, language=spoken_language or hint, refine=refine and settings.voice.task_refine_enabled,
+        )
+        if refine and not settings.voice.task_refine_enabled:
+            refinement = {"requested": True, "status": "disabled"}
+        body = task.as_dict()
+        suggested = None
+        if not task.needs_clarification:
+            suggested = {"goal": task_goal_text(task), "priority": task.priority or "normal"}
+            if task.repository:
+                suggested["persona_hint"] = "engineer"
+        return JSONResponse(content={
+            **body,
+            "transcript": transcript,
+            "refinement": refinement,
+            "suggested_request": suggested,
+            "started": False,
+        })
 
     # -- memory ------------------------------------------------------------------------
 
@@ -1938,6 +2015,15 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         await container.workspace_manager.destroy(target)
         return JSONResponse(content={"deleted": workspace_id, "repo": target.repo})
 
+    # ADR-041: start/stop/restart, resource stats and the read-only paired-desktop status.
+    from .engineering_ops import register_engineering_ops
+
+    register_engineering_ops(
+        router, container, principal=principal, enforce_rate_limit=enforce_rate_limit,
+        idempotent=idempotent, Depends=Depends, HTTPException=HTTPException,
+        JSONResponse=JSONResponse, Request=Request,
+    )
+
     class EngineerConsentRequest(BaseModel):
         notice_version: str = Field(min_length=1, max_length=64)
 
@@ -2286,6 +2372,30 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 ]
             }
         )
+
+    # -- agent tasks (ADR-041) ----------------------------------------------------------
+    from .agent_tasks import register_agent_task_ops
+
+    async def build_task_turn(fields: dict[str, Any], caller: Principal, request: Request) -> TurnRequest:
+        """A task's request, validated by exactly the code ``/chat`` uses (``to_turn``). A
+        background task has no live caller to hold a connector sign-in, so none is carried."""
+        turn = await to_turn(ChatRequest(**fields), caller, request)
+        return replace(turn, connector_tokens=None)
+
+    register_agent_task_ops(
+        router, container, principal=principal, enforce_rate_limit=enforce_rate_limit,
+        build_turn=build_task_turn, admit_turn=admit_turn, release_turn=release_turn,
+        Depends=Depends, JSONResponse=JSONResponse, Query=Query, Request=Request,
+    )
+
+    # -- usage dashboard and run history (ADR-041) -------------------------------------
+    # Before ``/agents/runs/{run_id}``: a path parameter would swallow "search" and "timeline".
+    from .usage_history import register_usage_history
+
+    register_usage_history(
+        router, container, principal=principal, enforce_rate_limit=enforce_rate_limit,
+        Depends=Depends, JSONResponse=JSONResponse, Query=Query, Request=Request,
+    )
 
     # -- agent runs (GAP-024) -----------------------------------------------------------
 

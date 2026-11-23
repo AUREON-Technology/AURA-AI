@@ -56,6 +56,7 @@ from .execution.recovery import RecoveryPolicy
 from .execution.stuck import StuckConfig
 from .execution.confirmations import PendingConfirmationStore
 from .execution.engine import ExecutionEngine
+from .history import RunSearchIndex, UsageLedger
 from .knowledge.chunking import ChunkingConfig
 from .knowledge.engine import KnowledgeEngine
 from .knowledge.extraction import RuleEntityExtractor
@@ -78,6 +79,7 @@ from .memory.session import EpisodicMemory, build_session_summariser
 from .observability.logging import configure_logging, get_logger
 from .observability.metrics import get_metrics
 from .rag import StrategyFacade, build_strategies
+from .tasks import AgentTaskQueue, AgentTaskStore, KernelTaskRunner
 from .observability.tracing import Tracer, install_tracer
 from .planning.engine import PlanningEngine
 from .ports.runtime import Closeable
@@ -656,6 +658,18 @@ class Container:
         #: attached by ``aura_service`` because the device registry lives outside aura_core
         #: (ADR-002). ``None`` where it is not attached; ``stop-all`` then reports it unavailable.
         self.device_revoker = None
+        # ADR-041: per-turn usage and the opt-in run-goal preview, both in the cache port (Redis
+        # in production) -- no table. The kernel writes them; the usage and run-search routes read.
+        usage = settings.usage
+        self.usage_ledger = UsageLedger(
+            self.cache_backend, enabled=usage.ledger_enabled, ttl_days=usage.ledger_ttl_days,
+            max_per_user=usage.ledger_max_per_user, clock=self.clock,
+        )
+        self.run_index = RunSearchIndex(
+            self.cache_backend, self.agent_runs, store_preview=usage.runs_store_preview,
+            preview_ttl_s=usage.runs_preview_ttl_s, scan=usage.runs_search_scan,
+        )
+
         self.kernel = AIKernel(
             KernelDependencies(
                 router=self.router,
@@ -690,8 +704,25 @@ class Container:
                 vision=self.vision,
                 lesson_sink=self.lesson_sink,
                 autonomy=self.autonomy,
+                usage_ledger=self.usage_ledger,
+                run_index=self.run_index,
             )
         )
+        # ADR-041: user agent tasks. The queue runs each task through `self.kernel` -- the same
+        # path as /chat -- so it can only exist once the kernel does. `None` is the kill switch
+        # (AURA_AGENT_TASKS_ENABLED=false): the routes then answer 503.
+        self.agent_task_store = AgentTaskStore(
+            self.cache_backend, record_ttl_s=settings.agent_tasks.record_ttl_s,
+            idempotency_ttl_s=settings.agent_tasks.idempotency_ttl_s,
+        )
+        self.task_queue = (
+            AgentTaskQueue(
+                store=self.agent_task_store, runner=KernelTaskRunner(self.kernel),
+                settings=settings.agent_tasks, clock=self.clock,
+            )
+            if settings.agent_tasks.enabled else None
+        )
+
         # After kernel exists, same reason as live_voice below: `delegate_to_agent`
         # (tools/delegation.py) recurses into `self.kernel.run()`, so it cannot be built inside
         # `_build_tools()` (which runs before the kernel does) -- the resolver defers the lookup
@@ -2030,6 +2061,8 @@ class Container:
         # Re-arms shutdown(): a container started again after one (a test client re-entering
         # its lifespan, an evaluation run) reconnects lazily, and those clients must close too.
         self._shut_down = False
+        if self.task_queue is not None:
+            await self.task_queue.start()
         await self.index_manager.ensure_ready()
         if self.settings.knowledge.hybrid_enabled:
             await self.knowledge.rebuild_lexical_index()
@@ -2135,6 +2168,10 @@ class Container:
         if self._shut_down:
             return
         self._shut_down = True
+        if getattr(self, "task_queue", None) is not None:
+            # ADR-041 gateway queue: first, and on its own -- it cancels running tasks and writes
+            # their final state to the cache, which must still be open while it does.
+            await self._close_quietly("agent task queue", self.task_queue.stop)
         if getattr(self, "agent_tasks", None) is not None:
             # Background sub-turns live in this process: stop them and write their final records
             # first, before the cache they report to (and the providers they call) are closed.

@@ -24,7 +24,7 @@ import asyncio
 import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from ..domain.engineering import AgentWorkspace, WorkspaceStatus
 from ..domain.errors import ToolExecutionError
@@ -199,13 +199,20 @@ class WorkspaceManager:
             return
         needed = self._min_free_memory_mb + self._memory_limit_mb
         if available < needed:
-            raise WorkspaceCapacityError(
+            refusal = WorkspaceCapacityError(
                 "not enough free memory on the host to start another workspace "
                 f"({available:.0f} MiB available, {needed:.0f} MiB needed). Nothing was started; "
                 "try again once the host is less busy, or ask an operator to raise "
                 "AURA_SANDBOX_MIN_FREE_MEMORY_MB if this is a false alarm.",
                 tool="open_workspace",
             )
+            # The message above is for the agent and the operator's logs. A person asking over
+            # HTTP is told the reason without the host's memory figures or its configuration.
+            refusal.public_message = (
+                "the server does not have enough free memory to start another workspace right "
+                "now. Nothing was started; try again shortly."
+            )
+            raise refusal
 
     async def _make_room_to_run(
         self, now: datetime, *, keep: WorkspaceId | None
@@ -282,6 +289,129 @@ class WorkspaceManager:
     async def list_for_user(self, user_id: UserId) -> Sequence[AgentWorkspace]:
         """This user's workspaces, most recently used first. Read-only; opens nothing."""
         return await self._store.list_for_user(user_id)
+
+    async def get_for_user(self, user_id: UserId, workspace_id: str) -> AgentWorkspace | None:
+        """One of this user's workspaces by id, or ``None`` -- the same answer for a workspace that
+        is someone else's as for one that never existed (ownership is the lookup itself)."""
+        for workspace in await self._store.list_for_user(user_id):
+            if workspace.id.value == workspace_id:
+                return workspace
+        return None
+
+    # -- lifecycle on request (ADR-041, roadmap row 89) -------------------------------------
+    #
+    # The same operations ``open``/``pause`` perform inside a turn, exposed so a person can start,
+    # stop or restart *their own* workspace from the app. They add no new policy: ``start`` goes
+    # through ``open``'s admission (the running limit, the host-memory guard), so a request cannot
+    # take a slot or memory that a turn could not.
+
+    async def start(self, workspace: AgentWorkspace) -> OpenWorkspace:
+        """Run ``workspace`` (resuming its stopped container). Idempotent: already running is a
+        touch. Refuses with :class:`WorkspaceCapacityError` when the host cannot afford it, and
+        may pause the least-recently-used *other* workspace to make room (``evicted``)."""
+        return await self.open(workspace.user_id, workspace.repo)
+
+    async def stop(self, workspace: AgentWorkspace) -> bool:
+        """Stop ``workspace``, keeping its files. ``True`` if it was running. Idempotent."""
+        current = await self._store.get_by_id(workspace.id)
+        if current is None or current.status != WorkspaceStatus.HOT:
+            return False
+        await self._pause(current, self._now())
+        await self._publish_gauges()
+        return True
+
+    async def restart(self, workspace: AgentWorkspace) -> OpenWorkspace:
+        """Stop then start. Admission applies to the start half, so a restart can be refused for
+        capacity -- after which the workspace is stopped, not running (it is never half-started)."""
+        await self.stop(workspace)
+        return await self.start(workspace)
+
+    async def stats(self, workspace: AgentWorkspace) -> dict[str, Any]:
+        """A resource readout that never starts anything.
+
+        State and disk always; CPU, memory and start time only when the runner reports them
+        (``workspace_stats``), otherwise ``None`` with ``resources.reason`` saying why -- a
+        missing number is never presented as zero."""
+        from ..ports.coding import SandboxHandle
+
+        current = await self._store.get_by_id(workspace.id) or workspace
+        # A handle by key, not ``open_workspace``: that would start a stopped container just to
+        # read a number about it.
+        handle = SandboxHandle(task_id=current.id.value)
+        running = current.status == WorkspaceStatus.HOT
+        now = self._now()
+
+        used_mb: float | None = None
+        disk_reason: str | None = None
+        measure = getattr(self._runner, "workspace_disk_usage_mb", None)
+        if measure is None:
+            disk_reason = "the runner does not report disk usage"
+        else:
+            try:
+                used_mb = float(await measure(handle))
+            except Exception:
+                logger.debug("workspace disk usage unreadable", exc_info=True)
+                disk_reason = "disk usage could not be read"
+        quota = self._disk_quota_mb
+        disk: dict[str, Any] = {
+            "used_mb": round(used_mb, 2) if used_mb is not None else None,
+            "quota_mb": quota,
+            "percent": round(100.0 * used_mb / quota, 1) if used_mb is not None and quota else None,
+            "over_quota": bool(used_mb is not None and used_mb >= quota),
+            "reason": disk_reason,
+        }
+
+        reading: Mapping[str, Any] | None = None
+        reason: str | None = None
+        reporter = getattr(self._runner, "workspace_stats", None)
+        if not running:
+            reason = "the workspace is stopped; it holds no CPU or memory"
+        elif reporter is None:
+            reason = "the runner does not report CPU or memory"
+        else:
+            try:
+                reading = await reporter(handle)
+            except Exception:
+                logger.debug("workspace stats unreadable", exc_info=True)
+            if reading is None:
+                reason = "the runner could not read this workspace's CPU and memory just now"
+
+        def number(key: str) -> float | None:
+            value = (reading or {}).get(key)
+            return round(float(value), 2) if isinstance(value, (int, float)) else None
+
+        if reading is not None and number("cpu_percent") is None and number("memory_mb") is None:
+            reason = "the runner reported the workspace's start time but not its CPU or memory"
+
+        started = (reading or {}).get("started_at")
+        uptime: float | None = None
+        if running and isinstance(started, str):
+            try:
+                begun = datetime.fromisoformat(started.replace("Z", "+00:00"))
+                if begun.tzinfo is None:
+                    begun = begun.replace(tzinfo=timezone.utc)
+                uptime = max(0.0, (now - begun).total_seconds())
+            except ValueError:
+                uptime = None
+        census = await self._store.list_all()
+        return {
+            "state": current.status,
+            "running": running,
+            "uptime_s": round(uptime, 1) if uptime is not None else None,
+            "disk": disk,
+            "cpu": {"percent": number("cpu_percent")},
+            "memory": {
+                "used_mb": number("memory_mb"),
+                "limit_mb": number("memory_limit_mb") or (self._memory_limit_mb or None),
+            },
+            "resources": {"available": reading is not None, "reason": reason},
+            "capacity": {
+                "running": sum(1 for w in census if w.status == WorkspaceStatus.HOT),
+                "max_running": self._max_running,
+                "workspaces": len(census),
+                "max_workspaces": self._max_workspaces,
+            },
+        }
 
     async def get(self, user_id: UserId, repo: str) -> AgentWorkspace | None:
         return await self._store.get(user_id, repo)
