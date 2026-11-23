@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import io
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
@@ -39,6 +41,9 @@ MAX_PDF_BYTES = 100 * 1024 * 1024
 MAX_PDF_PAGES = 5000
 
 _PDF_MAGIC = b"%PDF-"
+_ZIP_MAGIC = b"PK\x03\x04"
+#: Rows read per worksheet. A sheet longer than this comes back with a stated cut, never silently.
+MAX_XLSX_ROWS = 100_000
 
 #: Wall-clock allowance for OCR of one document. OCR is the slowest thing these tools do (seconds
 #: per page on CPU), so it gets a generous but bounded budget; it is never allowed to run unbounded.
@@ -82,6 +87,8 @@ class SourceRead:
     ocr_pages: Tuple[int, ...] = ()
     #: Set when OCR could not run (no engine, no Pillow, timed out) -- explains ``unreadable_pages``.
     ocr_note: Optional[str] = None
+    #: Extra caveats about how much was read (e.g. "sheet 'Data' was cut at 100,000 rows").
+    notes: Tuple[str, ...] = ()
 
     @property
     def complete(self) -> bool:
@@ -91,7 +98,7 @@ class SourceRead:
     def describe(self) -> Dict[str, Any]:
         """JSON-safe coverage report for a tool result."""
         info: Dict[str, Any] = {"kind": self.kind, "complete": self.complete, "chars": len(self.text)}
-        if self.kind == "pdf":
+        if self.kind in ("pdf", "pptx"):  # a slide is the "page" of a deck
             info["pages"] = self.pages
             info["pages_read"] = (self.pages or 0) - len(self.unreadable_pages)
             info["unreadable_pages"] = list(self.unreadable_pages)
@@ -100,7 +107,7 @@ class SourceRead:
         return info
 
     def warnings(self) -> list[str]:
-        out: list[str] = []
+        out: list[str] = list(self.notes)
         if self.ocr_pages:
             pages = ", ".join(str(p) for p in self.ocr_pages)
             out.append(
@@ -110,10 +117,16 @@ class SourceRead:
         if self.unreadable_pages:
             pages = ", ".join(str(p) for p in self.unreadable_pages)
             why = self.ocr_note or "OCR is required and is not available"
-            out.append(
-                f"PDF page(s) {pages} are scanned images with no text layer and were NOT read "
-                f"({why}); results cover only the other pages."
-            )
+            if self.kind == "pptx":
+                out.append(
+                    f"slide(s) {pages} are pictures with no text and were NOT read ({why}); "
+                    f"results cover only the rest."
+                )
+            else:
+                out.append(
+                    f"PDF page(s) {pages} are scanned images with no text layer and were NOT read "
+                    f"({why}); results cover only the other pages."
+                )
         return out
 
 
@@ -136,9 +149,14 @@ def read_source_bytes(
     if is_pdf_bytes(data):
         return _read_pdf(data, name, ocr_engine, ocr_time_budget_s)
 
+    office = _office_kind(data)
+    if office:
+        return _read_office(data, name, office)
+
     if b"\x00" in data[:8192]:
         raise SourceReadError(
-            f"{name} is a binary file (not text and not a PDF); refusing to parse it as source code."
+            f"{name} is a binary file (not text, a PDF or a .docx/.pptx/.xlsx document); "
+            "refusing to parse it as source code."
         )
     try:
         return SourceRead(text=data.decode("utf-8-sig"), kind="text")
@@ -182,7 +200,8 @@ def read_source_file(
         with resolved.open("rb") as handle:
             head = handle.read(len(_PDF_MAGIC) + 1024)
             looks_pdf = is_pdf_bytes(head) or resolved.suffix.lower() == ".pdf"
-            limit = MAX_PDF_BYTES if looks_pdf else MAX_TEXT_BYTES
+            looks_office = head[:4] == _ZIP_MAGIC  # .docx/.pptx/.xlsx are zips; same ceiling as a PDF
+            limit = MAX_PDF_BYTES if (looks_pdf or looks_office) else MAX_TEXT_BYTES
             if size > limit:
                 raise SourceReadError(
                     f"File is too large to read safely ({size} bytes; limit {limit}): {file_path}"
@@ -197,6 +216,67 @@ def read_source_file(
     if resolved.suffix.lower() == ".pdf" and not is_pdf_bytes(data):
         raise SourceReadError(f"{file_path} has a .pdf extension but is not a valid PDF file.")
     return read_source_bytes(data, name=str(file_path), ocr_engine=ocr_engine, ocr_time_budget_s=ocr_time_budget_s)
+
+
+def _office_kind(data: bytes) -> Optional[str]:
+    """``"docx"``, ``"pptx"`` or ``"xlsx"`` for an OOXML package, else ``None`` (names only; no parsing)."""
+    if data[:4] != _ZIP_MAGIC:
+        return None
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            names = set(archive.namelist())
+    except (zipfile.BadZipFile, OSError, ValueError, RuntimeError):
+        return None
+    if "word/document.xml" in names:
+        return "docx"
+    if "ppt/presentation.xml" in names:
+        return "pptx"
+    if "xl/workbook.xml" in names:
+        return "xlsx"
+    return None
+
+
+def _cell_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value).replace("\t", " ").replace("\r", " ").replace("\n", " ")
+
+
+def _read_office(data: bytes, name: str, kind: str) -> SourceRead:
+    """A Word / PowerPoint / Excel file as text: every paragraph, table, slide, note and sheet row."""
+    try:
+        from ...knowledge.documents import extract_docx, extract_pptx
+        from ...knowledge.ooxml import read_xlsx
+        from ...domain.errors import AuraError
+    except ImportError as exc:  # pragma: no cover
+        raise SourceReadError("Office document support is not installed.") from exc
+    title = Path(name).name or "the document"
+    try:
+        if kind == "xlsx":
+            sheets = read_xlsx(data, max_rows_per_sheet=MAX_XLSX_ROWS)
+            parts: list[str] = []
+            notes: list[str] = []
+            for sheet in sheets:
+                header = f"## {sheet.name}" + (" (hidden sheet)" if sheet.state != "visible" else "")
+                body = "\n".join("\t".join(_cell_text(c) for c in row) for row in sheet.rows)
+                parts.append(f"{header}\n{body}" if body else f"{header}\n(empty sheet)")
+                if sheet.truncated:
+                    notes.append(f"sheet {sheet.name!r} was cut at {MAX_XLSX_ROWS:,} rows; later rows are NOT in the text")
+            return SourceRead(text="\n\n".join(parts), kind="xlsx", notes=tuple(notes))
+        extraction = extract_docx(data, title=title) if kind == "docx" else extract_pptx(data, title=title)
+    except AuraError as exc:
+        raise SourceReadError(f"Could not read {name} as a {kind} file ({exc}).") from exc
+    return SourceRead(
+        text=extraction.text(),
+        kind=kind,
+        pages=extraction.pages or None,
+        unreadable_pages=tuple(extraction.unreadable_pages),
+        blank_pages=tuple(extraction.blank_pages),
+    )
 
 
 def _read_pdf(data: bytes, name: str, ocr_engine: Any = None, ocr_time_budget_s: float = DEFAULT_OCR_BUDGET_S) -> SourceRead:

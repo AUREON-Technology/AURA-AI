@@ -497,3 +497,63 @@ def test_the_container_hands_its_ocr_engine_to_the_open_tools(pillow: None) -> N
         assert get_ocr_engine() is container.ocr_engine  # None when OCR is disabled / tesseract is absent
     finally:
         configure_ocr_engine(None)
+
+
+# -- Office documents: read by the same reader (and therefore by read_file and every file-reading tool) --
+
+
+class TestOfficeDocuments:
+    def _docx(self, text: str) -> bytes:
+        from tests.unit.test_docx_pptx_xlsx_readers import _docx, _p
+
+        return _docx(_p("Quarterly report", "Heading1") + _p(text))
+
+    def test_docx_text_is_returned_through_the_shared_reader(self, tmp_path: Path) -> None:
+        path = tmp_path / "r.docx"
+        path.write_bytes(self._docx("التقرير ربع السنوي OFFICE-MARKER"))
+        read = read_source_file(path)
+        assert read.kind == "docx" and "Quarterly report" in read.text and "OFFICE-MARKER" in read.text
+        assert "التقرير ربع السنوي" in read.text and read.complete
+
+    def test_pptx_slides_notes_and_xlsx_sheets(self, tmp_path: Path) -> None:
+        from tests.unit.test_docx_pptx_xlsx_readers import _c, _notes, _pptx, _row, _shape, _sheet_xml, _slide, _xlsx
+
+        deck = _pptx([(_slide(_shape(["Roadmap"], "title"), _shape(["Ship v2"])), _notes(["Mention the migration."]))])
+        (tmp_path / "d.pptx").write_bytes(deck)
+        deck_read = read_source_file(tmp_path / "d.pptx")
+        assert deck_read.kind == "pptx" and deck_read.pages == 1
+        assert "Roadmap" in deck_read.text and "Ship v2" in deck_read.text and "Mention the migration." in deck_read.text
+
+        sheet = _sheet_xml(_row(1, _c("A1", inline="name"), _c("B1", inline="score")), _row(2, _c("A2", inline="ليلى"), _c("B2", "7.5")))
+        (tmp_path / "b.xlsx").write_bytes(_xlsx([("Scores", sheet)]))
+        book = read_source_file(tmp_path / "b.xlsx")
+        assert book.kind == "xlsx" and "## Scores" in book.text
+        assert "name\tscore" in book.text and "ليلى\t7.5" in book.text
+
+    def test_a_zip_that_is_not_office_is_still_refused_and_a_corrupt_office_file_is_an_error(self, tmp_path: Path) -> None:
+        import io
+        import zipfile
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("a.txt", "hello")
+        (tmp_path / "plain.zip").write_bytes(buf.getvalue())
+        with pytest.raises(SourceReadError, match="binary"):
+            read_source_file(tmp_path / "plain.zip")
+        broken = self._docx("x")[:200]
+        (tmp_path / "broken.docx").write_bytes(broken)
+        with pytest.raises(SourceReadError):
+            read_source_file(tmp_path / "broken.docx")
+
+    def test_read_file_opens_office_documents(self, monkeypatch, tmp_path: Path) -> None:
+        import asyncio
+
+        from aura_core.tools.builtin import build_file_tools
+        from aura_core.domain.identifiers import UserId
+        from aura_core.ports.runtime import ToolContext
+
+        (tmp_path / "r.docx").write_bytes(self._docx("OFFICE-MARKER"))
+        _, read_file = build_file_tools(tmp_path)
+        ctx = ToolContext(user_id=UserId("u"), correlation_id="c", deadline_s=30)
+        out = asyncio.run(read_file.execute({"path": "r.docx"}, ctx))
+        assert "Word document" in out and "read in full" in out and "OFFICE-MARKER" in out

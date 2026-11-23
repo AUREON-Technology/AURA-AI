@@ -412,6 +412,14 @@ def _pdf_notes(name: str, read: SourceRead) -> list[str]:
     return notes
 
 
+def _office_notes(name: str, read: SourceRead) -> list[str]:
+    """What the model must know about a Word / PowerPoint / Excel file it was given."""
+    label = {"docx": "Word document", "pptx": "PowerPoint deck", "xlsx": "Excel workbook"}.get(read.kind, read.kind)
+    notes = [f"{label} {name!r}: read in full."] if read.complete and not read.notes else [f"{label} {name!r}:"]
+    notes.extend(read.warnings())
+    return notes
+
+
 def _present(text: str, notes: Sequence[str], offset: int, window: int, tool_name: str, tool_label: str) -> str:
     """The part of ``text`` from ``offset`` on that fits one result, with every caveat spelled out.
 
@@ -537,7 +545,9 @@ def build_file_tools(workspace: str | Path, *, max_bytes: int = 512_000) -> list
         try:
             with target.open("rb") as handle:
                 head = handle.read(1024)
-                if is_pdf_bytes(head) or target.suffix.lower() == ".pdf":
+                if is_pdf_bytes(head) or target.suffix.lower() == ".pdf" or head[:4] == b"PK\x03\x04":
+                    # A PDF or an Office package (.docx/.pptx/.xlsx): read in full by the shared reader.
+                    # A zip that is none of these is refused there with a clear message.
                     read = None
                 else:
                     if info.st_size > max_bytes:
@@ -558,7 +568,7 @@ def build_file_tools(workspace: str | Path, *, max_bytes: int = 512_000) -> list
                 pdf = read_source_file(target, base_dir=root, ocr_time_budget_s=60.0)
             except SourceReadError as exc:
                 raise ToolExecutionError(str(exc).replace(str(target), shown), tool="read_file") from exc
-            result = (pdf.text, _pdf_notes(shown, pdf))
+            result = (pdf.text, _pdf_notes(shown, pdf) if pdf.kind == "pdf" else _office_notes(shown, pdf))
         else:
             if len(data) > max_bytes:
                 raise ToolExecutionError(
@@ -579,8 +589,9 @@ def build_file_tools(workspace: str | Path, *, max_bytes: int = 512_000) -> list
 
     @tool(
         "read_file",
-        "Read a UTF-8 text file or a PDF from the user's workspace directory. A PDF is read in FULL, "
-        "every page; the result names any scanned page that could not be read. Long files come back "
+        "Read a UTF-8 text file, a PDF or a Word/PowerPoint/Excel file (.docx/.pptx/.xlsx) from the user's "
+        "workspace directory. A PDF is read in FULL, every page; the result names any scanned page that "
+        "could not be read. Long files come back "
         "in parts: the result says which characters it holds and the offset to pass to read the next.",
         param("path", "string", "Path relative to the workspace root.", max_length=300),
         param("offset", "integer", "Character offset to continue from when a result says it is not the "
