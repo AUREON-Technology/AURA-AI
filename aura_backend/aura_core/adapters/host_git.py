@@ -195,8 +195,15 @@ class HostGitService:
         against :data:`_SAFE_CONFIG_KEYS`; for a ``fetch``, every ``remote.*.url`` must also be a
         plain GitHub URL. When ``cwd`` is not inside a repository there is no local config to check.
         """
-        result = await self._run(["config", "--local", "--list", "-z"], cwd=cwd)
+        result = await self._run(["config", "--local", "--list", "--no-includes", "-z"], cwd=cwd)
         if not result.ok:
+            if any((directory / ".git").exists() for directory in (cwd, *cwd.parents)):
+                # Inside a repository whose config cannot even be read: that is not "nothing to
+                # check", it is a config git itself rejects, and the credential stays home.
+                raise GitCommandError(
+                    "refusing to use the GitHub credential: this workspace's git configuration "
+                    f"cannot be read ({result.stderr.strip()[:200] or 'unknown error'})"
+                )
             return
         for entry in result.stdout.split("\0"):
             if not entry:

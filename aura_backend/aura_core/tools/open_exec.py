@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import keyword
 import re
 import tempfile
 import threading
@@ -44,6 +45,7 @@ _ENGINEER_CAPABILITY = "engineer_agent"
 _MAX_SOURCE = 100_000
 _MODULE_PATH = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
 _OUTPUT_CAP = 3_000
+_RESERVED_MODULE_NAMES = frozenset({"test_generated", "conftest"})
 
 #: Concurrent child processes across the whole gateway. A threading primitive on purpose: the work
 #: happens in ``asyncio.to_thread`` workers, and an asyncio lock would bind to one event loop.
@@ -191,6 +193,14 @@ async def analyze_test_quality(
     name = "analyze_test_quality"
     if "." in module_name or _module_path(name, module_name) is None:
         raise ToolExecutionError("module_name must be a single Python identifier", tool=name)
+    if module_name in _RESERVED_MODULE_NAMES or keyword.iskeyword(module_name):
+        # `test_generated` is the file the tests are written to, so naming the module that would
+        # overwrite the source with the tests and then measure the tests against themselves.
+        raise ToolExecutionError(
+            f"module_name {module_name!r} is reserved (it collides with the test file, pytest's "
+            "conftest or a Python keyword); choose another name",
+            tool=name,
+        )
     return await asyncio.to_thread(
         _in_slot,
         name,

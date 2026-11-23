@@ -272,7 +272,8 @@ def apply_write_plan(
                 note = f"; the {len(done)} file(s) already written in this call were restored"
             else:
                 note = ""
-            raise SandboxError(f"could not write {_label(target, root)}: {exc}{note}") from exc
+            reason = exc.strerror if isinstance(exc, OSError) and exc.strerror else str(exc)
+            raise SandboxError(f"could not write {_label(target, root)[:120]}: {reason}{note}") from exc
         done.append((target, previous, created))
 
 

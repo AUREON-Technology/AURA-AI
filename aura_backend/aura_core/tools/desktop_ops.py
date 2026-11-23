@@ -49,9 +49,11 @@ _PROFILE_WRAPPER = (
     "    exec(compile(src, '<snippet>', 'exec'), ns)\n"
     "finally:\n"
     "    prof.disable()\n"
-    "buf = io.StringIO()\n"
-    "pstats.Stats(prof, stream=buf).sort_stats('tottime').print_stats(top)\n"
-    "print(buf.getvalue())\n"
+    "    # Printed even when the snippet raised or called sys.exit(): a profile of a run that failed\n"
+    "    # is still the profile the caller asked for, and the error still reaches stderr afterwards.\n"
+    "    buf = io.StringIO()\n"
+    "    pstats.Stats(prof, stream=buf).sort_stats('tottime').print_stats(top)\n"
+    "    print(buf.getvalue(), flush=True)\n"
 )
 
 _COMMON = dict(
@@ -70,7 +72,8 @@ def _relative_path(tool_name: str, label: str, value: str) -> str:
     """A path inside the workspace: not absolute, not a drive, not an option, no ``..``."""
     bad = (
         not value
-        or "\x00" in value
+        or not value.strip()
+        or any(ord(ch) < 32 for ch in value)
         or value.startswith(("-", "/", "\\"))
         or _DRIVE.match(value)
         or ".." in re.split(r"[\\/]+", value)
@@ -85,7 +88,16 @@ def _relative_path(tool_name: str, label: str, value: str) -> str:
 
 def _format(result: Any) -> str:
     def cap(text: str) -> str:
-        return text if len(text) <= _OUTPUT_CAP else text[:_OUTPUT_CAP] + "\n…[truncated]"
+        """Head and tail, not just the head: a build's error is the last thing it prints, so a
+        head-only cut dropped exactly the lines the caller ran the command to see."""
+        if len(text) <= _OUTPUT_CAP:
+            return text
+        head = _OUTPUT_CAP // 4
+        tail = _OUTPUT_CAP - head
+        return (
+            f"{text[:head]}\n…[truncated] ({len(text) - head - tail} characters omitted from the "
+            f"middle)…\n{text[-tail:]}"
+        )
 
     return (
         f"exit_code={result.exit_code}\n"
@@ -101,7 +113,9 @@ def _missing_executable(result: Any, interpreter: str) -> bool:
     or raised that phrase, doubling its side effects. So: the shell's own "command not found"
     codes (126/127), or a message that names this interpreter and says it is missing.
     """
-    if result.exit_code in (126, 127):
+    # 126/127: a POSIX shell's "cannot execute"/"not found". 9009: what Windows' cmd.exe returns for
+    # a command it cannot find, which is also what the Microsoft Store's `python3` stub exits with.
+    if result.exit_code in (126, 127, 9009):
         return True
     if result.exit_code == 0:
         return False
@@ -115,6 +129,7 @@ def _missing_executable(result: Any, interpreter: str) -> bool:
             f"'{name}' is not recognized",
             f"{name} is not recognized",
             f"no such file or directory: '{name}'",
+            f"{name} was not found",  # the Windows Store stub: "Python was not found; run without ..."
         )
     )
 

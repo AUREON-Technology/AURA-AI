@@ -52,7 +52,7 @@ from ..domain.tools import ParameterSpec, ToolCategory, ToolSensitivity, ToolSpe
 from ..observability.logging import get_logger
 from ..ports.coding import FileWriteOp, McpToolDescriptor, SandboxResult, StreamingSandboxRunner
 from ..ports.runtime import Tool, ToolContext
-from .base import FunctionTool, param, tool
+from .base import param, tool
 from .desktop_ops import build_desktop_ops_tools
 from .open._input import MAX_PDF_BYTES, SourceReadError, read_source_bytes
 
@@ -541,6 +541,7 @@ class _WorkspaceResolver:
         self._manager = manager
         self._runner = runner
         self._bindings: dict[str, str] = {}
+        self._quota_ok: dict[str, float] = {}
         self._lock = asyncio.Lock()
 
     def bind(self, correlation_id: str, repo: str) -> None:
@@ -558,10 +559,22 @@ class _WorkspaceResolver:
         for correlation_id in [c for c, r in self._bindings.items() if r == repo]:
             del self._bindings[correlation_id]
 
+    #: Walking a checkout to total its size is O(files); a passing check is trusted this long.
+    _QUOTA_RECHECK_S = 15.0
+
     async def enforce_quota(self, opened: Any, *, tool_name: str) -> None:
         enforce = getattr(self._manager, "enforce_disk_quota", None)
-        if enforce is not None:
-            await enforce(opened.record, tool=tool_name)
+        if enforce is None:
+            return
+        key = opened.record.id.value
+        checked = self._quota_ok.get(key)
+        if checked is not None and time.monotonic() - checked < self._QUOTA_RECHECK_S:
+            return
+        self._quota_ok.pop(key, None)
+        await enforce(opened.record, tool=tool_name)  # raises when over; only a pass is cached
+        self._quota_ok[key] = time.monotonic()
+        while len(self._quota_ok) > 256:
+            self._quota_ok.pop(next(iter(self._quota_ok)))
 
     def bound_repo(self, correlation_id: str) -> str | None:
         return self._bindings.get(correlation_id)
@@ -658,6 +671,10 @@ class _SessionAdapter:
         if self._resolver is not None:
             self._resolver.unbind_repo(repo)
 
+    async def enforce_quota(self, opened: Any, *, tool_name: str) -> None:
+        if self._resolver is not None:
+            await self._resolver.enforce_quota(opened, tool_name=tool_name)
+
     def bound_repo(self, correlation_id: str) -> str | None:
         return self._resolver.bound_repo(correlation_id) if self._resolver else None
 
@@ -750,7 +767,7 @@ def build_sandbox_tools(
         "inside whatever folder they have granted, if they have a paired desktop app connected "
         "(AURA Desktop) -- otherwise an ephemeral sandbox container's scratch directory, torn "
         "down after the task. Overwrites the file if it already exists; creates parent "
-        "directories as needed. Text only: it refuses a .pdf or other binary file path.",
+        "directories as needed. Text only: refuses .pdf and other binary paths.",
         param("path", "string", "Path relative to the workspace root.", max_length=300),
         param("content", "string", "The file's full new content.", max_length=200_000),
         category=ToolCategory.DEVELOPMENT,
@@ -783,8 +800,7 @@ def build_sandbox_tools(
         "edit_file",
         "Replace one exact occurrence of `find` with `replace` in a file inside the engineer "
         "agent's workspace. Fails if `find` is not present exactly once -- read the file "
-        "first (e.g. via run_command 'cat path') to get the exact text. Line endings and "
-        "everything else outside the replaced text are left exactly as they were.",
+        "first (e.g. via run_command 'cat path') to get the exact text.",
         param("path", "string", "Path relative to the workspace root.", max_length=300),
         param("find", "string", "Exact text to replace; must occur exactly once in the file.",
               max_length=50_000),
@@ -845,8 +861,7 @@ def build_sandbox_tools(
         "in one call. Every operation is validated first (path resolves inside the workspace, "
         "and each find/replace operation's `find` text is present in its target exactly once) "
         "before anything is written -- if any operation fails validation, nothing in this call "
-        "is written, including the other, otherwise-valid operations in the same call. Each "
-        "file may appear in only one operation per call.",
+        "is written, including the other, otherwise-valid operations in the same call.",
         param(
             "operations", "array",
             "Each item is an object with `path` and either `content` (full overwrite, same as "
@@ -1026,9 +1041,8 @@ def build_sandbox_tools(
         "workspace's files. If the user has a paired desktop app connected, this runs directly "
         "on their own machine -- their real network, subject to the daemon's own path "
         "containment and command policy. Otherwise it runs in an ephemeral, network-restricted "
-        "sandbox container that cannot reach the user's real network or host. Very long output "
-        "keeps its beginning and its end (the middle is cut, and the result says how much). "
-        "`cat file.pdf` on its own returns the whole PDF's text.",
+        "sandbox container that cannot reach the user's real network or host. Long output keeps "
+        "its start and end. `cat file.pdf` alone returns the PDF's full text.",
         param("command", "string", "The shell command to run, e.g. 'pytest -q'.", max_length=2000),
         param("timeout_s", "number", "Max seconds to allow the command to run.", required=False,
               minimum=1, maximum=600, default=60),
@@ -1072,10 +1086,16 @@ def build_sandbox_tools(
             result = await sandbox_runner.run(handle, ["sh", "-c", command], timeout_s=timeout_s)
         stdout = result.stdout
         if stdout.startswith("%PDF-"):
+            advice = (
+                "this workspace cannot extract PDF text itself; use a PDF tool that is installed "
+                "(e.g. `pdftotext FILE.pdf -`), or fetch the file with github_get_file_contents, "
+                "which reads every page"
+                if pdf_target is not None
+                else "to read the PDF's text run `cat FILE.pdf` on its own (nothing piped or combined)"
+            )
             stdout = (
                 f"[aura] the command printed a PDF's raw bytes ({len(stdout)} characters), which "
-                "are not readable text. To read the PDF's text run `cat <file>.pdf` on its own "
-                "(nothing piped or combined)."
+                f"are not readable text; {advice}."
             )
         return _command_result(result.exit_code, stdout, result.stderr)
 
@@ -1088,8 +1108,7 @@ def build_sandbox_tools(
 
     @tool(
         "git_diff",
-        "Show the workspace's current git diff against HEAD (staged and unstaged changes), and "
-        "list untracked files, which a diff never includes.",
+        "Show the workspace's git diff against HEAD (staged and unstaged) and list untracked files.",
         category=ToolCategory.DEVELOPMENT,
         sensitivity=ToolSensitivity.PERSONAL,
         required_capability=_ENGINEER_CAPABILITY,
@@ -1099,6 +1118,14 @@ def build_sandbox_tools(
     async def git_diff(context: ToolContext) -> str:
         handle = await sessions.handle(context)
         has_head = await _git(handle, ["git", "rev-parse", "--verify", "--quiet", "HEAD"])
+        if has_head.exit_code != 0:
+            inside = await _git(handle, ["git", "rev-parse", "--is-inside-work-tree"])
+            if inside.exit_code != 0 or inside.stdout.strip() != "true":
+                raise ToolExecutionError(
+                    "the workspace is not a git repository; clone one (clone_repository) or run "
+                    "`git init` first",
+                    tool="git_diff",
+                )
         # A repository with no commit yet has no HEAD to diff against: its changes are what is
         # staged, plus what is edited since. (This used to run `git diff HEAD`, fail, and report
         # "(no changes)" for a workspace full of them.)
@@ -1163,8 +1190,7 @@ def build_sandbox_tools(
 
     @tool(
         "git_checkout_branch",
-        "Create (or switch to) a git branch in the workspace. An existing branch is switched to "
-        "as it is; it is never reset.",
+        "Create (or switch to) a git branch in the workspace; an existing branch is never reset.",
         param("branch", "string", "Branch name.", max_length=200),
         category=ToolCategory.DEVELOPMENT,
         sensitivity=ToolSensitivity.PERSONAL,
@@ -1352,9 +1378,25 @@ def build_sandbox_tools(
         # Refused here rather than left to the forge's branch protection: not every repository
         # has any, and "the agent pushed straight to main" is not a thing to discover afterwards.
         default_branch = await host_git.default_branch(checkout)
-        if branch == default_branch:
+        refused = {default_branch}
+        if code_host_resolver is not None:
+            # The checkout's idea of the default branch is a ref (`refs/remotes/origin/HEAD`) that
+            # commands in the workspace can rewrite or delete, after which `main` would stop being
+            # refused. GitHub's own answer cannot be edited from there, so it is asked as well and
+            # both names are refused.
+            client = await code_host_resolver(context.user_id)
+            if client is not None:
+                try:
+                    refused.add(await client.default_branch(slug))
+                except Exception as exc:
+                    raise ToolExecutionError(
+                        f"could not confirm {slug}'s default branch with GitHub ({exc}); not pushing "
+                        "without knowing which branch is protected",
+                        tool="git_push",
+                    ) from exc
+        if branch in refused:
             raise ToolExecutionError(
-                f"refusing to push to {default_branch!r}, the default branch. Push a feature "
+                f"refusing to push to {branch!r}, the default branch. Push a feature "
                 "branch and open a pull request from it.",
                 tool="git_push",
             )
@@ -1435,7 +1477,7 @@ def build_sandbox_tools(
 
         if host_git is not None and sessions.durable:
             opened = await sessions.opened(context, slug)
-            await sessions._resolver.enforce_quota(opened, tool_name="clone_repository")
+            await sessions.enforce_quota(opened, tool_name="clone_repository")
             checkout = Path(await sandbox_runner.workspace_path(opened.handle)) / subdir
             # Belt and braces under `_workspace_subdir`: whatever was joined, the checkout must
             # still be inside the workspace, because this is the gateway's own filesystem.
@@ -1572,6 +1614,65 @@ def build_sandbox_tools(
 # --------------------------------------------------------------------------------------
 
 
+#: Characters of a file per ``github_get_file_contents`` result: under the tool's 40,000-character
+#: result cap with room for the headers, so a part is never cut by the registry and the model is
+#: never told "truncated" with no way to get the rest.
+_FILE_PAGE_CHARS = 36_000
+#: OCR allowance for a scanned PDF read through ``github_get_file_contents`` (tool timeout 150 s).
+_GITHUB_PDF_OCR_BUDGET_S = 100.0
+#: Parsed files, so reading a long PDF part by part (one call per ``offset``) extracts it once.
+_FILE_TEXT_CACHE: "OrderedDict[str, tuple[str, str]]" = OrderedDict()
+_FILE_TEXT_CACHE_SIZE = 4
+
+
+async def _file_text(data: bytes, path: str) -> tuple[str, str]:
+    """``(text, lead)`` for a file's bytes: a PDF's full text, or a text file's text.
+
+    ``lead`` is a one-line description (with any pages that could not be read) for a PDF, empty for
+    text. A binary file that is not a PDF is refused with a message saying so, rather than returned
+    as the replacement characters it would decode to.
+    """
+    digest = hashlib.sha256(data).hexdigest()
+    cached = _FILE_TEXT_CACHE.get(digest)
+    if cached is not None:
+        _FILE_TEXT_CACHE.move_to_end(digest)
+        return cached
+    if len(data) > MAX_PDF_BYTES:
+        raise ToolExecutionError(
+            f"{path} is {len(data)} bytes, larger than the {MAX_PDF_BYTES // (1024 * 1024)} MiB this "
+            "tool reads",
+            tool="github_get_file_contents",
+        )
+    try:
+        read = await asyncio.to_thread(
+            read_source_bytes, data, name=path, ocr_time_budget_s=_GITHUB_PDF_OCR_BUDGET_S
+        )
+    except SourceReadError as exc:
+        raise ToolExecutionError(
+            f"{exc} It is {len(data)} bytes; fetch it another way if you need its raw content.",
+            tool="github_get_file_contents",
+        ) from exc
+    lead = ""
+    if read.kind == "pdf":
+        info = read.describe()
+        lead = f"[PDF {path}: {info['pages']} page(s), {info['pages_read']} read, {len(read.text)} characters of text]"
+        warnings = read.warnings()
+        if warnings:
+            lead += "\n" + "\n".join(f"[{warning}]" for warning in warnings)
+        if not read.text:
+            lead += "\n[no text could be extracted from this PDF]"
+    if read.kind == "text":
+        try:
+            data.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            lead = "[note: this file is not valid UTF-8; it is shown decoded as Latin-1]"
+    result = (read.text, lead)
+    _FILE_TEXT_CACHE[digest] = result
+    while len(_FILE_TEXT_CACHE) > _FILE_TEXT_CACHE_SIZE:
+        _FILE_TEXT_CACHE.popitem(last=False)
+    return result
+
+
 def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[Tool]:
     """Read/write GitHub tools. Every write is ``side_effecting`` at ``CONFIDENTIAL``
     sensitivity, which ``ToolSpec.__post_init__`` already forces into
@@ -1606,14 +1707,7 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
                 "(AURA_GITHUB_DEFAULT_OWNER/AURA_GITHUB_DEFAULT_REPO)",
                 tool="github",
             )
-        identity = RepositoryIdentity.parse_or_none(given)
-        if identity is None:
-            raise ToolExecutionError(
-                f"could not read a repository from {explicit!r}; expected 'owner/name' or a "
-                "GitHub URL like https://github.com/owner/name",
-                tool="github",
-            )
-        return identity.slug
+        return _strict_slug(given, "github")
 
     _repo_param = param(
         "repo", "string",
@@ -1645,6 +1739,7 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         path_prefix: str | None = None,
     ) -> str:
         client = await _client(context)
+        _check_ref(ref, "ref", "github_list_repository_files")
         tree = await client.list_files(_repo(repo), ref=ref)
         prefix = (path_prefix or "").lstrip("/")
         files = [f for f in tree.files if not prefix or f.path.startswith(prefix)]
@@ -1652,6 +1747,11 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
             return (
                 f"No files{' under ' + prefix if prefix else ''} in {_repo(repo)}"
                 f"{'@' + ref if ref else ''}."
+                + (
+                    " (GitHub truncated this repository's file listing, so a file may exist that "
+                    "is not listed)"
+                    if tree.truncated else ""
+                )
             )
         shown = files[:_LIST_FILES_MAX_ENTRIES]
         lines = [f"{f.path} ({f.size} bytes)" for f in shown]
@@ -1666,23 +1766,51 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
 
     @tool(
         "github_get_file_contents",
-        "Read a file's contents from a GitHub repository.",
+        "Read a file from a GitHub repository. A PDF is read in full (every page; scanned pages "
+        "named). A long file comes in parts: continue with `offset` as the result says.",
         param("path", "string", "File path within the repo.", max_length=500),
         _repo_param,
         param("ref", "string", "Branch, tag, or commit SHA. Omit for the default branch.",
               required=False, max_length=200),
+        param("offset", "integer", "Where to continue a long file, from the previous result's "
+              "note. Default 0.", required=False, default=0, minimum=0),
         category=ToolCategory.DEVELOPMENT,
         sensitivity=ToolSensitivity.CONFIDENTIAL,
         required_capability=_ENGINEER_CAPABILITY,
-        timeout_s=20.0,
+        timeout_s=150.0,
         max_result_chars=40_000,
         tags=("untrusted_content",),
     )
     async def github_get_file_contents(
-        path: str, context: ToolContext, repo: str | None = None, ref: str | None = None
+        path: str, context: ToolContext, repo: str | None = None, ref: str | None = None,
+        offset: int = 0,
     ) -> str:
         client = await _client(context)
-        return await client.get_file_contents(_repo(repo), path, ref=ref)
+        _check_ref(ref, "ref", "github_get_file_contents")
+        slug = _repo(repo)
+        get_bytes = getattr(client, "get_file_bytes", None)
+        if get_bytes is None:
+            text, lead = await client.get_file_contents(slug, path, ref=ref), ""
+        else:
+            data = await get_bytes(slug, path, ref=ref)
+            text, lead = await _file_text(bytes(data), path)
+        total = len(text)
+        if offset > total or (offset == total and total):
+            raise ToolExecutionError(
+                f"offset {offset} is at or past the end of {path} ({total} characters)",
+                tool="github_get_file_contents",
+            )
+        end = min(total, offset + _FILE_PAGE_CHARS)
+        if offset == 0 and end == total and not lead:
+            return text
+        chunk = text[offset:end]
+        lines = [lead] if lead else []
+        if end < total or offset:
+            lines.append(
+                f"[characters {offset}-{end} of {total}"
+                + (f"; call again with offset={end} to continue]" if end < total else "; end of file]")
+            )
+        return "\n".join([*lines, chunk])
 
     @tool(
         "github_get_issue",
@@ -1734,13 +1862,27 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         branch: str, from_ref: str, context: ToolContext, repo: str | None = None
     ) -> str:
         client = await _client(context)
-        return await client.create_branch(_repo(repo), branch=branch, from_ref=from_ref)
+        new_branch = branch.strip().removeprefix("refs/heads/")
+        base_ref = from_ref.strip().removeprefix("refs/heads/")
+        if not _valid_ref_name(new_branch):
+            raise ToolExecutionError(
+                f"{branch!r} is not a valid branch name", tool="github_create_branch"
+            )
+        if not _valid_ref_name(base_ref):
+            raise ToolExecutionError(
+                f"from_ref {from_ref!r} is not a valid branch name (it must be an existing "
+                "branch, e.g. 'main')",
+                tool="github_create_branch",
+            )
+        return await client.create_branch(_repo(repo), branch=new_branch, from_ref=base_ref)
 
     # D6: caps how much diff text a single confirmation prompt ever carries -- mirrors
     # run_command's max_result_chars / git_diff's own cap (this file's other size-cap
     # precedents), so a bulk commit across many/large files cannot balloon a confirmation
     # response instead of just truncating with a clear marker.
     _MAX_DIFF_PREVIEW_CHARS = 20_000
+    _COMMIT_MAX_FILES = 100
+    _COMMIT_MAX_CHARS = 3_000_000
 
     async def _preview_github_commit_files(arguments: Mapping[str, Any], context: ToolContext) -> str | None:
         """D6: a unified diff of what `github_commit_files` would change, shown alongside the
@@ -1768,6 +1910,14 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         remaining = len(files)
         for path, new_content in files.items():
             remaining -= 1
+            if _is_pdf_path(str(path)) or _is_binary_path(str(path)):
+                # A diff of a PDF's bytes is noise, and this call is going to be refused anyway
+                # (it writes text only): say so where the person is deciding.
+                parts.append(
+                    f"--- a/{path}\n+++ b/{path}\n"
+                    "(binary file type: github_commit_files writes text only and will refuse this)\n"
+                )
+                continue
             try:
                 before = await client.get_file_contents(repo, str(path), ref=branch)
             except Exception:
@@ -1805,10 +1955,47 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
     ) -> str:
         client = await _client(context)
         slug = _repo(repo)
+        if not isinstance(files, Mapping) or not files:
+            raise ToolExecutionError(
+                "files must be a non-empty object mapping each file path to its full new text",
+                tool="github_commit_files",
+            )
+        if len(files) > _COMMIT_MAX_FILES:
+            raise ToolExecutionError(
+                f"at most {_COMMIT_MAX_FILES} files per commit (got {len(files)}); split the "
+                "change into several commits",
+                tool="github_commit_files",
+            )
+        total_chars = 0
+        for file_path, text in files.items():
+            if not isinstance(file_path, str) or not file_path.strip():
+                raise ToolExecutionError(
+                    "every key of files must be a non-empty file path", tool="github_commit_files"
+                )
+            if not isinstance(text, str):
+                raise ToolExecutionError(
+                    f"the content of {file_path!r} must be a string of text (got "
+                    f"{type(text).__name__}); this tool commits text files only",
+                    tool="github_commit_files",
+                )
+            _refuse_binary_path(file_path, "github_commit_files")
+            total_chars += len(text)
+        if total_chars > _COMMIT_MAX_CHARS:
+            raise ToolExecutionError(
+                f"the commit carries {total_chars} characters of content; the limit is "
+                f"{_COMMIT_MAX_CHARS}. Split the change into several commits.",
+                tool="github_commit_files",
+            )
+        if not message.strip():
+            raise ToolExecutionError("commit message must not be empty", tool="github_commit_files")
         # D-07 / SEC-06, as `git_push` does: never the default branch. Changes reach it only
         # through a pull request a human merges. Compared on the bare name, so neither
         # `refs/heads/main` nor stray whitespace slips past it.
         target = branch.strip().removeprefix("refs/heads/")
+        if not _valid_ref_name(target):
+            raise ToolExecutionError(
+                f"{branch!r} is not a valid branch name", tool="github_commit_files"
+            )
         default_branch = await client.default_branch(slug)
         if target == default_branch:
             raise ToolExecutionError(
@@ -1838,8 +2025,18 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         repo: str | None = None,
     ) -> str:
         client = await _client(context)
+        head = branch.strip().removeprefix("refs/heads/")
+        base_branch = base.strip().removeprefix("refs/heads/")
+        if not title.strip():
+            raise ToolExecutionError("title must not be empty", tool="github_create_draft_pull_request")
+        if head == base_branch:
+            raise ToolExecutionError(
+                f"the head branch and the base are both {head!r}; a pull request needs changes on "
+                "a different branch (create one with github_create_branch and commit to it)",
+                tool="github_create_draft_pull_request",
+            )
         return await client.create_draft_pull_request(
-            _repo(repo), branch=branch, base=base, title=title, body=body
+            _repo(repo), branch=head, base=base_branch, title=title, body=body
         )
 
     return [
@@ -1863,31 +2060,95 @@ def _sanitize_name_part(value: str) -> str:
     return "".join(c if c in _NAME_OK else "_" for c in lowered) or "tool"
 
 
+_SCHEMA_TYPES = frozenset({"string", "number", "integer", "boolean", "array", "object"})
+
+
+def _schema_type(prop: Mapping[str, Any]) -> str:
+    """One supported JSON type for a property schema, whatever shape the server declared it in.
+
+    ``"type"`` may be a string, a list (``["string", "null"]`` -- the usual spelling of an optional
+    field) or absent in favour of ``anyOf``/``oneOf``. A list used to be tested for membership in a
+    set, which raises ``TypeError: unhashable type`` and took down the registration of *every* tool
+    from every server, not just the one with the odd schema.
+    """
+    declared = prop.get("type")
+    candidates: list[Any] = list(declared) if isinstance(declared, (list, tuple)) else [declared]
+    for key in ("anyOf", "oneOf"):
+        variants = prop.get(key)
+        if isinstance(variants, (list, tuple)):
+            candidates += [v.get("type") for v in variants if isinstance(v, Mapping)]
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate in _SCHEMA_TYPES:
+            return candidate
+    return "string"
+
+
 def _params_from_json_schema(schema: Mapping[str, Any]) -> list[ParameterSpec]:
-    properties = schema.get("properties") or {}
-    required = set(schema.get("required") or [])
-    supported = {"string", "number", "integer", "boolean", "array", "object"}
+    properties = schema.get("properties") if isinstance(schema, Mapping) else None
+    if not isinstance(properties, Mapping):
+        properties = {}
+    required_raw = schema.get("required") if isinstance(schema, Mapping) else None
+    required = set(required_raw) if isinstance(required_raw, (list, tuple)) else set()
     params: list[ParameterSpec] = []
     for name, raw_prop in properties.items():
         prop = raw_prop if isinstance(raw_prop, Mapping) else {}
-        json_type = prop.get("type") if prop.get("type") in supported else "string"
+        json_type = _schema_type(prop)
+        item_type = None
+        if json_type == "array":
+            items = prop.get("items")
+            # An array of integers or objects used to be declared as an array of strings, and the
+            # validator then rewrote every number into a string (and refused every object) before
+            # the call reached the server.
+            item_type = _schema_type(items) if isinstance(items, Mapping) and items else "string"
         params.append(
             param(
-                name,
+                str(name),
                 json_type,
                 str(prop.get("description") or name),
                 required=name in required,
-                item_type="string" if json_type == "array" else None,
+                item_type=item_type,
             )
         )
     return params
 
 
+class _McpTool:
+    """A bridged MCP tool.
+
+    Not a ``FunctionTool`` on purpose: that wrapper injects the tool context as a ``context``
+    keyword argument, so an MCP tool with a parameter *named* ``context`` (not unusual) had the
+    caller's value overwritten and never reached the server. Here the validated arguments go to the
+    server exactly as given.
+    """
+
+    def __init__(self, spec: ToolSpec, mcp_client: Any, server: str, name: str) -> None:
+        self._spec = spec
+        self._client = mcp_client
+        self._server = server
+        self._name = name
+
+    @property
+    def spec(self) -> ToolSpec:
+        return self._spec
+
+    async def execute(self, arguments: Mapping[str, Any], context: ToolContext) -> str:
+        try:
+            result = await self._client.call_tool(self._server, self._name, dict(arguments))
+        except ToolExecutionError:
+            raise
+        except Exception as exc:
+            raise ToolExecutionError(
+                f"{self._spec.name} failed: {str(exc) or type(exc).__name__}",
+                tool=self._spec.name,
+                cause=exc,
+            ) from exc
+        return result if isinstance(result, str) else str(result)
+
+
 async def build_mcp_bridge_tools(
     mcp_client: Any, *, safe_tools: Sequence[str] = ()
 ) -> list[Tool]:
-    """Discover every tool every configured MCP server advertises and wrap each as a
-    :class:`~aura_core.tools.base.FunctionTool`.
+    """Discover every tool every configured MCP server advertises and wrap each as a tool.
 
     Default-deny: a discovered tool is ``sensitivity=CONFIDENTIAL, side_effecting=True`` (so
     ``ToolPolicy`` always requires confirmation) unless its fully qualified name
@@ -1899,34 +2160,45 @@ async def build_mcp_bridge_tools(
     safe = frozenset(safe_tools)
     descriptors: Sequence[McpToolDescriptor] = await mcp_client.list_tools()
     tools: list[Tool] = []
+    taken: set[str] = set()
     for descriptor in descriptors:
         qualified_name = (
             f"mcp_{_sanitize_name_part(descriptor.server)}_{_sanitize_name_part(descriptor.name)}"
         )
+        # `a-b` and `a_b` sanitise to the same name; the registry refuses a duplicate, and one
+        # odd name must not cost the operator every other tool.
+        if qualified_name in taken:
+            logger.warning(
+                "MCP tool skipped: its sanitised name collides with another tool's",
+                extra={"tool": qualified_name, "server": descriptor.server, "mcp_name": descriptor.name},
+            )
+            continue
+        taken.add(qualified_name)
         is_safe = qualified_name in safe
-        spec = ToolSpec(
-            name=qualified_name,
-            description=f"[MCP:{descriptor.server}] {descriptor.description}"[:2000] or (
-                f"MCP tool {descriptor.name!r} from server {descriptor.server!r}."
-            ),
-            parameters=tuple(_params_from_json_schema(descriptor.input_schema)),
-            category=ToolCategory.DEVELOPMENT,
-            sensitivity=ToolSensitivity.PERSONAL if is_safe else ToolSensitivity.CONFIDENTIAL,
-            side_effecting=not is_safe,
-            required_capability=_ENGINEER_CAPABILITY,
-            timeout_s=30.0,
-            max_result_chars=20_000,
-            tags=() if is_safe else ("untrusted_content",),
-            output_schema=_supported_output_schema(descriptor),
-        )
-
-        def _make_handler(server: str, name: str) -> Any:
-            async def handler(context: ToolContext, **kwargs: Any) -> str:
-                return await mcp_client.call_tool(server, name, kwargs)
-
-            return handler
-
-        tools.append(FunctionTool(spec, _make_handler(descriptor.server, descriptor.name)))
+        try:
+            params = tuple(_params_from_json_schema(descriptor.input_schema))
+            spec = ToolSpec(
+                name=qualified_name,
+                description=f"[MCP:{descriptor.server}] {descriptor.description}"[:2000] or (
+                    f"MCP tool {descriptor.name!r} from server {descriptor.server!r}."
+                ),
+                parameters=params,
+                category=ToolCategory.DEVELOPMENT,
+                sensitivity=ToolSensitivity.PERSONAL if is_safe else ToolSensitivity.CONFIDENTIAL,
+                side_effecting=not is_safe,
+                required_capability=_ENGINEER_CAPABILITY,
+                timeout_s=30.0,
+                max_result_chars=20_000,
+                tags=() if is_safe else ("untrusted_content",),
+                output_schema=_supported_output_schema(descriptor),
+            )
+        except (ValueError, TypeError) as exc:
+            logger.warning(
+                "MCP tool skipped: its declaration is not usable",
+                extra={"tool": qualified_name, "server": descriptor.server, "error": str(exc)},
+            )
+            continue
+        tools.append(_McpTool(spec, mcp_client, descriptor.server, descriptor.name))
     return tools
 
 

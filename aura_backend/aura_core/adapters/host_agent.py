@@ -42,6 +42,20 @@ from .docker_sandbox import SandboxError
 _TASK_KEY = re.compile(r"[A-Za-z0-9._-]{1,128}")
 
 
+def _exit_code(payload: Any) -> int:
+    """The command's exit status from a daemon payload, ``-1`` when it is absent or malformed.
+
+    ``int(payload.get("exit_code", -1))`` raised ``TypeError`` for an explicit ``null`` (and
+    ``AttributeError`` for a payload that was not an object), turning a finished command into an
+    opaque tool failure that hid its output.
+    """
+    value = payload.get("exit_code") if isinstance(payload, Mapping) else None
+    try:
+        return int(value) if value is not None and not isinstance(value, bool) else -1
+    except (TypeError, ValueError):
+        return -1
+
+
 def _with_confirmation(params: dict[str, Any]) -> dict[str, Any]:
     """Add ``confirmed: true`` when the person approved this call (WP8, D-10c). Sent only when
     true, so a daemon that predates the field sees exactly the frame it always did. The daemon
@@ -368,11 +382,11 @@ class HostAgentSandboxRunner:
             # same way `write_file`/`write_files` above are.
             timeout_s=max(timeout_s + 5.0, 330.0),
         )
-        payload = result or {}
+        payload = result if isinstance(result, Mapping) else {}
         return SandboxResult(
-            stdout=str(payload.get("stdout", "")),
-            stderr=str(payload.get("stderr", "")),
-            exit_code=int(payload.get("exit_code", -1)),
+            stdout=str(payload.get("stdout") or ""),
+            stderr=str(payload.get("stderr") or ""),
+            exit_code=_exit_code(payload),
         )
 
     async def write_file(self, handle: SandboxHandle, path: str, content: str) -> None:
@@ -396,7 +410,8 @@ class HostAgentSandboxRunner:
             {"task_id": handle.task_id, "path": path},
             timeout_s=self._call_timeout_s,
         )
-        return str((result or {}).get("content", ""))
+        content = result.get("content") if isinstance(result, Mapping) else None
+        return "" if content is None else str(content)
 
     async def write_files(self, handle: SandboxHandle, operations: Sequence[FileWriteOp]) -> None:
         """D6: a single `write_files` RPC to the daemon (`aura_hostd/lib/src/task_handler.dart`),
@@ -454,8 +469,7 @@ class HostAgentSandboxRunner:
                     kind=str(frame.get("stream") or "stdout"), data=str(frame.get("data") or "")
                 )
             else:
-                payload = frame.get("result") or {}
-                yield SandboxOutputEvent(kind="done", exit_code=int(payload.get("exit_code", -1)))
+                yield SandboxOutputEvent(kind="done", exit_code=_exit_code(frame.get("result")))
 
     async def destroy(self, handle: SandboxHandle) -> None:
         # Workspace-scoped on the daemon side -- see class docstring. Just forget the mapping so
@@ -578,6 +592,18 @@ class CompositeSandboxRunner:
 
     async def read_file(self, handle: SandboxHandle, path: str) -> str:
         return await self._runner_for(handle).read_file(handle, path)
+
+    async def read_file_bytes(self, handle: SandboxHandle, path: str) -> bytes:
+        """A file's exact bytes, when the runner serving this handle can give them.
+
+        The server-side sandbox can; a paired desktop's wire protocol returns text only, so for
+        that handle this raises and a caller (``cat file.pdf`` in ``run_command``) falls back to
+        running the real command.
+        """
+        reader = getattr(self._runner_for(handle), "read_file_bytes", None)
+        if reader is None:
+            raise SandboxError("this sandbox cannot return a file's raw bytes")
+        return await reader(handle, path)
 
     async def workspace_path(self, handle: SandboxHandle) -> str:
         return await self._runner_for(handle).workspace_path(handle)
