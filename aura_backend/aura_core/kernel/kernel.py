@@ -81,7 +81,10 @@ from ..domain.telemetry import (
 )
 from ..execution.agentic_loop import AgentRunContext
 from ..execution.confirmations import PendingConfirmationStore, ResumedTurn
+from ..execution.critic import critique_answer
 from ..execution.engine import ExecutionOutcome, StepEvent
+from ..execution.loop_events import LoopEvent
+from ..execution.runner_output import observe_plan
 from ..llm.cache import InMemoryCache
 from ..llm.deadline import generation_budget, no_generation_budget
 from ..llm.router import TurnBudget, current_turn_budget, no_turn_budget, turn_budget_scope
@@ -251,6 +254,10 @@ class TurnResult:
     #: How attached images were understood (``VisionEngine.Perception.as_dict``), or ``None``
     #: for a turn without images.
     vision: Mapping[str, Any] | None = None
+    #: The agent loop's account of itself (ADR-037, ``execution/loop_events.py::LoopReport``): why
+    #: it stopped, the states it visited, any stuck verdict and escalation, the critic's findings.
+    #: ``None`` for a turn that ran no loop.
+    agent_loop: Mapping[str, Any] | None = None
 
     @property
     def degraded(self) -> bool:
@@ -545,6 +552,8 @@ class AIKernel:
         plan_summary: list[Mapping[str, Any]] = []
         plan_steps = plan_revisions = 0
         agent_run_id: str | None = None
+        agent_loop: Mapping[str, Any] | None = None
+        exec_outcome: Any = None
         planning_failed = False
 
         tool_declarations = await self._tool_declarations(request)
@@ -562,7 +571,10 @@ class AIKernel:
                 execution_notes.append(PLANNING_FAILED_NOTE)
             timings["planning"] = (time.perf_counter() - stage_start) * 1000.0
             if outcome is not None:
+                exec_outcome = outcome
                 agent_run_id = getattr(outcome, "run_id", None)
+                await self._relieve_pressure(request, outcome)
+                agent_loop = self._loop_summary(outcome)
                 tool_results = outcome.summary_for_context()
                 plan_steps = len(outcome.plan.steps)
                 plan_revisions = len(outcome.plan.revisions)
@@ -634,6 +646,11 @@ class AIKernel:
             self._dispatch_shadow(shadow_completion)
         except Exception:
             logger.debug("shadow dispatch failed", exc_info=True)
+
+        # 8b. The critic's check of the answer against what the tools reported (ADR-037) ------
+        caveat, _caveat_findings = self._answer_caveat(exec_outcome, answer, request.message)
+        if caveat:
+            answer = f"{answer}\n\n{caveat}"
 
         # 9. Output guards -----------------------------------------------------------
         groundedness = None
@@ -728,6 +745,7 @@ class AIKernel:
             agent_run_id=agent_run_id,
             data=data,
             vision=perception.as_dict() if perception is not None else None,
+            agent_loop=agent_loop,
         )
 
     # -- streaming ---------------------------------------------------------------------
@@ -845,6 +863,9 @@ class AIKernel:
                         ):
                             if isinstance(item, StepEvent):
                                 yield {"type": "step", **item.as_dict()}
+                            elif isinstance(item, LoopEvent):
+                                # ADR-037: `budget`, `context_pressure`, `critic`, `stuck`.
+                                yield item.as_frame()
                             elif isinstance(item, ExecutionOutcome):
                                 outcome = item
                     except Exception:
@@ -857,6 +878,10 @@ class AIKernel:
                     timings["planning"] = (time.perf_counter() - stage_start) * 1000.0
                 if outcome is not None:
                     tool_results = outcome.summary_for_context()
+                    # ADR-037: what the loop learned (stopped as stuck, tests still red) -- only
+                    # the loop's own notes; the step notes are `_run_turn`'s, unchanged here.
+                    execution_notes.extend(self._loop_notes(outcome))
+                    await self._relieve_pressure(request, outcome)
                     plan_summary = [
                         {"id": s.id.value, "kind": str(s.kind), "status": str(s.status),
                          "description": s.description}
@@ -976,6 +1001,17 @@ class AIKernel:
                     yield {"type": "token", "text": answer}
 
                 timings["generation"] = (time.perf_counter() - stage_start) * 1000.0
+                # The critic's check of the answer against what the tools reported, and the
+                # loop's own escalation (ADR-037). Appended as more tokens, never as a rewrite.
+                caveat, caveat_findings = self._answer_caveat(outcome, answer, message)
+                if caveat:
+                    if caveat_findings:
+                        yield {"type": "critic", "stage": "answer",
+                               "findings": [f.as_dict() for f in caveat_findings]}
+                    caveat_text = f"\n\n{caveat}"
+                    collected.append(caveat_text)
+                    answer += caveat_text
+                    yield {"type": "token", "text": caveat_text}
                 guards_complete = False
                 if deps.safety is not None:
                     stage_start = time.perf_counter()
@@ -1087,6 +1123,8 @@ class AIKernel:
                     "plan_summary": plan_summary,
                     "resolved_agent": resolved_agent,
                     "agent_run_id": getattr(outcome, "run_id", None),
+                    # Why the loop stopped and what it concluded (ADR-037); null with no loop.
+                    "agent_loop": self._loop_summary(outcome),
                     "turn_id": turn_id.value,
                     "correlation_id": correlation.value,
                     # Stream does not run the reasoner; null is honest, not a fake score.
@@ -1480,8 +1518,95 @@ class AIKernel:
             except Exception:
                 logger.warning("failed to record engineer run", extra={"tool": report.tool})
 
+    async def _relieve_pressure(self, request: TurnRequest, outcome: Any) -> None:
+        """Answer a ``context_pressure`` signal from the agent loop (ADR-037) with the existing
+        history compression: fold the session's older turns into its summary now, so the next turn
+        carries the summary instead of the verbatim turns. The loop already shortened the tool
+        output it held; this is the other half, and it runs at most once per turn because the loop
+        signals pressure at most once per run. A failure here never fails the turn."""
+        loop = getattr(outcome, "loop", None)
+        episodic = self._deps.episodic
+        if loop is None or loop.pressure is None or episodic is None or request.session_id is None:
+            return
+        compact = getattr(episodic, "compact", None)
+        if compact is None:
+            return
+        try:
+            loop.history_compacted = bool(await compact(request.session_id, request.user_id))
+        except Exception:
+            logger.warning("compacting session history under context pressure failed", exc_info=True)
+
+    @staticmethod
+    def _loop_summary(outcome: Any) -> Mapping[str, Any] | None:
+        """The agent loop's report for a done frame / response, or ``None`` with no loop."""
+        loop = getattr(outcome, "loop", None)
+        return loop.as_dict() if loop is not None else None
+
+    @staticmethod
+    def _loop_notes(outcome: Any) -> list[str]:
+        """SYSTEM-channel notes from the agent loop (ADR-037), beside the step notes.
+
+        The user is told the full escalation separately and deterministically (``_answer_caveat``);
+        this only keeps the model from writing an answer that contradicts what the loop concluded.
+        """
+        loop = getattr(outcome, "loop", None)
+        if loop is None:
+            return []
+        notes: list[str] = []
+        # Short on purpose: the scratchpad section is capped at a tenth of a small prompt budget,
+        # and a note that does not fit is dropped, not shortened.
+        if loop.stop_reason == "stuck" and loop.stuck:
+            notes.append(
+                "Execution note (system): the run was stopped because it was repeating itself. "
+                "Do not say the task succeeded; say what was tried and what could not be done."
+            )
+        for finding in loop.findings:
+            if finding.get("code") == "unresolved_tests_failed":
+                notes.append(
+                    "Execution note (system): the last test run failed. "
+                    "Do not state or imply that the tests pass."
+                )
+                break
+        return notes
+
+    @staticmethod
+    def _answer_caveat(outcome: Any, answer: str, message: str) -> tuple[str, list[Any]]:
+        """Caveat text to append to the answer, and the critic findings behind it (ADR-037).
+
+        Two sources, both deterministic. The loop's own escalation -- what it gave up on and what
+        to try -- is always appended when there is one, so a stopped run is never presented as a
+        finished one. The critic's answer checks (a success claim the tool results do not support;
+        a file or test no tool result mentions) run only when the critic is on for this loop.
+        """
+        loop = getattr(outcome, "loop", None)
+        if loop is None:
+            return "", []
+        parts: list[str] = []
+        findings: list[Any] = []
+        if loop.escalation:
+            parts.append(loop.escalation)
+        if loop.critic_active:
+            try:
+                findings = [
+                    f for f in critique_answer(
+                        answer, outcome.plan, user_message=message,
+                        observations=observe_plan(outcome.plan),
+                    )
+                ]
+            except Exception:  # pragma: no cover - a critic bug must not fail the turn
+                logger.debug("answer critic failed", exc_info=True)
+            for finding in findings:
+                prefix = "Caution" if finding.severity == "error" else "Unverified"
+                parts.append(f"{prefix} (checked against the tool results): {finding.message}.")
+        return "\n\n".join(parts), findings
+
     @staticmethod
     def _execution_notes(outcome: Any) -> list[str]:
+        """The step notes (below) plus the agent loop's own (ADR-037)."""
+        return AIKernel._step_notes(outcome) + AIKernel._loop_notes(outcome)
+
+    @staticmethod
+    def _step_notes(outcome: Any) -> list[str]:
         """State, on the SYSTEM channel, which planned steps produced nothing.
 
         Found in production. A user with a folder open in AURA Desktop asked the Engineer to
@@ -1808,7 +1933,7 @@ class AIKernel:
         turn_id: TurnId | None = None,
         correlation: CorrelationId | None = None,
         resume: ResumedTurn | None = None,
-    ) -> AsyncIterator[StepEvent | ExecutionOutcome]:
+    ) -> AsyncIterator[StepEvent | LoopEvent | ExecutionOutcome]:
         """Yield step progress, then the outcome. Prefer ``executor.stream``."""
         deps = self._deps
         plan, confirmations = await self._plan_for(request, message, tools, resume)

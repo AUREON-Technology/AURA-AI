@@ -320,6 +320,44 @@ class EpisodicMemory:
         finally:
             self._summarising.discard(key)
 
+    async def compact(
+        self, session_id: SessionId, owner_id: UserId, *, keep_last: int = 4
+    ) -> bool:
+        """Fold everything but the last ``keep_last`` messages into the summary *now*.
+
+        The same summarise-and-compare-and-set step :meth:`append` runs when the window overflows,
+        invoked on demand instead of on a message count -- what the agent loop asks for when a
+        long run reports context pressure (ADR-037), so the *next* turn's prompt carries a summary
+        in place of the verbatim older turns. ``True`` if history was folded; ``False`` when there
+        was nothing to fold, a summary of this session was already in flight, or the state moved
+        under it (the stale summary is discarded, exactly as in :meth:`append`).
+        """
+        key = self._key(session_id, owner_id)
+        if key in self._summarising:
+            return False
+        state = await self.load(session_id, owner_id)
+        keep = max(1, keep_last)
+        if len(state.messages) <= keep:
+            return False
+        self._summarising.add(key)
+        try:
+            overflow = state.messages[: len(state.messages) - keep]
+            summary = await self._summarise(overflow, state.summary)
+            async with self._exclusive(key):
+                current = await self.load(session_id, owner_id)
+                if current.folded != state.folded or not _same_prefix(current.messages, overflow):
+                    return False
+                await self._write(key, replace(
+                    current,
+                    messages=current.messages[len(overflow):],
+                    summary=summary,
+                    folded=current.folded + len(overflow),
+                    updated_at=time.time(),
+                ))
+                return True
+        finally:
+            self._summarising.discard(key)
+
     async def _write(self, key: str, state: SessionState) -> None:
         await self._cache.set(key, state.to_json().encode("utf-8"), ttl_s=self._ttl)
 

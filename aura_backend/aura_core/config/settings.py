@@ -1173,6 +1173,33 @@ class ReasoningSettings:
     #: flat 60s every other tool gets (`AIKernel._tool_context`) -- a delegated sub-turn is a full
     #: recursive `kernel.run()`, not a simple API call, and needs room for its own budgets.
     delegation_deadline_s: float = 180.0
+    #: Agent-loop intelligence (ADR-037). Stuck detection stops a loop that is already spinning,
+    #: so it is on; a threshold of ``0`` disables that one rule. ``identical_calls``: the same
+    #: tool + arguments with the same outcome N times; ``same_error``: the same failure in N
+    #: consecutive passes; ``no_progress``: N consecutive passes in which no step newly succeeded.
+    loop_stuck_detection_enabled: bool = True
+    loop_stuck_identical_calls: int = 3
+    loop_stuck_same_error: int = 3
+    loop_stuck_no_progress: int = 4
+    #: Decide retries per failure kind (``execution/recovery.py``) instead of retrying every
+    #: failed read-only step. Off: the original rule. ``backoff_s`` is the first transient delay
+    #: (doubling, capped at 8 s).
+    loop_recovery_policy_enabled: bool = False
+    loop_recovery_backoff_s: float = 0.5
+    #: Read test results as a loop input: a failing test run (or a non-zero command exit) makes the
+    #: pass "not done" and drives a replan with that reason. Off: a pass whose steps all ran is
+    #: complete, as before.
+    loop_test_signals_enabled: bool = False
+    #: Deterministic plan/outcome/answer critic, applied to the agent loop of a persona that
+    #: replans (today: engineer). ``critic_llm_enabled`` adds an advisory model critic on top.
+    critic_enabled: bool = True
+    critic_llm_enabled: bool = False
+    #: Token budget for the engineer persona's run (planner generations plus held tool output;
+    #: ``0`` = unbounded). Generous: 9 passes of a 1,200-token plan use a small fraction of it.
+    engineer_token_budget: int = 400_000
+    #: Fraction of the token budget at which ``context_pressure`` is signalled and older tool
+    #: output is compressed, once.
+    context_pressure_threshold: float = 0.8
 
     @classmethod
     def from_env(cls) -> "ReasoningSettings":
@@ -1195,6 +1222,19 @@ class ReasoningSettings:
             ),
             delegation_deadline_s=_float(
                 "REASONING_DELEGATION_DEADLINE_S", 180.0, minimum=10.0, maximum=3600.0
+            ),
+            loop_stuck_detection_enabled=_bool("LOOP_STUCK_DETECTION_ENABLED", True),
+            loop_stuck_identical_calls=_int("LOOP_STUCK_IDENTICAL_CALLS", 3, minimum=0, maximum=50),
+            loop_stuck_same_error=_int("LOOP_STUCK_SAME_ERROR", 3, minimum=0, maximum=50),
+            loop_stuck_no_progress=_int("LOOP_STUCK_NO_PROGRESS", 4, minimum=0, maximum=50),
+            loop_recovery_policy_enabled=_bool("LOOP_RECOVERY_POLICY_ENABLED", False),
+            loop_recovery_backoff_s=_float("LOOP_RECOVERY_BACKOFF_S", 0.5, minimum=0.0, maximum=30.0),
+            loop_test_signals_enabled=_bool("LOOP_TEST_SIGNALS_ENABLED", False),
+            critic_enabled=_bool("CRITIC_ENABLED", True),
+            critic_llm_enabled=_bool("CRITIC_LLM_ENABLED", False),
+            engineer_token_budget=_int("ENGINEER_TOKEN_BUDGET", 400_000, minimum=0),
+            context_pressure_threshold=_float(
+                "CONTEXT_PRESSURE_THRESHOLD", 0.8, minimum=0.1, maximum=1.0
             ),
         )
 
