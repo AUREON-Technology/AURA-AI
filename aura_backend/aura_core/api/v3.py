@@ -316,6 +316,16 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         #: size limits are `AURA_VISION_*` settings, checked before anything is decoded.
         images: list[ImageAttachment] = Field(default_factory=list, max_length=8)
 
+    class PlanFeedbackRequest(BaseModel):
+        """ADR-045 (row 51): free-text feedback on a plan held by ``plan_mode: review``."""
+
+        #: The ``pending_tool_calls[].approval_id`` s the held plan came back with (any subset).
+        approval_ids: list[str] = Field(min_length=1, max_length=32)
+        #: What to change, in the person's own words ("do the migration first, drop the docs step").
+        feedback: str = Field(min_length=1, max_length=2000)
+        #: The conversation the plan was held in: an approval is bound to it.
+        session_id: str | None = None
+
     class IngestRequest(BaseModel):
         title: str = Field(min_length=1, max_length=500)
         #: INT-112: no more characters than the engine's byte ceiling (a character is at least a
@@ -889,6 +899,35 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             },
             "knowledge": {"max_upload_bytes": settings.knowledge.max_document_bytes},
         })
+
+    @router.post("/chat/plan-feedback")
+    async def chat_plan_feedback(
+        request: Request,
+        payload: PlanFeedbackRequest,
+        caller: Principal = Depends(principal),
+    ) -> JSONResponse:
+        """Tell a plan held for approval what to change (ADR-045, row 51). Nothing runs.
+
+        The comment is read, the held plan is replanned at most once for it (bounded by
+        ``AURA_PLANNING_MAX_REPLANS``), and the revised plan comes back with **new**
+        ``approval_ids``; the old ones stop working. An approval with no change, or a question,
+        leaves the plan and its ids as they were (``revised: false``). A stranger's, expired or
+        used ids are a 409 ``confirmation_invalid``, exactly as for an approval; a plan that cannot
+        be revised any more (revision allowance used) is a 500 ``planning_error`` and the held plan
+        stays approvable. Send the final ``approval_ids`` back on ``/chat`` to run it."""
+        if caller.is_service:
+            raise ValidationError("a service key has no held plans to give feedback on")
+        await enforce_rate_limit(request, caller, "chat")
+        turn = await to_turn(
+            ChatRequest(message=payload.feedback, session_id=payload.session_id,
+                        approval_ids=payload.approval_ids),
+            caller, request,
+        )
+        result = await container.kernel.revise_held_plan(turn)
+        body = result.as_dict()
+        if "approval_ids" in result.extra:
+            body["approval_ids"] = result.extra["approval_ids"]
+        return JSONResponse(content=body)
 
     @router.post("/chat/stream")
     async def chat_stream(

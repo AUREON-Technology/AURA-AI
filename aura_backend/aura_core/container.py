@@ -706,6 +706,7 @@ class Container:
                 autonomy=self.autonomy,
                 usage_ledger=self.usage_ledger,
                 run_index=self.run_index,
+                audit=self.audit,
             )
         )
         # ADR-041: user agent tasks. The queue runs each task through `self.kernel` -- the same

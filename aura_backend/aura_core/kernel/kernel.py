@@ -100,6 +100,7 @@ from ..ports.runtime import ToolContext
 from ..prompts.language import reply_language
 from ..prompts.library import AGENT_PROMPT_IDS
 from ..agents.registry import AgentRegistry, AgentSpec
+from ..planning.feedback import PlanFeedbackService
 from ..planning.modes import PlanDecision, decide_plan, normalise_mode
 from ..reasoning.engine import ReasoningRequest
 from ..safety.guards import redact_secrets
@@ -369,6 +370,9 @@ class KernelDependencies:
     #: `RunSearchIndex` (`history/run_search.py`, ADR-041): keeps the opt-in redacted goal preview
     #: of an agent run (`AURA_AGENT_RUNS_STORE_PREVIEW`). `None`, or the setting off, stores nothing.
     run_index: Any = None
+    #: The audit sink (ADR-045): ``plan.feedback`` is recorded when a person revises a held plan.
+    #: `None` records nothing.
+    audit: Any = None
 
 
 #: Told to the model when planning or tool execution failed (CB-14). Without it the model saw
@@ -1767,6 +1771,34 @@ class AIKernel:
         should hear so when they submit, not find a failed task afterwards. The turn itself still
         re-checks when it runs. Raises the same :class:`ConsentRequiredError` the turn would."""
         await self._require_engineer_consent(request)
+
+    async def revise_held_plan(self, request: TurnRequest) -> Any:
+        """ADR-045 (row 51): apply the person's free-text feedback (``request.message``) to the plan
+        held for them (``request.approval_ids``) and return a ``PlanFeedbackResult``.
+
+        Planned only: nothing runs, whatever the comment says. The plan is replanned at most once
+        per comment (``PlanningEngine.replan``, bounded by its revision allowance), held again under
+        new approval ids, and the old ids are consumed -- see ``planning/feedback.py``. Owner and
+        session are enforced by the confirmation store; the tools offered to the planner are those
+        the held turn's persona and this caller's grant allow, as for any turn."""
+        held = await self._confirmations.peek(
+            request.approval_ids,
+            user_id=request.user_id.value,
+            session_id=request.session_id.value if request.session_id else None,
+        )
+        tools = await self._tool_declarations(replace(request, agent=held.agent))
+        service = PlanFeedbackService(
+            confirmations=self._confirmations, planner=lambda: self._deps.planner,
+            audit=self._deps.audit, clock=self._deps.clock,
+        )
+        return await service.revise(
+            approval_ids=request.approval_ids, feedback=request.message,
+            user_id=request.user_id.value,
+            session_id=request.session_id.value if request.session_id else None,
+            tools=tools,
+            correlation_id=(request.correlation_id or CorrelationId.new()).value,
+            turn_id=TurnId.new().value,
+        )
 
     async def _index_run(self, request: TurnRequest, run_id: str | None, goal: str) -> None:
         """Hand the run's goal to the opt-in preview index (ADR-041). A no-op unless the operator
