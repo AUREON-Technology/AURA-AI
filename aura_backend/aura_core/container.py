@@ -1843,6 +1843,9 @@ class Container:
                 enable_open_exec_tools=self.settings.open_tools.exec_enabled,
                 enable_desktop_ops_tools=self.settings.open_tools.desktop_ops_enabled,
                 episodic_memory=self.episodic,
+                # ADR-043 project_status: the owner-scoped run stores (None when not configured).
+                engineer_runs=self.engineer_runs,
+                agent_runs=self.agent_runs,
             )
         )
         return registry

@@ -842,8 +842,13 @@ def build_sandbox_tools(
     token_resolver: Any = None,
     host_agent_registry: Any = None,
     desktop_ops: bool = False,
+    read_ledger: Any = None,
 ) -> list[Tool]:
     """Filesystem, command-execution, and git tools against one shared per-task sandbox.
+
+    ``read_ledger`` (ADR-043, ``tools/open_workspace.py::FileReadLedger``) makes ``write_file`` and
+    ``edit_file`` *warn* -- never block -- when a file changed since the agent last read or wrote it.
+    It needs nothing from the host-daemon protocol: both tools already read through the runner.
 
     ``desktop_ops`` (with a ``host_agent_registry``) additionally registers the ADR-036 group C
     tools (``tools/desktop_ops.py``: ``docker_build``, ``docker_compose``, ``profile_python``). They
@@ -894,9 +899,34 @@ def build_sandbox_tools(
         _refuse_binary_path(path, "write_file")
         _require_encodable(content, "content", "write_file")
         handle = await sessions.write_handle(context, tool_name="write_file")
+        note = None
         async with _file_lock(handle, path):
+            if read_ledger is not None:
+                note = await _stale_note_overwrite(handle, path, context)
             await sandbox_runner.write_file(handle, path, content)
-        return f"Wrote {len(content.encode('utf-8'))} bytes to {path}"
+            if read_ledger is not None:
+                _ledger_wrote(path, content, context)
+        result = f"Wrote {len(content.encode('utf-8'))} bytes to {path}"
+        return f"{result}\n{note}" if note else result
+
+    async def _stale_note_overwrite(handle: Any, path: str, context: ToolContext) -> str | None:
+        """ADR-043: a warning if the file about to be overwritten differs from what the agent last
+        saw. Only files with a baseline cost the extra read; any failure means "no warning"."""
+        from .open_workspace import stale_note_before_write
+
+        user = str(getattr(context.user_id, "value", context.user_id))
+        if read_ledger.baseline(user, "sandbox", path) is None:
+            return None
+        try:
+            current = await sandbox_runner.read_file(handle, path)
+        except Exception:
+            return None  # missing, binary or unreadable: nothing to compare, and never a reason to block
+        return stale_note_before_write(read_ledger, context, path, current, overwriting=True)
+
+    def _ledger_wrote(path: str, text: str, context: ToolContext) -> None:
+        from .open_workspace import note_sandbox_written
+
+        note_sandbox_written(read_ledger, context, path, text)
 
     async def _read_text(handle: Any, path: str, tool_name: str) -> str:
         try:
@@ -945,6 +975,11 @@ def build_sandbox_tools(
         # the same text would each write back a file that lacks the other's change.
         async with _file_lock(handle, path):
             current = await _read_text(handle, path, "edit_file")
+            note = None
+            if read_ledger is not None:
+                from .open_workspace import stale_note_before_write
+
+                note = stale_note_before_write(read_ledger, context, path, current, overwriting=False)
             needle, replacement = find, replace
             occurrences = current.count(needle)
             crlf_file = _prefers_crlf(current)
@@ -978,8 +1013,12 @@ def build_sandbox_tools(
                     f"found {occurrences}{hint}",
                     tool="edit_file",
                 )
-            await sandbox_runner.write_file(handle, path, current.replace(needle, replacement, 1))
-        return f"Edited {path} (1 replacement)"
+            updated = current.replace(needle, replacement, 1)
+            await sandbox_runner.write_file(handle, path, updated)
+            if read_ledger is not None:
+                _ledger_wrote(path, updated, context)
+        result = f"Edited {path} (1 replacement)"
+        return f"{result}\n{note}" if note else result
 
     _WRITE_FILES_MAX_OPS = 100
 
@@ -1099,6 +1138,12 @@ def build_sandbox_tools(
                 if any(marker in message for marker in _WRITE_FILES_NOTHING_WRITTEN):
                     message += " (nothing in this call was written)"
                 raise ToolExecutionError(message, tool="write_files", cause=exc) from exc
+        if read_ledger is not None:
+            # Its content is not known here, so drop the baselines rather than leave stale ones that
+            # would make the next edit warn about a change this call itself made.
+            user = str(getattr(context.user_id, "value", context.user_id))
+            for op in ops:
+                read_ledger.forget(user, "sandbox", op.path)
         return f"Wrote/edited {len(ops)} file(s): {', '.join(op.path for op in ops)}"
 
     async def _pdf_cat(handle: Any, pdf_path: str) -> str | None:
