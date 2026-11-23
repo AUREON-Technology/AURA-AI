@@ -33,6 +33,23 @@ test.beforeEach(async ({ request }) => {
   await request.post(`${gateway}/__test/reset-control`);
 });
 
+// What the Cloudflare providers (C2) wrote to the gateway: the variables behind them, the keys a
+// person pasted and the Cloudflare tokens that exist. The API never returns a key; the mock's test
+// hook does, so a test can prove where a value went and where it did not.
+async function providerState(request: APIRequestContext) {
+  return (await (await request.get(`${gateway}/__test/control`)).json()) as {
+    provider_vars: Record<string, string>;
+    pasted_keys: string[];
+    cf_tokens: string[];
+    step_ups: number;
+  };
+}
+
+/** The end of the five-minute watch: watched changes succeed, and a removed provider's token is revoked. */
+async function finishChanges(request: APIRequestContext) {
+  await request.post(`${gateway}/__test/finish-changes`);
+}
+
 async function signIn(page: Page, button: "Developer mock login" | "SuperAdmin mock login") {
   await page.goto("/login");
   await page.getByRole("button", { name: button }).click();
@@ -589,6 +606,390 @@ test("Cloudflare tab: Arabic reads right to left", async ({ page, context }) => 
   await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
   await expect(page.getByText("الاتصال", { exact: true })).toBeVisible();
   await expect(page.getByTestId("platform-cloudflare").locator("code")).toHaveAttribute("dir", "ltr");
+});
+
+// -- The Cloudflare tab (stage 6, C2): the model catalog and the providers the gateway serves from.
+// The mock keeps providers as gateway variables and applies the refusals of control/cloudflare.py;
+// a change stays "watched" (and blocks the next one) until the test ends the watch.
+async function openCloudflareProviders(page: Page) {
+  await openCloudflare(page, [["railway"], ["cloudflare", ACCOUNT_ID]]);
+  await expect(page.getByTestId("cf-model-@cf/openai/gpt-oss-20b")).toBeVisible();
+}
+
+async function openAdd(page: Page, model: string) {
+  await page.getByRole("button", { name: `Add ${model}` }).click();
+  const dialog = page.getByTestId("provider-dialog");
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+const CONSENT = "I understand, and I consent to a third party reading prompts";
+
+/** The whole Add flow for one model, then the end of the watch so the next change is allowed. */
+async function addProvider(page: Page, request: APIRequestContext, model: string, name: string, rpm = "0") {
+  const dialog = await openAdd(page, model);
+  await dialog.getByLabel("Provider name").fill(name);
+  await dialog.getByLabel("Requests per minute").fill(rpm);
+  if (await dialog.getByTestId("consent-box").count()) await dialog.getByLabel(CONSENT).check();
+  await dialog.getByRole("button", { name: "Check", exact: true }).click();
+  await expect(dialog.getByTestId("provider-verdict")).toContainText("The gateway accepts this change");
+  await dialog.getByRole("button", { name: "Add provider" }).click();
+  await confirmWith(page, name);
+  await expect(page.getByTestId("cloudflare-notice")).toContainText(`${name} was added.`);
+  await finishChanges(request);
+}
+
+test("Cloudflare providers: nothing renders before Cloudflare is connected", async ({ page }) => {
+  await openCloudflare(page);
+  await expect(page.getByTestId("cf-providers")).toHaveCount(0);
+  await expect(page.getByTestId("cf-models")).toHaveCount(0);
+});
+
+test("Cloudflare providers: without Railway the section says so and no model can be added", async ({ page }) => {
+  await openCloudflare(page, [["cloudflare", ACCOUNT_ID]]);
+  await expect(page.getByTestId("cf-providers-need-railway")).toContainText("Connect Railway first");
+  await expect(page.getByTestId("cf-models-need-railway")).toBeVisible();
+  // The catalog needs only the account, so the models are listed, but Add is off.
+  await expect(page.getByTestId("cf-model-@cf/openai/gpt-oss-20b")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add @cf/openai/gpt-oss-20b" })).toBeDisabled();
+});
+
+test("Cloudflare models: the live catalog, its filters, its pages, and why a model is refused", async ({ page }) => {
+  await openCloudflareProviders(page);
+  const models = page.getByTestId("cf-models");
+  const rows = models.getByTestId(/^cf-model-/);
+
+  const usable = models.getByTestId("cf-model-@cf/openai/gpt-oss-20b");
+  await expect(usable).toContainText("128,000");
+  await expect(usable).toContainText("Reasoning");
+  await expect(usable).toContainText("Function calling");
+  await expect(usable).toContainText("0.2 USD per M input tokens");
+  await expect(usable).toContainText("Can be added");
+  await expect(models.getByTestId("cf-model-@cf/meta/llama-3.2-11b-vision-instruct")).toContainText("Vision");
+  await expect(models.getByTestId("cf-model-@cf/meta/llama-4-scout-17b-16e-instruct")).toContainText("Paid plan only");
+
+  // A model AURA may not serve says why, in words, and has no Add button.
+  await expect(models.getByTestId("cf-model-@cf/cloudflare/clairic")).toContainText("not on AURA's open-weight list");
+  await expect(page.getByRole("button", { name: "Add @cf/cloudflare/clairic" })).toHaveCount(0);
+  // The default task is Text Generation: the embedding model is not listed until the task is changed.
+  await expect(models.getByTestId("cf-model-@cf/baai/bge-m3")).toHaveCount(0);
+  await models.getByLabel("Task").selectOption("Text Embeddings");
+  await expect(models.getByTestId("cf-model-@cf/baai/bge-m3")).toContainText("not a text-generation model");
+  await expect(page.getByRole("button", { name: "Add @cf/baai/bge-m3" })).toHaveCount(0);
+  await models.getByLabel("Task").selectOption("Text Generation");
+
+  // 26 text-generation models, 20 a page.
+  const pager = models.getByTestId("cf-models-pager");
+  await expect(pager).toContainText("Page 1 of 2");
+  await expect(pager).toContainText("26 models");
+  await expect(rows).toHaveCount(20);
+  await pager.getByRole("button", { name: "Next" }).click();
+  await expect(pager).toContainText("Page 2 of 2");
+  await expect(rows).toHaveCount(6);
+  await expect(pager.getByRole("button", { name: "Next" })).toBeDisabled();
+  await pager.getByRole("button", { name: "Previous" }).click();
+  await expect(pager).toContainText("Page 1 of 2");
+
+  await models.getByLabel("Vision only").check();
+  await expect(rows).toHaveCount(1);
+  await models.getByLabel("Vision only").uncheck();
+  await models.getByLabel("AURA can use").check();
+  await expect(models.getByTestId("cf-model-@cf/cloudflare/clairic")).toHaveCount(0);
+  await models.getByLabel("AURA can use").uncheck();
+  await models.getByLabel("Plan").selectOption("paid");
+  await expect(rows).toHaveCount(1);
+  await expect(models.getByTestId("cf-model-@cf/meta/llama-4-scout-17b-16e-instruct")).toBeVisible();
+  await models.getByLabel("Plan").selectOption("any");
+
+  await models.getByLabel("Search models").fill("gpt-oss");
+  await expect(rows).toHaveCount(1);
+  await expect(usable).toBeVisible();
+  await models.getByLabel("Search models").fill("no-such-model");
+  await expect(models).toContainText("No models match.");
+});
+
+test("Cloudflare providers: add with a created key, after a check and the consent", async ({ page, request }) => {
+  await openCloudflareProviders(page);
+  await expect(page.getByTestId("cf-providers")).toContainText("No Cloudflare providers on the gateway yet");
+
+  const dialog = await openAdd(page, "@cf/openai/gpt-oss-20b");
+  // The model, a suggested name and the catalog's context window are filled in; the key is created.
+  await expect(dialog.getByLabel("Model", { exact: true })).toHaveValue("@cf/openai/gpt-oss-20b");
+  await expect(dialog.getByLabel("Provider name")).toHaveValue("cf-gpt-oss-20b");
+  await expect(dialog.getByLabel("Context window (tokens)")).toHaveValue("128000");
+  await expect(dialog.getByLabel("Create a new key")).toBeChecked();
+  await expect(dialog.getByRole("button", { name: "Add provider" })).toBeDisabled();
+  await expect(dialog.getByTestId("consent-box")).toContainText("a third party outside this platform");
+
+  // Without the consent the gateway refuses, in words, and nothing is written.
+  await dialog.getByRole("button", { name: "Check", exact: true }).click();
+  await expect(dialog.getByTestId("provider-problem")).toContainText("Hosted inference is off on the gateway");
+  await expect(dialog.getByRole("button", { name: "Add provider" })).toBeDisabled();
+  expect((await providerState(request)).provider_vars).toEqual({});
+
+  await dialog.getByLabel(CONSENT).check();
+  await dialog.getByLabel("Requests per minute").fill("30");
+  await dialog.getByLabel("Tokens per minute").fill("6000");
+  await dialog.getByRole("button", { name: "Check", exact: true }).click();
+  const verdict = dialog.getByTestId("provider-verdict");
+  await expect(verdict).toContainText("The gateway accepts this change");
+  await expect(verdict).toContainText("A new Cloudflare token will be created");
+  await expect(verdict).toContainText("AURA_ALLOW_HOSTED_INFERENCE will be set to true");
+  await expect(verdict.getByTestId("verdict-variable").filter({ hasText: "AURA_PROVIDER_CF_GPT_OSS_20B_API_KEY" })).toContainText("secret");
+  await expect(verdict).toContainText("AURA_PROVIDER_CF_GPT_OSS_20B_HEALTH_PROBE");
+  await expect(dialog.getByRole("button", { name: "Add provider" })).toBeEnabled();
+
+  // A form that changed since the check is not applied on the strength of it.
+  await dialog.getByLabel("Requests per day").fill("1000");
+  await expect(verdict).toContainText("The form changed since the last check");
+  await expect(dialog.getByRole("button", { name: "Add provider" })).toBeDisabled();
+  await dialog.getByRole("button", { name: "Check", exact: true }).click();
+  await expect(verdict).toContainText("The gateway accepts this change");
+
+  await dialog.getByRole("button", { name: "Add provider" }).click();
+  await confirmWith(page, "cf-gpt-oss-20b");
+  const notice = page.getByTestId("cloudflare-notice");
+  await expect(notice).toContainText("cf-gpt-oss-20b was added.");
+  await expect(notice).toContainText("rolled back automatically");
+  await expect(page.getByTestId("provider-dialog")).toHaveCount(0);
+
+  const row = page.getByTestId("cf-provider-cf-gpt-oss-20b");
+  await expect(row).toContainText("@cf/openai/gpt-oss-20b");
+  await expect(row).toContainText("Healthy");
+  await expect(row).toContainText("Set");
+  await expect(row).toContainText("On");
+  await expect(row.getByTestId("cf-limit-rpm")).toContainText("30 requests/min");
+  await expect(row.getByTestId("cf-limit-rpd")).toContainText("1,000 requests/day");
+  await expect(row.getByTestId("cf-limit-tpm")).toContainText("6,000 tokens/min");
+  await expect(row).toContainText("passive probe");
+  await expect(page.getByTestId("cf-passive-note")).toBeVisible();
+
+  const state = await providerState(request);
+  expect(state.provider_vars.AURA_LLM_PROVIDERS).toBe("hfspace,cf-gpt-oss-20b,local");
+  expect(state.provider_vars.AURA_ALLOW_HOSTED_INFERENCE).toBe("true");
+  expect(state.provider_vars.AURA_PROVIDER_CF_GPT_OSS_20B_RPM).toBe("30");
+  expect(state.provider_vars.AURA_PROVIDER_CF_GPT_OSS_20B_HEALTH_PROBE).toBe("passive");
+  expect(state.cf_tokens).toContain("aura-cf-gpt-oss-20b-20261123-1200");
+  noKeyValues(await page.content(), [state.provider_vars.AURA_PROVIDER_CF_GPT_OSS_20B_API_KEY]);
+
+  await page.getByTestId("cloudflare-changes-link").click();
+  await expect(page.getByTestId("change-row").first()).toContainText("Added the Cloudflare provider cf-gpt-oss-20b");
+});
+
+test("Cloudflare providers: a pasted key reaches the gateway and never the page or a check", async ({ page, request }) => {
+  await openCloudflareProviders(page);
+  const checks: string[] = [];
+  page.on("request", (req) => {
+    if (req.url().endsWith("/providers/validate")) checks.push(req.postData() ?? "");
+  });
+
+  const dialog = await openAdd(page, "@cf/meta/llama-3.2-11b-vision-instruct");
+  await expect(dialog.getByLabel("The model accepts images")).toBeChecked();
+  await expect(dialog.getByTestId("vision-note")).toContainText("does not send user images to third-party providers");
+  await dialog.getByLabel("Provider name").fill("cf-vision");
+  await dialog.getByLabel(CONSENT).check();
+  await dialog.getByLabel("Paste an existing key").check();
+  const secret = "pasted-secret-key-98765";
+  const field = dialog.locator('input[type="password"]');
+  await field.fill(secret);
+  await dialog.getByRole("button", { name: "Check", exact: true }).click();
+  await expect(dialog.getByTestId("provider-verdict")).toContainText("The gateway accepts this change");
+  await expect(dialog.getByTestId("provider-verdict")).not.toContainText("A new Cloudflare token");
+  await dialog.getByRole("button", { name: "Add provider" }).click();
+  await confirmWith(page, "cf-vision");
+  await expect(page.getByTestId("cloudflare-notice")).toContainText("cf-vision was added.");
+
+  const state = await providerState(request);
+  expect(state.pasted_keys).toEqual([secret]);
+  expect(state.provider_vars.AURA_PROVIDER_CF_VISION_API_KEY).toBe(secret);
+  expect(state.provider_vars.AURA_PROVIDER_CF_VISION_MODALITIES).toBe("text,image");
+  expect(state.cf_tokens).toEqual(["aura-workersai-old"]);
+  expect(await page.content()).not.toContain(secret);
+  // The check never carried the key, and its numbers were numbers: the gateway's body is strict.
+  expect(checks.length).toBeGreaterThan(0);
+  for (const body of checks) expect(body).not.toContain(secret);
+  const sent = JSON.parse(checks[0]) as Record<string, unknown>;
+  for (const numeric of ["context_window", "quality_tier", "max_output_tokens", "rpm", "rpd", "tpm", "tpd", "tokens_per_second"]) {
+    expect(typeof sent[numeric]).toBe("number");
+  }
+
+  // Removing a provider whose key was pasted revokes no Cloudflare token, and says so.
+  await finishChanges(request);
+  await page.getByRole("button", { name: "Remove cf-vision" }).click();
+  await expect(page.getByTestId("remove-token-note")).toContainText("No Cloudflare token will be revoked");
+});
+
+test("Cloudflare providers: the consent box shows only while hosted inference is off; a watched change blocks the next in words", async ({ page, request }) => {
+  await openCloudflareProviders(page);
+  const first = await openAdd(page, "@cf/openai/gpt-oss-20b");
+  await expect(first.getByTestId("consent-box")).toBeVisible();
+  await first.getByLabel(CONSENT).check();
+  await first.getByRole("button", { name: "Check", exact: true }).click();
+  await expect(first.getByTestId("provider-verdict")).toContainText("AURA_ALLOW_HOSTED_INFERENCE will be set to true");
+  await first.getByRole("button", { name: "Add provider" }).click();
+  await confirmWith(page, "cf-gpt-oss-20b");
+  await expect(page.getByTestId("cloudflare-notice")).toContainText("cf-gpt-oss-20b was added.");
+
+  // The flag is on now: no consent box, and the check does not touch it.
+  const second = await openAdd(page, "@cf/meta/llama-3.2-11b-vision-instruct");
+  await expect(second.getByTestId("consent-box")).toHaveCount(0);
+  await second.getByLabel("Provider name").fill("cf-vision");
+  await second.getByRole("button", { name: "Check", exact: true }).click();
+  await expect(second.getByTestId("provider-verdict")).toContainText("The gateway accepts this change");
+  await expect(second.getByTestId("provider-verdict")).not.toContainText("AURA_ALLOW_HOSTED_INFERENCE");
+
+  // The first change is still being watched: the gateway refuses the second, and says why.
+  await second.getByRole("button", { name: "Add provider" }).click();
+  await confirmWith(page, "cf-vision");
+  await expect(page.getByRole("dialog", { name: "Add cf-vision" }).getByRole("alert")).toContainText(
+    "Another change to the gateway is still being watched",
+  );
+  expect((await providerState(request)).provider_vars.AURA_LLM_PROVIDERS).toBe("hfspace,cf-gpt-oss-20b,local");
+
+  await finishChanges(request);
+  await page.getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByTestId("cloudflare-notice")).toContainText("cf-vision was added.");
+  expect((await providerState(request)).provider_vars.AURA_LLM_PROVIDERS).toBe("hfspace,cf-gpt-oss-20b,cf-vision,local");
+});
+
+test("Cloudflare providers: refusals read in words in the form", async ({ page, request }) => {
+  await openCloudflareProviders(page);
+  await page.getByRole("button", { name: "Add provider" }).click();
+  const dialog = page.getByTestId("provider-dialog");
+  await dialog.getByLabel(CONSENT).check();
+
+  // A model that is not open weight (the model list does not offer it, but the field can be typed in).
+  await dialog.getByLabel("Model", { exact: true }).fill("@cf/cloudflare/clairic");
+  await dialog.getByLabel("Provider name").fill("cf-clairic");
+  await dialog.getByRole("button", { name: "Check", exact: true }).click();
+  await expect(dialog.getByTestId("provider-problem")).toContainText("not on AURA's open-weight list");
+
+  // A reserved name is refused by the spec, in the gateway's own words.
+  await dialog.getByLabel("Model", { exact: true }).fill("@cf/openai/gpt-oss-20b");
+  await dialog.getByLabel("Provider name").fill("local");
+  await dialog.getByRole("button", { name: "Check", exact: true }).click();
+  await expect(dialog.getByTestId("provider-problem")).toContainText("is not 'local' or 'echo'");
+
+  // A number that is not a number is caught before any request.
+  await dialog.getByLabel("Provider name").fill("cf-dup");
+  await dialog.getByLabel("Context window (tokens)").fill("lots");
+  await expect(dialog.getByTestId("numbers-hint")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Check", exact: true })).toBeDisabled();
+  await dialog.getByLabel("Context window (tokens)").fill("32768");
+
+  await dialog.getByRole("button", { name: "Check", exact: true }).click();
+  await expect(dialog.getByTestId("provider-verdict")).toContainText("The gateway accepts this change");
+  await dialog.getByRole("button", { name: "Add provider" }).click();
+  await confirmWith(page, "cf-dup");
+  await expect(page.getByTestId("cloudflare-notice")).toContainText("cf-dup was added.");
+  await finishChanges(request);
+
+  // The same name again.
+  await page.getByRole("button", { name: "Add provider" }).click();
+  const again = page.getByTestId("provider-dialog");
+  await again.getByLabel("Model", { exact: true }).fill("@cf/openai/gpt-oss-20b");
+  await again.getByLabel("Provider name").fill("cf-dup");
+  await again.getByRole("button", { name: "Check", exact: true }).click();
+  await expect(again.getByTestId("provider-problem")).toContainText("A provider with this name is already on the gateway");
+  await expect(again.getByRole("button", { name: "Add provider" })).toBeDisabled();
+});
+
+test("Cloudflare providers: replace changes the model and the limits, and can create a new key", async ({ page, request }) => {
+  await openCloudflareProviders(page);
+  await addProvider(page, request, "@cf/openai/gpt-oss-20b", "cf-gpt-oss-20b", "30");
+
+  await page.getByRole("button", { name: "Replace cf-gpt-oss-20b" }).click();
+  const dialog = page.getByTestId("provider-dialog");
+  await expect(dialog).toContainText("Replace cf-gpt-oss-20b");
+  await expect(dialog.getByTestId("consent-box")).toHaveCount(0);
+  await expect(dialog.getByLabel("Provider name")).toBeDisabled();
+  await expect(dialog.getByLabel("Keep the current key")).toBeChecked();
+  await expect(dialog.getByLabel("Requests per minute")).toHaveValue("30");
+
+  await dialog.getByLabel("Model", { exact: true }).fill("@cf/openai/gpt-oss-120b");
+  await dialog.getByLabel("Requests per minute").fill("0");
+  await dialog.getByLabel("Quality tier").selectOption("3");
+  await dialog.getByLabel("Create a new key").check();
+  await dialog.getByRole("button", { name: "Check", exact: true }).click();
+  const verdict = dialog.getByTestId("provider-verdict");
+  await expect(verdict).toContainText("A new Cloudflare token will be created");
+  // A limit that is no longer declared is deleted, never written as 0.
+  await expect(verdict.getByTestId("verdict-variable").filter({ hasText: "AURA_PROVIDER_CF_GPT_OSS_20B_RPM" })).toContainText("deleted");
+
+  await dialog.getByRole("button", { name: "Replace provider" }).click();
+  await confirmWith(page, "cf-gpt-oss-20b");
+  await expect(page.getByTestId("cloudflare-notice")).toContainText("cf-gpt-oss-20b was replaced.");
+  const row = page.getByTestId("cf-provider-cf-gpt-oss-20b");
+  await expect(row).toContainText("@cf/openai/gpt-oss-120b");
+  await expect(row.getByTestId("cf-limit-rpm")).toHaveCount(0);
+
+  const state = await providerState(request);
+  expect(state.provider_vars.AURA_PROVIDER_CF_GPT_OSS_20B_MODEL).toBe("@cf/openai/gpt-oss-120b");
+  expect(state.provider_vars.AURA_PROVIDER_CF_GPT_OSS_20B_QUALITY_TIER).toBe("3");
+  expect(state.provider_vars).not.toHaveProperty("AURA_PROVIDER_CF_GPT_OSS_20B_RPM");
+  expect(state.cf_tokens).toContain("aura-cf-gpt-oss-20b-20261123-1201");
+  noKeyValues(await page.content(), [state.provider_vars.AURA_PROVIDER_CF_GPT_OSS_20B_API_KEY]);
+
+  await page.getByRole("link", { name: "Changes" }).click();
+  await expect(page.getByTestId("change-row").first()).toContainText("Replaced the Cloudflare provider cf-gpt-oss-20b");
+});
+
+test("Cloudflare providers: remove lists what goes, refuses a wrong name, and revokes the token only after the watch", async ({ page, request }) => {
+  await openCloudflareProviders(page);
+  await addProvider(page, request, "@cf/openai/gpt-oss-20b", "cf-gpt-oss-20b", "30");
+  expect((await providerState(request)).cf_tokens).toContain("aura-cf-gpt-oss-20b-20261123-1200");
+
+  await page.getByRole("button", { name: "Remove cf-gpt-oss-20b" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByTestId("remove-body")).toContainText("AURA_PROVIDER_CF_GPT_OSS_20B_MODEL");
+  await expect(dialog.getByTestId("remove-body")).toContainText("AURA_PROVIDER_CF_GPT_OSS_20B_API_KEY");
+  expect(await dialog.getByTestId("remove-variable").count()).toBeGreaterThan(10);
+  await expect(dialog.getByTestId("remove-token-note")).toContainText("revoked automatically after the change has stayed healthy for 5 minutes");
+  await expect(dialog.getByTestId("remove-token-note")).toContainText("If the change is rolled back, the token is not revoked");
+
+  // A wrong name is refused before anything is sent.
+  await page.getByLabel("Type cf-gpt-oss-20b").fill("cf-wrong");
+  await page.getByRole("button", { name: "Confirm" }).click();
+  await expect(dialog.getByRole("alert")).toContainText("Type cf-gpt-oss-20b to confirm");
+  expect((await providerState(request)).provider_vars.AURA_LLM_PROVIDERS).toContain("cf-gpt-oss-20b");
+
+  await page.getByLabel("Type cf-gpt-oss-20b").fill("cf-gpt-oss-20b");
+  await page.getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByTestId("cloudflare-notice")).toContainText("cf-gpt-oss-20b was removed.");
+  await expect(page.getByTestId("cf-provider-cf-gpt-oss-20b")).toHaveCount(0);
+  const after = await providerState(request);
+  expect(after.provider_vars.AURA_LLM_PROVIDERS).toBe("hfspace,local");
+  expect(Object.keys(after.provider_vars).filter((name) => name.startsWith("AURA_PROVIDER_CF_GPT_OSS_20B"))).toEqual([]);
+  // The token is revoked only once the change has stayed healthy, never at the click.
+  expect(after.cf_tokens).toContain("aura-cf-gpt-oss-20b-20261123-1200");
+  await finishChanges(request);
+  expect((await providerState(request)).cf_tokens).toEqual(["aura-workersai-old"]);
+
+  await page.getByRole("link", { name: "Changes" }).click();
+  await expect(page.getByTestId("change-row").first()).toContainText("Removed the Cloudflare provider cf-gpt-oss-20b");
+});
+
+test("Cloudflare providers: Arabic reads right to left, with model ids and numbers left to right", async ({ page, context, request }) => {
+  await openCloudflareProviders(page);
+  await addProvider(page, request, "@cf/openai/gpt-oss-20b", "cf-gpt-oss-20b", "30");
+  await context.addCookies([{ name: "aura_console_lang", value: "ar", url: process.env.PLAYWRIGHT_BASE_URL! }]);
+  await page.goto("/settings/cloudflare");
+  await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+  await expect(page.getByTestId("cf-providers")).toContainText("الـ Providers");
+  await expect(page.getByTestId("cf-models")).toContainText("الموديلات");
+
+  const row = page.getByTestId("cf-provider-cf-gpt-oss-20b");
+  await expect(row.locator("code").first()).toHaveAttribute("dir", "ltr");
+  await expect(row.getByTestId("cf-limit-rpm").locator("bdi")).toHaveAttribute("dir", "ltr");
+  await expect(page.getByTestId("cf-model-@cf/openai/gpt-oss-20b").locator("code")).toHaveAttribute("dir", "ltr");
+  await expect(page.getByTestId("cf-model-@cf/cloudflare/clairic")).toContainText("مش في قايمة الموديلات المفتوحة الأوزان");
+
+  await page.getByRole("button", { name: "غيّر cf-gpt-oss-20b" }).click();
+  const dialog = page.getByTestId("provider-dialog");
+  await expect(dialog).toContainText("غيّر cf-gpt-oss-20b");
+  await expect(dialog.getByLabel("الموديل", { exact: true })).toHaveAttribute("dir", "ltr");
+  await expect(dialog.getByLabel("الطلبات في الدقيقة")).toHaveAttribute("dir", "ltr");
+  await expect(dialog.getByTestId("vision-note")).toContainText("AURA مبتبعتش صور المستخدمين");
 });
 
 // -- Grafana Cloud and Qdrant Cloud (stage 5) -------------------------------------------------
