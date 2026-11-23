@@ -292,4 +292,4 @@ behaviour under real Redis concurrency across workers (the `incr` atomicity is R
 it is a thread pool on one process); the Docker `stats` reader against a real daemon (it is tested
 against a stand-in for the client); `/voice/task` audio through the nginx location on the VPS
 (pinned by the config test, not exercised); the model-refinement stage against a real model; and
-that a client built to this contract behaves. The client UI for rows 71, 72 and 91 does not exist.
+that a client built to this contract behaves. The client screens for rows 71, 72 and 91 are built (Engineer history, app bar: Agent tasks with an offline queue, Run history with timeline, Usage and cost; `aura_client/lib/features/engineering/`) and tested against a fake gateway; they have not been run on a device or against a live server.

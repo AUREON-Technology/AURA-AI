@@ -5329,4 +5329,243 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get chatToolChangesThings => 'الإجراء ده بيغيّر حاجات برّه الشات.';
+
+  @override
+  String get engineeringTasksTooltip => 'مهام الوكيل';
+
+  @override
+  String get engineeringRunSearchTooltip => 'دوّر في التشغيلات';
+
+  @override
+  String get engineeringUsageTooltip => 'الاستهلاك والتكلفة';
+
+  @override
+  String get agentTasksTitle => 'مهام الوكيل';
+
+  @override
+  String get agentTasksGoalHint => 'اوصف المهمة للوكيل';
+
+  @override
+  String get agentTasksSend => 'ابعت المهمة';
+
+  @override
+  String get agentTasksWaiting => 'مستنية تتبعت';
+
+  @override
+  String get agentTasksSending => 'بتتبعت…';
+
+  @override
+  String get agentTasksNotSent => 'ماتبعتتش';
+
+  @override
+  String agentTasksRetryingIn(int count) {
+    return 'المحاولة رقم $count فشلت. هتتحاول تاني لوحدها.';
+  }
+
+  @override
+  String get agentTasksQueuedOffline => 'اتحفظت. هتتبعت أول ما النت يرجع.';
+
+  @override
+  String get agentTasksSentSnack => 'المهمة اتبعتت.';
+
+  @override
+  String get agentTasksAlreadySentSnack =>
+      'المهمة دي كانت وصلت قبل كده. ماتنفذتش مرتين.';
+
+  @override
+  String get agentTasksNotSentSnack =>
+      'السيرفر رفض المهمة دي. شوف السبب في القايمة.';
+
+  @override
+  String get agentTasksQueueFull =>
+      'فيه مهام كتير لسه ماتبعتتش. استنى تتبعت أو شيل منها.';
+
+  @override
+  String get agentTasksRetryNow => 'حاول تاني دلوقتي';
+
+  @override
+  String get agentTasksDismiss => 'شيل';
+
+  @override
+  String get agentTasksSendAgain => 'ابعتها تاني كمهمة جديدة';
+
+  @override
+  String get agentTasksSentTitle => 'آخر المهام';
+
+  @override
+  String get agentTasksNoneYet => 'مفيش مهام لسه';
+
+  @override
+  String get agentTasksNoneYetMessage =>
+      'المهام اللي بتبعتها هتظهر هنا مع حالتها.';
+
+  @override
+  String get agentTasksConflict =>
+      'الطلب ده اتستخدم قبل كده بمحتوى مختلف، فماتبعتش.';
+
+  @override
+  String get agentTaskStatusQueued => 'في الطابور';
+
+  @override
+  String get agentTaskStatusRunning => 'شغّالة';
+
+  @override
+  String get agentTaskStatusAwaitingApproval => 'مستنية موافقتك';
+
+  @override
+  String get agentTaskStatusSucceeded => 'خلصت';
+
+  @override
+  String get agentTaskStatusFailed => 'فشلت';
+
+  @override
+  String get agentTaskStatusCancelled => 'اتلغت';
+
+  @override
+  String get runSearchTitle => 'سجل التشغيلات';
+
+  @override
+  String get runSearchHint => 'دوّر بالوكيل أو الحالة أو الأداة';
+
+  @override
+  String get runSearchButton => 'دوّر';
+
+  @override
+  String runSearchResults(int count) {
+    return '$count تشغيلة';
+  }
+
+  @override
+  String get runSearchEmpty => 'مفيش تشغيلات مطابقة';
+
+  @override
+  String get runSearchEmptyMessage =>
+      'جرّب كلمة تانية، أو امسح البحث عشان تشوف أحدث التشغيلات.';
+
+  @override
+  String get runStatusFailed => 'فشلت';
+
+  @override
+  String get runStatusCompleted => 'خلصت';
+
+  @override
+  String get runStatusPartial => 'خلصت جزئياً';
+
+  @override
+  String get runStatusRunning => 'شغّالة';
+
+  @override
+  String get runStatusAwaitingApproval => 'مستنية موافقة';
+
+  @override
+  String get runStatusBudgetExhausted => 'وقفت عند الحد';
+
+  @override
+  String runSummaryLine(int steps, int tools) {
+    return '$steps خطوات في الخطة، $tools استدعاء أداة';
+  }
+
+  @override
+  String get runTimelineTitle => 'خط سير التشغيلة';
+
+  @override
+  String get runTimelineNoSteps => 'مفيش خطوات اتسجلت للتشغيلة دي.';
+
+  @override
+  String runTimelineIteration(int n) {
+    return 'الدورة $n';
+  }
+
+  @override
+  String get runTimelineStepFailed => 'فشلت';
+
+  @override
+  String get runMetricElapsed => 'المدة';
+
+  @override
+  String get runMetricTokens => 'التوكنز';
+
+  @override
+  String get runMetricToolCalls => 'استدعاءات الأدوات';
+
+  @override
+  String get runMetricIterations => 'الدورات';
+
+  @override
+  String runSeconds(String seconds) {
+    return '$seconds ث';
+  }
+
+  @override
+  String get usageTitle => 'الاستهلاك والتكلفة';
+
+  @override
+  String get usagePeriodDay => '24 ساعة';
+
+  @override
+  String get usagePeriodWeek => '7 أيام';
+
+  @override
+  String get usagePeriodMonth => '30 يوم';
+
+  @override
+  String get usageGroupDay => 'باليوم';
+
+  @override
+  String get usageGroupAgent => 'بالوكيل';
+
+  @override
+  String get usageGroupTask => 'بالمهمة';
+
+  @override
+  String get usageTotalTurns => 'الردود';
+
+  @override
+  String get usageTotalTokensIn => 'توكنز داخلة';
+
+  @override
+  String get usageTotalTokensOut => 'توكنز خارجة';
+
+  @override
+  String get usageTotalCost => 'التكلفة';
+
+  @override
+  String usageFailedTurns(int count) {
+    return '$count فشلت';
+  }
+
+  @override
+  String usageCostValue(String amount) {
+    return '$amount دولار';
+  }
+
+  @override
+  String get usageTruncated =>
+      'الأرقام ممكن تكون ناقصة: السيرفر بيحتفظ بآخر الردود بس.';
+
+  @override
+  String get usageDisabled => 'الاستهلاك مش متسجل على السيرفر ده.';
+
+  @override
+  String get usageNoData => 'مفيش حاجة متسجلة في الفترة دي';
+
+  @override
+  String get usageNoTask => 'من غير مهمة';
+
+  @override
+  String get usageBreakdown => 'التفصيل';
+
+  @override
+  String get usageRecentTurns => 'آخر الردود';
+
+  @override
+  String usageTurnLine(int tokens, String seconds) {
+    return '$tokens توكن، $seconds ث';
+  }
+
+  @override
+  String get usageTurnFailed => 'فشل';
+
+  @override
+  String get usageTurnCached => 'من الكاش';
 }
