@@ -49,6 +49,7 @@ def turn_to_spec(turn: TurnRequest) -> dict[str, Any]:
         "use_memory": turn.use_memory,
         "use_tools": turn.use_tools,
         "plan": turn.plan,
+        "success_criteria": list(turn.success_criteria),
         "strategy": turn.strategy.value if turn.strategy else None,
         "routing_policy": turn.routing_policy.value if turn.routing_policy else None,
         "require_local": turn.require_local,
@@ -82,6 +83,7 @@ def spec_to_turn(spec: Mapping[str, Any], *, task: AgentTask) -> TurnRequest:
         use_memory=bool(spec.get("use_memory", True)),
         use_tools=bool(spec.get("use_tools", True)),
         plan=spec.get("plan"),
+        success_criteria=tuple(spec.get("success_criteria") or ()),
         strategy=ReasoningStrategy(spec["strategy"]) if spec.get("strategy") else None,
         routing_policy=RoutingPolicy(spec["routing_policy"]) if spec.get("routing_policy") else None,
         require_local=bool(spec.get("require_local", False)),
@@ -160,6 +162,11 @@ class KernelTaskRunner:
             "degraded": result.degraded,
             "resolved_agent": result.resolved_agent,
             "agent_run_id": result.agent_run_id,
+            # ADR-045: only for a task submitted with success_criteria.
+            # (the stop reason and the acceptance verdict only: the full loop report is bulky)
+            **({"agent_loop": {"stop_reason": result.agent_loop.get("stop_reason"),
+                               "acceptance": result.agent_loop.get("acceptance")}}
+               if turn.success_criteria and result.agent_loop is not None else {}),
         }
         return TaskOutcome(
             status=TaskStatus.AWAITING_APPROVAL if pending else TaskStatus.SUCCEEDED,

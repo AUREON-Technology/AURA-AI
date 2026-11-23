@@ -279,6 +279,11 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         #: ``approval_ids`` to run the stored plan. Absent (with no ``plan``) is today's behaviour.
         #: The response's ``plan_mode`` says what was decided and why.
         plan_mode: Literal["auto", "plan", "fast", "review"] | None = None
+        #: ADR-045 (row 41): what "done" means for this request, one statement per item (at most
+        #: 20 of 300 characters). The planner is told them; the response's
+        #: ``agent_loop.acceptance`` says which the run's tool results show met, which they
+        #: contradict and which nothing speaks to. Absent is today's behaviour exactly.
+        success_criteria: list[str] = Field(default_factory=list, max_length=20)
         strategy: str | None = None
         routing_policy: str | None = None
         require_local: bool = False
@@ -595,6 +600,19 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             return tuple(caller.capabilities)
         return deployment.caller_capabilities(tuple(caller.capabilities), caller.role)
 
+    def _success_criteria(raw: list[str]) -> tuple[str, ...]:
+        """Validated ``success_criteria`` (ADR-045): each item a non-empty statement of at most
+        300 characters; blanks dropped, duplicates collapsed. Too long is a 422, not a silent cut."""
+        from ..execution.acceptance import MAX_CRITERION_CHARS, normalise_criteria
+
+        for item in raw:
+            if len(str(item)) > MAX_CRITERION_CHARS:
+                raise ValidationError(
+                    "a success criterion is too long",
+                    details={"field": "success_criteria", "max_chars": MAX_CRITERION_CHARS},
+                )
+        return normalise_criteria(raw)
+
     async def to_turn(payload: ChatRequest, caller: Principal, request: Request) -> TurnRequest:
         # Phase I: shared transcript/message normalize before the kernel (same path live voice uses).
         from ..nlp import normalize_for_turn
@@ -617,6 +635,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             if len(json.dumps(payload.response_schema)) > _MAX_RESPONSE_SCHEMA_CHARS:
                 raise ValidationError("response_schema is too large",
                                       details={"limit_chars": _MAX_RESPONSE_SCHEMA_CHARS})
+        success_criteria = _success_criteria(payload.success_criteria)
         connector_tokens = _connector_tokens(request)
         if caller.is_service and connector_tokens:
             raise ValidationError("a service key cannot act with a person's connector sign-in")
@@ -652,6 +671,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             use_tools=payload.use_tools,
             plan=payload.plan,
             plan_mode=payload.plan_mode,
+            success_criteria=success_criteria,
             strategy=_parse_enum(ReasoningStrategy, payload.strategy),
             routing_policy=_parse_enum(RoutingPolicy, payload.routing_policy),
             require_local=payload.require_local,
@@ -820,6 +840,10 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "pending_tool_calls": list(result.pending_tool_calls),
                 "plan": list(result.plan_summary),
                 "plan_mode": result.plan_mode,
+                # ADR-045: the loop report appears only when the request asked for an
+                # acceptance check, so a request without criteria keeps its old shape.
+                **({"agent_loop": result.agent_loop}
+                   if payload.success_criteria and result.agent_loop is not None else {}),
                 "resolved_agent": result.resolved_agent,
                 "agent_run_id": result.agent_run_id,
                 "correlation_id": result.telemetry.correlation_id.value,

@@ -112,6 +112,9 @@ def register_agent_task_ops(
         use_memory: bool = True
         use_tools: bool = True
         plan: bool | None = None
+        #: ADR-045 (row 41): what "done" means, at most 20 statements of 300 characters; the
+        #: task's ``result.agent_loop.acceptance`` reports which the run's tool results support.
+        success_criteria: list[str] = Field(default_factory=list, max_length=20)
         strategy: str | None = None
         routing_policy: str | None = None
         require_local: bool = False
@@ -285,7 +288,8 @@ def register_agent_task_ops(
                     "message": payload.goal, "agent": payload.persona,
                     "session_id": payload.session_id, "use_knowledge": payload.use_knowledge,
                     "use_memory": payload.use_memory, "use_tools": payload.use_tools,
-                    "plan": payload.plan, "strategy": payload.strategy,
+                    "plan": payload.plan, "success_criteria": payload.success_criteria,
+                    "strategy": payload.strategy,
                     "routing_policy": payload.routing_policy, "require_local": payload.require_local,
                     "max_output_tokens": payload.max_output_tokens,
                     "temperature": payload.temperature,
