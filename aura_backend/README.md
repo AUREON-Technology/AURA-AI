@@ -104,6 +104,11 @@ Environment variables (see `aura_core/config/settings.py`):
 - `AURA_TOOLS_FILES_ROOT` / `AURA_TOOLS_HTTP_ALLOWED_HOSTS` — switch on the read-only `list_files`/`read_file` (confined to that directory) and the host-allowlisted `fetch_url`; both off while empty
 - `AURA_OPEN_EXEC_TOOLS_ENABLED` — `generate_and_run_tests` / `analyze_test_quality`, which run pytest in a child of the gateway; `engineer_agent` + confirmation, no container (default: false; ADR-036)
 - `AURA_DESKTOP_OPS_TOOLS_ENABLED` — `docker_build` / `docker_compose` / `profile_python` on a paired desktop only (default: true; ADR-036)
+- `AURA_LOOP_STUCK_DETECTION_ENABLED` / `AURA_LOOP_STUCK_IDENTICAL_CALLS` / `AURA_LOOP_STUCK_SAME_ERROR` / `AURA_LOOP_STUCK_NO_PROGRESS` — stop an agent loop that is repeating itself (default: true; 3 / 3 / 4; `0` disables a rule; ADR-037)
+- `AURA_LOOP_RECOVERY_POLICY_ENABLED` / `AURA_LOOP_RECOVERY_BACKOFF_S` — retry, replan, surface or stop by failure kind instead of retrying every failed read (default: false; 0.5 s; ADR-037)
+- `AURA_LOOP_TEST_SIGNALS_ENABLED` — a failing test run or non-zero command exit makes an agent pass "not done" and drives a replan (default: false; ADR-037)
+- `AURA_CRITIC_ENABLED` / `AURA_CRITIC_LLM_ENABLED` — check the Engineer's plan before it runs and its answer against the tool results; the model critic is advisory (default: true / false; ADR-037)
+- `AURA_ENGINEER_TOKEN_BUDGET` / `AURA_CONTEXT_PRESSURE_THRESHOLD` — the Engineer run's token budget (`0` = unbounded) and the fraction at which `context_pressure` is signalled (default: 400000; 0.8; ADR-037)
 - `AURA_ALLOW_REMOTE_INFERENCE` — gate remote inference (default: false)
 - `AURA_LEARNING_REFRESH_CRON` — knowledge refresh schedule (default: `0 2 * * *`)
 - `OLLAMA_NUM_PARALLEL` — model concurrency (default: 1)
