@@ -1727,7 +1727,10 @@ gaps:
       stack's ruler with per-group results; the scrape job and uptime checks, which no API
       covers for this token, shown as exact values with their live state; firing alerts) and
       Qdrant Cloud (health, collections, snapshots, and a restore that snapshots the current
-      state first). Every stage is built; none is proven.
+      state first). Stage 6 (docs/plans/console-cloudflare-tab-plan.md) adds a Cloudflare tab; its
+      read-only views, today's Workers AI usage against the free allowance and the R2 buckets, are
+      built (a named state for no permission, R2 not enabled and Cloudflare unreachable; the usage
+      neuron field name is unconfirmed). Every stage is built; none is proven.
     target_state: >-
       The Super Admin runs every platform operation the plan lists (Railway variables, redeploy,
       restart, rollback, logs; Space status, restart, hardware; key create, revoke and rotate;
@@ -1748,7 +1751,10 @@ gaps:
       HttpCloudflareTokens against recorded exchanges) and tests/unit/test_control_monitoring.py
       (the packaged rules equal deploy/'s, apply with per-group results, honest status when a
       query cannot run, snapshot and restore with a safety snapshot, HttpGrafanaCloud and
-      HttpQdrantAdmin against recorded exchanges).
+      HttpQdrantAdmin against recorded exchanges) and tests/unit/test_cloudflare_usage_r2.py and
+      tests/unit/test_control_cloudflare_usage_r2_api.py (Workers AI usage and R2 buckets:
+      HttpCloudflareAccount against recorded GraphQL and REST exchanges, every state named, the
+      engine and the two routes).
       Opt-in: tests/load/test_control_store_postgres.py and the migration round trip on Postgres.
       Console: tests/e2e/control-center.spec.ts against the mock gateway. Nothing here exercises
       real Google, a real platform API or a deployed gateway.
