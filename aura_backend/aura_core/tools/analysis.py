@@ -34,6 +34,7 @@ from .open.database_intelligence_tool import DatabaseIntelligenceTool
 from .open.dependency_license_compliance_scanner import DependencyLicenseComplianceScanner
 from .open.dependency_manager_validator import DependencyManagerValidator
 from .open.deployment_release_manager import DeploymentReleaseManager
+from .open.gate_ext import evaluate as gate_evaluate
 from .open.diagram_ext import (
     architecture_from_modules, er_from_sql, flowchart_from_source, sequence_from_source, validate_deep,
 )
@@ -751,22 +752,28 @@ async def validate_data_records(
 
 @tool(
     "evaluate_quality_gate",
-    "Decide whether a change may merge from check results you already have. A check you leave out "
-    "counts as NOT RUN: security, tests, coverage and complexity are required by default and a "
-    "missing one fails the gate. operation: readiness (adds a weighted score and blockers) or gate.",
+    "Decide whether a change may merge from check results you already have; a check left out is "
+    "NOT RUN and a required one fails the gate. Pass booleans, or `results` {check: boolean | the "
+    "other tool's result} for security, tests, coverage, complexity, lint, architecture, review, "
+    "mutation or a custom name; verdicts then carry evidence. operation: readiness or gate.",
     param("operation", "string", "readiness (default) or gate.", required=False,
           enum=("readiness", "gate"), default="readiness"),
-    param("security_pass", "boolean", "Security checks passed.", required=False),
+    param("security_pass", "boolean", "Security passed.", required=False),
     param("tests_pass", "boolean", "Tests passed.", required=False),
     param("coverage_pass", "boolean", "Coverage met its threshold.", required=False),
     param("complexity_pass", "boolean", "Complexity within limits.", required=False),
-    param("lint_pass", "boolean", "Lint clean (optional check).", required=False),
-    param("architecture_pass", "boolean", "Architecture rules held (optional check).", required=False),
-    param("required_checks", "array", "Replace the required set (names: security, tests, coverage, "
-          "complexity, lint, architecture).", required=False, item_type="string"),
-    param("blocking_checks", "array", "Checks whose failure blocks regardless of score "
-          "(default security, tests).", required=False, item_type="string"),
-    param("min_score_threshold", "number", "Minimum weighted score 0-100 (default 80).",
+    param("lint_pass", "boolean", "Lint clean.", required=False),
+    param("architecture_pass", "boolean", "Architecture rules held.", required=False),
+    param("results", "object", "{check: boolean | result object}, e.g. review: review_code_diff output.",
+          required=False),
+    param("weights", "object", "{check: weight} overriding score weights.", required=False),
+    param("min_mutation_score", "number", "Mutation % that passes (default 50).", required=False,
+          default=50.0, minimum=0, maximum=100),
+    param("required_checks", "array", "Replace the required set (default security, tests, "
+          "coverage, complexity).", required=False, item_type="string"),
+    param("blocking_checks", "array", "Checks that block regardless of score (default security, "
+          "tests).", required=False, item_type="string"),
+    param("min_score_threshold", "number", "Minimum score 0-100 (default 80).",
           required=False, default=80.0, minimum=0, maximum=100),
     **_CODE,
 )
@@ -781,10 +788,29 @@ async def evaluate_quality_gate(
     required_checks: list | None = None,
     blocking_checks: list | None = None,
     min_score_threshold: float = 80.0,
+    results: dict | None = None,
+    weights: dict | None = None,
+    min_mutation_score: float = 50.0,
 ) -> str:
     if not math.isfinite(min_score_threshold):
         # NaN compares false with everything: it answered "approved" with ready_to_merge false.
         raise ToolExecutionError("min_score_threshold must be a finite number", tool="evaluate_quality_gate")
+    if results is not None or weights is not None:
+        found = _bounded("evaluate_quality_gate", "results", results) or {}
+        if not isinstance(found, dict) or not isinstance(weights or {}, dict):
+            raise ToolExecutionError("results and weights must be objects", tool="evaluate_quality_gate")
+        booleans = {"security": security_pass, "tests": tests_pass, "coverage": coverage_pass,
+                    "complexity": complexity_pass, "lint": lint_pass, "architecture": architecture_pass}
+        try:
+            return await _run(
+                gate_evaluate, operation=operation, booleans=booleans, results={str(k): v for k, v in found.items()},
+                required=[str(c) for c in required_checks] if required_checks is not None else None,
+                blocking=[str(c) for c in blocking_checks] if blocking_checks is not None else None,
+                weights=_bounded("evaluate_quality_gate", "weights", weights), min_score=min_score_threshold,
+                min_mutation_score=min_mutation_score,
+            )
+        except ValueError as exc:
+            raise ToolExecutionError(str(exc), tool="evaluate_quality_gate") from exc
     checks = dict(
         security_pass=security_pass, tests_pass=tests_pass, coverage_pass=coverage_pass,
         complexity_pass=complexity_pass, lint_pass=lint_pass, architecture_pass=architecture_pass,
