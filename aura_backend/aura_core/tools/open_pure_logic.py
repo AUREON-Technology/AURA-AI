@@ -24,6 +24,7 @@ code, opens a socket or keeps module-level state (``tests/unit/test_open_pure_to
 from __future__ import annotations
 
 import ast
+import bisect
 import csv
 import hashlib
 import io
@@ -785,7 +786,7 @@ def _blank(source: str, lang: str) -> str:
     def mask(m: re.Match[str]) -> str:
         return re.sub(r"[^\n]", " ", m.group(0))
 
-    text = _BLOCK.sub(mask, source)
+    text = _BLOCK.sub(mask, source) if "*/" in source else source  # no terminator: every "/*" would rescan to the end
     text = _LINE_C.sub(mask, text)
     return (_RUST_STRING if lang == "rust" else _STRING).sub(mask, text)
 
@@ -850,30 +851,30 @@ _IMPORT_PATTERNS: dict[str, re.Pattern[str]] = {
 }
 _IMPORT_PATTERNS["typescript"] = _IMPORT_PATTERNS["javascript"]
 _CALL = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(|\.\s*([A-Za-z_$][\w$]*)\s*\(")
-_MAX_SCAN_LINE = 600
+_MAX_SCAN_LINE = 400
+_MAX_SYMBOLS = 3_000
 
 
-def _match_brace(blanked: str, open_index: int, limit: int = 400_000) -> int:
-    """Index of the ``}`` that closes the ``{`` at ``open_index``; ``-1`` when none within ``limit``."""
-    depth = 0
-    for i in range(open_index, min(len(blanked), open_index + limit)):
-        ch = blanked[i]
+def _brace_pairs(blanked: str) -> dict[int, int]:
+    """``{index of '{': index of its '}'}`` in one pass (an unclosed brace has no entry)."""
+    pairs: dict[int, int] = {}
+    stack: list[int] = []
+    for i, ch in enumerate(blanked):
         if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return i
-    return -1
+            stack.append(i)
+        elif ch == "}" and stack:
+            pairs[stack.pop()] = i
+    return pairs
 
 
 def scan_source(source: str, lang: str) -> dict[str, Any]:
     """Symbols (kind, name, line, parent, signature, exported, calls), imports and a call graph.
 
     Brace matching over comment- and string-blanked text; a heuristic, not a parser. Lines longer
-    than 600 characters (minified code) are skipped and counted.
+    than 400 characters (minified code) are skipped and counted; at most 3,000 symbols are kept.
     """
     blanked = _blank(source, lang)
+    pairs = _brace_pairs(blanked)
     lines = blanked.split("\n")
     raw_lines = source.split("\n")
     offsets: list[int] = []
@@ -885,6 +886,8 @@ def scan_source(source: str, lang: str) -> dict[str, Any]:
     symbols: list[dict[str, Any]] = []
     skipped = 0
     for index, line in enumerate(lines):
+        if len(symbols) >= _MAX_SYMBOLS:
+            break
         if len(line) > _MAX_SCAN_LINE:
             skipped += 1
             continue
@@ -917,9 +920,9 @@ def scan_source(source: str, lang: str) -> dict[str, Any]:
             end_line = index + 1
             body_range: tuple[int, int] | None = None
             if brace != -1:
-                close = _match_brace(blanked, brace)
+                close = pairs.get(brace, -1)
                 if close != -1:
-                    end_line = blanked.count("\n", 0, close) + 1
+                    end_line = bisect.bisect_right(offsets, close)
                     body_range = (brace, close)
             symbols.append({
                 "kind": kind, "name": name, "line": index + 1, "end_line": end_line, "parent": parent,
@@ -940,12 +943,14 @@ def scan_source(source: str, lang: str) -> dict[str, Any]:
         # `foo(x) {` outside a class is a call in an expression or a nested block, not a declaration
         symbols = [s for s in symbols if not (s["kind"] == "method" and s["parent"] is None)]
     call_graph: dict[str, list[str]] = {}
+    budget = 2_000_000  # characters of function bodies scanned for calls in all (nested bodies are scanned again)
     for sym in symbols:
         body = sym.pop("_body")
-        if sym["kind"] in ("function", "method") and body:
-            text = blanked[body[0] + 1: body[1]]
+        if sym["kind"] in ("function", "method") and body and budget > 0:
+            text = blanked[body[0] + 1: body[1]][:50_000]
+            budget -= len(text)
             names: list[str] = []
-            for m in _CALL.finditer(text[:200_000]):
+            for m in _CALL.finditer(text):
                 called = m.group(1) or m.group(2)
                 if called and called not in _CONTROL and called != sym["name"] and called not in names:
                     names.append(called)
@@ -1373,11 +1378,14 @@ def validate_workflow_spec(
     for t, deps in graph.items():
         for d in deps:
             all_dependents[d].append(t)
-    blocked_by: dict[str, list[str]] = {}
+    impact_all: dict[str, list[str]] = {}
     for t in normal:
         impacted = _failure_impact(all_dependents, meta, t, normal_set)
         if impacted:
-            blocked_by[t] = impacted
+            impact_all[t] = impacted
+    # the largest blast radii first; a long chain would otherwise return n^2 names
+    top = sorted(impact_all, key=lambda t: (-len(impact_all[t]), t))[:40]
+    blocked_by = {t: {"blocks": len(impact_all[t]), "first": impact_all[t][:10]} for t in top}
     simulation: dict[str, Any] | None = None
     if simulate_failures:
         failed = [f for f in simulate_failures if f in graph]
@@ -1397,13 +1405,19 @@ def validate_workflow_spec(
         for t in ids:
             if not graph[t] and t not in depended and t not in recovery_targets:
                 warnings.append(f"task '{t}' has no dependencies and nothing depends on it")
+    big = len(ids) > 200
     result: dict[str, Any] = {
-        "valid": not errors, "errors": errors, "warnings": warnings, "total_tasks": len(ids),
-        "order": order, "parallel_tiers": tiers, "max_concurrency": max((len(t) for t in tiers), default=0),
-        "critical_path": critical, "critical_duration_s": round(makespan, 3), "deadlines": deadline_report,
-        "failure_impact": blocked_by, "recovery_tasks": sorted(recovery_targets),
+        "valid": not errors, "errors": errors[:100], "warnings": warnings[:50], "total_tasks": len(ids),
+        "order": order[:100] if big else order, "order_length": len(order),
+        "parallel_tiers": [{"tier": i, "count": len(t), "first": t[:5]} for i, t in enumerate(tiers)][:100] if big else tiers,
+        "tier_count": len(tiers), "max_concurrency": max((len(t) for t in tiers), default=0),
+        "critical_path": critical[:100] if big else critical, "critical_path_length": len(critical),
+        "critical_duration_s": round(makespan, 3), "deadlines": deadline_report,
+        "failure_impact": blocked_by, "failure_impact_tasks": len(impact_all), "recovery_tasks": sorted(recovery_targets),
         "deadlines_checked": deadline_report["checked"],
     }
+    if big:
+        result["truncated"] = "order, tiers and critical path are shortened for a workflow of more than 200 tasks; the counts are complete"
     if simulation is not None:
         result["simulation"] = simulation
     return result

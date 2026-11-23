@@ -50,6 +50,10 @@ _DATA = dict(category=ToolCategory.DATA, sensitivity=ToolSensitivity.PERSONAL, t
 _MAX_B64 = 2_800_000
 _MAX_FILES = 300
 _MAX_TASKS = 2_000
+_MAX_CRITERIA = 200
+_MAX_EVIDENCE = 500
+_LIST_ALL = 40
+_MAX_PLAN_STEPS = 300
 
 
 def _fail(name: str, message: str) -> ToolExecutionError:
@@ -197,8 +201,8 @@ async def check_architecture(
 # --------------------------------------------------------------------------------------
 
 
-def _ambiguity(text: str, requirements: list[str], context: str, min_words: int) -> dict[str, Any]:
-    combined = text if not context else f"{text}\n{context}"
+def _ambiguity(text: str, requirements: list[str], known: str, min_words: int) -> dict[str, Any]:
+    combined = text if not known else f"{text}\n{known}"
     base = AmbiguityAndClarificationDetector.analyze_task_description(text, min_words=min_words)
     score = AmbiguityAndClarificationDetector.score_ambiguity(text)
     missing = AmbiguityAndClarificationDetector.check_missing_specifications(combined)
@@ -264,17 +268,17 @@ def _ambiguity(text: str, requirements: list[str], context: str, min_words: int)
     param("text", "string", "The task or requirements text.", max_length=_MAX_TEXT),
     param("requirements", "array", "Optional: the requirements as separate statements (conflicts are "
           "checked between them; default: the sentences of text).", required=False, item_type="string"),
-    param("context", "string", "Optional known context; aspects it already settles are not asked about.",
+    param("known_context", "string", "Optional known context; aspects it already settles are not asked about.",
           required=False, max_length=_MAX_TEXT),
     param("min_words", "integer", "Fewer words than this is 'too brief' (default 5).", required=False,
           default=5, minimum=1, maximum=100),
     **_CODE,
 )
 async def detect_ambiguity(
-    text: str, requirements: list | None = None, context: str = "", min_words: int = 5
+    text: str, requirements: list | None = None, known_context: str = "", min_words: int = 5
 ) -> str:
     reqs = [str(r) for r in _items("detect_ambiguity", "requirements", requirements)]
-    return await _run(_ambiguity, text, reqs, context or "", min_words)
+    return await _run(_ambiguity, text, reqs, known_context or "", min_words)
 
 
 # --------------------------------------------------------------------------------------
@@ -283,12 +287,14 @@ async def detect_ambiguity(
 
 _PYTEST_COUNTS = (("passed", re.compile(r"(\d+)\s+passed")), ("failed", re.compile(r"(\d+)\s+failed")),
                   ("errors", re.compile(r"(\d+)\s+errors?\b")))
-_EVIDENCE_LINE = re.compile(r"^\s*(?:[-*]\s*)?(?:\[(?P<box>[xX ])\]|(?P<tag>PASS(?:ED)?|OK|FAIL(?:ED)?|ERROR|✅|❌|✓|✗|✔|✘)\s*[:\-]?)\s*(?P<text>.+?)\s*$")
+_EVIDENCE_LINE = re.compile(r"^\s*(?:[-*]\s*)?(?:\[(?P<box>[xX ])\]|(?P<tag>(?:PASS(?:ED)?|OK|FAIL(?:ED)?|ERROR)\b|[✅❌✓✗✔✘])\s*[:\-]?)\s*(?P<text>.+?)\s*$")
 
 
 def _evidence_from_text(text: str) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for line in text.splitlines()[:5_000]:
+        if len(out) >= _MAX_EVIDENCE:
+            break
         m = _EVIDENCE_LINE.match(line)
         if m:
             tag = (m.group("tag") or "").upper()
@@ -304,7 +310,7 @@ def _evidence_from_text(text: str) -> dict[str, Any]:
 def _acceptance(criteria: list[str], requirements_text: str, evidence: dict, evidence_text: str,
                 test_summary: dict, test_output: str, minimum_coverage: float) -> dict[str, Any]:
     parsed = AcceptanceCriteriaVerifier.parse_criteria_from_markdown(requirements_text) if requirements_text else []
-    all_criteria = list(dict.fromkeys([*(c.strip() for c in criteria if c.strip()), *parsed]))
+    all_criteria = list(dict.fromkeys([*(c.strip() for c in criteria if c.strip()), *parsed]))[:_MAX_CRITERIA]
     structured = AcceptanceCriteriaVerifier.convert_requirements_to_criteria(all_criteria)
     proof_type = {c["description"]: c["proof_type"] for c in structured}
     merged: dict[str, Any] = dict(evidence)
@@ -327,7 +333,7 @@ def _acceptance(criteria: list[str], requirements_text: str, evidence: dict, evi
             elif re.search(r"\b(?:tests?|pytest|test suite|unit tests?)\b", low):
                 merged.setdefault(crit, tests_ok)
     result = AcceptanceCriteriaVerifier.verify_criteria(all_criteria, merged)
-    result["proof_types"] = proof_type
+    badge_source = dict(result)
     result["criteria_source"] = {"given": len(criteria), "parsed_from_requirements_text": len(parsed)}
     if test_used is not None:
         result["test_summary_used"] = test_used
@@ -336,9 +342,18 @@ def _acceptance(criteria: list[str], requirements_text: str, evidence: dict, evi
         actions.append(f"Provide evidence for: {crit} (expected proof: {proof_type.get(crit, 'FUNCTIONAL_OUTPUT')})")
     for crit in result["contradicted_criteria"]:
         actions.append(f"Fix, then re-verify: {crit}")
-    result["next_actions"] = actions
+    result["next_actions"] = actions[:40]
     result["can_mark_complete"] = bool(result["all_satisfied"])
-    result["badge_report_markdown"] = AcceptanceCriteriaVerifier.generate_acceptance_badge_report(result)
+    # a long checklist is reported by its exceptions: the lists name every failing criterion, the table the first 40
+    if len(all_criteria) > _LIST_ALL:
+        result["breakdown"] = {c: ok for c, ok in list(result["breakdown"].items())[:_LIST_ALL]}
+        result["breakdown_truncated"] = True
+        badge_source["breakdown"] = dict(list(badge_source["breakdown"].items())[:_LIST_ALL])
+    result["unverified_criteria"] = result["unverified_criteria"][:60]
+    result["contradicted_criteria"] = result["contradicted_criteria"][:60]
+    shown = set(result["unverified_criteria"]) | set(result["contradicted_criteria"]) | set(result["breakdown"])
+    result["proof_types"] = {c: t for c, t in proof_type.items() if c in shown}
+    result["badge_report_markdown"] = AcceptanceCriteriaVerifier.generate_acceptance_badge_report(badge_source)
     return result
 
 
@@ -372,8 +387,14 @@ async def verify_acceptance_criteria(
     crit = [str(c) for c in _items(name, "criteria", criteria)]
     if not crit and not requirements_text.strip():
         raise _fail(name, "provide 'criteria' or a 'requirements_text' containing criteria")
+    # the verifier compares every criterion with every piece of evidence, so both are counted
+    evidence = _bounded(name, "evidence", evidence) or {}
+    pieces = sum(len(v) if isinstance(v, (list, tuple, set)) else 1 for v in evidence.values())
+    if len(crit) > _MAX_CRITERIA or pieces > _MAX_EVIDENCE:
+        raise _fail(name, f"at most {_MAX_CRITERIA} criteria and {_MAX_EVIDENCE} evidence entries per call "
+                          f"(got {len(crit)} and {pieces}); verify in batches")
     return await _run(
-        _acceptance, crit, requirements_text, _bounded(name, "evidence", evidence) or {}, evidence_text,
+        _acceptance, crit, requirements_text, evidence, evidence_text,
         _bounded(name, "test_summary", test_summary) or {}, test_output, float(minimum_coverage),
     )
 
@@ -625,6 +646,11 @@ def _quiz(operation: str, topic: str, source: str, count: int, types: list[str],
     types = types or (["true_false", "cloze"] if operation == "comprehension" else [])
     quiz = L.build_quiz(topic, source, concepts, count, types)
     if not quiz["questions"]:
+        if re.search(r"(?m)^\s*(?:def|class)\s+\w+", source):
+            try:
+                ast.parse(source)
+            except (SyntaxError, ValueError) as exc:
+                raise _fail("generate_quiz", f"source_text looks like Python but does not parse ({exc}); fix or trim it and call again") from exc
         raise _fail("generate_quiz", "no quizzable facts were found in source_text (too short, or no definitions/sentences of 6-45 words)")
     if operation == "comprehension":
         quiz["rubric"] = {"passing_score": 75.0, "criteria": [
@@ -967,7 +993,7 @@ def _apply_feedback(plan: list[str], feedback: str, revision: int) -> dict[str, 
             continue
         m = re.match(r"(?:remove|delete|drop|skip)\s+(?:the\s+)?(.+)$", low)
         if m:
-            keywords = L.word_set(m.group(1))
+            keywords = L.word_set(m.group(1)) - {"step", "steps", "task", "tasks", "item", "items"}
             hits = [it for it in items if keywords and keywords <= L.word_set(it["text"])]
             if hits:
                 for it in hits:
@@ -981,8 +1007,8 @@ def _apply_feedback(plan: list[str], feedback: str, revision: int) -> dict[str, 
     revised = [it["text"] for it in items]
     changed = revised != plan
     rejected = intent["intent"] == "REJECT"
-    approved = intent["intent"] == "APPROVE" and not changed and not unhandled
-    needs_replan = rejected or (bool(unhandled) and intent["intent"] in ("MODIFY_STEP", "ADD_STEP", "REMOVE_STEP", "REJECT", "GENERAL_COMMENT"))
+    approved = intent["intent"] == "APPROVE" and not changed
+    needs_replan = rejected or (bool(unhandled) and intent["intent"] in ("MODIFY_STEP", "ADD_STEP", "REMOVE_STEP"))
     if not actions and not unhandled and not approved:
         actions.append("Recorded feedback without structural plan changes.")
     result: dict[str, Any] = {
@@ -1069,6 +1095,8 @@ async def apply_plan_feedback(
 ) -> str:
     name = "apply_plan_feedback"
     steps = [str(s) for s in _items(name, "plan", plan)]
+    if len(steps) > _MAX_PLAN_STEPS:
+        raise _fail(name, f"'plan' has {len(steps)} steps; the limit is {_MAX_PLAN_STEPS}")
     more = [str(f) for f in _items(name, "feedbacks", feedbacks)]
     return await _run(_feedback_tool, operation, steps, feedback or "", more, revision, markdown_text, section,
                       new_content, mode, revised_text)

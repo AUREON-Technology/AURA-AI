@@ -557,6 +557,7 @@ def _all_tools() -> dict[str, ToolSpec]:
         workspace_manager=object(), host_git=object(), github_token_resolver=resolver,
         host_agent_registry=object(), enable_analysis_tools=True, enable_open_exec_tools=True,
         enable_desktop_ops_tools=True, episodic_memory=object(),
+        enable_open_pure_tools=True,  # ADR-042
         web_search_url="http://searxng:8080", ocr_engine=_Ocr(), vision_engine=object(),
         image_normalizer=object(), stt_engine=_Stt(),
     )
