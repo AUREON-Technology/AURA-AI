@@ -38,6 +38,7 @@ from .fact_grounding import check_fact_support
 from ..domain.safety import GuardAction, GuardStage
 from ..safety.guards import SecretGuard
 from .analysis import build_analysis_tools
+from .open_pure import build_open_pure_tools
 from .base import param, tool
 from .coding import build_github_tools, build_sandbox_tools
 from .confinement import resolve_within as _resolve_within
@@ -944,6 +945,7 @@ def default_tools(
     enable_analysis_tools: bool = False,
     enable_open_exec_tools: bool = False,
     enable_desktop_ops_tools: bool = False,
+    enable_open_pure_tools: bool = False,
     episodic_memory: Any = None,
     web_search_url: str = "",
     web_search_timeout_s: float = 10.0,
@@ -1026,6 +1028,11 @@ def default_tools(
         # Pure text-in/JSON-out analysis (ADR-036 group A): no I/O, no capability, so unlike the
         # groups above it needs no resource to be present -- only the operator not turning it off.
         tools += build_analysis_tools()
+    if enable_open_pure_tools:
+        # ADR-042: fourteen more pure tools (architecture, ambiguity, acceptance criteria, diff scope,
+        # explain, quiz, artifacts, evidence, plan feedback, mobile summary, file type, structured
+        # data, source structure, workflow validation). Same risk profile as group A.
+        tools += build_open_pure_tools()
     if enable_open_exec_tools:
         # ADR-036 group B: runs project code in a child of *this* process. Operator opt-in only,
         # and each tool still needs `engineer_agent` plus a per-call confirmation.

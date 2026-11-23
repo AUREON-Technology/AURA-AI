@@ -1842,6 +1842,7 @@ class Container:
                 enable_analysis_tools=self.settings.open_tools.analysis_enabled,
                 enable_open_exec_tools=self.settings.open_tools.exec_enabled,
                 enable_desktop_ops_tools=self.settings.open_tools.desktop_ops_enabled,
+                enable_open_pure_tools=self.settings.open_tools.pure_enabled,  # ADR-042
                 episodic_memory=self.episodic,
             )
         )
