@@ -8,6 +8,8 @@ import { expect, test, type APIRequestContext, type Page } from "@playwright/tes
 // tokens that are never returned.
 
 const gateway = process.env.AURA_API_URL || "http://127.0.0.1:8010";
+// A Cloudflare connection needs its account id (32 lower-case hexadecimal characters).
+const ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
 
 async function seen(request: APIRequestContext) {
   return (await (await request.get(`${gateway}/__test/control`)).json()) as {
@@ -462,7 +464,7 @@ async function connectPlatform(page: Page, platform: string, target?: string) {
   const card = page.getByTestId(`platform-${platform}`);
   await card.getByRole("button", { name: "Connect" }).click();
   await page.getByLabel("Token", { exact: true }).fill(`${platform}-management-token`);
-  const targetLabel: Record<string, string> = { hf_space: "Space (owner/name)", grafana: "Stack URL" };
+  const targetLabel: Record<string, string> = { hf_space: "Space (owner/name)", grafana: "Stack URL", cloudflare: "Account ID" };
   if (target) await page.getByLabel(targetLabel[platform]).fill(target);
   await page.getByLabel(`Type ${platform}`).fill(platform);
   await page.getByRole("button", { name: "Confirm" }).click();
@@ -512,7 +514,7 @@ test("Keys: the GPU Space key rotates on both sides with one confirmation", asyn
 });
 
 test("Keys: a new Cloudflare key is created, and only the unused token can be revoked", async ({ page, request }) => {
-  await openKeys(page, [["railway"], ["cloudflare"]]);
+  await openKeys(page, [["railway"], ["cloudflare", ACCOUNT_ID]]);
   await page.getByTestId("key-workersai").getByRole("button", { name: "Create new key" }).click();
   await confirmWith(page, "workersai");
   await expect(page.getByTestId("keys-notice")).toContainText("Revoke the old token");
@@ -528,6 +530,65 @@ test("Keys: a new Cloudflare key is created, and only the unused token can be re
 
   await page.getByRole("link", { name: "Changes" }).click();
   await expect(page.getByTestId("change-row").first()).toContainText("Revoked the token aura-workersai-old");
+});
+
+// -- The Cloudflare tab (stage 6, C1): the connection and the account's API tokens ------------
+async function openCloudflare(page: Page, platforms: [string, string?][] = []) {
+  await openSettings(page);
+  for (const [platform, target] of platforms) await connectPlatform(page, platform, target);
+  await page.getByRole("link", { name: "Cloudflare", exact: true }).click();
+  await expect(page.getByTestId("cloudflare-panel")).toBeVisible();
+}
+
+test("Cloudflare tab: not connected, it says so and shows no tokens", async ({ page }) => {
+  await openCloudflare(page);
+  await expect(page.getByTestId("platform-cloudflare")).toContainText("Not connected");
+  await expect(page.getByTestId("cf-connect-first")).toContainText("Connect Cloudflare above");
+  await expect(page.getByTestId(/^cf-token-/)).toHaveCount(0);
+});
+
+test("Cloudflare tab: connecting needs the account ID, which is shown; the token never comes back", async ({ page, request }) => {
+  await openCloudflare(page);
+  const card = page.getByTestId("platform-cloudflare");
+  await card.getByRole("button", { name: "Connect" }).click();
+  await page.getByLabel("Token", { exact: true }).fill("cf-management-token-xyz");
+  await page.getByLabel("Account ID").fill("not-an-account-id");
+  await page.getByLabel("Type cloudflare").fill("cloudflare");
+  await page.getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByText("give the Cloudflare account id")).toBeVisible();
+  await expect(card).toContainText("Not connected");
+
+  // The token is cleared after every attempt, so it is typed again with the right account ID.
+  await page.getByLabel("Token", { exact: true }).fill("cf-management-token-xyz");
+  await page.getByLabel("Account ID").fill(ACCOUNT_ID);
+  await page.getByRole("button", { name: "Confirm" }).click();
+  await expect(card).toContainText("Verified");
+  await expect(card).toContainText(ACCOUNT_ID);
+  await expect(page.getByTestId("cf-token-aura-workersai-old")).toBeVisible();
+  await expect(page.getByTestId("cf-connect-first")).toHaveCount(0);
+  expect(await page.content()).not.toContain("cf-management-token-xyz");
+  expect((await seen(request)).tokens_received).toEqual(["cf-management-token-xyz"]);
+});
+
+test("Cloudflare tab: the token the gateway uses is listed and cannot be revoked", async ({ page }) => {
+  await openCloudflare(page, [["cloudflare", ACCOUNT_ID]]);
+  await expect(page.getByTestId("cf-token-aura-workersai-old")).toContainText("in use");
+  await expect(page.getByRole("button", { name: "Revoke aura-workersai-old" })).toHaveCount(0);
+  noKeyValues(await page.content(), []);
+});
+
+test("Cloudflare tab: the same tokens are on the Keys tab too", async ({ page }) => {
+  await openKeys(page, [["railway"], ["cloudflare", ACCOUNT_ID]]);
+  await expect(page.getByTestId("cf-token-aura-workersai-old")).toBeVisible();
+});
+
+test("Cloudflare tab: Arabic reads right to left", async ({ page, context }) => {
+  await openCloudflare(page, [["cloudflare", ACCOUNT_ID]]);
+  await context.addCookies([{ name: "aura_console_lang", value: "ar", url: process.env.PLAYWRIGHT_BASE_URL! }]);
+  await page.goto("/settings/cloudflare");
+  await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+  await expect(page.getByText("الاتصال", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("platform-cloudflare").locator("code")).toHaveAttribute("dir", "ltr");
 });
 
 // -- Grafana Cloud and Qdrant Cloud (stage 5) -------------------------------------------------
