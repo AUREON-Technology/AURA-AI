@@ -200,7 +200,7 @@ export function ModelsSection({
                     {row.can_add ? (
                       <Badge tone="ok">{t("settings.cloudflare.models.canUse")}</Badge>
                     ) : (
-                      <span className="text-muted" data-testid="cf-model-refusal">
+                      <span className="text-muted" data-testid="cf-refusal">
                         {refusal ? t(refusal) : row.refusal}
                       </span>
                     )}

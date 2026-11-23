@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 
 import { CloudflareProviders } from "@/components/cloudflare/providers-and-models";
+import { R2Panel } from "@/components/cloudflare/r2-panel";
+import { UsagePanel } from "@/components/cloudflare/usage-panel";
 import { CloudflareTokens } from "@/components/cloudflare-tokens";
 import { PlatformCard } from "@/components/platform-card";
 import { Alert } from "@/components/ui/alert";
@@ -89,6 +91,8 @@ export default function CloudflarePage() {
       ) : (
         <p className="text-[13px] text-muted" data-testid="cf-connect-first">{t("settings.cloudflare.connectFirst")}</p>
       )}
+      {cloudflare.connected && cloudflare.account_id ? <UsagePanel /> : null}
+      {cloudflare.connected && cloudflare.account_id ? <R2Panel /> : null}
     </div>
   );
 }

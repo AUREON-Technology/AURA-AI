@@ -1,6 +1,8 @@
 # Plan: a Cloudflare tab in the console's Settings, with provider add, replace and remove
 
-**Status:** Proposed, awaiting approval · **Date:** 2026-11-23 · **Owner:** platform-core ·
+**Status:** Proposed, awaiting approval. **C3 (the Usage and R2 views, backend and console) is built
+and tested locally, not proven** (2026-11-23): nothing has run against real Cloudflare, and the usage
+neuron field name is unconfirmed (see "As built: C3" below) · **Date:** 2026-11-23 · **Owner:** platform-core ·
 **Builds on:** ADR-037 and `docs/plans/console-control-center-plan.md` (stages 1-5, built, not
 proven; GAP-067) · **Related:** ADR-030 (hosted open-weight inference), ADR-038 (`clairic`, not
 built)
@@ -250,6 +252,38 @@ exchanges and the in-memory adapters first.
 - **Per-process caps.** Any call counter is per worker.
 - **Revoke-after-success** adds a new reconciler path; a failed revoke leaves a visible, working
   token rather than a hidden one.
+
+## As built: C3 (Usage and R2 views), 2026-11-23
+
+Built and tested locally against recorded exchanges and in-memory adapters; **not proven** until the
+exit condition's items 4 and 5 are shown on the live console.
+
+- **Port and adapter.** `CloudflareAccount` gains `usage(account_id, day=None)` and
+  `r2_buckets(account_id)`, returning `CloudflareUsage` / `CloudflareR2` with a named `state`. Cloudflare-
+  side outcomes never raise: only a malformed account id or a missing API root does.
+- **Usage** is the GraphQL dataset `aiInferenceAdaptiveGroups` at `{api_root}/graphql`, for the UTC day.
+  **The neuron field name is not confirmed.** The adapter introspects
+  `AccountAiInferenceAdaptiveGroupsSum` for a field matching `/neuron/i`, queries `count` and that sum, and
+  falls back to requests only (`neurons: null`, said so in the UI) when there is none, when introspection
+  fails, or when Cloudflare rejects the guessed field. Confirming the real name needs a live token with
+  `Account Analytics: Read`. A 401/403 or a GraphQL authorisation error is `no_permission`; everything else
+  that cannot be read is `unavailable` with a short reason code (never vendor text, never zero).
+- **Allowance.** `allowance_neurons: 10000`, `allowance_basis: "free_plan"`: the free-plan figure, because
+  the account's plan tier is unknown. The card says it, and says Cloudflare's analytics are not for billing.
+- **R2** is `GET /accounts/{id}/r2/buckets` (`Workers R2 Storage: Read`). Error 10042 (any status) is the
+  first-class state `not_enabled`; 401/403 is `no_permission`. Each bucket's lock rules are read best effort
+  from `GET .../r2/buckets/{name}/lock` (endpoint unverified; first 50 buckets, five at a time): any failure
+  there is `lock_rules: null` ("unknown"), never an error. One page of 100 buckets; `more` is set when
+  Cloudflare returns a cursor. Read-only: no bucket is created, locked or deleted.
+- **Routes.** `GET /admin/control/cloudflare/usage` and `.../r2`, Super-Admin only, no-store, no step-up
+  (they change nothing), a 200 with the state for every Cloudflare-side outcome and a 422
+  `cloudflare_not_connected` / `no_account` when the tab has no account to read.
+- **Console.** `components/cloudflare/usage-panel.tsx` and `r2-panel.tsx`, one mount line each in the page;
+  strings under `settings.cloudflare.usage.*` and `settings.cloudflare.r2.*` in English and Egyptian Arabic.
+  The mock gateway simulates every state through `POST /__test/cloudflare-views`.
+- **Unverified against Cloudflare:** the neuron field name, the lock endpoint's shape, whether the
+  `datetimeHour_geq` filter on a window that starts at 00:00 UTC matches the dashboard's own total, and the
+  cursor field of the bucket list.
 
 ## Out of scope
 

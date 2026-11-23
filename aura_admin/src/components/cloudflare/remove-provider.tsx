@@ -35,7 +35,7 @@ function RemoveBody({ name }: { name: string }) {
     <div className="flex flex-col gap-3 text-[13px]" data-testid="remove-body">
       <div>
         <p className="mb-1.5 text-muted">{t("settings.cloudflare.providers.removeDeletes")}</p>
-        <ul className="flex flex-col gap-1">
+        <ul className="flex max-h-44 flex-col gap-1 overflow-y-auto">
           {result.variables.map((variable) => (
             <li key={variable.name}>
               <code dir="ltr" className="text-[12px] break-all" data-testid="remove-variable">{variable.name}</code>

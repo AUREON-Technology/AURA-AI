@@ -514,6 +514,14 @@ async function cfProviderRoute({ method, path, request, response, control, who, 
   return true;
 }
 
+// The Cloudflare usage and R2 views' simulated states (C3), created on first use so that
+// /__test/reset-control, which replaces state.control, resets them. usage: ok | no_neurons |
+// near_limit | no_permission | unavailable. r2: not_enabled | ok | empty | no_permission | unavailable.
+function cfViews(control) {
+  control.cfViews ??= { usage: "ok", r2: "not_enabled" };
+  return control.cfViews;
+}
+
 // Grafana Cloud and Qdrant Cloud (aura_core/control/monitoring.py and vector.py).
 const RULE_GROUPS = [
   ["aura-availability", 4], ["aura-security", 7], ["aura-quality", 6],
@@ -816,6 +824,16 @@ const server = http.createServer(async (request, response) => {
     json(response, 200, { finished: true });
     return;
   }
+  // Which state the Cloudflare usage and R2 views simulate. It lives on state.control, so
+  // /__test/reset-control returns both to their defaults (usage ok, R2 not enabled: this account).
+  if (method === "POST" && path === "/__test/cloudflare-views") {
+    const body = await readBody(request);
+    const views = cfViews(state.control);
+    if (typeof body.usage === "string") views.usage = body.usage;
+    if (typeof body.r2 === "string") views.r2 = body.r2;
+    json(response, 200, { ...views });
+    return;
+  }
   if (method === "POST" && path === "/__test/reset-customers") {
     state.customers = JSON.parse(CUSTOMERS_AT_START);
     json(response, 200, { reset: true });
@@ -1116,6 +1134,49 @@ const server = http.createServer(async (request, response) => {
       const safety = shot();
       qd.points[name] = target.points;
       journal("vector_restore", { snapshot: target.name, safety_snapshot: safety.name }, { safety_snapshot: safety.name });
+      return;
+    }
+
+    // -- Cloudflare usage and R2 (stage 6, C3; control/cloudflare.py usage() and r2()) ---------------
+    // Read-only. Every outcome is a `state` in a 200; the view modes are set by /__test/cloudflare-views.
+    if (method === "GET" && (path === "/api/v3/admin/control/cloudflare/usage" || path === "/api/v3/admin/control/cloudflare/r2")) {
+      const credential = control.platforms.cloudflare;
+      if (!credential) {
+        auraError(response, 422, "validation_error", "connect Cloudflare first, in Settings", false, { reason: "cloudflare_not_connected" });
+        return;
+      }
+      const views = cfViews(control);
+      if (path.endsWith("/usage")) {
+        const mode = views.usage;
+        const base = {
+          state: "ok", account_id: credential.target, day: new Date(now).toISOString().slice(0, 10),
+          resets_at: `${new Date(now + 86_400_000).toISOString().slice(0, 10)}T00:00:00Z`,
+          requests: null, neurons: null, neurons_available: false, neurons_field: "", reason: "",
+          allowance_neurons: 10000, allowance_basis: "free_plan", permission: "Account Analytics: Read",
+        };
+        if (mode === "no_permission") json(response, 200, { ...base, state: "no_permission" });
+        else if (mode === "unavailable") json(response, 200, { ...base, state: "unavailable", reason: "http_502" });
+        else if (mode === "no_neurons") json(response, 200, { ...base, requests: 128 });
+        else if (mode === "near_limit") json(response, 200, { ...base, requests: 910, neurons: 8650.5, neurons_available: true, neurons_field: "totalNeurons" });
+        else json(response, 200, { ...base, requests: 128, neurons: 2840.5, neurons_available: true, neurons_field: "totalNeurons" });
+        return;
+      }
+      const mode = views.r2;
+      const base = { state: "ok", account_id: credential.target, reason: "", permission: "Workers R2 Storage: Read", more: false, buckets: [] };
+      if (mode === "not_enabled" || mode === "no_permission" || mode === "unavailable") {
+        json(response, 200, { ...base, state: mode, reason: mode === "unavailable" ? "http_502" : "" });
+      } else if (mode === "empty") {
+        json(response, 200, base);
+      } else {
+        json(response, 200, {
+          ...base,
+          buckets: [
+            { name: "aura-backups", created: "2026-10-01T09:30:00.000Z", location: "WEUR", storage_class: "Standard", lock_rules: 1 },
+            { name: "aura-scratch", created: "2026-11-02T00:00:00.000Z", location: "", storage_class: "", lock_rules: 0 },
+            { name: "aura-archive", created: "2026-11-03T00:00:00.000Z", location: "ENAM", storage_class: "Standard", lock_rules: null },
+          ],
+        });
+      }
       return;
     }
 

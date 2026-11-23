@@ -16,7 +16,8 @@ rebuild, hardware, sleep time and logs. Stage 4: provider keys -- replace, rotat
 (rule groups applied, scrape and uptime status, firing alerts) and Qdrant Cloud (health,
 collections, snapshots, and a restore that snapshots the current state first). Stage 6: the
 Cloudflare tab -- overview, the live Workers AI model catalog, and add, replace and remove for the
-gateway's Cloudflare providers (each one watched gateway change, with a dry run).
+gateway's Cloudflare providers (each one watched gateway change, with a dry run), plus two read-only
+views, today's usage and the R2 buckets, whose every outcome is a named state in a 200.
 """
 
 # No `from __future__ import annotations`: request models are defined inside the register
@@ -480,6 +481,19 @@ def register_control_ops(
     ) -> Any:
         require_super_admin(caller)
         return ok(await container.cloudflare_control.models(task=task, search=search, page=page, per_page=per_page))
+
+    @router.get("/admin/control/cloudflare/usage")
+    async def cloudflare_usage(caller=Depends(principal)) -> Any:
+        """Today's Workers AI usage. Read-only; a missing permission or an unreachable Cloudflare is a
+        named ``state`` in a 200, never an error."""
+        require_super_admin(caller)
+        return ok(await container.cloudflare_control.usage())
+
+    @router.get("/admin/control/cloudflare/r2")
+    async def cloudflare_r2(caller=Depends(principal)) -> Any:
+        """The account's R2 buckets, read-only. ``not_enabled`` is a state, not an error."""
+        require_super_admin(caller)
+        return ok(await container.cloudflare_control.r2())
 
     async def cloudflare_write(request: Any, caller: Any, action: str, target: str, run: Callable) -> Any:
         await stepped_up(request, caller)

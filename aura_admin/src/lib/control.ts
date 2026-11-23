@@ -454,3 +454,46 @@ export type CloudflareValidateResult = {
   enables_consent?: boolean;
   revoke_token_id?: string | null;
 };
+
+// -- Cloudflare usage and R2 (stage 6, C3) ------------------------------------------------------
+// Read-only views. Every Cloudflare-side outcome is a `state` in a 200, never an error.
+
+export type CloudflareUsage = {
+  state: "ok" | "no_permission" | "unavailable";
+  account_id: string;
+  /** The UTC day the figures are for (YYYY-MM-DD) and when the allowance resets (ISO, 00:00 UTC). */
+  day: string;
+  resets_at: string;
+  requests: number | null;
+  /** null when Cloudflare names no neuron field (neurons_available is false). */
+  neurons: number | null;
+  neurons_available: boolean;
+  /** The GraphQL field the neurons came from: empty when there are none. */
+  neurons_field: string;
+  /** A short code for why it is unavailable; never Cloudflare's own text. */
+  reason: string;
+  /** The free-plan allowance: the plan tier is not known to the console. */
+  allowance_neurons: number;
+  allowance_basis: "free_plan";
+  /** The token permission the view needs, named when it is missing. */
+  permission: string;
+};
+
+export type CloudflareBucketRow = {
+  name: string;
+  created: string;
+  location: string;
+  storage_class: string;
+  /** The number of lock rules, or null when Cloudflare would not say. */
+  lock_rules: number | null;
+};
+
+export type CloudflareR2 = {
+  state: "ok" | "not_enabled" | "no_permission" | "unavailable";
+  account_id: string;
+  reason: string;
+  permission: string;
+  /** More buckets exist than this list shows. */
+  more: boolean;
+  buckets: CloudflareBucketRow[];
+};
