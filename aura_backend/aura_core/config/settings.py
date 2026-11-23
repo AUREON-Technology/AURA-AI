@@ -1129,6 +1129,14 @@ class ToolSettings:
     #: Hosts ``fetch_url`` may reach (``build_http_tool``); subdomains are not implied. Empty (the
     #: default) registers no ``fetch_url``. Private/loopback addresses are refused regardless.
     http_allowed_hosts: tuple[str, ...] = ()
+    #: Path to a JSON/YAML file of declarative tool-call rules (``tools/policy_rules.py``, ADR-039):
+    #: deny or require confirmation by tool name + argument pattern. Empty (the default) = none.
+    #: Validated when the container is built; a bad rule stops start-up with its index.
+    policy_file: str = ""
+    #: Whether a user may pick the ``autonomous`` review profile (``PUT /api/v3/engineering/policy``)
+    #: and have it honoured. Off by default; ``strict`` and ``standard`` need no switch because
+    #: neither asks for less than today's behaviour.
+    allow_autonomous_profile: bool = False
 
     @classmethod
     def from_env(cls) -> "ToolSettings":
@@ -1142,6 +1150,8 @@ class ToolSettings:
             require_confirmation_for_side_effects=_bool("TOOLS_REQUIRE_CONFIRMATION", True),
             files_root=(_env("TOOLS_FILES_ROOT", "") or "").strip(),
             http_allowed_hosts=_list("TOOLS_HTTP_ALLOWED_HOSTS"),
+            policy_file=(_env("TOOL_POLICY_FILE", "") or "").strip(),
+            allow_autonomous_profile=_bool("AUTONOMY_ALLOW_AUTONOMOUS", False),
         )
 
 
@@ -2397,6 +2407,8 @@ class AuraSettings:
         root = self.tools.files_root
         if root and (not root.startswith("/") or root.rstrip("/") == "" or ".." in root.split("/")):
             problems.append("AURA_TOOLS_FILES_ROOT must be an absolute path that is not '/' and has no '..'")
+        if self.tools.policy_file and not self.tools.policy_file.startswith("/"):
+            problems.append("AURA_TOOL_POLICY_FILE must be an absolute path")
         for host in self.tools.http_allowed_hosts:
             if "://" in host or "/" in host or "*" in host or ":" in host:
                 problems.append(

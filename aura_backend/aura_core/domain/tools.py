@@ -34,6 +34,7 @@ __all__ = [
     "tool_grant_permits",
     "intersect_tool_grants",
     "NESTED_DISPATCH_TAG",
+    "NETWORK_TAG",
 ]
 
 #: A tool tagged with this runs further tool calls through the same ``ToolRegistry`` while it
@@ -42,6 +43,10 @@ __all__ = [
 #: ``max_parallel`` concurrent delegations would each occupy a slot waiting for a child that can
 #: never get one, until the delegation timeout cut them all off.
 NESTED_DISPATCH_TAG = "nested_dispatch"
+
+#: Marks a tool that reaches a network service on the caller's behalf (a web fetch, a forge call,
+#: a bridged MCP server). The ``strict`` autonomy profile refuses these outright (ADR-039).
+NETWORK_TAG = "network"
 
 
 class ToolSensitivity(int, enum.Enum):

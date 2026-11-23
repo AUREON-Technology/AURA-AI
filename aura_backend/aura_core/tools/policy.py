@@ -22,16 +22,38 @@ Four rules, in order of strictness:
    forge write) is not workspace-local and keeps every rule here. See ADR-014.
 4. **Sensitivity.** Confidential and system-level tools always require confirmation for
    side-effecting operations, tainted or not.
+
+Two layers sit around those rules and can only make a call *stricter* (ADR-039):
+
+* **Declarative rules** (``AURA_TOOL_POLICY_FILE``, :mod:`.policy_rules`) -- operator-written
+  deny / require-confirmation rules over a tool's name *and arguments*, scoped by persona and
+  sensitivity. They run before everything above; a rule that fires is named in the decision's
+  reason (``policy_rule_deny:<id>``) so the audit log says which one.
+* **Autonomy profile** (``context.autonomy``, set per user) -- ``strict`` confirms every side
+  effect and denies tools tagged ``network``; ``standard`` is the rules above unchanged;
+  ``autonomous`` is honoured only when the deployment enabled it, and it never skips a taint,
+  remote-origin, tool-declared or non-workspace-local confirmation. Every workspace-local tool the
+  policy allows is already prompt-free on the server side, and a paired desktop's own approval
+  cannot be waived from here, so on today's tool set ``autonomous`` waives nothing: it is the
+  profile a future workspace-local tool could opt into, and the switch that proves nothing looser
+  than ``standard`` is reachable.
 """
 
 from __future__ import annotations
 
 from typing import Sequence
 
-from ..domain.tools import ToolPolicyDecision, ToolSensitivity, ToolSpec
-from ..ports.runtime import ToolContext
+from typing import Any, Mapping
 
-__all__ = ["ToolPolicy"]
+from ..domain.tools import NETWORK_TAG, ToolPolicyDecision, ToolSensitivity, ToolSpec
+from ..ports.runtime import ToolContext
+from .policy_rules import PolicyRuleSet, load_policy_rules
+
+__all__ = ["ToolPolicy", "AUTONOMY_PROFILES", "DEFAULT_AUTONOMY"]
+
+#: The per-user review profiles, loosest last. ``standard`` is today's behaviour.
+AUTONOMY_PROFILES = ("strict", "standard", "autonomous")
+DEFAULT_AUTONOMY = "standard"
 
 
 class ToolPolicy:
@@ -43,12 +65,35 @@ class ToolPolicy:
         require_confirmation_for_side_effects: bool = True,
         max_sensitivity: ToolSensitivity = ToolSensitivity.SYSTEM,
         block_side_effects_when_tainted: bool = True,
+        rules: PolicyRuleSet | None = None,
+        allow_autonomous: bool = False,
     ) -> None:
         self._allowlist = frozenset(allowlist)
         self._denylist = frozenset(denylist)
         self._confirm_side_effects = require_confirmation_for_side_effects
         self._max_sensitivity = max_sensitivity
         self._block_when_tainted = block_side_effects_when_tainted
+        self._rules = rules if rules is not None else PolicyRuleSet()
+        # Whether a user's ``autonomous`` profile is honoured. Off by default: it is the one
+        # profile that can ask for less than ``standard`` does, so an operator opts in to it.
+        self._allow_autonomous = allow_autonomous
+
+    @property
+    def rules(self) -> PolicyRuleSet:
+        return self._rules
+
+    @property
+    def allow_autonomous(self) -> bool:
+        return self._allow_autonomous
+
+    def effective_autonomy(self, context: ToolContext) -> str:
+        """The profile that governs this call: the user's, unless it is one this deployment does
+        not honour (``autonomous`` while disabled, or an unknown value) -- both fall back to
+        ``standard``, never to something looser."""
+        profile = getattr(context, "autonomy", None) or DEFAULT_AUTONOMY
+        if profile == "autonomous" and not self._allow_autonomous:
+            return DEFAULT_AUTONOMY
+        return profile if profile in AUTONOMY_PROFILES else DEFAULT_AUTONOMY
 
     def evaluate(
         self,
@@ -58,11 +103,64 @@ class ToolPolicy:
         capabilities: Sequence[str] = (),
         confirmed: bool = False,
         host_routed: bool = False,
+        arguments: Mapping[str, Any] | None = None,
     ) -> ToolPolicyDecision:
-        """``host_routed`` says this call will run on the user's own machine through a paired
+        """``arguments`` are the call's validated arguments, for the declarative rules; a caller
+        that omits them gets confirmation from any rule that needs one (never a silent pass).
+
+        ``host_routed`` says this call will run on the user's own machine through a paired
         ``aura_hostd`` rather than in the server-side sandbox -- the routing
         ``CompositeSandboxRunner`` performs. The registry works it out; it changes what
         ``workspace_local`` can promise (see below)."""
+        profile = self.effective_autonomy(context)
+        verdict = None
+        if self._rules:
+            verdict = self._rules.evaluate(
+                spec.name, arguments, persona=context.agent_id,
+                sensitivity=spec.sensitivity.name, host_routed=host_routed,
+            )
+        if verdict is not None and verdict.action == "deny":
+            return ToolPolicyDecision.deny(
+                verdict.reason, tool=spec.name, sensitivity=spec.sensitivity.name,
+                side_effecting=spec.side_effecting, tainted=context.tainted,
+                host_routed=host_routed, autonomy=profile, rule=verdict.rule_id,
+                rule_detail=verdict.detail,
+            )
+        if profile == "strict" and NETWORK_TAG in spec.tags:
+            return ToolPolicyDecision.deny(
+                "autonomy_strict_denies_network", tool=spec.name,
+                sensitivity=spec.sensitivity.name, side_effecting=spec.side_effecting,
+                tainted=context.tainted, host_routed=host_routed, autonomy=profile,
+            )
+
+        decision = self._evaluate_base(
+            spec, context=context, capabilities=capabilities, confirmed=confirmed,
+            host_routed=host_routed,
+        )
+        if not decision.allowed:
+            return decision
+
+        stricter: tuple[str, dict[str, Any]] | None = None
+        if verdict is not None and not confirmed:  # a "confirm" verdict (deny returned above)
+            stricter = (verdict.reason, {"rule": verdict.rule_id, "rule_detail": verdict.detail})
+        elif profile == "strict" and spec.side_effecting and not confirmed:
+            stricter = ("autonomy_strict_side_effect", {})
+        if stricter is not None and not decision.requires_confirmation:
+            return ToolPolicyDecision.confirm(
+                stricter[0], **{**dict(decision.audit_fields), "autonomy": profile, **stricter[1]}
+            )
+        return decision
+
+    def _evaluate_base(
+        self,
+        spec: ToolSpec,
+        *,
+        context: ToolContext,
+        capabilities: Sequence[str],
+        confirmed: bool,
+        host_routed: bool,
+    ) -> ToolPolicyDecision:
+        """The four rules in the module docstring -- unchanged by rules or profiles."""
         audit = {
             "tool": spec.name,
             "sensitivity": spec.sensitivity.name,
@@ -166,9 +264,15 @@ class ToolPolicy:
 
     @classmethod
     def from_settings(cls, settings) -> "ToolPolicy":
-        """Build from :class:`~aura_core.config.settings.ToolSettings`."""
+        """Build from :class:`~aura_core.config.settings.ToolSettings`.
+
+        Loads and validates ``policy_file`` (``AURA_TOOL_POLICY_FILE``) here, so a bad rule stops
+        the process at start-up with the rule's index in the message rather than at first use.
+        """
         return cls(
             allowlist=settings.allowlist,
             denylist=settings.denylist,
             require_confirmation_for_side_effects=settings.require_confirmation_for_side_effects,
+            rules=load_policy_rules(getattr(settings, "policy_file", "") or ""),
+            allow_autonomous=bool(getattr(settings, "allow_autonomous_profile", False)),
         )

@@ -57,7 +57,7 @@ class ToolContext:
     __slots__ = (
         "user_id", "correlation_id", "deadline_s", "tainted", "credentials", "metadata",
         "agent_id", "allowed_tools", "allowed_tool_prefixes", "max_sensitivity", "memory_scope",
-        "capabilities", "delegation_depth", "knowledge_owner",
+        "capabilities", "delegation_depth", "knowledge_owner", "autonomy", "cancel_event",
     )
 
     def __init__(
@@ -77,8 +77,17 @@ class ToolContext:
         capabilities: tuple[str, ...] = (),
         delegation_depth: int = 0,
         knowledge_owner: UserId | None = None,
+        autonomy: str = "standard",
+        cancel_event: Any = None,
     ) -> None:
         self.user_id = user_id
+        # The user's review profile (ADR-039): ``strict`` | ``standard`` | ``autonomous``. A policy
+        # input like ``max_sensitivity``; ``ToolPolicy`` decides what each value means and falls
+        # back to ``standard`` for one it does not honour.
+        self.autonomy = autonomy
+        # Set by the kill switch (``POST /agents/stop-all``) to say "this turn was stopped".
+        # Tools never read it; the registry and kernel use it to cancel work in flight.
+        self.cancel_event = cancel_event
         # ADR-034: the owner for shareable data (the knowledge tools). ``None`` means ``user_id``.
         self.knowledge_owner = knowledge_owner
         self.correlation_id = correlation_id

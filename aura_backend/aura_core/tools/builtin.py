@@ -33,7 +33,7 @@ from ..domain.errors import ToolExecutionError
 from ..domain.files import strip_absolute_prefix
 from ..domain.memory import SHARED_MEMORY_SCOPE, MemoryKind, MemoryQuery, readable_scopes
 from ..domain.network import is_internal_address
-from ..domain.tools import ToolCategory, ToolSensitivity
+from ..domain.tools import NETWORK_TAG, ToolCategory, ToolSensitivity
 from ..ports.runtime import Tool, ToolContext
 from ..domain.safety import GuardAction, GuardStage
 from ..safety.guards import SecretGuard
@@ -769,7 +769,7 @@ def build_http_tool(
         # registry.execute() taints the ToolContext on this tag so a
         # prompt-injection payload here can't get a later PERSONAL-sensitivity
         # propose_* call auto-approved (M4).
-        tags=("untrusted_content",),
+        tags=("untrusted_content", NETWORK_TAG),
     )
     async def fetch_url(url: str, offset: int = 0) -> str:
         _assert_public_url(url, allowlist, "fetch_url")
@@ -864,6 +864,7 @@ def build_weather_tool(*, timeout_s: float = 10.0) -> list[Tool]:
         category=ToolCategory.UTILITY,
         sensitivity=ToolSensitivity.PUBLIC,
         timeout_s=timeout_s,
+        tags=(NETWORK_TAG,),
     )
     async def get_weather(location: str) -> str:
         try:

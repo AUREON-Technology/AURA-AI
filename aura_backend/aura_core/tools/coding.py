@@ -48,7 +48,7 @@ from pathlib import Path
 from ..domain.errors import ToolExecutionError, ValidationError
 from ..domain.output_schema import check_output_schema
 from ..domain.repository_identity import RepositoryIdentity
-from ..domain.tools import ParameterSpec, ToolCategory, ToolSensitivity, ToolSpec
+from ..domain.tools import NETWORK_TAG, ParameterSpec, ToolCategory, ToolSensitivity, ToolSpec
 from ..observability.logging import get_logger
 from ..ports.coding import FileWriteOp, McpToolDescriptor, SandboxResult, StreamingSandboxRunner
 from ..ports.runtime import Tool, ToolContext
@@ -1344,6 +1344,7 @@ def build_sandbox_tools(
         side_effecting=True,
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=300.0,
+        tags=(NETWORK_TAG,),
     )
     async def git_push(branch: str, context: ToolContext, repo: str | None = None) -> str:
         if host_git is None or not sessions.durable:
@@ -1446,7 +1447,7 @@ def build_sandbox_tools(
         max_result_chars=20_000,
         # Everything this pulls in is third-party repository content -- exactly as
         # attacker-influenceable as fetch_url's page bodies or run_command's output.
-        tags=("untrusted_content",),
+        tags=("untrusted_content", NETWORK_TAG),
     )
     async def clone_repository(
         repo: str, context: ToolContext, ref: str | None = None, destination: str | None = None,
@@ -1732,7 +1733,7 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         timeout_s=30.0,
         max_result_chars=40_000,
         # Path names are repository-controlled text, same as file contents.
-        tags=("untrusted_content",),
+        tags=("untrusted_content", NETWORK_TAG),
     )
     async def github_list_repository_files(
         context: ToolContext, repo: str | None = None, ref: str | None = None,
@@ -1779,7 +1780,7 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=150.0,
         max_result_chars=40_000,
-        tags=("untrusted_content",),
+        tags=("untrusted_content", NETWORK_TAG),
     )
     async def github_get_file_contents(
         path: str, context: ToolContext, repo: str | None = None, ref: str | None = None,
@@ -1822,7 +1823,7 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=20.0,
         max_result_chars=10_000,
-        tags=("untrusted_content",),
+        tags=("untrusted_content", NETWORK_TAG),
     )
     async def github_get_issue(number: int, context: ToolContext, repo: str | None = None) -> str:
         client = await _client(context)
@@ -1838,7 +1839,7 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=20.0,
         max_result_chars=10_000,
-        tags=("untrusted_content",),
+        tags=("untrusted_content", NETWORK_TAG),
     )
     async def github_get_pull_request(
         number: int, context: ToolContext, repo: str | None = None
@@ -1857,6 +1858,7 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         side_effecting=True,
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=20.0,
+        tags=(NETWORK_TAG,),
     )
     async def github_create_branch(
         branch: str, from_ref: str, context: ToolContext, repo: str | None = None
@@ -1948,6 +1950,7 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=60.0,
         preview=_preview_github_commit_files,
+        tags=(NETWORK_TAG,),
     )
     async def github_commit_files(
         branch: str, message: str, files: Mapping[str, str], context: ToolContext,
@@ -2019,6 +2022,7 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         side_effecting=True,
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=20.0,
+        tags=(NETWORK_TAG,),
     )
     async def github_create_draft_pull_request(
         branch: str, base: str, title: str, body: str, context: ToolContext,
@@ -2189,7 +2193,7 @@ async def build_mcp_bridge_tools(
                 required_capability=_ENGINEER_CAPABILITY,
                 timeout_s=30.0,
                 max_result_chars=20_000,
-                tags=() if is_safe else ("untrusted_content",),
+                tags=(NETWORK_TAG,) if is_safe else ("untrusted_content", NETWORK_TAG),
                 output_schema=_supported_output_schema(descriptor),
             )
         except (ValueError, TypeError) as exc:

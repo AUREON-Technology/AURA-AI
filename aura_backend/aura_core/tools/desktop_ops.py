@@ -24,7 +24,7 @@ import re
 from typing import Any
 
 from ..domain.errors import ToolExecutionError
-from ..domain.tools import ToolCategory, ToolSensitivity
+from ..domain.tools import NETWORK_TAG, ToolCategory, ToolSensitivity
 from ..ports.runtime import Tool, ToolContext
 from .base import param, tool
 
@@ -163,7 +163,7 @@ def build_desktop_ops_tools(sandbox_runner: Any, sessions: Any, host_agent_regis
         param("timeout_s", "number", "Max seconds for the build (default 600).", required=False,
               default=600, minimum=10, maximum=900),
         timeout_s=910.0,
-        **_COMMON,
+        **{**_COMMON, "tags": ("untrusted_content", NETWORK_TAG)},  # may pull images
     )
     async def docker_build(
         image_tag: str,
@@ -198,7 +198,7 @@ def build_desktop_ops_tools(sandbox_runner: Any, sessions: Any, host_agent_regis
         param("timeout_s", "number", "Max seconds (default 120).", required=False, default=120,
               minimum=5, maximum=600),
         timeout_s=610.0,
-        **_COMMON,
+        **{**_COMMON, "tags": ("untrusted_content", NETWORK_TAG)},  # may pull images
     )
     async def docker_compose(
         action: str,
