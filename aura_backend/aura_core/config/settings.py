@@ -65,6 +65,8 @@ __all__ = [
     "OpenToolsSettings",
     "GitHubSettings",
     "SandboxSettings",
+    "AgentTaskSettings",
+    "UsageSettings",
     "DATA_ENCRYPTION_KEYS_ENV",
     "data_encryption_keys",
     "SECRETS_ENCRYPTION_KEYS_ENV",
@@ -1824,6 +1826,111 @@ class SandboxSettings:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class AgentTaskSettings:
+    """The agent task gateway and its queue (ADR-041): ``POST /api/v3/agents/tasks``.
+
+    A task is one ``/chat`` turn that runs server-side, so a dropped connection loses nothing.
+    Everything here is *per process*: the queue lives in the gateway worker that accepted the
+    task, so with N uvicorn workers the effective ceilings are N times these. The record of a
+    task (status, result) is in the shared cache and is readable from any worker.
+
+    ``enabled=False`` is a kill switch: the routes answer 503 and no queue is started. Nothing
+    here changes ``/chat`` or ``/chat/stream``.
+    """
+
+    enabled: bool = True
+    #: Tasks executing at once in this process.
+    max_concurrent: int = 2
+    #: Of those, how many may belong to one user (fairness: one person cannot hold every slot).
+    max_concurrent_per_user: int = 1
+    #: Waiting tasks this process will hold; past it a new task is refused with 429.
+    max_queued: int = 200
+    max_queued_per_user: int = 20
+    #: How far ahead ``run_at`` may be. The task runs with the capabilities the owner had when
+    #: they submitted it, so this also bounds how stale that grant can get.
+    max_schedule_ahead_s: int = 86_400
+    #: Hard ceiling on one task's execution; it then fails with ``timeout``.
+    task_timeout_s: float = 900.0
+    #: How long a task's record (status and result) is kept after its last update.
+    record_ttl_s: int = 7 * 86_400
+    #: How often the owning process refreshes a live task's heartbeat, and how long a silent one
+    #: is believed. A queued/running task whose heartbeat is older reads as ``failed``
+    #: (``interrupted``): its process died.
+    heartbeat_s: float = 10.0
+    stale_after_s: float = 90.0
+    #: A waiting task gains one priority level per this many seconds, so ``low`` cannot starve.
+    aging_s: float = 120.0
+    #: How long a ``client_request_id`` / ``Idempotency-Key`` is remembered (ADR-041).
+    idempotency_ttl_s: int = 86_400
+
+    def __post_init__(self) -> None:
+        if self.max_concurrent_per_user > self.max_concurrent:
+            raise ConfigurationError(
+                "AURA_AGENT_TASKS_MAX_CONCURRENT_PER_USER must be <= AURA_AGENT_TASKS_MAX_CONCURRENT",
+                details={"per_user": self.max_concurrent_per_user, "global": self.max_concurrent},
+            )
+        if self.stale_after_s <= self.heartbeat_s:
+            raise ConfigurationError(
+                "AURA_AGENT_TASKS_STALE_AFTER_S must be greater than AURA_AGENT_TASKS_HEARTBEAT_S"
+            )
+
+    @classmethod
+    def from_env(cls) -> "AgentTaskSettings":
+        return cls(
+            enabled=_bool("AGENT_TASKS_ENABLED", True),
+            max_concurrent=_int("AGENT_TASKS_MAX_CONCURRENT", 2, minimum=1, maximum=64),
+            max_concurrent_per_user=_int("AGENT_TASKS_MAX_CONCURRENT_PER_USER", 1, minimum=1, maximum=64),
+            max_queued=_int("AGENT_TASKS_MAX_QUEUED", 200, minimum=1, maximum=10_000),
+            max_queued_per_user=_int("AGENT_TASKS_MAX_QUEUED_PER_USER", 20, minimum=1, maximum=1000),
+            max_schedule_ahead_s=_int(
+                "AGENT_TASKS_MAX_SCHEDULE_AHEAD_S", 86_400, minimum=60, maximum=30 * 86_400
+            ),
+            task_timeout_s=_float("AGENT_TASKS_TIMEOUT_S", 900.0, minimum=5.0, maximum=86_400.0),
+            record_ttl_s=_int("AGENT_TASKS_RECORD_TTL_S", 7 * 86_400, minimum=3600, maximum=90 * 86_400),
+            heartbeat_s=_float("AGENT_TASKS_HEARTBEAT_S", 10.0, minimum=0.2, maximum=300.0),
+            stale_after_s=_float("AGENT_TASKS_STALE_AFTER_S", 90.0, minimum=1.0, maximum=3600.0),
+            aging_s=_float("AGENT_TASKS_AGING_S", 120.0, minimum=1.0, maximum=86_400.0),
+            idempotency_ttl_s=_int(
+                "AGENT_TASKS_IDEMPOTENCY_TTL_S", 86_400, minimum=60, maximum=30 * 86_400
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class UsageSettings:
+    """Per-turn usage records and agent-run search (ADR-041). All of it lives in the cache port
+    (Redis in production), bounded and TTL'd; none of it is a new table.
+
+    ``runs_store_preview`` is the one privacy-relevant switch and is **off** by default: with it
+    on, each agent run also keeps a 200-character, secret-redacted preview of its goal (in the
+    cache, never in the run store) so ``GET /agents/runs/search?q=`` can match on goal text.
+    With it off a run stores only a digest of its goal, exactly as before.
+    """
+
+    ledger_enabled: bool = True
+    ledger_ttl_days: int = 35
+    #: Most recent turns kept readable per user; older ones fall out of the summary window.
+    ledger_max_per_user: int = 5000
+    runs_store_preview: bool = False
+    runs_preview_ttl_s: int = 30 * 86_400
+    #: How many of a user's most recent runs a search/timeline looks through.
+    runs_search_scan: int = 300
+
+    @classmethod
+    def from_env(cls) -> "UsageSettings":
+        return cls(
+            ledger_enabled=_bool("USAGE_LEDGER_ENABLED", True),
+            ledger_ttl_days=_int("USAGE_LEDGER_TTL_DAYS", 35, minimum=1, maximum=400),
+            ledger_max_per_user=_int("USAGE_LEDGER_MAX_PER_USER", 5000, minimum=100, maximum=50_000),
+            runs_store_preview=_bool("AGENT_RUNS_STORE_PREVIEW", False),
+            runs_preview_ttl_s=_int(
+                "AGENT_RUNS_PREVIEW_TTL_S", 30 * 86_400, minimum=3600, maximum=400 * 86_400
+            ),
+            runs_search_scan=_int("AGENT_RUNS_SEARCH_SCAN", 300, minimum=20, maximum=1000),
+        )
+
+
 #: The voice-activity detectors ``AURA_VOICE_LIVE_VAD`` may name.
 LIVE_VAD_KINDS = frozenset({"energy", "silero"})
 
@@ -2315,6 +2422,8 @@ class AuraSettings:
     adaptation: AdaptationSettings = field(default_factory=AdaptationSettings)
     github: GitHubSettings = field(default_factory=GitHubSettings)
     sandbox: SandboxSettings = field(default_factory=SandboxSettings)
+    agent_tasks: AgentTaskSettings = field(default_factory=AgentTaskSettings)
+    usage: UsageSettings = field(default_factory=UsageSettings)
     release: ReleaseSettings = field(default_factory=ReleaseSettings)
     tenancy: TenancySettings = field(default_factory=TenancySettings)
     billing: BillingSettings = field(default_factory=BillingSettings)
@@ -2355,6 +2464,8 @@ class AuraSettings:
             adaptation=AdaptationSettings.from_env(),
             github=GitHubSettings.from_env(),
             sandbox=SandboxSettings.from_env(),
+            agent_tasks=AgentTaskSettings.from_env(),
+            usage=UsageSettings.from_env(),
             release=ReleaseSettings.from_env(),
             tenancy=TenancySettings.from_env(),
             billing=BillingSettings.from_env(),

@@ -52,6 +52,7 @@ from .domain.errors import ConfigurationError
 from .execution.agentic_loop import AgenticExecutor
 from .execution.confirmations import PendingConfirmationStore
 from .execution.engine import ExecutionEngine
+from .history import RunSearchIndex, UsageLedger
 from .knowledge.chunking import ChunkingConfig
 from .knowledge.engine import KnowledgeEngine
 from .knowledge.extraction import RuleEntityExtractor
@@ -608,6 +609,18 @@ class Container:
             self.blueprint_compiler = self._build_compiler(use_postgres=use_postgres)
             self.blueprint_deployment = self._build_deployment()
 
+        # ADR-041: per-turn usage and the opt-in run-goal preview, both in the cache port (Redis
+        # in production) -- no table. The kernel writes them; the usage and run-search routes read.
+        usage = settings.usage
+        self.usage_ledger = UsageLedger(
+            self.cache_backend, enabled=usage.ledger_enabled, ttl_days=usage.ledger_ttl_days,
+            max_per_user=usage.ledger_max_per_user, clock=self.clock,
+        )
+        self.run_index = RunSearchIndex(
+            self.cache_backend, self.agent_runs, store_preview=usage.runs_store_preview,
+            preview_ttl_s=usage.runs_preview_ttl_s, scan=usage.runs_search_scan,
+        )
+
         self.kernel = AIKernel(
             KernelDependencies(
                 router=self.router,
@@ -640,6 +653,8 @@ class Container:
                 # production), so any replica can resume the exact turn the user approved.
                 tool_confirmations=PendingConfirmationStore(self.cache_backend),
                 vision=self.vision,
+                usage_ledger=self.usage_ledger,
+                run_index=self.run_index,
             )
         )
         # After kernel exists, same reason as live_voice below: `delegate_to_agent`

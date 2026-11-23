@@ -1965,6 +1965,15 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             }
         )
 
+    # -- usage dashboard and run history (ADR-041) -------------------------------------
+    # Before ``/agents/runs/{run_id}``: a path parameter would swallow "search" and "timeline".
+    from .usage_history import register_usage_history
+
+    register_usage_history(
+        router, container, principal=principal, enforce_rate_limit=enforce_rate_limit,
+        Depends=Depends, JSONResponse=JSONResponse, Query=Query, Request=Request,
+    )
+
     # -- agent runs (GAP-024) -----------------------------------------------------------
 
     @router.get("/agents/runs")
