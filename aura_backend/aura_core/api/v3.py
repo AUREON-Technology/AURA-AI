@@ -459,11 +459,14 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         if inbox is None or caller.is_service or not details.get("limit"):
             return
         window = details.get("resets_at") or container.clock.now().date().isoformat()
-        await inbox.notify(
-            caller.user_id, "usage_limit_reached",
-            {"limit": details["limit"], "plan": details.get("plan"), "resets_at": details.get("resets_at")},
-            dedupe_key=f"limit:{details['limit']}:{details.get('plan')}:{window}",
-        )
+        try:
+            await inbox.notify(
+                caller.user_id, "usage_limit_reached",
+                {"limit": details["limit"], "plan": details.get("plan"), "resets_at": details.get("resets_at")},
+                dedupe_key=f"limit:{details['limit']}:{details.get('plan')}:{window}",
+            )
+        except Exception:  # noqa: BLE001 -- the 402 must still reach the caller
+            logger.debug("could not notify about a plan limit", exc_info=True)
 
     async def admit_turn(caller: Principal, agent: str | None, turn: Any) -> tuple[Any, Any]:
         """SaaS P1-C: reserve one message against the workspace's plan. Returns the reservation

@@ -527,6 +527,7 @@ class Container:
             AgenticExecutor(
                 planner=self.planner, executor=self.executor, metrics=self.metrics,
                 clock=self.clock, runs=self.agent_runs, cancellation=self.run_cancellation,
+                inbox=self.inbox,
             )
             if self.planner is not None
             else None

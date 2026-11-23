@@ -236,11 +236,14 @@ class PendingConfirmationStore:
         if self._inbox is not None:
             # The tool names and the conversation, never the approval ids: those release the call
             # and live behind ``GET /approvals``.
-            await self._inbox.notify(
-                user_id, "approval_pending",
-                {"tools": sorted({e["tool"] for e in entries})[:10], "count": len(entries), "session_id": session_id},
-                dedupe_key=f"approval:{token}",
-            )
+            try:
+                await self._inbox.notify(
+                    user_id, "approval_pending",
+                    {"tools": sorted({e["tool"] for e in entries})[:10], "count": len(entries), "session_id": session_id},
+                    dedupe_key=f"approval:{token}",
+                )
+            except Exception:  # noqa: BLE001 -- a hold must never depend on a courtesy
+                logger.debug("could not notify about a held call", exc_info=True)
         return approval_ids
 
     # -- claim ---------------------------------------------------------------------------

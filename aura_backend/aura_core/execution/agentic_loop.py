@@ -178,7 +178,10 @@ class AgenticExecutor:
         clock: Any = None,
         runs: Any = None,
         cancellation: Any = None,
+        inbox: Any = None,
     ) -> None:
+        #: The in-app ``Inbox``: told when a run ends failed or out of budget (``run_recorder.py``).
+        self._inbox = inbox
         #: ``RunCancellation`` (``execution/cancellation.py``); ``None`` means runs cannot be
         #: cancelled by id (a client closing its connection still ends the turn).
         self._cancellation = cancellation
@@ -323,7 +326,7 @@ class AgenticExecutor:
         recorder = (
             RunRecorder(
                 context=run_context, budget=budget, store=self._runs, clock=self._clock,
-                metrics=self._metrics,
+                metrics=self._metrics, inbox=self._inbox,
             )
             if run_context is not None else None
         )

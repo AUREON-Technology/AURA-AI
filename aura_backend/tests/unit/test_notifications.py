@@ -238,6 +238,114 @@ class TestApprovalHold:
                                       tainted=False, turn_id="t", calls=calls)) == {"step_s1", "step_s2"}
 
 
+class TestRunFailed:
+    """A run that ends failed or out of budget is the one a person did not see finish; the others
+    (completed, partial, awaiting approval, cancelled) have their outcome inline."""
+
+    @staticmethod
+    def _loop(inbox, executor):
+        from aura_core.adapters.memory_stores import InMemoryEngineerRunStore
+        from aura_core.execution.agentic_loop import AgenticExecutor
+        from tests.unit.test_agentic_loop import _FakePlanner
+
+        runs = InMemoryEngineerRunStore()
+        return AgenticExecutor(planner=_FakePlanner(), executor=executor, runs=runs, inbox=inbox), runs
+
+    @staticmethod
+    async def _run(loop, goal: str = "SECRET-GOAL"):
+        from aura_core.execution.run_recorder import AgentRunContext
+        from aura_core.ports.runtime import ToolContext
+        from tests.unit.test_agentic_loop import _plan
+
+        return await loop.run(
+            _plan(), context=ToolContext(user_id=ALICE, correlation_id="c1", deadline_s=30.0), max_iterations=0,
+            run_context=AgentRunContext(user_id=ALICE, agent_id="engineer", turn_id="t", correlation_id="c", goal=goal),
+        )
+
+    async def test_a_failed_run_notifies_with_identifiers_only(self, inbox_parts) -> None:
+        from tests.unit.test_agentic_loop import _ScriptedExecutor
+
+        store, _, inbox = inbox_parts
+        loop, runs = self._loop(inbox, _ScriptedExecutor([False]))
+
+        await self._run(loop)
+
+        [run] = await runs.list_runs(ALICE)
+        (row,) = await store.list(ALICE)
+        assert row.kind == "run_failed" and run.status == "failed"
+        assert dict(row.params) == {"run_id": run.id.value, "agent_id": "engineer", "status": "failed"}
+        assert "SECRET-GOAL" not in json.dumps(row.as_dict()), "the instruction reached a notification"
+
+    async def test_a_run_that_completes_says_nothing(self, inbox_parts) -> None:
+        from tests.unit.test_agentic_loop import _ScriptedExecutor
+
+        store, _, inbox = inbox_parts
+        loop, _ = self._loop(inbox, _ScriptedExecutor([True]))
+        await self._run(loop)
+        assert await store.list(ALICE) == []
+
+    async def test_a_loop_that_raises_notifies_and_still_raises(self, inbox_parts) -> None:
+        store, _, inbox = inbox_parts
+
+        class Boom:
+            async def execute(self, plan, *, context, **kw):
+                raise RuntimeError("boom")
+
+        loop, runs = self._loop(inbox, Boom())
+        with pytest.raises(RuntimeError):
+            await self._run(loop)
+        (row,) = await store.list(ALICE)
+        assert row.kind == "run_failed" and dict(row.params)["status"] == "failed"
+
+    @pytest.mark.parametrize("status_case,notified", [
+        ("budget", True), ("partial", False), ("awaiting_approval", False), ("cancelled", False),
+    ])
+    async def test_only_failed_and_out_of_budget_runs_notify(self, inbox_parts, status_case, notified) -> None:
+        from types import SimpleNamespace
+
+        from aura_core.domain.agent_runs import AgentBudget
+        from aura_core.execution.run_recorder import AgentRunContext, RunRecorder
+
+        store, _, inbox = inbox_parts
+        recorder = RunRecorder(
+            context=AgentRunContext(user_id=ALICE, agent_id="engineer", turn_id="t", correlation_id="c", goal="g"),
+            budget=AgentBudget(), inbox=inbox,
+        )
+        failed = SimpleNamespace(succeeded=False, blocked_reason=None)
+        if status_case == "budget":
+            await recorder.finish(failed, stop_reason="budget", exhausted_budget="tool_calls")
+        elif status_case == "partial":
+            recorder.run = recorder.run.with_(plan_steps_succeeded=1)
+            await recorder.finish(failed, stop_reason="plan_failed", exhausted_budget=None)
+        elif status_case == "awaiting_approval":
+            await recorder.finish(SimpleNamespace(succeeded=False, blocked_reason="needs_confirmation"),
+                                  stop_reason="needs_confirmation", exhausted_budget=None)
+        else:
+            await recorder.finish(failed, stop_reason="run_cancelled", exhausted_budget=None)
+
+        rows = await store.list(ALICE)
+        assert [r.kind for r in rows] == (["run_failed"] if notified else [])
+        if notified:
+            assert dict(rows[0].params)["status"] == "budget_exhausted"
+
+    async def test_a_kind_switched_off_or_a_broken_inbox_never_changes_the_run(self, inbox_parts) -> None:
+        from tests.unit.test_agentic_loop import _ScriptedExecutor
+
+        store, settings, inbox = inbox_parts
+        await settings.put(ALICE, NotificationSettings(disabled_kinds=frozenset({"run_failed"})), at=T0)
+        loop, runs = self._loop(inbox, _ScriptedExecutor([False]))
+        await self._run(loop)
+        assert await store.list(ALICE) == [] and (await runs.list_runs(ALICE))[0].status == "failed"
+
+        class Down:
+            async def notify(self, *a, **k):
+                raise ConnectionError("db down")
+
+        loop2, runs2 = self._loop(Down(), _ScriptedExecutor([False]))
+        await self._run(loop2)
+        assert (await runs2.list_runs(ALICE))[0].status == "failed"
+
+
 def _app(container, role: str = "User"):
     from aura_core.api import Principal, build_app
     from aura_core.domain.errors import AuthenticationError
@@ -253,6 +361,34 @@ def _app(container, role: str = "User"):
 
 def _as(user: str) -> dict:
     return {"Authorization": f"Bearer {user}"}
+
+
+class _RaisingInbox:
+    """Breaks the ``Inbox`` contract (``notify`` never raises) to prove no producer depends on it."""
+
+    async def notify(self, *args, **kwargs):
+        raise ConnectionError("db down")
+
+
+class TestProducersDoNotDependOnTheInboxKeepingItsContract:
+    async def test_a_hold_still_returns_its_approval_ids(self) -> None:
+        from aura_core.execution.confirmations import PendingConfirmationStore
+        from aura_core.llm.cache import InMemoryCache
+
+        plan, calls = _held_turn()
+        ids = await PendingConfirmationStore(InMemoryCache(), inbox=_RaisingInbox()).issue(
+            user_id="alice", session_id="s", agent="o", message="m", plan=plan, tainted=False, turn_id="t", calls=calls)
+        assert set(ids) == {"step_s1", "step_s2"}
+
+    async def test_a_plan_limit_is_still_a_402(self, container) -> None:
+        from fastapi.testclient import TestClient
+
+        container.inbox = _RaisingInbox()
+        workspace = (await container.tenancy.ensure_personal("alice")).id
+        usage = await container.plans.usage(workspace)
+        await container.plans.meter.try_consume(workspace, "messages", usage["period"], usage["messages_allowed"], usage["messages_allowed"])
+        with TestClient(_app(container)) as client:
+            assert client.post("/api/v3/chat", json={"message": "hi"}, headers=_as("alice")).status_code == 402
 
 
 class TestUsageLimit:
