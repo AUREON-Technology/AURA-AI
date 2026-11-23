@@ -1555,7 +1555,7 @@ class AIKernel:
             sandbox_transcript = (
                 text if report.tool in
                 ("write_file", "edit_file", "run_command", "git_diff", "git_commit",
-                 "git_checkout_branch")
+                 "git_checkout_branch", "workspace_snapshot", "workspace_restore")
                 else None
             )
             try:

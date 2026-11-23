@@ -309,6 +309,11 @@ class TestApi:
 class TestRealKernelTurn:
     async def _turn(self, container, user: UserId):
         await container.startup()
+        # The default test container has no server-side sandbox (that needs Docker), so a write
+        # would fail on arrival; give its registry the real tools over a real-directory runner.
+        self.runner = InMemorySandboxRunner()
+        for tool in build_sandbox_tools(self.runner):
+            container.tools.register(tool, overwrite=True)
         container.kernel._deps.planner = ScriptedPlanner(
             "write_file", {"path": "note.txt", "content": "hello"})
         return await container.kernel.run(TurnRequest(
@@ -317,6 +322,8 @@ class TestRealKernelTurn:
     async def test_standard_writes_without_asking(self, container) -> None:
         result = await self._turn(container, UserId("std-user"))
         assert result.tool_calls == ("write_file",) and result.needs_confirmation == ()
+        (root,) = self.runner._scratch_dirs.values()
+        assert (root / "note.txt").read_text() == "hello", "the write really happened"
 
     async def test_the_stored_strict_profile_holds_the_same_write_for_confirmation(self, container) -> None:
         user = UserId("strict-user")
@@ -324,6 +331,8 @@ class TestRealKernelTurn:
         result = await self._turn(container, user)
         assert result.needs_confirmation == ("write_file",)
         assert result.pending_tool_calls, "the held call is offered to the user for approval"
+        assert not self.runner._scratch_dirs or not any(
+            (root / "note.txt").exists() for root in self.runner._scratch_dirs.values()), "and it did not run"
 
     async def test_an_unreadable_profile_store_does_not_fail_the_turn(self, container) -> None:
         class Broken:
