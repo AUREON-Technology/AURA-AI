@@ -188,6 +188,11 @@ _ENGINEER_READING_TOOLS = _DOCUMENT_READING_TOOLS | frozenset({
 # so the Engineer holds it and the coding agent does not.
 _ENGINEER_RELEASE_TOOLS = frozenset({"verify_release_health"})
 
+# ADR-044. Model drift against a stored history (`tools/drift.py`): `record_model_metric` writes the
+# owner's own metric series (side-effecting), `compare_model_metric` reads it. Always registered with the
+# analysis group, so unlike the release tool these names are guaranteed to exist.
+_ENGINEER_MODEL_MONITOR_TOOLS = frozenset({"record_model_metric", "compare_model_metric"})
+
 # `tools/session_tools.py`: checkpoint the conversation and read it back. Written out rather than
 # imported, like the sets above (`tests/unit/test_agents.py` pins the names against the builder).
 _SESSION_TOOLS = frozenset({"save_session_checkpoint", "recall_session_checkpoint"})
@@ -304,7 +309,8 @@ def build_default_agent_registry(*, engineer_token_budget: int | None = None) ->
                     "github_create_branch", "github_commit_files",
                     "github_create_draft_pull_request",
                 } | _CODE_ANALYSIS_TOOLS | _DATA_ANALYSIS_TOOLS | _ENGINEER_OPEN_TOOLS | _ENGINEER_DEVTOOLS
-                | _ENGINEER_READING_TOOLS | _SESSION_TOOLS | _ENGINEER_RELEASE_TOOLS,
+                | _ENGINEER_READING_TOOLS | _SESSION_TOOLS | _ENGINEER_RELEASE_TOOLS
+                | _ENGINEER_MODEL_MONITOR_TOOLS,
                 # Every tool the MCP bridge registers (`build_mcp_bridge_tools`). The prefix only
                 # decides *who* may ask: each such tool still needs the `engineer_agent`
                 # capability, and an unreviewed one stays CONFIDENTIAL + side-effecting, hence

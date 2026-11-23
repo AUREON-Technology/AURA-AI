@@ -1845,6 +1845,12 @@ class Container:
                 episodic_memory=self.episodic,
             )
         )
+        # ADR-044 (open partial tools): the model-metric history lives in the Cache port, so these two
+        # tools need the container's cache and cannot be built by `default_tools`.
+        if self.settings.open_tools.analysis_enabled:
+            from .tools.drift import build_drift_tools
+
+            registry.register_all(build_drift_tools(self.cache_backend))
         return registry
 
     def _build_lesson_sink(self) -> Any:
