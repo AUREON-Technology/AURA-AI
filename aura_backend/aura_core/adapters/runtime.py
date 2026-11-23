@@ -333,6 +333,27 @@ class InMemoryTelemetrySink:
                 return t.usage_view()
         return None
 
+    async def usage_by_day(self, owner_ref: str, *, since: datetime, until: datetime) -> list[dict]:
+        if not owner_ref:
+            return []
+        days: dict[str, dict] = {}
+        for t in self._turns:
+            if not (t.owner_ref and hmac.compare_digest(t.owner_ref, owner_ref)):
+                continue
+            if not since <= t.started_at < until:
+                continue
+            day = t.started_at.astimezone(timezone.utc).date().isoformat()
+            row = days.setdefault(day, {
+                "day": day, "turns": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost_usd": 0.0,
+                "estimated_turns": 0,
+            })
+            row["turns"] += 1
+            row["prompt_tokens"] += t.prompt_tokens
+            row["completion_tokens"] += t.completion_tokens
+            row["cost_usd"] += t.cost_usd
+            row["estimated_turns"] += 1 if t.usage_estimated else 0
+        return [days[d] for d in sorted(days, reverse=True)]
+
     async def purge_owner(self, owner_ref: str) -> int:
         if not owner_ref:
             return 0

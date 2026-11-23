@@ -115,6 +115,41 @@ class PostgresTelemetrySink:
         record = json.loads(payload) if isinstance(payload, str) else dict(payload)
         return usage_view_from(record, started_at=row["started_at"])
 
+    async def usage_by_day(self, owner_ref: str, *, since: datetime, until: datetime) -> list[dict[str, Any]]:
+        """One owner's tokens and cost per UTC day. ``owner_ref`` is compared with ``=`` like
+        ``get_turn_usage``. Token sums are ``bigint`` and cost a ``DOUBLE PRECISION`` sum, so both
+        arrive as plain numbers; they are coerced here only so the result is JSON-ready whatever the
+        driver returns for an aggregate."""
+        if not owner_ref:
+            return []
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT (started_at AT TIME ZONE 'UTC')::date AS day,
+                           count(*) AS turns,
+                           COALESCE(sum(prompt_tokens), 0) AS prompt_tokens,
+                           COALESCE(sum(completion_tokens), 0) AS completion_tokens,
+                           COALESCE(sum(cost_usd), 0) AS cost_usd,
+                           count(*) FILTER (WHERE (payload::jsonb -> 'tokens' ->> 'estimated') = 'true') AS estimated_turns
+                    FROM aura_turn_telemetry
+                    WHERE owner_ref = $1 AND started_at >= $2 AND started_at < $3
+                    GROUP BY 1 ORDER BY 1 DESC
+                    """,
+                    owner_ref, since, until,
+                )
+        except Exception as exc:
+            raise _unavailable(f"could not total token usage: {exc}") from exc
+        return [
+            {
+                "day": r["day"].isoformat(), "turns": int(r["turns"]), "prompt_tokens": int(r["prompt_tokens"]),
+                "completion_tokens": int(r["completion_tokens"]), "cost_usd": float(r["cost_usd"]),
+                "estimated_turns": int(r["estimated_turns"]),
+            }
+            for r in rows
+        ]
+
     async def purge_owner(self, owner_ref: str) -> int:
         if not owner_ref:
             return 0

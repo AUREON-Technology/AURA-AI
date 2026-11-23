@@ -2627,6 +2627,13 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         JSONResponse=JSONResponse, enforce_rate_limit=enforce_rate_limit, Request=Request,
     )
 
+    from .usage import register_usage_ops
+
+    register_usage_ops(
+        router, container, principal=principal, idempotent=idempotent, Depends=Depends,
+        JSONResponse=JSONResponse, enforce_rate_limit=enforce_rate_limit, Request=Request,
+    )
+
     from .models import register_model_ops
 
     register_model_ops(
