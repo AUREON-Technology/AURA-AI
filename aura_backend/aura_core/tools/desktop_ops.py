@@ -20,6 +20,7 @@ wired (``tools/coding.py::build_sandbox_tools``).
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -27,6 +28,7 @@ from ..domain.errors import ToolExecutionError
 from ..domain.tools import NETWORK_TAG, ToolCategory, ToolSensitivity
 from ..ports.runtime import Tool, ToolContext
 from .base import param, tool
+from .open.profile_ext import PROFILE_WRAPPER, compare as compare_profile, parse_profile
 
 __all__ = ["build_desktop_ops_tools", "DESKTOP_OPS_TOOL_NAMES"]
 
@@ -37,24 +39,9 @@ _DRIVE = re.compile(r"^[A-Za-z]:")
 _COMPOSE_ACTIONS = ("up", "down", "ps", "config", "pull")
 _OUTPUT_CAP = 8_000
 
-#: Runs ``sys.argv[1]`` under cProfile and prints the ``sys.argv[2]`` hottest functions. The snippet
+#: Runs ``sys.argv[1]`` under cProfile + tracemalloc (``tools/open/profile_ext.py``). The snippet
 #: travels as an argument, so nothing is written to the user's folder.
-_PROFILE_WRAPPER = (
-    "import cProfile, io, pstats, sys\n"
-    "src, top = sys.argv[1], int(sys.argv[2])\n"
-    "prof = cProfile.Profile()\n"
-    "ns = {'__name__': '__main__'}\n"
-    "prof.enable()\n"
-    "try:\n"
-    "    exec(compile(src, '<snippet>', 'exec'), ns)\n"
-    "finally:\n"
-    "    prof.disable()\n"
-    "    # Printed even when the snippet raised or called sys.exit(): a profile of a run that failed\n"
-    "    # is still the profile the caller asked for, and the error still reaches stderr afterwards.\n"
-    "    buf = io.StringIO()\n"
-    "    pstats.Stats(prof, stream=buf).sort_stats('tottime').print_stats(top)\n"
-    "    print(buf.getvalue(), flush=True)\n"
-)
+_PROFILE_WRAPPER = PROFILE_WRAPPER
 
 _COMMON = dict(
     category=ToolCategory.DEVELOPMENT,
@@ -226,31 +213,60 @@ def build_desktop_ops_tools(sandbox_runner: Any, sessions: Any, host_agent_regis
 
     @tool(
         "profile_python",
-        "Run a Python snippet under cProfile on the user's own machine (needs AURA Desktop "
-        "connected) and return its hottest functions by own time. RUNS THE CODE with the user's "
-        "permissions; nothing is written to their folder.",
+        "Run a Python snippet under cProfile and tracemalloc on the user's own machine (needs AURA "
+        "Desktop connected). Returns the hottest functions plus wall time, peak memory and the top "
+        "allocations; pass `baseline` (figures from an earlier run) to get a regression verdict. "
+        "RUNS THE CODE with the user's permissions; nothing is written to their folder.",
         param("source_code", "string", "The Python code to profile.", max_length=20_000),
         param("limit", "integer", "How many of the hottest functions to list (default 15).", required=False,
               default=15, minimum=1, maximum=50),
+        param("memory", "boolean", "Track memory with tracemalloc (default true; slows the run).",
+              required=False, default=True),
+        param("baseline", "object", "Earlier figures to compare with: any of wall_s, peak_kb, "
+              "function_calls (as returned in `metrics`).", required=False),
+        param("max_regression_pct", "number", "Largest acceptable rise over the baseline (default 25).",
+              required=False, default=25, minimum=0, maximum=1000),
+        param("max_peak_kb", "number", "Absolute peak-memory budget in KiB.", required=False, minimum=1),
         param("timeout_s", "number", "Max seconds (default 60).", required=False, default=60,
               minimum=1, maximum=300),
         timeout_s=310.0,
         **_COMMON,
     )
     async def profile_python(
-        source_code: str, context: ToolContext, limit: int = 15, timeout_s: float = 60.0
+        source_code: str,
+        context: ToolContext,
+        limit: int = 15,
+        timeout_s: float = 60.0,
+        memory: bool = True,
+        baseline: dict | None = None,
+        max_regression_pct: float = 25.0,
+        max_peak_kb: float | None = None,
     ) -> str:
         name = "profile_python"
+        if baseline is not None and (not isinstance(baseline, dict) or len(str(baseline)) > 2_000):
+            raise ToolExecutionError("baseline must be a small object of earlier figures", tool=name)
         await require_desktop(name, context)
         handle = await sessions.handle(context)
         result = None
+        extra = [] if memory else ["0"]
         for interpreter in ("python3", "python"):
             result = await sandbox_runner.run(
-                handle, [interpreter, "-c", _PROFILE_WRAPPER, source_code, str(limit)], timeout_s=timeout_s
+                handle, [interpreter, "-c", _PROFILE_WRAPPER, source_code, str(limit), *extra], timeout_s=timeout_s
             )
             if not _missing_executable(result, interpreter):
                 break
-        return _format(result)
+        text = _format(result)
+        metrics = parse_profile(result.stdout or "")
+        if metrics is not None:
+            # The figures line is machine output; the table above already carries the human view.
+            text += "\n--- metrics ---\n" + json.dumps(metrics, ensure_ascii=False)
+            if baseline is not None or max_peak_kb is not None:
+                verdict = compare_profile(metrics, baseline or {}, max_regression_pct, max_peak_kb)
+                text += "\n--- regression ---\n" + json.dumps(verdict, ensure_ascii=False)
+        elif baseline is not None:
+            text += "\n--- regression ---\n" + json.dumps(
+                {"regressed": None, "note": "no figures were produced (the snippet may have exited early)"})
+        return text
 
     return [docker_build, docker_compose, profile_python]
 
