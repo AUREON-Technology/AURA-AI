@@ -1129,6 +1129,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get knowledgeSaved => 'Saved.';
 
   @override
+  String get knowledgeNotSearchableYet =>
+      'Search can\'t find it yet: knowledge search is being updated, and this will show up once that finishes.';
+
+  @override
   String get knowledgePdfUploadFailed => 'Could not upload this PDF.';
 
   @override
@@ -3710,6 +3714,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get chatTurnToolOutputTrimmed =>
       'A tool\'s result was too long to use in full.';
+
+  @override
+  String get chatTurnKnowledgeUnavailable =>
+      'Knowledge search is being updated, so this answer doesn\'t use your documents or the shared library.';
 
   @override
   String chatMoreLines(int count) {

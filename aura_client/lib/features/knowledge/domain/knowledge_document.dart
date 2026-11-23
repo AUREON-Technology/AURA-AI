@@ -79,6 +79,11 @@ class KnowledgeIngestResult {
   final String? skippedReason;
   final String? documentId;
 
+  /// Whether search can find the document yet. `false` while the server's index is being rebuilt:
+  /// the document is stored, but stays invisible to every query until then. `null` when the server
+  /// did not say (an older server, or one that could not check).
+  final bool? searchable;
+
   /// Set when [ok] is false.
   final KnowledgeIngestFailure? failure;
 
@@ -93,6 +98,7 @@ class KnowledgeIngestResult {
     this.quarantinedChunks = 0,
     this.skippedReason,
     this.documentId,
+    this.searchable,
     this.failure,
     this.failureMessage,
     this.limitBytes,
@@ -105,7 +111,8 @@ class KnowledgeIngestResult {
   })  : ok = false,
         quarantinedChunks = 0,
         skippedReason = null,
-        documentId = null;
+        documentId = null,
+        searchable = null;
 
   /// A retry of this same write should carry the same Idempotency-Key (INT-017): the server
   /// may already have stored it (timeout, network, 5xx), is still storing it (409), or refused

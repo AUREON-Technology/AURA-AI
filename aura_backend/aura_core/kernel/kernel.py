@@ -2897,6 +2897,7 @@ class AIKernel:
             quarantined=quarantined,
             citations=len(retrieval.citations()),
             strategy=retrieval.strategy,
+            unavailable=retrieval.is_unavailable,
         )
 
     def _error_result(
