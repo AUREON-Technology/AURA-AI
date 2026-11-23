@@ -139,8 +139,12 @@ byte-built PDF/DOCX/PPTX/XLSX), and each tool called through `Container.tools.ex
 * `transcribe_audio` / `detail=segments` against real faster-whisper (not installable in the build
   environment; the model's result shape is faked and the real mapping runs over it).
 * `lint_code` / `check_format` on a **paired desktop** or in the Docker sandbox: only the in-memory
-  runner (real subprocesses in a temp directory) was exercised. Whether the sandbox image carries
-  ruff/mypy/eslint is a deployment question the tool answers per call with `not_installed`.
+  runner (real subprocesses in a temp directory) was exercised. `deploy/sandbox/Dockerfile` installs
+  git, build-essential, nodejs and npm but no ruff, mypy, eslint or prettier, so on the server sandbox
+  these tools report `not_installed` (never clean) unless the repository brings its own
+  `node_modules`; a paired desktop with the tools installed is the useful target until the image
+  gains them. Likewise `aura_backend/Dockerfile` installs no `ffmpeg`, so video files get the clear
+  error in the stock image.
 * The vision-model path of `analyze_image_requirements` against a real VLM: the router and
   `VisionEngine` are real, the model is the scripted echo provider. At 5-10 tok/s a 900-token JSON
   reply is ~100 s against the 120 s `perception_timeout_s`; the GPU Space is far faster.
