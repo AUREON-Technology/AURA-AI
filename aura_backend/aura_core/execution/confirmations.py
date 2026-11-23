@@ -159,6 +159,7 @@ class PendingConfirmationStore:
 
     def __init__(
         self, cache: Any, *, ttl_s: int = _DEFAULT_TTL_S, ledger: Any = None, clock: Any = None,
+        inbox: Any = None,
     ) -> None:
         self._cache = cache
         self._ttl_s = max(1, int(ttl_s))
@@ -167,6 +168,9 @@ class PendingConfirmationStore:
         #: is down never stops a hold, an approval or a rejection (see ``_ledger_write``).
         self._ledger = ledger
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        #: Optional in-app ``Inbox`` (``notifications/inbox.py``): tells the person a call is waiting.
+        #: Like the ledger it is a courtesy -- ``notify`` never raises.
+        self._inbox = inbox
 
     # -- issue ---------------------------------------------------------------------------
 
@@ -229,6 +233,14 @@ class PendingConfirmationStore:
                 for e in entries
             ]
             await self._ledger_write("record", self._ledger.record_held(held))
+        if self._inbox is not None:
+            # The tool names and the conversation, never the approval ids: those release the call
+            # and live behind ``GET /approvals``.
+            await self._inbox.notify(
+                user_id, "approval_pending",
+                {"tools": sorted({e["tool"] for e in entries})[:10], "count": len(entries), "session_id": session_id},
+                dedupe_key=f"approval:{token}",
+            )
         return approval_ids
 
     # -- claim ---------------------------------------------------------------------------

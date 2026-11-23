@@ -45,6 +45,7 @@ from ..domain.engineering import ENGINEER_CONSENT_NOTICE_VERSION
 from ..domain.repository_identity import RepositoryIdentity
 from ..domain.llm import RoutingPolicy, WorkloadClass
 from ..domain.model_settings import SERVER_DEFAULTS, ModelSettings
+from ..domain.plans import PlanLimitError
 from ..llm.workload import workload_class_for_turn
 from ..text.language import CLIENT_LANGUAGE_HEADER, normalize_language
 from ..domain.memory import MemoryKind, MemoryQuery
@@ -449,6 +450,21 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     plans = getattr(container, "plans", None)
 
+    async def notify_plan_limit(caller: Principal, exc: Exception) -> None:
+        """Tell the person, in their inbox, that their plan's allowance is used up -- once per
+        period for messages, once a day for storage. The 402 still goes to the request; this only
+        leaves a trace they can find later. Never raises."""
+        inbox = getattr(container, "inbox", None)
+        details = getattr(exc, "details", None) or {}
+        if inbox is None or caller.is_service or not details.get("limit"):
+            return
+        window = details.get("resets_at") or container.clock.now().date().isoformat()
+        await inbox.notify(
+            caller.user_id, "usage_limit_reached",
+            {"limit": details["limit"], "plan": details.get("plan"), "resets_at": details.get("resets_at")},
+            dedupe_key=f"limit:{details['limit']}:{details.get('plan')}:{window}",
+        )
+
     async def admit_turn(caller: Principal, agent: str | None, turn: Any) -> tuple[Any, Any]:
         """SaaS P1-C: reserve one message against the workspace's plan. Returns the reservation
         to give back if the turn fails (None when unmetered) and the turn to run.
@@ -472,7 +488,11 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 await plans.require_engineer(workspace_id)
             if "engineer_agent" in turn.capabilities:
                 turn = replace(turn, capabilities=tuple(c for c in turn.capabilities if c != "engineer_agent"))
-        return await plans.admit_message(workspace_id), turn
+        try:
+            return await plans.admit_message(workspace_id), turn
+        except PlanLimitError as exc:
+            await notify_plan_limit(caller, exc)
+            raise
 
     async def engineer_granted(caller: Principal) -> bool:
         """Whether the caller has the Engineer outside a turn: by role (``granted``) or, with
@@ -1087,7 +1107,11 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         storage_ws = await storage_workspace(caller)
         reserved = await storage_to_reserve(caller, payload.content) if storage_ws is not None else 0
         if storage_ws is not None:
-            await plans.admit_storage(storage_ws, reserved)
+            try:
+                await plans.admit_storage(storage_ws, reserved)
+            except PlanLimitError as exc:
+                await notify_plan_limit(caller, exc)
+                raise
         result = None
         try:
             result = await container.knowledge.ingest(
@@ -1173,7 +1197,11 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         joined = "\n\n".join(block.text for block in extraction.blocks if block.text)
         reserved = await storage_to_reserve(caller, joined) if storage_ws is not None else 0
         if storage_ws is not None:
-            await plans.admit_storage(storage_ws, reserved)
+            try:
+                await plans.admit_storage(storage_ws, reserved)
+            except PlanLimitError as exc:
+                await notify_plan_limit(caller, exc)
+                raise
         result = None
         try:
             result = await container.knowledge.ingest(
@@ -2623,6 +2651,13 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
     from .agent_runs import register_run_ops
 
     register_run_ops(
+        router, container, principal=principal, idempotent=idempotent, Depends=Depends,
+        JSONResponse=JSONResponse, enforce_rate_limit=enforce_rate_limit, Request=Request,
+    )
+
+    from .notifications import register_notification_ops
+
+    register_notification_ops(
         router, container, principal=principal, idempotent=idempotent, Depends=Depends,
         JSONResponse=JSONResponse, enforce_rate_limit=enforce_rate_limit, Request=Request,
     )

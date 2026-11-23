@@ -60,6 +60,8 @@ TRIAGE = (
     ("/api/v3/admin/blueprints", "to wire: Console blueprint review and deploy are Track AP phase AP9"),
     ("/api/v3/admin/", "to wire: admin console page missing for this route"),
     ("/api/v3/learning/", "to wire or remove: learning surface with no caller (GAP-013)"),
+    ("/api/v3/notifications", "to wire: the server inbox (approvals waiting, failed runs, billing, plan limits); the app's notification center is built locally from telemetry and keeps its read mark on the device (api/notifications.py)"),
+    ("/api/v3/me/notification-settings", "to wire: which notification kinds are on; the app has no such setting (api/notifications.py)"),
     ("/api/v3/me/usage", "to wire: this month's messages, storage, tokens and subscription, and the history; the app shows a team's plan through /workspaces/{id}/plan but nothing for the personal workspace's tokens or history (api/usage.py)"),
     ("/api/v3/plans", "to wire: the plan catalogue (what each plan allows) for an upgrade screen; the app has no such list today (api/usage.py)"),
     ("/api/v3/me/model-settings", "to wire: the app sends no routing_policy, require_local, temperature or max_output_tokens today, so a person cannot choose how chats are answered (api/models.py)"),

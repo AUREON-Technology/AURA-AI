@@ -112,6 +112,10 @@ COVERED = {
         "TestAgentRuns::test_bob_cannot_read_alices_run_status_or_logs",
     ("POST", "/api/v3/agents/runs/{run_id}/cancel"):
         "TestAgentRuns::test_bob_cannot_cancel_alices_run",
+    ("POST", "/api/v3/notifications/{notification_id}/read"):
+        "TestNotifications::test_bob_cannot_read_mark_or_delete_alices_notifications",
+    ("DELETE", "/api/v3/notifications/{notification_id}"):
+        "TestNotifications::test_bob_cannot_read_mark_or_delete_alices_notifications",
     ("GET", "/api/v3/approvals/{approval_id}"):
         "TestApprovals::test_bob_cannot_read_or_list_alices_approval",
     ("POST", "/api/v3/approvals/{approval_id}/reject"):
@@ -487,6 +491,38 @@ class TestEngineering:
         with TestClient(_app(container)) as client:
             assert client.get("/api/v3/engineering/runs", headers=AUTH_B).json()["runs"] == []
             assert len(client.get("/api/v3/engineering/runs", headers=AUTH_A).json()["runs"]) == 1
+
+
+class TestNotifications:
+    """A notification is the person's own: listing, marking read, deleting, the badge and read-all."""
+
+    @staticmethod
+    def _alice_notification(container) -> str:
+        asyncio.run(container.inbox.notify(
+            ALICE, "run_failed", {"run_id": "r1", "agent_id": "engineer", "status": "failed"}, dedupe_key="run:r1",
+        ))
+        (row,) = asyncio.run(container.notification_store.list(UserId(ALICE)))
+        return row.id
+
+    def test_bob_cannot_read_mark_or_delete_alices_notifications(self, container) -> None:
+        from fastapi.testclient import TestClient
+
+        notification_id = self._alice_notification(container)
+        with TestClient(_app(container)) as client:
+            listing = client.get("/api/v3/notifications", headers=AUTH_B)
+            count = client.get("/api/v3/notifications/unread-count", headers=AUTH_B)
+            marked = client.post(f"/api/v3/notifications/{notification_id}/read", headers=AUTH_B)
+            gone = client.post("/api/v3/notifications/no-such-id/read", headers=AUTH_B)
+            deleted = client.delete(f"/api/v3/notifications/{notification_id}", headers=AUTH_B)
+            read_all = client.post("/api/v3/notifications/read-all", headers=AUTH_B)
+            still = client.get("/api/v3/notifications", headers=AUTH_A).json()
+
+        assert listing.json()["notifications"] == [] and count.json() == {"unread": 0}
+        assert marked.status_code == deleted.status_code == gone.status_code == 404
+        assert marked.json()["error"] == gone.json()["error"], "Bob can tell Alice's id from a missing one"
+        assert read_all.json()["marked"] == 0, "Bob's read-all touched Alice's"
+        (mine,) = still["notifications"]
+        assert mine["id"] == notification_id and mine["read"] is False and still["unread_count"] == 1
 
 
 class TestApprovals:

@@ -188,10 +188,16 @@ class Container:
         self.approval_ledger = self._build_approval_ledger()
         # A person's standing defaults for how their chats are answered (``domain/model_settings.py``).
         self.model_settings = self._build_model_settings_store()
+        # A person's in-app notification inbox and which kinds they switched off
+        # (``domain/notifications.py``). ``self.inbox.notify`` is what producers call; it never raises.
+        self.notification_store, self.notification_settings = self._build_notification_stores()
+        from .notifications.inbox import Inbox
+
+        self.inbox = Inbox(self.notification_store, self.notification_settings, self.clock)
         # One store for the kernel (holds and approvals) and the approvals routes (rejection), both
         # over the shared cache, so any worker can act on a hold another worker made.
         self.tool_confirmations = PendingConfirmationStore(
-            self.cache_backend, ledger=self.approval_ledger, clock=lambda: self.clock.now(),
+            self.cache_backend, ledger=self.approval_ledger, clock=lambda: self.clock.now(), inbox=self.inbox,
         )
         # Cancel-by-id for live agent runs: a request is a cache key every worker polls for the
         # runs it is executing (``execution/cancellation.py``).
@@ -1307,6 +1313,21 @@ class Container:
 
         return InMemoryEngineerConsentStore()
 
+    def _build_notification_stores(self) -> tuple[Any, Any]:
+        """The notification inbox and its settings. Postgres with the other per-user stores, so a
+        notification written on one gateway worker is listed from any other."""
+        backend = self.settings.infrastructure.memory_backend
+        if backend == "postgres":
+            from .adapters.postgres_notifications import PostgresNotificationSettingsStore, PostgresNotificationStore
+
+            url, pool = self.settings.infrastructure.database_url, self._postgres_pool()
+            return PostgresNotificationStore(url, pool=pool), PostgresNotificationSettingsStore(url, pool=pool)
+        if backend != "memory":
+            raise ConfigurationError(f"unknown memory backend {backend!r}")
+        from .adapters.notifications import InMemoryNotificationSettingsStore, InMemoryNotificationStore
+
+        return InMemoryNotificationStore(), InMemoryNotificationSettingsStore()
+
     def _build_model_settings_store(self) -> Any:
         """A person's standing model preferences. Postgres with the other per-user stores, so a
         preference set on one gateway worker applies to the next chat on any other."""
@@ -1759,7 +1780,7 @@ class Container:
             subscriptions=subscriptions, payments=payments, provider=provider, plans=self.plans,
             tenancy=self.tenancy, clock=self.clock, audit=self.audit, settings=billing,
             prices=load_prices(billing.prices_json), locks=locks, contacts=contacts, notifier=self.notifier,
-            heartbeat=self.cache_backend,
+            heartbeat=self.cache_backend, inbox=self.inbox,
         )
 
     def _build_sharing(self) -> Any:

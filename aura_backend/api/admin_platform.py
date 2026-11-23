@@ -430,6 +430,12 @@ async def _erase_core(
     if custom_agents is not None:
         # The instructions a person wrote into their own agents are theirs (migration 0035).
         await step("custom_agents", lambda: custom_agents.delete_for_owner(owner_id))
+    notification_store = getattr(container, "notification_store", None)
+    if notification_store is not None:
+        await step("notifications", lambda: notification_store.delete_for_owner(owner_id))
+    notification_settings = getattr(container, "notification_settings", None)
+    if notification_settings is not None:
+        await step("notification_settings", lambda: notification_settings.delete(owner_id))
     model_settings = getattr(container, "model_settings", None)
     if model_settings is not None:
         await step("model_settings", lambda: model_settings.delete(owner_id))
