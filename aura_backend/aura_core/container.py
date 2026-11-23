@@ -49,6 +49,7 @@ from .config.settings import (
 from .context.engine import ContextEngine
 from .context.tokenizer import get_tokenizer
 from .domain.errors import ConfigurationError
+from .domain.identifiers import SessionId
 from .execution.agentic_loop import AgenticExecutor
 from .execution.confirmations import PendingConfirmationStore
 from .execution.engine import ExecutionEngine
@@ -648,7 +649,30 @@ class Container:
         # (tools/delegation.py) recurses into `self.kernel.run()`, so it cannot be built inside
         # `_build_tools()` (which runs before the kernel does) -- the resolver defers the lookup
         # of `self.kernel` to call time, once it is guaranteed to exist.
+        from .agents.handoff import HandoffStore
+        from .agents.tasks import AgentTaskManager
         from .tools.delegation import build_delegation_tools
+
+        # ADR-038, both off by default. Status and results of a background task, and handoff
+        # records, live in the shared cache (Redis in production); the running task itself is an
+        # asyncio task in this process (agents/tasks.py).
+        reasoning = settings.reasoning
+        self.agent_tasks = (
+            AgentTaskManager(
+                self.cache_backend,
+                per_user=reasoning.agent_tasks_per_user,
+                global_cap=reasoning.agent_tasks_global,
+                ttl_s=reasoning.agent_task_ttl_s,
+                deadline_s=reasoning.agent_task_deadline_s,
+            )
+            if reasoning.background_delegation_enabled else None
+        )
+        self.handoffs = (
+            HandoffStore(self.cache_backend) if reasoning.structured_handoff_enabled else None
+        )
+
+        async def _parent_checkpoint(owner: Any, session_id: str) -> Any:
+            return await self.episodic.fresh_checkpoint(SessionId(session_id), owner)
 
         self.tools.register_all(
             build_delegation_tools(
@@ -656,6 +680,10 @@ class Container:
                 kernel=lambda: self.kernel,
                 max_depth=settings.reasoning.max_delegation_depth,
                 deadline_s=settings.reasoning.delegation_deadline_s,
+                tasks=self.agent_tasks,
+                handoffs=self.handoffs,
+                checkpoint_provider=_parent_checkpoint,
+                structured_handoff=reasoning.structured_handoff_enabled,
             )
         )
 
@@ -2021,6 +2049,10 @@ class Container:
         if self._shut_down:
             return
         self._shut_down = True
+        if getattr(self, "agent_tasks", None) is not None:
+            # Background sub-turns live in this process: stop them and write their final records
+            # first, before the cache they report to (and the providers they call) are closed.
+            await self._close_quietly("agent tasks", self.agent_tasks.shutdown)
         closers = self._shutdown_closers()
         await asyncio.gather(*(self._close_quietly(name, close) for name, close in closers))
         mark_dead = getattr(self.metrics, "mark_process_dead", None)

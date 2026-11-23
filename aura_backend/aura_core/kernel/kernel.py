@@ -194,6 +194,13 @@ class TurnRequest:
     #: Evidence the calling system supplied for this turn (AR-5). DATA channel only: guarded
     #: like retrieved chunks, fenced, and its presence taints the turn.
     caller_context: tuple[CallerContext, ...] = ()
+    #: A structured agent handoff (ADR-038, ``agents/handoff.py``), set only by
+    #: ``delegate_to_agent`` on the child turn it builds. Rides the DATA channel like
+    #: ``caller_context`` -- guarded, fenced with the turn's nonce, dropped if quarantined -- but
+    #: does *not* taint the turn merely by being present (the child already inherits its parent's
+    #: taint through ``inherited_taint``); a block the guards quarantine does taint it. Never
+    #: reachable from the HTTP API: ``to_turn`` does not set it.
+    handoff_context: tuple[CallerContext, ...] = ()
     #: Normalized images the user attached (ADR-031). Never sent to the answering model: the
     #: kernel has ``deps.vision`` describe them first, and the description joins
     #: ``caller_context`` -- DATA, guarded, fenced and tainting -- before anything else runs.
@@ -531,9 +538,14 @@ class AIKernel:
             ) * 1000.0
         caller_context, context_quarantined = await self._guard_caller_context(request, turn_id)
         quarantined_count += context_quarantined
+        handoff_context, handoff_quarantined = await self._guard_caller_context(
+            request, turn_id, entries=request.handoff_context
+        )
+        quarantined_count += handoff_quarantined
+        caller_context = (*caller_context, *handoff_context)
         tainted = (
             tainted or bool(request.caller_context) or bool(resume and resume.tainted)
-            or request.inherited_taint
+            or request.inherited_taint or handoff_quarantined > 0
         )
 
         # 6. Plan and execute --------------------------------------------------------
@@ -822,9 +834,14 @@ class AIKernel:
                     request, turn_id
                 )
                 quarantined_count += context_quarantined
+                handoff_context, handoff_quarantined = await self._guard_caller_context(
+                    request, turn_id, entries=request.handoff_context
+                )
+                quarantined_count += handoff_quarantined
+                caller_context = (*caller_context, *handoff_context)
                 tainted = (
                     tainted or bool(request.caller_context) or bool(resume and resume.tainted)
-                    or request.inherited_taint
+                    or request.inherited_taint or handoff_quarantined > 0
                 )
 
                 tool_declarations = await self._tool_declarations(request)
@@ -2107,7 +2124,8 @@ class AIKernel:
         return retrieval, kept_memories, tainted, len(quarantined)
 
     async def _guard_caller_context(
-        self, request: TurnRequest, turn_id: TurnId
+        self, request: TurnRequest, turn_id: TurnId,
+        entries: tuple[CallerContext, ...] | None = None,
     ) -> tuple[tuple[CallerContext, ...], int]:
         """Caller-supplied evidence through the same context guards as retrieved chunks (AR-5).
 
@@ -2116,7 +2134,7 @@ class AIKernel:
         context was *sent*: a side effect must never be unlocked by evidence a calling system
         put in front of the model.
         """
-        entries = request.caller_context
+        entries = request.caller_context if entries is None else entries
         if not entries or self._deps.safety is None:
             return entries, 0
         keys = [f"{i}:{e.id}" for i, e in enumerate(entries)]
