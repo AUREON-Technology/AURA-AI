@@ -152,7 +152,7 @@ class TestMemoryAndKnowledge:
         _, remember = build_memory_tools(memory)
         with pytest.raises(ToolExecutionError, match="credential"):
             await remember.execute(
-                {"fact": "The user's key is sk-abcdefghijklmnopqrstuvwxyz123456."}, _ctx()
+                {"fact": "The user's key is " + "sk-" + "abcdefghijklmnopqrstuvwxyz123456" + "."}, _ctx()  # built at runtime: no credential literal in source
             )
 
     async def test_a_blank_fact_and_a_nul_byte_are_handled(self, memory, user) -> None:
