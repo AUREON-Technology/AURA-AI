@@ -262,18 +262,52 @@ def _alembic_column(call: ast.Call, table: dict[str, Any]) -> None:
                                               "ref_columns": [_unquote(ref_col)]})
 
 
+def _upgrade_nodes(tree: ast.AST):
+    """Every node of the migration source *except* the bodies of ``downgrade()``: a migration's schema is what
+    ``upgrade()`` builds, and ``downgrade()`` drops exactly that, so walking both yields an empty schema."""
+    stack = [tree]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "downgrade":
+            continue
+        yield node
+        stack.extend(reversed(list(ast.iter_child_nodes(node))))
+
+
 def _parse_alembic(source: str, tables: dict[str, dict[str, Any]], notes: list[str]) -> bool:
     try:
         tree = ast.parse(source)
     except SyntaxError:
         return False
     found = False
-    for node in ast.walk(tree):
+    consts: dict[str, list[str]] = {}  # module-level NAME = "sql" / ("sql", "sql", ...)
+    for top in getattr(tree, "body", []):
+        if isinstance(top, ast.Assign) and len(top.targets) == 1 and isinstance(top.targets[0], ast.Name):
+            value = top.value
+            items = value.elts if isinstance(value, (ast.Tuple, ast.List)) else [value]
+            strings = [i.value for i in items if isinstance(i, ast.Constant) and isinstance(i.value, str)]
+            if strings:
+                consts[top.targets[0].id] = strings
+    loop_vars = {n.target.id: n.iter.id for n in ast.walk(tree)
+                 if isinstance(n, ast.For) and isinstance(n.target, ast.Name) and isinstance(n.iter, ast.Name)}
+    for node in _upgrade_nodes(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                 and isinstance(node.func.value, ast.Name) and node.func.value.id == "op"):
             continue
         action = node.func.attr
         args = node.args
+        if action == "execute":
+            # Raw DDL: ``op.execute("CREATE TABLE IF NOT EXISTS ...")`` (a third of this repo's own migrations).
+            parts = [str(n.value) for a in args for n in ast.walk(a)
+                     if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+            for a in args:  # ``op.execute(STATEMENT)`` / ``for stmt in STATEMENTS: op.execute(stmt)``
+                if isinstance(a, ast.Name):
+                    parts.extend(consts.get(loop_vars.get(a.id, a.id), []))
+            sql = ";\n".join(p.strip().rstrip(";") for p in parts)  # one statement each, whatever its own terminator
+            if sql.strip():
+                found = True
+                _parse_sql(sql, tables, notes)
+            continue
         if action == "create_table" and args and isinstance(_lit(args[0]), str):
             found = True
             table = tables.setdefault(_lit(args[0]).lower(), _new_table())

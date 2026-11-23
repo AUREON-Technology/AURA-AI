@@ -409,8 +409,10 @@ class DockerSandboxRunner:
 
     async def create_task(
         self, *, user_id: Any | None = None, session_id: str | None = None, isolate: bool = False,
-        workspace_root: str | None = None,
+        workspace_root: str | None = None, origin: str | None = None,
     ) -> SandboxHandle:
+        # `origin` (WP8) is only meaningful to a paired desktop; accepted and ignored here, like
+        # `workspace_root`, so a remote-origin turn does not fail with a TypeError on this runner.
         # `workspace_root` (FSA-006) is a path on the user's machine; this sandbox's workspace is
         # the checkout on the host, so there is nothing it could sensibly name here: ignored.
         # `user_id`/`session_id`/`isolate` are accepted for `SandboxRunner` protocol conformance
