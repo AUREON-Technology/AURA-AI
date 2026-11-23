@@ -164,6 +164,22 @@ _CODE_ANALYSIS_TOOLS = frozenset({
 })
 _DATA_ANALYSIS_TOOLS = frozenset({"analyze_logs", "validate_data_records", "check_model_drift"})
 
+# ADR-042 (`tools/open_pure.py`): fourteen more pure text-in/JSON-out tools, the same risk profile as
+# the analysis tools above. None is tagged `untrusted_content`, so `coding_agent` may hold them.
+_OPEN_PURE_CODE_TOOLS = frozenset({
+    "check_architecture", "check_diff_scope", "explain_source", "analyze_source_structure",
+    "parse_structured_data", "detect_file_type", "validate_workflow", "verify_acceptance_criteria",
+    "collect_verification_evidence", "generate_artifact", "apply_plan_feedback", "detect_ambiguity",
+    "generate_quiz",
+})
+_OPEN_PURE_PLANNING_TOOLS = frozenset({
+    "detect_ambiguity", "validate_workflow", "generate_artifact", "apply_plan_feedback",
+    "verify_acceptance_criteria", "summarize_for_mobile",
+})
+_OPEN_PURE_RESEARCH_TOOLS = frozenset({
+    "detect_file_type", "parse_structured_data", "explain_source", "generate_quiz", "detect_ambiguity",
+})
+
 # ADR-036 groups B and C. Both are `engineer_agent`-gated and side-effecting: B runs project code
 # (`tools/open_exec.py`), C acts on the user's paired desktop (`tools/desktop_ops.py`).
 _ENGINEER_OPEN_TOOLS = frozenset({
@@ -221,7 +237,7 @@ def build_default_agent_registry(*, engineer_token_budget: int | None = None) ->
                     "create_calendar_event", "list_calendar_events",
                     "update_calendar_event", "delete_calendar_event",
                     "prioritize_tasks", "find_calendar_slots",
-                },
+                } | _OPEN_PURE_PLANNING_TOOLS,
                 risk_ceiling=ToolSensitivity.PERSONAL, memory_scope="shared",
             ),
             AgentSpec(
@@ -250,7 +266,7 @@ def build_default_agent_registry(*, engineer_token_budget: int | None = None) ->
                 # it here only matters once a deployment configures AURA_HTTP_ALLOWED_HOSTS.
                 allowed_tools=_READ_TOOLS | _MEMORY_WRITE_TOOLS | {"calculator", "fetch_url", "web_search"} | {
                     "synthesize_research", "validate_data_records",
-                } | _DOCUMENT_READING_TOOLS | {"transcribe_audio"},
+                } | _DOCUMENT_READING_TOOLS | {"transcribe_audio"} | _OPEN_PURE_RESEARCH_TOOLS,
                 risk_ceiling=ToolSensitivity.CONFIDENTIAL, memory_scope="shared",
             ),
             AgentSpec(
@@ -258,7 +274,7 @@ def build_default_agent_registry(*, engineer_token_budget: int | None = None) ->
                 prompt_template_id=AGENT_PROMPT_IDS["coding_agent"],
                 allowed_tools=(
                     _READ_TOOLS | _MEMORY_WRITE_TOOLS | {"calculator"}
-                    | _CODE_ANALYSIS_TOOLS | _DATA_ANALYSIS_TOOLS
+                    | _CODE_ANALYSIS_TOOLS | _DATA_ANALYSIS_TOOLS | _OPEN_PURE_CODE_TOOLS
                 ),
                 risk_ceiling=ToolSensitivity.PERSONAL, memory_scope="shared",
             ),
@@ -299,7 +315,7 @@ def build_default_agent_registry(*, engineer_token_budget: int | None = None) ->
                     "github_create_branch", "github_commit_files",
                     "github_create_draft_pull_request",
                 } | _CODE_ANALYSIS_TOOLS | _DATA_ANALYSIS_TOOLS | _ENGINEER_OPEN_TOOLS | _ENGINEER_DEVTOOLS
-                | _ENGINEER_READING_TOOLS | _SESSION_TOOLS,
+                | _ENGINEER_READING_TOOLS | _SESSION_TOOLS | _OPEN_PURE_CODE_TOOLS | _OPEN_PURE_PLANNING_TOOLS,
                 # Every tool the MCP bridge registers (`build_mcp_bridge_tools`). The prefix only
                 # decides *who* may ask: each such tool still needs the `engineer_agent`
                 # capability, and an unreviewed one stays CONFIDENTIAL + side-effecting, hence

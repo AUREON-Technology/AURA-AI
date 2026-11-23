@@ -1844,6 +1844,8 @@ class OpenToolsSettings:
     analysis_enabled: bool = True
     exec_enabled: bool = False
     desktop_ops_enabled: bool = True
+    #: ADR-042: the fourteen pure tools of ``tools/open_pure.py`` (same risk profile as ``analysis_enabled``).
+    pure_enabled: bool = True
 
     @classmethod
     def from_env(cls) -> "OpenToolsSettings":
@@ -1851,6 +1853,7 @@ class OpenToolsSettings:
             analysis_enabled=_bool("ANALYSIS_TOOLS_ENABLED", True),
             exec_enabled=_bool("OPEN_EXEC_TOOLS_ENABLED", False),
             desktop_ops_enabled=_bool("DESKTOP_OPS_TOOLS_ENABLED", True),
+            pure_enabled=_bool("OPEN_PURE_TOOLS_ENABLED", True),
         )
 
 
