@@ -47,8 +47,8 @@ Config and granted roots persist under the platform's usual per-user config dire
 
 ## RPC methods and remote control
 
-The backend calls `create_task`, `run`, `write_file`, `write_files`, `read_file`, `list_roots`
-and `init_git` over the WebSocket (`lib/src/task_handler.dart` has the details). `list_roots` needs
+The backend calls `create_task`, `run`, `write_file`, `write_files`, `delete_file`, `rename_file`,
+`read_file`, `list_roots` and `init_git` over the WebSocket (`lib/src/task_handler.dart` has the details). `list_roots` needs
 no task and returns `{"roots": [{"path", "trusted", "is_git"}], "remote_control": <bool>}`.
 
 **Isolation needs git (WP4, D-13).** An isolated task (`isolate: true` with a `task_key`) works on
