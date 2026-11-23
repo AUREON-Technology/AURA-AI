@@ -1348,6 +1348,8 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         request: Request,
         file: UploadFile = File(...),
         language: str | None = Form(default=None, max_length=40),
+        detail: str = Form(default="text", max_length=16),
+        words: bool = Form(default=True),
         caller: Principal = Depends(principal),
     ) -> JSONResponse:
         """Speech to text via the container's `SpeechToText` engine (self-hosted
@@ -1363,9 +1365,24 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
         The response's ``language`` (Phase V, additive) is the language the engine used --
         the hint it honoured, or the one it detected -- or ``null`` when it cannot say.
+
+        ``detail=segments`` (ADR-040, additive; the default ``text`` is unchanged) returns the
+        timestamped transcript: ``segments`` with ``start``/``end`` seconds, ``text``,
+        ``confidence`` (0-1, from the engine's own figures) and, unless ``words=false``, per-word
+        times and probabilities, plus the clip ``duration`` and ``language_probability``. Every
+        segment's ``speaker`` is ``null`` and ``diarization.available`` is ``false``: the engine
+        cannot say who is talking, and labels are never invented. An engine that cannot report
+        timestamps answers 503 ``dependency_unavailable`` rather than returning an untimed
+        transcript as if it were timed.
         """
-        from ..ports.speech import LanguageAwareSpeechToText
+        from ..ports.speech import LanguageAwareSpeechToText, TimestampedSpeechToText
         from ..voice.session import normalise_language
+
+        if detail not in ("text", "segments"):
+            raise ValidationError(
+                "detail must be 'text' or 'segments'",
+                details={"field": "detail", "reason": "detail_unsupported"},
+            )
 
         await enforce_rate_limit(request, caller, "voice")
         engine = container.stt_engine
@@ -1395,6 +1412,25 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             raise ValidationError(
                 "uploaded audio exceeds the size limit", details={"limit_bytes": MAX_AUDIO_BYTES}
             )
+        if detail == "segments":
+            if not isinstance(engine, TimestampedSpeechToText):
+                raise DependencyUnavailableError(
+                    "the configured speech-to-text engine does not report timestamps",
+                    dependency="faster-whisper",
+                )
+            transcript = await engine.transcribe_segments(data, language=hint, word_timestamps=words)
+            body = transcript.as_dict(include_words=words)
+            if english_only:
+                body["language"] = "en"
+            return JSONResponse(content={
+                **body,
+                "engine": engine.name,
+                "detail": "segments",
+                "diarization": {
+                    "available": False,
+                    "reason": "the speech engine does not identify speakers; every segment's speaker is null",
+                },
+            })
         if language_aware:
             text, used = await engine.transcribe_detect(data, language=hint)
         else:

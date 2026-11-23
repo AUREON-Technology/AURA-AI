@@ -79,6 +79,10 @@ class TranscriptWord:
     text: str
     confidence: float | None = None
 
+    def as_dict(self) -> dict[str, object]:
+        return {"start": round(self.start, 3), "end": round(self.end, 3), "text": self.text,
+                "confidence": self.confidence}
+
 
 @dataclass(frozen=True, slots=True)
 class TranscriptSegment:
@@ -104,6 +108,18 @@ class TranscriptSegment:
     words: tuple[TranscriptWord, ...] = ()
     speaker: str | None = None
 
+    def as_dict(self, *, include_words: bool = True) -> dict[str, object]:
+        """JSON-ready form, shared by ``POST /voice/transcribe?detail=segments`` and the
+        ``transcribe_audio`` tool. ``speaker`` is always present and is ``None``: there is no
+        diarization (see the class docstring)."""
+        out: dict[str, object] = {
+            "start": round(self.start, 3), "end": round(self.end, 3), "text": self.text,
+            "confidence": self.confidence, "speaker": self.speaker,
+        }
+        if include_words:
+            out["words"] = [w.as_dict() for w in self.words]
+        return out
+
 
 @dataclass(frozen=True, slots=True)
 class Transcript:
@@ -117,6 +133,15 @@ class Transcript:
     language: str | None = None
     language_probability: float | None = None
     duration: float | None = None
+
+    def as_dict(self, *, include_words: bool = True) -> dict[str, object]:
+        return {
+            "text": self.text,
+            "language": self.language,
+            "language_probability": self.language_probability,
+            "duration": None if self.duration is None else round(self.duration, 3),
+            "segments": [segment.as_dict(include_words=include_words) for segment in self.segments],
+        }
 
 
 @runtime_checkable
