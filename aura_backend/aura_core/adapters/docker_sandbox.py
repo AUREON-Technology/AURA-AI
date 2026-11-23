@@ -748,6 +748,53 @@ class DockerSandboxRunner:
 
         return await asyncio.to_thread(_size)
 
+    async def workspace_stats(self, handle: SandboxHandle) -> dict[str, Any] | None:
+        """The running container's start time, CPU and memory, from the daemon; ``None`` when there
+        is no running container for this key or the daemon would not say.
+
+        Read-only and never starts anything: it lists by label and reads ``State`` and one
+        ``stats`` sample (``GET /containers/<id>/stats?stream=false``, which the socket proxy's
+        ``CONTAINERS`` allowance already covers -- no allowlist is widened for this). Memory is
+        usage minus reclaimable page cache, the figure ``docker stats`` itself shows, so a
+        workspace that merely read many files does not look as if it were near its limit."""
+
+        def _read() -> dict[str, Any] | None:
+            client = self._get_client()
+            found = client.containers.list(
+                all=True, filters={"label": f"{_WORKSPACE_LABEL}={handle.task_id}"}
+            )
+            if not found:
+                return None
+            container = found[0]
+            container.reload()
+            state = (container.attrs or {}).get("State") or {}
+            if not state.get("Running"):
+                return None
+            out: dict[str, Any] = {
+                "started_at": state.get("StartedAt"), "cpu_percent": None,
+                "memory_mb": None, "memory_limit_mb": None,
+            }
+            sample = container.stats(stream=False) or {}
+            cpu = sample.get("cpu_stats") or {}
+            before = sample.get("precpu_stats") or {}
+            cpu_delta = (cpu.get("cpu_usage") or {}).get("total_usage", 0) - (
+                (before.get("cpu_usage") or {}).get("total_usage", 0)
+            )
+            system_delta = (cpu.get("system_cpu_usage") or 0) - (before.get("system_cpu_usage") or 0)
+            cpus = cpu.get("online_cpus") or len((cpu.get("cpu_usage") or {}).get("percpu_usage") or []) or 1
+            if system_delta > 0 and cpu_delta >= 0:
+                out["cpu_percent"] = 100.0 * cpu_delta / system_delta * cpus
+            memory = sample.get("memory_stats") or {}
+            if memory.get("usage") is not None:
+                detail = memory.get("stats") or {}
+                reclaimable = detail.get("inactive_file", detail.get("cache", 0)) or 0
+                out["memory_mb"] = max(0, memory["usage"] - reclaimable) / (1024 * 1024)
+            if memory.get("limit"):
+                out["memory_limit_mb"] = memory["limit"] / (1024 * 1024)
+            return out
+
+        return await asyncio.to_thread(_read)
+
     async def workspace_path(self, handle: SandboxHandle) -> str:
         scratch = self._scratch_dirs.get(handle.task_id)
         if scratch is None and self._host_root is not None:

@@ -15,6 +15,7 @@ import asyncio
 import shutil
 import tempfile
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -41,6 +42,7 @@ class InMemorySandboxRunner:
     def __init__(self) -> None:
         self._scratch_dirs: dict[str, Path] = {}
         self._paused: set[str] = set()
+        self._opened_at: dict[str, str] = {}
 
     async def create_task(
         self, *, user_id: Any | None = None, session_id: str | None = None, isolate: bool = False,
@@ -159,9 +161,18 @@ class InMemorySandboxRunner:
     # this fake can prove the bookkeeping, and only `tests/load/test_docker_sandbox_live.py`
     # against a real daemon can prove a paused workspace actually releases memory.
 
+    async def workspace_stats(self, handle: SandboxHandle) -> dict[str, Any] | None:
+        """When the workspace was last (re)opened. A fake process has no CPU or memory worth
+        reporting, so those are ``None`` -- the manager then says why instead of showing zeros."""
+        started = self._opened_at.get(handle.task_id)
+        if started is None or handle.task_id in self._paused:
+            return None
+        return {"started_at": started, "cpu_percent": None, "memory_mb": None, "memory_limit_mb": None}
+
     async def open_workspace(self, key: str) -> SandboxHandle:
         handle = SandboxHandle(task_id=key)
         self._paused.discard(key)
+        self._opened_at[key] = datetime.now(timezone.utc).isoformat()
         if key not in self._scratch_dirs:
             scratch = await asyncio.to_thread(
                 tempfile.mkdtemp, prefix=f"aura-fake-workspace-{key}-"

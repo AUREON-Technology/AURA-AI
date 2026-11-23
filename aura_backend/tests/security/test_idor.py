@@ -108,6 +108,14 @@ COVERED = {
         "TestAgentTasks::test_bob_cannot_cancel_alices_task",
     ("POST", "/api/v3/agents/tasks/{task_id}/approve"):
         "TestAgentTasks::test_bob_cannot_approve_alices_task",
+    ("POST", "/api/v3/engineering/workspaces/{workspace_id}/start"):
+        "TestEngineeringLifecycle::test_bob_cannot_start_stop_restart_or_stat_alices_workspace",
+    ("POST", "/api/v3/engineering/workspaces/{workspace_id}/stop"):
+        "TestEngineeringLifecycle::test_bob_cannot_start_stop_restart_or_stat_alices_workspace",
+    ("POST", "/api/v3/engineering/workspaces/{workspace_id}/restart"):
+        "TestEngineeringLifecycle::test_bob_cannot_start_stop_restart_or_stat_alices_workspace",
+    ("GET", "/api/v3/engineering/workspaces/{workspace_id}/stats"):
+        "TestEngineeringLifecycle::test_bob_cannot_start_stop_restart_or_stat_alices_workspace",
     ("DELETE", "/api/v3/workspaces/{workspace_id}"):
         "TestWorkspaces::test_bob_cannot_delete_alices_team",
     ("GET", "/api/v3/workspaces/{workspace_id}/members"):
@@ -436,6 +444,29 @@ class TestEngineering:
         with TestClient(_app(container)) as client:
             assert client.get("/api/v3/engineering/runs", headers=AUTH_B).json()["runs"] == []
             assert len(client.get("/api/v3/engineering/runs", headers=AUTH_A).json()["runs"]) == 1
+
+
+class TestEngineeringLifecycle:
+    """ADR-041: starting, stopping, restarting or reading the stats of a workspace is its owner's."""
+
+    def test_bob_cannot_start_stop_restart_or_stat_alices_workspace(self, container) -> None:
+        from fastapi.testclient import TestClient
+
+        from aura_core.adapters.coding_fakes import InMemorySandboxRunner
+        from aura_core.tools.workspaces import WorkspaceManager
+
+        container.workspace_manager = WorkspaceManager(
+            runner=InMemorySandboxRunner(), store=container.workspaces, min_free_memory_mb=0
+        )
+        victim = asyncio.run(container.workspace_manager.open(UserId(ALICE), "acme/private"))
+        wid = victim.record.id.value
+        base = "/api/v3/engineering/workspaces"
+        with TestClient(_app(container)) as client:
+            for verb in ("start", "stop", "restart"):
+                assert client.post(f"{base}/{wid}/{verb}", headers=AUTH_B).status_code == 404, verb
+            assert client.get(f"{base}/{wid}/stats", headers=AUTH_B).status_code == 404
+            rows = client.get(base, headers=AUTH_A).json()["workspaces"]
+            assert [(w["repo"], w["status"]) for w in rows] == [("acme/private", "hot")]
 
 
 class TestAgentTasks:

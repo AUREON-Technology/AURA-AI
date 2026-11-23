@@ -1842,6 +1842,15 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         await container.workspace_manager.destroy(target)
         return JSONResponse(content={"deleted": workspace_id, "repo": target.repo})
 
+    # ADR-041: start/stop/restart, resource stats and the read-only paired-desktop status.
+    from .engineering_ops import register_engineering_ops
+
+    register_engineering_ops(
+        router, container, principal=principal, enforce_rate_limit=enforce_rate_limit,
+        idempotent=idempotent, Depends=Depends, HTTPException=HTTPException,
+        JSONResponse=JSONResponse, Request=Request,
+    )
+
     class EngineerConsentRequest(BaseModel):
         notice_version: str = Field(min_length=1, max_length=64)
 
