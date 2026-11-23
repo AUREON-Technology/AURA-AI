@@ -97,9 +97,17 @@ class HostAgentSession:
     whichever of the two bookkeeping structures (`_pending`/`_streams`) is waiting on that id.
     """
 
-    def __init__(self, user_id: UserId, send: Callable[[Mapping[str, Any]], Awaitable[None]]) -> None:
+    def __init__(
+        self,
+        user_id: UserId,
+        send: Callable[[Mapping[str, Any]], Awaitable[None]],
+        *,
+        close: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
         self.user_id = user_id
         self._send = send
+        #: Closes the underlying socket (``None`` for a session with no socket to close).
+        self._close = close
         self._pending: dict[str, "asyncio.Future[Any]"] = {}
         self._streams: dict[str, "asyncio.Queue[Any]"] = {}
 
@@ -200,6 +208,22 @@ class HostAgentSession:
         else:
             future.set_result(frame.get("result"))
 
+    async def stop(self, reason: str) -> None:
+        """The kill switch (ADR-039): tell the daemon to drop every call this side is waiting on,
+        unblock them here, and close the socket.
+
+        The ``cancel`` frames go first, while the socket is still open: the daemon marks each
+        pending approval cancelled, so a human answering afterwards executes nothing. Without
+        ``revoke_devices`` the daemon may reconnect; revoking the device is what stops that."""
+        for call_id in list(self._pending) + list(self._streams):
+            await self._cancel(call_id)
+        self.fail_all_pending(reason)
+        if self._close is not None:
+            try:
+                await self._close()
+            except Exception:  # noqa: BLE001 -- already gone is the goal
+                logger.debug("host agent socket already closed", exc_info=True)
+
     def fail_all_pending(self, reason: str) -> None:
         """Called when the connection drops -- every in-flight call (single-shot or streaming)
         must be unblocked rather than hanging until its own timeout, which would otherwise stall a
@@ -269,6 +293,17 @@ class HostAgentRegistry:
         session.fail_all_pending("desktop app disconnected")
         if was_current and self._relay is not None:
             await self._relay.release(session.user_id)
+
+    async def stop_user(self, user_id: UserId, *, reason: str) -> int:
+        """Stop and close this worker's session for ``user_id``; how many (0 or 1).
+
+        A session another worker holds is not reachable from here; the device revocation the
+        kill switch can also perform reaches it at its next credential re-check."""
+        session = await self._local(user_id)
+        if session is None:
+            return 0
+        await session.stop(reason)
+        return 1
 
     async def resolve(self, user_id: UserId) -> Any:
         """This worker's session for ``user_id``, a relay proxy to another worker's, or ``None``.

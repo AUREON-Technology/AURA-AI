@@ -48,6 +48,7 @@ from ..domain.tenancy import WorkspaceContext, WorkspaceKind, workspace_scope
 from ..domain.tenancy import can as can_in_workspace
 from ..domain.untrusted import MAX_UNTRUSTED_CHARS
 from ..kernel.kernel import TurnRequest
+from ..tools.policy import AUTONOMY_PROFILES
 from ..observability.logging import get_logger
 from ..ports.runtime import AuditEvent
 from ..prompts import PIN_SYNC_INTERVAL_S
@@ -774,9 +775,10 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             status = {"blocked": 400, "budget_exceeded": 429, "rate_limited": 429}.get(
                 result.telemetry.outcome.value, 503
             )
-            if result.telemetry.error_kind == "confirmation_invalid":
+            if result.telemetry.error_kind in ("confirmation_invalid", "turn_stopped"):
                 # F-04: a confirmation naming no pending call this caller may resume. One-shot,
-                # so not retryable as sent -- the turn has to be asked again.
+                # so not retryable as sent -- the turn has to be asked again. `turn_stopped`
+                # (ADR-039) is the caller's own stop-all: likewise a decision, not a fault.
                 status = 409
             if result.telemetry.error_kind in ("consent_required", "user_quota_exhausted"):
                 # D-03 / D-05: refused before anything was sent. Neither clears by retrying the
@@ -1997,6 +1999,158 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         store = _consent_store_or_refuse(caller)
         consent = await store.withdraw(caller.user_id, at=container.clock.now())
         return JSONResponse(content=_consent_body(consent))
+
+    # -- review profile (ADR-039) -------------------------------------------------------
+
+    class AutonomyRequest(BaseModel):
+        profile: str = Field(min_length=1, max_length=32)
+
+    async def _autonomy_body(caller: Principal) -> dict[str, Any]:
+        store = container.autonomy
+        record = await store.get_record(caller.user_id)
+        allowed = container.settings.tools.allow_autonomous_profile
+        stored = record["profile"]
+        return {
+            "profile": stored,
+            "source": record["source"],
+            "updated_at": record["updated_at"],
+            "default": store.default,
+            "profiles": list(AUTONOMY_PROFILES),
+            "autonomous_enabled": allowed,
+            # What turns actually run under: ``autonomous`` is honoured only when the deployment
+            # enabled it, and otherwise behaves as ``standard``.
+            "effective": "standard" if stored == "autonomous" and not allowed else stored,
+        }
+
+    def _refuse_service_key(caller: Principal, what: str) -> None:
+        if caller.is_service:
+            # A service key is not a person; it has no review preferences to set and must not be
+            # able to stop, or loosen, a person's agent.
+            raise HTTPException(
+                status_code=403,
+                detail=AuthorizationError(f"a service key cannot {what}").to_dict(),
+            )
+
+    @router.get("/engineering/policy")
+    async def get_autonomy_profile(caller: Principal = Depends(principal)) -> JSONResponse:
+        """How much the caller wants to be asked before the agent acts: ``strict``, ``standard``
+        (today's behaviour, the default) or ``autonomous``. The caller's own, never anyone else's."""
+        _refuse_service_key(caller, "read a review profile")
+        return JSONResponse(content=await _autonomy_body(caller))
+
+    @router.put("/engineering/policy")
+    async def set_autonomy_profile(
+        request: Request, payload: AutonomyRequest, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Choose the review profile. ``strict`` confirms every side effect and refuses network
+        tools; ``autonomous`` is accepted only where the operator enabled it, and even then never
+        skips a taint, remote-origin or tool-declared confirmation. Audited."""
+        _refuse_service_key(caller, "set a review profile")
+        profile = payload.profile.strip().lower()
+        if profile not in AUTONOMY_PROFILES:
+            raise HTTPException(
+                status_code=422,
+                detail=ValidationError(
+                    f"profile must be one of {', '.join(AUTONOMY_PROFILES)}",
+                    details={"allowed": list(AUTONOMY_PROFILES)},
+                ).to_dict(),
+            )
+        if profile == "autonomous" and not container.settings.tools.allow_autonomous_profile:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "autonomy_not_enabled",
+                    "message": "The autonomous profile is not enabled on this deployment.",
+                    "retryable": False,
+                    "details": {"setting": "AURA_AUTONOMY_ALLOW_AUTONOMOUS"},
+                },
+            )
+        before = (await container.autonomy.get_record(caller.user_id))["profile"]
+        await container.autonomy.put(caller.user_id, profile, at=container.clock.now().isoformat())
+        try:
+            await container.audit.record(AuditEvent(
+                action="autonomy.profile_changed", actor=caller.email or caller.user_id.value,
+                actor_role=caller.role, resource=f"user:{caller.user_id.value}", outcome="ok",
+                correlation_id=request.headers.get("x-correlation-id") or "",
+                source_ip=client_ip(request), detail={"from": before, "to": profile},
+            ))
+        except Exception:
+            logger.warning("autonomy audit write failed", exc_info=False)
+        return JSONResponse(content=await _autonomy_body(caller))
+
+    # -- kill switch (ADR-039) ----------------------------------------------------------
+
+    class StopAllRequest(BaseModel):
+        revoke_devices: bool = False
+
+    @router.post("/agents/stop-all")
+    async def stop_all_agents(
+        request: Request, payload: StopAllRequest | None = None,
+        caller: Principal = Depends(principal),
+    ) -> JSONResponse:
+        """Stop everything the caller's agent is doing, now.
+
+        Cancels every turn of the caller running on this server (the cancellation reaches a
+        running tool, and a host-routed call sends its ``cancel`` frame to the desktop), closes
+        the caller's paired-desktop connection, and -- with ``revoke_devices`` -- revokes their
+        paired desktop devices so the daemon cannot reconnect. Idempotent: with nothing running it
+        answers with zeros. Owner-scoped: it acts only on the caller's own turns, sessions and
+        devices. Audited. Not replayed by the idempotency cache: a second press must act again.
+
+        Limits, reported rather than hidden: turns held in another gateway worker are not seen
+        (``scope: "this_process"``), and a held confirmation stays answerable.
+        """
+        _refuse_service_key(caller, "stop a person's agent")
+        revoke = bool(payload.revoke_devices) if payload is not None else False
+        user_id = caller.user_id
+
+        stopped = container.kernel.active_turns.stop_user(user_id.value)
+
+        registry = getattr(container, "host_agent_registry", None)
+        sessions_closed = 0
+        if registry is not None:
+            try:
+                sessions_closed = await registry.stop_user(user_id, reason="stopped by the user")
+            except Exception:
+                logger.warning("closing the desktop session failed", exc_info=True)
+
+        devices: dict[str, Any] = {"requested": revoke}
+        if revoke:
+            revoker = getattr(container, "device_revoker", None)
+            if revoker is None:
+                devices.update(available=False, revoked=[])
+            else:
+                try:
+                    devices.update(available=True, revoked=list(await revoker(user_id.value)))
+                except Exception:
+                    logger.warning("device revocation failed", exc_info=True)
+                    devices.update(available=True, revoked=[], error="revocation_failed")
+
+        try:
+            await container.audit.record(AuditEvent(
+                action="agents.stop_all", actor=caller.email or caller.user_id.value,
+                actor_role=caller.role, resource=f"user:{user_id.value}", outcome="ok",
+                correlation_id=request.headers.get("x-correlation-id") or "",
+                source_ip=client_ip(request),
+                detail={
+                    "turns_stopped": len(stopped), "desktop_sessions_closed": sessions_closed,
+                    "revoke_devices": revoke,
+                    "devices_revoked": len(devices.get("revoked", [])),
+                },
+            ))
+        except Exception:
+            logger.warning("stop-all audit write failed", exc_info=False)
+
+        return JSONResponse(content={
+            "stopped": True,
+            "scope": "this_process",
+            "turns": [
+                {"turn_id": s.turn_id, "kind": s.kind, "running_s": s.running_s} for s in stopped
+            ],
+            "turns_stopped": len(stopped),
+            "desktop_sessions_closed": sessions_closed,
+            "devices": devices,
+        })
 
     @router.get("/host/folders")
     async def host_folders(caller: Principal = Depends(principal)) -> JSONResponse:

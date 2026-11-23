@@ -226,6 +226,48 @@ def _list(key: str, default: Sequence[str] = ()) -> tuple[str, ...]:
     return tuple(item.strip() for item in raw.split(",") if item.strip())
 
 
+def _host_list(key: str) -> tuple[str, ...]:
+    """Like :func:`_list`, but whitespace and newlines separate entries too -- the same split
+    ``deploy/scripts/render-sandbox-filter.sh`` applies to the same variable."""
+    raw = _env(key)
+    if raw is None:
+        return ()
+    return tuple(item for item in re.split(r"[,\s]+", raw) if item)
+
+
+def egress_host_problem(host: str) -> str | None:
+    """Why ``host`` is not an acceptable sandbox egress host, or ``None`` when it is.
+
+    The same rules as ``deploy/scripts/render-sandbox-filter.sh``, which is what turns the
+    setting into the proxy's allowlist (``tests/unit/test_render_sandbox_filter.py`` runs both over
+    one corpus and requires them to agree). Here it is the start-up check: a value the renderer
+    would refuse must stop the gateway too, not be discovered when the proxy container exits.
+    """
+    h = host.strip().lower()
+    if "*" in h:
+        return "wildcards are not supported; list each host"
+    if "://" in h or "/" in h:
+        return "give a bare host name, not a URL or a path"
+    if "@" in h:
+        return "credentials are not allowed in a host"
+    if ":" in h:
+        return "a port is not allowed (the proxy only ever connects to 443)"
+    if not h or not re.fullmatch(r"[a-z0-9.-]+", h):
+        return "only letters, digits, hyphens and dots are allowed"
+    if h.startswith((".", "-")) or h.endswith((".", "-")) or ".." in h or ".-" in h or "-." in h:
+        return "malformed (empty label, or a label starting or ending with a hyphen)"
+    if len(h) > 253:
+        return "longer than 253 characters"
+    labels = h.split(".")
+    if len(labels) < 2:
+        return "needs at least two labels (a single name such as 'localhost' is an internal host)"
+    if any(len(label) > 63 for label in labels):
+        return "a label is longer than 63 characters"
+    if labels[-1].isdigit():
+        return "an IP address is not a host name"
+    return None
+
+
 def _redact_url_userinfo(value: str) -> str:
     """Replace username/password in a URL so DSNs can be shown without leaking secrets.
 
@@ -1103,6 +1145,18 @@ class SafetySettings:
     block_on_secret_leak: bool = True
     max_input_chars: int = 32_000
     groundedness_min: float = 0.4
+    #: Redact credential-shaped text (``safety/guards.py::SecretGuard``, redact-only, never block)
+    #: from what the model is shown, and from what a session keeps. Three switches because they
+    #: change three different things, and all default off -- today's behaviour:
+    #:   *context*: retrieved chunks, recalled memories and the loaded session history, in the
+    #:   prompt (a key planted in a document does not reach the model);
+    #:   *input*: the user's own message (a key they pasted does not reach the model -- which also
+    #:   means the model cannot use it, so a user asking the agent to configure that key must
+    #:   leave this off);
+    #:   *history*: what is written to session history (the stored transcript is redacted).
+    redact_secrets_in_context: bool = False
+    redact_secrets_in_input: bool = False
+    redact_secrets_in_history: bool = False
 
     @classmethod
     def from_env(cls) -> "SafetySettings":
@@ -1118,6 +1172,9 @@ class SafetySettings:
             block_on_secret_leak=_bool("SAFETY_BLOCK_ON_SECRET_LEAK", True),
             max_input_chars=_int("SAFETY_MAX_INPUT_CHARS", 32_000, minimum=100),
             groundedness_min=_float("SAFETY_GROUNDEDNESS_MIN", 0.4, minimum=0.0, maximum=1.0),
+            redact_secrets_in_context=_bool("SAFETY_REDACT_CONTEXT_SECRETS", False),
+            redact_secrets_in_input=_bool("SAFETY_REDACT_INPUT_SECRETS", False),
+            redact_secrets_in_history=_bool("SAFETY_REDACT_HISTORY_SECRETS", False),
         )
 
 
@@ -1148,6 +1205,18 @@ class ToolSettings:
     web_search_language: str = ""
     #: Directory ``ocr_image``, ``inspect_spreadsheet``, ``parse_document`` and ``transcribe_audio``
     #: read from is ``files_root`` (the same confinement as ``read_file``); nothing extra to set.
+    #: Path to a JSON/YAML file of declarative tool-call rules (``tools/policy_rules.py``, ADR-039):
+    #: deny or require confirmation by tool name + argument pattern. Empty (the default) = none.
+    #: Validated when the container is built; a bad rule stops start-up with its index.
+    policy_file: str = ""
+    #: Whether a user may pick the ``autonomous`` review profile (``PUT /api/v3/engineering/policy``)
+    #: and have it honoured. Off by default; ``strict`` and ``standard`` need no switch because
+    #: neither asks for less than today's behaviour.
+    allow_autonomous_profile: bool = False
+    #: The review profile a user who never chose one gets: ``standard`` (today's behaviour) or
+    #: ``strict`` (an operator who wants every side effect confirmed by default). ``autonomous``
+    #: cannot be a default -- it is something a person opts into.
+    autonomy_default: str = "standard"
 
     @classmethod
     def from_env(cls) -> "ToolSettings":
@@ -1165,6 +1234,9 @@ class ToolSettings:
             web_search_timeout_s=_float("WEB_SEARCH_TIMEOUT_S", 10.0, minimum=1.0, maximum=60.0),
             web_search_engines=(_env("WEB_SEARCH_ENGINES", "") or "").strip(),
             web_search_language=(_env("WEB_SEARCH_LANGUAGE", "") or "").strip(),
+            policy_file=(_env("TOOL_POLICY_FILE", "") or "").strip(),
+            allow_autonomous_profile=_bool("AUTONOMY_ALLOW_AUTONOMOUS", False),
+            autonomy_default=(_env("AUTONOMY_DEFAULT", "standard") or "standard").strip().lower(),
         )
 
 
@@ -1906,7 +1978,7 @@ class SandboxSettings:
             memory_limit=_env("SANDBOX_MEMORY_LIMIT", "512m") or "512m",
             cpu_limit=_float("SANDBOX_CPU_LIMIT", 1.0, minimum=0.1, maximum=8.0),
             timeout_s=_float("SANDBOX_TIMEOUT_S", 120.0, minimum=1.0, maximum=1800.0),
-            allowed_egress_hosts=_list("SANDBOX_ALLOWED_EGRESS_HOSTS"),
+            allowed_egress_hosts=_host_list("SANDBOX_ALLOWED_EGRESS_HOSTS"),
             host_root=_env("SANDBOX_HOST_ROOT", "") or "",
             workspace_ttl_hours=_float(
                 "SANDBOX_WORKSPACE_TTL_HOURS", 72.0, minimum=0.25, maximum=8760.0
@@ -2506,6 +2578,16 @@ class AuraSettings:
                 validate_search_url(self.tools.web_search_url)
             except ValueError as exc:
                 problems.append(str(exc))
+        if self.tools.policy_file and not self.tools.policy_file.startswith("/"):
+            problems.append("AURA_TOOL_POLICY_FILE must be an absolute path")
+        if self.tools.autonomy_default not in ("strict", "standard"):
+            problems.append("AURA_AUTONOMY_DEFAULT must be 'strict' or 'standard'")
+        for host in self.sandbox.allowed_egress_hosts:
+            problem = egress_host_problem(host)
+            if problem:
+                problems.append(f"AURA_SANDBOX_ALLOWED_EGRESS_HOSTS entry {host!r}: {problem}")
+        if len(self.sandbox.allowed_egress_hosts) > 100:
+            problems.append("AURA_SANDBOX_ALLOWED_EGRESS_HOSTS lists more than 100 hosts")
         for host in self.tools.http_allowed_hosts:
             if "://" in host or "/" in host or "*" in host or ":" in host:
                 problems.append(

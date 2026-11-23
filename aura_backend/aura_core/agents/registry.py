@@ -288,6 +288,8 @@ def build_default_agent_registry(*, engineer_token_budget: int | None = None) ->
                     # sandbox and code-host builders register for the capability is granted.
                     "write_file", "write_files", "edit_file", "run_command", "clone_repository",
                     "git_diff", "git_commit", "git_checkout_branch", "git_status", "git_push",
+                    # Snapshot and roll back the workspace (ADR-039); restore always confirms.
+                    "workspace_snapshot", "list_workspace_snapshots", "workspace_restore",
                     # Persistent workspaces (ADR-013). Only registered when a deployment wires a
                     # workspace manager, so naming them here is a grant, not a guarantee they
                     # exist -- the same rule _READ_TOOLS' own comment states.

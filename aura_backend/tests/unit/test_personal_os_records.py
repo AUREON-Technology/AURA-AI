@@ -368,6 +368,7 @@ class TestKernelWiring:
             "fetch_url",
             "write_file", "write_files", "edit_file", "run_command", "clone_repository",
             "git_diff", "git_commit", "git_checkout_branch", "git_status", "git_push",
+            "workspace_snapshot", "list_workspace_snapshots", "workspace_restore",
             # Persistent workspaces (ADR-013) additionally need a workspace manager, which this
             # default container has no sandbox runner to build one from.
             "open_workspace", "list_workspaces", "destroy_workspace",

@@ -48,9 +48,15 @@ from pathlib import Path
 from ..domain.errors import ToolExecutionError, ValidationError
 from ..domain.output_schema import check_output_schema
 from ..domain.repository_identity import RepositoryIdentity
-from ..domain.tools import ParameterSpec, ToolCategory, ToolSensitivity, ToolSpec
+from ..domain.tools import NETWORK_TAG, ParameterSpec, ToolCategory, ToolSensitivity, ToolSpec
 from ..observability.logging import get_logger
-from ..ports.coding import FileWriteOp, McpToolDescriptor, SandboxResult, StreamingSandboxRunner
+from ..ports.coding import (
+    TOOL_CALL_CONFIRMED,
+    FileWriteOp,
+    McpToolDescriptor,
+    SandboxResult,
+    StreamingSandboxRunner,
+)
 from ..ports.runtime import Tool, ToolContext
 from .base import param, tool
 from .desktop_ops import build_desktop_ops_tools
@@ -80,6 +86,74 @@ _CLONE_MAX_FILES = 400
 _CLONE_MAX_FILE_BYTES = 256_000
 _CLONE_MAX_TOTAL_BYTES = 8_000_000
 _CLONE_CONCURRENCY = 6
+
+#: Workspace snapshots (ADR-039): refs under refs/aura/snapshots/, one commit object each.
+_SNAPSHOT_REF_PREFIX = "refs/aura/snapshots/"
+#: ``aura-snapshot:<nanosecond clock>: <label>``. Git's own dates have one-second resolution, so
+#: two snapshots taken in the same second could not be told apart by age; the clock in the subject
+#: is what "newest first" and "keep the newest 20" order by.
+_SNAPSHOT_SUBJECT = re.compile(r"aura-snapshot:(\d+): (.*)", re.DOTALL)
+_SNAPSHOT_ID = re.compile(r"snap-[0-9a-f]{12}")
+_SNAPSHOT_LABEL_MAX = 100
+#: How many snapshots a workspace keeps; the oldest beyond this are unreferenced (git collects
+#: them later). Bounds the disk a model that snapshots in a loop can use.
+_SNAPSHOT_KEEP = 20
+
+# Shared head of every snapshot script: this must be a git repository and the workspace must BE
+# its root. Restoring rewrites the index and the working tree of the whole repository, so a
+# workspace that is a subdirectory of a bigger one (a folder granted on a desktop) would have
+# files outside it rewritten -- refused (exit 4) rather than guarded.
+_SNAPSHOT_PRELUDE = (
+    'git rev-parse --git-dir >/dev/null 2>&1 || exit 3\n'
+    '[ -z "$(git rev-parse --show-cdup)" ] || exit 4\n'
+)
+
+#: ``$1`` label, ``$2`` the nanosecond clock for the subject. Prints the new snapshot id.
+#: The tree is built in a private index file: ``git add -A`` there stages everything git would
+#: not ignore, ``write-tree`` makes the tree, ``commit-tree`` a parent-linked commit, and
+#: ``update-ref`` names it. The real index and the working tree are never read for writing.
+_SNAPSHOT_SCRIPT = (
+    "set -e\n" + _SNAPSHOT_PRELUDE +
+    'gitdir=$(git rev-parse --absolute-git-dir)\n'
+    'idx="$gitdir/aura-snapshot-index.$$"\n'
+    'trap \'rm -f "$idx"\' EXIT\n'
+    'GIT_INDEX_FILE="$idx" git add -A >/dev/null\n'
+    'tree=$(GIT_INDEX_FILE="$idx" git write-tree)\n'
+    'if git rev-parse -q --verify HEAD >/dev/null; then parent=$(git rev-parse HEAD); '
+    'commit=$(GIT_AUTHOR_NAME="AURA Engineer Agent" GIT_AUTHOR_EMAIL=engineer-agent@aura.local '
+    'GIT_COMMITTER_NAME="AURA Engineer Agent" GIT_COMMITTER_EMAIL=engineer-agent@aura.local '
+    'git commit-tree "$tree" -p "$parent" -m "aura-snapshot:$2: $1"); '
+    'else commit=$(GIT_AUTHOR_NAME="AURA Engineer Agent" GIT_AUTHOR_EMAIL=engineer-agent@aura.local '
+    'GIT_COMMITTER_NAME="AURA Engineer Agent" GIT_COMMITTER_EMAIL=engineer-agent@aura.local '
+    'git commit-tree "$tree" -m "aura-snapshot:$2: $1"); fi\n'
+    'id="snap-$(printf %s "$commit" | cut -c1-12)"\n'
+    'git update-ref "refs/aura/snapshots/$id" "$commit"\n'
+    'printf \'%s\\n\' "$id"\n'
+)
+
+_SNAPSHOT_LIST_SCRIPT = (
+    "set -e\n" + _SNAPSHOT_PRELUDE +
+    "git for-each-ref --format='%(refname)%09%(committerdate:iso-strict)%09%(subject)' refs/aura/snapshots\n"
+)
+
+#: ``$@`` snapshot ids to forget (the objects are collected by git's own gc later).
+_SNAPSHOT_FORGET_SCRIPT = (
+    "set -e\n" + _SNAPSHOT_PRELUDE +
+    'for id in "$@"; do git update-ref -d "refs/aura/snapshots/$id"; done\n'
+)
+
+#: ``$1`` snapshot id. Untracked, un-ignored files go first (anything the snapshot had comes back
+#: with it); then index and working tree are made equal to the snapshot's tree -- tracked files
+#: not in it are removed, changed ones rewritten -- and finally the index is put back to HEAD so
+#: the restored differences read as ordinary uncommitted changes. HEAD never moves. Ignored files
+#: (``node_modules``, build output) are left alone: ``clean`` runs without ``-x``.
+_RESTORE_SCRIPT = (
+    "set -e\n" + _SNAPSHOT_PRELUDE +
+    'commit=$(git rev-parse -q --verify "refs/aura/snapshots/$1^{commit}") || exit 5\n'
+    'git clean -fdq\n'
+    'git read-tree --reset -u "$commit"\n'
+    'if git rev-parse -q --verify HEAD >/dev/null; then git reset -q; else git read-tree --empty; fi\n'
+)
 
 #: Bounds how much of a streamed command's output this side ever holds in memory while
 #: accumulating it, independent of whatever cap the daemon itself applies
@@ -1345,6 +1419,7 @@ def build_sandbox_tools(
         side_effecting=True,
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=300.0,
+        tags=(NETWORK_TAG,),
     )
     async def git_push(branch: str, context: ToolContext, repo: str | None = None) -> str:
         if host_git is None or not sessions.durable:
@@ -1412,9 +1487,181 @@ def build_sandbox_tools(
         await host_git.push(checkout, branch=branch, token=token, repo=slug)
         return f"Pushed {branch} to {slug}."
 
+
+    # -- snapshots (ADR-039) --------------------------------------------------------------
+    #
+    # A snapshot is a git commit object holding the workspace's whole working tree -- tracked
+    # files, and untracked files that are not ignored -- stored under refs/aura/snapshots/<id>.
+    # It is built in a throwaway index, so taking one touches neither the working tree, the real
+    # index, HEAD nor any branch, and shows up in neither `git status` nor `git log`. Restoring is
+    # the reverse: remove the untracked files added since, then make index and working tree equal
+    # the snapshot's tree, leaving HEAD where it is. Plain git run through the same
+    # `sandbox_runner` as every other tool here, so it works the same in a server-side workspace
+    # and on a paired desktop (where the daemon's own command policy still applies).
+
+    async def _snapshot_git(handle: Any, script: str, *args: str, timeout_s: float) -> Any:
+        """Run a snapshot script; its arguments travel as argv, never spliced into the script."""
+        return await sandbox_runner.run(
+            handle, ["sh", "-c", script, "aura-snapshot", *args], timeout_s=timeout_s
+        )
+
+    def _snapshot_failure(result: Any, tool_name: str) -> ToolExecutionError:
+        reasons = {
+            3: "the workspace is not a git repository; clone one (clone_repository) or run `git init` first",
+            4: "the workspace is inside a larger repository; snapshots need the workspace itself to be "
+               "the repository root, because restoring one must not touch anything outside the workspace",
+            5: "no snapshot with that id; list_workspace_snapshots shows the ones that exist",
+        }
+        return ToolExecutionError(
+            reasons.get(result.exit_code) or f"git failed: {_git_failure(result)}", tool=tool_name
+        )
+
+    async def _list_snapshots(handle: Any, tool_name: str) -> list[tuple[str, str, str]]:
+        """``(id, committed-at, label)`` for every snapshot, newest first."""
+        result = await _snapshot_git(handle, _SNAPSHOT_LIST_SCRIPT, timeout_s=20.0)
+        if result.exit_code != 0:
+            raise _snapshot_failure(result, tool_name)
+        rows: list[tuple[int, str, str, str]] = []
+        for line in result.stdout.splitlines():
+            ref, _, rest = line.partition("\t")
+            when, _, subject = rest.partition("\t")
+            snapshot_id = ref.removeprefix(_SNAPSHOT_REF_PREFIX)
+            parsed = _SNAPSHOT_SUBJECT.fullmatch(subject)
+            if _SNAPSHOT_ID.fullmatch(snapshot_id):
+                rows.append((int(parsed.group(1)) if parsed else 0, snapshot_id, when,
+                             parsed.group(2) if parsed else subject))
+        rows.sort(key=lambda row: (row[0], row[2]), reverse=True)
+        return [(i, when, label) for _clock, i, when, label in rows]
+
+    async def _take_snapshot(handle: Any, label: str, tool_name: str) -> str:
+        result = await _snapshot_git(
+            handle, _SNAPSHOT_SCRIPT, " ".join(label.split())[:_SNAPSHOT_LABEL_MAX],
+            str(time.time_ns()), timeout_s=60.0,
+        )
+        snapshot_id = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else ""
+        if result.exit_code != 0 or not _SNAPSHOT_ID.fullmatch(snapshot_id):
+            raise _snapshot_failure(result, tool_name)
+        # Keep the newest _SNAPSHOT_KEEP. Best effort: a failed prune must not fail the snapshot.
+        try:
+            stale = [i for i, _, _ in (await _list_snapshots(handle, tool_name))[_SNAPSHOT_KEEP:]
+                     if i != snapshot_id]
+            if stale:
+                await _snapshot_git(handle, _SNAPSHOT_FORGET_SCRIPT, *stale, timeout_s=30.0)
+        except ToolExecutionError:
+            logger.warning("could not prune old workspace snapshots", exc_info=True)
+        return snapshot_id
+
+    @tool(
+        "workspace_snapshot",
+        "Save the workspace's current state -- every file, including new ones you have not committed -- "
+        "under a label, so you can return to it with workspace_restore if a change goes wrong. Takes "
+        f"no commit and changes no file. The newest {_SNAPSHOT_KEEP} are kept. Returns the snapshot id.",
+        param("label", "string", "What this state is, e.g. 'before refactoring the parser'.",
+              max_length=_SNAPSHOT_LABEL_MAX),
+        category=ToolCategory.DEVELOPMENT,
+        sensitivity=ToolSensitivity.PERSONAL,
+        side_effecting=True,
+        required_capability=_ENGINEER_CAPABILITY,
+        timeout_s=75.0,
+        # Writes objects and a ref inside the workspace's own .git, nothing else: the same
+        # confinement git_commit has.
+        workspace_local=True,
+    )
+    async def workspace_snapshot(label: str, context: ToolContext) -> str:
+        if not label.strip():
+            raise ToolExecutionError("label must not be empty", tool="workspace_snapshot")
+        handle = await sessions.handle(context)
+        snapshot_id = await _take_snapshot(handle, label, "workspace_snapshot")
+        return (
+            f"Saved snapshot {snapshot_id} ({' '.join(label.split())[:_SNAPSHOT_LABEL_MAX]}). Nothing in "
+            f"the workspace changed. workspace_restore with this id returns to this state."
+        )
+
+    @tool(
+        "list_workspace_snapshots",
+        "List the workspace's saved snapshots, newest first: id, when, and label.",
+        category=ToolCategory.DEVELOPMENT,
+        sensitivity=ToolSensitivity.PERSONAL,
+        required_capability=_ENGINEER_CAPABILITY,
+        timeout_s=30.0,
+    )
+    async def list_workspace_snapshots(context: ToolContext) -> str:
+        handle = await sessions.handle(context)
+        rows = [f"- {i}  {when}  {label}"
+                for i, when, label in await _list_snapshots(handle, "list_workspace_snapshots")]
+        return "\n".join(rows) if rows else "No snapshots yet. workspace_snapshot saves one."
+
+    async def _preview_restore(arguments: Mapping[str, Any], context: ToolContext) -> str | None:
+        """What the person approving is about to lose: the workspace's uncommitted changes."""
+        handle = await sessions.handle(context)
+        status = await _git(handle, ["git", "status", "--short"], timeout_s=15.0)
+        if status.exit_code != 0:
+            return None
+        lines = [line for line in status.stdout.splitlines() if line]
+        shown = "\n".join(lines[:40]) + (f"\n... and {len(lines) - 40} more" if len(lines) > 40 else "")
+        return (
+            f"Restoring {arguments.get('snapshot_id')} replaces the workspace's files with that saved state. "
+            + (f"These changes, present now, will be discarded:\n{shown}" if lines
+               else "The workspace has no uncommitted changes. ")
+            + "\nThe current state is saved as a new snapshot first, so this can be undone."
+        )
+
+    @tool(
+        "workspace_restore",
+        "Return the workspace to a saved snapshot: files changed since come back as they were, files "
+        "added since (and not ignored by git) are removed, and everything outside the workspace is "
+        "left alone. HEAD and branches do not move. DISCARDS uncommitted work, so the user is always "
+        "asked first; the current state is saved as a snapshot just before, and its id is returned so "
+        "the restore itself can be undone.",
+        param("snapshot_id", "string", "An id from workspace_snapshot or list_workspace_snapshots.",
+              max_length=40),
+        category=ToolCategory.DEVELOPMENT,
+        # CONFIDENTIAL + side_effecting is the existing idiom for "always confirm"
+        # (ToolSpec.__post_init__), and it is deliberately NOT workspace_local: this throws work
+        # away, so no profile and no tainted-or-untainted rule may wave it through.
+        sensitivity=ToolSensitivity.CONFIDENTIAL,
+        side_effecting=True,
+        required_capability=_ENGINEER_CAPABILITY,
+        timeout_s=150.0,
+        preview=_preview_restore,
+    )
+    async def workspace_restore(snapshot_id: str, context: ToolContext) -> str:
+        snapshot_id = snapshot_id.strip()
+        if not _SNAPSHOT_ID.fullmatch(snapshot_id):
+            raise ToolExecutionError(
+                f"{snapshot_id!r} is not a snapshot id (they look like snap-0123456789ab); "
+                "list_workspace_snapshots shows them",
+                tool="workspace_restore",
+            )
+        handle = await sessions.handle(context)
+        status = await _git(handle, ["git", "status", "--porcelain"], timeout_s=20.0)
+        if status.exit_code != 0:
+            raise _snapshot_failure(status, "workspace_restore")
+        if status.stdout.strip() and not TOOL_CALL_CONFIRMED.get():
+            # The registry already holds this tool for confirmation, so this is the second lock:
+            # a path that reaches the handler without the person's approval (a future caller, a
+            # profile bug) still cannot discard uncommitted work.
+            raise ToolExecutionError(
+                "the workspace has uncommitted changes and restoring would discard them; "
+                "this needs the user's confirmation",
+                tool="workspace_restore",
+            )
+        # Fail closed: if the current state cannot be saved, nothing is restored.
+        safety_id = await _take_snapshot(handle, f"automatic: before restoring {snapshot_id}", "workspace_restore")
+        result = await _snapshot_git(handle, _RESTORE_SCRIPT, snapshot_id, timeout_s=120.0)
+        if result.exit_code != 0:
+            raise _snapshot_failure(result, "workspace_restore")
+        after = await _git(handle, ["git", "status", "--short"], timeout_s=20.0)
+        changed = [line for line in after.stdout.splitlines() if line][:20]
+        return (
+            f"Restored the workspace to snapshot {snapshot_id}. The state it replaced was saved as "
+            f"{safety_id}; workspace_restore {safety_id} undoes this.\n"
+            + ("Differences from HEAD now:\n" + "\n".join(changed) if changed else "The workspace matches HEAD.")
+        )
+
     tools: list[Tool] = [
         write_file, edit_file, write_files, run_command, git_diff, git_commit, git_checkout_branch,
-        git_status,
+        git_status, workspace_snapshot, list_workspace_snapshots, workspace_restore,
     ]
     if host_git is not None:
         tools.append(git_push)
@@ -1449,7 +1696,7 @@ def build_sandbox_tools(
         max_result_chars=20_000,
         # Everything this pulls in is third-party repository content -- exactly as
         # attacker-influenceable as fetch_url's page bodies or run_command's output.
-        tags=("untrusted_content",),
+        tags=("untrusted_content", NETWORK_TAG),
     )
     async def clone_repository(
         repo: str, context: ToolContext, ref: str | None = None, destination: str | None = None,
@@ -1735,7 +1982,7 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         timeout_s=30.0,
         max_result_chars=40_000,
         # Path names are repository-controlled text, same as file contents.
-        tags=("untrusted_content",),
+        tags=("untrusted_content", NETWORK_TAG),
     )
     async def github_list_repository_files(
         context: ToolContext, repo: str | None = None, ref: str | None = None,
@@ -1782,7 +2029,7 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=150.0,
         max_result_chars=40_000,
-        tags=("untrusted_content",),
+        tags=("untrusted_content", NETWORK_TAG),
     )
     async def github_get_file_contents(
         path: str, context: ToolContext, repo: str | None = None, ref: str | None = None,
@@ -1825,7 +2072,7 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=20.0,
         max_result_chars=10_000,
-        tags=("untrusted_content",),
+        tags=("untrusted_content", NETWORK_TAG),
     )
     async def github_get_issue(number: int, context: ToolContext, repo: str | None = None) -> str:
         client = await _client(context)
@@ -1841,7 +2088,7 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=20.0,
         max_result_chars=10_000,
-        tags=("untrusted_content",),
+        tags=("untrusted_content", NETWORK_TAG),
     )
     async def github_get_pull_request(
         number: int, context: ToolContext, repo: str | None = None
@@ -1860,6 +2107,7 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         side_effecting=True,
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=20.0,
+        tags=(NETWORK_TAG,),
     )
     async def github_create_branch(
         branch: str, from_ref: str, context: ToolContext, repo: str | None = None
@@ -1951,6 +2199,7 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=60.0,
         preview=_preview_github_commit_files,
+        tags=(NETWORK_TAG,),
     )
     async def github_commit_files(
         branch: str, message: str, files: Mapping[str, str], context: ToolContext,
@@ -2022,6 +2271,7 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         side_effecting=True,
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=20.0,
+        tags=(NETWORK_TAG,),
     )
     async def github_create_draft_pull_request(
         branch: str, base: str, title: str, body: str, context: ToolContext,
@@ -2192,7 +2442,7 @@ async def build_mcp_bridge_tools(
                 required_capability=_ENGINEER_CAPABILITY,
                 timeout_s=30.0,
                 max_result_chars=20_000,
-                tags=() if is_safe else ("untrusted_content",),
+                tags=(NETWORK_TAG,) if is_safe else ("untrusted_content", NETWORK_TAG),
                 output_schema=_supported_output_schema(descriptor),
             )
         except (ValueError, TypeError) as exc:

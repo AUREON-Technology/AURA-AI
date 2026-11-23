@@ -370,11 +370,12 @@ class ToolRegistry:
         host_routed = on_desktop and not confirmed
         decision: ToolPolicyDecision = self._policy.evaluate(
             spec, context=context, capabilities=capabilities, confirmed=confirmed,
-            host_routed=host_routed,
+            host_routed=host_routed, arguments=arguments,
         )
         if not decision.allowed:
             self._observe(name, outcome="denied", denied_reason=decision.reason)
-            await self._audit_call(name, context, "denied", arguments_digest, decision.reason)
+            await self._audit_call(name, context, "denied", arguments_digest, decision.reason,
+                                   decision=decision)
             await self._publish(name, context, allowed=False, ok=False, duration_ms=0.0,
                                 error_kind=decision.reason)
             return finish(
@@ -390,7 +391,7 @@ class ToolRegistry:
             # stopped for confirmation" is the event a reviewer looks for, and until now it left
             # only a metric and a same-user response.
             await self._audit_call(name, context, "needs_confirmation", arguments_digest,
-                                   decision.reason)
+                                   decision.reason, decision=decision)
             # D6: give the human something to review beyond the raw arguments, when the tool can
             # produce one. A preview failure must never block confirmation itself -- the call is
             # already going to sit in confirm-required limbo either way, so this degrades to "no
@@ -598,7 +599,8 @@ class ToolRegistry:
 
         duration = (time.perf_counter() - started) * 1000.0
         self._observe(name, outcome="ok", duration_ms=duration)
-        await self._audit_call(name, context, "success", arguments_digest, decision.reason)
+        await self._audit_call(name, context, "success", arguments_digest, decision.reason,
+                               decision=decision)
         await self._publish(name, context, allowed=True, ok=True, duration_ms=duration)
         return finish(ok=True, content=content, policy_reason=decision.reason, truncation=truncation)
 
@@ -688,7 +690,8 @@ class ToolRegistry:
             logger.debug("tool event publication failed", exc_info=True)
 
     async def _audit_call(
-        self, name: str, context: ToolContext, outcome: str, digest: str, reason: str
+        self, name: str, context: ToolContext, outcome: str, digest: str, reason: str,
+        decision: ToolPolicyDecision | None = None,
     ) -> None:
         """Audit every attempt.
 
@@ -699,6 +702,14 @@ class ToolRegistry:
             return
         from ..ports.runtime import AuditEvent
 
+        detail: dict[str, Any] = {"arguments_digest": digest, "reason": reason,
+                                  "tainted": context.tainted}
+        if decision is not None:
+            # Which declarative rule fired and under which review profile (ADR-039); the rule's
+            # id and the profile name are operator-authored, never argument values.
+            for key in ("rule", "autonomy"):
+                if key in decision.audit_fields:
+                    detail[key] = decision.audit_fields[key]
         try:
             await self._audit.record(
                 AuditEvent(
@@ -707,8 +718,7 @@ class ToolRegistry:
                     resource=name,
                     outcome=outcome,
                     correlation_id=context.correlation_id,
-                    detail={"arguments_digest": digest, "reason": reason,
-                            "tainted": context.tainted},
+                    detail=detail,
                 )
             )
         except Exception:  # pragma: no cover - defensive

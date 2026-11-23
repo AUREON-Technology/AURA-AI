@@ -57,7 +57,7 @@ class ToolContext:
     __slots__ = (
         "user_id", "correlation_id", "deadline_s", "tainted", "credentials", "metadata",
         "agent_id", "allowed_tools", "allowed_tool_prefixes", "max_sensitivity", "memory_scope",
-        "capabilities", "delegation_depth", "knowledge_owner", "session_id",
+        "capabilities", "delegation_depth", "knowledge_owner", "session_id", "autonomy", "cancel_event",
     )
 
     def __init__(
@@ -78,12 +78,21 @@ class ToolContext:
         delegation_depth: int = 0,
         knowledge_owner: UserId | None = None,
         session_id: str | None = None,
+        autonomy: str = "standard",
+        cancel_event: Any = None,
     ) -> None:
         self.user_id = user_id
         # The conversation this turn belongs to (``None`` for a turn without one). Carried for the
         # session tools (checkpoint save/recall) and the handoff builder; every one of them still
         # scopes by ``user_id`` as well, so a session id is never a capability on its own.
         self.session_id = session_id
+        # The user's review profile (ADR-039): ``strict`` | ``standard`` | ``autonomous``. A policy
+        # input like ``max_sensitivity``; ``ToolPolicy`` decides what each value means and falls
+        # back to ``standard`` for one it does not honour.
+        self.autonomy = autonomy
+        # Set by the kill switch (``POST /agents/stop-all``) to say "this turn was stopped".
+        # Tools never read it; the registry and kernel use it to cancel work in flight.
+        self.cancel_event = cancel_event
         # ADR-034: the owner for shareable data (the knowledge tools). ``None`` means ``user_id``.
         self.knowledge_owner = knowledge_owner
         self.correlation_id = correlation_id

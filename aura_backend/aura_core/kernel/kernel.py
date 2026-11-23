@@ -43,6 +43,7 @@ from ..domain.errors import (
     OverloadedError,
     PlanningError,
     SafetyViolationError,
+    TurnStoppedError,
     UserConcurrencyLimitError,
     UserQuotaExhaustedError,
     ValidationError,
@@ -100,7 +101,9 @@ from ..prompts.library import AGENT_PROMPT_IDS
 from ..agents.registry import AgentRegistry, AgentSpec
 from ..planning.modes import PlanDecision, decide_plan, normalise_mode
 from ..reasoning.engine import ReasoningRequest
+from ..safety.guards import redact_secrets
 from ..tools.personal_os import actions_from_tool_results
+from .active_turns import ActiveTurns
 
 __all__ = ["AIKernel", "TurnRequest", "TurnResult", "KernelDependencies"]
 
@@ -347,6 +350,9 @@ class KernelDependencies:
     #: turn completes so lessons can be derived and queued for the owner's review. ``None`` -- the
     #: default, and what the container wires unless ``AURA_AUTO_LESSONS_ENABLED`` -- does nothing.
     lesson_sink: Any = None
+    #: `AutonomyStore` (`tools/autonomy.py`, ADR-039): the user's review profile, read once per
+    #: turn into `ToolContext.autonomy`. `None` means every turn runs as `standard`.
+    autonomy: Any = None
 
 
 #: Told to the model when planning or tool execution failed (CB-14). Without it the model saw
@@ -393,6 +399,16 @@ def _consume_shadow_result(task: "asyncio.Task[None]") -> None:
     exc = task.exception()
     if exc is not None:
         logger.debug("shadow task failed", exc_info=exc)
+
+
+def _clear_cancellation() -> None:
+    """Swallow a cancellation this turn was *asked* to take (the kill switch), so that what it
+    awaits next -- the response write -- is not cancelled again. ``Task.uncancel`` is 3.11+."""
+    task = asyncio.current_task()
+    uncancel = getattr(task, "uncancel", None)
+    if uncancel is not None:
+        while task.cancelling() > 0:
+            uncancel()
 
 
 def _stream_error_outcome(exc: AuraError) -> TurnOutcome:
@@ -481,13 +497,37 @@ class AIKernel:
         self._shadow_task: asyncio.Task[None] | None = None
         #: Lesson-extraction tasks in flight (strong references; see `_dispatch_lessons`).
         self._lesson_tasks: set[asyncio.Task[None]] = set()
+        #: The turns each user has running here, so ``POST /agents/stop-all`` can cancel them
+        #: (ADR-039). Process-local, like the host-agent registry without its relay.
+        self.active_turns = ActiveTurns()
 
     # -- public API --------------------------------------------------------------------
 
     async def run(self, request: TurnRequest) -> TurnResult:
-        """Execute a turn and return the complete answer."""
-        correlation = request.correlation_id or CorrelationId.new()
+        """Execute a turn and return the complete answer.
+
+        A turn the user stops (``stop-all``) comes back as a normal failed result
+        (``error_kind="turn_stopped"``), not as a raised cancellation: the caller asked for it to
+        end, and the route should answer it rather than drop the connection."""
         turn_id = TurnId.new()
+        if request.delegation_depth > 0:
+            # A delegated sub-turn runs inside its parent's task and stops with it.
+            return await self._run_untracked(request, turn_id)
+        with self.active_turns.track(request.user_id.value, turn_id.value, kind="run") as entry:
+            started = time.perf_counter()
+            try:
+                return await self._run_untracked(request, turn_id)
+            except asyncio.CancelledError:
+                if not entry.stopped:
+                    raise  # the client went away, or the process is shutting down
+                _clear_cancellation()
+                return self._error_result(
+                    request, request.correlation_id or CorrelationId.new(), turn_id, started,
+                    TurnStoppedError("the turn was stopped by the user"), TurnOutcome.ERROR,
+                )
+
+    async def _run_untracked(self, request: TurnRequest, turn_id: TurnId) -> TurnResult:
+        correlation = request.correlation_id or CorrelationId.new()
 
         with LogContext(
             correlation_id=correlation.value,
@@ -758,7 +798,8 @@ class AIKernel:
             try:
                 await deps.episodic.append(
                     request.session_id, request.user_id,
-                    user_message=self._history_message(request), assistant_message=answer,
+                    user_message=self._persistable(self._history_message(request)),
+                    assistant_message=self._persistable(answer),
                 )
             except Exception:
                 # Losing session persistence degrades the next turn; failing this one would be
@@ -833,6 +874,40 @@ class AIKernel:
     # -- streaming ---------------------------------------------------------------------
 
     async def stream(self, request: TurnRequest) -> AsyncIterator[Mapping[str, Any]]:
+        """Stream a turn as typed frames. A turn the user stops (``stop-all``) ends with an
+        ``error`` frame of kind ``turn_stopped`` rather than a dropped connection (ADR-039).
+
+        Tracked for the kill switch here, then delegated to :meth:`_stream_untracked`, which
+        holds the pipeline and its own docstring.
+        """
+        turn_id = TurnId.new()
+        if request.delegation_depth > 0:
+            async for frame in self._stream_untracked(request, turn_id):
+                yield frame
+            return
+        with self.active_turns.track(request.user_id.value, turn_id.value, kind="stream") as entry:
+            started = time.perf_counter()
+            inner = self._stream_untracked(request, turn_id)
+            try:
+                async for frame in inner:
+                    yield frame
+            except asyncio.CancelledError:
+                if not entry.stopped:
+                    raise
+                _clear_cancellation()
+                exc = TurnStoppedError("the turn was stopped by the user")
+                self._error_result(
+                    request, request.correlation_id or CorrelationId.new(), turn_id, started,
+                    exc, TurnOutcome.ERROR,
+                )
+                yield {"type": "error", "error": exc.kind, "message": exc.message,
+                       "retryable": False}
+            finally:
+                await inner.aclose()
+
+    async def _stream_untracked(
+        self, request: TurnRequest, turn_id: TurnId
+    ) -> AsyncIterator[Mapping[str, Any]]:
         """Stream a turn as typed frames.
 
         Frames: ``{"type": "token"|"step"|"actions"|"citations"|"tool_calls"|"revision"|"done"|"error", ...}``.
@@ -848,7 +923,6 @@ class AIKernel:
         ``guards_complete`` flag makes the difference explicit rather than implied.
         """
         correlation = request.correlation_id or CorrelationId.new()
-        turn_id = TurnId.new()
         started = time.perf_counter()
         # The stream is the client's only chat path, so it carries the same lifecycle as
         # ``run``: in-flight gauge, TurnStarted, a TurnBudget, and a recorded TurnTelemetry
@@ -1156,8 +1230,8 @@ class AIKernel:
                     try:
                         await deps.episodic.append(
                             request.session_id, request.user_id,
-                            user_message=self._history_message(request),
-                            assistant_message=answer,
+                            user_message=self._persistable(self._history_message(request)),
+                            assistant_message=self._persistable(answer),
                         )
                     except Exception:
                         logger.warning("failed to persist session state")
@@ -1422,10 +1496,11 @@ class AIKernel:
             if deps.episodic is None or request.session_id is None:
                 return Conversation(), ""
             try:
-                return await deps.episodic.history(request.session_id, request.user_id)
+                loaded = await deps.episodic.history(request.session_id, request.user_id)
             except Exception:
                 logger.warning("session history load failed; continuing without it")
                 return Conversation(), ""
+            return self._redact_loaded_history(*loaded)
 
         async def load_goals() -> Sequence[GoalSnapshot]:
             if deps.goals is None:
@@ -1471,6 +1546,29 @@ class AIKernel:
             )
         perception = await vision.perceive(request.images, message)
         return replace(request, caller_context=request.caller_context + perception.entries), perception
+
+    def _safety_setting(self, name: str) -> bool:
+        return bool(getattr(getattr(self._deps.settings, "safety", None), name, False))
+
+    def _redact_loaded_history(self, history: Conversation, summary: str) -> tuple[Conversation, str]:
+        """Session history as the prompt sees it, with credentials redacted when
+        ``AURA_SAFETY_REDACT_CONTEXT_SECRETS`` is on. History written before the persisted-
+        transcript switch existed still holds whatever was typed then; this is what keeps it from
+        reaching the model."""
+        if not self._safety_setting("redact_secrets_in_context") or self._deps.safety is None:
+            return history, summary
+        messages = []
+        for message in history.messages:
+            cleaned, _ = redact_secrets(message.content)
+            messages.append(message if cleaned == message.content else replace(message, content=cleaned))
+        return Conversation(tuple(messages)), redact_secrets(summary)[0] if summary else summary
+
+    def _persistable(self, text: str) -> str:
+        """``text`` as session history stores it: credentials redacted when
+        ``AURA_SAFETY_REDACT_HISTORY_SECRETS`` is on, unchanged otherwise."""
+        if not self._safety_setting("redact_secrets_in_history"):
+            return text
+        return redact_secrets(text)[0]
 
     @staticmethod
     def _history_message(request: TurnRequest) -> str:
@@ -1692,7 +1790,7 @@ class AIKernel:
             sandbox_transcript = (
                 text if report.tool in
                 ("write_file", "edit_file", "run_command", "git_diff", "git_commit",
-                 "git_checkout_branch")
+                 "git_checkout_branch", "workspace_snapshot", "workspace_restore")
                 else None
             )
             try:
@@ -1991,7 +2089,24 @@ class AIKernel:
     def _should_plan(self, request: TurnRequest, tools: Sequence[Mapping[str, Any]]) -> bool:
         return self._plan_decision(request, tools).plan
 
-    def _tool_context(self, request: TurnRequest, tainted: bool) -> ToolContext:
+    async def _user_autonomy(self, request: TurnRequest) -> str:
+        """The calling user's review profile (ADR-039), ``standard`` when none is stored.
+
+        Never raises: a store that cannot answer must not fail a turn, and the answer it falls
+        back to is the one that changes nothing."""
+        store = self._deps.autonomy
+        user_id = getattr(request, "user_id", None)
+        if store is None or user_id is None:
+            return "standard"
+        try:
+            return await store.get(user_id)
+        except Exception:
+            logger.warning("autonomy profile lookup failed; using standard", exc_info=True)
+            return "standard"
+
+    def _tool_context(
+        self, request: TurnRequest, tainted: bool, autonomy: str = "standard"
+    ) -> ToolContext:
         agent = self._resolve_agent(request)
         allowed_tools, allowed_prefixes, max_sensitivity = self._delegation_grant(request, agent)
         deadline_s = 60.0
@@ -2023,6 +2138,7 @@ class AIKernel:
             capabilities=request.capabilities,
             delegation_depth=request.delegation_depth,
             session_id=request.session_id.value if request.session_id else None,
+            autonomy=autonomy,
             credentials={connector_token_key(c): token for c, token in (request.connector_tokens or {}).items()},
             # D8: carried via the existing free-form `metadata` field rather than a new
             # `ToolContext` slot -- see `ports/runtime.py::ToolContext`'s own doc comment on why
@@ -2133,7 +2249,7 @@ class AIKernel:
         )
         if plan is None:
             return None
-        context = self._tool_context(request, tainted)
+        context = self._tool_context(request, tainted, await self._user_autonomy(request))
         loop = self._loop_arguments(request, message, tools, tainted, turn_id, correlation)
         if loop is not None:
             return await deps.agentic_executor.run(
@@ -2170,7 +2286,7 @@ class AIKernel:
         )
         if plan is None:
             return
-        context = self._tool_context(request, tainted)
+        context = self._tool_context(request, tainted, await self._user_autonomy(request))
         loop = self._loop_arguments(request, message, tools, tainted, turn_id, correlation)
         if loop is not None:
             async for item in deps.agentic_executor.stream(
