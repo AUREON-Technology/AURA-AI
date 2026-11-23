@@ -430,6 +430,9 @@ async def _erase_core(
     if custom_agents is not None:
         # The instructions a person wrote into their own agents are theirs (migration 0035).
         await step("custom_agents", lambda: custom_agents.delete_for_owner(owner_id))
+    model_settings = getattr(container, "model_settings", None)
+    if model_settings is not None:
+        await step("model_settings", lambda: model_settings.delete(owner_id))
     approval_ledger = getattr(container, "approval_ledger", None)
     if approval_ledger is not None:
         await step("tool_approvals", lambda: approval_ledger.delete_for_owner(owner_id))

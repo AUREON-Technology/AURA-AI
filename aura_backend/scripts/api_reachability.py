@@ -60,6 +60,8 @@ TRIAGE = (
     ("/api/v3/admin/blueprints", "to wire: Console blueprint review and deploy are Track AP phase AP9"),
     ("/api/v3/admin/", "to wire: admin console page missing for this route"),
     ("/api/v3/learning/", "to wire or remove: learning surface with no caller (GAP-013)"),
+    ("/api/v3/me/model-settings", "to wire: the app sends no routing_policy, require_local, temperature or max_output_tokens today, so a person cannot choose how chats are answered (api/models.py)"),
+    ("/api/v3/models", "to wire: the model catalog (capabilities and privacy of each model) is not shown anywhere; the app offers no model or policy choice (api/models.py)"),
     ("/api/v3/me", "to wire: profile read/update and password change have no app screen yet; register and forgot/reset password stay in the client's Firebase SDK (api/me.py)"),
     ("/api/v3/turns/", "to wire: usage by turn id (read it later); the app already gets the same numbers inline on /chat and the stream's done frame"),
     ("/api/v3/chats", "to wire: the app lists, pins, archives and renames chats locally (Drift) today; no screen calls the server list or the pin/archive/title routes yet (api/chats.py)"),

@@ -185,6 +185,11 @@ NOT_USER_RESOURCES = {
     # in tests/unit/test_api_surface.py::TestAuthorisation and test_route_auth.py; the ids they
     # take are deployment objects (sources, models, approvals, jobs, operators), not user data.
     "/api/v3/admin/",
+    # The model catalog: `{model_id}` is a provider the deployment serves, the same for everybody.
+    # What it shows is capabilities and circuit state, never an endpoint, a key or a cost
+    # (tests/unit/test_model_management.py::TestCatalog). The per-person part, `/me/model-settings`,
+    # takes no id: it is the caller's row by construction.
+    "/api/v3/models/",
 }
 
 

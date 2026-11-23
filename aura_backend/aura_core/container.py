@@ -186,6 +186,8 @@ class Container:
         # Durable, content-free record of held tool calls and how each was decided
         # (``domain/approvals.py``); the pending turn itself stays in the cache.
         self.approval_ledger = self._build_approval_ledger()
+        # A person's standing defaults for how their chats are answered (``domain/model_settings.py``).
+        self.model_settings = self._build_model_settings_store()
         # One store for the kernel (holds and approvals) and the approvals routes (rejection), both
         # over the shared cache, so any worker can act on a hold another worker made.
         self.tool_confirmations = PendingConfirmationStore(
@@ -1304,6 +1306,22 @@ class Container:
         from .adapters.engineer_consent import InMemoryEngineerConsentStore
 
         return InMemoryEngineerConsentStore()
+
+    def _build_model_settings_store(self) -> Any:
+        """A person's standing model preferences. Postgres with the other per-user stores, so a
+        preference set on one gateway worker applies to the next chat on any other."""
+        backend = self.settings.infrastructure.memory_backend
+        if backend == "postgres":
+            from .adapters.postgres_model_settings import PostgresModelSettingsStore
+
+            return PostgresModelSettingsStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        if backend != "memory":
+            raise ConfigurationError(f"unknown memory backend {backend!r}")
+        from .adapters.model_settings import InMemoryModelSettingsStore
+
+        return InMemoryModelSettingsStore()
 
     def _build_approval_ledger(self) -> Any:
         """The record of held tool calls (``domain/approvals.py``). Postgres with the other per-user

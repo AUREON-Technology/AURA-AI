@@ -44,6 +44,7 @@ from ..domain.identifiers import AgentRunId, CorrelationId, DocumentId, SessionI
 from ..domain.engineering import ENGINEER_CONSENT_NOTICE_VERSION
 from ..domain.repository_identity import RepositoryIdentity
 from ..domain.llm import RoutingPolicy, WorkloadClass
+from ..domain.model_settings import SERVER_DEFAULTS, ModelSettings
 from ..llm.workload import workload_class_for_turn
 from ..text.language import CLIENT_LANGUAGE_HEADER, normalize_language
 from ..domain.memory import MemoryKind, MemoryQuery
@@ -63,6 +64,11 @@ from .admin import register_admin_ops
 __all__ = ["build_router", "build_app", "Principal"]
 
 logger = get_logger("api.v3")
+
+def _first(*values: Any) -> Any:
+    """The first value that is not ``None`` (``False`` and ``0`` count as values)."""
+    return next((v for v in values if v is not None), None)
+
 
 #: Most documents one ``DELETE /knowledge/documents?confirm=true`` removes: each removal touches the
 #: graph, the indexes and the plan, so a corpus of thousands is cleared by calling again.
@@ -308,7 +314,9 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         plan: bool | None = None
         strategy: str | None = None
         routing_policy: str | None = None
-        require_local: bool = False
+        #: ``None`` = not specified: the caller's stored preference (``/me/model-settings``) applies,
+        #: then the server default (False for ``require_local``, 1024 tokens, temperature 0.3).
+        require_local: bool | None = None
         #: F-04 (ADR-006): the `approval_id`s, from one turn's `pending_tool_calls`, of the held
         #: calls the user approved. The request then resumes *that* turn -- its stored plan, its
         #: own message -- and runs only calls identical to the approved ones, once. Unknown,
@@ -316,8 +324,8 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         #: `confirmed_tools`/`confirmed_call_ids` fields confirmed by name or position; they are
         #: no longer read (an old client's field is ignored, so its call is simply held again).
         approval_ids: list[str] = Field(default_factory=list, max_length=32)
-        max_output_tokens: int = Field(default=1024, ge=16, le=8192)
-        temperature: float = Field(default=0.3, ge=0.0, le=2.0)
+        max_output_tokens: int | None = Field(default=None, ge=16, le=8192)
+        temperature: float | None = Field(default=None, ge=0.0, le=2.0)
         #: D8 (Desktop IDE only): ask the paired desktop daemon to isolate this task's writes into
         #: a dedicated git worktree keyed by `session_id`, rather than the user's live checkout.
         #: Silently a no-op for any caller without a live desktop pairing.
@@ -622,6 +630,19 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             return tuple(caller.capabilities)
         return deployment.caller_capabilities(tuple(caller.capabilities), caller.role)
 
+    async def standing_model_settings(caller: Principal) -> ModelSettings:
+        """The caller's stored model preferences, or none. History-free and best effort: a person
+        with no row, a service key, a deployment without the store and a store that is down all mean
+        "no preference", and the turn goes on with the server's defaults."""
+        store = getattr(container, "model_settings", None)
+        if store is None or caller.is_service:
+            return ModelSettings()
+        try:
+            return await store.get(caller.user_id) or ModelSettings()
+        except Exception:  # noqa: BLE001 -- preferences must never stop a chat
+            logger.warning("could not read model settings; using the server defaults", exc_info=True)
+            return ModelSettings()
+
     async def to_turn(payload: ChatRequest, caller: Principal, request: Request) -> TurnRequest:
         # Phase I: shared transcript/message normalize before the kernel (same path live voice uses).
         from ..nlp import normalize_for_turn
@@ -696,6 +717,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         except ValueError as exc:
             raise ValidationError("X-Correlation-Id is not a valid identifier",
                                   details={"field": "x-correlation-id"}) from exc
+        preferences = await standing_model_settings(caller)
         return TurnRequest(
             message=message,
             user_id=caller.user_id,
@@ -712,12 +734,16 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             use_tools=payload.use_tools,
             plan=payload.plan,
             strategy=_parse_enum(ReasoningStrategy, payload.strategy),
-            routing_policy=_parse_enum(RoutingPolicy, payload.routing_policy),
-            require_local=payload.require_local,
+            # A value the request names wins; then the person's standing preference; then the
+            # server's own default. A stored preference never overrides what the request says.
+            routing_policy=_parse_enum(
+                RoutingPolicy, payload.routing_policy if payload.routing_policy is not None else preferences.routing_policy,
+            ),
+            require_local=_first(payload.require_local, preferences.require_local, SERVER_DEFAULTS["require_local"]),
             capabilities=granted(caller),
             approval_ids=tuple(payload.approval_ids),
-            max_output_tokens=payload.max_output_tokens,
-            temperature=payload.temperature,
+            max_output_tokens=_first(payload.max_output_tokens, preferences.max_output_tokens, SERVER_DEFAULTS["max_output_tokens"]),
+            temperature=_first(payload.temperature, preferences.temperature, SERVER_DEFAULTS["temperature"]),
             desktop_task_isolation=payload.desktop_task_isolation,
             workspace_root=payload.workspace_root,
             # WP8: from the token's signed claim, never from the request body.
@@ -921,6 +947,12 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "max_request_image_bytes": vision.max_request_image_bytes,
             },
             "knowledge": {"max_upload_bytes": settings.knowledge.max_document_bytes},
+            # What a client may offer for choosing how a chat is answered (``GET /models``).
+            "models": {
+                "routing_policies": [p.value for p in RoutingPolicy],
+                "local_available": any(m["local"] and m["available"] for m in container.router.catalog()),
+                "settings_endpoint": "/api/v3/me/model-settings",
+            },
         })
 
     @router.post("/chat/stream")
@@ -2591,6 +2623,13 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
     from .agent_runs import register_run_ops
 
     register_run_ops(
+        router, container, principal=principal, idempotent=idempotent, Depends=Depends,
+        JSONResponse=JSONResponse, enforce_rate_limit=enforce_rate_limit, Request=Request,
+    )
+
+    from .models import register_model_ops
+
+    register_model_ops(
         router, container, principal=principal, idempotent=idempotent, Depends=Depends,
         JSONResponse=JSONResponse, enforce_rate_limit=enforce_rate_limit, Request=Request,
     )
