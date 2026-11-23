@@ -247,7 +247,11 @@ class KnowledgeRefreshPipeline:
             logger.info("knowledge refresh starting", extra={"generation": generation.value})
 
             sources = [s for s in await self._registry.list_enabled()]
-            if not sources:
+            # With no source there is nothing to fetch, but the index phase still has a job when
+            # the published index is not the one the running configuration builds (KM-01). This
+            # used to return here regardless, so an embedder change on a deployment with no
+            # registered source left retrieval unavailable and this job unable to repair it.
+            if not sources and (dry_run or not await self._index_needs_rebuild()):
                 logger.info("no enabled knowledge sources; nothing to refresh")
                 report = RefreshReport(
                     generation=generation, started_at=started_at,

@@ -1264,6 +1264,13 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
+  // The Knowledge page also reads the latest triggered refresh; none has run in the mock.
+  if (method === "GET" && path === "/api/v3/admin/refresh/latest") {
+    if (!coreGate(response, who, "Admin")) return;
+    json(response, 200, { report: null, run: null });
+    return;
+  }
+
   if (method === "PATCH" && path.startsWith("/api/v3/admin/sources/")) {
     if (!coreGate(response, who, "Admin")) return;
     const id = path.slice("/api/v3/admin/sources/".length);

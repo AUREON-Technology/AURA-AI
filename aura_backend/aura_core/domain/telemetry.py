@@ -106,6 +106,10 @@ class RetrievalTelemetry:
     quarantined: int = 0
     citations: int = 0
     strategy: str = "none"
+    #: The knowledge base could not be searched (index not ready), so the turn answered without
+    #: it. Distinct from ``returned_nothing``: that one means it was searched and held nothing
+    #: relevant.
+    unavailable: bool = False
 
     @property
     def returned_nothing(self) -> bool:
@@ -216,6 +220,7 @@ class TurnTelemetry:
             self.fallback_count
             or self.tainted
             or self.retrieval.returned_nothing
+            or self.retrieval.unavailable
             or any(not t.ok for t in self.tools)
             or self.planning_failed
             or self.tool_output_dropped
@@ -230,6 +235,7 @@ class TurnTelemetry:
             ("provider_fallback", self.fallback_count),
             ("tainted_context", self.tainted),
             ("empty_retrieval", self.retrieval.returned_nothing),
+            ("knowledge_unavailable", self.retrieval.unavailable),
             ("tool_failure", any(not t.ok for t in self.tools)),
             ("planning_failed", self.planning_failed),
             ("tool_output_dropped", self.tool_output_dropped),

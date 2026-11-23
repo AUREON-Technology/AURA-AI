@@ -2120,6 +2120,12 @@ abstract class AppLocalizations {
   /// **'Saved.'**
   String get knowledgeSaved;
 
+  /// Knowledge page: appended to the saved message while the server's search index is not ready (the document is stored but not yet searchable)
+  ///
+  /// In en, this message translates to:
+  /// **'Search can\'t find it yet: knowledge search is being updated, and this will show up once that finishes.'**
+  String get knowledgeNotSearchableYet;
+
   /// Knowledge page: message when a PDF upload fails
   ///
   /// In en, this message translates to:
@@ -6325,6 +6331,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'A tool\'s result was too long to use in full.'**
   String get chatTurnToolOutputTrimmed;
+
+  /// Chat: note when the server could not search the knowledge base for this turn
+  ///
+  /// In en, this message translates to:
+  /// **'Knowledge search is being updated, so this answer doesn\'t use your documents or the shared library.'**
+  String get chatTurnKnowledgeUnavailable;
 
   /// Chat: note under a truncated code, file, diff or terminal preview
   ///

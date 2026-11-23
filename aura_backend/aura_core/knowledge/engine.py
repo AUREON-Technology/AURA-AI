@@ -725,6 +725,10 @@ class KnowledgeEngine:
             identity = await self._indexes.resolve_for_read()
         except Exception as exc:
             logger.warning("retrieval skipped: index not ready", extra={"error": type(exc).__name__})
+            if self._metrics is not None:
+                # Counted, not just logged: this path used to return before every metric, so a
+                # corpus nobody could search looked identical to a quiet one (KB-002).
+                self._metrics.retrieval_total.labels(strategy=strategy, result="unavailable").inc()
             return RetrievalResult(query=query, strategy="unavailable")
 
         # Dense and lexical run concurrently: they are independent, and serialising them adds

@@ -50,6 +50,7 @@ class TurnStatusRow extends StatelessWidget {
     if (reasons.contains('tool_failure')) return l10n.chatTurnToolFailed;
     if (reasons.contains('empty_generation_fallback')) return l10n.chatTurnEmptyReply;
     if (reasons.contains('tool_output_dropped')) return l10n.chatTurnToolOutputTrimmed;
+    if (reasons.contains('knowledge_unavailable')) return l10n.chatTurnKnowledgeUnavailable;
     return null;
   }
   static const ungroundedCopy = 'Ungrounded — no sources attached.';

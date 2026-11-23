@@ -979,6 +979,18 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     # -- knowledge ---------------------------------------------------------------------
 
+    async def _index_searchable() -> bool | None:
+        """Whether a document written now can be found by search (KB-001).
+
+        False while the published index was built by another embedding model: an upload is then
+        stored and embedded into the unpublished index, and stays invisible to every query until
+        an admin rebuilds. ``None`` when the index could not be asked.
+        """
+        try:
+            return bool((await container.index_manager.status())["matches_embedder"])
+        except Exception:
+            return None
+
     @router.post("/knowledge/documents", dependencies=idempotent)
     async def ingest_document(
         request: Request, payload: IngestRequest, caller: Principal = Depends(principal)
@@ -1012,6 +1024,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "created": result.created,
                 "quarantined_chunks": result.quarantined,
                 "skipped_reason": result.skipped_reason,
+                "searchable": await _index_searchable(),
             }
         )
 
@@ -1079,6 +1092,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "unreadable_pages": list(extraction.unreadable_pages),
                 "blank_pages": list(extraction.blank_pages),
                 "ocr_used": container.ocr_engine.name if container.ocr_engine is not None else None,
+                "searchable": await _index_searchable(),
             }
         )
 
