@@ -1030,6 +1030,7 @@ class Container:
         from .control.wiring import key_slots
 
         if settings.environment.is_production_like:
+            from .adapters.cloudflare_account import HttpCloudflareAccount
             from .adapters.cloudflare_tokens import HttpCloudflareTokens
 
             async def cloudflare_token() -> str:
@@ -1038,11 +1039,17 @@ class Container:
             cloudflare_api: Any = HttpCloudflareTokens(
                 token_source=cloudflare_token, api_root=cloudflare_api_root(settings.llm.providers),
             )
+            cloudflare_account: Any = HttpCloudflareAccount(
+                token_source=cloudflare_token, api_root=cloudflare_api_root(settings.llm.providers),
+            )
         else:
+            from .adapters.cloudflare_account import InMemoryCloudflareAccount
             from .adapters.cloudflare_tokens import InMemoryCloudflareTokens
 
             cloudflare_api = InMemoryCloudflareTokens()
+            cloudflare_account = InMemoryCloudflareAccount()
         self.cloudflare_tokens = cloudflare_api
+        self.cloudflare_account = cloudflare_account
 
         # Stage 5: Qdrant Cloud (the cluster named when its key was connected, or the gateway's
         # own) and Grafana Cloud (the stack named with its token).
@@ -1089,10 +1096,20 @@ class Container:
             space_api=space_api, cloudflare=cloudflare_api, slots=key_slots(settings.llm.providers),
             provider_health=lambda: self.router.stats(),
         )
+        # Stage 6: the Cloudflare tab's engine (providers, model catalog). A removed provider's
+        # token is revoked by the reconciler, and only once the change has stayed healthy.
+        from .control.cloudflare import REVOKE_ACTION, CloudflareControl
+
+        self.cloudflare_control = CloudflareControl(
+            control=self.control, store=store, railway=self.railway, tokens=cloudflare_api,
+            account=cloudflare_account, api_root=cloudflare_api_root(settings.llm.providers),
+            provider_health=lambda: self.router.stats(),
+        )
         self.control_reconciler = Reconciler(
             store=store, vault=vault,
             platforms={Platform.RAILWAY: railway_api, Platform.HF_SPACE: space_api},
             watch_s=control.rollback_watch_s,
+            success_hooks={REVOKE_ACTION: self.cloudflare_control.revoke_after_success},
         )
         self._reconciler_task: Any = None
 

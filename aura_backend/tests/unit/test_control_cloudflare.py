@@ -128,7 +128,13 @@ def _reason(caught) -> str:
 
 
 def _never_leaked(container, *payloads) -> None:
-    audit = json.dumps([getattr(e, "__dict__", str(e)) for e in container.audit._events], default=str)
+    # AuditEvent uses __slots__ (no __dict__): read it through as_dict(). The engine itself writes no
+    # audit events (the routes do), so this scans the change journal and the vault instead.
+    journal = json.dumps(
+        [dict(c.detail) | {"reason": c.reason} for c in container.control_store._changes.values()]
+        if hasattr(container.control_store, "_changes") else [], default=str,
+    )
+    audit = journal + json.dumps([e.as_dict() for e in container.audit._events], default=str)
     for secret in (OLD_CF, GROQ, PASTED):
         assert secret not in audit
         for payload in payloads:
