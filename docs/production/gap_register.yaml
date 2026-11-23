@@ -1765,3 +1765,48 @@ gaps:
       afterwards; and, from stage 5, (7) Apply setup loading every rule group with
       up{job="aura-gateway"} reading 1, and a Qdrant snapshot created and listed.
     status: built_not_proven
+  - gap_id: GAP-068
+    component: tools/extract-structured
+    severity: P2
+    current_state: >-
+      Built, not proven (ADR-038, 2026-11-22). An extract_structured tool (tools/extract.py), off
+      unless AURA_ALLOW_EXTRACTION_INFERENCE=true, calls Cloudflare's clairic
+      (@cf/cloudflare/clairic, a preview model that fills typed fields from text and returns a
+      confidence per answer) through one adapter (adapters/cloudflare_clairic.py). It sits behind
+      the data-scope ceiling, a per-process daily cap and a withhold-below-threshold rule, and
+      writes an audit record per call. No call has reached the service from a deployed gateway, and
+      the VPS compose stack is not plumbed for it (that needs a docker secret and prod/dev parity;
+      Railway takes plain variables). Background: it is not an OpenAI-compatible chat model, and
+      is_open_weight_model() rejects its ID, so it cannot be a provider slot under ADR-030. One
+      probe call on 2026-11-22 returned HTTP 200 with four of five fields right and a wrong due
+      date at confidence 0.096. Cloudflare's pages do not state whether its weights are published,
+      whether the no-training and no-retention terms cover this model, its Arabic support, its
+      per-model rate limits or free-plan eligibility.
+    target_state: >-
+      An extract_structured tool, off unless AURA_ALLOW_EXTRACTION_INFERENCE=true, calls clairic
+      through exactly one adapter module at a fixed endpoint. It refuses above the internal data
+      scope, returns null for any value below AURA_EXTRACT_MIN_CONFIDENCE, is tagged
+      untrusted_content, writes an audit record that holds no text or answers, and is capped per
+      process so it cannot starve the hosted3 chat slot's daily allowance.
+    owner: platform-core
+    dependencies: [GAP-064]
+    test: >-
+      Default pytest, no network: tests/unit/test_extraction_domain.py (types and the confidence
+      rule), test_extraction_adapters.py (the in-memory reader, and clairic over a replay of the
+      real probe response: request shape, redirects, cooldown, secrecy),
+      test_extraction_settings.py, test_extract_tool.py (data-ceiling refusal, cap, an audit record
+      that holds no content) and test_extraction_container.py (wiring through the real registry),
+      plus the architecture pins in tests/architecture/test_no_external_inference.py
+      (TestExtractionIsGatedNotSilent: exactly one module names /ai/run, the open-weight list is
+      not widened). Opt-in: tests/load/test_extraction_live.py (-m load), which needs a token and
+      prints the per-field table. Nothing in the default run reaches Cloudflare.
+    metric: >-
+      extract_structured calls, refusals by reason (data_ceiling, cap, cooldown, low_confidence)
+      and Workers AI neurons used per day against the 10,000 allowance
+    exit_condition: >-
+      docs/reports/extract-structured-*.md committed showing (1) one call from a deployed gateway
+      with the audit record present, (2) one refusal at sensitive scope, (3) measured per-field
+      accuracy on a small labelled set in English and in Arabic, and (4) recorded answers to
+      ADR-038's open items O-1 to O-4 (token rotated, weight status, free-plan eligibility and
+      limits, whether the data terms cover this model).
+    status: built_not_proven

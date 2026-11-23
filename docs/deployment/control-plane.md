@@ -271,6 +271,63 @@ Two things already set on this target that the Engineer depends on:
 **Rollback:** take `claude1` out of `AURA_LLM_PROVIDERS` and redeploy. Engineer turns go back to
 `capability_unavailable`; nothing else changes. Consents and usage counters stay where they are.
 
+### Optional: structured extraction through Cloudflare `clairic` (ADR-038)
+
+**Off by default, and off means absent**: with `AURA_ALLOW_EXTRACTION_INFERENCE` unset there is no
+adapter and no `extract_structured` tool. Turning it on sends text a person typed into a turn to
+Cloudflare Workers AI, so it is a consent flag as much as a switch. Neither
+`AURA_ALLOW_HOSTED_INFERENCE` nor `AURA_ALLOW_CLAUDE_INFERENCE` implies it. It is separate from the
+`hosted3` chat slot: a different endpoint (`/ai/run`, not `/ai/v1`) and a different model, but the
+same Workers AI daily allowance (10,000 neurons on the free plan), so heavy use can starve chat.
+
+```bash
+AURA_ALLOW_EXTRACTION_INFERENCE=true
+AURA_EXTRACT_CLOUDFLARE_ACCOUNT_ID=<32-character hexadecimal Cloudflare account id>
+# The NAME of the variable that holds the token, never the token itself. Set that variable too,
+# as a Railway secret:
+AURA_EXTRACT_API_KEY_ENV=AURA_EXTRACT_API_KEY
+AURA_EXTRACT_API_KEY=<a dedicated Workers AI token>
+# Optional, with their defaults:
+# AURA_EXTRACT_MIN_CONFIDENCE=0.5     # a value below this is withheld: null, with the guess shown
+# AURA_EXTRACT_MAX_CHARS=20000        # at most 100000
+# AURA_EXTRACT_TIMEOUT_S=30           # at most 300
+# AURA_EXTRACT_DAILY_CALL_CAP=100     # per process: multiply by AURA_WORKERS for the real ceiling
+```
+
+There is no endpoint setting and no model setting: the host and the model are fixed in
+`aura_core/config/external_inference.py`, so no variable can redirect the token. A missing or
+malformed account id, or an empty token variable, stops the gateway at startup.
+
+**What to expect from the tool.** It runs only when the turn holds nothing but the person's own
+words: a turn that retrieved memory, documents, pinned documents or goals, followed a sensitive
+turn, or already ran any tool is refused, and the refusal names why. A user with stored memories
+will therefore often be refused. Values the service is not confident in come back withheld, never
+as answers. Every call writes an `extraction.third_party_call` audit record (user, field count,
+character count, status counts; never the text or the answers).
+
+**Verify, in this order**
+
+1. `/health/ready` shows `"extraction": {"enabled": true, "model": "@cf/cloudflare/clairic",
+   "cooling_down": false}`. That reports configuration only; it makes no call and never gates
+   readiness.
+2. Run the live check once, from `aura_backend/`, with a token that is not the production one:
+   `AURA_EXTRACT_LIVE_ACCOUNT_ID`, `AURA_EXTRACT_LIVE_TOKEN`, then
+   `python -m pytest tests/load/test_extraction_live.py -m load -s`. It costs a few hundred neurons,
+   asserts that no English answer is confidently wrong, and prints a per-field table (English and
+   Arabic) to commit as `docs/reports/extract-structured-<date>.md` (GAP-068's exit condition).
+
+**Know before enabling**
+
+- It is a **preview** model: Cloudflare may change or withdraw it. The tool fails closed and
+  `AURA_ALLOW_EXTRACTION_INFERENCE=false` is the rollback.
+- Create a **dedicated** token for it so it can be rotated on its own. The minimum permissions
+  `/ai/run` needs are not verified (ADR-038 O-6): confirm the live check passes with the token you
+  create. Never paste a token into a chat, an issue or a file in the repository.
+- Whether clairic's weights are published, whether the Workers AI no-training terms cover it, its
+  Arabic support and whether the free plan may call it are all open (ADR-038 O-2 to O-4).
+- The **VPS compose stack does not forward these variables** (ADR-038 O-5), so setting them in a VPS
+  `.env` changes nothing. That fails safe. Supporting it needs a docker secret and prod/dev parity.
+
 ### Capacity and latency settings (provider performance audit, 2026-11-08)
 
 Without these, the code defaults apply on Railway:

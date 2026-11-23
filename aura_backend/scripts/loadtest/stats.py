@@ -57,6 +57,8 @@ ERROR_KIND_STATUS: Mapping[str, int] = {
     "consent_required": 403,
     "user_quota_exhausted": 429,
     "embedding_error": 502,
+    "extraction_error": 502,
+    "extraction_refused": 403,
     "vector_store_error": 502,
     "memory_store_error": 502,
     "knowledge_error": 500,
