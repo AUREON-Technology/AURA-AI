@@ -117,6 +117,32 @@ class PeerCodeReviewerAgent:
             "findings": findings,
         }
 
+    @classmethod
+    def review_source_patterns(cls, source_code: str, filename: str = "<string>") -> List[Dict[str, Any]]:
+        """Apply the diff-mode smell rules (``SMELL_PATTERNS``) to every line of ``source_code``.
+
+        Same rules and the same comment exemption as ``review_diff``; ``line`` is the line number in
+        the supplied source.
+        """
+        findings: List[Dict[str, Any]] = []
+        if not isinstance(source_code, str):
+            return findings
+        for number, content in enumerate(source_code.splitlines(), start=1):
+            is_comment = content.strip().startswith(cls._COMMENT_PREFIXES)
+            for rule in cls.SMELL_PATTERNS:
+                if is_comment and rule["code"] != "REV-TODO-MARKER":
+                    continue
+                if re.search(rule["pattern"], content):
+                    findings.append({
+                        "code": rule["code"],
+                        "severity": rule["severity"],
+                        "file": filename,
+                        "line": number,
+                        "message": rule["message"],
+                        "snippet": content.strip()[:300],
+                    })
+        return findings
+
     @staticmethod
     def _not_reviewed(error: str) -> Dict[str, Any]:
         return {
@@ -200,6 +226,9 @@ class PeerCodeReviewerAgent:
                 errors.append("source_code: empty, nothing to review.")
             else:
                 reviewed_any = True
+                pattern_findings = cls.review_source_patterns(source_code, filename=filename)
+                conv_res["pattern_findings"] = pattern_findings
+                all_findings.extend(pattern_findings)
 
         if diff_text is None and source_code is None:
             errors.append("Nothing to review: give diff_text and/or source_code.")

@@ -255,6 +255,10 @@ async def analyze_code_complexity(
 async def verify_python_symbols(
     source_code: str, check_undefined_names: bool = True, expected_arities: dict | None = None
 ) -> str:
+    if expected_arities is not None:
+        problem = SymbolAndImportVerifier.arity_spec_error(expected_arities)
+        if problem:
+            raise ToolExecutionError(problem, tool="verify_python_symbols")
     return await _run(
         SymbolAndImportVerifier.verify_source,
         source_code,
@@ -375,6 +379,23 @@ async def generate_diagram(
             raise ToolExecutionError(f"spec.{key} must be an array of {of.__name__}s", tool=name)
         return value
 
+    def keyed(key: str, *required: str, any_of: tuple[str, ...] = ()) -> list:
+        """``listed(key)``, but every item must carry the keys the generator reads (no silent drops)."""
+        items = listed(key)
+        for index, item in enumerate(items):
+            for need in required:
+                if not item.get(need):
+                    raise ToolExecutionError(
+                        f"spec.{key}[{index}] is missing '{need}' (got keys: {sorted(item) or 'none'})",
+                        tool=name,
+                    )
+            if any_of and not any(item.get(k) for k in any_of):
+                raise ToolExecutionError(
+                    f"spec.{key}[{index}] needs one of {' or '.join(repr(k) for k in any_of)} "
+                    f"(got keys: {sorted(item) or 'none'})", tool=name,
+                )
+        return items
+
     if diagram_type == "class_from_source":
         _need(name, source_code=source_code)
         return await _run(MermaidDiagramGenerator.generate_class_diagram_from_source, source_code)
@@ -387,20 +408,22 @@ async def generate_diagram(
         if diagram_type == "class":
             text = gen.generate_class_diagram(
                 class_names=listed("class_names", str) or None,
-                relations=listed("relations") or None,
-                class_details=listed("class_details") or None,
+                relations=keyed("relations", "source", "target") or None,
+                class_details=keyed("class_details", "name") or None,
             )
         elif diagram_type == "flowchart":
             text = gen.generate_flowchart(
-                listed("nodes"), listed("edges"), direction=str(spec.get("direction", "TD"))
+                keyed("nodes", any_of=("id", "label")), keyed("edges", "from", "to"), direction=str(spec.get("direction", "TD"))
             )
         elif diagram_type == "sequence":
-            text = gen.generate_sequence_diagram(listed("participants", str), listed("messages"))
+            text = gen.generate_sequence_diagram(
+                listed("participants", str), keyed("messages", "from", "to")
+            )
         else:  # er
             entities = spec.get("entities") or {}
             if not isinstance(entities, dict):
                 raise ToolExecutionError("spec.entities must be an object of {Name: [fields]}", tool=name)
-            text = gen.generate_er_diagram(entities, listed("relationships") or None)
+            text = gen.generate_er_diagram(entities, keyed("relationships", "left", "right") or None)
         return {"mermaid": text}
 
     return await _run(build)
@@ -452,9 +475,21 @@ async def scan_dependency_licenses(
     packages: list, forbidden: list | None = None, allowed: list | None = None
 ) -> str:
     name = "scan_dependency_licenses"
+    entries: list[dict[str, str]] = []
+    for index, p in enumerate(_objects(name, "packages", packages)):
+        entry = {str(k): str(v) for k, v in p.items()}
+        if not entry.get("package", "").strip():
+            alias = entry.get("name", "").strip()
+            if not alias:
+                raise ToolExecutionError(
+                    f"packages[{index}] has no 'package' (or 'name'); each item must be "
+                    f"{{package, license}} (got keys: {sorted(entry) or 'none'})", tool=name,
+                )
+            entry["package"] = alias
+        entries.append(entry)
     return await _run(
         DependencyLicenseComplianceScanner.scan_licenses,
-        [{str(k): str(v) for k, v in p.items()} for p in _objects(name, "packages", packages)],
+        entries,
         forbidden_tokens=[str(x) for x in forbidden] if forbidden is not None else None,
         allowed_licenses=[str(x) for x in allowed] if allowed is not None else None,
     )

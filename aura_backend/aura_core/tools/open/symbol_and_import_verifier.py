@@ -581,6 +581,27 @@ class SymbolAndImportVerifier:
             "unverified_symbols": unverified,
         }
 
+    @staticmethod
+    def arity_spec_error(expected_arities: Any) -> Optional[str]:
+        """Why ``expected_arities`` is not ``{name: {"min_args": int?, "max_args": int?}}``, or ``None``."""
+        shape = 'expected shape: {"function_name": {"min_args": <int>, "max_args": <int>}}'
+        if not isinstance(expected_arities, dict):
+            return f"expected_arities must be an object; {shape}"
+        for fname, spec in expected_arities.items():
+            if not isinstance(spec, dict):
+                return (
+                    f"expected_arities[{fname!r}] must be an object like "
+                    f'{{"min_args": 1, "max_args": 3}}, got {type(spec).__name__} ({spec!r}); {shape}'
+                )
+            for key, value in spec.items():
+                if key not in ("min_args", "max_args"):
+                    return f"expected_arities[{fname!r}] has unknown key {key!r}; {shape}"
+                if key == "max_args" and value is None:
+                    continue  # explicit "no upper bound"
+                if isinstance(value, bool) or not isinstance(value, int):
+                    return f"expected_arities[{fname!r}][{key!r}] must be an integer, got {value!r}; {shape}"
+        return None
+
     @classmethod
     def verify_call_argument_counts(
         cls,
@@ -591,6 +612,9 @@ class SymbolAndImportVerifier:
         Verify direct function call argument counts against expected arity specs.
         expected_arities format: {"func_name": {"min_args": 1, "max_args": 3}}
         """
+        bad_spec = cls.arity_spec_error(expected_arities if expected_arities is not None else {})
+        if bad_spec:
+            return {"valid": False, "error": bad_spec, "mismatches": []}
         parsed = cls.parse_ast(source_code)
         if not parsed["valid_syntax"]:
             return {"valid": False, "error": parsed["error"], "mismatches": []}

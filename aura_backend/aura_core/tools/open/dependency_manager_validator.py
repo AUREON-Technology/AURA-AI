@@ -65,6 +65,8 @@ class DependencyManagerValidator:
         r"^\s*([A-Za-z0-9][A-Za-z0-9_.\-]*)(?:\[[^\]]+\])?\s*(==|===|!=|<=|>=|<|>|~=|@)?\s*([^\s;#]*)"
     )
 
+    _PEP508_NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._\-]*[A-Za-z0-9])?$")
+
     # VCS prefixes that should not be parsed as package names.
     _VCS_PREFIXES = ("git+", "hg+", "svn+", "bzr+")
 
@@ -122,6 +124,13 @@ class DependencyManagerValidator:
                 continue
 
             pkg_name, operator, version = match.groups()
+            # PEP 508: a name ends in a letter or digit, and after it comes a version operator, an
+            # environment marker or nothing. "badline!!" is neither a package nor "version !!".
+            if not cls._PEP508_NAME_RE.match(pkg_name) or (
+                not operator and version and not version.startswith("(")
+            ):
+                invalid_lines.append({"line": lineno, "raw": stripped, "reason": "not a valid requirement (PEP 508)"})
+                continue
             if operator and not version:
                 # "requests==" names no version: it is not pinned, and pip rejects it.
                 invalid_lines.append({"line": lineno, "raw": stripped, "reason": "operator without a version"})

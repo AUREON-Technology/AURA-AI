@@ -293,7 +293,10 @@ class WorkflowDependencyValidator:
             if tid in task_ids:
                 errors.append(f"Duplicate task id: '{tid}'")
             task_ids.add(tid)
-            raw_deps = t.get("dependencies", []) or t.get("prerequisites", [])
+            # "depends_on" and "deps" are the spellings callers actually use for the same field.
+            raw_deps = (
+                t.get("dependencies") or t.get("prerequisites") or t.get("depends_on") or t.get("deps") or []
+            )
             norm, dep_error = _normalize_graph({tid: raw_deps})
             if dep_error:
                 errors.append(dep_error)
