@@ -208,6 +208,21 @@ _ENGINEER_WORKSPACE_TOOLS = frozenset({
 })
 
 
+# ADR-044. `verify_release_health` (`tools/release.py`) is only registered when AURA_TOOLS_HTTP_ALLOWED_HOSTS
+# is set, so naming it here is a grant, not a guarantee. It returns other systems' text (untrusted_content),
+# so the Engineer holds it and the coding agent does not.
+_ENGINEER_RELEASE_TOOLS = frozenset({"verify_release_health"})
+
+# ADR-044. Model drift against a stored history (`tools/drift.py`): `record_model_metric` writes the
+# owner's own metric series (side-effecting), `compare_model_metric` reads it. Always registered with the
+# analysis group, so unlike the release tool these names are guaranteed to exist.
+_ENGINEER_MODEL_MONITOR_TOOLS = frozenset({"record_model_metric", "compare_model_metric"})
+
+# ADR-044. `research_topic` (`tools/research.py`) calls search_knowledge / web_search / fetch_url through the
+# registry as the caller. Its output is other people's text (untrusted_content), so only the personas that
+# already hold web_search / fetch_url get it, never the coding agent.
+_RESEARCH_TOOLS = frozenset({"research_topic"})
+
 # `tools/session_tools.py`: checkpoint the conversation and read it back. Written out rather than
 # imported, like the sets above (`tests/unit/test_agents.py` pins the names against the builder).
 _SESSION_TOOLS = frozenset({"save_session_checkpoint", "recall_session_checkpoint"})
@@ -275,7 +290,7 @@ def build_default_agent_registry(*, engineer_token_budget: int | None = None) ->
                 # it here only matters once a deployment configures AURA_HTTP_ALLOWED_HOSTS.
                 allowed_tools=_READ_TOOLS | _MEMORY_WRITE_TOOLS | {"calculator", "fetch_url", "web_search"} | {
                     "synthesize_research", "validate_data_records",
-                } | _DOCUMENT_READING_TOOLS | {"transcribe_audio"} | _OPEN_PURE_RESEARCH_TOOLS,
+                } | _DOCUMENT_READING_TOOLS | {"transcribe_audio"} | _OPEN_PURE_RESEARCH_TOOLS | _RESEARCH_TOOLS,
                 risk_ceiling=ToolSensitivity.CONFIDENTIAL, memory_scope="shared",
             ),
             AgentSpec(
@@ -325,7 +340,7 @@ def build_default_agent_registry(*, engineer_token_budget: int | None = None) ->
                     "github_create_draft_pull_request",
                 } | _CODE_ANALYSIS_TOOLS | _DATA_ANALYSIS_TOOLS | _ENGINEER_OPEN_TOOLS | _ENGINEER_DEVTOOLS
                 | _ENGINEER_READING_TOOLS | _SESSION_TOOLS | _OPEN_PURE_CODE_TOOLS | _OPEN_PURE_PLANNING_TOOLS
-                | _ENGINEER_WORKSPACE_TOOLS,
+                | _ENGINEER_WORKSPACE_TOOLS | _ENGINEER_RELEASE_TOOLS | _ENGINEER_MODEL_MONITOR_TOOLS | _RESEARCH_TOOLS,
                 # Every tool the MCP bridge registers (`build_mcp_bridge_tools`). The prefix only
                 # decides *who* may ask: each such tool still needs the `engineer_agent`
                 # capability, and an unreviewed one stays CONFIDENTIAL + side-effecting, hence

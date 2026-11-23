@@ -26,6 +26,7 @@ from ..domain.tools import ToolCategory, ToolSensitivity
 from ..ports.runtime import Tool
 from .base import param, tool
 from .open.api_contract_validator import ApiContractValidator
+from .open.api_ext import as_json_text as api_json_text, classify_changes, generate_tests, load_spec, validate_spec
 from .open.ast_code_analyzer import ASTCodeAnalyzer
 from .open.autonomous_research_and_synthesis_tool import AutonomousResearchAndSynthesisTool
 from .open.complexity_and_duplication_analyzer import ComplexityAndDuplicationAnalyzer
@@ -34,12 +35,21 @@ from .open.database_intelligence_tool import DatabaseIntelligenceTool
 from .open.dependency_license_compliance_scanner import DependencyLicenseComplianceScanner
 from .open.dependency_manager_validator import DependencyManagerValidator
 from .open.deployment_release_manager import DeploymentReleaseManager
+from .open.gate_ext import evaluate as gate_evaluate
+from .open.data_ext import check_formats, check_types, detect_corrupted, detect_outliers, profile
+from .open.diagram_ext import (
+    architecture_from_modules, er_from_sql, flowchart_from_source, sequence_from_source, validate_deep,
+)
 from .open.mermaid_diagram_generator import MermaidDiagramGenerator
 from .open.model_drift_and_performance_monitor import ModelDriftAndPerformanceMonitor
 from .open.observability_incident_analyzer import ObservabilityIncidentAnalyzer
 from .open.peer_code_reviewer_agent import PeerCodeReviewerAgent
 from .open.quality_gate_aggregator import QualityGateAggregator
 from .open.regression_impact_analyzer import RegressionImpactAnalyzer
+from .open.release_ext import release_checklist
+from .open.telemetry_ext import analyze_incident, parse_structured_logs
+from .open.review_ext import deep_review
+from .open.sql_schema_ext import generate_select, parse_schema, query_smells, schema_report
 from .open.security_vulnerability_scanner import SecurityVulnerabilityScanner
 from .open.symbol_and_import_verifier import SymbolAndImportVerifier
 
@@ -270,24 +280,67 @@ async def verify_python_symbols(
 
 @tool(
     "review_code_diff",
-    "Rule-based review of a unified git diff and/or Python source: debug prints, TODO markers, "
-    "broad `except Exception`, missing docstrings. A checklist pass, not a substitute for reading "
-    "the change.",
-    param("diff_text", "string", "A unified diff (e.g. the output of git_diff).",
+    "Rule-based review of a unified diff and/or Python source: debug prints, TODO markers, "
+    "broad `except Exception`, missing docstrings and (deep, default on) bug patterns found on the "
+    "AST (mutable defaults, == None, swallowed exceptions, unreachable code, ...), complexity over "
+    "the limits and layer-import violations, each with a line number. A rule engine, not an "
+    "independent reviewer: it does not replace reading the change.",
+    param("diff_text", "string", "A unified diff (e.g. the output of the diff tool).",
           required=False, max_length=_MAX_TEXT),
     param("source_code", "string", "Python source to check for convention issues.",
           required=False, max_length=_MAX_TEXT),
-    param("filename", "string", "Name to report findings against (default '<string>').",
+    param("filename", "string", "Name to report findings against (default '<string>'). A relative "
+          "path like aura_core/domain/x.py also names the module for the layer check.",
           required=False, default="<string>", max_length=500),
+    param("deep", "boolean", "Add bug-pattern, complexity and architecture findings (default true).",
+          required=False, default=True),
+    param("module_name", "string", "Dotted module name for the layer check when filename does not "
+          "give it.", required=False, max_length=300),
+    param("layer_rules", "object", "Forbidden imports per layer, {layer: [layers it may not import]}; "
+          "default is the platform's own rules.", required=False),
+    param("max_complexity", "integer", "Cyclomatic complexity above which a function is flagged "
+          "(default 10).", required=False, default=10, minimum=1, maximum=200),
     **_CODE,
 )
 async def review_code_diff(
-    diff_text: str | None = None, source_code: str | None = None, filename: str = "<string>"
+    diff_text: str | None = None,
+    source_code: str | None = None,
+    filename: str = "<string>",
+    deep: bool = True,
+    module_name: str | None = None,
+    layer_rules: dict | None = None,
+    max_complexity: int = 10,
 ) -> str:
-    _need("review_code_diff", diff_text=diff_text, source_code=source_code)
-    return await _run(
-        PeerCodeReviewerAgent.full_review, diff_text=diff_text, source_code=source_code, filename=filename
-    )
+    name = "review_code_diff"
+    _need(name, diff_text=diff_text, source_code=source_code)
+    rules = _bounded(name, "layer_rules", layer_rules)
+    if rules is not None and not (isinstance(rules, dict) and all(
+            isinstance(v, list) for v in rules.values())):
+        raise ToolExecutionError("layer_rules must be {layer: [forbidden layers]}", tool=name)
+
+    def review() -> dict:
+        result = PeerCodeReviewerAgent.full_review(
+            diff_text=diff_text, source_code=source_code, filename=filename)
+        if deep:
+            extra = deep_review(
+                source_code=source_code, diff_text=diff_text, filename=filename, module_name=module_name,
+                layer_rules={str(k): [str(x) for x in v] for k, v in rules.items()} if rules else None,
+                max_complexity=max_complexity)
+            known = {(f.get("file"), f.get("line"), f.get("code")) for f in result["findings"]}
+            fresh = [f for f in extra["findings"] if (f["file"], f["line"], f["code"]) not in known]
+            result["deep_review"] = {**extra, "findings": fresh}
+            blocking = sum(1 for f in fresh if f["severity"] in ("MAJOR", "CRITICAL"))
+            result["major_issues"] += sum(1 for f in fresh if f["severity"] == "MAJOR")
+            result["critical_issues"] += sum(1 for f in fresh if f["severity"] == "CRITICAL")
+            result["total_findings"] += len(fresh)
+            if blocking:
+                result["approved"] = False
+            if extra["errors"]:
+                errs = result.setdefault("errors", [])
+                errs.extend(e for e in extra["errors"] if e not in errs)
+        return result
+
+    return await _run(review)
 
 
 @tool(
@@ -345,13 +398,18 @@ async def analyze_change_impact(
 
 @tool(
     "generate_diagram",
-    "Produce Mermaid diagram text. diagram_type: class_from_source (from Python source), class, "
-    "flowchart, sequence, er, or validate (check diagram_code). Identifiers and labels are "
-    "sanitised.",
+    "Produce Mermaid text. diagram_type: class_from_source, er_from_sql (DDL/Alembic in source_code), "
+    "flowchart_from_source and sequence_from_source (source_code + function), architecture_from_modules "
+    "({path: source} in modules), or from a spec you write: class, flowchart, sequence, er; validate "
+    "checks diagram_code.",
     param("diagram_type", "string", "Which diagram to produce.",
-          enum=("class_from_source", "class", "flowchart", "sequence", "er", "validate")),
-    param("source_code", "string", "Python source (class_from_source).", required=False,
+          enum=("class_from_source", "er_from_sql", "flowchart_from_source", "sequence_from_source",
+                "architecture_from_modules", "class", "flowchart", "sequence", "er", "validate")),
+    param("source_code", "string", "Python source, or SQL/Alembic text for er_from_sql.", required=False,
           max_length=_MAX_TEXT),
+    param("function", "string", "Function to draw (flowchart/sequence_from_source).", required=False,
+          max_length=200),
+    param("modules", "object", "{path: Python source} (architecture_from_modules).", required=False),
     param("spec", "object",
           "class: {class_names?, relations? [{from,to,type}], class_details? [{name,attributes,methods}]}. "
           "flowchart: {nodes [{id,label,shape}], edges [{from,to,label}], direction?}. "
@@ -366,6 +424,8 @@ async def generate_diagram(
     source_code: str | None = None,
     spec: dict | None = None,
     diagram_code: str | None = None,
+    function: str | None = None,
+    modules: dict | None = None,
 ) -> str:
     name = "generate_diagram"
     spec = _bounded(name, "spec", spec) or {}
@@ -401,7 +461,18 @@ async def generate_diagram(
         return await _run(MermaidDiagramGenerator.generate_class_diagram_from_source, source_code)
     if diagram_type == "validate":
         _need(name, diagram_code=diagram_code)
-        return await _run(MermaidDiagramGenerator.validate_mermaid_syntax, diagram_code)
+        return await _run(validate_deep, diagram_code)
+    if diagram_type in ("er_from_sql", "flowchart_from_source", "sequence_from_source"):
+        _need(name, source_code=source_code)
+        derive = {"er_from_sql": lambda: er_from_sql(source_code),
+                  "flowchart_from_source": lambda: flowchart_from_source(source_code, function),
+                  "sequence_from_source": lambda: sequence_from_source(source_code, function)}[diagram_type]
+        return await _run(derive)
+    if diagram_type == "architecture_from_modules":
+        found = _bounded(name, "modules", modules)
+        if not isinstance(found, dict) or not found or not all(isinstance(v, str) for v in found.values()):
+            raise ToolExecutionError("architecture_from_modules needs modules as {path: source text}", tool=name)
+        return await _run(architecture_from_modules, {str(k): v for k, v in found.items()})
 
     def build() -> dict:
         gen = MermaidDiagramGenerator
@@ -497,14 +568,17 @@ async def scan_dependency_licenses(
 
 @tool(
     "compare_api_specs",
-    "Work with JSON OpenAPI/contract documents. operation: deprecated_endpoints (list deprecated "
-    "operations in `spec`), diff (paths removed/added between `old_spec` and `new_spec`; flags "
-    "removals as breaking), validate_payload (check `payload` has `required_fields` of the right "
-    "`field_types`).",
-    param("operation", "string", "What to do.", enum=("deprecated_endpoints", "diff", "validate_payload")),
-    param("spec", "string", "A JSON spec (deprecated_endpoints).", required=False, max_length=_MAX_TEXT),
-    param("old_spec", "string", "The earlier JSON spec (diff).", required=False, max_length=_MAX_TEXT),
-    param("new_spec", "string", "The later JSON spec (diff).", required=False, max_length=_MAX_TEXT),
+    "Work with OpenAPI/contract documents (JSON or YAML). operation: validate_spec (structure, $refs, "
+    "path params), breaking_changes (old_spec vs new_spec incl. request/response schema changes, "
+    "semver bump), diff (route-level), deprecated_endpoints, generate_tests (pytest integration text), "
+    "validate_payload.",
+    param("operation", "string", "What to do.",
+          enum=("validate_spec", "breaking_changes", "diff", "deprecated_endpoints", "generate_tests",
+                "validate_payload")),
+    param("spec", "string", "A JSON/YAML spec (validate_spec, deprecated_endpoints, generate_tests).",
+          required=False, max_length=_MAX_TEXT),
+    param("old_spec", "string", "The earlier spec (diff, breaking_changes).", required=False, max_length=_MAX_TEXT),
+    param("new_spec", "string", "The later spec (diff, breaking_changes).", required=False, max_length=_MAX_TEXT),
     param("payload", "object", "A request/response body (validate_payload).", required=False),
     param("required_fields", "array", "Keys the payload must have.", required=False, item_type="string"),
     param("field_types", "object", "{field: 'string'|'integer'|'number'|'boolean'|'array'|'object'}.",
@@ -521,13 +595,38 @@ async def compare_api_specs(
     field_types: dict | None = None,
 ) -> str:
     name = "compare_api_specs"
+    if operation in ("validate_spec", "generate_tests"):
+        _need(name, spec=spec)
+        parsed, problem, _fmt = load_spec(spec)
+        if parsed is None:
+            raise ToolExecutionError(f"spec: {problem}", tool=name)
+        return await _run(validate_spec if operation == "validate_spec" else generate_tests, parsed)
+    if operation == "breaking_changes":
+        if old_spec is None or new_spec is None:
+            raise ToolExecutionError("breaking_changes needs both old_spec and new_spec", tool=name)
+        old_parsed, old_problem, _ = load_spec(old_spec)
+        new_parsed, new_problem, _ = load_spec(new_spec)
+        if old_parsed is None or new_parsed is None:
+            raise ToolExecutionError(f"{'old_spec' if old_parsed is None else 'new_spec'}: "
+                                     f"{old_problem if old_parsed is None else new_problem}", tool=name)
+        return await _run(classify_changes, old_parsed, new_parsed)
     if operation == "deprecated_endpoints":
         _need(name, spec=spec)
-        return await _run(ApiContractValidator.check_deprecated_endpoints, spec)
+        return await _run(ApiContractValidator.check_deprecated_endpoints, api_json_text(spec))
     if operation == "diff":
         if old_spec is None or new_spec is None:
             raise ToolExecutionError("diff needs both old_spec and new_spec", tool=name)
-        return await _run(ApiContractValidator.compare_route_sets, old_spec, new_spec)
+
+        def route_diff() -> dict:
+            result = ApiContractValidator.compare_route_sets(api_json_text(old_spec), api_json_text(new_spec))
+            result["all_breaking_changes"] = [
+                *[f"Removed path '{p}'" for p in result.get("removed_paths", [])],
+                *[f"Removed operation '{o}'" for o in result.get("removed_operations", [])],
+                *result.get("breaking_changes", []),
+            ]
+            return result
+
+        return await _run(route_diff)
     if payload is None:
         raise ToolExecutionError("validate_payload needs payload", tool=name)
     return await _run(
@@ -540,19 +639,63 @@ async def compare_api_specs(
 
 @tool(
     "inspect_sql",
-    "Lint a SQL statement or script with patterns only (it never connects to a database): flags "
-    "DROP/TRUNCATE, DELETE/UPDATE without WHERE and SELECT *, lists referenced tables, and "
-    "suggests indexes for WHERE and JOIN columns.",
-    param("query", "string", "The SQL text.", max_length=_MAX_TEXT),
-    param("schema_info", "string", "Optional schema text (DDL or table list) to match the "
-          "referenced tables against.", required=False, max_length=_MAX_TEXT),
+    "Analyse SQL text only (never connects, so no EXPLAIN plans). operation: lint (default: unsafe "
+    "statements, tables, index hints, query smells), schema (parse DDL/Alembic text: tables, "
+    "relationships, indexes, missing FK indexes), smells (vs schema_info), generate_select.",
+    param("query", "string", "The SQL text (schema: the DDL).", required=False, max_length=_MAX_TEXT),
+    param("schema_info", "string", "Schema as SQL DDL or Alembic source.", required=False,
+          max_length=_MAX_TEXT),
+    param("operation", "string", "What to do (default lint).", required=False, default="lint",
+          enum=("lint", "schema", "smells", "generate_select")),
+    param("table", "string", "generate_select: table.", required=False, max_length=200),
+    param("columns", "array", "generate_select: columns.", required=False, item_type="string"),
+    param("filters", "array", "generate_select: equality-filter columns (bound parameters).",
+          required=False, item_type="string"),
+    param("order_by", "string", "generate_select: order column.", required=False, max_length=200),
+    param("limit", "integer", "generate_select: row limit.", required=False, default=100,
+          minimum=1, maximum=10000),
     **_DATA,
 )
-async def inspect_sql(query: str, schema_info: str | None = None) -> str:
+async def inspect_sql(
+    query: str | None = None,
+    schema_info: str | None = None,
+    operation: str = "lint",
+    table: str | None = None,
+    columns: list | None = None,
+    filters: list | None = None,
+    order_by: str | None = None,
+    limit: int = 100,
+) -> str:
+    name = "inspect_sql"
+    if operation == "schema":
+        text = schema_info if schema_info is not None else query
+        if text is None:
+            raise ToolExecutionError("schema needs the DDL in 'query' or 'schema_info'", tool=name)
+        return await _run(schema_report, text)
+    if operation == "generate_select":
+        if schema_info is None or not table:
+            raise ToolExecutionError("generate_select needs schema_info and table", tool=name)
+        return await _run(
+            lambda: generate_select(
+                parse_schema(schema_info), table, [str(c) for c in _items(name, "columns", columns)] or None,
+                [str(f) for f in _items(name, "filters", filters)] or None, order_by, limit))
+    if query is None:
+        raise ToolExecutionError("provide 'query'", tool=name)
+
     def lint() -> dict:
+        schema = parse_schema(schema_info) if schema_info else None
+        if operation == "smells":
+            smells = query_smells(query, schema if schema and schema["tables"] else None)
+            return {"smells": smells, "smells_count": len(smells), "schema_tables": sorted(schema["tables"]) if schema else [],
+                    "plan_available": False}
         result = DatabaseIntelligenceTool.inspect_sql(query, schema_info)
         result["all_tables"] = DatabaseIntelligenceTool.extract_table_names(query)
         result["index_hints"] = DatabaseIntelligenceTool.suggest_index_hints(query)
+        smells = query_smells(query, schema if schema and schema["tables"] else None)
+        result["smells"] = smells
+        result["plan_available"] = False
+        if any(s["code"] == "explain_analyze_executes" for s in smells):
+            result["is_safe_sql"] = False
         return result
 
     return await _run(lint)
@@ -565,11 +708,16 @@ async def inspect_sql(query: str, schema_info: str | None = None) -> str:
 
 @tool(
     "analyze_logs",
-    "Analyse log lines you pass in. operation: errors (lines with ERROR/CRITICAL/FATAL/Traceback "
-    "and the most common exception types), root_cause (first incident and the dominant exception), "
-    "latency (outliers above threshold_ms in `latencies_ms`).",
-    param("operation", "string", "What to do.", enum=("errors", "root_cause", "latency")),
-    param("logs", "array", "Log lines (errors, root_cause).", required=False, item_type="string"),
+    "Analyse log lines and metrics you pass in (no live telemetry access). operation: incident "
+    "(logs and/or Prometheus text: ranked root-cause hypotheses with evidence lines), structured "
+    "(JSON/logfmt logs: levels, error signatures, bursts, traces), metrics (Prometheus text anomalies), "
+    "errors, root_cause (first incident), latency (outliers).",
+    param("operation", "string", "What to do.",
+          enum=("incident", "structured", "metrics", "errors", "root_cause", "latency")),
+    param("logs", "array", "Log lines.", required=False, item_type="string"),
+    param("metrics_text", "string", "Prometheus /metrics text.", required=False, max_length=_MAX_TEXT),
+    param("baseline_metrics_text", "string", "Earlier /metrics text to diff against.", required=False,
+          max_length=_MAX_TEXT),
     param("latencies_ms", "array", "Latency samples in ms (latency).", required=False, item_type="number"),
     param("threshold_ms", "number", "Outlier threshold in ms (default 1000).", required=False,
           default=1000.0, minimum=0),
@@ -580,6 +728,8 @@ async def analyze_logs(
     logs: list | None = None,
     latencies_ms: list | None = None,
     threshold_ms: float = 1000.0,
+    metrics_text: str | None = None,
+    baseline_metrics_text: str | None = None,
 ) -> str:
     name = "analyze_logs"
     if operation == "latency":
@@ -589,8 +739,22 @@ async def analyze_logs(
             [float(v) for v in _items(name, "latencies_ms", latencies_ms)],
             threshold_ms=threshold_ms,
         )
+    if operation in ("incident", "metrics"):
+        if logs is None and metrics_text is None:
+            raise ToolExecutionError("provide at least one of: logs, metrics_text", tool=name)
+        lines = [str(line) for line in _items(name, "logs", logs)] if operation == "incident" else None
+        if operation == "metrics" and metrics_text is None:
+            raise ToolExecutionError("metrics needs metrics_text", tool=name)
+        return await _run(analyze_incident, lines, metrics_text, baseline_metrics_text, slow_s=threshold_ms / 1000.0)
     _need(name, logs=logs)
     lines = [str(line) for line in _items(name, "logs", logs)]
+    if operation == "structured":
+        def structured() -> dict:
+            result = parse_structured_logs(lines)
+            result.pop("_records", None)
+            return result
+
+        return await _run(structured)
     if operation == "root_cause":
         return await _run(ObservabilityIncidentAnalyzer.identify_root_cause, lines)
     return await _run(ObservabilityIncidentAnalyzer.parse_error_logs, lines)
@@ -598,19 +762,26 @@ async def analyze_logs(
 
 @tool(
     "validate_data_records",
-    "Check tabular rows (a list of objects). operation: records (null/blank/NaN in required_fields "
-    "and duplicate values of unique_key) or numeric_bounds (values of `field` outside "
-    "min_value/max_value, non-numeric or NaN).",
-    param("operation", "string", "What to check.", enum=("records", "numeric_bounds")),
+    "Check tabular rows (a list of objects). operation: records (null/blank/NaN in required_fields, "
+    "duplicate unique_key), numeric_bounds, formats (inconsistent value shapes, padding, case "
+    "variants), corrupted (mojibake, truncated JSON, control chars, ragged rows), outliers, types, "
+    "profile (everything, with a score).",
+    param("operation", "string", "What to check.",
+          enum=("records", "numeric_bounds", "formats", "corrupted", "outliers", "types", "profile")),
     param("records", "array", "The rows.", item_type="object"),
     param("required_fields", "array", "Fields that must be present and non-empty (records).",
           required=False, item_type="string"),
     param("unique_key", "string", "A field whose values must be unique (records).", required=False,
           max_length=200),
-    param("field", "string", "The numeric field to bound (numeric_bounds).", required=False,
+    param("field", "string", "The numeric field (numeric_bounds, outliers).", required=False,
           max_length=200),
     param("min_value", "number", "Lower bound (numeric_bounds).", required=False),
     param("max_value", "number", "Upper bound (numeric_bounds).", required=False),
+    param("formats", "object", "{column: email|uuid|url|iso_date|iso_datetime|integer|decimal|phone|...}.",
+          required=False),
+    param("type_contracts", "object", "{column: string|integer|number|boolean|array|object}.", required=False),
+    param("method", "string", "Outlier rule (default zscore).", required=False, enum=("zscore", "iqr", "mad")),
+    param("threshold", "number", "Outlier threshold (z 3.0, iqr 1.5, mad 3.5).", required=False, minimum=0),
     **_DATA,
 )
 async def validate_data_records(
@@ -621,9 +792,30 @@ async def validate_data_records(
     field: str | None = None,
     min_value: float | None = None,
     max_value: float | None = None,
+    formats: dict | None = None,
+    type_contracts: dict | None = None,
+    method: str = "zscore",
+    threshold: float | None = None,
 ) -> str:
     name = "validate_data_records"
     rows = _objects(name, "records", records)
+    pinned_formats = _bounded(name, "formats", formats)
+    contracts = _bounded(name, "type_contracts", type_contracts)
+    if operation == "formats":
+        return await _run(check_formats, rows, {str(k): str(v) for k, v in (pinned_formats or {}).items()})
+    if operation == "corrupted":
+        return await _run(detect_corrupted, rows)
+    if operation == "outliers":
+        if not field:
+            raise ToolExecutionError("outliers needs 'field'", tool=name)
+        return await _run(detect_outliers, rows, field, method, threshold)
+    if operation == "types":
+        return await _run(check_types, rows, {str(k): str(v) for k, v in contracts.items()} if contracts else None)
+    if operation == "profile":
+        return await _run(
+            profile, rows, {str(k): str(v) for k, v in (pinned_formats or {}).items()} or None,
+            {str(k): str(v) for k, v in contracts.items()} if contracts else None,
+            [str(f) for f in _items(name, "required_fields", required_fields)] or None, unique_key)
     if operation == "numeric_bounds":
         if not field:
             raise ToolExecutionError("numeric_bounds needs 'field'", tool=name)
@@ -641,22 +833,28 @@ async def validate_data_records(
 
 @tool(
     "evaluate_quality_gate",
-    "Decide whether a change may merge from check results you already have. A check you leave out "
-    "counts as NOT RUN: security, tests, coverage and complexity are required by default and a "
-    "missing one fails the gate. operation: readiness (adds a weighted score and blockers) or gate.",
+    "Decide whether a change may merge from check results you already have; a check left out is "
+    "NOT RUN and a required one fails the gate. Pass booleans, or `results` {check: boolean | the "
+    "other tool's result} for security, tests, coverage, complexity, lint, architecture, review, "
+    "mutation or a custom name; verdicts then carry evidence. operation: readiness or gate.",
     param("operation", "string", "readiness (default) or gate.", required=False,
           enum=("readiness", "gate"), default="readiness"),
-    param("security_pass", "boolean", "Security checks passed.", required=False),
+    param("security_pass", "boolean", "Security passed.", required=False),
     param("tests_pass", "boolean", "Tests passed.", required=False),
     param("coverage_pass", "boolean", "Coverage met its threshold.", required=False),
     param("complexity_pass", "boolean", "Complexity within limits.", required=False),
-    param("lint_pass", "boolean", "Lint clean (optional check).", required=False),
-    param("architecture_pass", "boolean", "Architecture rules held (optional check).", required=False),
-    param("required_checks", "array", "Replace the required set (names: security, tests, coverage, "
-          "complexity, lint, architecture).", required=False, item_type="string"),
-    param("blocking_checks", "array", "Checks whose failure blocks regardless of score "
-          "(default security, tests).", required=False, item_type="string"),
-    param("min_score_threshold", "number", "Minimum weighted score 0-100 (default 80).",
+    param("lint_pass", "boolean", "Lint clean.", required=False),
+    param("architecture_pass", "boolean", "Architecture rules held.", required=False),
+    param("results", "object", "{check: boolean | result object}, e.g. review: review_code_diff output.",
+          required=False),
+    param("weights", "object", "{check: weight} overriding score weights.", required=False),
+    param("min_mutation_score", "number", "Mutation % that passes (default 50).", required=False,
+          default=50.0, minimum=0, maximum=100),
+    param("required_checks", "array", "Replace the required set (default security, tests, "
+          "coverage, complexity).", required=False, item_type="string"),
+    param("blocking_checks", "array", "Checks that block regardless of score (default security, "
+          "tests).", required=False, item_type="string"),
+    param("min_score_threshold", "number", "Minimum score 0-100 (default 80).",
           required=False, default=80.0, minimum=0, maximum=100),
     **_CODE,
 )
@@ -671,10 +869,29 @@ async def evaluate_quality_gate(
     required_checks: list | None = None,
     blocking_checks: list | None = None,
     min_score_threshold: float = 80.0,
+    results: dict | None = None,
+    weights: dict | None = None,
+    min_mutation_score: float = 50.0,
 ) -> str:
     if not math.isfinite(min_score_threshold):
         # NaN compares false with everything: it answered "approved" with ready_to_merge false.
         raise ToolExecutionError("min_score_threshold must be a finite number", tool="evaluate_quality_gate")
+    if results is not None or weights is not None:
+        found = _bounded("evaluate_quality_gate", "results", results) or {}
+        if not isinstance(found, dict) or not isinstance(weights or {}, dict):
+            raise ToolExecutionError("results and weights must be objects", tool="evaluate_quality_gate")
+        booleans = {"security": security_pass, "tests": tests_pass, "coverage": coverage_pass,
+                    "complexity": complexity_pass, "lint": lint_pass, "architecture": architecture_pass}
+        try:
+            return await _run(
+                gate_evaluate, operation=operation, booleans=booleans, results={str(k): v for k, v in found.items()},
+                required=[str(c) for c in required_checks] if required_checks is not None else None,
+                blocking=[str(c) for c in blocking_checks] if blocking_checks is not None else None,
+                weights=_bounded("evaluate_quality_gate", "weights", weights), min_score=min_score_threshold,
+                min_mutation_score=min_mutation_score,
+            )
+        except ValueError as exc:
+            raise ToolExecutionError(str(exc), tool="evaluate_quality_gate") from exc
     checks = dict(
         security_pass=security_pass, tests_pass=tests_pass, coverage_pass=coverage_pass,
         complexity_pass=complexity_pass, lint_pass=lint_pass, architecture_pass=architecture_pass,
@@ -761,15 +978,24 @@ async def synthesize_research(
 
 @tool(
     "plan_rollout",
-    "Draft a structured deployment-and-rollback plan for a service: target and previous version, "
-    "the health checks to run after, and whether rollback is possible. Produces the plan only; "
-    "it deploys nothing.",
+    "Plan a release (deploys nothing): versions, health checks, rollback possibility; give `changelog` "
+    "and `migrations` for a go/no-go checklist (changelog entry, semver vs content, destructive or "
+    "irreversible migrations, rollback safety, strategy). verify_release_health checks it afterwards.",
     param("service_name", "string", "The service being released.", max_length=200),
     param("target_version", "string", "The version being rolled out.", max_length=100),
     param("previous_version", "string", "The version to roll back to, if any.", required=False,
           max_length=100),
     param("health_checks", "array", "Paths or commands that prove the release is healthy "
           "(default ['/health']).", required=False, item_type="string"),
+    param("changelog", "string", "CHANGELOG text (Keep a Changelog style).", required=False,
+          max_length=_MAX_TEXT),
+    param("migrations", "array", "Migrations in the release: {name, text?} (text is inspected).",
+          required=False, item_type="object"),
+    param("strategy", "string", "Deployment strategy.", required=False,
+          enum=("blue_green", "canary", "rolling")),
+    param("changed_files_count", "integer", "Files changed (for the risk score).", required=False, minimum=0),
+    param("test_coverage_pct", "number", "Test coverage % (for the risk score).", required=False,
+          minimum=0, maximum=100),
     **_CODE,
 )
 async def plan_rollout(
@@ -777,18 +1003,28 @@ async def plan_rollout(
     target_version: str,
     previous_version: str | None = None,
     health_checks: list | None = None,
+    changelog: str | None = None,
+    migrations: list | None = None,
+    strategy: str | None = None,
+    changed_files_count: int | None = None,
+    test_coverage_pct: float | None = None,
 ) -> str:
     def plan() -> dict:
+        checks = [str(h) for h in _items("plan_rollout", "health_checks", health_checks)] or None
         result = DeploymentReleaseManager.plan_rollout(
-            service_name,
-            target_version,
-            previous_version=previous_version,
-            health_checks=[str(h) for h in _items("plan_rollout", "health_checks", health_checks)] or None,
-        )
+            service_name, target_version, previous_version=previous_version, health_checks=checks)
         if previous_version and previous_version.strip() == (target_version or "").strip():
             # "Roll back to the version you are deploying" is a plan with no rollback in it.
             result = {**result, "warnings": ["previous_version equals target_version: there is no "
                                               "earlier version to roll back to."]}
+        if changelog is not None or migrations is not None or strategy or changed_files_count is not None:
+            items = _items("plan_rollout", "migrations", migrations)
+            if not all(isinstance(m, (str, dict)) for m in items):
+                raise ToolExecutionError("every migration must be a name or {name, text}", tool="plan_rollout")
+            result["release_checklist"] = release_checklist(
+                service=service_name, target_version=target_version, previous_version=previous_version,
+                changelog=changelog, migrations=items, health_checks=checks or ["/health"],
+                changed_files_count=changed_files_count, test_coverage_pct=test_coverage_pct, strategy=strategy)
         return result
 
     return await _run(plan)

@@ -389,6 +389,8 @@ class TestKernelWiring:
             # ADR-043: need AURA_TOOLS_FILES_ROOT (file tools) or a run store (project_status).
             "index_repository", "search_repository", "check_file_staleness", "load_project_conventions",
             "load_project_skills", "read_notebook", "inspect_binary_file", "verify_backup",
+            # ADR-044: only registered when AURA_TOOLS_HTTP_ALLOWED_HOSTS names a host.
+            "verify_release_health",
         }
         # The sandbox/git tools (minus `clone_repository`, which additionally needs a GitHub
         # resolver this default container does not configure) are unconditionally *registered*

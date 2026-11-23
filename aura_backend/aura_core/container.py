@@ -765,6 +765,13 @@ class Container:
             )
         )
 
+        # ADR-044: `research_topic` composes other tools (search_knowledge, web_search, fetch_url) through
+        # this same registry, as the caller, so it is registered once the registry is complete.
+        if settings.open_tools.analysis_enabled:
+            from .tools.research import build_research_tools
+
+            self.tools.register_all(build_research_tools(lambda: self.tools))
+
         # Phase H: after kernel exists so the live session can stream through it.
         self.live_voice = self._build_live_voice()
 
@@ -1849,6 +1856,12 @@ class Container:
                 agent_runs=self.agent_runs,
             )
         )
+        # ADR-044 (open partial tools): the model-metric history lives in the Cache port, so these two
+        # tools need the container's cache and cannot be built by `default_tools`.
+        if self.settings.open_tools.analysis_enabled:
+            from .tools.drift import build_drift_tools
+
+            registry.register_all(build_drift_tools(self.cache_backend))
         return registry
 
     def _build_lesson_sink(self) -> Any:
