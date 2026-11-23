@@ -34,12 +34,13 @@ estimate of held output informs pressure and reporting, it does not end a run by
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
 from ..domain.planning import Plan, StepStatus
 
-__all__ = ["TokenMonitor", "BudgetStatus", "compress_results", "estimate_tokens"]
+__all__ = ["TokenMonitor", "BudgetStatus", "compress_results", "digest_omitted", "estimate_tokens"]
 
 #: Characters per token for the estimate. Conservative for code, which tokenises worse than prose.
 _CHARS_PER_TOKEN = 4
@@ -81,11 +82,57 @@ class BudgetStatus:
         }
 
 
+#: Lines that say something went wrong or needs attention. A run's output is mostly noise, but the
+#: handful of these lines is what a later pass (or the critic) actually needs; head-and-tail alone
+#: drops them whenever they sit in the middle (a failing test's name, a stack frame, a warning).
+_SALIENT = re.compile(
+    r"\b(?:errors?|fail(?:ed|ure|ures|ing)?|exceptions?|traceback|fatal|panic|assert(?:ion)?(?:error)?|"
+    r"warnings?|denied|refused|timed? ?out|not found|cannot|undefined|unresolved)\b|[✗❌]|^E\s",
+    re.I,
+)
+_DIGEST_CHARS = 500
+_DIGEST_LINES = 8
+_DIGEST_LINE_CHARS = 110
+_OMITTED_MARK = "omitted to save context"
+
+
+def digest_omitted(middle: str) -> str:
+    """The salient lines of the part a clip drops, without a model (ADR-045, row 28).
+
+    Distinct lines that look like failures or warnings, first occurrences, each cut to 110
+    characters with a repeat count, at most 8 of them and 500 characters in all. ``""`` when the
+    omitted part has none (plain noise needs no digest). Pure and bounded.
+    """
+    seen: dict[str, int] = {}
+    for line in middle.splitlines()[:20_000]:
+        text = " ".join(line.split())
+        if text and _SALIENT.search(text):
+            key = text[:_DIGEST_LINE_CHARS]
+            seen[key] = seen.get(key, 0) + 1
+    if not seen:
+        return ""
+    parts: list[str] = []
+    used = 0
+    for key, count in list(seen.items())[:_DIGEST_LINES]:
+        piece = key + (f" (x{count})" if count > 1 else "")
+        if used + len(piece) + 3 > _DIGEST_CHARS:
+            break
+        parts.append(piece)
+        used += len(piece) + 3
+    more = len(seen) - len(parts)
+    return " | ".join(parts) + (f" | (+{more} more)" if more > 0 else "")
+
+
 def _clip_middle(text: str, head: int = _HEAD_CHARS, tail: int = _TAIL_CHARS) -> str:
-    if len(text) <= head + tail + 80:
-        return text
+    if len(text) <= head + tail + 80 or _OMITTED_MARK in text[head:head + 200]:
+        return text  # short enough, or already clipped (a second pass must save nothing)
     cut = len(text) - head - tail
-    return f"{text[:head]}\n[... {cut} characters of earlier tool output omitted to save context ...]\n{text[-tail:]}"
+    digest = digest_omitted(text[head:len(text) - tail])
+    kept = f"\n[salient lines from the omitted part: {digest}]" if digest else ""
+    return (
+        f"{text[:head]}\n[... {cut} characters of earlier tool output {_OMITTED_MARK} ...]"
+        f"{kept}\n{text[-tail:]}"
+    )
 
 
 def compress_results(
