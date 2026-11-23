@@ -57,7 +57,7 @@ class ToolContext:
     __slots__ = (
         "user_id", "correlation_id", "deadline_s", "tainted", "credentials", "metadata",
         "agent_id", "allowed_tools", "allowed_tool_prefixes", "max_sensitivity", "memory_scope",
-        "capabilities", "delegation_depth", "knowledge_owner",
+        "capabilities", "delegation_depth", "knowledge_owner", "session_id",
     )
 
     def __init__(
@@ -77,8 +77,13 @@ class ToolContext:
         capabilities: tuple[str, ...] = (),
         delegation_depth: int = 0,
         knowledge_owner: UserId | None = None,
+        session_id: str | None = None,
     ) -> None:
         self.user_id = user_id
+        # The conversation this turn belongs to (``None`` for a turn without one). Carried for the
+        # session tools (checkpoint save/recall) and the handoff builder; every one of them still
+        # scopes by ``user_id`` as well, so a session id is never a capability on its own.
+        self.session_id = session_id
         # ADR-034: the owner for shareable data (the knowledge tools). ``None`` means ``user_id``.
         self.knowledge_owner = knowledge_owner
         self.correlation_id = correlation_id

@@ -172,6 +172,11 @@ _ENGINEER_OPEN_TOOLS = frozenset({
 })
 
 
+# `tools/session_tools.py`: checkpoint the conversation and read it back. Written out rather than
+# imported, like the sets above (`tests/unit/test_agents.py` pins the names against the builder).
+_SESSION_TOOLS = frozenset({"save_session_checkpoint", "recall_session_checkpoint"})
+
+
 def build_default_agent_registry(*, engineer_token_budget: int | None = None) -> AgentRegistry:
     """The seven personas :data:`AGENT_PROMPT_IDS` used to define, now with real grants.
 
@@ -280,7 +285,7 @@ def build_default_agent_registry(*, engineer_token_budget: int | None = None) ->
                     "github_get_issue", "github_get_pull_request",
                     "github_create_branch", "github_commit_files",
                     "github_create_draft_pull_request",
-                } | _CODE_ANALYSIS_TOOLS | _DATA_ANALYSIS_TOOLS | _ENGINEER_OPEN_TOOLS,
+                } | _CODE_ANALYSIS_TOOLS | _DATA_ANALYSIS_TOOLS | _ENGINEER_OPEN_TOOLS | _SESSION_TOOLS,
                 # Every tool the MCP bridge registers (`build_mcp_bridge_tools`). The prefix only
                 # decides *who* may ask: each such tool still needs the `engineer_agent`
                 # capability, and an unreviewed one stays CONFIDENTIAL + side-effecting, hence

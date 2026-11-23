@@ -49,6 +49,7 @@ from .config.settings import (
 from .context.engine import ContextEngine
 from .context.tokenizer import get_tokenizer
 from .domain.errors import ConfigurationError
+from .domain.identifiers import SessionId
 from .execution.agentic_loop import AgenticExecutor
 from .execution.critic import Critic, LLMCritic
 from .execution.recovery import RecoveryPolicy
@@ -422,6 +423,8 @@ class Container:
             summarise_after=settings.memory.summarise_after_turns,
             summariser=build_session_summariser(self.router, self.prompts),
             checkpointer=build_session_checkpointer(self.router),
+            # Off (0) unless AURA_MEMORY_AUTO_CHECKPOINT_EVERY_TURNS: each one is a model call.
+            auto_checkpoint_every=settings.memory.auto_checkpoint_every_turns,
         )
 
         # The ten retrieval strategies, and a facade presenting the selected one with the
@@ -641,6 +644,10 @@ class Container:
             self.blueprint_compiler = self._build_compiler(use_postgres=use_postgres)
             self.blueprint_deployment = self._build_deployment()
 
+        # ADR-038 (row 60): lesson extraction after Engineer turns. None unless
+        # AURA_AUTO_LESSONS_ENABLED (and memory on): the kernel then does nothing extra.
+        self.lesson_sink = self._build_lesson_sink()
+
         self.kernel = AIKernel(
             KernelDependencies(
                 router=self.router,
@@ -673,13 +680,37 @@ class Container:
                 # production), so any replica can resume the exact turn the user approved.
                 tool_confirmations=PendingConfirmationStore(self.cache_backend),
                 vision=self.vision,
+                lesson_sink=self.lesson_sink,
             )
         )
         # After kernel exists, same reason as live_voice below: `delegate_to_agent`
         # (tools/delegation.py) recurses into `self.kernel.run()`, so it cannot be built inside
         # `_build_tools()` (which runs before the kernel does) -- the resolver defers the lookup
         # of `self.kernel` to call time, once it is guaranteed to exist.
+        from .agents.handoff import HandoffStore
+        from .agents.tasks import AgentTaskManager
         from .tools.delegation import build_delegation_tools
+
+        # ADR-038, both off by default. Status and results of a background task, and handoff
+        # records, live in the shared cache (Redis in production); the running task itself is an
+        # asyncio task in this process (agents/tasks.py).
+        reasoning = settings.reasoning
+        self.agent_tasks = (
+            AgentTaskManager(
+                self.cache_backend,
+                per_user=reasoning.agent_tasks_per_user,
+                global_cap=reasoning.agent_tasks_global,
+                ttl_s=reasoning.agent_task_ttl_s,
+                deadline_s=reasoning.agent_task_deadline_s,
+            )
+            if reasoning.background_delegation_enabled else None
+        )
+        self.handoffs = (
+            HandoffStore(self.cache_backend) if reasoning.structured_handoff_enabled else None
+        )
+
+        async def _parent_checkpoint(owner: Any, session_id: str) -> Any:
+            return await self.episodic.fresh_checkpoint(SessionId(session_id), owner)
 
         self.tools.register_all(
             build_delegation_tools(
@@ -687,6 +718,10 @@ class Container:
                 kernel=lambda: self.kernel,
                 max_depth=settings.reasoning.max_delegation_depth,
                 deadline_s=settings.reasoning.delegation_deadline_s,
+                tasks=self.agent_tasks,
+                handoffs=self.handoffs,
+                checkpoint_provider=_parent_checkpoint,
+                structured_handoff=reasoning.structured_handoff_enabled,
             )
         )
 
@@ -1759,9 +1794,41 @@ class Container:
                 enable_analysis_tools=self.settings.open_tools.analysis_enabled,
                 enable_open_exec_tools=self.settings.open_tools.exec_enabled,
                 enable_desktop_ops_tools=self.settings.open_tools.desktop_ops_enabled,
+                episodic_memory=self.episodic,
             )
         )
         return registry
+
+    def _build_lesson_sink(self) -> Any:
+        """``async (LessonTurn) -> None`` queueing an Engineer turn's lessons for review, or ``None``.
+
+        Candidates are screened with the same context guards retrieved chunks pass (an injection
+        in a "lesson" is dropped, not stored), checked for secrets and duplicates, and written to
+        the engineer scope's *pending* partition (``learning/jobs.py``). Nothing here promotes them.
+        """
+        if not self.settings.learning.auto_lessons_enabled or self.memory is None:
+            return None
+        from .learning.jobs import run_engineer_lesson_extraction
+
+        safety = self.safety if self.settings.safety.enabled else None
+
+        async def screen(text: str) -> bool:
+            if safety is None:
+                return True
+            _accepted, quarantined, _tainted = await safety.guard_context_items([("lesson", text)])
+            return not quarantined
+
+        async def sink(turn: Any) -> None:
+            checkpoint = None
+            if turn.session_id:
+                # The saved one, never a fresh model call: this runs after every Engineer turn.
+                checkpoint = await self.episodic.latest_checkpoint(SessionId(turn.session_id), turn.user_id)
+            report = await run_engineer_lesson_extraction(
+                self.memory, turn, checkpoint=checkpoint, enabled=True, screen=screen,
+            )
+            logger.info("engineer lessons", extra={"report": report})
+
+        return sink
 
     def _build_sandbox_runner(self) -> Any:
         """Always a `CompositeSandboxRunner` (`adapters/host_agent.py`) wrapping the desktop
@@ -2051,6 +2118,10 @@ class Container:
         if self._shut_down:
             return
         self._shut_down = True
+        if getattr(self, "agent_tasks", None) is not None:
+            # Background sub-turns live in this process: stop them and write their final records
+            # first, before the cache they report to (and the providers they call) are closed.
+            await self._close_quietly("agent tasks", self.agent_tasks.shutdown)
         closers = self._shutdown_closers()
         await asyncio.gather(*(self._close_quietly(name, close) for name, close in closers))
         mark_dead = getattr(self.metrics, "mark_process_dead", None)

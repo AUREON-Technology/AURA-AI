@@ -937,6 +937,7 @@ def default_tools(
     enable_analysis_tools: bool = False,
     enable_open_exec_tools: bool = False,
     enable_desktop_ops_tools: bool = False,
+    episodic_memory: Any = None,
 ) -> list[Tool]:
     """Assemble the tool set for a deployment.
 
@@ -965,6 +966,11 @@ def default_tools(
         tools += build_knowledge_tools(knowledge_engine)
     if memory_engine is not None:
         tools += build_memory_tools(memory_engine)
+    if episodic_memory is not None:
+        # Row 26: the checkpoint capability had no caller. Owner-scoped inside EpisodicMemory.
+        from .session_tools import build_session_tools
+
+        tools += build_session_tools(episodic_memory)
     if personal_os_store is not None:
         tools += build_personal_os_crud_tools(personal_os_store)
     if workspace is not None:

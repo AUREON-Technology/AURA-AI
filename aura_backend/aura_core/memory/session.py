@@ -194,10 +194,16 @@ class EpisodicMemory:
         lease_ttl_s: int = 10,
         lease_wait_s: float = 12.0,
         checkpointer: Any = None,
+        auto_checkpoint_every: int = 0,
     ) -> None:
         self._cache = cache
         #: ``async (transcript, previous_summary) -> raw model text``; ``None`` = extractive only.
         self._checkpointer = checkpointer
+        #: Write a checkpoint in the background every N persisted turns of a session (``0`` = never).
+        #: Checked at the end of :meth:`append`, off the caller's path: a checkpoint is a model call.
+        self._auto_checkpoint_every = max(0, int(auto_checkpoint_every))
+        # Strong references: a bare ``create_task`` can be collected before it finishes.
+        self._background: set[asyncio.Task[Any]] = set()
         self._window = window
         self._summarise_after = summarise_after
         self._ttl = ttl_s
@@ -291,6 +297,8 @@ class EpisodicMemory:
                 folded=loaded.folded,
             )
             await self._write(key, state)
+
+        self._maybe_auto_checkpoint(session_id, owner_id, state.turn_count)
 
         if len(state.messages) <= self._summarise_after or key in self._summarising:
             return state
@@ -436,6 +444,49 @@ class EpisodicMemory:
                 self._checkpoint_key(session_id, owner_id), result.to_json().encode("utf-8"), ttl_s=self._ttl
             )
         return result
+
+    def _maybe_auto_checkpoint(self, session_id: SessionId, owner_id: UserId, turn_count: int) -> None:
+        """Schedule a checkpoint when this was every Nth turn. Never awaits, never raises.
+
+        Through :meth:`append`, the one path every persisted exchange takes (``run`` and
+        ``stream`` alike), so a caller cannot forget it. Background, because the checkpoint may
+        be a model call (seconds to minutes on a CPU host) and the turn it follows has already
+        been answered. A failed one is logged and the next Nth turn tries again.
+        """
+        every = self._auto_checkpoint_every
+        if every <= 0 or turn_count <= 0 or turn_count % every != 0:
+            return
+        try:
+            task = asyncio.get_running_loop().create_task(self._auto_checkpoint(session_id, owner_id))
+        except RuntimeError:  # no running loop: nothing to schedule on
+            return
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+
+    async def _auto_checkpoint(self, session_id: SessionId, owner_id: UserId) -> None:
+        try:
+            await self.checkpoint(session_id, owner_id, save=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("automatic session checkpoint failed", exc_info=True)
+
+    async def drain_background(self) -> None:
+        """Wait for any automatic checkpoint in flight (tests, graceful shutdown)."""
+        while self._background:
+            await asyncio.gather(*list(self._background), return_exceptions=True)
+
+    async def fresh_checkpoint(
+        self, session_id: SessionId, owner_id: UserId, *, max_age_s: float = 600.0
+    ) -> SessionCheckpoint | None:
+        """The saved checkpoint if it is recent enough, else a newly written one; ``None`` for a
+        session with nothing in it. For callers on a live path (a handoff) that should not pay for
+        a model call when one was written a moment ago."""
+        saved = await self.latest_checkpoint(session_id, owner_id)
+        if saved is not None and not saved.is_empty() and time.time() - saved.created_at <= max_age_s:
+            return saved
+        written = await self.checkpoint(session_id, owner_id, save=True)
+        return None if written.is_empty() and written.covers_messages == 0 else written
 
     async def latest_checkpoint(self, session_id: SessionId, owner_id: UserId) -> SessionCheckpoint | None:
         """The last saved checkpoint for this owner's session, or ``None``."""

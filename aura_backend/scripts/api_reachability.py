@@ -60,6 +60,8 @@ TRIAGE = (
     ("/api/v3/admin/", "to wire: admin console page missing for this route"),
     ("/api/v3/learning/", "to wire or remove: learning surface with no caller (GAP-013)"),
     ("/api/v3/tools", "to wire: tool catalogue is not shown anywhere"),
+    ("/api/v3/memory/lessons", "to wire: pending Engineer lessons (row 60, ADR-038) have no approve/reject view yet; backend scope"),
+    ("/api/v3/sessions/{session_id}/checkpoint", "to wire: session checkpoint (row 26, ADR-038) is backend-only until the client shows a resume card; backend scope"),
     ("/api/v3/workspaces", "client: team workspaces, plan, billing and shared chats are called from aura_client/lib/features/workspaces/data/workspaces_client.dart through AuraApiClient's string-built paths (SaaS P1-F2)"),
 )
 
