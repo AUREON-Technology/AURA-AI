@@ -28,8 +28,6 @@ No ``from __future__ import annotations``: the request model below is resolved b
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from pydantic import BaseModel, Field
-
 from ..domain.errors import NotFoundError, ValidationError
 from ..domain.model_settings import (
     MAX_OUTPUT_TOKENS, MAX_TEMPERATURE, MIN_OUTPUT_TOKENS, MIN_TEMPERATURE, ROUTING_POLICIES, SERVER_DEFAULTS,
@@ -37,13 +35,6 @@ from ..domain.model_settings import (
 )
 
 __all__ = ["register_model_ops"]
-
-
-class ModelSettingsRequest(BaseModel):
-    routing_policy: str | None = Field(default=None, description="One of the five routing policies, or null.")
-    require_local: bool | None = None
-    temperature: float | None = Field(default=None, ge=MIN_TEMPERATURE, le=MAX_TEMPERATURE)
-    max_output_tokens: int | None = Field(default=None, ge=MIN_OUTPUT_TOKENS, le=MAX_OUTPUT_TOKENS)
 
 
 def register_model_ops(
@@ -57,6 +48,16 @@ def register_model_ops(
     enforce_rate_limit: Callable,
     Request: Any,
 ) -> None:
+    # Imported here, not at module scope: vendor SDKs are reached lazily (ADR-001, enforced by
+    # tests/architecture/test_dependency_rules.py).
+    from pydantic import BaseModel, Field
+
+    class ModelSettingsRequest(BaseModel):
+        routing_policy: str | None = Field(default=None, description="One of the five routing policies, or null.")
+        require_local: bool | None = None
+        temperature: float | None = Field(default=None, ge=MIN_TEMPERATURE, le=MAX_TEMPERATURE)
+        max_output_tokens: int | None = Field(default=None, ge=MIN_OUTPUT_TOKENS, le=MAX_OUTPUT_TOKENS)
+
     def catalog() -> list[dict[str, Any]]:
         return container.router.catalog()
 
