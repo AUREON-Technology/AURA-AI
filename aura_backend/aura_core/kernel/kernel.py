@@ -2182,6 +2182,10 @@ class AIKernel:
                 "desktop_task_isolation": request.desktop_task_isolation,
                 "workspace_root": request.workspace_root,
                 "origin": request.origin,
+                # The user's own words for this turn, for `remember_fact` to check a fact against
+                # (tools/fact_grounding.py). A delegated turn's message is another agent's task
+                # text, not something the user said, so it carries none.
+                "user_message": (request.message or "")[:8000] if request.delegation_depth == 0 else None,
             },
         )
 

@@ -34,6 +34,7 @@ from ..domain.memory import SHARED_MEMORY_SCOPE, MemoryKind, MemoryQuery, readab
 from ..domain.network import is_internal_address
 from ..domain.tools import NETWORK_TAG, ToolCategory, ToolSensitivity
 from ..ports.runtime import Tool, ToolContext
+from .fact_grounding import check_fact_support
 from ..domain.safety import GuardAction, GuardStage
 from ..safety.guards import SecretGuard
 from .analysis import build_analysis_tools
@@ -322,9 +323,13 @@ def build_memory_tools(memory_engine: Any) -> list[Tool]:
     @tool(
         "remember_fact",
         "Store a durable fact about the user. Only for things the user stated about themselves "
-        "that will still be true next month. Do not store passing context, questions, or "
-        "anything you inferred.",
-        param("fact", "string", "The fact, written in the third person.", max_length=500),
+        "in this message that will still be true next month. Do not store passing context, "
+        "questions, or anything you inferred. The fact is checked against the user's own words: "
+        "numbers must match exactly and most of its words must appear in what they said, so "
+        "write it with their wording (\"The user lives in Cairo\" for \"I live in Cairo\"), not "
+        "a paraphrase, and ask when unsure.",
+        param("fact", "string", "The fact, written in the third person but in the user's own "
+              "words.", max_length=500),
         param("subject", "string", "A 1-3 word topic label, e.g. 'diet' or 'work location'.",
               required=False, max_length=64),
         category=ToolCategory.MEMORY,
@@ -348,6 +353,15 @@ def build_memory_tools(memory_engine: Any) -> list[Tool]:
                 "it was not stored. Remember what the credential is for, never its value.",
                 tool="remember_fact",
             )
+        # What the user said this turn (set by the kernel, never retrieved text or a delegating
+        # agent's task). Absent means the call cannot be checked -- a context built outside a turn.
+        said = (getattr(context, "metadata", None) or {}).get("user_message")
+        if isinstance(said, str) and said.strip():
+            support = check_fact_support(fact, said)
+            if not support.supported:
+                raise ToolExecutionError(
+                    f"the fact was not stored: {support.explain()}", tool="remember_fact"
+                )
         record = await memory_engine.remember(
             owner_id=context.user_id,
             content=fact,
