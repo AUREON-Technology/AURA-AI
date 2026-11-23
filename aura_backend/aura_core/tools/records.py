@@ -188,7 +188,7 @@ def _domain(
         async def update(context: ToolContext, record_id: str, **kwargs: Any) -> str:
             existing = await _owned(context, record_id)
             if existing is None:
-                return f"No {noun} found with id {_shown(record_id)}."
+                return f"No {noun} found with id {_shown(record_id)[:64]}."
             name = f"update_{noun}"
             changes = _checked(kind, {k: v for k, v in kwargs.items() if v is not None}, name)
             if not changes:
@@ -210,10 +210,10 @@ def _domain(
         async def delete(context: ToolContext, record_id: str) -> str:
             existing = await _owned(context, record_id)
             if existing is None:
-                return f"No {noun} found with id {_shown(record_id)}."
+                return f"No {noun} found with id {_shown(record_id)[:64]}."
             if not await builder.store.delete(existing.id, owner_id=context.user_id):
                 # Gone between the read and the delete (another device, another call).
-                return f"No {noun} found with id {_shown(record_id)}."
+                return f"No {noun} found with id {_shown(record_id)[:64]}."
             return f"Deleted {noun} {record_id}."
 
         builder.tools.append(create)
