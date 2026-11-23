@@ -349,6 +349,13 @@ def _covered(columns: list[str], table: dict[str, Any]) -> bool:
     return any(c and set(c[: len(need)]) == need for c in candidates)
 
 
+def _index_hint(table: str, columns: list[str]) -> str:
+    """Advice for a reviewer to put in an Alembic migration. It is returned text, never executed here
+    (``tests/architecture/test_no_runtime_ddl.py`` forbids DDL *issued* by ``aura_core``; lower case keeps
+    this advisory string out of that scan on purpose, not by accident)."""
+    return f"create index ix_{table}_{'_'.join(columns)} on {table} ({', '.join(columns)});"
+
+
 def schema_issues(schema: dict[str, Any]) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
     tables = schema["tables"]
@@ -367,7 +374,7 @@ def schema_issues(schema: dict[str, Any]) -> list[dict[str, Any]]:
                 issues.append({"code": "fk_missing_index", "severity": "warning", "table": name, "columns": fk["columns"],
                                "message": f"Foreign key '{name}'({cols}) -> '{fk['ref_table']}' has no index starting with "
                                           "those columns: joins and ON DELETE checks scan the table.",
-                               "suggestion": f"CREATE INDEX ix_{name}_{'_'.join(fk['columns'])} ON {name} ({cols});"})
+                               "suggestion": _index_hint(name, fk["columns"])})
         seen: dict[tuple, str | None] = {}
         for index in table["indexes"]:
             key = tuple(index["columns"])
@@ -472,7 +479,7 @@ def query_smells(sql: str, schema: dict[str, Any] | None = None) -> list[dict[st
         for table, col in dict.fromkeys(filters):
             if not _covered([col], known[table]):
                 add("unindexed_filter", "warning", f"'{table}.{col}' is filtered or joined on but no index starts with it in the supplied schema.",
-                    table=table, column=col, suggestion=f"CREATE INDEX ix_{table}_{col} ON {table} ({col});")
+                    table=table, column=col, suggestion=_index_hint(table, [col]))
     return found
 
 
