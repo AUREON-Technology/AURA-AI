@@ -54,6 +54,7 @@ from ..ports.coding import FileWriteOp, McpToolDescriptor, SandboxResult, Stream
 from ..ports.runtime import Tool, ToolContext
 from .base import param, tool
 from .desktop_ops import build_desktop_ops_tools
+from .devtools import build_devtools
 from .open._input import MAX_PDF_BYTES, SourceReadError, read_source_bytes
 
 __all__ = [
@@ -1419,6 +1420,8 @@ def build_sandbox_tools(
         tools.append(git_push)
     if workspace_manager is not None:
         tools += [open_workspace, list_workspaces, destroy_workspace]
+    # ADR-040: structured lint / format checks, in the same workspace run_command uses.
+    tools += build_devtools(sandbox_runner, sessions)
     if desktop_ops and host_agent_registry is not None:
         tools += build_desktop_ops_tools(sandbox_runner, sessions, host_agent_registry)
     if code_host_resolver is None:

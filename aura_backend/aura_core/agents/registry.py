@@ -171,6 +171,12 @@ _ENGINEER_OPEN_TOOLS = frozenset({
     "docker_build", "docker_compose", "profile_python",
 })
 
+# ADR-040. `lint_code` / `check_format` (`tools/devtools.py`) run in the engineer's workspace through
+# the same runner as `run_command`. The file-reading and search tools the engineer lacked
+# (`tools/media.py`, `tools/websearch.py`) are granted below as `_ENGINEER_READING_TOOLS`; each is
+# only registered when its own setting is present.
+_ENGINEER_DEVTOOLS = frozenset({"lint_code", "check_format"})
+
 
 def build_default_agent_registry() -> AgentRegistry:
     """The seven personas :data:`AGENT_PROMPT_IDS` used to define, now with real grants.
@@ -276,7 +282,7 @@ def build_default_agent_registry() -> AgentRegistry:
                     "github_get_issue", "github_get_pull_request",
                     "github_create_branch", "github_commit_files",
                     "github_create_draft_pull_request",
-                } | _CODE_ANALYSIS_TOOLS | _DATA_ANALYSIS_TOOLS | _ENGINEER_OPEN_TOOLS,
+                } | _CODE_ANALYSIS_TOOLS | _DATA_ANALYSIS_TOOLS | _ENGINEER_OPEN_TOOLS | _ENGINEER_DEVTOOLS,
                 # Every tool the MCP bridge registers (`build_mcp_bridge_tools`). The prefix only
                 # decides *who* may ask: each such tool still needs the `engineer_agent`
                 # capability, and an unreviewed one stays CONFIDENTIAL + side-effecting, hence
