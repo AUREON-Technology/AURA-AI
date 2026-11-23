@@ -380,6 +380,10 @@ class TestKernelWiring:
             # `AURA_OPEN_EXEC_TOOLS_ENABLED`.
             "generate_and_run_tests", "analyze_test_quality",
             "docker_build", "docker_compose", "profile_python",
+            # ADR-040: registered only with their engine / AURA_WEB_SEARCH_URL / files root, none of
+            # which this default container configures (`test_media_tools` registers them for real).
+            "web_search", "ocr_image", "inspect_spreadsheet", "parse_document", "transcribe_audio",
+            "analyze_image_requirements",
         }
         # The sandbox/git tools (minus `clone_repository`, which additionally needs a GitHub
         # resolver this default container does not configure) are unconditionally *registered*
