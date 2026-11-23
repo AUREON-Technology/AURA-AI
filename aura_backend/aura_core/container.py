@@ -608,6 +608,14 @@ class Container:
             self.blueprint_compiler = self._build_compiler(use_postgres=use_postgres)
             self.blueprint_deployment = self._build_deployment()
 
+        from .tools.autonomy import AutonomyStore
+
+        # ADR-039: the user's review profile, in the cache port (see tools/autonomy.py for why).
+        self.autonomy = AutonomyStore(self.cache_backend, default=settings.tools.autonomy_default)
+        #: ``async (uid: str) -> list[dict]`` revoking the paired desktop devices ``uid`` owns,
+        #: attached by ``aura_service`` because the device registry lives outside aura_core
+        #: (ADR-002). ``None`` where it is not attached; ``stop-all`` then reports it unavailable.
+        self.device_revoker = None
         self.kernel = AIKernel(
             KernelDependencies(
                 router=self.router,
@@ -640,6 +648,7 @@ class Container:
                 # production), so any replica can resume the exact turn the user approved.
                 tool_confirmations=PendingConfirmationStore(self.cache_backend),
                 vision=self.vision,
+                autonomy=self.autonomy,
             )
         )
         # After kernel exists, same reason as live_voice below: `delegate_to_agent`

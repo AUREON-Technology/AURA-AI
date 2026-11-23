@@ -1137,6 +1137,10 @@ class ToolSettings:
     #: and have it honoured. Off by default; ``strict`` and ``standard`` need no switch because
     #: neither asks for less than today's behaviour.
     allow_autonomous_profile: bool = False
+    #: The review profile a user who never chose one gets: ``standard`` (today's behaviour) or
+    #: ``strict`` (an operator who wants every side effect confirmed by default). ``autonomous``
+    #: cannot be a default -- it is something a person opts into.
+    autonomy_default: str = "standard"
 
     @classmethod
     def from_env(cls) -> "ToolSettings":
@@ -1152,6 +1156,7 @@ class ToolSettings:
             http_allowed_hosts=_list("TOOLS_HTTP_ALLOWED_HOSTS"),
             policy_file=(_env("TOOL_POLICY_FILE", "") or "").strip(),
             allow_autonomous_profile=_bool("AUTONOMY_ALLOW_AUTONOMOUS", False),
+            autonomy_default=(_env("AUTONOMY_DEFAULT", "standard") or "standard").strip().lower(),
         )
 
 
@@ -2409,6 +2414,8 @@ class AuraSettings:
             problems.append("AURA_TOOLS_FILES_ROOT must be an absolute path that is not '/' and has no '..'")
         if self.tools.policy_file and not self.tools.policy_file.startswith("/"):
             problems.append("AURA_TOOL_POLICY_FILE must be an absolute path")
+        if self.tools.autonomy_default not in ("strict", "standard"):
+            problems.append("AURA_AUTONOMY_DEFAULT must be 'strict' or 'standard'")
         for host in self.tools.http_allowed_hosts:
             if "://" in host or "/" in host or "*" in host or ":" in host:
                 problems.append(
