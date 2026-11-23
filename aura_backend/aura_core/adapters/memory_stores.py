@@ -31,6 +31,7 @@ from ..domain.github_identity import GitHubIdentity
 from ..domain.goals import GoalSnapshot
 from ..domain.identifiers import DocumentId, MemoryId, PersonalOsRecordId, UserId, WorkspaceId
 from ..domain.knowledge import (
+    DocumentStats,
     Chunk,
     Document,
     DocumentStatus,
@@ -275,6 +276,18 @@ class InMemoryDocumentStore:
         ]
         active.sort(key=lambda d: (d.id.value, -d.version))
         return active[offset : offset + limit]
+
+    async def owner_stats(self, *, owner_id: UserId | None) -> DocumentStats:
+        owner = owner_id.value if owner_id else None
+        mine = [
+            d for d in self._documents.values()
+            if d.status is DocumentStatus.ACTIVE and ((d.owner_id.value if d.owner_id else None) == owner)
+        ]
+        return DocumentStats(
+            documents=len(mine),
+            content_bytes=sum(len(d.content.encode("utf-8")) for d in mine),
+            pinned=sum(1 for d in mine if d.cag_pinned),
+        )
 
     async def set_cag_pin(
         self, document_id: DocumentId, *, owner_id: UserId | None, pinned: bool

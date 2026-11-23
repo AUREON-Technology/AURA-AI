@@ -30,6 +30,7 @@ from ..domain.errors import (
     AuthorizationError,
     ConflictError,
     DependencyUnavailableError,
+    KnowledgeError,
     NotFoundError,
     OverloadedError,
     RateLimitedError,
@@ -62,6 +63,24 @@ from .admin import register_admin_ops
 __all__ = ["build_router", "build_app", "Principal"]
 
 logger = get_logger("api.v3")
+
+#: Most documents one ``DELETE /knowledge/documents?confirm=true`` removes: each removal touches the
+#: graph, the indexes and the plan, so a corpus of thousands is cleared by calling again.
+BULK_DELETE_LIMIT = 100
+#: What ``POST /knowledge/documents/upload`` accepts as a file, by extension (no extension means PDF,
+#: as before). Text formats must be UTF-8.
+UPLOAD_TYPES = ("pdf", "md", "txt", "html")
+
+def upload_kind(filename: str | None) -> str | None:
+    """Which of :data:`UPLOAD_TYPES` an uploaded file is, by extension; ``None`` when it is none of
+    them. A name with no extension is a PDF, which is what every earlier client sent."""
+    name = (filename or "").rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    if "." not in name:
+        return "pdf"
+    extension = name.rsplit(".", 1)[-1].lower()
+    return {"pdf": "pdf", "md": "md", "markdown": "md", "txt": "txt", "text": "txt",
+            "html": "html", "htm": "html"}.get(extension)
+
 
 #: The role a service-key principal carries (AR-4). Never an admin role, so every admin check
 #: refuses it before the route allowlist even has to.
@@ -1070,7 +1089,8 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         title: str = Form(..., min_length=1, max_length=500),
         caller: Principal = Depends(principal),
     ) -> JSONResponse:
-        """Accept a raw PDF upload -- text and scanned pages alike (Phase F1).
+        """Accept a file upload: a PDF (text and scanned pages alike, Phase F1) or a Markdown, text or
+        HTML file, chosen by the file extension (none means PDF).
 
         The one HTTP entry point that was missing to reach `knowledge/documents.py`'s
         page-aware extraction (`extract_pdf` already tells a text page from a scanned one and
@@ -1089,15 +1109,33 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 details={"limit_bytes": settings.knowledge.max_document_bytes},
             )
 
-        from ..knowledge.documents import apply_ocr, extract_pdf_async, image_extraction_available
-
-        # In a worker thread (F40): parsing a long PDF held this worker's event loop. A PDF over
-        # the page cap raises DocumentTooLargeError, which answers 413 naming the limit.
-        extraction = await extract_pdf_async(
-            data, title=title, keep_images=image_extraction_available()
+        from ..knowledge.documents import (
+            apply_ocr, extract_document, extract_pdf_async, image_extraction_available,
         )
-        if extraction.unreadable_pages and container.ocr_engine is not None:
-            extraction = await apply_ocr(extraction, container.ocr_engine)
+
+        kind = upload_kind(file.filename)
+        if kind is None:
+            raise ValidationError(
+                "this file type is not supported; upload a PDF, Markdown, text or HTML file",
+                details={"filename": file.filename, "supported": list(UPLOAD_TYPES)},
+            )
+        if kind == "pdf":
+            # In a worker thread (F40): parsing a long PDF held this worker's event loop. A PDF over
+            # the page cap raises DocumentTooLargeError, which answers 413 naming the limit.
+            extraction = await extract_pdf_async(
+                data, title=title, keep_images=image_extraction_available()
+            )
+            if extraction.unreadable_pages and container.ocr_engine is not None:
+                extraction = await apply_ocr(extraction, container.ocr_engine)
+        else:
+            # Text formats are read as UTF-8; anything else is refused with the reason
+            # (``KnowledgeError``), not stored as garbled text.
+            try:
+                extraction = extract_document(
+                    data, format={"md": "markdown", "txt": "text", "html": "html"}[kind], title=title,
+                )
+            except KnowledgeError as exc:
+                raise ValidationError(exc.message, details={**exc.details, "filename": file.filename}) from exc
 
         storage_ws = await storage_workspace(caller)
         joined = "\n\n".join(block.text for block in extraction.blocks if block.text)
@@ -1159,6 +1197,19 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             }
         )
 
+    async def remove_document(caller: Principal, stored: Any) -> int:
+        """Remove one of the caller's own documents everywhere it lives, and give its bytes back to
+        the plan. ``stored`` is the document as the store holds it, already checked as the caller's."""
+        doc_id = stored.id
+        removed = await container.knowledge.delete_document(doc_id, owner_id=caller.knowledge_owner)
+        storage_ws = await storage_workspace(caller)
+        if removed and storage_ws is not None:
+            # Gives back what settle_storage counted for it (spec 5.3); never below 0.
+            await plans.free_storage(storage_ws, len(stored.content.encode("utf-8")))
+        if container.cag is not None:
+            await container.cag.on_document_changed(doc_id, owner_id=caller.knowledge_owner)
+        return removed
+
     @router.delete("/knowledge/documents/{document_id}", dependencies=idempotent)
     async def delete_document(
         request: Request, document_id: str, caller: Principal = Depends(principal)
@@ -1173,16 +1224,105 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             # on "0 chunks removed", which a fully quarantined document of one's own reports.
             raise NotFoundError(f"document {document_id!r} not found",
                                 details={"document_id": document_id})
-        removed = await container.knowledge.delete_document(
-            doc_id, owner_id=caller.knowledge_owner
-        )
-        storage_ws = await storage_workspace(caller)
-        if removed and storage_ws is not None:
-            # Gives back what settle_storage counted for it (spec 5.3); never below 0.
-            await plans.free_storage(storage_ws, len(stored.content.encode("utf-8")))
-        if container.cag is not None:
-            await container.cag.on_document_changed(doc_id, owner_id=caller.knowledge_owner)
+        removed = await remove_document(caller, stored)
         return JSONResponse(content={"deleted": True, "chunks_removed": removed})
+
+    @router.delete("/knowledge/documents", dependencies=idempotent)
+    async def delete_all_documents(
+        request: Request,
+        caller: Principal = Depends(principal),
+        confirm: bool = Query(default=False, description="Must be true: this removes every document."),
+    ) -> JSONResponse:
+        """Delete every document in the caller's own corpus (a team's corpus for a team owner or
+        admin), at most ``BULK_DELETE_LIMIT`` per call: ``remaining`` says whether to call again.
+
+        Each document goes through the same removal as ``DELETE /knowledge/documents/{id}`` -- its
+        graph facts, tombstone, index entries and plan storage -- one at a time, so one that fails
+        is reported in ``failed`` and the rest still go. Never reaches another person's documents
+        or the global corpus: the list it works from is the caller's owner scope alone.
+        """
+        await enforce_rate_limit(request, caller, "ingest")
+        require_knowledge_write(caller)
+        if not confirm:
+            raise ValidationError(
+                "confirm=true is required: this deletes every document in the corpus",
+                details={"field": "confirm"},
+            )
+        owner = caller.knowledge_owner
+        mine = await container.documents.list_active(owner_id=owner, limit=BULK_DELETE_LIMIT)
+        deleted, chunks_removed, failed = 0, 0, []
+        for stored in mine:
+            try:
+                chunks_removed += await remove_document(caller, stored)
+                deleted += 1
+            except Exception:  # noqa: BLE001 -- report it and carry on with the rest
+                logger.warning("bulk knowledge delete: a document could not be removed", exc_info=True)
+                failed.append(stored.id.value)
+        stats = await container.documents.owner_stats(owner_id=owner)
+        return JSONResponse(content={
+            "deleted": deleted, "chunks_removed": chunks_removed, "failed": failed,
+            "remaining": stats.documents,
+        })
+
+    @router.get("/knowledge/documents/{document_id}")
+    async def get_document(
+        request: Request,
+        document_id: str,
+        caller: Principal = Depends(principal),
+        content: bool = Query(default=False, description="Include the document's full text."),
+    ) -> JSONResponse:
+        """One of the caller's documents: what it is, its size and how many chunks it was split into.
+
+        Someone else's, a global one and an unknown id all answer the same 404, like the delete.
+        The text comes back only when asked for (``content=true``); it is the caller's own upload.
+        """
+        await enforce_rate_limit(request, caller, "read")
+        stored = await container.documents.get(DocumentId(document_id))
+        if stored is None or stored.owner_id != caller.knowledge_owner:
+            raise NotFoundError(f"document {document_id!r} not found", details={"document_id": document_id})
+        chunks = await container.documents.chunks_for(stored.id, stored.version)
+        body = {
+            "document_id": stored.id.value,
+            "title": stored.title,
+            "version": stored.version,
+            "status": str(stored.status),
+            "cag_pinned": stored.cag_pinned,
+            "source_type": str(stored.source_type),
+            "language": stored.language,
+            "size_bytes": len(stored.content.encode("utf-8")),
+            "chunks": len(chunks),
+            "created_at": stored.created_at.isoformat(),
+            "updated_at": stored.updated_at.isoformat(),
+            "metadata": dict(stored.metadata),
+        }
+        if content:
+            body["content"] = stored.content
+        return JSONResponse(content=body)
+
+    @router.get("/knowledge")
+    async def knowledge_summary(
+        request: Request, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """The caller's corpus at a glance: how many documents, their size, how many are pinned, what
+        a single upload may be and how much of the plan's storage is used (when the workspace is
+        metered). There is one corpus per person (or per team), not several named knowledge bases."""
+        await enforce_rate_limit(request, caller, "read")
+        stats = await container.documents.owner_stats(owner_id=caller.knowledge_owner)
+        storage = None
+        storage_ws = await storage_workspace(caller)
+        if storage_ws is not None:
+            usage = await plans.usage(storage_ws)
+            storage = {
+                "plan": usage["plan"], "used_bytes": usage["storage_used"], "allowed_bytes": usage["storage_allowed"],
+            }
+        return JSONResponse(content={
+            "documents": stats.documents,
+            "content_bytes": stats.content_bytes,
+            "cag_pinned": stats.pinned,
+            "max_document_bytes": settings.knowledge.max_document_bytes,
+            "upload_types": list(UPLOAD_TYPES),
+            "storage": storage,
+        })
 
     @router.post("/knowledge/documents/{document_id}/cag-pin", dependencies=idempotent)
     async def pin_cag_document(

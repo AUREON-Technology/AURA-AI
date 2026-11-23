@@ -31,7 +31,7 @@ from typing import Any, AsyncIterator, Mapping, Sequence
 
 from ..domain.errors import ConfigurationError, DependencyUnavailableError, NotFoundError
 from ..domain.identifiers import ChunkId, DocumentId, MemoryId, SessionId, TurnId, UserId
-from ..domain.knowledge import Chunk, Document, DocumentStatus, SourceType, TrustTier
+from ..domain.knowledge import Chunk, Document, DocumentStats, DocumentStatus, SourceType, TrustTier
 from ..domain.memory import MemoryKind, MemoryRecord, Provenance
 from ..ports.storage import GLOBAL_OWNER
 from .field_crypto import FieldCipher
@@ -421,6 +421,27 @@ class PostgresDocumentStore:
         except Exception as exc:
             raise _unavailable(f"could not list documents: {exc}") from exc
         return [self._document(row) for row in rows]
+
+    async def owner_stats(self, *, owner_id: UserId | None) -> DocumentStats:
+        pool = await self._pool._get_pool()
+        owner = owner_id.value if owner_id else None
+        try:
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT count(*) AS documents,
+                           COALESCE(sum(octet_length(content)), 0) AS content_bytes,
+                           count(*) FILTER (WHERE cag_pinned) AS pinned
+                    FROM aura_documents
+                    WHERE status = 'active' AND owner_id IS NOT DISTINCT FROM $1
+                    """,
+                    owner,
+                )
+        except Exception as exc:
+            raise _unavailable(f"could not total documents: {exc}") from exc
+        return DocumentStats(
+            documents=int(row["documents"]), content_bytes=int(row["content_bytes"]), pinned=int(row["pinned"]),
+        )
 
     async def set_cag_pin(
         self, document_id: DocumentId, *, owner_id: UserId | None, pinned: bool

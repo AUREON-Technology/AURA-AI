@@ -18,6 +18,7 @@ from ..domain.graph import FactProvenance
 from ..domain.goals import GoalSnapshot
 from ..domain.identifiers import DocumentId, MemoryId, PersonalOsRecordId, UserId
 from ..domain.knowledge import (
+    DocumentStats,
     Chunk,
     Document,
     Entity,
@@ -180,6 +181,12 @@ class DocumentStore(Protocol):
     async def list_active(
         self, *, owner_id: UserId | None, limit: int = 100, offset: int = 0
     ) -> Sequence[Document]:
+        ...
+
+    async def owner_stats(self, *, owner_id: UserId | None) -> DocumentStats:
+        """How many active documents ``owner_id`` has, their text size in UTF-8 bytes and how many
+        are CAG-pinned. Owner-only like :meth:`list_active`: ``None`` counts the global documents
+        and there is no cross-tenant total."""
         ...
 
     async def set_cag_pin(

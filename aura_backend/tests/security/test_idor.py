@@ -88,6 +88,8 @@ def _alice_can_still_find_her_document(client) -> bool:
 COVERED = {
     ("DELETE", "/api/v3/knowledge/documents/{document_id}"):
         "TestKnowledgeDocuments::test_bob_cannot_delete_alices_document",
+    ("GET", "/api/v3/knowledge/documents/{document_id}"):
+        "TestKnowledgeDocuments::test_bob_cannot_read_alices_document_or_clear_her_corpus",
     ("POST", "/api/v3/knowledge/documents/{document_id}/cag-pin"):
         "TestKnowledgeDocuments::test_bob_cannot_pin_alices_document",
     ("DELETE", "/api/v3/knowledge/documents/{document_id}/cag-pin"):
@@ -229,6 +231,20 @@ class TestKnowledgeDocuments:
         _alice_document(client)
         listing = client.get("/api/v3/knowledge/documents", headers=AUTH_B).json()["documents"]
         assert listing == []
+
+    def test_bob_cannot_read_alices_document_or_clear_her_corpus(self, client) -> None:
+        """Reading one document by id answers Bob exactly as it answers a missing id; and Bob's
+        delete-all, the only corpus-wide write, touches his own corpus and nothing of Alice's."""
+        document_id = _alice_document(client)
+        theirs = client.get(f"/api/v3/knowledge/documents/{document_id}", params={"content": "true"}, headers=AUTH_B)
+        gone = client.get("/api/v3/knowledge/documents/no-such-document", params={"content": "true"}, headers=AUTH_B)
+        assert theirs.status_code == gone.status_code == 404 and theirs.json()["error"] == gone.json()["error"]
+        assert "PELICAN" not in theirs.text
+
+        cleared = client.delete("/api/v3/knowledge/documents", params={"confirm": "true"}, headers=AUTH_B)
+        assert cleared.status_code == 200 and cleared.json()["deleted"] == 0, "Bob's delete-all deleted something"
+        assert _alice_can_still_find_her_document(client), "Bob's delete-all removed Alice's document"
+        assert client.get(f"/api/v3/knowledge/documents/{document_id}", headers=AUTH_A).status_code == 200
 
     def test_bob_cannot_retrieve_alices_content_by_search(self, client) -> None:
         _alice_document(client)

@@ -297,3 +297,19 @@ async def test_full_team_refused_as_plan_limit(client, container) -> None:
     full = client.post(f"/api/v3/workspaces/{team}/invites", headers=_as("lou"), json={"email": "m3@example.com"})
     assert full.status_code == 402
     assert full.json()["error"] == "plan_limit" and full.json()["details"]["limit"] == "seats"
+
+
+async def test_delete_all_frees_the_storage_every_document_counted(client, container) -> None:
+    """Clearing the corpus in one call gives back exactly what each document counted, and the
+    summary reports the same meter the plan enforces."""
+    for name, filler in (("one", "M" * 100), ("two", "N" * 100)):
+        assert client.post("/api/v3/knowledge/documents", headers=_as("kit"), json={"title": name, "content": filler}).status_code == 200
+    ws = (await container.tenancy.ensure_personal("kit")).id
+    assert (await container.plans.usage(ws))["storage_used"] == 200
+    assert client.get("/api/v3/knowledge", headers=_as("kit")).json()["storage"]["used_bytes"] == 200
+
+    done = client.delete("/api/v3/knowledge/documents", params={"confirm": "true"}, headers=_as("kit"))
+
+    assert done.status_code == 200 and done.json()["deleted"] == 2
+    assert (await container.plans.usage(ws))["storage_used"] == 0
+    assert client.get("/api/v3/knowledge", headers=_as("kit")).json()["storage"]["used_bytes"] == 0
