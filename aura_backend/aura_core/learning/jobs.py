@@ -18,7 +18,7 @@ from ..domain.outbox import OutboxEntry
 from ..domain.safety import GuardAction, GuardStage
 from ..observability.logging import get_logger
 from ..safety.guards import SecretGuard
-from .lessons import extract_lessons, normalise_lesson
+from .lessons import LessonCandidate, extract_lessons, normalise_lesson
 
 __all__ = [
     "run_knowledge_refresh", "run_memory_consolidate", "run_outbox_drain",
@@ -117,6 +117,7 @@ async def run_engineer_lesson_extraction(
     enabled: bool,
     screen: Callable[[str], Awaitable[bool]] | None = None,
     scope: str = ENGINEER_SCOPE,
+    model_extractor: Callable[[LessonTurn], Awaitable[list[LessonCandidate] | None]] | None = None,
 ) -> dict[str, Any]:
     """Derive lessons from one finished Engineer turn and queue them for the owner's review.
 
@@ -139,9 +140,24 @@ async def run_engineer_lesson_extraction(
     if turn.agent_id != "engineer":
         return {"status": "skipped", "reason": "not_engineer"}
 
-    candidates = extract_lessons(turn, checkpoint)
+    # ADR-045 (row 60): an optional model-written path. ``None`` or an empty list -- unavailable,
+    # refused, not valid JSON for the contract, or "nothing worth keeping" from a small model --
+    # falls back to the keyword extractor, so enabling it can only add lessons, never lose the
+    # ones the heuristic would have found. Its candidates take the same road below.
+    extractor = "heuristic"
+    candidates: list[LessonCandidate] = []
+    if model_extractor is not None:
+        try:
+            candidates = list(await model_extractor(turn) or [])
+        except Exception:
+            logger.warning("model lesson extraction failed; using the heuristic", exc_info=True)
+            candidates = []
+        extractor = "model" if candidates else "heuristic_fallback"
+    if not candidates:
+        candidates = extract_lessons(turn, checkpoint)
     report = {
-        "status": "success", "outcome": turn.outcome, "candidates": len(candidates), "stored": 0,
+        "status": "success", "extractor": extractor, "outcome": turn.outcome,
+        "candidates": len(candidates), "stored": 0,
         "duplicates": 0, "rejected_secret": 0, "rejected_unsafe": 0, "errors": 0,
     }
     secrets = SecretGuard()
@@ -167,8 +183,8 @@ async def run_engineer_lesson_extraction(
                 # No ``session_id``: recall treats a record with one as that conversation's own, so a
                 # lesson stamped with its session would never be seen by the next one. Where it came
                 # from is kept in the metadata instead.
-                extractor="engineer_lessons",
-                extractor_version="1",
+                extractor="engineer_lessons_model" if extractor == "model" else "engineer_lessons",
+                extractor_version="2" if extractor == "model" else "1",
                 metadata={
                     "review": "pending", "lesson_kind": candidate.kind,
                     "turn_id": turn.turn_id, "turn_outcome": turn.outcome,

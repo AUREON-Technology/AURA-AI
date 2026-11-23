@@ -1030,6 +1030,12 @@ def _apply_feedback(plan: list[str], feedback: str, revision: int) -> dict[str, 
     return result
 
 
+#: The step editor, public for the planning engine's held-plan feedback (ADR-045, row 51): the same
+#: reading of "remove step 2 / move step 4 to the top / ..." the agent tool uses, so the two never
+#: disagree about what a comment means.
+apply_step_feedback = _apply_feedback
+
+
 def _feedback_tool(operation: str, plan: list[str], feedback: str, feedbacks: list[str], revision: int, markdown: str,
                    section: str, new_content: str, mode: str, revised_text: str) -> dict[str, Any]:
     cls = ArtifactFeedbackIngestor

@@ -81,6 +81,7 @@ from ..domain.telemetry import (
     TurnOutcome,
     TurnTelemetry,
 )
+from ..execution.acceptance import AcceptanceReport, check_acceptance
 from ..execution.agentic_loop import AgentRunContext
 from ..execution.confirmations import PendingCall, PendingConfirmationStore, ResumedTurn
 from ..execution.critic import critique_answer
@@ -99,6 +100,7 @@ from ..ports.runtime import ToolContext
 from ..prompts.language import reply_language
 from ..prompts.library import AGENT_PROMPT_IDS
 from ..agents.registry import AgentRegistry, AgentSpec
+from ..planning.feedback import PlanFeedbackService
 from ..planning.modes import PlanDecision, decide_plan, normalise_mode
 from ..reasoning.engine import ReasoningRequest
 from ..safety.guards import redact_secrets
@@ -151,6 +153,11 @@ class TurnRequest:
     #: over ``plan``; both ``None`` is today's behaviour. ``review`` plans and then holds the plan
     #: for the user's approval instead of executing it.
     plan_mode: str | None = None
+    #: ADR-045 (row 41): acceptance criteria the caller wants the run checked against (at most
+    #: 20 of 300 characters, ``execution/acceptance.py``). Empty is today's behaviour exactly.
+    #: With criteria the planner is told them, and ``agent_loop.acceptance`` reports
+    #: ``{status, met, unmet, unverified}`` read from the run's own tool results.
+    success_criteria: tuple[str, ...] = ()
     strategy: ReasoningStrategy | None = None
     routing_policy: RoutingPolicy | None = None
     require_local: bool = False
@@ -363,6 +370,9 @@ class KernelDependencies:
     #: `RunSearchIndex` (`history/run_search.py`, ADR-041): keeps the opt-in redacted goal preview
     #: of an agent run (`AURA_AGENT_RUNS_STORE_PREVIEW`). `None`, or the setting off, stores nothing.
     run_index: Any = None
+    #: The audit sink (ADR-045): ``plan.feedback`` is recorded when a person revises a held plan.
+    #: `None` records nothing.
+    audit: Any = None
 
 
 #: Told to the model when planning or tool execution failed (CB-14). Without it the model saw
@@ -773,7 +783,12 @@ class AIKernel:
             logger.debug("shadow dispatch failed", exc_info=True)
 
         # 8b. The critic's check of the answer against what the tools reported (ADR-037) ------
-        caveat, _caveat_findings = self._answer_caveat(exec_outcome, answer, request.message)
+        acceptance = (
+            None if held is not None and held.held else self._acceptance(request, exec_outcome)
+        )
+        caveat, _caveat_findings = self._answer_caveat(
+            exec_outcome, answer, request.message, acceptance
+        )
         if caveat:
             answer = f"{answer}\n\n{caveat}"
 
@@ -876,7 +891,7 @@ class AIKernel:
             agent_run_id=agent_run_id,
             data=data,
             vision=perception.as_dict() if perception is not None else None,
-            agent_loop=agent_loop,
+            agent_loop=self._with_acceptance(agent_loop, acceptance),
             plan_mode=plan_decision.as_dict(
                 awaiting_approval=bool(held is not None and held.held), planning_failed=planning_failed,
             ),
@@ -1189,7 +1204,10 @@ class AIKernel:
                 timings["generation"] = (time.perf_counter() - stage_start) * 1000.0
                 # The critic's check of the answer against what the tools reported, and the
                 # loop's own escalation (ADR-037). Appended as more tokens, never as a rewrite.
-                caveat, caveat_findings = self._answer_caveat(outcome, answer, message)
+                acceptance = (
+                    None if held is not None and held.held else self._acceptance(request, outcome)
+                )
+                caveat, caveat_findings = self._answer_caveat(outcome, answer, message, acceptance)
                 if caveat:
                     if caveat_findings:
                         yield {"type": "critic", "stage": "answer",
@@ -1318,7 +1336,7 @@ class AIKernel:
                     "resolved_agent": resolved_agent,
                     "agent_run_id": getattr(outcome, "run_id", None),
                     # Why the loop stopped and what it concluded (ADR-037); null with no loop.
-                    "agent_loop": self._loop_summary(outcome),
+                    "agent_loop": self._with_acceptance(self._loop_summary(outcome), acceptance),
                     "plan_mode": plan_decision.as_dict(
                         awaiting_approval=bool(held is not None and held.held),
                         planning_failed=planning_failed,
@@ -1754,6 +1772,34 @@ class AIKernel:
         re-checks when it runs. Raises the same :class:`ConsentRequiredError` the turn would."""
         await self._require_engineer_consent(request)
 
+    async def revise_held_plan(self, request: TurnRequest) -> Any:
+        """ADR-045 (row 51): apply the person's free-text feedback (``request.message``) to the plan
+        held for them (``request.approval_ids``) and return a ``PlanFeedbackResult``.
+
+        Planned only: nothing runs, whatever the comment says. The plan is replanned at most once
+        per comment (``PlanningEngine.replan``, bounded by its revision allowance), held again under
+        new approval ids, and the old ids are consumed -- see ``planning/feedback.py``. Owner and
+        session are enforced by the confirmation store; the tools offered to the planner are those
+        the held turn's persona and this caller's grant allow, as for any turn."""
+        held = await self._confirmations.peek(
+            request.approval_ids,
+            user_id=request.user_id.value,
+            session_id=request.session_id.value if request.session_id else None,
+        )
+        tools = await self._tool_declarations(replace(request, agent=held.agent))
+        service = PlanFeedbackService(
+            confirmations=self._confirmations, planner=lambda: self._deps.planner,
+            audit=self._deps.audit, clock=self._deps.clock,
+        )
+        return await service.revise(
+            approval_ids=request.approval_ids, feedback=request.message,
+            user_id=request.user_id.value,
+            session_id=request.session_id.value if request.session_id else None,
+            tools=tools,
+            correlation_id=(request.correlation_id or CorrelationId.new()).value,
+            turn_id=TurnId.new().value,
+        )
+
     async def _index_run(self, request: TurnRequest, run_id: str | None, goal: str) -> None:
         """Hand the run's goal to the opt-in preview index (ADR-041). A no-op unless the operator
         enabled previews; never raises."""
@@ -1863,6 +1909,28 @@ class AIKernel:
             logger.warning("compacting session history under context pressure failed", exc_info=True)
 
     @staticmethod
+    def _acceptance(request: TurnRequest, outcome: Any) -> AcceptanceReport | None:
+        """ADR-045 (row 41): the run's tool results checked against the caller's
+        ``success_criteria``; ``None`` when none were supplied. Never raises."""
+        if not request.success_criteria:
+            return None
+        try:
+            return check_acceptance(request.success_criteria, getattr(outcome, "plan", None))
+        except Exception:  # pragma: no cover - a check is an aid, never a failed turn
+            logger.warning("acceptance check failed", exc_info=True)
+            return None
+
+    @staticmethod
+    def _with_acceptance(
+        loop: Mapping[str, Any] | None, acceptance: AcceptanceReport | None
+    ) -> Mapping[str, Any] | None:
+        """``loop`` with ``acceptance`` added; unchanged without one (an existing request's
+        ``agent_loop`` keeps exactly its old shape)."""
+        if acceptance is None:
+            return loop
+        return {**(loop or {}), "acceptance": acceptance.as_dict()}
+
+    @staticmethod
     def _loop_summary(outcome: Any) -> Mapping[str, Any] | None:
         """The agent loop's report for a done frame / response, or ``None`` with no loop."""
         loop = getattr(outcome, "loop", None)
@@ -1896,7 +1964,9 @@ class AIKernel:
         return notes
 
     @staticmethod
-    def _answer_caveat(outcome: Any, answer: str, message: str) -> tuple[str, list[Any]]:
+    def _answer_caveat(
+        outcome: Any, answer: str, message: str, acceptance: AcceptanceReport | None = None,
+    ) -> tuple[str, list[Any]]:
         """Caveat text to append to the answer, and the critic findings behind it (ADR-037).
 
         Two sources, both deterministic. The loop's own escalation -- what it gave up on and what
@@ -1905,8 +1975,10 @@ class AIKernel:
         a file or test no tool result mentions) run only when the critic is on for this loop.
         """
         loop = getattr(outcome, "loop", None)
+        # ADR-045: a run that did not meet its criteria says so, loop or no loop.
+        acceptance_note = acceptance.caveat() if acceptance is not None else ""
         if loop is None:
-            return "", []
+            return acceptance_note, []
         parts: list[str] = []
         findings: list[Any] = []
         if loop.escalation:
@@ -1924,6 +1996,8 @@ class AIKernel:
             for finding in findings:
                 prefix = "Caution" if finding.severity == "error" else "Unverified"
                 parts.append(f"{prefix} (checked against the tool results): {finding.message}.")
+        if acceptance_note:
+            parts.append(acceptance_note)
         return "\n\n".join(parts), findings
 
     @staticmethod
@@ -2199,7 +2273,7 @@ class AIKernel:
         # A planner failure propagates: the caller answers directly *and* marks the turn
         # degraded (CB-14). Swallowing it here made "no plan was needed" and "planning broke"
         # the same ``None``, so the turn reported plain success either way.
-        goal = deps.planner.goal_from_message(message)
+        goal = deps.planner.goal_from_message(message, criteria=request.success_criteria)
         plan = await deps.planner.plan(goal, available_tools=tools)
         if plan.fallback_reason:
             # The planner already answered "respond directly" for us, but only because its own

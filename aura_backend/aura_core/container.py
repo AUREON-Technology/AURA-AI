@@ -706,6 +706,7 @@ class Container:
                 autonomy=self.autonomy,
                 usage_ledger=self.usage_ledger,
                 run_index=self.run_index,
+                audit=self.audit,
             )
         )
         # ADR-041: user agent tasks. The queue runs each task through `self.kernel` -- the same
@@ -1876,6 +1877,12 @@ class Container:
         from .learning.jobs import run_engineer_lesson_extraction
 
         safety = self.safety if self.settings.safety.enabled else None
+        # ADR-045 (row 60): optional, default off. Local-only by construction (see the module).
+        model_extractor = None
+        if self.settings.learning.auto_lessons_model_enabled:
+            from .learning.model_lessons import build_model_lesson_extractor
+
+            model_extractor = build_model_lesson_extractor(self.router)
 
         async def screen(text: str) -> bool:
             if safety is None:
@@ -1890,6 +1897,7 @@ class Container:
                 checkpoint = await self.episodic.latest_checkpoint(SessionId(turn.session_id), turn.user_id)
             report = await run_engineer_lesson_extraction(
                 self.memory, turn, checkpoint=checkpoint, enabled=True, screen=screen,
+                model_extractor=model_extractor,
             )
             logger.info("engineer lessons", extra={"report": report})
 

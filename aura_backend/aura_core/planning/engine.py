@@ -201,7 +201,7 @@ class PlanningEngine:
         tool_lines = "\n".join(_render_tool_line(t) for t in available_tools)
         rendered = self._prompts.render(
             "task.plan_decomposition",
-            {"goal": goal.description, "tools": tool_lines, "max_steps": str(limit)},
+            {"goal": _goal_text(goal), "tools": tool_lines, "max_steps": str(limit)},
         )
 
         try:
@@ -490,6 +490,19 @@ class PlanningEngine:
     @staticmethod
     def goal_from_message(message: str, *, criteria: Sequence[str] = ()) -> Goal:
         return Goal(description=message.strip(), success_criteria=tuple(criteria))
+
+
+def _goal_text(goal: Goal) -> str:
+    """The goal as the planner sees it. With ``success_criteria`` (ADR-045) they are listed, so the
+    plan includes a step that produces evidence for each; without them it is the description
+    unchanged."""
+    if not goal.success_criteria:
+        return goal.description
+    listed = "\n".join(f"- {c}" for c in goal.success_criteria)
+    return (
+        f"{goal.description}\n\nAcceptance criteria (the finished run is checked against these "
+        f"using the tools' own output, so include steps whose output shows each one):\n{listed}"
+    )
 
 
 def _parse_json_object(text: str) -> dict[str, Any]:
