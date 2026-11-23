@@ -60,8 +60,9 @@ tests stay as they were. Two new tools are justified because they need something
   register, is reported in `coverage.tools_unavailable` and `gaps`; it is not reached another way.
 * **No new state outside the platform's ports.** Metric history lives in `Cache` under
   `aura:drift:v1:<owner>:<model>:<metric>` (owner = knowledge owner, else user), 50 observations per
-  series, 200 values per observation, 50 series per owner, 90-day expiry. The only module-level object is
-  none; a lock table lives inside the builder's closure. There is no table, so no migration.
+  series, 200 values per observation, 50 series per owner, 90-day expiry. There is no module-level mutable
+  state (the lock that serialises a read-modify-write lives in the builder's closure) and no table, so no
+  migration.
 * **Everything is bounded**: inputs by the existing `_MAX_TEXT` / `_MAX_ITEMS`, results by `_dump`,
   generated diagrams and findings by caps that say when they cut (`truncated`).
 * **The planner prompt budget** (`tests/unit/test_analysis_tools.py`) rose from 7,000 to 8,500 characters
