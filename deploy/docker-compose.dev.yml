@@ -484,6 +484,12 @@ services:
       AURA_ANALYSIS_TOOLS_ENABLED: ${AURA_ANALYSIS_TOOLS_ENABLED:-true}
       AURA_TOOLS_FILES_ROOT: ${AURA_TOOLS_FILES_ROOT:-}
       AURA_TOOLS_HTTP_ALLOWED_HOSTS: ${AURA_TOOLS_HTTP_ALLOWED_HOSTS:-}
+      # web_search (ADR-040): an operator-run SearXNG with the JSON format enabled; empty = no
+      # web_search tool. Never a hosted search API.
+      AURA_WEB_SEARCH_URL: ${AURA_WEB_SEARCH_URL:-}
+      AURA_WEB_SEARCH_TIMEOUT_S: ${AURA_WEB_SEARCH_TIMEOUT_S:-10}
+      AURA_WEB_SEARCH_ENGINES: ${AURA_WEB_SEARCH_ENGINES:-}
+      AURA_WEB_SEARCH_LANGUAGE: ${AURA_WEB_SEARCH_LANGUAGE:-}
       AURA_OPEN_EXEC_TOOLS_ENABLED: ${AURA_OPEN_EXEC_TOOLS_ENABLED:-false}
       AURA_DESKTOP_OPS_TOOLS_ENABLED: ${AURA_DESKTOP_OPS_TOOLS_ENABLED:-true}
       # Track AP connectors (ADR-021), off by default. Credentials are vaulted under the
