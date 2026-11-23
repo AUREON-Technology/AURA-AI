@@ -36,6 +36,7 @@ from .open.dependency_license_compliance_scanner import DependencyLicenseComplia
 from .open.dependency_manager_validator import DependencyManagerValidator
 from .open.deployment_release_manager import DeploymentReleaseManager
 from .open.gate_ext import evaluate as gate_evaluate
+from .open.data_ext import check_formats, check_types, detect_corrupted, detect_outliers, profile
 from .open.diagram_ext import (
     architecture_from_modules, er_from_sql, flowchart_from_source, sequence_from_source, validate_deep,
 )
@@ -761,19 +762,26 @@ async def analyze_logs(
 
 @tool(
     "validate_data_records",
-    "Check tabular rows (a list of objects). operation: records (null/blank/NaN in required_fields "
-    "and duplicate values of unique_key) or numeric_bounds (values of `field` outside "
-    "min_value/max_value, non-numeric or NaN).",
-    param("operation", "string", "What to check.", enum=("records", "numeric_bounds")),
+    "Check tabular rows (a list of objects). operation: records (null/blank/NaN in required_fields, "
+    "duplicate unique_key), numeric_bounds, formats (inconsistent value shapes, padding, case "
+    "variants), corrupted (mojibake, truncated JSON, control chars, ragged rows), outliers, types, "
+    "profile (everything, with a score).",
+    param("operation", "string", "What to check.",
+          enum=("records", "numeric_bounds", "formats", "corrupted", "outliers", "types", "profile")),
     param("records", "array", "The rows.", item_type="object"),
     param("required_fields", "array", "Fields that must be present and non-empty (records).",
           required=False, item_type="string"),
     param("unique_key", "string", "A field whose values must be unique (records).", required=False,
           max_length=200),
-    param("field", "string", "The numeric field to bound (numeric_bounds).", required=False,
+    param("field", "string", "The numeric field (numeric_bounds, outliers).", required=False,
           max_length=200),
     param("min_value", "number", "Lower bound (numeric_bounds).", required=False),
     param("max_value", "number", "Upper bound (numeric_bounds).", required=False),
+    param("formats", "object", "{column: email|uuid|url|iso_date|iso_datetime|integer|decimal|phone|...}.",
+          required=False),
+    param("type_contracts", "object", "{column: string|integer|number|boolean|array|object}.", required=False),
+    param("method", "string", "Outlier rule (default zscore).", required=False, enum=("zscore", "iqr", "mad")),
+    param("threshold", "number", "Outlier threshold (z 3.0, iqr 1.5, mad 3.5).", required=False, minimum=0),
     **_DATA,
 )
 async def validate_data_records(
@@ -784,9 +792,30 @@ async def validate_data_records(
     field: str | None = None,
     min_value: float | None = None,
     max_value: float | None = None,
+    formats: dict | None = None,
+    type_contracts: dict | None = None,
+    method: str = "zscore",
+    threshold: float | None = None,
 ) -> str:
     name = "validate_data_records"
     rows = _objects(name, "records", records)
+    pinned_formats = _bounded(name, "formats", formats)
+    contracts = _bounded(name, "type_contracts", type_contracts)
+    if operation == "formats":
+        return await _run(check_formats, rows, {str(k): str(v) for k, v in (pinned_formats or {}).items()})
+    if operation == "corrupted":
+        return await _run(detect_corrupted, rows)
+    if operation == "outliers":
+        if not field:
+            raise ToolExecutionError("outliers needs 'field'", tool=name)
+        return await _run(detect_outliers, rows, field, method, threshold)
+    if operation == "types":
+        return await _run(check_types, rows, {str(k): str(v) for k, v in contracts.items()} if contracts else None)
+    if operation == "profile":
+        return await _run(
+            profile, rows, {str(k): str(v) for k, v in (pinned_formats or {}).items()} or None,
+            {str(k): str(v) for k, v in contracts.items()} if contracts else None,
+            [str(f) for f in _items(name, "required_fields", required_fields)] or None, unique_key)
     if operation == "numeric_bounds":
         if not field:
             raise ToolExecutionError("numeric_bounds needs 'field'", tool=name)
