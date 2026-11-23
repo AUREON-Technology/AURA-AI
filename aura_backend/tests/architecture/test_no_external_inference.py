@@ -891,3 +891,71 @@ class TestClaudeIsGatedNotSilent:
         assert "anthropic" in BANNED_PROVIDER_KINDS
         assert "ANTHROPIC_API_KEY" in BANNED_CREDENTIAL_NAMES
         assert "ANTHROPIC_AUTH_TOKEN" in BANNED_CREDENTIAL_NAMES
+
+
+class TestExtractionIsGatedNotSilent:
+    """ADR-038: Cloudflare's ``clairic`` is reached only on purpose, only through one module, and
+    without widening ADR-030's open-weight rule.
+
+    Each assertion pins one edge of the exception, so widening it -- a second call site, a provider
+    slot for the model, a banned host, a wider open-weight list -- fails a named test.
+    """
+
+    ADAPTER = "aura_core/adapters/cloudflare_clairic.py"
+
+    def test_exactly_one_module_names_the_run_path(self) -> None:
+        naming = sorted(
+            _rel(p)
+            for p in _sources()
+            if _rel(p).startswith("aura_core/")
+            and _rel(p) not in SELF_EXEMPT
+            and "/ai/run" in p.read_text(encoding="utf-8")
+        )
+        assert naming == [self.ADAPTER], (
+            "Only the sanctioned adapter may name Workers AI's /ai/run path (ADR-038). "
+            f"Found: {naming}"
+        )
+
+    def test_the_adapter_imports_the_http_client_lazily(self) -> None:
+        tree = ast.parse((BACKEND / self.ADAPTER).read_text(encoding="utf-8"))
+        for node in tree.body:
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                assert "httpx" not in _dotted_imports(ast.Module(body=[node], type_ignores=[]))
+
+    def test_the_host_stays_gated_and_is_never_a_banned_one(self) -> None:
+        from aura_core.config.external_inference import (
+            EXTRACTION_API_HOST,
+            is_external_inference_host,
+            is_hosted_open_weight_host,
+        )
+
+        assert is_hosted_open_weight_host(EXTRACTION_API_HOST)
+        assert is_external_inference_host(EXTRACTION_API_HOST) is None
+
+    def test_the_ai_gateway_proxy_stays_banned(self) -> None:
+        assert "gateway.ai.cloudflare.com" in EXTERNAL_INFERENCE_HOSTS
+
+    def test_the_open_weight_rule_was_not_widened_to_admit_the_model(self) -> None:
+        from aura_core.config.external_inference import EXTRACTION_MODEL, is_open_weight_model
+
+        assert not is_open_weight_model(EXTRACTION_MODEL), (
+            "clairic is now recognised as open-weight. If Cloudflare has published its weights, "
+            "retire ADR-038's exception rather than leaving both in place (ADR-038 O-2)."
+        )
+
+    def test_the_model_cannot_be_a_chat_provider_slot_even_with_the_hosted_opt_in(
+        self, monkeypatch
+    ) -> None:
+        from aura_core.config.external_inference import EXTRACTION_MODEL
+        from aura_core.config.settings import ProviderConfig
+        from aura_core.domain.errors import ConfigurationError
+
+        monkeypatch.setenv("AURA_ALLOW_HOSTED_INFERENCE", "true")
+        with pytest.raises(ConfigurationError) as excinfo:
+            ProviderConfig(
+                name="hosted",
+                kind="openai_compatible",
+                model=EXTRACTION_MODEL,
+                base_url="https://api.cloudflare.com/client/v4/accounts/abc123/ai/v1",
+            )
+        assert "open-weight" in str(excinfo.value)

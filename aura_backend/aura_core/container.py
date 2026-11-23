@@ -462,6 +462,9 @@ class Container:
         self._github_clients_by_user: dict[str, Any] = {}
         self.github_client_resolver = self._build_github_client_resolver()
         self.mcp_client = self._build_mcp_client()
+        # ADR-038: None unless AURA_ALLOW_EXTRACTION_INFERENCE is on. Before the tools, which
+        # register ``extract_structured`` only when there is an extractor to call.
+        self.structured_extractor = self._build_structured_extractor()
         self.tools = self._build_tools()
         self.planner = (
             PlanningEngine(
@@ -1030,6 +1033,7 @@ class Container:
         from .control.wiring import key_slots
 
         if settings.environment.is_production_like:
+            from .adapters.cloudflare_account import HttpCloudflareAccount
             from .adapters.cloudflare_tokens import HttpCloudflareTokens
 
             async def cloudflare_token() -> str:
@@ -1038,11 +1042,17 @@ class Container:
             cloudflare_api: Any = HttpCloudflareTokens(
                 token_source=cloudflare_token, api_root=cloudflare_api_root(settings.llm.providers),
             )
+            cloudflare_account: Any = HttpCloudflareAccount(
+                token_source=cloudflare_token, api_root=cloudflare_api_root(settings.llm.providers),
+            )
         else:
+            from .adapters.cloudflare_account import InMemoryCloudflareAccount
             from .adapters.cloudflare_tokens import InMemoryCloudflareTokens
 
             cloudflare_api = InMemoryCloudflareTokens()
+            cloudflare_account = InMemoryCloudflareAccount()
         self.cloudflare_tokens = cloudflare_api
+        self.cloudflare_account = cloudflare_account
 
         # Stage 5: Qdrant Cloud (the cluster named when its key was connected, or the gateway's
         # own) and Grafana Cloud (the stack named with its token).
@@ -1089,10 +1099,20 @@ class Container:
             space_api=space_api, cloudflare=cloudflare_api, slots=key_slots(settings.llm.providers),
             provider_health=lambda: self.router.stats(),
         )
+        # Stage 6: the Cloudflare tab's engine (providers, model catalog). A removed provider's
+        # token is revoked by the reconciler, and only once the change has stayed healthy.
+        from .control.cloudflare import REVOKE_ACTION, CloudflareControl
+
+        self.cloudflare_control = CloudflareControl(
+            control=self.control, store=store, railway=self.railway, tokens=cloudflare_api,
+            account=cloudflare_account, api_root=cloudflare_api_root(settings.llm.providers),
+            provider_health=lambda: self.router.stats(),
+        )
         self.control_reconciler = Reconciler(
             store=store, vault=vault,
             platforms={Platform.RAILWAY: railway_api, Platform.HF_SPACE: space_api},
             watch_s=control.rollback_watch_s,
+            success_hooks={REVOKE_ACTION: self.cloudflare_control.revoke_after_success},
         )
         self._reconciler_task: Any = None
 
@@ -1944,7 +1964,45 @@ class Container:
                 enable_desktop_ops_tools=self.settings.open_tools.desktop_ops_enabled,
             )
         )
+        if self.structured_extractor is not None:
+            # ADR-038. Built here, not in ``default_tools``: it needs the audit sink and the clock,
+            # and like every other opt-in resource it exists only when its adapter does.
+            from .tools.extract import build_extract_tools
+
+            extraction = self.settings.extraction
+            registry.register_all(
+                build_extract_tools(
+                    extractor=self.structured_extractor,
+                    audit=self.audit,
+                    clock=self.clock,
+                    min_confidence=extraction.min_confidence,
+                    max_chars=extraction.max_chars,
+                    timeout_s=extraction.timeout_s,
+                    daily_call_cap=extraction.daily_call_cap,
+                )
+            )
         return registry
+
+    def _build_structured_extractor(self) -> Any:
+        """Cloudflare's ``clairic`` behind the extraction port, or ``None`` when it is off (ADR-038).
+
+        Off is the default and means no adapter and no tool. On, the adapter is built here and
+        connects lazily like every other: nothing touches the network until the first call. A bad
+        account id or an empty credential raises ``ConfigurationError`` from the adapter itself,
+        the same refusal ``AuraSettings.validate`` gives at startup, repeated for callers that
+        loaded settings with ``validate=False``.
+        """
+        extraction = self.settings.extraction
+        if not extraction.enabled:
+            return None
+        from .adapters.cloudflare_clairic import ClairicExtractor
+
+        return ClairicExtractor(
+            account_id=extraction.account_id,
+            api_key=extraction.api_key,
+            clock=self.clock,
+            timeout_s=extraction.timeout_s,
+        )
 
     def _build_sandbox_runner(self) -> Any:
         """Always a `CompositeSandboxRunner` (`adapters/host_agent.py`) wrapping the desktop
@@ -2313,6 +2371,7 @@ class Container:
             ("host agent relay", getattr(getattr(self, "host_agent_registry", None), "relay", None)),
             ("github client", self.github_client),
             ("mcp client", self.mcp_client),
+            ("structured extractor", getattr(self, "structured_extractor", None)),
         ):
             if adapter is not None and isinstance(adapter, Closeable):
                 closers.append((name, adapter.close))
@@ -2395,6 +2454,14 @@ class Container:
             if not result.get("healthy", True):
                 healthy = False
 
+        # ADR-038. Informational, never gates readiness: an optional tool, and the adapter has no
+        # free endpoint to probe, so this reports configuration and its own cooldown, never a call.
+        extractor = self.structured_extractor
+        extraction: dict[str, Any] = {"enabled": extractor is not None}
+        if extractor is not None:
+            extraction["model"] = extractor.model_id
+            extraction["cooling_down"] = not (await extractor.health()).healthy
+
         payload = {
             "providers": providers,
             "index": knowledge_index["published"],
@@ -2430,6 +2497,7 @@ class Container:
                 "dimension": getattr(self.embedder, "dimension", None),
                 "semantic": not isinstance(self.embedder, HashEmbeddingProvider),
             },
+            "extraction": extraction,
             "healthy": healthy,
             # Informational, never gates readiness: `healthy` needs any provider, but a turn sent
             # with `require_local` (service callers such as Flame default to it) can only use a

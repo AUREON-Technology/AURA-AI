@@ -616,6 +616,11 @@ const server = http.createServer(async (request, response) => {
         auraError(response, 422, "validation_error", `${platformName} refused the token`);
         return;
       }
+      // The real verifier (adapters/platform_verify.py) needs the account id with a Cloudflare token.
+      if (platformName === "cloudflare" && !/^[0-9a-f]{32}$/.test(body.target || "")) {
+        auraError(response, 422, "validation_error", "give the Cloudflare account id: 32 lower-case hexadecimal characters");
+        return;
+      }
       const replaced = Boolean(control.platforms[platformName]);
       const verified = true; // every platform's token is checked since stage 5
       control.platforms[platformName] = {
@@ -750,6 +755,21 @@ const server = http.createServer(async (request, response) => {
       const safety = shot();
       qd.points[name] = target.points;
       journal("vector_restore", { snapshot: target.name, safety_snapshot: safety.name }, { safety_snapshot: safety.name });
+      return;
+    }
+
+    // -- The Cloudflare tab (stage 6; aura_core/control/cloudflare.py) -----------------------------
+    if (path.startsWith("/api/v3/admin/control/cloudflare")) {
+      const credential = control.platforms.cloudflare;
+      if (method === "GET" && path === "/api/v3/admin/control/cloudflare") {
+        json(response, 200, {
+          connected: Boolean(credential), account_id: credential?.target || "",
+          api_root: "https://cloudflare.mock/client/v4", gateway_ready: Boolean(control.platforms.railway),
+          hosted_inference_allowed: control.platforms.railway ? true : null, providers: [],
+        });
+        return;
+      }
+      auraError(response, 404, "not_found", "no such route");
       return;
     }
 

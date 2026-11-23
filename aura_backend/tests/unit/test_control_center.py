@@ -106,6 +106,14 @@ ROUTES = [
     ("POST", "/api/v3/admin/control/keys/hosted1/replace", {"value": "k", "confirm": "hosted1"}),
     ("POST", "/api/v3/admin/control/keys/hosted1/rotate", {"confirm": "hosted1"}),
     ("POST", "/api/v3/admin/control/keys/cloudflare/tokens/cf-1/revoke", {"confirm": "x"}),
+    ("GET", "/api/v3/admin/control/cloudflare", None),
+    ("GET", "/api/v3/admin/control/cloudflare/models", None),
+    ("POST", "/api/v3/admin/control/cloudflare/providers/validate", {"operation": "remove", "name": "cfp-1"}),
+    ("POST", "/api/v3/admin/control/cloudflare/providers",
+     {"name": "cfp-1", "model": "@cf/openai/gpt-oss-20b", "context_window": 32768, "confirm": "cfp-1"}),
+    ("POST", "/api/v3/admin/control/cloudflare/providers/cfp-1/replace",
+     {"model": "@cf/openai/gpt-oss-20b", "context_window": 32768, "confirm": "cfp-1"}),
+    ("POST", "/api/v3/admin/control/cloudflare/providers/cfp-1/remove", {"confirm": "cfp-1"}),
     ("GET", "/api/v3/admin/control/monitoring", None),
     ("POST", "/api/v3/admin/control/monitoring/apply", {"confirm": "grafana"}),
     ("GET", "/api/v3/admin/control/vector", None),
@@ -141,7 +149,8 @@ class TestOnlyTheSuperAdmin:
         swept = {
             (m, p.replace("/hf_space/", "/{platform}/").replace("/svc-gw/", "/{service_id}/")
                  .replace("/dep-1/", "/{deployment_id}/").replace("/hosted1/", "/{slot}/")
-                 .replace("/cf-1/", "/{token_id}/").replace("/docs/", "/{collection}/"))
+                 .replace("/cf-1/", "/{token_id}/").replace("/cfp-1/", "/{name}/")
+                 .replace("/docs/", "/{collection}/"))
             for m, p, _ in ROUTES
         }
         assert registered == swept
@@ -315,7 +324,7 @@ class TestTokens:
             bodies = [connected.text] + [
                 client.get(path).text for path in (
                     "/api/v3/admin/control/overview", "/api/v3/admin/control/settings",
-                    "/api/v3/admin/control/changes",
+                    "/api/v3/admin/control/changes", "/api/v3/admin/control/cloudflare",
                 )
             ]
         audit = [json.dumps(e.as_dict() if hasattr(e, "as_dict") else e.__dict__, default=str)

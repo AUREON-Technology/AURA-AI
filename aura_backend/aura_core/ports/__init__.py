@@ -10,6 +10,7 @@ clients running inside coroutines (see ``docs/analysis/05-performance-report.md`
 async-only port surface makes that mistake impossible to repeat above the adapter boundary.
 """
 
+from .extraction import StructuredExtractor
 from .llm import EmbeddingProvider, HealthStatus, LLMProvider, Reranker
 from .runtime import (
     AuditEvent,
@@ -38,6 +39,7 @@ __all__ = [
     "EmbeddingProvider",
     "Reranker",
     "HealthStatus",
+    "StructuredExtractor",
     "VectorStore",
     "VectorPoint",
     "DocumentStore",

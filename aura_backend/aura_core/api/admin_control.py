@@ -14,17 +14,20 @@ Space -- status, variables (watched and undone on failure), write-only secrets, 
 rebuild, hardware, sleep time and logs. Stage 4: provider keys -- replace, rotate both sides
 (gateway and Space), create a new Cloudflare key and revoke unused ones. Stage 5: Grafana Cloud
 (rule groups applied, scrape and uptime status, firing alerts) and Qdrant Cloud (health,
-collections, snapshots, and a restore that snapshots the current state first).
+collections, snapshots, and a restore that snapshots the current state first). Stage 6: the
+Cloudflare tab -- overview, the live Workers AI model catalog, and add, replace and remove for the
+gateway's Cloudflare providers (each one watched gateway change, with a dry run).
 """
 
 # No `from __future__ import annotations`: request models are defined inside the register
 # function, and FastAPI must resolve their annotations at decoration time (as in v3.py).
 import os
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 
 from ..control.catalog import build_catalog
 from ..control.railway import change_json
 from ..control.service import STEP_UP_HEADER
+from ..domain.cloudflare_provider import CloudflareProviderSpec
 from ..domain.control import Platform
 from ..domain.errors import ValidationError
 
@@ -128,6 +131,46 @@ def register_control_ops(
 
         deployment_id: str = Field(min_length=1, max_length=128)
         confirm: str = Field(default="", max_length=128)
+
+    class CloudflareProviderRequest(BaseModel):
+        """What the Add and Replace forms set. Strict on purpose: ``"32768"`` for a number or
+        ``true`` for a tier is a mistake to report, not a value to coerce."""
+
+        model_config = ConfigDict(extra="forbid", strict=True)
+
+        #: Optional here so the same body serves a dry run of Remove; the spec refuses a missing one.
+        model: Optional[str] = Field(default=None, max_length=200)
+        context_window: Optional[int] = None
+        quality_tier: int = 2
+        max_output_tokens: int = 2048
+        enabled: bool = True
+        rpm: int = 0
+        rpd: int = 0
+        tpm: int = 0
+        tpd: int = 0
+        tokens_per_second: float = 0.0
+        json_mode: bool = False
+        vision: bool = False
+        #: ``create`` (default for Add) or ``paste``; Replace also takes ``keep`` (its default).
+        key: Optional[str] = Field(default=None, max_length=16)
+        key_value: Optional[str] = Field(default=None, max_length=8192)
+        enable_consent: bool = False
+        confirm: str = Field(default="", max_length=128)
+
+    class CloudflareAddRequest(CloudflareProviderRequest):
+        name: str = Field(min_length=1, max_length=64)
+
+    class CloudflareValidateRequest(CloudflareProviderRequest):
+        operation: Literal["add", "replace", "remove"]
+        name: str = Field(min_length=1, max_length=64)
+
+    def provider_spec(name: str, body: Any) -> CloudflareProviderSpec:
+        return CloudflareProviderSpec(
+            name=name, model=body.model, context_window=body.context_window,
+            quality_tier=body.quality_tier, max_output_tokens=body.max_output_tokens, enabled=body.enabled,
+            rpm=body.rpm, rpd=body.rpd, tpm=body.tpm, tpd=body.tpd,
+            tokens_per_second=body.tokens_per_second, json_mode=body.json_mode, vision=body.vision,
+        )
 
     def actor(caller: Any) -> str:
         return caller.email or caller.user_id.value
@@ -419,6 +462,82 @@ def register_control_ops(
     async def keys_revoke(token_id: str, payload: ServiceConfirmRequest, request: Request, caller=Depends(principal)) -> Any:
         return await keys_write(request, caller, "revoke", token_id, lambda: container.keys.revoke_cloudflare(
             token_id, actor=actor(caller), confirm=payload.confirm,
+        ))
+
+    # -- Cloudflare (stage 6) ---------------------------------------------------------------
+    from fastapi import Query
+
+    @router.get("/admin/control/cloudflare")
+    async def cloudflare_overview(caller=Depends(principal)) -> Any:
+        require_super_admin(caller)
+        return ok(await container.cloudflare_control.overview())
+
+    @router.get("/admin/control/cloudflare/models")
+    async def cloudflare_models(
+        task: str = Query("Text Generation", max_length=100), search: str = Query("", max_length=100),
+        page: int = Query(1, ge=1, le=1000), per_page: int = Query(100, ge=1, le=100),
+        caller=Depends(principal),
+    ) -> Any:
+        require_super_admin(caller)
+        return ok(await container.cloudflare_control.models(task=task, search=search, page=page, per_page=per_page))
+
+    async def cloudflare_write(request: Any, caller: Any, action: str, target: str, run: Callable) -> Any:
+        await stepped_up(request, caller)
+        event = f"admin.control.cloudflare.{action}"
+        try:
+            result = await run()
+        except Exception as exc:
+            await audit_admin(request, caller, event, target, "refused",
+                              detail={"error": type(exc).__name__,
+                                      "reason": str((getattr(exc, "details", None) or {}).get("reason", ""))})
+            raise
+        detail = result.get("detail") or {}
+        # The consent and the key mode are what a reader of the audit trail needs; never a value.
+        extra = {k: detail[k] for k in ("provider", "model", "key", "consent_enabled") if k in detail}
+        await audit_admin(request, caller, event, target, "success",
+                          detail={"change_id": result["change_id"], "status": result["status"], **extra})
+        return ok(result)
+
+    @router.post("/admin/control/cloudflare/providers/validate")
+    async def cloudflare_validate(payload: CloudflareValidateRequest, caller=Depends(principal)) -> Any:
+        """A dry run of add, replace or remove: every check of the real write, nothing written, no
+        key made. The typed confirmation is supplied here because nothing is changed."""
+        require_super_admin(caller)
+        engine, who, name = container.cloudflare_control, actor(caller), payload.name
+        if payload.operation == "remove":
+            return ok(await engine.remove_provider(name, actor=who, confirm=name, dry_run=True))
+        spec = provider_spec(name, payload)
+        key = payload.key
+        value = payload.key_value or ("dry-run" if key == "paste" else None)
+        if payload.operation == "replace":
+            return ok(await engine.replace_provider(
+                name, spec, key=key or "keep", key_value=value, actor=who, confirm=name, dry_run=True,
+            ))
+        return ok(await engine.add_provider(
+            spec, key=key or "create", key_value=value, enable_consent=payload.enable_consent,
+            actor=who, confirm=name, dry_run=True,
+        ))
+
+    @router.post("/admin/control/cloudflare/providers")
+    async def cloudflare_add(payload: CloudflareAddRequest, request: Request, caller=Depends(principal)) -> Any:
+        return await cloudflare_write(request, caller, "add", payload.name, lambda: container.cloudflare_control.add_provider(
+            provider_spec(payload.name, payload), key=payload.key or "create", key_value=payload.key_value,
+            enable_consent=payload.enable_consent, actor=actor(caller), confirm=payload.confirm,
+        ))
+
+    @router.post("/admin/control/cloudflare/providers/{name}/replace")
+    async def cloudflare_replace(
+        name: str, payload: CloudflareProviderRequest, request: Request, caller=Depends(principal)
+    ) -> Any:
+        return await cloudflare_write(request, caller, "replace", name, lambda: container.cloudflare_control.replace_provider(
+            name, provider_spec(name, payload), key=payload.key or "keep", key_value=payload.key_value,
+            actor=actor(caller), confirm=payload.confirm,
+        ))
+
+    @router.post("/admin/control/cloudflare/providers/{name}/remove")
+    async def cloudflare_remove(name: str, payload: ServiceConfirmRequest, request: Request, caller=Depends(principal)) -> Any:
+        return await cloudflare_write(request, caller, "remove", name, lambda: container.cloudflare_control.remove_provider(
+            name, actor=actor(caller), confirm=payload.confirm,
         ))
 
     # -- Grafana Cloud and Qdrant Cloud (stage 5) -------------------------------------------
