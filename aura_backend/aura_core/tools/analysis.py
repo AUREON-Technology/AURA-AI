@@ -26,6 +26,7 @@ from ..domain.tools import ToolCategory, ToolSensitivity
 from ..ports.runtime import Tool
 from .base import param, tool
 from .open.api_contract_validator import ApiContractValidator
+from .open.api_ext import as_json_text as api_json_text, classify_changes, generate_tests, load_spec, validate_spec
 from .open.ast_code_analyzer import ASTCodeAnalyzer
 from .open.autonomous_research_and_synthesis_tool import AutonomousResearchAndSynthesisTool
 from .open.complexity_and_duplication_analyzer import ComplexityAndDuplicationAnalyzer
@@ -564,14 +565,17 @@ async def scan_dependency_licenses(
 
 @tool(
     "compare_api_specs",
-    "Work with JSON OpenAPI/contract documents. operation: deprecated_endpoints (list deprecated "
-    "operations in `spec`), diff (paths removed/added between `old_spec` and `new_spec`; flags "
-    "removals as breaking), validate_payload (check `payload` has `required_fields` of the right "
-    "`field_types`).",
-    param("operation", "string", "What to do.", enum=("deprecated_endpoints", "diff", "validate_payload")),
-    param("spec", "string", "A JSON spec (deprecated_endpoints).", required=False, max_length=_MAX_TEXT),
-    param("old_spec", "string", "The earlier JSON spec (diff).", required=False, max_length=_MAX_TEXT),
-    param("new_spec", "string", "The later JSON spec (diff).", required=False, max_length=_MAX_TEXT),
+    "Work with OpenAPI/contract documents (JSON or YAML). operation: validate_spec (structure, $refs, "
+    "path params), breaking_changes (old_spec vs new_spec incl. request/response schema changes, "
+    "semver bump), diff (route-level), deprecated_endpoints, generate_tests (pytest integration text), "
+    "validate_payload.",
+    param("operation", "string", "What to do.",
+          enum=("validate_spec", "breaking_changes", "diff", "deprecated_endpoints", "generate_tests",
+                "validate_payload")),
+    param("spec", "string", "A JSON/YAML spec (validate_spec, deprecated_endpoints, generate_tests).",
+          required=False, max_length=_MAX_TEXT),
+    param("old_spec", "string", "The earlier spec (diff, breaking_changes).", required=False, max_length=_MAX_TEXT),
+    param("new_spec", "string", "The later spec (diff, breaking_changes).", required=False, max_length=_MAX_TEXT),
     param("payload", "object", "A request/response body (validate_payload).", required=False),
     param("required_fields", "array", "Keys the payload must have.", required=False, item_type="string"),
     param("field_types", "object", "{field: 'string'|'integer'|'number'|'boolean'|'array'|'object'}.",
@@ -588,13 +592,38 @@ async def compare_api_specs(
     field_types: dict | None = None,
 ) -> str:
     name = "compare_api_specs"
+    if operation in ("validate_spec", "generate_tests"):
+        _need(name, spec=spec)
+        parsed, problem, _fmt = load_spec(spec)
+        if parsed is None:
+            raise ToolExecutionError(f"spec: {problem}", tool=name)
+        return await _run(validate_spec if operation == "validate_spec" else generate_tests, parsed)
+    if operation == "breaking_changes":
+        if old_spec is None or new_spec is None:
+            raise ToolExecutionError("breaking_changes needs both old_spec and new_spec", tool=name)
+        old_parsed, old_problem, _ = load_spec(old_spec)
+        new_parsed, new_problem, _ = load_spec(new_spec)
+        if old_parsed is None or new_parsed is None:
+            raise ToolExecutionError(f"{'old_spec' if old_parsed is None else 'new_spec'}: "
+                                     f"{old_problem if old_parsed is None else new_problem}", tool=name)
+        return await _run(classify_changes, old_parsed, new_parsed)
     if operation == "deprecated_endpoints":
         _need(name, spec=spec)
-        return await _run(ApiContractValidator.check_deprecated_endpoints, spec)
+        return await _run(ApiContractValidator.check_deprecated_endpoints, api_json_text(spec))
     if operation == "diff":
         if old_spec is None or new_spec is None:
             raise ToolExecutionError("diff needs both old_spec and new_spec", tool=name)
-        return await _run(ApiContractValidator.compare_route_sets, old_spec, new_spec)
+
+        def route_diff() -> dict:
+            result = ApiContractValidator.compare_route_sets(api_json_text(old_spec), api_json_text(new_spec))
+            result["all_breaking_changes"] = [
+                *[f"Removed path '{p}'" for p in result.get("removed_paths", [])],
+                *[f"Removed operation '{o}'" for o in result.get("removed_operations", [])],
+                *result.get("breaking_changes", []),
+            ]
+            return result
+
+        return await _run(route_diff)
     if payload is None:
         raise ToolExecutionError("validate_payload needs payload", tool=name)
     return await _run(
