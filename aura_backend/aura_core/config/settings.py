@@ -1963,6 +1963,10 @@ class VoiceSettings:
     #: container. ``None`` means "in production-like environments only", which keeps a local or
     #: test container from ever pulling weights.
     stt_warm_on_startup: bool | None = None
+    #: ``POST /voice/task`` may refine its deterministic extraction with a model through the router
+    #: (ADR-041). Off, the endpoint is deterministic only. The transcript is personal data, so the
+    #: router sends it only to a provider cleared for it (a local model by default).
+    task_refine_enabled: bool = True
     tts_enabled: bool = True
     tts_voice: str = "en-us"
     tts_rate_wpm: int = 142
@@ -2028,6 +2032,7 @@ class VoiceSettings:
             stt_warm_on_startup=(
                 None if not _env("VOICE_STT_WARM_ON_STARTUP", "") else _bool("VOICE_STT_WARM_ON_STARTUP", True)
             ),
+            task_refine_enabled=_bool("VOICE_TASK_REFINE", True),
             tts_enabled=_bool("VOICE_TTS_ENABLED", True),
             tts_voice=_env("VOICE_TTS_VOICE", "en-us") or "en-us",
             tts_rate_wpm=_int("VOICE_TTS_RATE_WPM", 142, minimum=80, maximum=250),

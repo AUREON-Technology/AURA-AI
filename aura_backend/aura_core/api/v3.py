@@ -1343,31 +1343,13 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     # -- voice (Phase F2) ----------------------------------------------------------------
 
-    @router.post("/voice/transcribe")
-    async def transcribe_audio(
-        request: Request,
-        file: UploadFile = File(...),
-        language: str | None = Form(default=None, max_length=40),
-        caller: Principal = Depends(principal),
-    ) -> JSONResponse:
-        """Speech to text via the container's `SpeechToText` engine (self-hosted
-        `faster-whisper`, Phase F2). 503s with a clear `dependency_unavailable` body when no
-        engine is configured, rather than pretending an empty transcript is a real answer.
-
-        ``language`` (optional, ISO-639-1 such as ``ar``; ``AR-eg`` folds to ``ar``) is a hint
-        for a multilingual model, validated exactly as a live-voice start frame is; an unknown
-        code is a 422. Without it the model detects the language itself. An English-only
-        (``*.en``) model ignores the hint, exactly as before the field existed: clients already
-        in use send ``ar`` whenever the app is in Arabic, and must keep getting a transcript
-        (docs/plans/arabic-language_plan.md, stage 4).
-
-        The response's ``language`` (Phase V, additive) is the language the engine used --
-        the hint it honoured, or the one it detected -- or ``null`` when it cannot say.
-        """
+    async def transcribe_upload(file: Any, language: str | None) -> tuple[str, str | None, Any]:
+        """Speech to text for one uploaded file: ``(text, language used, engine)``. The one place
+        the STT engine is checked, the language hint validated and the size limit enforced, so
+        ``/voice/transcribe`` and ``/voice/task`` cannot drift apart."""
         from ..ports.speech import LanguageAwareSpeechToText
         from ..voice.session import normalise_language
 
-        await enforce_rate_limit(request, caller, "voice")
         engine = container.stt_engine
         if engine is None:
             raise DependencyUnavailableError(
@@ -1401,6 +1383,31 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             text, used = await engine.transcribe(data, language=hint), hint
         if english_only:
             used = "en"
+        return text, used, engine
+
+    @router.post("/voice/transcribe")
+    async def transcribe_audio(
+        request: Request,
+        file: UploadFile = File(...),
+        language: str | None = Form(default=None, max_length=40),
+        caller: Principal = Depends(principal),
+    ) -> JSONResponse:
+        """Speech to text via the container's `SpeechToText` engine (self-hosted
+        `faster-whisper`, Phase F2). 503s with a clear `dependency_unavailable` body when no
+        engine is configured, rather than pretending an empty transcript is a real answer.
+
+        ``language`` (optional, ISO-639-1 such as ``ar``; ``AR-eg`` folds to ``ar``) is a hint
+        for a multilingual model, validated exactly as a live-voice start frame is; an unknown
+        code is a 422. Without it the model detects the language itself. An English-only
+        (``*.en``) model ignores the hint, exactly as before the field existed: clients already
+        in use send ``ar`` whenever the app is in Arabic, and must keep getting a transcript
+        (docs/plans/arabic-language_plan.md, stage 4).
+
+        The response's ``language`` (Phase V, additive) is the language the engine used --
+        the hint it honoured, or the one it detected -- or ``null`` when it cannot say.
+        """
+        await enforce_rate_limit(request, caller, "voice")
+        text, used, engine = await transcribe_upload(file, language)
         return JSONResponse(content={"text": text, "engine": engine.name, "language": used})
 
     @router.post("/voice/speak")
@@ -1424,6 +1431,73 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             content=audio, media_type="audio/wav",
             headers={"X-Engine": container.tts_engine.name},
         )
+
+    @router.post("/voice/task")
+    async def voice_to_task(
+        request: Request,
+        file: UploadFile | None = File(default=None),
+        text: str | None = Form(default=None, max_length=8000),
+        language: str | None = Form(default=None, max_length=40),
+        refine: bool = Form(default=True),
+        caller: Principal = Depends(principal),
+    ) -> JSONResponse:
+        """Spoken (``file``) or typed (``text``) request -> a structured task, **never started**.
+
+        Send exactly one of ``file`` (audio, transcribed as ``/voice/transcribe`` does) or
+        ``text`` (a transcript the client already has) as ``multipart/form-data`` or
+        ``application/x-www-form-urlencoded``; ``language`` is the usual ``en``/``ar`` hint and
+        ``refine=false`` skips the optional model refinement.
+
+        The body is ``{goal, constraints[], repository, deliverable, priority, ambiguities[],
+        needs_clarification, questions[]}`` plus ``transcript``, ``language``, ``source``
+        (``deterministic`` or ``llm``), ``refinement`` (what the model stage did), ``assumptions``
+        and -- only when nothing needs asking -- ``suggested_request``, a body for
+        ``POST /api/v3/agents/tasks``. A gap (no goal, a code task with no repository, a repository
+        without its owner, a goal that is only "fix it", a request with no stated deliverable) is
+        never guessed: it becomes an ambiguity and a localized question, and
+        ``needs_clarification`` is true. The client asks, then submits the task itself; this route
+        starts nothing (``started`` is always false)."""
+        from ..text.language import normalize_language
+        from ..voice.task_extractor import TaskExtractor, task_goal_text
+
+        await enforce_rate_limit(request, caller, "voice")
+        typed = (text or "").strip()
+        if file is not None and typed:
+            raise ValidationError("send audio or text, not both", details={"field": "file"})
+        if file is None and not typed:
+            raise ValidationError("send audio in `file` or a transcript in `text`",
+                                  details={"field": "text"})
+        hint = normalize_language(language) if language else None
+        if language and language.strip() and hint is None:
+            raise ValidationError(
+                "language is not a supported language code; send an ISO-639-1 code such as en or ar",
+                details={"field": "language", "reason": "language_unsupported"},
+            )
+        transcript = typed
+        spoken_language: str | None = None
+        if file is not None:
+            transcript, spoken_language, _engine = await transcribe_upload(file, language)
+        extractor = TaskExtractor(
+            container.router if settings.voice.task_refine_enabled else None,
+        )
+        task, refinement = await extractor.extract(
+            transcript, language=spoken_language or hint, refine=refine and settings.voice.task_refine_enabled,
+        )
+        if refine and not settings.voice.task_refine_enabled:
+            refinement = {"requested": True, "status": "disabled"}
+        body = task.as_dict()
+        suggested = None
+        if not task.needs_clarification:
+            suggested = {"goal": task_goal_text(task), "priority": task.priority or "normal"}
+            if task.repository:
+                suggested["persona_hint"] = "engineer"
+        return JSONResponse(content={
+            **body,
+            "transcript": transcript,
+            "refinement": refinement,
+            "suggested_request": suggested,
+            "started": False,
+        })
 
     # -- memory ------------------------------------------------------------------------
 

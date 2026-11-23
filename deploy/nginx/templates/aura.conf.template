@@ -234,6 +234,20 @@ server {
         include /etc/nginx/conf.d/proxy_headers.inc;
     }
 
+    # /voice/task takes the same audio (it transcribes, then extracts a task): same cap, same proxy.
+    location = /api/v3/voice/task {
+        client_max_body_size 27m;
+        limit_req zone=aura_general burst=20 nodelay;
+
+        proxy_pass http://aura_gateway;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+
+        include /etc/nginx/conf.d/proxy_headers.inc;
+    }
+
     location /api/ {
         limit_req zone=aura_general burst=20 nodelay;
 
@@ -477,6 +491,20 @@ server {
     # otherwise proxies exactly like the location it shadows. Pinned by
     # tests/unit/test_nginx_voice_upload_size.py.
     location = /api/v3/voice/transcribe {
+        client_max_body_size 27m;
+        limit_req zone=aura_general burst=20 nodelay;
+
+        proxy_pass http://$aura_dev_gateway;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+
+        include /etc/nginx/conf.d/proxy_headers.inc;
+    }
+
+    # /voice/task takes the same audio (it transcribes, then extracts a task): same cap, same proxy.
+    location = /api/v3/voice/task {
         client_max_body_size 27m;
         limit_req zone=aura_general burst=20 nodelay;
 
