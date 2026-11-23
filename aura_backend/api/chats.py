@@ -18,6 +18,14 @@ owns finds nothing, and answers exactly what a chat that does not exist answers 
 cannot be probed. Only a user-issued access token reaches these routes (``verify_access_token``):
 a paired daemon's scoped token and a service key do not.
 
+**Messages (``/chats/{id}/messages``) are stored and returned as the ciphertext they are.** The
+routes list, read, edit and delete a chat's messages; the text of a message (and its citations and
+tool calls) is ``*_enc`` and the server neither reads nor searches it. An edit is the client's own
+new ciphertext, accepted only in an envelope shape (``gcm2:`` or ``gcm:``) so plaintext cannot be
+stored in a ciphertext column by mistake. A delete is the sync's tombstone. The server's working
+transcript of the conversation (what the model is shown next turn) has no message ids and is not
+edited by either; ``DELETE /api/v3/sessions/{id}`` forgets it.
+
 **Last write wins by the server clock.** A change here stamps ``client_updated_at`` with the
 server's ``now``. A device with a *newer* offline edit of the same row will win its next push;
 one with an older edit will not. That is the sync's own rule, not a new one.
@@ -470,3 +478,215 @@ async def delete_chat(
             logger.warning("chat deleted but its server transcript could not be cleared", exc_info=True)
     logger.info("chat deleted", extra={"messages": deleted.rowcount})
     return {"deleted": True, "messages_deleted": deleted.rowcount}
+
+
+
+# --- messages ---
+
+DEFAULT_MESSAGE_LIMIT = 50
+MAX_MESSAGE_LIMIT = 100
+#: A message's text is ciphertext: up to 32,000 characters of text become well under this once
+#: sealed and base64-encoded. It bounds what is stored, not what the message says.
+MAX_MESSAGE_ENC_CHARS = 512_000
+#: How the client seals a value (``EncryptionService.isEnvelope``): the account data key (``gcm2``)
+#: or the legacy device key (``gcm``). Anything else in a ``*_enc`` column is plaintext someone
+#: forgot to seal, and is refused.
+_ENVELOPES = ("gcm2:", "gcm:")
+_ROLE = re.compile(r"^[a-z_]{1,16}$")
+
+
+class MessageItem(BaseModel):
+    id: str
+    chat_id: str
+    role: str
+    #: Ciphertext the server cannot read (``gcm2:...``; a row an old device sealed with its own key
+    #: starts ``gcm:``).
+    content_enc: str
+    citations_enc: str | None
+    tool_calls_enc: str | None
+    model_used: str | None
+    tokens_used: int | None
+    persona: str | None
+    created_at: str
+    updated_at: str
+    #: The clock of whoever last wrote the row: the device's for a sync push, the server's for an
+    #: edit made here. ``None`` for rows older than the column.
+    client_updated_at: str | None
+
+
+class MessageList(BaseModel):
+    messages: list[MessageItem]
+    #: Pass back as ``cursor`` for the next page; ``None`` on the last.
+    next_cursor: str | None
+
+
+class MessageUpdate(BaseModel):
+    """The ciphertext fields a person may replace. ``null`` clears citations or tool calls; the text
+    itself cannot be cleared (delete the message instead). The role is never editable."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    content_enc: str | None = Field(default=None, max_length=MAX_MESSAGE_ENC_CHARS)
+    citations_enc: str | None = Field(default=None, max_length=MAX_MESSAGE_ENC_CHARS)
+    tool_calls_enc: str | None = Field(default=None, max_length=MAX_MESSAGE_ENC_CHARS)
+
+
+def _message_key(value: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(value)
+    except ValueError:
+        raise _invalid("message_id", "a message id is a UUID") from None
+
+
+def _message_not_found() -> HTTPException:
+    return HTTPException(status_code=404, detail={"error": "not_found", "detail": "message not found"})
+
+
+def _message_item(row: Message) -> MessageItem:
+    return MessageItem(
+        id=str(row.id), chat_id=row.conversation_id, role=row.role, content_enc=row.content_enc,
+        citations_enc=row.citations_enc, tool_calls_enc=row.tool_calls_enc, model_used=row.model_used,
+        tokens_used=row.tokens_used, persona=row.persona, created_at=row.created_at.isoformat(),
+        updated_at=row.updated_at.isoformat(),
+        client_updated_at=row.client_updated_at.isoformat() if row.client_updated_at else None,
+    )
+
+
+@router.get("/{chat_id}/messages", response_model=MessageList)
+async def list_messages(
+    chat_id: str,
+    user_info: dict = Depends(verify_access_token),
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(default=DEFAULT_MESSAGE_LIMIT, ge=1, le=MAX_MESSAGE_LIMIT),
+    cursor: str | None = Query(default=None, max_length=512),
+    order: Literal["asc", "desc"] = Query(default="asc", description="By creation time: oldest first (default) or newest first."),
+    role: str | None = Query(default=None, description="Only messages of this role (user, assistant, ...)."),
+) -> MessageList:
+    """A chat's live messages, as ciphertext, oldest first by default.
+
+    Keyset-paged on ``(created_at, id)``: pass ``next_cursor`` back as ``cursor`` with the same
+    parameters. The text cannot be searched here (it is ciphertext); filter by role and order only.
+    """
+    _require_db_configured()
+    key = _chat_key(chat_id)
+    if role is not None and not _ROLE.match(role):
+        raise _invalid("role", "lower-case letters and underscores, up to 16 characters")
+    user = await get_or_create_user(db, user_info)
+    if await _load(db, user.id, key) is None:
+        raise _not_found(key)
+
+    stmt = select(Message).where(
+        Message.user_id == user.id, Message.conversation_id == key, Message.deleted_at.is_(None))
+    if role is not None:
+        stmt = stmt.where(Message.role == role)
+    descending = order == "desc"
+    params = {"chat": key, "order": order, "role": role}
+    ordering = [(Message.created_at, descending), (Message.id, descending)]
+    if cursor is not None:
+        position = _decode_cursor(cursor, params)
+        try:
+            after = [datetime.fromisoformat(position["v"]), uuid.UUID(position["k"])]
+        except ValueError:
+            raise _invalid("cursor", "not a cursor for this list; start again without one") from None
+        stmt = stmt.where(_after([(e, d, v) for (e, d), v in zip(ordering, after)]))
+    stmt = stmt.order_by(*[e.desc() if d else e.asc() for e, d in ordering]).limit(limit + 1)
+    rows = (await db.execute(stmt)).scalars().all()
+    page, more = rows[:limit], len(rows) > limit
+    next_cursor = None
+    if more:
+        last = page[-1]
+        next_cursor = _encode_cursor({"q": params, "p": False, "v": last.created_at.isoformat(), "k": str(last.id)})
+    return MessageList(messages=[_message_item(r) for r in page], next_cursor=next_cursor)
+
+
+async def _own_message(db: AsyncSession, user_id: uuid.UUID, key: str, message_id: uuid.UUID, *,
+                       live_only: bool, lock: bool = False) -> Message | None:
+    stmt = select(Message).where(
+        Message.user_id == user_id, Message.conversation_id == key, Message.id == message_id)
+    if live_only:
+        stmt = stmt.where(Message.deleted_at.is_(None))
+    if lock:
+        stmt = stmt.with_for_update()
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
+@router.get("/{chat_id}/messages/{message_id}", response_model=MessageItem)
+async def get_message(
+    chat_id: str,
+    message_id: str,
+    user_info: dict = Depends(verify_access_token),
+    db: AsyncSession = Depends(get_db),
+) -> MessageItem:
+    """One live message of the caller's chat, as ciphertext."""
+    _require_db_configured()
+    key, mid = _chat_key(chat_id), _message_key(message_id)
+    user = await get_or_create_user(db, user_info)
+    row = await _own_message(db, user.id, key, mid, live_only=True)
+    if row is None:
+        raise _message_not_found()
+    return _message_item(row)
+
+
+@router.patch("/{chat_id}/messages/{message_id}", response_model=MessageItem)
+async def update_message(
+    chat_id: str,
+    message_id: str,
+    body: MessageUpdate,
+    user_info: dict = Depends(verify_access_token),
+    db: AsyncSession = Depends(get_db),
+) -> MessageItem:
+    """Replace a message's ciphertext (text, citations, tool calls). Send only what changes.
+
+    The new value is the client's own ciphertext; the server checks only that it is shaped like one
+    (``gcm2:`` or ``gcm:``) and is not too large. A deleted message is not edited back to life.
+    """
+    _require_db_configured()
+    key, mid = _chat_key(chat_id), _message_key(message_id)
+    sent = body.model_fields_set
+    if not sent:
+        raise HTTPException(status_code=422, detail={"error": "empty_update", "detail": "Send at least one field."})
+    if "content_enc" in sent and body.content_enc is None:
+        raise _invalid("content_enc", "the text cannot be cleared; delete the message instead")
+    for name in sent:
+        value = getattr(body, name)
+        if value is not None and not value.startswith(_ENVELOPES):
+            raise _invalid(name, "not a sealed value (expected gcm2: or gcm:); the server stores no plaintext here")
+    user = await get_or_create_user(db, user_info)
+    row = await _own_message(db, user.id, key, mid, live_only=True, lock=True)
+    if row is None:
+        raise _message_not_found()
+    for name in sent:
+        setattr(row, name, getattr(body, name))
+    row.client_updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(row)
+    return _message_item(row)
+
+
+@router.delete("/{chat_id}/messages/{message_id}")
+async def delete_message(
+    chat_id: str,
+    message_id: str,
+    user_info: dict = Depends(verify_access_token),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Delete one message on every device: its row becomes a sync tombstone and its ciphertext is cleared.
+
+    Idempotent: a message that is already deleted is another 200; only an id that never existed
+    for the caller is a 404. The server's working transcript of the conversation is not edited
+    (it has no message ids); ``DELETE /api/v3/sessions/{id}`` forgets it.
+    """
+    _require_db_configured()
+    key, mid = _chat_key(chat_id), _message_key(message_id)
+    user = await get_or_create_user(db, user_info)
+    row = await _own_message(db, user.id, key, mid, live_only=False, lock=True)
+    if row is None:
+        raise _message_not_found()
+    if row.deleted_at is None:
+        now = datetime.now(timezone.utc)
+        row.deleted_at, row.client_updated_at = now, now
+        for column in Message.__table__.columns:
+            if column.name.endswith("_enc"):
+                setattr(row, column.name, None if column.nullable else "")
+        await db.commit()
+    return {"deleted": True}

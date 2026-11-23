@@ -156,6 +156,14 @@ COVERED = {
         "TestWorkspaces::test_bob_cannot_unshare_alices_shared_chat",
     ("POST", "/api/v3/workspaces/{workspace_id}/billing/store-token"):
         "TestWorkspaces::test_bob_cannot_bind_a_purchase_to_alices_workspace",
+    ("GET", "/api/v3/chats/{chat_id}/messages"):
+        "Postgres-only route (api/chats.py): every statement is scoped to the caller's user row and chat key, and a stranger's chat or message id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_messages_postgres.py::test_bob_cannot_list_read_edit_or_delete_alices_messages and test_two_people_with_the_same_chat_key_each_see_only_their_own_messages",
+    ("GET", "/api/v3/chats/{chat_id}/messages/{message_id}"):
+        "Postgres-only route (api/chats.py): every statement is scoped to the caller's user row and chat key, and a stranger's chat or message id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_messages_postgres.py::test_bob_cannot_list_read_edit_or_delete_alices_messages",
+    ("PATCH", "/api/v3/chats/{chat_id}/messages/{message_id}"):
+        "Postgres-only route (api/chats.py): every statement is scoped to the caller's user row and chat key, and a stranger's chat or message id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_messages_postgres.py::test_bob_cannot_list_read_edit_or_delete_alices_messages",
+    ("DELETE", "/api/v3/chats/{chat_id}/messages/{message_id}"):
+        "Postgres-only route (api/chats.py): every statement is scoped to the caller's user row and chat key, and a stranger's chat or message id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_messages_postgres.py::test_bob_cannot_list_read_edit_or_delete_alices_messages",
     ("GET", "/api/v3/chats/{chat_id}"):
         "Postgres-only route (api/chats.py, FULL JOIN over messages and conversations): every statement is scoped to the caller's user row and a stranger's chat id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_chats_postgres.py::test_bob_cannot_see_change_or_delete_alices_chat_and_the_same_key_is_separate",
     ("PATCH", "/api/v3/chats/{chat_id}"):

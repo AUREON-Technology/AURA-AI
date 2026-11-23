@@ -66,6 +66,8 @@ TRIAGE = (
     ("/api/v3/plans", "to wire: the plan catalogue (what each plan allows) for an upgrade screen; the app has no such list today (api/usage.py)"),
     ("/api/v3/me/model-settings", "to wire: the app sends no routing_policy, require_local, temperature or max_output_tokens today, so a person cannot choose how chats are answered (api/models.py)"),
     ("/api/v3/models", "to wire: the model catalog (capabilities and privacy of each model) is not shown anywhere; the app offers no model or policy choice (api/models.py)"),
+    ("/api/v3/chats/{chat_id}/messages", "to wire: reading, editing and deleting one message through the API; the app keeps its messages in its own database and syncs them (api/chats.py)"),
+    ("/api/v3/feedback", "to wire: the app only posts a rating; listing one's own ratings has no screen (GET /feedback)"),
     ("/api/v3/me/export", "to wire: a \"download my data\" button; the bundle is the server's personal scope in plain text, the app has no such screen (api/export.py)"),
     ("/api/v3/sessions/{session_id}/export", "to wire: an export action on a chat; the server's copy is partial (summary + unsummarised turns) because synced chats are encrypted, so the app should export from its own database and use this only as a fallback (api/export.py)"),
     ("/api/v3/me", "to wire: profile read/update and password change have no app screen yet; register and forgot/reset password stay in the client's Firebase SDK (api/me.py)"),

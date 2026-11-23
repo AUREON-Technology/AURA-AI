@@ -83,6 +83,8 @@ def test_no_route_answers_an_anonymous_caller(monkeypatch) -> None:
             ("GET", "/api/v3/chats"), ("POST", "/api/v3/chats"), ("GET", "/api/v3/chats/x"),
             ("PATCH", "/api/v3/chats/x"), ("DELETE", "/api/v3/chats/x"), ("POST", "/api/v3/chats/x/archive"),
             ("POST", "/api/v3/chats/x/unarchive"), ("POST", "/api/v3/chats/x/pin"), ("POST", "/api/v3/chats/x/unpin"),
+            ("GET", "/api/v3/chats/x/messages"), ("GET", "/api/v3/chats/x/messages/m"),
+            ("PATCH", "/api/v3/chats/x/messages/m"), ("DELETE", "/api/v3/chats/x/messages/m"),
         ):
             response = client.request(method, path, json={})
             assert response.status_code == 401, (method, path, response.status_code)
@@ -95,4 +97,6 @@ def test_the_router_exposes_exactly_the_agreed_surface() -> None:
         ("PATCH", "/api/v3/chats/{chat_id}"), ("DELETE", "/api/v3/chats/{chat_id}"),
         ("POST", "/api/v3/chats/{chat_id}/archive"), ("POST", "/api/v3/chats/{chat_id}/unarchive"),
         ("POST", "/api/v3/chats/{chat_id}/pin"), ("POST", "/api/v3/chats/{chat_id}/unpin"),
+        ("GET", "/api/v3/chats/{chat_id}/messages"), ("GET", "/api/v3/chats/{chat_id}/messages/{message_id}"),
+        ("PATCH", "/api/v3/chats/{chat_id}/messages/{message_id}"), ("DELETE", "/api/v3/chats/{chat_id}/messages/{message_id}"),
     ])

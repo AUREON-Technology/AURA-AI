@@ -1914,6 +1914,37 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         )
         return JSONResponse(content={"recorded": True})
 
+    @router.get("/feedback")
+    async def list_feedback(
+        request: Request,
+        caller: Principal = Depends(principal),
+        turn_id: str | None = Query(default=None, max_length=64),
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> JSONResponse:
+        """The caller's own ratings, newest first, optionally for one turn.
+
+        Content-free on purpose: the stored record also holds the prompt, the reply and any
+        correction the person typed, and those stay out of this answer (``has_correction`` says
+        whether there is one). Owner-scoped in the store, which has no unscoped list.
+        """
+        await enforce_rate_limit(request, caller, "read")
+        if caller.is_service:
+            raise AuthorizationError("a service key has no ratings of its own to list")
+        rows = await container.feedback.list_for_owner(caller.user_id, limit=200)
+        wanted = [r for r in rows if turn_id is None or r.metadata.get("turn_id") == turn_id]
+        wanted.sort(key=lambda r: r.created_at, reverse=True)
+        return JSONResponse(content={"feedback": [
+            {
+                "id": r.id,
+                "turn_id": r.metadata.get("turn_id"),
+                "rating": r.rating,
+                "comment": r.metadata.get("comment") or "",
+                "has_correction": bool(r.correction),
+                "created_at": r.created_at.isoformat(),
+            }
+            for r in wanted[:limit]
+        ]})
+
     # -- introspection -----------------------------------------------------------------
 
     @router.get("/tools")
