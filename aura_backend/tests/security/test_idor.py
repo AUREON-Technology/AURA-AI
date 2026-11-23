@@ -110,6 +110,10 @@ COVERED = {
         "TestAgentRuns::test_bob_cannot_read_alices_run_status_or_logs",
     ("POST", "/api/v3/agents/runs/{run_id}/cancel"):
         "TestAgentRuns::test_bob_cannot_cancel_alices_run",
+    ("GET", "/api/v3/approvals/{approval_id}"):
+        "TestApprovals::test_bob_cannot_read_or_list_alices_approval",
+    ("POST", "/api/v3/approvals/{approval_id}/reject"):
+        "TestApprovals::test_bob_cannot_reject_alices_approval",
     ("DELETE", "/api/v3/workspaces/{workspace_id}"):
         "TestWorkspaces::test_bob_cannot_delete_alices_team",
     ("GET", "/api/v3/workspaces/{workspace_id}/members"):
@@ -462,6 +466,57 @@ class TestEngineering:
         with TestClient(_app(container)) as client:
             assert client.get("/api/v3/engineering/runs", headers=AUTH_B).json()["runs"] == []
             assert len(client.get("/api/v3/engineering/runs", headers=AUTH_A).json()["runs"]) == 1
+
+
+class TestApprovals:
+    """A held tool call, and the approval that releases it, are the person's own: by id, by listing,
+    and for the one write (reject). The mechanism's own owner binding is in
+    ``test_confirmation_binding.py``; this is the route surface over it."""
+
+    @staticmethod
+    def _alice_hold(container) -> tuple[str, dict]:
+        from aura_core.domain.identifiers import PlanId, StepId
+        from aura_core.domain.planning import Goal, Plan, PlanStep, StepKind
+        from aura_core.execution.confirmations import PendingCall
+
+        step = PlanStep(
+            id=StepId("s1"), kind=StepKind.TOOL, tool="delete_record", description="delete",
+            arguments={"target": "PELICAN-7731"},
+        ).blocked("needs_confirmation")
+        ids = asyncio.run(container.tool_confirmations.issue(
+            user_id=ALICE, session_id="conv-1", agent="orchestrator", message="do it",
+            plan=Plan(id=PlanId.new(), goal=Goal(description="g"), steps=(step,)), tainted=False,
+            turn_id="t1", calls=[PendingCall("s1", "step_s1", "delete_record", {"target": "PELICAN-7731"})],
+        ))
+        return ids["step_s1"], {"session_id": "conv-1"}
+
+    def test_bob_cannot_read_or_list_alices_approval(self, container) -> None:
+        from fastapi.testclient import TestClient
+
+        approval_id, _ = self._alice_hold(container)
+        with TestClient(_app(container)) as client:
+            theirs = client.get(f"/api/v3/approvals/{approval_id}", headers=AUTH_B)
+            gone = client.get("/api/v3/approvals/apr.no.such", headers=AUTH_B)
+            listing = client.get("/api/v3/approvals", headers=AUTH_B)
+            mine = client.get(f"/api/v3/approvals/{approval_id}", headers=AUTH_A)
+        assert theirs.status_code == gone.status_code == 404 and theirs.json()["error"] == gone.json()["error"]
+        assert listing.json()["approvals"] == [] and "delete_record" not in listing.text
+        assert mine.status_code == 200 and mine.json()["tool"] == "delete_record"
+
+    def test_bob_cannot_reject_alices_approval(self, container) -> None:
+        """A reject discards the held turn: it must neither do that for Bob nor tell him it exists."""
+        from fastapi.testclient import TestClient
+
+        approval_id, _ = self._alice_hold(container)
+        with TestClient(_app(container)) as client:
+            refused = client.post(f"/api/v3/approvals/{approval_id}/reject", headers=AUTH_B)
+            still = client.get(f"/api/v3/approvals/{approval_id}", headers=AUTH_A).json()
+        assert refused.status_code == 404
+        assert still["status"] == "pending", "Bob's reject changed Alice's approval"
+        token = approval_id.split(".")[1]
+        assert asyncio.run(container.cache_backend.get(f"tool-confirm:pending:v1:{token}")) is not None, (
+            "Bob's reject discarded Alice's held turn"
+        )
 
 
 class TestAgentRuns:

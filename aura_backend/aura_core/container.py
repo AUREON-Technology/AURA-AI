@@ -183,6 +183,14 @@ class Container:
         # Module readiness D-03 (WP1): who agreed to the Engineer sending code to Anthropic.
         self.engineer_consent = self._build_engineer_consent_store()
         self.custom_agents = self._build_custom_agent_store()
+        # Durable, content-free record of held tool calls and how each was decided
+        # (``domain/approvals.py``); the pending turn itself stays in the cache.
+        self.approval_ledger = self._build_approval_ledger()
+        # One store for the kernel (holds and approvals) and the approvals routes (rejection), both
+        # over the shared cache, so any worker can act on a hold another worker made.
+        self.tool_confirmations = PendingConfirmationStore(
+            self.cache_backend, ledger=self.approval_ledger, clock=lambda: self.clock.now(),
+        )
         # Cancel-by-id for live agent runs: a request is a cache key every worker polls for the
         # runs it is executing (``execution/cancellation.py``).
         self.run_cancellation = RunCancellation(self.cache_backend)
@@ -658,7 +666,7 @@ class Container:
                 host_agent_registry=self.host_agent_registry,
                 # F-04: pending tool confirmations live in the shared cache (Redis in
                 # production), so any replica can resume the exact turn the user approved.
-                tool_confirmations=PendingConfirmationStore(self.cache_backend),
+                tool_confirmations=self.tool_confirmations,
                 vision=self.vision,
             )
         )
@@ -1296,6 +1304,22 @@ class Container:
         from .adapters.engineer_consent import InMemoryEngineerConsentStore
 
         return InMemoryEngineerConsentStore()
+
+    def _build_approval_ledger(self) -> Any:
+        """The record of held tool calls (``domain/approvals.py``). Postgres with the other per-user
+        stores, so a call held on one worker is listed and refused from any other."""
+        backend = self.settings.infrastructure.memory_backend
+        if backend == "postgres":
+            from .adapters.postgres_tool_approvals import PostgresApprovalLedger
+
+            return PostgresApprovalLedger(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        if backend != "memory":
+            raise ConfigurationError(f"unknown memory backend {backend!r}")
+        from .adapters.approvals import InMemoryApprovalLedger
+
+        return InMemoryApprovalLedger()
 
     def _build_custom_agent_store(self) -> Any:
         """A person's own agents (``domain/custom_agents.py``). Postgres with the other per-user

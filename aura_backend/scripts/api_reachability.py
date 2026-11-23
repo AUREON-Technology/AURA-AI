@@ -64,6 +64,7 @@ TRIAGE = (
     ("/api/v3/turns/", "to wire: usage by turn id (read it later); the app already gets the same numbers inline on /chat and the stream's done frame"),
     ("/api/v3/chats", "to wire: the app lists, pins, archives and renames chats locally (Drift) today; no screen calls the server list or the pin/archive/title routes yet (api/chats.py)"),
     ("/api/v3/runtime", "to wire: whether the paired computer is connected and which device; the app learns it today from its own daemon's /status, and the phone and web only from /host/folders (aura_core/api/v3.py)"),
+    ("/api/v3/approvals", "to wire: the app approves held tool calls through /chat (approval_ids) and keeps the pending ones only on the device that received them; no screen lists them, shows the history, or refuses one on the server yet (api/approvals.py)"),
     ("/api/v3/tools", "to wire: tool catalogue is not shown anywhere"),
     ("/api/v3/workspaces", "client: team workspaces, plan, billing and shared chats are called from aura_client/lib/features/workspaces/data/workspaces_client.dart through AuraApiClient's string-built paths (SaaS P1-F2)"),
 )

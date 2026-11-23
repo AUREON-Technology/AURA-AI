@@ -35,11 +35,12 @@ import hashlib
 import json
 import secrets
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Sequence
 
+from ..domain.approvals import ApprovalStatus, ToolApproval
 from ..domain.errors import ConfirmationInvalidError
-from ..domain.identifiers import PlanId, StepId
+from ..domain.identifiers import PlanId, StepId, UserId
 from ..domain.planning import (
     Goal,
     Plan,
@@ -156,9 +157,16 @@ class PendingConfirmationStore:
     Not an adapter: only logic over an injected port, so it sits beside the engine that uses it.
     """
 
-    def __init__(self, cache: Any, *, ttl_s: int = _DEFAULT_TTL_S) -> None:
+    def __init__(
+        self, cache: Any, *, ttl_s: int = _DEFAULT_TTL_S, ledger: Any = None, clock: Any = None,
+    ) -> None:
         self._cache = cache
         self._ttl_s = max(1, int(ttl_s))
+        #: Optional durable record of each held call (``domain/approvals.py``). It is history, not
+        #: part of the guarantee: the cache record decides whether a call can run, and a ledger that
+        #: is down never stops a hold, an approval or a rejection (see ``_ledger_write``).
+        self._ledger = ledger
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
 
     # -- issue ---------------------------------------------------------------------------
 
@@ -210,6 +218,17 @@ class PendingConfirmationStore:
             json.dumps(record, ensure_ascii=False, default=str).encode("utf-8"),
             ttl_s=self._ttl_s,
         )
+        if self._ledger is not None:
+            created = self._clock()
+            held = [
+                ToolApproval(
+                    id=approval_ids[e["call_id"]], owner_id=UserId(user_id), tool=e["tool"],
+                    call_id=e["call_id"], digest=e["digest"], session_id=session_id, turn_id=turn_id,
+                    created_at=created, expires_at=created + timedelta(seconds=self._ttl_s),
+                )
+                for e in entries
+            ]
+            await self._ledger_write("record", self._ledger.record_held(held))
         return approval_ids
 
     # -- claim ---------------------------------------------------------------------------
@@ -223,6 +242,56 @@ class PendingConfirmationStore:
     ) -> ResumedTurn:
         """Consume the pending turn these ids belong to. One-shot; raises if anything is off."""
         token, nonces = _parse(approval_ids)
+        record = await self._take(token, nonces, user_id=user_id, session_id=session_id)
+        by_nonce = {c["nonce"]: c for c in record.get("calls") or ()}
+        approved = {
+            by_nonce[n]["call_id"]: (by_nonce[n]["tool"], by_nonce[n]["digest"]) for n in nonces
+        }
+        # The record: the approved calls are released; the rest of the turn's held calls are
+        # held again below under fresh ids, so these ids are spent (superseded).
+        await self._record_decisions(
+            token, record, user_id, approved=set(nonces), via="chat",
+        )
+        plan = _plan_from_dict(record["plan"])
+        # Every held step goes back to PENDING: the approved ones run (if, and only if, the
+        # grant matches), the rest are held again and get a fresh approval id.
+        plan = plan.with_steps(
+            replace(s, status=StepStatus.PENDING, error_kind=None, finished_at=None)
+            for s in plan.steps
+            if s.status is StepStatus.BLOCKED and s.error_kind == NEEDS_CONFIRMATION
+        )
+        return ResumedTurn(
+            message=str(record.get("message") or ""),
+            agent=str(record.get("agent") or "orchestrator"),
+            plan=plan,
+            tainted=bool(record.get("tainted")),
+            grant=ConfirmationGrant(approved, binding=token),
+            approved_call_ids=tuple(approved),
+            origin_turn_id=record.get("turn_id"),
+            workspace_root=record.get("workspace_root") or None,
+        )
+
+    # -- reject --------------------------------------------------------------------------
+
+    async def reject(
+        self, approval_id: str, *, user_id: str, session_id: str | None,
+    ) -> None:
+        """Refuse a held call: discard the whole pending turn so none of its calls can be approved.
+
+        A held turn is one record with one claim, so rejecting any of its calls ends the turn's
+        pending state: every call it still holds is recorded as rejected. Same checks as an
+        approval (owner, conversation, one-shot), and the same refusal when it is gone.
+        """
+        token, nonces = _parse([approval_id])
+        record = await self._take(token, nonces, user_id=user_id, session_id=session_id)
+        await self._record_decisions(token, record, user_id, approved=set(), via="reject")
+
+    # -- shared --------------------------------------------------------------------------
+
+    async def _take(
+        self, token: str, nonces: Sequence[str], *, user_id: str, session_id: str | None,
+    ) -> dict[str, Any]:
+        """Validate and consume one pending turn's record; return it. Fails closed."""
         record_key = _RECORD_KEY.format(token=token)
         try:
             raw = await self._cache.get(record_key)
@@ -265,28 +334,37 @@ class PendingConfirmationStore:
             await self._cache.delete(record_key)
         except Exception:  # pragma: no cover - the claim key already makes it single-use
             logger.debug("could not delete a claimed confirmation record", exc_info=True)
+        return record
 
-        approved = {
-            by_nonce[n]["call_id"]: (by_nonce[n]["tool"], by_nonce[n]["digest"]) for n in nonces
-        }
-        plan = _plan_from_dict(record["plan"])
-        # Every held step goes back to PENDING: the approved ones run (if, and only if, the
-        # grant matches), the rest are held again and get a fresh approval id.
-        plan = plan.with_steps(
-            replace(s, status=StepStatus.PENDING, error_kind=None, finished_at=None)
-            for s in plan.steps
-            if s.status is StepStatus.BLOCKED and s.error_kind == NEEDS_CONFIRMATION
-        )
-        return ResumedTurn(
-            message=str(record.get("message") or ""),
-            agent=str(record.get("agent") or "orchestrator"),
-            plan=plan,
-            tainted=bool(record.get("tainted")),
-            grant=ConfirmationGrant(approved, binding=token),
-            approved_call_ids=tuple(approved),
-            origin_turn_id=record.get("turn_id"),
-            workspace_root=record.get("workspace_root") or None,
-        )
+    async def _record_decisions(
+        self, token: str, record: Mapping[str, Any], user_id: str, *, approved: set[str], via: str,
+    ) -> None:
+        """Write the outcome of a consumed turn to the ledger: ``approved`` nonces were released;
+        every other call of the turn is superseded after an approval or rejected after a
+        rejection."""
+        if self._ledger is None:
+            return
+        owner = UserId(user_id)
+        at = self._clock()
+        ids = {c["nonce"]: f"{_ID_PREFIX}.{token}.{c['nonce']}" for c in record.get("calls") or ()}
+        released = [ids[n] for n in approved if n in ids]
+        rest = [i for n, i in ids.items() if n not in approved]
+        if released:
+            await self._ledger_write(
+                "approve", self._ledger.decide(owner, released, ApprovalStatus.APPROVED, at=at, via=via)
+            )
+        if rest:
+            leftover = ApprovalStatus.REJECTED if via == "reject" else ApprovalStatus.SUPERSEDED
+            await self._ledger_write(
+                "decide", self._ledger.decide(owner, rest, leftover, at=at, via=via)
+            )
+
+    @staticmethod
+    async def _ledger_write(what: str, awaitable: Any) -> None:
+        try:
+            await awaitable
+        except Exception:  # noqa: BLE001 -- history must never stop a hold, an approval or a refusal
+            logger.warning("approval ledger write failed (%s)", what, exc_info=True)
 
 
 def _parse(approval_ids: Sequence[str]) -> tuple[str, tuple[str, ...]]:
