@@ -250,7 +250,6 @@ def build_default_agent_registry() -> AgentRegistry:
                 allowed_tools=(
                     _READ_TOOLS | _MEMORY_WRITE_TOOLS | {"calculator"}
                     | _CODE_ANALYSIS_TOOLS | _DATA_ANALYSIS_TOOLS
-                    | _DOCUMENT_READING_TOOLS | {"analyze_image_requirements"}
                 ),
                 risk_ceiling=ToolSensitivity.PERSONAL, memory_scope="shared",
             ),

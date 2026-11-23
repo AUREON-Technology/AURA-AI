@@ -532,6 +532,24 @@ def _all_tools() -> dict[str, ToolSpec]:
     async def resolver(_user: Any) -> None:
         return None
 
+    class _Ocr:  # a structured OCR engine, so ocr_image and analyze_image_requirements register (ADR-040)
+        name = "ocr"
+
+        async def image_text(self, image, *, page):
+            return ""
+
+        async def image_data(self, image, *, page):
+            raise NotImplementedError
+
+    class _Stt:  # a timestamp-capable speech engine, so transcribe_audio registers
+        name = "stt"
+
+        async def transcribe(self, audio, *, language=None):
+            return ""
+
+        async def transcribe_segments(self, audio, *, language=None, word_timestamps=True):
+            raise NotImplementedError
+
     tools = default_tools(
         knowledge_engine=object(), memory_engine=object(), personal_os_store=object(),
         workspace="/tmp", allowed_http_hosts=("example.com",), enable_weather=True,
@@ -539,6 +557,8 @@ def _all_tools() -> dict[str, ToolSpec]:
         workspace_manager=object(), host_git=object(), github_token_resolver=resolver,
         host_agent_registry=object(), enable_analysis_tools=True, enable_open_exec_tools=True,
         enable_desktop_ops_tools=True,
+        web_search_url="http://searxng:8080", ocr_engine=_Ocr(), vision_engine=object(),
+        image_normalizer=object(), stt_engine=_Stt(),
     )
     agents = build_default_agent_registry()
     tools += build_delegation_tools(agents=agents, kernel=lambda: None)

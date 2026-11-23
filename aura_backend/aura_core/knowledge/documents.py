@@ -28,6 +28,7 @@ OCR adapter would implement and :func:`apply_ocr` for where it would plug in.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -44,6 +45,10 @@ __all__ = [
     "extract_docx",
     "extract_pptx",
     "extract_document",
+    "TextTable",
+    "find_text_tables",
+    "pdf_image_inventory",
+    "split_cells",
     "DocumentTooLargeError",
     "MAX_PDF_PAGES",
     "apply_ocr",
@@ -339,8 +344,11 @@ def extract_pdf(
 
         text = raw.strip()
         if len(text) >= min_page_chars:
-            modality = Modality.TABLE if _looks_tabular(text) else Modality.PDF_PAGE
-            blocks.append(ExtractedBlock(text=text, modality=modality, page=number))
+            if _looks_tabular(text):
+                blocks.append(ExtractedBlock(text=text, modality=Modality.TABLE, page=number,
+                                             rows=_page_table_rows(text)))
+            else:
+                blocks.append(ExtractedBlock(text=text, modality=Modality.PDF_PAGE, page=number))
             continue
 
         images = _page_images(page) if keep_images else ()
@@ -509,6 +517,115 @@ def _looks_tabular(text: str) -> bool:
         return False
     gapped = sum(1 for line in lines if len(_COLUMN_GAP.findall(line)) >= 2)
     return gapped / len(lines) >= 0.6
+
+
+#: A cell boundary in a PDF text layer: a run of two or more spaces, or tabs.
+_CELL_SPLIT = re.compile(r" {2,}|\t+")
+_NUMERIC_CELL = re.compile(r"^[-+(]?[$\u20ac\u00a3]?\s?\d[\d,.]*%?\)?$")
+
+
+@dataclass(frozen=True, slots=True)
+class TextTable:
+    """A table found in a page's text: its cells row by row, and where its lines sit in the text.
+
+    ``first_line``/``last_line`` index ``text.splitlines()`` (inclusive). ``header`` is a guess that
+    the first row is column titles: no cell in it is a number while some cell below it is.
+    """
+
+    rows: tuple[tuple[str, ...], ...]
+    first_line: int
+    last_line: int
+    header: bool = False
+
+
+def split_cells(line: str) -> tuple[str, ...]:
+    """A text-layer line as cells, split where the layout leaves a column gap."""
+    return tuple(cell for cell in _CELL_SPLIT.split(line.strip()) if cell)
+
+
+def find_text_tables(text: str) -> tuple[TextTable, ...]:
+    """The tables inside ``text``, with their cells.
+
+    Companion to :func:`_looks_tabular`, which only says whether a *whole page* is a table. This finds
+    table *regions* (a table under a heading and above a paragraph, two tables on a page) and returns
+    their rows and cells. A region is a run of at least three consecutive lines that each split into
+    two or more cells, where one cell count (at least two) accounts for 60% or more of the run;
+    lines at the ends of a run that do not share that count (a prose line that happens to contain a
+    wide space) are not part of the table. A blank line ends a region.
+
+    Heuristic, by nature: a text layer has no cell borders. A blank cell in the first column is
+    indistinguishable from indentation, so such a row comes back one cell short; the caller can see
+    that in a row whose length differs from its neighbours. Nothing is invented: every cell is text
+    that is on the page.
+    """
+    lines = text.splitlines()
+    tables: list[TextTable] = []
+    i = 0
+    while i < len(lines):
+        if len(split_cells(lines[i])) < 2:
+            i += 1
+            continue
+        j = i
+        while j + 1 < len(lines) and len(split_cells(lines[j + 1])) >= 2:
+            j += 1
+        counts = [len(split_cells(line)) for line in lines[i : j + 1]]
+        modal, hits = Counter(counts).most_common(1)[0]
+        if len(counts) >= 3 and hits / len(counts) >= 0.6:
+            lo, hi = 0, len(counts) - 1
+            while lo < hi and counts[lo] != modal:
+                lo += 1
+            while hi > lo and counts[hi] != modal:
+                hi -= 1
+            if hi - lo + 1 >= 3:
+                rows = tuple(split_cells(line) for line in lines[i + lo : i + hi + 1])
+                first_numeric = any(_NUMERIC_CELL.match(c) for c in rows[0])
+                later_numeric = any(_NUMERIC_CELL.match(c) for row in rows[1:] for c in row)
+                tables.append(TextTable(rows, i + lo, i + hi, header=not first_numeric and later_numeric))
+        i = j + 1
+    return tuple(tables)
+
+
+def _page_table_rows(text: str) -> tuple[tuple[str, ...], ...]:
+    """The cells of a page :func:`_looks_tabular` called a table: its table regions' rows, or, when no
+    region qualifies, every non-blank line split at its column gaps."""
+    found = find_text_tables(text)
+    if found:
+        return tuple(row for table in found for row in table.rows)
+    return tuple(cells for cells in (split_cells(line) for line in text.splitlines()) if cells)
+
+
+def pdf_image_inventory(data: bytes, *, max_pages: int | None = None) -> tuple[dict[str, Any], ...]:
+    """The images embedded in a PDF, one record per picture: ``{"page", "name", "width", "height"}``.
+
+    Read from each page's ``/XObject`` resources without decoding a single pixel, so it is cheap on
+    a 200-page scan and cannot fail on an exotic image filter. Pictures drawn from inside a nested
+    form XObject are not listed (a limitation, not a claim that none exist). A page whose resources
+    cannot be read contributes nothing rather than failing the document.
+    """
+    try:
+        import io
+
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(data))
+        pages = list(reader.pages)
+    except Exception as exc:
+        raise KnowledgeError("could not parse the PDF", details={"reason": type(exc).__name__}) from exc
+    found: list[dict[str, Any]] = []
+    for number, page in enumerate(pages[: max_pages or len(pages)], start=1):
+        try:
+            resources = page.get("/Resources")
+            xobjects = (resources.get_object() if resources is not None else {}).get("/XObject")
+            xobjects = xobjects.get_object() if xobjects is not None else {}
+            for name in xobjects:
+                node = xobjects[name].get_object()
+                if node.get("/Subtype") == "/Image":
+                    found.append({"page": number, "name": str(name).lstrip("/"),
+                                  "width": int(node.get("/Width", 0)) or None,
+                                  "height": int(node.get("/Height", 0)) or None})
+        except Exception:  # noqa: BLE001 - one malformed page must not lose the rest
+            continue
+    return tuple(found)
 
 
 def _page_image_count(page: Any) -> int:
