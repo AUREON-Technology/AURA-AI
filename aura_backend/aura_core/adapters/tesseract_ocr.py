@@ -203,24 +203,55 @@ class TesseractOcrEngine:
             logger.warning("tesseract recognition failed", extra={"page": page})
             raise
 
-    async def image_data(self, image: bytes, *, page: int) -> OcrResult:
+    @property
+    def lang(self) -> str:
+        """The language string this engine recognises with by default (installed languages only)."""
+        return self._lang
+
+    def installed_languages(self) -> tuple[str, ...]:
+        """Tesseract language codes whose data is installed (empty when that cannot be read)."""
+        try:
+            return tuple(sorted(set(self._pytesseract.get_languages(config=""))))
+        except Exception:
+            return ()
+
+    def resolve_language(self, lang: str | None) -> str:
+        """``lang`` (``"eng"``, ``"ara+eng"``) checked against what is installed, or the default.
+
+        Raises :class:`ValueError` naming the missing codes and the installed ones, so a caller can
+        tell the user what to ask for instead of surfacing tesseract's own failure.
+        """
+        if not lang:
+            return self._lang
+        wanted = [code for code in lang.split("+") if code]
+        installed = self.installed_languages()
+        missing = [code for code in wanted if installed and code not in installed]
+        if not wanted or missing:
+            raise ValueError(
+                f"tesseract language data for {missing or [lang]} is not installed "
+                f"(installed: {', '.join(installed) or 'unknown'})"
+            )
+        return "+".join(wanted)
+
+    async def image_data(self, image: bytes, *, page: int, lang: str | None = None) -> OcrResult:
         """Recognise ``image`` and return per-word/per-line text, confidence (0-100, ``None``
         when unknown) and pixel bounding boxes, plus the page's mean confidence.
 
         Same off-the-event-loop treatment and the same failure behaviour as :meth:`image_text`:
         an undecodable image or a tesseract failure raises; an image with no text returns an
-        empty result.
+        empty result. ``lang`` (optional, beyond the port) overrides the engine's languages for this
+        call; an uninstalled one raises :class:`ValueError`.
         """
-        return await asyncio.to_thread(self._recognise_data, image, page)
+        return await asyncio.to_thread(self._recognise_data, image, page, self.resolve_language(lang))
 
-    def _recognise_data(self, image: bytes, page: int) -> OcrResult:
+    def _recognise_data(self, image: bytes, page: int, lang: str | None = None) -> OcrResult:
         from PIL import Image
 
         try:
             with Image.open(io.BytesIO(image)) as pil_image:
                 pil_image.load()
                 data = self._pytesseract.image_to_data(
-                    pil_image, lang=self._lang, output_type=self._pytesseract.Output.DICT
+                    pil_image, lang=lang or self._lang, output_type=self._pytesseract.Output.DICT
                 )
                 width, height = pil_image.size
             return parse_tesseract_data(data, image_width=width, image_height=height)

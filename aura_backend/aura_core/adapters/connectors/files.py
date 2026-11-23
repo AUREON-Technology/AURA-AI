@@ -48,9 +48,7 @@ to stay inside the root after resolution. ``health()`` therefore reports ``write
 from __future__ import annotations
 
 import csv
-import datetime as dt
 import hashlib
-import io
 import json
 import os
 import re
@@ -71,6 +69,14 @@ from ...domain.errors import (
 from ...domain.templates import ReadTemplate
 from ...domain.untrusted import UntrustedText
 from ...observability.logging import get_logger
+from ...knowledge.tabular import (
+    HEADER_SCAN as _HEADER_SCAN,
+    coerce as _coerce,
+    infer_type as _infer_type,
+    normalise_sheet_dates as _normalise_sheet_dates,
+    read_delimited as _read_csv,
+    sheet_header as _sheet_header,
+)
 from .memory import InMemoryReadConnector
 from .postgres_catalog import _CATEGORICAL_MAX_DISTINCT, _MAX_VALUE_CHARS, _PATTERNS, artifacts_from_catalog
 
@@ -99,13 +105,6 @@ MAX_ROWS = 100_000
 _MAX_IDENT = 63
 #: The PostgreSQL connector's pattern rules, as Python regexes (its POSIX class spelled ``\s``).
 _PY_PATTERNS = tuple((name, re.compile(regex.replace("[:space:]", r"\s"))) for name, regex in _PATTERNS)
-
-_INTEGER = re.compile(r"^-?(0|[1-9][0-9]*)$")
-_NUMBER = re.compile(r"^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][-+]?[0-9]+)?$")
-_DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
-_TIMESTAMP = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]+)?)?(Z|[+-][0-9]{2}:?[0-9]{2})?$")
-_BOOLEAN = {"true": True, "false": False}
-_INT32 = 2**31 - 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,57 +137,6 @@ def resolve_directory(root: str | None, endpoint: str) -> Path | None:
     if target != base and base not in target.parents:
         return None
     return target if target.is_dir() else None
-
-
-def _infer_type(values: Sequence[Any]) -> str:
-    present = [v for v in values if v is not None]
-    if not present:
-        return "text"
-    if all(isinstance(v, bool) for v in present):
-        return "boolean"
-    if all(isinstance(v, int) and not isinstance(v, bool) for v in present):
-        return "integer" if all(abs(v) <= _INT32 for v in present) else "bigint"
-    if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in present):
-        return "numeric"
-    if all(isinstance(v, str) and _DATE.match(v) for v in present):
-        return "date"
-    if all(isinstance(v, str) and _TIMESTAMP.match(v) for v in present):
-        has_zone = all(v.endswith("Z") or re.search(r"[+-][0-9]{2}:?[0-9]{2}$", v) for v in present)
-        return "timestamp with time zone" if has_zone else "timestamp without time zone"
-    return "text"
-
-
-def _cell(text: str) -> Any:
-    """A CSV cell as its natural JSON value: empty -> None, then bool, int, float, else text."""
-    if text == "":
-        return None
-    lowered = text.lower()
-    if lowered in _BOOLEAN:
-        return _BOOLEAN[lowered]
-    if _INTEGER.match(text):
-        return int(text)
-    if _NUMBER.match(text):
-        return float(text)
-    return text
-
-
-def _coerce(column_type: str, value: Any) -> Any:
-    """A value under its column's inferred type; mixed columns are text, so their cells become text."""
-    if value is None or column_type != "text" or isinstance(value, str):
-        return value
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (dict, list)):
-        return json.dumps(value, ensure_ascii=False, sort_keys=True)
-    return str(value)
-
-
-def _read_csv(data: bytes, delimiter: str = ",") -> tuple[list[str], list[list[Any]]]:
-    text = data.decode("utf-8-sig")
-    reader = csv.reader(io.StringIO(text, newline=""), delimiter=delimiter)
-    header = next(reader, None) or []
-    rows = [[_cell(cell) for cell in row] for row in reader if any(cell.strip() for cell in row)]
-    return [h.strip() for h in header], rows
 
 
 def _read_json(data: bytes) -> tuple[list[str], list[list[Any]]]:
@@ -258,68 +206,6 @@ def _load(path: Path, name: str, issues: list[dict[str, str]]) -> _Table | None:
         issues.append(_issue("unparseable", locator))
         return None
     return _build_table(name, header, raw_rows, issues)
-
-
-#: Rows scanned from the top of a sheet for its header, and the slack the reader gets beyond
-#: ``MAX_ROWS`` so a title block above the header does not eat into the data allowance.
-_HEADER_SCAN = 50
-
-
-def _cell_text(value: Any) -> str:
-    if isinstance(value, (dt.datetime, dt.date, dt.time)):
-        return value.isoformat()
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
-    return str(value).strip()
-
-
-def _sheet_header(rows: Sequence[Sequence[Any]]) -> tuple[list[str], list[list[Any]]]:
-    """``(header, data rows)`` for a sheet's non-empty rows; synthesised names when no row is a header.
-
-    The header is the first of the leading rows at least half as wide as the widest of them (which
-    steps over a one-cell title line) provided most of its cells are text. A sheet whose first such
-    row is numeric has no header: every row is data and the columns are ``column_1`` ... ``column_n``.
-    """
-    width = max((len(r) for r in rows), default=0)
-    counts = [sum(1 for v in r if v is not None) for r in rows[:_HEADER_SCAN]]
-    widest = max(counts, default=0)
-    start = next((i for i, c in enumerate(counts) if c >= max(1, -(-widest // 2))), 0)
-    candidate = rows[start] if rows else ()
-    present = [v for v in candidate if v is not None]
-    texts = sum(1 for v in present if isinstance(v, str))
-    if present and texts * 2 >= len(present):
-        data = [list(r) for r in rows[start + 1:]]
-        header = [(_cell_text(candidate[j]) if j < len(candidate) and candidate[j] is not None else "")
-                  for j in range(width)]
-    else:
-        data = [list(r) for r in rows]
-        header = [""] * width
-    for j, name in enumerate(header):
-        if not name:
-            # A blank header cell over data still names a column; one over nothing is just padding.
-            header[j] = f"column_{j + 1}" if any(j < len(r) and r[j] is not None for r in data) else ""
-    return header, data
-
-
-def _isoformat(moment: dt.datetime | dt.time) -> str:
-    return moment.isoformat(timespec="milliseconds" if moment.microsecond else "seconds")
-
-
-def _normalise_sheet_dates(rows: list[list[Any]], columns: int) -> None:
-    """Datetimes become ISO strings in place, the way a CSV export spells them (so the column is
-    inferred ``date`` or ``timestamp`` by the same rules). A column is a ``date`` column only if no
-    value in it carries a time of day; one that does makes every value in it a timestamp."""
-    for j in range(columns):
-        moments = [r[j] for r in rows if j < len(r) and isinstance(r[j], dt.datetime)]
-        whole_days = all(m.time() == dt.time(0) for m in moments)
-        for row in rows:
-            if j >= len(row):
-                continue
-            value = row[j]
-            if isinstance(value, dt.datetime):
-                row[j] = value.date().isoformat() if whole_days else _isoformat(value)
-            elif isinstance(value, dt.time):
-                row[j] = _isoformat(value)
 
 
 def _load_workbook(path: Path, stem: str, issues: list[dict[str, str]], seen: set[str]) -> list[_Table]:

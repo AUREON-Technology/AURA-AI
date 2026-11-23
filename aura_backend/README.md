@@ -102,6 +102,8 @@ Environment variables (see `aura_core/config/settings.py`):
 - `AURA_SANDBOX_ENABLED` — enable persistent engineer workspaces (opt-in)
 - `AURA_ANALYSIS_TOOLS_ENABLED` — the 17 pure code/data analysis tools (default: true; ADR-036)
 - `AURA_TOOLS_FILES_ROOT` / `AURA_TOOLS_HTTP_ALLOWED_HOSTS` — switch on the read-only `list_files`/`read_file` (confined to that directory) and the host-allowlisted `fetch_url`; both off while empty
+- `AURA_WEB_SEARCH_URL` (+ `AURA_WEB_SEARCH_TIMEOUT_S`, `AURA_WEB_SEARCH_ENGINES`, `AURA_WEB_SEARCH_LANGUAGE`) — base URL of an operator-run SearXNG (JSON format enabled); switches on `web_search` (title/url/snippet/engine, untrusted content, request pinned to that host, no redirects). Off while empty; never a hosted search API (ADR-040)
+- With `AURA_TOOLS_FILES_ROOT` set, the same confined directory also serves `ocr_image`, `inspect_spreadsheet`, `parse_document`, `analyze_image_requirements` and `transcribe_audio`; each additionally needs its engine (OCR, vision/OCR, faster-whisper; ffmpeg on `PATH` for video) and is simply not registered without it (ADR-040)
 - `AURA_OPEN_EXEC_TOOLS_ENABLED` — `generate_and_run_tests` / `analyze_test_quality`, which run pytest in a child of the gateway; `engineer_agent` + confirmation, no container (default: false; ADR-036)
 - `AURA_DESKTOP_OPS_TOOLS_ENABLED` — `docker_build` / `docker_compose` / `profile_python` on a paired desktop only (default: true; ADR-036)
 - `AURA_LOOP_STUCK_DETECTION_ENABLED` / `AURA_LOOP_STUCK_IDENTICAL_CALLS` / `AURA_LOOP_STUCK_SAME_ERROR` / `AURA_LOOP_STUCK_NO_PROGRESS` — stop an agent loop that is repeating itself (default: true; 3 / 3 / 4; `0` disables a rule; ADR-037)

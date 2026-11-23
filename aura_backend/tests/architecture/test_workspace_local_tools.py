@@ -33,6 +33,10 @@ _EXPECTED_WORKSPACE_LOCAL = {
     "edit_file",
     "write_files",
     "run_command",
+    # ADR-040: start ruff/mypy/eslint/prettier in the workspace and parse what they print. Nothing
+    # run_command cannot already do (and no --fix: they never write), so the same exemption applies.
+    "lint_code",
+    "check_format",
     "git_commit",
     "git_checkout_branch",
     "open_workspace",

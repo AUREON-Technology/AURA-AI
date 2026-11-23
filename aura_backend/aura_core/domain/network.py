@@ -8,8 +8,9 @@ apart. Stdlib only.
 from __future__ import annotations
 
 import ipaddress
+from urllib.parse import urlparse
 
-__all__ = ["is_internal_address"]
+__all__ = ["is_internal_address", "validate_search_url"]
 
 
 def is_internal_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
@@ -36,3 +37,28 @@ def is_internal_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) 
         or address.is_multicast
         or address.is_unspecified
     )
+
+
+def validate_search_url(value: str) -> str:
+    """The configured SearXNG base URL, normalised (no trailing slash), or ``ValueError``.
+
+    Must be ``http`` or ``https`` with a host, and nothing a request could be smuggled through:
+    no credentials, query, fragment, whitespace or backslash.
+    """
+    text = (value or "").strip()
+    if not text:
+        raise ValueError("AURA_WEB_SEARCH_URL is empty")
+    if any(c.isspace() or ord(c) < 32 or ord(c) == 127 or c == "\\" for c in text):
+        raise ValueError("AURA_WEB_SEARCH_URL contains characters that are not permitted")
+    try:
+        parsed = urlparse(text)
+        parsed.port  # noqa: B018  (raises ValueError on a malformed port)
+    except ValueError as exc:
+        raise ValueError("AURA_WEB_SEARCH_URL is not a valid URL") from exc
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError("AURA_WEB_SEARCH_URL must be an http(s) URL with a host")
+    if parsed.username or parsed.password or "@" in parsed.netloc:
+        raise ValueError("AURA_WEB_SEARCH_URL must not embed credentials")
+    if parsed.query or parsed.fragment or "?" in text or "#" in text:
+        raise ValueError("AURA_WEB_SEARCH_URL must not carry a query or fragment")
+    return text.rstrip("/")

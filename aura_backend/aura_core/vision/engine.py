@@ -165,6 +165,54 @@ class VisionEngine:
             model=response.model,
         )
 
+    async def analyze(
+        self,
+        images: Sequence[ImageInput],
+        *,
+        instruction: str,
+        question: str,
+        max_tokens: int | None = None,
+        history: Sequence[Message] = (),
+    ) -> tuple[str, str | None, str | None]:
+        """Ask a vision model a task-specific question about ``images``: ``(text, provider, model)``.
+
+        ``perceive`` always asks for a *description*; callers that need something else (a strict JSON
+        extraction, say) supply their own ``instruction`` as the system message. The same rules
+        apply as for a perception: only an image-capable, non-third-party provider can serve it, the
+        content is ``SENSITIVE``, and a deployment with no such provider raises
+        ``DependencyUnavailableError`` -- there is no silent text-only answer. ``history`` lets a
+        caller continue the conversation (a repair turn after an invalid reply).
+        """
+        if not images:
+            raise DependencyUnavailableError("no image to analyse", dependency="vision")
+        if not self.enabled:
+            raise DependencyUnavailableError(
+                "image understanding is not enabled on this deployment", dependency="vision"
+            )
+        ambient = current_workload() or DEFAULT_WORKLOAD
+        hint = replace(ambient, pool=ModelPool.VISION, modalities=(Modality.IMAGE,))
+        request = CompletionRequest(
+            conversation=Conversation.of(
+                [Message.system(instruction), Message.user(question), *history]
+            ),
+            sampling=SamplingParams(
+                temperature=0.0,
+                max_output_tokens=max_tokens or self._settings.perception_max_tokens,
+            ),
+            images=tuple(images),
+            timeout_s=self._settings.perception_timeout_s,
+            workload=hint,
+            data_classification=DataClassification.SENSITIVE,
+        )
+        try:
+            response = await self._router.complete(request)
+        except AllProvidersFailedError as exc:
+            self._count("unavailable")
+            raise DependencyUnavailableError(
+                "no image-capable model is available", dependency="vision-model",
+            ) from exc
+        return (response.text or "").strip(), response.provider, response.model
+
     async def _ocr_fallback(self, images: Sequence[ImageInput]) -> Perception:
         parts: list[str] = []
         for number, image in enumerate(images, start=1):

@@ -30,7 +30,7 @@ from typing import Iterable
 from .documents import DocumentExtraction, DocumentTooLargeError, ExtractedBlock, Modality
 from .ooxml import DEFAULT_LIMITS, Node, OoxmlError, OoxmlLimits, Package
 
-__all__ = ["extract_docx", "extract_pptx", "MAX_PPTX_SLIDES"]
+__all__ = ["extract_docx", "extract_pptx", "office_images", "MAX_PPTX_SLIDES"]
 
 #: The most slides ``extract_pptx`` reads, the counterpart of ``MAX_PDF_PAGES``. The count comes
 #: from the presentation part before any slide is parsed.
@@ -482,3 +482,28 @@ def extract_pptx(
     return DocumentExtraction(
         blocks=tuple(blocks), pages=total, unreadable_pages=tuple(unreadable), blank_pages=tuple(blank)
     )
+
+
+def office_images(data: bytes, kind: str, *, limits: OoxmlLimits | None = None) -> list[dict[str, object]]:
+    """The pictures a ``.docx`` or ``.pptx`` embeds: ``{"name", "slide"}`` per picture (``slide`` is
+    ``None`` for Word, which does not record page numbers in the file -- pagination is decided when
+    the document is rendered). Read from the relationships, so nothing is decoded; a picture used on
+    two slides is listed on each. Raises :class:`OoxmlError` like the extractors."""
+    package = Package(data, limits=limits or DEFAULT_LIMITS)
+    found: list[dict[str, object]] = []
+    if kind == "docx":
+        part = package.main_part("officeDocument", "word/document.xml")
+        seen: set[str] = set()
+        for rel in package.relationships(part):
+            if rel.type == "image" and rel.target not in seen:
+                seen.add(rel.target)
+                found.append({"name": rel.target.rpartition("/")[2], "slide": None})
+    elif kind == "pptx":
+        presentation = package.main_part("officeDocument", "ppt/presentation.xml")
+        for number, part in enumerate(_slide_parts(package, presentation), start=1):
+            for rel in package.relationships(part):
+                if rel.type == "image":
+                    found.append({"name": rel.target.rpartition("/")[2], "slide": number})
+    else:
+        raise OoxmlError("only Word and PowerPoint packages carry a picture list here")
+    return found

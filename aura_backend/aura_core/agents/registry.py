@@ -171,6 +171,17 @@ _ENGINEER_OPEN_TOOLS = frozenset({
     "docker_build", "docker_compose", "profile_python",
 })
 
+# ADR-040. `lint_code` / `check_format` (`tools/devtools.py`) run in the engineer's workspace through
+# the same runner as `run_command`. The file-reading and search tools the engineer lacked
+# (`tools/media.py`, `tools/websearch.py`) are each only registered when their own setting is present
+# (AURA_TOOLS_FILES_ROOT for the file readers, AURA_WEB_SEARCH_URL for search), so naming them here
+# is a grant, not a guarantee.
+_ENGINEER_DEVTOOLS = frozenset({"lint_code", "check_format"})
+_DOCUMENT_READING_TOOLS = frozenset({"parse_document", "inspect_spreadsheet", "ocr_image"})
+_ENGINEER_READING_TOOLS = _DOCUMENT_READING_TOOLS | frozenset({
+    "web_search", "fetch_url", "analyze_image_requirements", "transcribe_audio",
+})
+
 
 # `tools/session_tools.py`: checkpoint the conversation and read it back. Written out rather than
 # imported, like the sets above (`tests/unit/test_agents.py` pins the names against the builder).
@@ -237,9 +248,9 @@ def build_default_agent_registry(*, engineer_token_budget: int | None = None) ->
                 prompt_template_id=AGENT_PROMPT_IDS["research_agent"],
                 # fetch_url is CONFIDENTIAL (reaches the network) and opt-in server-side; naming
                 # it here only matters once a deployment configures AURA_HTTP_ALLOWED_HOSTS.
-                allowed_tools=_READ_TOOLS | _MEMORY_WRITE_TOOLS | {"calculator", "fetch_url"} | {
+                allowed_tools=_READ_TOOLS | _MEMORY_WRITE_TOOLS | {"calculator", "fetch_url", "web_search"} | {
                     "synthesize_research", "validate_data_records",
-                },
+                } | _DOCUMENT_READING_TOOLS | {"transcribe_audio"},
                 risk_ceiling=ToolSensitivity.CONFIDENTIAL, memory_scope="shared",
             ),
             AgentSpec(
@@ -285,7 +296,8 @@ def build_default_agent_registry(*, engineer_token_budget: int | None = None) ->
                     "github_get_issue", "github_get_pull_request",
                     "github_create_branch", "github_commit_files",
                     "github_create_draft_pull_request",
-                } | _CODE_ANALYSIS_TOOLS | _DATA_ANALYSIS_TOOLS | _ENGINEER_OPEN_TOOLS | _SESSION_TOOLS,
+                } | _CODE_ANALYSIS_TOOLS | _DATA_ANALYSIS_TOOLS | _ENGINEER_OPEN_TOOLS | _ENGINEER_DEVTOOLS
+                | _ENGINEER_READING_TOOLS | _SESSION_TOOLS,
                 # Every tool the MCP bridge registers (`build_mcp_bridge_tools`). The prefix only
                 # decides *who* may ask: each such tool still needs the `engineer_agent`
                 # capability, and an unreviewed one stays CONFIDENTIAL + side-effecting, hence

@@ -1137,6 +1137,17 @@ class ToolSettings:
     #: Hosts ``fetch_url`` may reach (``build_http_tool``); subdomains are not implied. Empty (the
     #: default) registers no ``fetch_url``. Private/loopback addresses are refused regardless.
     http_allowed_hosts: tuple[str, ...] = ()
+    #: Base URL of an operator-run SearXNG instance (JSON API enabled) that ``web_search`` queries
+    #: (``tools/websearch.py``, ADR-040). Empty (the default) registers no ``web_search``. There is
+    #: deliberately no hosted-vendor alternative: search is self-hosted like everything else here.
+    web_search_url: str = ""
+    #: Seconds the search server gets to answer.
+    web_search_timeout_s: float = 10.0
+    #: Optional SearXNG ``engines`` / ``language`` parameters, passed on verbatim (empty = its defaults).
+    web_search_engines: str = ""
+    web_search_language: str = ""
+    #: Directory ``ocr_image``, ``inspect_spreadsheet``, ``parse_document`` and ``transcribe_audio``
+    #: read from is ``files_root`` (the same confinement as ``read_file``); nothing extra to set.
 
     @classmethod
     def from_env(cls) -> "ToolSettings":
@@ -1150,6 +1161,10 @@ class ToolSettings:
             require_confirmation_for_side_effects=_bool("TOOLS_REQUIRE_CONFIRMATION", True),
             files_root=(_env("TOOLS_FILES_ROOT", "") or "").strip(),
             http_allowed_hosts=_list("TOOLS_HTTP_ALLOWED_HOSTS"),
+            web_search_url=(_env("WEB_SEARCH_URL", "") or "").strip(),
+            web_search_timeout_s=_float("WEB_SEARCH_TIMEOUT_S", 10.0, minimum=1.0, maximum=60.0),
+            web_search_engines=(_env("WEB_SEARCH_ENGINES", "") or "").strip(),
+            web_search_language=(_env("WEB_SEARCH_LANGUAGE", "") or "").strip(),
         )
 
 
@@ -2484,6 +2499,13 @@ class AuraSettings:
         root = self.tools.files_root
         if root and (not root.startswith("/") or root.rstrip("/") == "" or ".." in root.split("/")):
             problems.append("AURA_TOOLS_FILES_ROOT must be an absolute path that is not '/' and has no '..'")
+        if self.tools.web_search_url:
+            from ..domain.network import validate_search_url
+
+            try:
+                validate_search_url(self.tools.web_search_url)
+            except ValueError as exc:
+                problems.append(str(exc))
         for host in self.tools.http_allowed_hosts:
             if "://" in host or "/" in host or "*" in host or ":" in host:
                 problems.append(

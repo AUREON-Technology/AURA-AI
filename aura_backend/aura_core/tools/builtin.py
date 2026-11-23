@@ -30,7 +30,6 @@ from typing import Any, Callable, Sequence
 from urllib.parse import urlparse
 
 from ..domain.errors import ToolExecutionError
-from ..domain.files import strip_absolute_prefix
 from ..domain.memory import SHARED_MEMORY_SCOPE, MemoryKind, MemoryQuery, readable_scopes
 from ..domain.network import is_internal_address
 from ..domain.tools import ToolCategory, ToolSensitivity
@@ -40,11 +39,14 @@ from ..safety.guards import SecretGuard
 from .analysis import build_analysis_tools
 from .base import param, tool
 from .coding import build_github_tools, build_sandbox_tools
+from .confinement import resolve_within as _resolve_within
 from .open._input import SourceRead, SourceReadError, is_pdf_bytes, read_source_file, read_source_bytes
+from .media import build_media_tools
 from .open_exec import build_open_exec_tools
 from .personal_os import personal_os_tools
 from .planning import find_calendar_slots, prioritize_tasks
 from .records import build_personal_os_crud_tools
+from .websearch import build_web_search_tool
 
 __all__ = [
     "calculator",
@@ -472,18 +474,8 @@ def build_file_tools(workspace: str | Path, *, max_bytes: int = 512_000) -> list
     cache: "OrderedDict[tuple[str, int, int], tuple[str, list[str]]]" = OrderedDict()
 
     def resolve_within(relative: str, tool_name: str = "read_file") -> Path:
-        if "\x00" in relative:
-            raise ToolExecutionError("path contains a null byte", tool=tool_name)
-        try:
-            candidate = (root / strip_absolute_prefix(relative)).resolve()
-        except (OSError, RuntimeError, ValueError) as exc:  # symlink loop, over-long name
-            raise ToolExecutionError(f"{relative} cannot be resolved", tool=tool_name) from exc
-        if candidate != root and root not in candidate.parents:
-            raise ToolExecutionError(
-                "path escapes the workspace directory", tool=tool_name,
-                details={"requested": relative},
-            )
-        return candidate
+        # One definition shared with the ADR-040 readers (tools/confinement.py).
+        return _resolve_within(root, relative, tool_name)
 
     @tool(
         "list_files",
@@ -938,6 +930,14 @@ def default_tools(
     enable_open_exec_tools: bool = False,
     enable_desktop_ops_tools: bool = False,
     episodic_memory: Any = None,
+    web_search_url: str = "",
+    web_search_timeout_s: float = 10.0,
+    web_search_engines: str = "",
+    web_search_language: str = "",
+    ocr_engine: Any = None,
+    vision_engine: Any = None,
+    image_normalizer: Any = None,
+    stt_engine: Any = None,
 ) -> list[Tool]:
     """Assemble the tool set for a deployment.
 
@@ -975,10 +975,22 @@ def default_tools(
         tools += build_personal_os_crud_tools(personal_os_store)
     if workspace is not None:
         tools += build_file_tools(workspace)
+        # ADR-040: structured readers over the same confined directory. Each is registered only if what
+        # it needs is present (the OCR / vision / speech engines are injected, never imported here).
+        tools += build_media_tools(
+            workspace, ocr_engine=ocr_engine, vision_engine=vision_engine,
+            image_normalizer=image_normalizer, stt_engine=stt_engine,
+        )
     if allowed_http_hosts:
         tools += build_http_tool(allowed_hosts=allowed_http_hosts)
     if enable_weather:
         tools += build_weather_tool()
+    if web_search_url:
+        # ADR-040: search through the operator's own SearXNG, or not at all (no hosted search API).
+        tools += build_web_search_tool(
+            base_url=web_search_url, timeout_s=web_search_timeout_s,
+            engines=web_search_engines, language=web_search_language,
+        )
     if sandbox_runner is not None:
         # The resolver is passed to both builders on purpose: `clone_repository` lives with the
         # sandbox tools (it writes into their per-turn workspace) but reaches GitHub through the
