@@ -156,4 +156,70 @@ class FakeDockerClient:
         self.containers = _Containers()
 
 
+def simulate_public_hosts(monkeypatch: Any, mapping: dict[str, int]) -> None:
+    """Make simulated public host names reachable on loopback WITHOUT touching the SSRF policy code.
 
+    SIMULATED: ``socket.getaddrinfo`` answers a public address (93.184.216.34) for each name in
+    ``mapping`` and ``socket.create_connection`` dials ``127.0.0.1:<mapped port>`` instead. The
+    real ``check_url`` therefore runs in full (name rules, path rules, "every resolved address must
+    be public") and the real HTTP stack carries the request; only DNS and the TCP destination are
+    stood in for. Names not in ``mapping`` behave normally, so refusals of loopback/private/metadata
+    URLs are still the real guard's.
+    """
+    import socket
+
+    real_getaddrinfo, real_connect = socket.getaddrinfo, socket.create_connection
+
+    def getaddrinfo(host, port, *args, **kwargs):
+        if isinstance(host, str) and host.lower() in mapping:
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port or 80))]
+        return real_getaddrinfo(host, port, *args, **kwargs)
+
+    def create_connection(address, *args, **kwargs):
+        host, _port = address
+        if isinstance(host, str) and host.lower() in mapping:
+            return real_connect(("127.0.0.1", mapping[host.lower()]), *args, **kwargs)
+        return real_connect(address, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    monkeypatch.setattr(socket, "create_connection", create_connection)
+
+
+class RecordingServer:
+    """A loopback HTTP server that records every request and answers from ``routes``."""
+
+    def __init__(self, routes: dict[str, tuple[int, Any]] | None = None) -> None:
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        self.requests: list[dict[str, Any]] = []
+        self.routes = routes or {}
+        outer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def _serve(self, body: bytes = b"") -> None:
+                outer.requests.append({"method": self.command, "path": self.path, "body": body,
+                                       "headers": {k.lower(): v for k, v in self.headers.items()}})
+                status, payload = outer.routes.get(self.path, (200, {"ok": True}))
+                raw = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
+                self.send_response(status)
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def do_GET(self) -> None:  # noqa: N802
+                self._serve()
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length") or 0)
+                self._serve(self.rfile.read(length))
+
+            def log_message(self, *args: Any) -> None:
+                return None
+
+        self._server = HTTPServer(("127.0.0.1", 0), Handler)
+        self.port = self._server.server_address[1]
+        threading.Thread(target=self._server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self._server.shutdown()
+        self._server.server_close()
