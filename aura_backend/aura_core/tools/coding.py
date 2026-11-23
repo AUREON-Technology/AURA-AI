@@ -1276,6 +1276,34 @@ def build_sandbox_tools(
     async def _git(handle: Any, argv: list[str], *, timeout_s: float = 15.0) -> Any:
         return await sandbox_runner.run(handle, argv, timeout_s=timeout_s)
 
+    async def _checkout_args(context: ToolContext, handle: Any) -> list[str]:
+        """``["-C", "<dir>"]`` when this call's git work belongs in a cloned checkout, else ``[]``.
+
+        In a durable workspace ``clone_repository`` lands the repository in ``<workspace>/<name>/``,
+        so the workspace root itself is not a repository and a bare ``git status`` there fails with
+        "not a git repository" right after a successful clone (found by the simulated end-to-end
+        suite). When the root is not a repository but the bound repository's checkout is, git is
+        pointed at the checkout. A workspace whose root *is* a repository, a scratch workspace and a
+        paired desktop (whose root is the user's own folder) are unchanged.
+        """
+        if not sessions.durable or await sessions._desktop_active(context):
+            return []
+        slug = sessions.bound_repo(context.correlation_id)
+        workspace_path = getattr(sandbox_runner, "workspace_path", None)
+        if not slug or slug == _WorkspaceResolver.SCRATCH or workspace_path is None:
+            return []
+        try:
+            root = Path(await workspace_path(handle))
+        except Exception:
+            return []
+        if (root / ".git").exists():
+            return []
+        directory = _clone_dir(slug, None)
+        checkout = root / directory
+        if (checkout / ".git").is_dir() and not (checkout / ".git").is_symlink() and not checkout.is_symlink():
+            return ["-C", directory]
+        return []
+
     def _git_failure(result: Any) -> str:
         """What git said, from whichever stream it used (``nothing to commit`` goes to stdout)."""
         return (result.stderr.strip() or result.stdout.strip() or f"exit code {result.exit_code}")[:300]
@@ -1291,9 +1319,10 @@ def build_sandbox_tools(
     )
     async def git_diff(context: ToolContext) -> str:
         handle = await sessions.handle(context)
-        has_head = await _git(handle, ["git", "rev-parse", "--verify", "--quiet", "HEAD"])
+        where = await _checkout_args(context, handle)
+        has_head = await _git(handle, ["git", *where, "rev-parse", "--verify", "--quiet", "HEAD"])
         if has_head.exit_code != 0:
-            inside = await _git(handle, ["git", "rev-parse", "--is-inside-work-tree"])
+            inside = await _git(handle, ["git", *where, "rev-parse", "--is-inside-work-tree"])
             if inside.exit_code != 0 or inside.stdout.strip() != "true":
                 raise ToolExecutionError(
                     "the workspace is not a git repository; clone one (clone_repository) or run "
@@ -1304,9 +1333,9 @@ def build_sandbox_tools(
         # staged, plus what is edited since. (This used to run `git diff HEAD`, fail, and report
         # "(no changes)" for a workspace full of them.)
         commands = (
-            [["git", "diff", "--no-ext-diff", "HEAD"]]
+            [["git", *where, "diff", "--no-ext-diff", "HEAD"]]
             if has_head.exit_code == 0
-            else [["git", "diff", "--no-ext-diff", "--cached"], ["git", "diff", "--no-ext-diff"]]
+            else [["git", *where, "diff", "--no-ext-diff", "--cached"], ["git", *where, "diff", "--no-ext-diff"]]
         )
         parts: list[str] = []
         for argv in commands:
@@ -1317,7 +1346,7 @@ def build_sandbox_tools(
                 )
             if result.stdout:
                 parts.append(result.stdout)
-        untracked = await _git(handle, ["git", "ls-files", "--others", "--exclude-standard"])
+        untracked = await _git(handle, ["git", *where, "ls-files", "--others", "--exclude-standard"])
         names = [line for line in untracked.stdout.splitlines() if line] if untracked.exit_code == 0 else []
         diff = "".join(parts)
         if not names:
@@ -1345,19 +1374,22 @@ def build_sandbox_tools(
         if not message.strip():
             raise ToolExecutionError("commit message must not be empty", tool="git_commit")
         handle = await sessions.handle(context)
-        added = await _git(handle, ["git", "add", "-A"])
+        where = await _checkout_args(context, handle)
+        added = await _git(handle, ["git", *where, "add", "-A"])
         if added.exit_code != 0:
             raise ToolExecutionError(f"git add failed: {_git_failure(added)}", tool="git_commit")
         # The sandbox's HOME is a fresh tmpfs for every command, so there is no global identity
         # and `git commit` refuses ("Please tell me who you are"). Supply one for this commit
         # only, and only when none is configured -- never over a person's own.
         identity = await _git(
-            handle, ["sh", "-c", "git config user.name >/dev/null && git config user.email >/dev/null"]
+            handle,
+            ["sh", "-c", "git " + " ".join(shlex.quote(a) for a in (*where, "config", "user.name")) + " >/dev/null && git "
+                         + " ".join(shlex.quote(a) for a in (*where, "config", "user.email")) + " >/dev/null"],
         )
         argv = ["git"]
         if identity.exit_code != 0:
             argv += ["-c", "user.name=AURA Engineer Agent", "-c", "user.email=engineer-agent@aura.local"]
-        result = await _git(handle, [*argv, "commit", "-m", message])
+        result = await _git(handle, [*argv, *where, "commit", "-m", message])
         if result.exit_code != 0:
             raise ToolExecutionError(f"git commit failed: {_git_failure(result)}", tool="git_commit")
         return result.stdout or "committed"
@@ -1381,14 +1413,16 @@ def build_sandbox_tools(
                 tool="git_checkout_branch",
             )
         handle = await sessions.handle(context)
+        where = await _checkout_args(context, handle)
         exists = await _git(
-            handle, ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], timeout_s=10.0
+            handle, ["git", *where, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], timeout_s=10.0
         )
         # `checkout -B` -- which this used to run -- *resets* an existing branch to the current
         # HEAD: asking for `main` while on a feature branch moved `main` onto the feature's
         # commits. An existing branch is switched to; only a new one is created.
         argv = (
-            ["git", "checkout", branch, "--"] if exists.exit_code == 0 else ["git", "checkout", "-b", branch]
+            ["git", *where, "checkout", branch, "--"] if exists.exit_code == 0
+            else ["git", *where, "checkout", "-b", branch]
         )
         result = await _git(handle, argv, timeout_s=10.0)
         if result.exit_code != 0:
@@ -1491,8 +1525,10 @@ def build_sandbox_tools(
     )
     async def git_status(context: ToolContext) -> str:
         handle = await sessions.handle(context)
+        where = " ".join(shlex.quote(a) for a in await _checkout_args(context, handle))
         result = await sandbox_runner.run(
-            handle, ["sh", "-c", "git status --short --branch"], timeout_s=15.0
+            handle, ["sh", "-c", "git " + (where + " " if where else "") + "status --short --branch"],
+            timeout_s=15.0,
         )
         if result.exit_code != 0:
             raise ToolExecutionError(
