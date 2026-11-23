@@ -108,6 +108,8 @@ ROUTES = [
     ("POST", "/api/v3/admin/control/keys/cloudflare/tokens/cf-1/revoke", {"confirm": "x"}),
     ("GET", "/api/v3/admin/control/cloudflare", None),
     ("GET", "/api/v3/admin/control/cloudflare/models", None),
+    ("GET", "/api/v3/admin/control/cloudflare/usage", None),
+    ("GET", "/api/v3/admin/control/cloudflare/r2", None),
     ("POST", "/api/v3/admin/control/cloudflare/providers/validate", {"operation": "remove", "name": "cfp-1"}),
     ("POST", "/api/v3/admin/control/cloudflare/providers",
      {"name": "cfp-1", "model": "@cf/openai/gpt-oss-20b", "context_window": 32768, "confirm": "cfp-1"}),
