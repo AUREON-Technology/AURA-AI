@@ -222,6 +222,17 @@ class TestCheckArchitecture:
         assert r["cycles"], r
         assert r["languages"] == {"javascript/typescript": 2}
 
+    async def test_a_package_reexport_of_a_module_that_was_not_passed_is_not_a_cycle(self, ctx) -> None:
+        files = [{"path": "pkg/domain/__init__.py", "source_code": "from .errors import Boom\nfrom .cag import Thing\n"},
+                 {"path": "pkg/domain/cag.py", "source_code": "from .errors import Boom\n"}]
+        r = await call("check_architecture", ctx, files=files)
+        assert r["cycles"] == [] and r["is_consistent"] is True
+
+    async def test_files_under_a_source_root_resolve_to_the_names_they_are_imported_by(self, ctx) -> None:
+        files = [{"path": "src/pkg/a.py", "source_code": "import pkg.b\n"}, {"path": "src/pkg/b.py", "source_code": "from pkg import a\n"}]
+        r = await call("check_architecture", ctx, files=files)
+        assert r["cycles"], r
+
     async def test_an_import_map_alone_works_and_nothing_at_all_is_an_error(self, ctx) -> None:
         r = await call("check_architecture", ctx, import_map={"x.domain.a": ["x.api.b"]})
         assert r["layer_violations"]
@@ -385,7 +396,8 @@ class TestCheckDiffScope:
         assert r["task_alignment"]["alignment"] == "ALIGNED"
 
     async def test_forbidden_files_secrets_allowed_paths_and_size(self, ctx) -> None:
-        diff = ('diff --git a/.env b/.env\n--- a/.env\n+++ b/.env\n@@ -0,0 +1 @@\n+API_KEY="sk-abcdefghijklmnopqrstuvwxyz0123"\n'
+        fake_key = "s" + "k-" + "abcdefghijklmnopqrstuvwxyz0123"  # built at runtime, never a committed literal
+        diff = (f'diff --git a/.env b/.env\n--- a/.env\n+++ b/.env\n@@ -0,0 +1 @@\n+API_KEY="{fake_key}"\n'
                 "diff --git a/docs/readme.md b/docs/readme.md\n--- a/docs/readme.md\n+++ b/docs/readme.md\n@@ -1 +1 @@\n-a\n+b\n")
         r = await call("check_diff_scope", ctx, diff_text=diff, allowed_paths=["src"], max_lines_changed=2)
         assert r["verdict"] == "SCOPE_VIOLATIONS_DETECTED" and r["within_scope"] is False

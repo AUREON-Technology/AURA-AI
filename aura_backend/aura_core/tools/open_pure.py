@@ -69,15 +69,15 @@ def _targets_to_dotted(targets: list[str]) -> list[str]:
     return [re.sub(r"[/:]+", ".", t).strip(".") for t in targets if t]
 
 
-def _resolve(target: str, modules: set[str]) -> str | None:
-    """The scanned module ``target`` names, by longest dotted prefix (``a.b.c`` -> ``a.b``)."""
-    while target:
-        if target in modules:
-            return target
-        if "." not in target:
-            return None
-        target = target.rsplit(".", 1)[0]
-    return None
+def _resolve(target: str, modules: set[str], by_suffix: dict[str, list[str]]) -> str | None:
+    """The scanned module ``target`` names: an exact match, else the one module whose dotted name ends
+    with it (files passed as ``src/pkg/a.py`` are imported as ``pkg.a``). No prefix guessing: an import
+    of a module that was not passed is not an edge to its package, or every ``__init__`` re-export
+    would look like a cycle."""
+    if target in modules:
+        return target
+    hits = by_suffix.get(target, [])
+    return hits[0] if len(hits) == 1 else None
 
 
 def _architecture(
@@ -126,8 +126,13 @@ def _architecture(
     audit = ArchitecturalConsistencyChecker.audit_project_modules(graph, forbidden_rules=rules)
     layering = ArchitecturalConsistencyChecker.detect_layering_violations(graph, layer_tiers=tiers)
     modules = set(graph)
+    by_suffix: dict[str, list[str]] = {}
+    for m in modules:
+        parts = m.split(".")
+        for i in range(1, len(parts)):
+            by_suffix.setdefault(".".join(parts[i:]), []).append(m)
     internal = {
-        m: [r for t in [*targets, *link_graph.get(m, [])] if (r := _resolve(t, modules)) and r != m]
+        m: [r for t in [*targets, *link_graph.get(m, [])] if (r := _resolve(t, modules, by_suffix)) and r != m]
         for m, targets in graph.items()
     }
     internal = {m: list(dict.fromkeys(t)) for m, t in internal.items()}
