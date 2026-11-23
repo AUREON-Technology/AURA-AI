@@ -417,6 +417,8 @@ class Container:
             summarise_after=settings.memory.summarise_after_turns,
             summariser=build_session_summariser(self.router, self.prompts),
             checkpointer=build_session_checkpointer(self.router),
+            # Off (0) unless AURA_MEMORY_AUTO_CHECKPOINT_EVERY_TURNS: each one is a model call.
+            auto_checkpoint_every=settings.memory.auto_checkpoint_every_turns,
         )
 
         # The ten retrieval strategies, and a facade presenting the selected one with the
@@ -1726,6 +1728,7 @@ class Container:
                 enable_analysis_tools=self.settings.open_tools.analysis_enabled,
                 enable_open_exec_tools=self.settings.open_tools.exec_enabled,
                 enable_desktop_ops_tools=self.settings.open_tools.desktop_ops_enabled,
+                episodic_memory=self.episodic,
             )
         )
         return registry

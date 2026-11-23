@@ -98,6 +98,10 @@ COVERED = {
         "TestMemory::test_bob_cannot_delete_alices_memory",
     ("DELETE", "/api/v3/sessions/{session_id}"):
         "TestConversations::test_bob_cannot_delete_alices_conversation_by_session_id",
+    ("GET", "/api/v3/sessions/{session_id}/checkpoint"):
+        "TestConversations::test_bob_cannot_read_alices_session_checkpoint",
+    ("POST", "/api/v3/sessions/{session_id}/checkpoint"):
+        "TestConversations::test_bob_cannot_checkpoint_alices_session",
     ("DELETE", "/api/v3/engineering/workspaces/{workspace_id}"):
         "TestEngineering::test_bob_cannot_delete_alices_workspace",
     ("GET", "/api/v3/agents/runs/{run_id}"):
@@ -549,6 +553,47 @@ class TestConversations:
         assert response.status_code == 200  # idempotent: Bob's (empty) session is cleared
         history, _ = asyncio.run(container.episodic.history(session, UserId(ALICE)))
         assert any("14th" in m.content for m in history), "Bob's delete erased Alice's conversation"
+
+
+    def test_bob_cannot_read_alices_session_checkpoint(self, container) -> None:
+        """Row 26: ``GET /sessions/{id}/checkpoint`` reads the *caller's* namespace, so a guessed
+        session id of Alice's answers 404 for Bob and never returns her decisions or blockers."""
+        from fastapi.testclient import TestClient
+
+        from aura_core.domain.identifiers import SessionId
+
+        session = SessionId("shared-guessable-id")
+        asyncio.run(container.episodic.append(
+            session, UserId(ALICE),
+            user_message="We decided to use the Lisbon vendor.",
+            assistant_message="Blocked: the Lisbon contract PELICAN-7731 is waiting on legal.",
+        ))
+        asyncio.run(container.episodic.checkpoint(session, UserId(ALICE), save=True))
+        with TestClient(_app(container)) as client:
+            own = client.get(f"/api/v3/sessions/{session.value}/checkpoint", headers=AUTH_A)
+            foreign = client.get(f"/api/v3/sessions/{session.value}/checkpoint", headers=AUTH_B)
+        assert own.status_code == 200 and "PELICAN-7731" in own.text
+        assert foreign.status_code == 404 and "PELICAN-7731" not in foreign.text
+
+    def test_bob_cannot_checkpoint_alices_session(self, container) -> None:
+        """``POST`` writes into the caller's own namespace only: Bob's call neither reads Alice's
+        conversation nor replaces her saved checkpoint."""
+        from fastapi.testclient import TestClient
+
+        from aura_core.domain.identifiers import SessionId
+
+        session = SessionId("shared-guessable-id")
+        asyncio.run(container.episodic.append(
+            session, UserId(ALICE),
+            user_message="We decided to use the Lisbon vendor.",
+            assistant_message="Blocked: the Lisbon contract PELICAN-7731 is waiting on legal.",
+        ))
+        saved = asyncio.run(container.episodic.checkpoint(session, UserId(ALICE), save=True))
+        with TestClient(_app(container)) as client:
+            response = client.post(f"/api/v3/sessions/{session.value}/checkpoint", headers=AUTH_B)
+        assert response.status_code == 404 and "PELICAN-7731" not in response.text
+        still = asyncio.run(container.episodic.latest_checkpoint(session, UserId(ALICE)))
+        assert still is not None and still.as_dict() == saved.as_dict()
 
 
 class TestWorkspaces:

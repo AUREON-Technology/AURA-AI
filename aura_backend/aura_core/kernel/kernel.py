@@ -1673,6 +1673,7 @@ class AIKernel:
             memory_scope=agent.memory_scope if agent is not None else "shared",
             capabilities=request.capabilities,
             delegation_depth=request.delegation_depth,
+            session_id=request.session_id.value if request.session_id else None,
             credentials={connector_token_key(c): token for c, token in (request.connector_tokens or {}).items()},
             # D8: carried via the existing free-form `metadata` field rather than a new
             # `ToolContext` slot -- see `ports/runtime.py::ToolContext`'s own doc comment on why

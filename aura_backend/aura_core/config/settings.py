@@ -1064,6 +1064,11 @@ class MemorySettings:
     max_records_per_user: int = 20_000
     #: Verbatim messages injected into the model. Stored session history is unchanged.
     prompt_history_messages: int = 4
+    #: Write a structured session checkpoint (decisions / completed / blockers / next steps) in the
+    #: background every N persisted turns of a session (``EpisodicMemory.append``). ``0`` -- the
+    #: default -- never does it automatically; ``save_session_checkpoint`` and the checkpoint API
+    #: still work on demand. Each one is a model call, so it never runs on the turn's own path.
+    auto_checkpoint_every_turns: int = 0
 
     @classmethod
     def from_env(cls) -> "MemorySettings":
@@ -1079,6 +1084,9 @@ class MemorySettings:
             duplicate_threshold=_float("MEMORY_DUPLICATE_THRESHOLD", 0.94, minimum=0.5, maximum=1.0),
             max_records_per_user=_int("MEMORY_MAX_RECORDS_PER_USER", 20_000, minimum=100),
             prompt_history_messages=_int("MEMORY_PROMPT_HISTORY_MESSAGES", 4, minimum=0, maximum=64),
+            auto_checkpoint_every_turns=_int(
+                "MEMORY_AUTO_CHECKPOINT_EVERY_TURNS", 0, minimum=0, maximum=1000
+            ),
         )
 
 
@@ -1173,6 +1181,28 @@ class ReasoningSettings:
     #: flat 60s every other tool gets (`AIKernel._tool_context`) -- a delegated sub-turn is a full
     #: recursive `kernel.run()`, not a simple API call, and needs room for its own budgets.
     delegation_deadline_s: float = 180.0
+    #: ADR-038. ``delegate_to_agent(background=true)`` plus ``list_agent_tasks`` /
+    #: ``get_agent_task`` / ``cancel_agent_task``. Off: none of them is registered and the
+    #: ``background`` parameter is not advertised, so delegation is the synchronous one-hop
+    #: sub-turn it always was.
+    background_delegation_enabled: bool = False
+    #: Background tasks one user may have queued or running at once (counted in the shared cache,
+    #: so it holds across workers), and the cap on tasks this process runs at once.
+    agent_tasks_per_user: int = 3
+    agent_tasks_global: int = 16
+    #: How long a finished task's status and result stay readable, and the wall-clock limit on one
+    #: background sub-turn.
+    agent_task_ttl_s: int = 3600
+    agent_task_deadline_s: float = 900.0
+    #: ADR-038. A delegated sub-turn receives a structured, fenced DATA-channel handoff (goal,
+    #: decisions, completed, blockers, pending, relevant paths) built from the parent session's
+    #: checkpoint, and its result is stored back as a structured outcome. Off: the child sees only
+    #: the subtask text, as before.
+    structured_handoff_enabled: bool = False
+    #: ADR-038. What a ``/chat`` turn that names no ``plan_mode`` (and no ``plan``) does:
+    #: ``""`` -- the default -- is today's behaviour, unchanged; ``auto``, ``plan``, ``fast`` or
+    #: ``review`` make that mode the deployment default.
+    default_plan_mode: str = ""
 
     @classmethod
     def from_env(cls) -> "ReasoningSettings":
@@ -1196,6 +1226,15 @@ class ReasoningSettings:
             delegation_deadline_s=_float(
                 "REASONING_DELEGATION_DEADLINE_S", 180.0, minimum=10.0, maximum=3600.0
             ),
+            background_delegation_enabled=_bool("REASONING_BACKGROUND_DELEGATION", False),
+            agent_tasks_per_user=_int("REASONING_AGENT_TASKS_PER_USER", 3, minimum=1, maximum=50),
+            agent_tasks_global=_int("REASONING_AGENT_TASKS_GLOBAL", 16, minimum=1, maximum=500),
+            agent_task_ttl_s=_int("REASONING_AGENT_TASK_TTL_S", 3600, minimum=60, maximum=7 * 86400),
+            agent_task_deadline_s=_float(
+                "REASONING_AGENT_TASK_DEADLINE_S", 900.0, minimum=10.0, maximum=7200.0
+            ),
+            structured_handoff_enabled=_bool("REASONING_STRUCTURED_HANDOFF", False),
+            default_plan_mode=(_env("REASONING_DEFAULT_PLAN_MODE", "") or "").strip().lower(),
         )
 
 
@@ -1464,6 +1503,10 @@ class LearningSettings:
     finetune_estimated_cpu_hours: float | None = None
     #: Max substring-coverage drop vs base before canary is blocked.
     finetune_canary_max_coverage_drop: float = 0.05
+    #: ADR-038. After an Engineer turn, derive candidate lessons (decisions, corrected errors,
+    #: conventions) and store them as ``auto_lesson`` memories in the engineer scope's *pending*
+    #: partition. Nothing reaches recall until the owner approves it. Off by default.
+    auto_lessons_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> "LearningSettings":
@@ -1498,6 +1541,7 @@ class LearningSettings:
             finetune_canary_max_coverage_drop=_float(
                 "LEARNING_FINETUNE_CANARY_MAX_COVERAGE_DROP", 0.05, minimum=0.0, maximum=1.0
             ),
+            auto_lessons_enabled=_bool("AUTO_LESSONS_ENABLED", False),
         )
 
 
@@ -2371,6 +2415,9 @@ class AuraSettings:
         where one of these is violated.
         """
         problems: list[str] = []
+
+        if self.reasoning.default_plan_mode not in ("", "auto", "plan", "fast", "review"):
+            problems.append("AURA_REASONING_DEFAULT_PLAN_MODE must be empty, auto, plan, fast or review")
 
         if self.security.engineer_for_customers:
             # SaaS P1-E: a customer's Engineer runs on their own computer only. Each of these

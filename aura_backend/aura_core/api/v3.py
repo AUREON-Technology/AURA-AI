@@ -1572,6 +1572,15 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     # -- sessions ----------------------------------------------------------------------
 
+    def _checkpoint_session(session_id: str, caller: Principal) -> SessionId:
+        if caller.is_service:
+            # A service key has no conversation (AR-4); same refusal as a session id on /chat.
+            raise ValidationError("a service key cannot use a session")
+        try:
+            return SessionId(session_id)
+        except ValueError as exc:
+            raise ValidationError("session id is not a valid identifier") from exc
+
     @router.delete("/sessions/{session_id}", dependencies=idempotent)
     async def delete_session(
         request: Request, session_id: str, caller: Principal = Depends(principal)
@@ -1591,6 +1600,42 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             raise ValidationError("session id is not a valid identifier") from exc
         await container.episodic.clear(session, caller.user_id)
         return JSONResponse(content={"deleted": True})
+
+    @router.get("/sessions/{session_id}/checkpoint")
+    async def get_session_checkpoint(
+        request: Request, session_id: str, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """The last saved checkpoint of one of the caller's conversations (row 26).
+
+        Decisions, completed work, blockers and next steps, as ``memory/checkpoint.py`` writes them.
+        Owner-scoped: the checkpoint key is namespaced by the caller's own id, so naming another
+        user's session id reads an empty slot of the caller's own namespace and answers 404 --
+        indistinguishable from a session that was never checkpointed.
+        """
+        await enforce_rate_limit(request, caller, "read")
+        session = _checkpoint_session(session_id, caller)
+        checkpoint = await container.episodic.latest_checkpoint(session, caller.user_id)
+        if checkpoint is None:
+            raise HTTPException(status_code=404, detail={"error": "not_found"})
+        return JSONResponse(content={"session_id": session.value, "checkpoint": checkpoint.as_dict()})
+
+    @router.post("/sessions/{session_id}/checkpoint", dependencies=idempotent)
+    async def write_session_checkpoint(
+        request: Request, session_id: str, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Write (and save) a checkpoint of one of the caller's conversations now.
+
+        Model-written when the deployment has a model that answers, extractive otherwise
+        (``checkpoint.source`` says which). A conversation with nothing saved in it answers 404:
+        there is nothing to write down. Counts against the chat budget because it may be a model
+        call.
+        """
+        await enforce_rate_limit(request, caller, "chat")
+        session = _checkpoint_session(session_id, caller)
+        checkpoint = await container.episodic.checkpoint(session, caller.user_id, save=True)
+        if checkpoint.covers_messages == 0 and checkpoint.is_empty():
+            raise HTTPException(status_code=404, detail={"error": "not_found", "reason": "empty_session"})
+        return JSONResponse(content={"session_id": session.value, "checkpoint": checkpoint.as_dict()})
 
     # -- feedback ----------------------------------------------------------------------
 
