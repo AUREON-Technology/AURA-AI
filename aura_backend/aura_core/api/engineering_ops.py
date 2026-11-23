@@ -78,7 +78,9 @@ def register_engineering_ops(
     def _capacity_refused(exc: WorkspaceCapacityError) -> Any:
         # A refusal, not a fault: nothing was started, and it clears as other workspaces stop.
         return JSONResponse(status_code=409, content={
-            "error": "workspace_capacity", "message": str(exc), "retryable": True, "details": {},
+            "error": "workspace_capacity",
+            "message": getattr(exc, "public_message", None) or str(exc),
+            "retryable": True, "details": {},
         })
 
     async def _lifecycle(request: Any, caller: Any, workspace_id: str, action: str) -> Any:

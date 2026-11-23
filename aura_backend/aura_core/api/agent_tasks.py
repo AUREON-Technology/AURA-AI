@@ -295,10 +295,12 @@ def register_agent_task_ops(
                 },
                 caller, request,
             )
-            # Consent is refused here, at submission, not discovered later in a failed task.
-            await container.kernel.preflight(turn)
             reservation, turn = await admit_turn(caller, payload.persona, turn)
             try:
+                # Consent is refused here, at submission, not discovered later in a failed task.
+                # After admission, because admission can grant a customer's Engineer capability
+                # (their plan), and consent is asked of whoever will actually run as the Engineer.
+                await container.kernel.preflight(turn)
                 task = AgentTask(
                     id=str(uuid.uuid4()), owner=owner, goal=payload.goal,
                     persona=payload.persona, status=TaskStatus.QUEUED, priority=payload.priority,

@@ -199,13 +199,20 @@ class WorkspaceManager:
             return
         needed = self._min_free_memory_mb + self._memory_limit_mb
         if available < needed:
-            raise WorkspaceCapacityError(
+            refusal = WorkspaceCapacityError(
                 "not enough free memory on the host to start another workspace "
                 f"({available:.0f} MiB available, {needed:.0f} MiB needed). Nothing was started; "
                 "try again once the host is less busy, or ask an operator to raise "
                 "AURA_SANDBOX_MIN_FREE_MEMORY_MB if this is a false alarm.",
                 tool="open_workspace",
             )
+            # The message above is for the agent and the operator's logs. A person asking over
+            # HTTP is told the reason without the host's memory figures or its configuration.
+            refusal.public_message = (
+                "the server does not have enough free memory to start another workspace right "
+                "now. Nothing was started; try again shortly."
+            )
+            raise refusal
 
     async def _make_room_to_run(
         self, now: datetime, *, keep: WorkspaceId | None

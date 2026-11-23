@@ -138,6 +138,8 @@ class TestStartStopRestart:
             body = refused.json()
             assert body["error"] == "workspace_capacity" and body["retryable"] is True
             assert "memory" in body["message"]
+            # The host's figures and its configuration are for logs, not for the person asking.
+            assert "MiB" not in body["message"] and "AURA_" not in body["message"]
             assert _status(client, ws.id.value) == "warm"
             # A restart refused for capacity leaves the workspace stopped, never half-started.
             again = client.post(f"{WS}/{ws.id.value}/restart", headers=AUTH_A)

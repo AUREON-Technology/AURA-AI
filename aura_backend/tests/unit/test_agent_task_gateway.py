@@ -241,6 +241,10 @@ class TestRefusals:
     def test_engineer_consent_is_refused_at_submission_not_discovered_in_a_failed_task(
         self, container
     ) -> None:
+        # Plan entitlement is checked first (as on /chat); give the plan the Engineer so consent
+        # is the gate under test.
+        free = replace(DEFAULT_CATALOGUE["free"], engineer=True)
+        container.plans.catalogue = MappingProxyType({**DEFAULT_CATALOGUE, "free": free})
         with TestClient(_app(container)) as client:
             refused = _submit(client, "fix the build", headers=AUTH_E, persona="engineer")
             assert refused.status_code == 403
@@ -334,7 +338,7 @@ class TestCancel:
 class TestScheduling:
     def test_run_at_delays_the_start(self, container) -> None:
         container.router.get("echo").queue(ScriptedTurn(text="on time"))
-        start_after = datetime.now(timezone.utc) + timedelta(seconds=1.2)
+        start_after = datetime.now(timezone.utc) + timedelta(seconds=2.0)
         with TestClient(_app(container)) as client:
             tid = _submit(client, "scheduled", run_at=start_after.isoformat()).json()["task"]["id"]
             time.sleep(0.4)
@@ -354,7 +358,7 @@ class TestScheduling:
         container = _container(monkeypatch, AGENT_TASKS_MAX_CONCURRENT=1,
                                AGENT_TASKS_MAX_CONCURRENT_PER_USER=1)
         echo = container.router.get("echo")
-        echo.queue(ScriptedTurn(text="blocker", delay_ms=700))
+        echo.queue(ScriptedTurn(text="blocker", delay_ms=2500))
         with TestClient(_app(container)) as client:
             blocker = _submit(client, "blocker").json()["task"]["id"]
             _wait(client, blocker, AUTH_A, {"running"})
