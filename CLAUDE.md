@@ -278,10 +278,10 @@ permanent platform adapters mounted outside `aura_core` (ADR-002), not legacy co
 removal.
 
 Full ADR list and the ten essential decisions are in `docs/architecture/00-overview.md` and
-`docs/architecture/001-*.md`–`037-*.md` (there is no 012 or 017; 018–028 are Track AP drafts, Proposed); read the relevant one before touching
+`docs/architecture/001-*.md`–`038-*.md` (there is no 012 or 017; 018–028 are Track AP drafts, Proposed); read the relevant one before touching
 retrieval, memory, routing, safety, indexing, desktop hostd (011), engineer workspaces
 (013/014), service keys / caller context / structured output on `/chat` (029), images on
-`/chat` (031), the Claude provider and complexity routing (033), customer workspaces and team scopes (034), adaptive knowledge updates (035), the `tools/open` analysis tools (036), or the console's Super-Admin control center (037) — each encodes a reason something is shaped the way it is, not just what it does.
+`/chat` (031), the Claude provider and complexity routing (033), customer workspaces and team scopes (034), adaptive knowledge updates (035), the `tools/open` analysis tools (036), the console's Super-Admin control center (037), or typed field extraction through Cloudflare's `clairic` and its closed-model exception (038) — each encodes a reason something is shaped the way it is, not just what it does.
 
 ## Client architecture — the parts that span files
 

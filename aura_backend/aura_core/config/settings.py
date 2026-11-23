@@ -31,6 +31,7 @@ from ..domain.llm import DataClassification, Modality, ModelPool, RoutingPolicy,
 from .external_inference import (
     CLAUDE_PROVIDER_KIND,
     is_claude_model,
+    is_cloudflare_account_id,
     is_external_inference_host,
     is_hosted_open_weight_host,
     is_open_weight_model,
@@ -64,6 +65,7 @@ __all__ = [
     "McpServerConfig",
     "McpSettings",
     "OpenToolsSettings",
+    "ExtractionSettings",
     "GitHubSettings",
     "SandboxSettings",
     "DATA_ENCRYPTION_KEYS_ENV",
@@ -1724,6 +1726,79 @@ class OpenToolsSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class ExtractionSettings:
+    """The ``extract_structured`` tool (ADR-038): typed fields from user-supplied text, through
+    Cloudflare's ``clairic``.
+
+    ``enabled`` is ``AURA_ALLOW_EXTRACTION_INFERENCE`` and it is the only switch. Text leaves our
+    infrastructure when it is on, so it is a consent flag as much as a feature flag: neither
+    ``AURA_ALLOW_HOSTED_INFERENCE`` nor ``AURA_ALLOW_CLAUDE_INFERENCE`` implies it. Off by default,
+    and off means the adapter is never built and the tool is never registered.
+
+    There is no endpoint setting and no model setting. The host and the model are fixed in
+    ``config/external_inference.py``, so no configuration value can redirect the credential.
+
+    ``api_key_env`` names the variable holding the Cloudflare token. The secret is a property, never
+    a dataclass field, so :meth:`AuraSettings.as_dict` cannot reach it (the same rule as
+    :class:`ProviderConfig` and :class:`GitHubSettings`).
+
+    ``daily_call_cap`` is per *process*: the count is not shared between gateway workers, so the
+    effective cap is this times the worker count. It exists so one busy day of extraction cannot
+    spend the Workers AI allowance the ``hosted3`` chat slot also draws on.
+    """
+
+    enabled: bool = False
+    account_id: str = ""
+    api_key_env: str = ""
+    min_confidence: float = 0.5
+    max_chars: int = 20_000
+    timeout_s: float = 30.0
+    daily_call_cap: int = 100
+
+    @property
+    def api_key(self) -> str:
+        return os.environ.get(self.api_key_env, "") if self.api_key_env else ""
+
+    @classmethod
+    def from_env(cls) -> "ExtractionSettings":
+        return cls(
+            enabled=_bool("ALLOW_EXTRACTION_INFERENCE", False),
+            account_id=(_env("EXTRACT_CLOUDFLARE_ACCOUNT_ID", "") or "").strip(),
+            api_key_env=(_env("EXTRACT_API_KEY_ENV", "") or "").strip(),
+            min_confidence=_float("EXTRACT_MIN_CONFIDENCE", 0.5, minimum=0.0, maximum=1.0),
+            max_chars=_int("EXTRACT_MAX_CHARS", 20_000, minimum=100, maximum=100_000),
+            timeout_s=_float("EXTRACT_TIMEOUT_S", 30.0, minimum=1.0, maximum=300.0),
+            daily_call_cap=_int("EXTRACT_DAILY_CALL_CAP", 100, minimum=1, maximum=100_000),
+        )
+
+    def problems(self) -> list[str]:
+        """What stops this from running, as ``validate()`` messages.
+
+        The threshold is checked whether or not the tool is on, and with a comparison that a NaN
+        fails (``_float`` lets ``nan`` through its own range check). Everything else is checked only
+        when the tool is on, so a deployment that never enables it is never blocked by it.
+        """
+        found: list[str] = []
+        if not 0.0 <= self.min_confidence <= 1.0:
+            found.append("extraction.min_confidence (AURA_EXTRACT_MIN_CONFIDENCE) must be between 0 and 1")
+        if not self.enabled:
+            return found
+        if not is_cloudflare_account_id(self.account_id):
+            found.append(
+                "AURA_ALLOW_EXTRACTION_INFERENCE needs AURA_EXTRACT_CLOUDFLARE_ACCOUNT_ID: the "
+                "32-character hexadecimal Cloudflare account id"
+            )
+        if not self.api_key_env:
+            found.append(
+                "AURA_ALLOW_EXTRACTION_INFERENCE needs AURA_EXTRACT_API_KEY_ENV: the name of the "
+                "variable that holds the Cloudflare token (the token itself is never configured here)"
+            )
+        elif not self.api_key.strip():
+            found.append(f"{self.api_key_env}, named by AURA_EXTRACT_API_KEY_ENV, is unset or empty")
+        return found
+
+
+@dataclass(frozen=True, slots=True)
 class GitHubSettings:
     """GitHub access for the engineer agent's read/write tools -- two independent paths.
 
@@ -2412,6 +2487,7 @@ class AuraSettings:
     billing: BillingSettings = field(default_factory=BillingSettings)
     email: EmailSettings = field(default_factory=EmailSettings)
     control: ControlSettings = field(default_factory=ControlSettings)
+    extraction: ExtractionSettings = field(default_factory=ExtractionSettings)
 
     @classmethod
     def from_env(cls) -> "AuraSettings":
@@ -2453,6 +2529,7 @@ class AuraSettings:
             billing=BillingSettings.from_env(),
             email=EmailSettings.from_env(),
             control=ControlSettings.from_env(),
+            extraction=ExtractionSettings.from_env(),
         )
 
     # -- validation --------------------------------------------------------------------
@@ -2641,6 +2718,8 @@ class AuraSettings:
 
         if self.observability.tracing_enabled and not self.observability.otlp_endpoint:
             problems.append("tracing_enabled requires AURA_OTLP_ENDPOINT")
+
+        problems.extend(self.extraction.problems())
 
         if problems:
             raise ConfigurationError(

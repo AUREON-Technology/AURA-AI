@@ -40,6 +40,9 @@ __all__ = [
     "SANCTIONED_DISTRIBUTIONS",
     "CLAUDE_PROVIDER_KIND",
     "is_claude_model",
+    "EXTRACTION_API_HOST",
+    "EXTRACTION_MODEL",
+    "is_cloudflare_account_id",
 ]
 
 
@@ -432,3 +435,42 @@ _CLAUDE_MODEL_RE = re.compile(r"^claude-[a-z0-9][a-z0-9.-]*$")
 def is_claude_model(model: str) -> bool:
     """True when ``model`` is a first-party Claude model ID."""
     return _CLAUDE_MODEL_RE.match((model or "").strip()) is not None
+
+
+# --------------------------------------------------------------------------------------
+# ADR-038: the structured-extraction exception
+# --------------------------------------------------------------------------------------
+#
+# Cloudflare's ``clairic`` reads text and fills typed fields. It is not an OpenAI-compatible chat
+# model, so it is never a ``ProviderConfig`` slot, and ``is_open_weight_model`` is False for it:
+# Cloudflare does not say whether its weights are published. ADR-038 therefore makes a separate,
+# narrower exception than ADR-030's, and keeps it as small as the static scans can make it:
+#
+# * the host is :data:`EXTRACTION_API_HOST`, one entry of :data:`HOSTED_OPEN_WEIGHT_HOSTS`, so the
+#   adapter reaches the same gated host and the source scan above still forbids naming it anywhere
+#   else. It is held here, the one file that scan exempts, and never configurable;
+# * the model is :data:`EXTRACTION_MODEL` and nothing else: there is no setting for it;
+# * exactly one module (``aura_core/adapters/cloudflare_clairic.py``) may name the ``/ai/run``
+#   path, pinned by ``TestExtractionIsGatedNotSilent``;
+# * :data:`OPEN_WEIGHT_MODEL_PATTERNS` is not widened. If Cloudflare states that the weights are
+#   published, ADR-030's list can admit the family and this exception can be retired (ADR-038 O-2).
+#
+# The runtime half is the ``AURA_ALLOW_EXTRACTION_INFERENCE`` flag, in settings.
+
+#: Where Workers AI's ``/ai/run`` lives. Must stay a member of :data:`HOSTED_OPEN_WEIGHT_HOSTS`.
+EXTRACTION_API_HOST = "api.cloudflare.com"
+
+#: The one model the extraction adapter will call.
+EXTRACTION_MODEL = "@cf/cloudflare/clairic"
+
+_CLOUDFLARE_ACCOUNT_ID_RE = re.compile(r"[0-9a-f]{32}")
+
+
+def is_cloudflare_account_id(value: object) -> bool:
+    """True for a Cloudflare account id: 32 lower-case hexadecimal characters.
+
+    Used by both the settings check and the adapter, because the id is placed in a URL path and a
+    value like ``../x``, ``<id>/other`` or ``<id>\\n`` must never get there. ``fullmatch`` rather
+    than ``^...$``: ``$`` also matches before a trailing newline, which let ``<id>\\n`` through.
+    """
+    return isinstance(value, str) and _CLOUDFLARE_ACCOUNT_ID_RE.fullmatch(value) is not None
