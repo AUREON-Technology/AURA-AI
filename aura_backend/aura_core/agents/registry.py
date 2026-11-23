@@ -183,6 +183,11 @@ _ENGINEER_READING_TOOLS = _DOCUMENT_READING_TOOLS | frozenset({
 })
 
 
+# ADR-044. `verify_release_health` (`tools/release.py`) is only registered when AURA_TOOLS_HTTP_ALLOWED_HOSTS
+# is set, so naming it here is a grant, not a guarantee. It returns other systems' text (untrusted_content),
+# so the Engineer holds it and the coding agent does not.
+_ENGINEER_RELEASE_TOOLS = frozenset({"verify_release_health"})
+
 # `tools/session_tools.py`: checkpoint the conversation and read it back. Written out rather than
 # imported, like the sets above (`tests/unit/test_agents.py` pins the names against the builder).
 _SESSION_TOOLS = frozenset({"save_session_checkpoint", "recall_session_checkpoint"})
@@ -299,7 +304,7 @@ def build_default_agent_registry(*, engineer_token_budget: int | None = None) ->
                     "github_create_branch", "github_commit_files",
                     "github_create_draft_pull_request",
                 } | _CODE_ANALYSIS_TOOLS | _DATA_ANALYSIS_TOOLS | _ENGINEER_OPEN_TOOLS | _ENGINEER_DEVTOOLS
-                | _ENGINEER_READING_TOOLS | _SESSION_TOOLS,
+                | _ENGINEER_READING_TOOLS | _SESSION_TOOLS | _ENGINEER_RELEASE_TOOLS,
                 # Every tool the MCP bridge registers (`build_mcp_bridge_tools`). The prefix only
                 # decides *who* may ask: each such tool still needs the `engineer_agent`
                 # capability, and an unreviewed one stays CONFIDENTIAL + side-effecting, hence

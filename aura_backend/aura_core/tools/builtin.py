@@ -1026,6 +1026,11 @@ def default_tools(
         # Pure text-in/JSON-out analysis (ADR-036 group A): no I/O, no capability, so unlike the
         # groups above it needs no resource to be present -- only the operator not turning it off.
         tools += build_analysis_tools()
+    if enable_analysis_tools and allowed_http_hosts:
+        # ADR-044: post-release health verification, only against the operator's allowed hosts.
+        from .release import build_release_tools
+
+        tools += build_release_tools(allowed_http_hosts)
     if enable_open_exec_tools:
         # ADR-036 group B: runs project code in a child of *this* process. Operator opt-in only,
         # and each tool still needs `engineer_agent` plus a per-call confirmation.

@@ -45,6 +45,7 @@ from .open.observability_incident_analyzer import ObservabilityIncidentAnalyzer
 from .open.peer_code_reviewer_agent import PeerCodeReviewerAgent
 from .open.quality_gate_aggregator import QualityGateAggregator
 from .open.regression_impact_analyzer import RegressionImpactAnalyzer
+from .open.release_ext import release_checklist
 from .open.review_ext import deep_review
 from .open.sql_schema_ext import generate_select, parse_schema, query_smells, schema_report
 from .open.security_vulnerability_scanner import SecurityVulnerabilityScanner
@@ -926,15 +927,24 @@ async def synthesize_research(
 
 @tool(
     "plan_rollout",
-    "Draft a structured deployment-and-rollback plan for a service: target and previous version, "
-    "the health checks to run after, and whether rollback is possible. Produces the plan only; "
-    "it deploys nothing.",
+    "Plan a release (deploys nothing): versions, health checks, rollback possibility; give `changelog` "
+    "and `migrations` for a go/no-go checklist (changelog entry, semver vs content, destructive or "
+    "irreversible migrations, rollback safety, strategy). verify_release_health checks it afterwards.",
     param("service_name", "string", "The service being released.", max_length=200),
     param("target_version", "string", "The version being rolled out.", max_length=100),
     param("previous_version", "string", "The version to roll back to, if any.", required=False,
           max_length=100),
     param("health_checks", "array", "Paths or commands that prove the release is healthy "
           "(default ['/health']).", required=False, item_type="string"),
+    param("changelog", "string", "CHANGELOG text (Keep a Changelog style).", required=False,
+          max_length=_MAX_TEXT),
+    param("migrations", "array", "Migrations in the release: {name, text?} (text is inspected).",
+          required=False, item_type="object"),
+    param("strategy", "string", "Deployment strategy.", required=False,
+          enum=("blue_green", "canary", "rolling")),
+    param("changed_files_count", "integer", "Files changed (for the risk score).", required=False, minimum=0),
+    param("test_coverage_pct", "number", "Test coverage % (for the risk score).", required=False,
+          minimum=0, maximum=100),
     **_CODE,
 )
 async def plan_rollout(
@@ -942,18 +952,28 @@ async def plan_rollout(
     target_version: str,
     previous_version: str | None = None,
     health_checks: list | None = None,
+    changelog: str | None = None,
+    migrations: list | None = None,
+    strategy: str | None = None,
+    changed_files_count: int | None = None,
+    test_coverage_pct: float | None = None,
 ) -> str:
     def plan() -> dict:
+        checks = [str(h) for h in _items("plan_rollout", "health_checks", health_checks)] or None
         result = DeploymentReleaseManager.plan_rollout(
-            service_name,
-            target_version,
-            previous_version=previous_version,
-            health_checks=[str(h) for h in _items("plan_rollout", "health_checks", health_checks)] or None,
-        )
+            service_name, target_version, previous_version=previous_version, health_checks=checks)
         if previous_version and previous_version.strip() == (target_version or "").strip():
             # "Roll back to the version you are deploying" is a plan with no rollback in it.
             result = {**result, "warnings": ["previous_version equals target_version: there is no "
                                               "earlier version to roll back to."]}
+        if changelog is not None or migrations is not None or strategy or changed_files_count is not None:
+            items = _items("plan_rollout", "migrations", migrations)
+            if not all(isinstance(m, (str, dict)) for m in items):
+                raise ToolExecutionError("every migration must be a name or {name, text}", tool="plan_rollout")
+            result["release_checklist"] = release_checklist(
+                service=service_name, target_version=target_version, previous_version=previous_version,
+                changelog=changelog, migrations=items, health_checks=checks or ["/health"],
+                changed_files_count=changed_files_count, test_coverage_pct=test_coverage_pct, strategy=strategy)
         return result
 
     return await _run(plan)

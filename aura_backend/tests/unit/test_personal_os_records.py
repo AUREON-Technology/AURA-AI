@@ -386,6 +386,8 @@ class TestKernelWiring:
             "analyze_image_requirements",
             # `engineer_agent`-gated like the other sandbox tools (registered in build_sandbox_tools).
             "lint_code", "check_format",
+            # ADR-044: only registered when AURA_TOOLS_HTTP_ALLOWED_HOSTS names a host.
+            "verify_release_health",
         }
         # The sandbox/git tools (minus `clone_repository`, which additionally needs a GitHub
         # resolver this default container does not configure) are unconditionally *registered*
