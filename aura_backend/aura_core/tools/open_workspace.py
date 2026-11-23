@@ -700,7 +700,7 @@ def _file_tools(root: _Root, ledger: FileReadLedger) -> list[Tool]:
         timeout_s=60.0, max_result_chars=60_000, **_common(),
     )
     async def load_project_conventions(path: str = ".", max_chars_per_file: int = 4000,
-                                       check_file: str | None = None) -> str:
+                                       check_file: str | None = None, *, context: ToolContext) -> str:
         start = root.resolve(path, "load_project_conventions", "dir")
         checked = root.resolve(check_file, "load_project_conventions", "file") if check_file else None
 
@@ -760,7 +760,10 @@ def _file_tools(root: _Root, ledger: FileReadLedger) -> list[Tool]:
                     out["check"] = result
             return out
 
-        return _emit(await asyncio.to_thread(run), 58_000)
+        result = await asyncio.to_thread(run)
+        for shown in list(result.get("files", {})):
+            await asyncio.to_thread(note_file_read, ledger, context, shown, root.path / shown)
+        return _emit(result, 58_000)
 
     tools.append(load_project_conventions)
 
@@ -791,7 +794,7 @@ def _file_tools(root: _Root, ledger: FileReadLedger) -> list[Tool]:
         timeout_s=60.0, max_result_chars=50_000, **_common(),
     )
     async def load_project_skills(operation: str = "list", task: str | None = None, path: str | None = None,
-                                  limit: int = 30) -> str:
+                                  limit: int = 30, *, context: ToolContext) -> str:
         def entries() -> tuple[list[dict[str, Any]], dict[str, Any]]:
             loaded = SkillsRulesWorkflowsLoader.load_resources(
                 str(root.path), extra_dirs=_RESOURCE_DIRS, max_files=1500, include_pdf=False, time_budget_s=20.0)
@@ -837,7 +840,9 @@ def _file_tools(root: _Root, ledger: FileReadLedger) -> list[Tool]:
                         step.pop("description", None)
                 return out
 
-            return _emit(await asyncio.to_thread(read), 50_000)
+            result = await asyncio.to_thread(read)
+            await asyncio.to_thread(note_file_read, ledger, context, rel, target)
+            return _emit(result, 50_000)
 
         listing, loaded = await asyncio.to_thread(entries)
         out: dict[str, Any] = {"operation": operation, "total": len(listing),
@@ -878,7 +883,7 @@ def _file_tools(root: _Root, ledger: FileReadLedger) -> list[Tool]:
         timeout_s=60.0, max_result_chars=50_000, **_common(),
     )
     async def read_notebook(path: str, cells: str | None = None, include_outputs: bool = True,
-                            as_script: bool = False, max_cells: int = 100) -> str:
+                            as_script: bool = False, max_cells: int = 100, *, context: ToolContext) -> str:
         target = root.resolve(path, "read_notebook", "file")
         if target.suffix.lower() != ".ipynb":
             raise ToolExecutionError(f"{path} is not a .ipynb notebook", tool="read_notebook")
@@ -945,7 +950,9 @@ def _file_tools(root: _Root, ledger: FileReadLedger) -> list[Tool]:
             out["notes"] = ["images are listed with mime type and size only; their data is not returned"]
             return out
 
-        return _emit(await asyncio.to_thread(run), 48_000)
+        result = await asyncio.to_thread(run)
+        await asyncio.to_thread(note_file_read, ledger, context, path, target)
+        return _emit(result, 48_000)
 
     tools.append(read_notebook)
 
@@ -970,7 +977,8 @@ def _file_tools(root: _Root, ledger: FileReadLedger) -> list[Tool]:
         timeout_s=90.0, max_result_chars=30_000, **_common(),
     )
     async def inspect_binary_file(path: str, hashes: list | None = None, include_strings: bool = False,
-                                  min_string_length: int = 6, max_strings: int = 50) -> str:
+                                  min_string_length: int = 6, max_strings: int = 50, *,
+                                  context: ToolContext) -> str:
         target = root.resolve(path, "inspect_binary_file", "file")
         algorithms = _need_list("inspect_binary_file", "hashes", hashes, 8) or None
 
@@ -1013,7 +1021,9 @@ def _file_tools(root: _Root, ledger: FileReadLedger) -> list[Tool]:
                 out["warnings"] = info["warnings"]
             return out
 
-        return _emit(await asyncio.to_thread(run), 28_000)
+        result = await asyncio.to_thread(run)
+        await asyncio.to_thread(note_file_read, ledger, context, path, target)
+        return _emit(result, 28_000)
 
     tools.append(inspect_binary_file)
 
@@ -1699,15 +1709,40 @@ def _extend_change_impact(original: FunctionTool, root: _Root) -> FunctionTool:
         extra = [str(f) for f in (kw.get("extra_dependents") or [])]
 
         def run() -> dict[str, Any]:
+            scan = RegressionImpactAnalyzer._scan_repo(str(repo), 10_000, 60.0)
+            if scan is None:
+                raise ToolExecutionError(f"{repo_dir} could not be scanned", tool=name)
+            # Importers of the changed files, then importers of those, up to four hops: a test that imports
+            # a module that imports the change is affected too.
+            depth_of: dict[str, int] = {}
+            frontier = list(modified)
+            for depth in range(1, 5):
+                nxt: list[str] = []
+                for changed in frontier:
+                    fragments = RegressionImpactAnalyzer._module_fragments(changed)
+                    for rel, mods in scan["index"].items():
+                        if rel not in depth_of and rel not in modified and \
+                                RegressionImpactAnalyzer._imports_fragment(mods, fragments):
+                            depth_of[rel] = depth
+                            nxt.append(rel)
+                if not nxt:
+                    break
+                frontier = nxt
+            for rel in _js_importers(root, repo, modified):
+                depth_of.setdefault(rel, 1)
             report = RegressionImpactAnalyzer.analyze_impact(
-                modified, repo_dir=str(repo), extra_dependents=extra, time_budget_s=60.0)
-            js = _js_importers(root, repo, modified)
-            if js:
-                affected = sorted(set(report["affected_modules"]) | set(js) - set(modified))
-                report["affected_modules"] = affected
-                report["blast_radius_count"] = len(modified) + len(affected)
-                report["risk_level"] = "HIGH" if report["blast_radius_count"] > 6 else \
-                    "MEDIUM" if report["blast_radius_count"] > 2 else "LOW"
+                modified, repo_dir=None, extra_dependents=sorted(set(extra) | set(depth_of)))
+            report["warnings"] = [w for w in report.get("warnings", []) if not w.startswith("No repository")]
+            report.update({
+                "dependents_scanned": True, "files_scanned": scan["files_scanned"], "scan_truncated": scan["truncated"],
+                "unparseable_files": scan["unparseable"],
+                "affected_by_distance": {str(d): sorted(r for r, v in depth_of.items() if v == d) for d in range(1, 5)
+                                         if any(v == d for v in depth_of.values())},
+            })
+            if scan["truncated"]:
+                report.setdefault("warnings", []).append("The repository scan hit its file or time limit; some importers may be missing.")
+            for guess in report.get("suggested_tests", []):
+                guess["exists"] = (repo / guess["path"]).is_file()
             affected_all = report["affected_modules"]
             tests_that_import = [a for a in affected_all if _TEST_FILE.search(a)]
             guessed = report.pop("suggested_tests", [])
@@ -1988,7 +2023,7 @@ def _verify_one(
                         if node.level:
                             if resolver._find(sub, [base]) is not None:
                                 continue
-                        elif resolver.classify(sub, file)[0] not in ("missing", "declared_not_installed"):
+                        elif resolver.classify(sub, file)[0] in ("stdlib", "workspace", "site_packages"):
                             continue
                         known = resolver.names_of(origin)
                         if known is None:
@@ -2003,6 +2038,16 @@ def _verify_one(
                                     key = alias.asname or alias.name
                                     derived[key] = spec_arity if key not in derived or derived[key] == spec_arity else \
                                         {"min_args": 0, "max_args": None}
+                            continue
+                        if star and status == "stdlib" and shown in sys.modules:
+                            # A standard-library module that re-exports with ``import *`` and is already loaded
+                            # in the gateway: reading its attributes runs no new code. Python versions may differ.
+                            if hasattr(sys.modules[shown], alias.name):
+                                continue
+                            imports["missing_symbols"].append({
+                                "module": shown, "symbol": alias.name, "line": node.lineno,
+                                "basis": f"not an attribute of the standard-library module in the gateway's "
+                                         f"Python {sys.version_info.major}.{sys.version_info.minor}"})
                             continue
                         if star or "__getattr__" in names:
                             imports["unverified"].append({"module": shown, "symbol": alias.name, "line": node.lineno,

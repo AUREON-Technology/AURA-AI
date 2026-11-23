@@ -471,16 +471,91 @@ def _poetry_spec(spec: str) -> str:
 # -- version logic ------------------------------------------------------------------------------
 
 
+_PEP440 = re.compile(
+    r"^\s*v?(?:(?P<epoch>\d+)!)?(?P<release>\d+(?:\.\d+)*)"
+    r"(?:[-_.]?(?P<pre_l>alpha|beta|preview|pre|rc|a|b|c)[-_.]?(?P<pre_n>\d+)?)?"
+    r"(?:-(?P<post_implicit>\d+)|[-_.]?(?P<post_l>post|rev|r)[-_.]?(?P<post_n>\d+)?)?"
+    r"(?:[-_.]?(?P<dev_l>dev)[-_.]?(?P<dev_n>\d+)?)?(?:\+(?P<local>[a-z0-9]+(?:[-_.][a-z0-9]+)*))?\s*$", re.I)
+_PRE_RANK = {"a": 0, "alpha": 0, "b": 1, "beta": 1, "c": 2, "rc": 2, "pre": 2, "preview": 2}
+_INF = float("inf")
+
+
+def pep440_key(text: str) -> tuple | None:
+    """A sortable key for a PEP 440 version (``None`` if it is not one). Local labels are ignored."""
+    m = _PEP440.match(text or "")
+    if not m:
+        return None
+    release = tuple(int(x) for x in m.group("release").split("."))
+    while len(release) > 1 and release[-1] == 0:
+        release = release[:-1]
+    pre = (_PRE_RANK[m.group("pre_l").lower()], int(m.group("pre_n") or 0)) if m.group("pre_l") else None
+    post_n = m.group("post_n") if m.group("post_n") is not None else m.group("post_implicit")
+    post = int(post_n or 0) if (m.group("post_l") or post_n is not None) else None
+    dev = int(m.group("dev_n") or 0) if m.group("dev_l") else None
+    if pre is None and post is None and dev is not None:
+        pre_key: Any = (-_INF, 0)
+    elif pre is None:
+        pre_key = (_INF, 0)
+    else:
+        pre_key = pre
+    return (int(m.group("epoch") or 0), release, pre_key, -_INF if post is None else post, _INF if dev is None else dev)
+
+
+def _wildcard_release(text: str) -> tuple[int, ...] | None:
+    m = re.fullmatch(r"\s*v?(?:\d+!)?(\d+(?:\.\d+)*)\.\*\s*", text)
+    return tuple(int(x) for x in m.group(1).split(".")) if m else None
+
+
 def _py_satisfies(version: str, spec: str) -> bool | None:
+    """Whether ``version`` satisfies a PEP 440 specifier set (comma separated); ``None`` if either is unparseable."""
     if not spec:
         return True
-    try:
-        from packaging.specifiers import InvalidSpecifier, SpecifierSet
-        from packaging.version import InvalidVersion, Version
-
-        return SpecifierSet(spec).contains(Version(version), prereleases=True)
-    except (ImportError, InvalidSpecifier, InvalidVersion, ValueError):
+    key = pep440_key(version)
+    if key is None:
         return None
+    release = tuple(int(x) for x in re.match(r"\s*v?(?:\d+!)?(\d+(?:\.\d+)*)", version).group(1).split("."))
+    for clause in [c.strip() for c in spec.split(",") if c.strip()]:
+        m = re.fullmatch(r"(===|==|!=|~=|<=|>=|<|>)\s*(.+)", clause)
+        if not m:
+            return None
+        op, rhs = m.group(1), m.group(2).strip()
+        wild = _wildcard_release(rhs)
+        if wild is not None and op in ("==", "!="):
+            padded = release + (0,) * max(0, len(wild) - len(release))
+            hit = padded[:len(wild)] == wild
+            if (op == "==") != hit:
+                return False
+            continue
+        other = pep440_key(rhs)
+        if other is None:
+            return None
+        if op == "===":
+            ok = version.strip() == rhs
+        elif op == "==":
+            ok = key == other
+        elif op == "!=":
+            ok = key != other
+        elif op == "<=":
+            ok = key <= other
+        elif op == ">=":
+            ok = key >= other
+        elif op == "<":
+            # PEP 440: "<V" does not match a pre-release of V itself.
+            ok = key < other and not (key[:2] == other[:2] and other[2] == (_INF, 0) and other[4] == _INF
+                                      and (key[2] != (_INF, 0) or key[4] != _INF))
+        elif op == ">":
+            # ... and ">V" does not match a post-release of V.
+            ok = key > other and not (key[:2] == other[:2] and other[3] == -_INF and key[3] != -_INF)
+        else:  # ~= : at least rhs, and the same release up to its second-to-last segment
+            rel = tuple(int(x) for x in re.match(r"\s*v?(?:\d+!)?(\d+(?:\.\d+)*)", rhs).group(1).split("."))
+            if len(rel) < 2:
+                return None
+            prefix = rel[:-1]
+            padded = release + (0,) * max(0, len(prefix) - len(release))
+            ok = key >= other and key[0] == other[0] and padded[:len(prefix)] == prefix
+        if not ok:
+            return False
+    return True
 
 
 def _semver(text: str) -> tuple[int, int, int] | None:
@@ -746,53 +821,49 @@ def installed_distributions(root: Path, start: Path, *, max_dists: int = 4000) -
     return dists, {"environments": envs, "truncated": truncated}
 
 
+_REQ_LINE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*\(?\s*([^;()]*?)\s*\)?\s*(?:;(.*))?$")
+
+
 def pip_check_report(dists: list[Dist], envs: dict[str, Any]) -> dict[str, Any]:
-    """What ``pip check`` would report for the distributions found on disk, computed from metadata."""
-    try:
-        from packaging.markers import InvalidMarker, UndefinedEnvironmentName
-        from packaging.requirements import InvalidRequirement, Requirement
-        from packaging.version import InvalidVersion, Version
-    except ImportError:
-        return {"performed": False, "reason": "the 'packaging' library is not available"}
+    """What ``pip check`` would report for the distributions found on disk, computed from metadata.
+
+    A requirement carrying an environment marker (``; python_version < "3.9"``) is not evaluated -- it is
+    counted under ``conditional_requirements_not_evaluated`` -- so a marker can never produce a false alarm.
+    """
     python = next((e["python"] for e in envs.get("environments", []) if e.get("python")), None)
-    marker_env: dict[str, str] = {"extra": ""}
-    if python:
-        marker_env["python_version"] = ".".join(python.split(".")[:2])
-        marker_env["python_full_version"] = python if python.count(".") >= 2 else python + ".0"
     installed: dict[str, list[Dist]] = {}
     for d in dists:
         installed.setdefault(norm_name(d.name), []).append(d)
     broken: list[dict[str, Any]] = []
+    conditional = 0
+    unparsed = 0
     multiple = [{"package": k, "versions": sorted({d.version for d in v})}
                 for k, v in installed.items() if len({d.version for d in v}) > 1]
     for d in dists:
         for line in d.requires:
-            try:
-                req = Requirement(line)
-            except InvalidRequirement:
+            m = _REQ_LINE.match(line)
+            if not m:
+                unparsed += 1
                 continue
-            if req.marker is not None:
-                try:
-                    if "extra" in str(req.marker) or not req.marker.evaluate(marker_env):
-                        continue
-                except (UndefinedEnvironmentName, InvalidMarker, ValueError):
-                    continue
-            have = installed.get(norm_name(req.name))
+            name, spec, marker = m.group(1), m.group(2).replace(" ", ""), m.group(3)
+            if marker is not None and marker.strip():
+                conditional += 1
+                continue
+            have = installed.get(norm_name(name))
             if not have:
-                broken.append({"package": d.name, "version": d.version, "requires": line, "problem": "not installed"})
+                broken.append({"package": d.name, "version": d.version, "requires": line.strip(),
+                               "problem": "not installed"})
                 continue
-            try:
-                ok = any(req.specifier.contains(Version(h.version), prereleases=True) for h in have)
-            except InvalidVersion:
-                continue
-            if not ok:
-                broken.append({"package": d.name, "version": d.version, "requires": line,
+            verdicts = [_py_satisfies(h.version, spec) for h in have]
+            if all(v is False for v in verdicts):
+                broken.append({"package": d.name, "version": d.version, "requires": line.strip(),
                                "problem": f"installed {sorted({h.version for h in have})[0]}"})
     return {
         "performed": True, "source": "dist-info metadata in the workspace (no process was started)",
-        "python_assumed": python or "gateway interpreter (no pyvenv.cfg found)",
+        "python_assumed": python or "unknown (no pyvenv.cfg found)",
         "distributions_checked": len(dists), "healthy": not broken, "broken_requirements": broken[:100],
         "broken_count": len(broken), "multiple_versions_installed": multiple[:50],
+        "conditional_requirements_not_evaluated": conditional, "requirements_not_understood": unparsed,
     }
 
 
@@ -890,11 +961,11 @@ def import_report(
         if n not in stdlib and n.lower() not in local_names and dist_for(n) not in declared_names
         and not n.startswith("_")
     ) if declared_py else []
-    unused_py = sorted(
+    unused_py = sorted({
         d.name for d in declared_py
         if norm_name(d.name) not in used_dists and not any(fnmatch.fnmatch(norm_name(d.name), t) for t in _TOOLING)
         and d.kind == "registry"
-    ) if py_files else []
+    }) if py_files else []
 
     js_imported: dict[str, set[str]] = {}
     for path in js_files:
@@ -903,10 +974,10 @@ def import_report(
             continue
         for name in js_imports(text):
             js_imported.setdefault(name, set()).add(_rel(root, path))
-    unused_js = sorted(
+    unused_js = sorted({
         d.name for d in declared_js
         if d.name not in js_imported and not any(fnmatch.fnmatch(d.name, t) for t in _TOOLING) and d.kind == "registry"
-    ) if js_files else []
+    }) if js_files else []
     undeclared_js = sorted(
         n for n in js_imported if declared_js and n not in {d.name for d in declared_js}
         and not n.startswith(("@types/",)) and n not in {"react-dom/client"}
@@ -1082,14 +1153,7 @@ def parse_advisories(text: str) -> tuple[list[dict[str, Any]], str | None]:
 
 
 def _version_key(eco: str, version: str) -> Any:
-    if eco == "pypi":
-        try:
-            from packaging.version import Version
-
-            return Version(version)
-        except Exception:
-            return None
-    return _semver(version)
+    return pep440_key(version) if eco == "pypi" else _semver(version)
 
 
 def _in_range(eco: str, version: str, events: list[dict[str, Any]]) -> bool | None:
