@@ -331,6 +331,13 @@ class RetrievalResult:
     def is_empty_but_searched(self) -> bool:
         return not self.chunks and self.candidates_considered > 0
 
+    @property
+    def is_unavailable(self) -> bool:
+        """The corpus could not be searched at all (no published index, or one built by another
+        embedding model), which is not the same as searching it and finding nothing: nothing was
+        looked at, so ``candidates_considered`` is 0 and ``is_empty_but_searched`` is false."""
+        return self.strategy == "unavailable"
+
     def citations(self) -> tuple[str, ...]:
         return tuple(c.citation() for c in self.chunks)
 

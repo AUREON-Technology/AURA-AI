@@ -161,6 +161,24 @@ export const en = {
   "knowledge.colPhysicalName": "Physical name",
   "knowledge.rollbackAliasTitle": "Rollback alias",
   "knowledge.toggleFailed": "{action} {id} failed: {reason}",
+  "knowledge.refresh": "Knowledge refresh",
+  "knowledge.refreshHelp":
+    "Fetch every enabled source now, the same run the nightly job does. A dry run fetches and checks each source and changes nothing.",
+  "knowledge.refreshDry": "Dry run",
+  "knowledge.refreshNow": "Run now",
+  "knowledge.refreshTitle": "Run the knowledge refresh",
+  "knowledge.refreshWord": "refresh",
+  "knowledge.refreshNever": "No refresh has been started from here yet.",
+  "knowledge.refreshModeDry": "dry run",
+  "knowledge.refreshModeReal": "real run",
+  "knowledge.refreshStatus.running": "Running",
+  "knowledge.refreshStatus.succeeded": "Finished",
+  "knowledge.refreshStatus.failed": "Failed",
+  "knowledge.refreshTotals": "Ingested {ingested}, unchanged {skipped}, failed {failed}, held {held}.",
+  "knowledge.refreshHeld": "held back",
+  "knowledge.refreshSourceOk": "fetched {fetched}, ingested {ingested}",
+  "knowledge.retireDocsPrompt":
+    "This source has {count} live documents in the corpus. Also remove them from the corpus? OK removes them now; Cancel keeps them live and only deletes the source.",
   "knowledge.idHint": "Letters, digits, '.', '_', ':' or '-', starting with a letter or digit",
 
   // Prompts

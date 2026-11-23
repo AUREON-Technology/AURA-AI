@@ -1129,6 +1129,10 @@ class AppLocalizationsAr extends AppLocalizations {
   String get knowledgeSaved => 'اتحفظ.';
 
   @override
+  String get knowledgeNotSearchableYet =>
+      'البحث لسه مش شايفه: بحث المعرفة بيتحدّث، وهيظهر أول ما ده يخلص.';
+
+  @override
   String get knowledgePdfUploadFailed => 'معرفناش نرفع الـ PDF ده.';
 
   @override
@@ -3745,6 +3749,10 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get chatTurnToolOutputTrimmed =>
       'نتيجة أداة كانت طويلة أوي ومتستخدمتش كلها.';
+
+  @override
+  String get chatTurnKnowledgeUnavailable =>
+      'بحث المعرفة بيتحدّث دلوقتي، فالإجابة دي مش بتستخدم مستنداتك ولا المكتبة المشتركة.';
 
   @override
   String chatMoreLines(int count) {

@@ -163,6 +163,24 @@ export const ar: Dictionary = {
   "knowledge.colPhysicalName": "الاسم الفعلي",
   "knowledge.rollbackAliasTitle": "استرجاع الـ alias",
   "knowledge.toggleFailed": "{action} {id} فشل: {reason}",
+  "knowledge.refresh": "تحديث المعرفة",
+  "knowledge.refreshHelp":
+    "يجلب كل المصادر المفعّلة الآن، وهو نفس التشغيل الليلي. التشغيل التجريبي يجلب كل مصدر ويفحصه دون أي تغيير.",
+  "knowledge.refreshDry": "تشغيل تجريبي",
+  "knowledge.refreshNow": "شغّل الآن",
+  "knowledge.refreshTitle": "تشغيل تحديث المعرفة",
+  "knowledge.refreshWord": "تحديث",
+  "knowledge.refreshNever": "لم يبدأ أي تحديث من هنا بعد.",
+  "knowledge.refreshModeDry": "تشغيل تجريبي",
+  "knowledge.refreshModeReal": "تشغيل فعلي",
+  "knowledge.refreshStatus.running": "قيد التشغيل",
+  "knowledge.refreshStatus.succeeded": "انتهى",
+  "knowledge.refreshStatus.failed": "فشل",
+  "knowledge.refreshTotals": "أُضيف {ingested}، دون تغيير {skipped}، فشل {failed}، معلّق {held}.",
+  "knowledge.refreshHeld": "معلّق",
+  "knowledge.refreshSourceOk": "جُلب {fetched}، أُضيف {ingested}",
+  "knowledge.retireDocsPrompt":
+    "لهذا المصدر {count} مستندًا نشطًا في المكتبة. هل تريد إزالتها من المكتبة أيضًا؟ «موافق» يزيلها الآن، و«إلغاء» يُبقيها نشطة ويحذف المصدر فقط.",
   "knowledge.idHint": "حروف إنجليزي أو أرقام أو '.' أو '_' أو ':' أو '-'، ويبدأ بحرف أو رقم",
 
   // Prompts
