@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 
+import { CloudflareProviders } from "@/components/cloudflare/providers-and-models";
 import { CloudflareTokens } from "@/components/cloudflare-tokens";
 import { PlatformCard } from "@/components/platform-card";
 import { Alert } from "@/components/ui/alert";
@@ -20,7 +22,7 @@ export default function CloudflarePage() {
   const [platforms, setPlatforms] = useState<ControlOverview | null>(null);
   const [cloudflare, setCloudflare] = useState<CloudflareOverview | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ message: string; watched: boolean } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const load = useCallback(() => {
@@ -43,8 +45,9 @@ export default function CloudflarePage() {
 
   const row = platforms.platforms.find((p) => p.platform === "cloudflare");
 
-  function done(message: string) {
-    setNotice(message);
+  /** ``watched``: the change is a gateway deploy that is followed on the Changes tab. */
+  function done(message: string, watched = false) {
+    setNotice({ message, watched });
     setRefreshKey((n) => n + 1);
     load();
   }
@@ -53,7 +56,19 @@ export default function CloudflarePage() {
     <div className="flex flex-col gap-5" data-testid="cloudflare-panel">
       <p className="text-[13px] text-muted">{t("settings.cloudflare.intro")}</p>
       {!platforms.vault_ready ? <Alert data-testid="vault-missing">{t("settings.vaultMissing")}</Alert> : null}
-      {notice ? <p className="text-[13px] text-ok" role="status" data-testid="cloudflare-notice">{notice}</p> : null}
+      {notice ? (
+        <p className="text-[13px] text-ok" role="status" data-testid="cloudflare-notice">
+          {notice.message}
+          {notice.watched ? (
+            <>
+              {" "}
+              <Link className="underline" href="/settings/changes" data-testid="cloudflare-changes-link">
+                {t("settings.cloudflare.providers.seeChanges")}
+              </Link>
+            </>
+          ) : null}
+        </p>
+      ) : null}
 
       <section aria-labelledby="cf-connection" className="flex flex-col gap-2">
         <h3 id="cf-connection" className="text-[13px] font-semibold tracking-[0.06em] text-faint uppercase">
@@ -66,6 +81,8 @@ export default function CloudflarePage() {
           <Alert className="mb-0" data-testid="cf-needs-account">{t("settings.cloudflare.needAccount")}</Alert>
         ) : null}
       </section>
+
+      <CloudflareProviders overview={cloudflare} onDone={done} />
 
       {cloudflare.connected ? (
         <CloudflareTokens refreshKey={refreshKey} onDone={done} />
