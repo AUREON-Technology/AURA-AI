@@ -304,6 +304,46 @@ class CloudflareTokens(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class CloudflareModel:
+    """One Workers AI model from Cloudflare's catalog (console plan, stage 6).
+
+    ``model`` is the id the gateway uses (``@cf/...``). ``price`` is Cloudflare's own list of
+    ``{unit, price, currency}`` entries, kept as it came; it is for display, never for a decision.
+    """
+
+    model: str
+    task: str = ""
+    description: str = ""
+    context_window: int | None = None
+    vision: bool = False
+    function_calling: bool = False
+    reasoning: bool = False
+    #: The catalog marks it ``require_workers_paid``: it does not run on the free plan.
+    paid_only: bool = False
+    price: tuple[Mapping[str, Any], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class CloudflareModelPage:
+    models: tuple[CloudflareModel, ...]
+    total: int | None = None
+    page: int = 1
+    per_page: int = 100
+
+
+@runtime_checkable
+class CloudflareAccount(Protocol):
+    """The Cloudflare account behind the console's Cloudflare tab, reached with the stored token."""
+
+    async def models(
+        self, account_id: str, *, task: str = "", search: str = "", page: int = 1, per_page: int = 100
+    ) -> CloudflareModelPage:
+        """One page of the Workers AI catalog. Raises on a refusal or an unreadable answer: an
+        empty page always means the catalog really is empty."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
 class VectorCollection:
     name: str
     status: str = ""

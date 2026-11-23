@@ -54,8 +54,11 @@ PLATFORM_TOKEN_HINTS: Mapping[Platform, str] = {
                       "-> Access Policies, covering this stack, with stacks:read, metrics:read, "
                       "rules:read and rules:write. Not a service-account token (glsa_).",
     Platform.QDRANT: "The Qdrant Cloud cluster API key (the one the gateway already uses).",
-    Platform.CLOUDFLARE: "A Cloudflare API token with 'API Tokens: Edit' and 'Workers AI: Read', "
-                         "for creating and revoking the Workers AI key.",
+    Platform.CLOUDFLARE: "A Cloudflare user API token (My Profile -> API Tokens; it starts with cfut_). "
+                         "An account-owned token (cfat_) is not accepted: Cloudflare's user-token API "
+                         "refuses it. Permissions: 'API Tokens: Edit' (user) and 'Workers AI: Read' "
+                         "(account), for the key, model and provider controls; optionally 'Account "
+                         "Analytics: Read' for usage and 'Workers R2 Storage: Read' for backup status.",
 }
 
 

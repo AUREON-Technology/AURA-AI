@@ -30,6 +30,7 @@ __all__ = [
     "BANNED_PROVIDER_KINDS",
     "REMOTE_INFERENCE_HOSTS",
     "HOSTED_OPEN_WEIGHT_HOSTS",
+    "WORKERS_AI_API_ROOT",
     "OPEN_WEIGHT_MODEL_PATTERNS",
     "is_external_inference_host",
     "is_remote_inference_host",
@@ -300,6 +301,14 @@ HOSTED_OPEN_WEIGHT_HOSTS: tuple[str, ...] = (
     "router.huggingface.co",
     "integrate.api.nvidia.com",
 )
+
+#: The Cloudflare API root the control center's Cloudflare tab talks to (console plan, stage 6): the
+#: token API, the Workers AI model catalog and a new provider's ``base_url`` are all under it. It
+#: lives here, in the one file allowed to name a hosted host, so that the *first* Workers AI
+#: provider can be added from the console. Before this, the root was derived from an
+#: already-configured provider, so nothing could connect while none existed. Its host must stay on
+#: :data:`HOSTED_OPEN_WEIGHT_HOSTS` (pinned by ``tests/unit/test_cloudflare_provider_spec.py``).
+WORKERS_AI_API_ROOT = "https://api.cloudflare.com/client/v4"
 
 
 #: Model families whose weights are published, matched against a normalised model ID (see

@@ -324,6 +324,43 @@ export type CloudflareTokenRow = {
   in_use: boolean;
 };
 
+// -- The Cloudflare tab (stage 6) ---------------------------------------------------------------
+
+/** A Cloudflare provider as the gateway's Railway variables describe it (never its key). */
+export type CloudflareProviderRow = {
+  name: string;
+  model: string;
+  account_id: string;
+  enabled: boolean;
+  key_env: string;
+  key_set: boolean;
+  /** passive: the circuit breaker only; Cloudflare's /models path answers 405. */
+  health_probe: string;
+  quality_tier: number | null;
+  context_window: number | null;
+  max_output_tokens: number | null;
+  rpm: number;
+  rpd: number;
+  tpm: number;
+  tpd: number;
+  tokens_per_second: number;
+  json_mode: boolean;
+  vision: boolean;
+  healthy: boolean | null;
+  state: string | null;
+};
+
+export type CloudflareOverview = {
+  connected: boolean;
+  /** Empty when Cloudflare was connected without one: the tab cannot run until it is replaced. */
+  account_id: string;
+  api_root: string;
+  gateway_ready: boolean;
+  /** null while Railway is not connected: the gateway's variables cannot be read. */
+  hosted_inference_allowed: boolean | null;
+  providers: CloudflareProviderRow[];
+};
+
 // -- Grafana Cloud and Qdrant Cloud (stage 5) -------------------------------------------------
 
 export type MonitoringOverview = {

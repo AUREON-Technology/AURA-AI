@@ -31,7 +31,7 @@ from typing import Any, Mapping
 from ..domain.control import PROTECTED_VARIABLES, ChangeRecord, ChangeStatus, Platform, is_secret_variable
 from ..domain.errors import NotFoundError, ValidationError
 from ..ports.control_plane import DeploymentSummary, RailwayApi, ServiceSummary, SettingsValidator
-from .service import ControlService, _confirm
+from .service import ON_SUCCESS_KEY, ControlService, _confirm
 
 __all__ = ["COMPANION_KEY", "RailwayService", "change_json"]
 
@@ -259,10 +259,16 @@ class RailwayService:
         self, service_id: str, changes: Mapping[str, str | None], *, actor: str, confirm: str | None,
         action: str = "set_variables", extra_detail: Mapping[str, Any] | None = None,
         companion: Mapping[str, Any] | None = None,
+        on_success: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """``companion`` is a second platform's restore (stage 4: the Space's key when both
         sides of a key rotate): ``{"platform": ..., "target": ..., "secrets": {name: old}}``. It
-        is kept in the vault with the variables and put back by the reconciler on a rollback."""
+        is kept in the vault with the variables and put back by the reconciler on a rollback.
+
+        ``on_success`` is a follow-up for the reconciler to run only after the change has stayed
+        healthy for its whole watch (stage 6: revoke a removed provider's Cloudflare token):
+        ``{"action": ..., ...}``, held in the vault like the companion and discarded by a rollback.
+        It must hold no secret value."""
         service = await self.service(service_id)
         _confirm(service.name, confirm)
         await self._control.check_write_cap(actor)
@@ -271,6 +277,8 @@ class RailwayService:
         restore: dict[str, Any] = {name: raw.get(name) for name in clean}
         if companion:
             restore[COMPANION_KEY] = dict(companion)
+        if on_success:
+            restore[ON_SUCCESS_KEY] = dict(on_success)
         previous = await self._last_good(service_id)
         detail = {"service": service.name, "variables": self._redacted(clean, raw), "settings_checked": aura,
                   **dict(extra_detail or {})}
@@ -279,7 +287,9 @@ class RailwayService:
             deployment_id = await self._api.redeploy(service_id)
         except Exception:
             # Nothing is running the new values yet: put the old ones back before saying so.
-            await self._api.set_variables(service_id, {k: v for k, v in restore.items() if k != COMPANION_KEY})
+            await self._api.set_variables(
+                service_id, {k: v for k, v in restore.items() if k not in (COMPANION_KEY, ON_SUCCESS_KEY)},
+            )
             await self._control.journal(
                 actor=actor, platform=Platform.RAILWAY, target=service_id, action=action,
                 detail=detail, status=ChangeStatus.FAILED,
