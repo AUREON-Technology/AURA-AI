@@ -37,6 +37,7 @@ import difflib
 import hashlib
 import posixpath
 import re
+import unicodedata
 import shlex
 import time
 import weakref
@@ -218,6 +219,40 @@ def _refuse_binary_path(path: str, tool_name: str) -> None:
             "file with text would destroy it.",
             tool=tool_name,
         )
+
+
+def _refuse_directory_path(path: str, tool_name: str) -> None:
+    """A path that names a directory is not a file to write.
+
+    ``write_file("dir/", ...)`` used to be accepted by the in-memory runner, which treated the
+    trailing slash as noise and wrote a *file* called ``dir`` -- reported as "Wrote ... to dir/". A
+    real daemon fails the same call with an operating-system error that says nothing about why.
+    """
+    stripped = path.strip()
+    last = re.split(r"[/\\]", stripped.rstrip("/\\"))[-1] if stripped.rstrip("/\\") else ""
+    if stripped.endswith(("/", "\\")) or last in {".", ".."} or not stripped.strip("/\\"):
+        base = stripped.rstrip("/\\") or "src"
+        raise ToolExecutionError(
+            f"{path!r} names a directory, not a file; give a file path such as {base}/name.txt",
+            tool=tool_name,
+        )
+
+
+def _require_encodable(text: str, what: str, tool_name: str) -> None:
+    """``text`` must be valid Unicode that UTF-8 can carry (no lone surrogates).
+
+    A surrogate half is legal in a Python string and not in a file; without this the failure was
+    the codec's own ``'utf-8' codec can't encode character '\\ud800' in position 4``, which names
+    neither the argument nor what to do.
+    """
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ToolExecutionError(
+            f"{what} contains a character that cannot be written as UTF-8 (a lone surrogate at "
+            f"position {exc.start}); remove it or replace it with the intended character",
+            tool=tool_name,
+        ) from exc
 
 
 def _norm_path(path: str) -> str:
@@ -855,7 +890,9 @@ def build_sandbox_tools(
     async def write_file(path: str, content: str, context: ToolContext) -> str:
         if not path or not path.strip():
             raise ToolExecutionError("path must not be empty", tool="write_file")
+        _refuse_directory_path(path, "write_file")
         _refuse_binary_path(path, "write_file")
+        _require_encodable(content, "content", "write_file")
         handle = await sessions.write_handle(context, tool_name="write_file")
         async with _file_lock(handle, path):
             await sandbox_runner.write_file(handle, path, content)
@@ -889,7 +926,10 @@ def build_sandbox_tools(
         workspace_local=True,
     )
     async def edit_file(path: str, find: str, replace: str, context: ToolContext) -> str:
+        _refuse_directory_path(path, "edit_file")
         _refuse_binary_path(path, "edit_file")
+        _require_encodable(find, "find", "edit_file")
+        _require_encodable(replace, "replace", "edit_file")
         if find == "":
             raise ToolExecutionError(
                 "`find` is empty; give the exact existing text to replace (to create or "
@@ -915,12 +955,24 @@ def build_sandbox_tools(
             if crlf_file and "\n" in replace:
                 replacement = _to_crlf(replace)
             if occurrences != 1:
-                hint = (
-                    " -- include more surrounding lines so it is unique"
-                    if occurrences > 1
-                    else " -- check the exact text, indentation and line breaks (re-read the file; "
-                    "it may have changed)"
-                )
+                if occurrences > 1:
+                    hint = " -- include more surrounding lines so it is unique"
+                elif (
+                    unicodedata.normalize("NFC", current).count(unicodedata.normalize("NFC", find)) > 0
+                ):
+                    # The text is there, spelled with different code points: "é" as one character or
+                    # as "e" plus a combining accent, and the same for Arabic marks. Both look
+                    # identical, which is why a model that copied it exactly still did not match.
+                    hint = (
+                        " -- the same text IS in the file, but spelled with different Unicode "
+                        "code points (accents or marks composed differently); copy the exact "
+                        "characters from the file with run_command `cat`, or use write_file"
+                    )
+                else:
+                    hint = (
+                        " -- check the exact text, indentation and line breaks (re-read the file; "
+                        "it may have changed)"
+                    )
                 raise ToolExecutionError(
                     f"expected exactly one occurrence of the given text in {path}, "
                     f"found {occurrences}{hint}",
@@ -983,6 +1035,7 @@ def build_sandbox_tools(
                     "and 'replace'",
                     tool="write_files",
                 )
+            _refuse_directory_path(path, "write_files")
             _refuse_binary_path(path, "write_files")
             key = _norm_path(path)
             if key in seen:
@@ -1009,6 +1062,7 @@ def build_sandbox_tools(
                         f"characters (got {type(content).__name__})",
                         tool="write_files",
                     )
+                _require_encodable(content, f"{where} ({path!r}) content", "write_files")
                 ops.append(FileWriteOp(path=path, content=content))
             elif "find" in raw and "replace" in raw:
                 find, replace = raw["find"], raw["replace"]
@@ -1023,6 +1077,8 @@ def build_sandbox_tools(
                         "be at most 50000 characters",
                         tool="write_files",
                     )
+                _require_encodable(find, f"{where} ({path!r}) find", "write_files")
+                _require_encodable(replace, f"{where} ({path!r}) replace", "write_files")
                 ops.append(FileWriteOp(path=path, find=find, replace=replace))
             else:
                 raise ToolExecutionError(

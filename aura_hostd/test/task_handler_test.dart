@@ -357,6 +357,56 @@ void main() {
       expect(stderrFromChunks, contains('err1'));
     });
 
+    group('command output is decoded as UTF-8 on every platform', () {
+      // `SystemEncoding` is the ANSI code page on Windows (cp1252 on most installs), so "مرحبا" and
+      // "café" came back as mojibake there, and the backend then fed that to the model. The wire is
+      // JSON, which is UTF-8 by definition: decode as UTF-8 everywhere.
+      test('non-ASCII text survives intact', () async {
+        roots.setTrusted(workspaceDir.path, true);
+        File(p.join(workspaceDir.path, 'hello.txt')).writeAsStringSync('café مرحبا 😀\n');
+        final result = await handler.run({
+          'command': ['sh', '-c', 'cat hello.txt'],
+          'timeout_s': 5.0,
+        });
+        expect(result['exit_code'], 0);
+        expect(result['stdout'], 'café مرحبا 😀\n');
+      });
+
+      test('a multibyte character split across two writes is not corrupted', () async {
+        roots.setTrusted(workspaceDir.path, true);
+        // 0xF0 0x9F 0x98 0x80 is U+1F600, emitted a byte at a time with a pause between.
+        final result = await handler.run({
+          'command': [
+            'sh', '-c',
+            r"printf '\360'; sleep 0.2; printf '\237'; sleep 0.2; printf '\230'; sleep 0.2; printf '\200'",
+          ],
+          'timeout_s': 10.0,
+        });
+        expect(result['stdout'], '😀');
+      });
+
+      test('bytes that are not UTF-8 become replacement characters instead of failing the call',
+          () async {
+        roots.setTrusted(workspaceDir.path, true);
+        final result = await handler.run({
+          'command': ['sh', '-c', r"printf 'caf\351 ok'"],
+          'timeout_s': 5.0,
+        });
+        expect(result['exit_code'], 0);
+        expect(result['stdout'], 'caf\u{FFFD} ok');
+      });
+
+      test('stderr is decoded the same way', () async {
+        roots.setTrusted(workspaceDir.path, true);
+        File(p.join(workspaceDir.path, 'hello.txt')).writeAsStringSync('خطأ\n');
+        final result = await handler.run({
+          'command': ['sh', '-c', 'cat hello.txt 1>&2'],
+          'timeout_s': 5.0,
+        });
+        expect(result['stderr'], contains('خطأ'));
+      });
+    }, testOn: '!windows');
+
     test('run works identically with no onChunk callback at all', () async {
       roots.setTrusted(workspaceDir.path, true);
       final result = await handler.run({

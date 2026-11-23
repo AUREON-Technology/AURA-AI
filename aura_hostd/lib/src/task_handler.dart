@@ -86,6 +86,9 @@ const _maxCommandTimeout = Duration(minutes: 15);
 /// longer captured or forwarded.
 const _maxOutputCapChars = 500000;
 
+/// How a command's stdout and stderr are decoded: UTF-8 everywhere, malformed bytes as U+FFFD.
+const _outputDecoder = Utf8Decoder(allowMalformed: true);
+
 /// The largest file `read_file` returns (audit INT-036), the same 2 MiB the control server's
 /// own `GET /read` allows. A bigger file used to be read whole and sent as one frame, which a
 /// backend whose WebSocket message limit is smaller answers by closing the connection (1009),
@@ -651,11 +654,16 @@ class TaskHandler {
       if (piece.length < chunk.length) outputTruncated = true;
     }
 
+    // UTF-8 on every platform, never `SystemEncoding`: that is the ANSI code page on Windows, which
+    // turned "café" and Arabic into mojibake before the backend ever saw them, and on POSIX it is a
+    // strict decoder, so one stray byte (`cat` on a latin-1 file) threw a FormatException out of the
+    // stream and failed the whole call. The wire is JSON, which is UTF-8; bytes that are not valid
+    // UTF-8 become U+FFFD, the same way the backend decodes a container's output.
     final stdoutDone = process.stdout
-        .transform(const SystemEncoding().decoder)
+        .transform(_outputDecoder)
         .forEach((chunk) => capture('stdout', stdoutBuf, chunk));
     final stderrDone = process.stderr
-        .transform(const SystemEncoding().decoder)
+        .transform(_outputDecoder)
         .forEach((chunk) => capture('stderr', stderrBuf, chunk));
 
     int exitCode;
