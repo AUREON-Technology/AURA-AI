@@ -198,6 +198,15 @@ _ENGINEER_READING_TOOLS = _DOCUMENT_READING_TOOLS | frozenset({
     "web_search", "fetch_url", "analyze_image_requirements", "transcribe_audio",
 })
 
+# ADR-043 (`tools/open_workspace.py`): the tools/open classes that read the user's workspace. Each file
+# tool is registered only with AURA_TOOLS_FILES_ROOT, `project_status` only with a run store, so naming
+# them here is a grant, not a guarantee. Engineer only: `coding_agent` holds no file-reading tool, and
+# these return workspace content (tagged untrusted_content), which that persona must never hold.
+_ENGINEER_WORKSPACE_TOOLS = frozenset({
+    "index_repository", "search_repository", "check_file_staleness", "load_project_conventions",
+    "load_project_skills", "read_notebook", "inspect_binary_file", "verify_backup", "project_status",
+})
+
 
 # `tools/session_tools.py`: checkpoint the conversation and read it back. Written out rather than
 # imported, like the sets above (`tests/unit/test_agents.py` pins the names against the builder).
@@ -315,7 +324,8 @@ def build_default_agent_registry(*, engineer_token_budget: int | None = None) ->
                     "github_create_branch", "github_commit_files",
                     "github_create_draft_pull_request",
                 } | _CODE_ANALYSIS_TOOLS | _DATA_ANALYSIS_TOOLS | _ENGINEER_OPEN_TOOLS | _ENGINEER_DEVTOOLS
-                | _ENGINEER_READING_TOOLS | _SESSION_TOOLS | _OPEN_PURE_CODE_TOOLS | _OPEN_PURE_PLANNING_TOOLS,
+                | _ENGINEER_READING_TOOLS | _SESSION_TOOLS | _OPEN_PURE_CODE_TOOLS | _OPEN_PURE_PLANNING_TOOLS
+                | _ENGINEER_WORKSPACE_TOOLS,
                 # Every tool the MCP bridge registers (`build_mcp_bridge_tools`). The prefix only
                 # decides *who* may ask: each such tool still needs the `engineer_agent`
                 # capability, and an unreviewed one stays CONFIDENTIAL + side-effecting, hence

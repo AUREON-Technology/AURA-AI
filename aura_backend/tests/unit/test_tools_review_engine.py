@@ -560,6 +560,7 @@ def _all_tools() -> dict[str, ToolSpec]:
         enable_open_pure_tools=True,  # ADR-042
         web_search_url="http://searxng:8080", ocr_engine=_Ocr(), vision_engine=object(),
         image_normalizer=object(), stt_engine=_Stt(),
+        engineer_runs=object(),  # ADR-043: registers project_status
     )
     agents = build_default_agent_registry()
     tools += build_delegation_tools(agents=agents, kernel=lambda: None)

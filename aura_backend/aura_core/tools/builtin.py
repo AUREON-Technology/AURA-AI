@@ -45,6 +45,7 @@ from .confinement import resolve_within as _resolve_within
 from .open._input import SourceRead, SourceReadError, is_pdf_bytes, read_source_file, read_source_bytes
 from .media import build_media_tools
 from .open_exec import build_open_exec_tools
+from .open_workspace import FileReadLedger, build_open_workspace_tools, note_file_read as _note_read
 from .personal_os import personal_os_tools
 from .planning import find_calendar_slots, prioritize_tasks
 from .records import build_personal_os_crud_tools
@@ -472,7 +473,7 @@ def _present(text: str, notes: Sequence[str], offset: int, window: int, tool_nam
     return "\n".join(lines) + "\n\n" + body
 
 
-def build_file_tools(workspace: str | Path, *, max_bytes: int = 512_000) -> list[Tool]:
+def build_file_tools(workspace: str | Path, *, max_bytes: int = 512_000, read_ledger: Any = None) -> list[Tool]:
     """Read-only file access confined to one directory.
 
     Containment is checked after ``resolve()``, which follows symlinks -- checking before
@@ -612,7 +613,7 @@ def build_file_tools(workspace: str | Path, *, max_bytes: int = 512_000) -> list
         # instructions, and a turn that read it must not auto-approve a later side effect (ADR-006).
         tags=("untrusted_content",),
     )
-    async def read_file(path: str, offset: int = 0) -> str:
+    async def read_file(path: str, offset: int = 0, context: ToolContext | None = None) -> str:
         target = resolve_within(path)
         try:
             is_file = target.is_file()
@@ -622,6 +623,9 @@ def build_file_tools(workspace: str | Path, *, max_bytes: int = 512_000) -> list
         if not is_file:
             raise ToolExecutionError(f"{path} is not a file", tool="read_file")
         text, notes = await asyncio.to_thread(load, target, path)
+        if read_ledger is not None and context is not None:
+            # ADR-043: remember what the agent saw, so check_file_staleness can say it changed.
+            await asyncio.to_thread(_note_read, read_ledger, context, path, target)
         return _present(text, notes, offset or 0, _WINDOW_CHARS, "read_file", "read_file")
 
     return [list_files, read_file]
@@ -955,6 +959,8 @@ def default_tools(
     vision_engine: Any = None,
     image_normalizer: Any = None,
     stt_engine: Any = None,
+    engineer_runs: Any = None,
+    agent_runs: Any = None,
 ) -> list[Tool]:
     """Assemble the tool set for a deployment.
 
@@ -990,14 +996,20 @@ def default_tools(
         tools += build_session_tools(episodic_memory)
     if personal_os_store is not None:
         tools += build_personal_os_crud_tools(personal_os_store)
+    # ADR-043: one ledger of what the agent last read or wrote, shared by read_file, the Engineer's
+    # write_file/edit_file and check_file_staleness (in memory; a restart only loses baselines).
+    read_ledger = FileReadLedger()
     if workspace is not None:
-        tools += build_file_tools(workspace)
+        tools += build_file_tools(workspace, read_ledger=read_ledger)
         # ADR-040: structured readers over the same confined directory. Each is registered only if what
         # it needs is present (the OCR / vision / speech engines are injected, never imported here).
         tools += build_media_tools(
             workspace, ocr_engine=ocr_engine, vision_engine=vision_engine,
             image_normalizer=image_normalizer, stt_engine=stt_engine,
         )
+    # ADR-043: the tools/open classes that read the workspace, plus project_status over the run stores.
+    tools += build_open_workspace_tools(
+        workspace, ledger=read_ledger, engineer_runs=engineer_runs, agent_runs=agent_runs)
     if allowed_http_hosts:
         tools += build_http_tool(allowed_hosts=allowed_http_hosts)
     if enable_weather:
@@ -1021,13 +1033,14 @@ def default_tools(
             token_resolver=github_token_resolver,
             host_agent_registry=host_agent_registry,
             desktop_ops=enable_desktop_ops_tools,
+            read_ledger=read_ledger,
         )
     if github_client_resolver is not None:
         tools += build_github_tools(github_client_resolver, default_repo=github_default_repo)
     if enable_analysis_tools:
         # Pure text-in/JSON-out analysis (ADR-036 group A): no I/O, no capability, so unlike the
         # groups above it needs no resource to be present -- only the operator not turning it off.
-        tools += build_analysis_tools()
+        tools += build_analysis_tools(workspace=workspace)
     if enable_open_pure_tools:
         # ADR-042: fourteen more pure tools (architecture, ambiguity, acceptance criteria, diff scope,
         # explain, quiz, artifacts, evidence, plan feedback, mobile summary, file type, structured

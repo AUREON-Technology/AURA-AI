@@ -818,6 +818,16 @@ _ANALYSIS_TOOLS: tuple[Tool, ...] = (
 ANALYSIS_TOOL_NAMES: frozenset[str] = frozenset(t.spec.name for t in _ANALYSIS_TOOLS)
 
 
-def build_analysis_tools() -> list[Tool]:
-    """The pure analysis tools: no capability, no I/O, no state."""
-    return list(_ANALYSIS_TOOLS)
+def build_analysis_tools(workspace: Any = None) -> list[Tool]:
+    """The pure analysis tools: no capability, no I/O, no state.
+
+    With a ``workspace`` (``AURA_TOOLS_FILES_ROOT``) five of them gain optional arguments that read
+    files under it (``tools/open_workspace.py``, ADR-043); called without those arguments they behave
+    exactly as they do here. Without a workspace nothing changes.
+    """
+    tools = list(_ANALYSIS_TOOLS)
+    if workspace is not None and str(workspace):
+        from .open_workspace import extend_analysis_tools
+
+        tools = extend_analysis_tools(tools, workspace)
+    return tools

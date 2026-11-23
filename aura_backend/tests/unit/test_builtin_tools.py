@@ -583,6 +583,9 @@ class TestAssembly:
             "remember_fact", "list_files", "read_file", "fetch_url", "get_weather",
             # ADR-040: the two file readers that need nothing but the files root.
             "inspect_spreadsheet", "parse_document",
+            # ADR-043: the workspace-reading tools, likewise needing nothing but the files root.
+            "index_repository", "search_repository", "check_file_staleness", "load_project_conventions",
+            "load_project_skills", "read_notebook", "inspect_binary_file", "verify_backup",
             "propose_task", "propose_event", "propose_expense", "propose_income",
             "propose_health_log",
         }
