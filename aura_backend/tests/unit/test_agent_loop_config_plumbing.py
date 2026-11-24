@@ -52,7 +52,7 @@ def test_documented_in_env_example_and_readme() -> None:
         assert name in readme or name.rsplit("_", 1)[0] in readme, f"README lacks {name}"
 
 
-def test_the_risky_behaviours_default_to_the_old_behaviour(reasoning) -> None:
-    assert reasoning.loop_recovery_policy_enabled is False
-    assert reasoning.loop_test_signals_enabled is False
+def test_agent_recovery_and_test_signals_are_enabled_by_default(reasoning) -> None:
+    assert reasoning.loop_recovery_policy_enabled is True
+    assert reasoning.loop_test_signals_enabled is True
     assert reasoning.critic_llm_enabled is False
