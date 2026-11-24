@@ -374,9 +374,15 @@ async def test_row78_archive_extractor_lists_audits_extracts_reads_and_refuses_h
         z.writestr("ok.txt", "fine")
     audit = A.audit_archive_safety(at("evil.zip"), base_dir=base)
     assert audit["safe"] is False and audit["path_traversal_attempts"] == ["../../outside.txt"]
+    # pytest's tmp_path parent is shared by every test in the session, and other tests leave their
+    # own `outside.txt` there, so "does not exist" is not a safe assertion: compare it with how it
+    # was before the extraction and check it never holds this archive's payload.
+    shared = tmp_path.parent / "outside.txt"
+    before = shared.read_bytes() if shared.exists() else None
     refused = A.extract_archive(at("evil.zip"), at("out2"), base_dir=base)
     assert refused["extracted"] is False and "Path traversal blocked" in refused["error"]
-    assert not (tmp_path.parent / "outside.txt").exists() and not (tmp_path / "outside.txt").exists()
+    assert (shared.read_bytes() if shared.exists() else None) == before and before != b"pwned"
+    assert not (tmp_path / "outside.txt").exists()
 
     with tarfile.open(at("link.tar"), "w") as t:
         info = tarfile.TarInfo("evil_link")
