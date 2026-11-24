@@ -117,9 +117,12 @@ async def _run(container, message: str = "check the upstream data"):
     ))
 
 
-class TestDefaultStaysOff:
-    def test_the_flag_is_off_by_default(self) -> None:
-        assert load_settings(refresh=True, validate=False).reasoning.loop_recovery_policy_enabled is False
+class TestDefault:
+    def test_the_policy_is_on_by_default(self) -> None:
+        """Enabled by default since the "Enable agent recovery defaults" change: a failed read is
+        classified before it is retried (see ``test_agent_recovery_defaults.py`` for the three
+        behaviours that depends on, run with no flag set at all)."""
+        assert load_settings(refresh=True, validate=False).reasoning.loop_recovery_policy_enabled is True
 
 
 class TestTransient:

@@ -288,7 +288,11 @@ class TestEndToEndWithRealPytest:
         assert statuses["s5"] == "succeeded"
 
     async def test_with_the_input_off_the_old_loop_stops_at_red(self, monkeypatch) -> None:
-        _, _, script, frames = await self._turn(monkeypatch, [self.PLAN_RED, self.PLAN_FIX])
+        # The input is on by default now (see test_agent_recovery_defaults.py), so the old loop is
+        # what you get only by switching it off explicitly.
+        _, _, script, frames = await self._turn(
+            monkeypatch, [self.PLAN_RED, self.PLAN_FIX], LOOP_TEST_SIGNALS_ENABLED="false",
+        )
         done = frames_of(frames, "done")[0]
         assert script.planning_calls == 1
         assert done["agent_loop"]["stop_reason"] == "completed", "every step 'succeeded'; nobody read the exit status"

@@ -283,6 +283,10 @@ class TestEndToEnd:
     async def _turn(self, monkeypatch, **env):
         # The critic is switched off here: it would (rightly) ask for a read before this edit and
         # spend a planning call doing so, which is its own test's business.
+        # The recovery policy (on by default) escalates an unrecognised failure after two passes,
+        # before this detector's threshold of three. These tests are about the detector, so the
+        # policy is off here; test_agent_recovery_defaults.py runs the same turn with it on.
+        env.setdefault("LOOP_RECOVERY_POLICY_ENABLED", "false")
         container = make_container(monkeypatch, CRITIC_ENABLED="false", LLM_MAX_PROMPT_TOKENS="8000",
                                    **env)
         echo = await ready_engineer(container)
