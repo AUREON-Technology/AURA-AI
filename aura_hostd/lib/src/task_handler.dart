@@ -191,6 +191,9 @@ class TaskHandler {
   /// Running commands by the RPC call id that started them, so a `cancel` frame stops the command
   /// itself and not only a pending approval (G-16, SEC-09).
   final Map<String, void Function()> _runningByCall = {};
+
+  /// Every command process tree currently running, so [stopRunningCommands] can end them all.
+  final Set<ProcessTree> _runningTrees = {};
   final Map<String, WorkspaceRoot> _boundRoots = {};
   final Set<String> _activeTaskIds = {};
 
@@ -646,6 +649,7 @@ class TaskHandler {
     }
 
     final process = tree.process;
+    _runningTrees.add(tree);
     final stdoutBuf = StringBuffer();
     final stderrBuf = StringBuffer();
     var capturedChars = 0;
@@ -703,6 +707,7 @@ class TaskHandler {
       // way, as it always has on timeout.
       if (timedOut || cancelled) exitCode = -1;
     } finally {
+      _runningTrees.remove(tree);
       timer.cancel();
       if (callId != null) _runningByCall.remove(callId);
       // A command that exits normally can still leave a background child holding the
@@ -750,6 +755,16 @@ class TaskHandler {
   /// still waiting for a human may run afterwards: an approval granted now would execute a
   /// command or write whose result nobody receives, and a model retry could run it twice.
   /// Cancels every approval a call is waiting on; a call already running is unaffected.
+  /// The daemon is stopping (SIGTERM/SIGINT, `POST /shutdown`, a re-pair that replaces this
+  /// handler's connection): kill every command this handler started that is still running, with
+  /// everything it spawned. Found by driving the real daemon: stopping it left the agent's
+  /// commands -- a dev server, a long build -- running as the user with nothing left to read their
+  /// output or stop them. A dropped *socket* deliberately does not do this (see [cancelAll]); only
+  /// the daemon going away does.
+  Future<void> stopRunningCommands() async {
+    await Future.wait([for (final tree in _runningTrees.toList()) tree.kill()]);
+  }
+
   void cancelAll() {
     final approvalIds = _approvalByCall.values.toList();
     _approvalByCall.clear();

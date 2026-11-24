@@ -483,6 +483,7 @@ class HostAgentSandboxRunner:
         ``exit_code`` exactly like the non-streaming `run` RPC's does.
         """
         session = await self._session_for(handle)
+        streamed = {"stdout": "", "stderr": ""}
         async for frame in session.call_streaming(
             "run",
             _with_confirmation(
@@ -500,10 +501,27 @@ class HostAgentSandboxRunner:
             timeout_s=max(timeout_s + 5.0, 330.0),
         ):
             if frame.get("type") == "stream":
-                yield SandboxOutputEvent(
-                    kind=str(frame.get("stream") or "stdout"), data=str(frame.get("data") or "")
-                )
+                kind = str(frame.get("stream") or "stdout")
+                data = str(frame.get("data") or "")
+                streamed[kind if kind in streamed else "stdout"] += data
+                yield SandboxOutputEvent(kind=kind, data=data)
             else:
+                payload = frame.get("result") or {}
+                # The daemon appends its own notes to the *aggregated* output in this terminal
+                # frame only -- "command killed after Ns timeout", "output truncated after N
+                # characters" -- and never streams them. Without this, the one consumer that
+                # reads the streaming path (`run_command`) reported `exit_code=-1` and an empty
+                # stderr for a timed-out command: the model could not tell a timeout from a crash.
+                # Found by driving the real daemon. What was already streamed is a prefix of the
+                # aggregate, so only the remainder is new.
+                for kind in ("stdout", "stderr"):
+                    final = payload.get(kind)
+                    if not isinstance(final, str) or not final:
+                        continue
+                    seen = streamed[kind]
+                    extra = final[len(seen):] if final.startswith(seen) else final
+                    if extra:
+                        yield SandboxOutputEvent(kind=kind, data=extra)
                 yield SandboxOutputEvent(kind="done", exit_code=_exit_code(frame.get("result")))
 
     async def destroy(self, handle: SandboxHandle) -> None:

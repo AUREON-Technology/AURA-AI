@@ -140,6 +140,9 @@ class HostAgentClient {
     }
   }
 
+  /// Kills every command this client's handler still has running (the daemon is going away).
+  Future<void> stopRunningCommands() => taskHandler.stopRunningCommands();
+
   void stop() {
     _stopRequested = true;
     _socket?.close();

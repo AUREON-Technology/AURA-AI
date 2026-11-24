@@ -278,6 +278,29 @@ void main() {
       expect(result['stderr'], contains('timeout'));
     });
 
+    test('stopRunningCommands ends a running command and everything it spawned', () async {
+      // Found by driving the real daemon: stopping it (SIGTERM, /shutdown) left the agent's
+      // commands running as the user, with nothing left to read them or stop them.
+      if (Platform.isWindows) return; // the check below reads the POSIX process table via pgrep.
+      roots.setTrusted(workspaceDir.path, true);
+      final marker = 'sleep 9${DateTime.now().microsecondsSinceEpoch % 1000000}.5';
+      final running = handler.run({
+        'command': ['sh', '-c', '$marker & $marker'],
+        'timeout_s': 60,
+      });
+      // Wait until the command is really in the process table.
+      for (var i = 0; i < 50 && Process.runSync('pgrep', ['-f', marker]).exitCode != 0; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      expect(Process.runSync('pgrep', ['-f', marker]).exitCode, 0, reason: 'the command never started');
+
+      await handler.stopRunningCommands();
+
+      final result = await running.timeout(const Duration(seconds: 10));
+      expect(result['exit_code'], isNot(0));
+      expect(Process.runSync('pgrep', ['-f', marker]).exitCode, 1, reason: 'something survived');
+    });
+
     test('output that is not valid UTF-8 comes back (U+FFFD) instead of failing the call', () async {
       // Found by driving the real daemon through the real gateway: `cat some.pdf` -- any command
       // printing a byte that is not UTF-8 -- failed the whole run with "Invalid UTF-8 byte".

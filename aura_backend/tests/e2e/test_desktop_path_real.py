@@ -92,7 +92,7 @@ class Desk:
 
     async def tool(self, name: str, arguments: dict[str, Any], *, root: Path | str | None = None,
                    corr: str | None = None, origin: str | None = None, confirmed: bool = False,
-                   timeout: float = 120.0):
+                   timeout: float = 60.0):
         """One call through the real registry. Returns ``(result, report)``."""
         from aura_core.domain.identifiers import ToolCallId
         from aura_core.domain.messages import ToolCall
@@ -217,6 +217,15 @@ async def desk(tmp_path_factory):
 
     desk = Desk(gateway, daemon, base)
     desk.trusted, desk.untrusted, desk.outside, desk.shim_log = trusted, untrusted, outside, shim_log
+
+    # The Engineer turn's own gate (D-03): the person has agreed that code goes to the model.
+    from datetime import datetime, timezone
+
+    from aura_core.domain.engineering import ENGINEER_CONSENT_NOTICE_VERSION
+    from aura_core.domain.identifiers import UserId
+
+    await gateway.container.engineer_consent.accept(
+        UserId(R.OPERATOR_UID), ENGINEER_CONSENT_NOTICE_VERSION, at=datetime.now(timezone.utc))
     try:
         yield desk
     finally:
@@ -541,16 +550,9 @@ class TestEngineerTurnThroughTheKernel:
             async def plan(self, goal, available_tools=()):
                 return Plan(id=PlanId.new(), goal=goal, steps=(
                     step("s1", "write_file", {"path": "kernel/out.txt", "content": "from the kernel ☃\n"}),
-                    step("s2", "run_command", {"command": "cat kernel/out.txt && wc -c kernel/out.txt"}, ("s1",)),
+                    step("s2", "run_command", {"command": "cat kernel/out.txt > kernel/copy.txt && wc -c < kernel/copy.txt > kernel/size.txt"}, ("s1",)),
                 ))
 
-        from datetime import datetime, timezone
-
-        from aura_core.domain.engineering import ENGINEER_CONSENT_NOTICE_VERSION
-
-        # The Engineer turn's own gate (D-03): the person has agreed that code goes to the model.
-        await desk.container.engineer_consent.accept(
-            UserId(R.OPERATOR_UID), ENGINEER_CONSENT_NOTICE_VERSION, at=datetime.now(timezone.utc))
         kernel = desk.container.kernel
         original = kernel._deps.planner
         kernel._deps.planner = Planner()
@@ -565,6 +567,9 @@ class TestEngineerTurnThroughTheKernel:
         assert not result.pending_tool_calls, result.pending_tool_calls
         written = desk.trusted / "kernel" / "out.txt"
         assert written.read_text(encoding="utf-8") == "from the kernel ☃\n"
+        # ... and the second step ran too, after the first, on the same desktop folder.
+        assert (desk.trusted / "kernel" / "copy.txt").read_bytes() == written.read_bytes()
+        assert (desk.trusted / "kernel" / "size.txt").read_text().strip() == str(len(written.read_bytes()))
 
 
 # -- 3. containment, enforced by the daemon -------------------------------------------------------
@@ -730,7 +735,7 @@ class TestTrustTiers:
 
     async def test_an_untrusted_root_queues_anything_else_and_waits_for_the_human(self, desk) -> None:
         target = desk.untrusted / "made_by_agent.txt"
-        pending = asyncio.create_task(desk.run("touch made_by_agent.txt && echo made", root=desk.untrusted))
+        pending = asyncio.create_task(desk.run("touch made_by_agent.txt", root=desk.untrusted))
         # Look first, decide second: while the human has not answered, nothing may have run.
         seen = await R.wait_until(desk.approvals, timeout=30, what="the queued approval")
         assert any("made_by_agent.txt" in str(a["command"]) for a in seen)
@@ -945,3 +950,362 @@ class TestTrustTiers:
             assert result.ok and _exit_code(result.content) == 0, (command, result.content)
         assert (desk.trusted / "build/out/a").exists()
         assert await desk.approvals() == []
+
+    async def test_even_a_trusted_root_holds_a_command_that_names_a_path_outside_it(self, desk) -> None:
+        """SEC-05: trust is "run my project's commands", not "read and write anywhere"."""
+        secret = desk.outside / "secret.txt"
+        copy = desk.trusted / "stolen_secret.txt"
+        pending = asyncio.create_task(desk.run(f"cp {secret} stolen_secret.txt", root=desk.trusted))
+        seen = await R.wait_until(desk.approvals, timeout=30, what="the held command")
+        assert any("secret.txt" in str(a["command"]) for a in seen)
+        await asyncio.sleep(0.5)
+        assert not copy.exists(), "the command ran before the human answered"
+        await desk.decide(False, containing="secret.txt")
+        result, _ = await asyncio.wait_for(pending, timeout=30)
+        assert not result.ok
+        assert not copy.exists()
+
+
+# -- 5. resource handling -------------------------------------------------------------------------
+
+
+def _tag() -> int:
+    return uuid.uuid4().int % 10**7
+
+
+async def _gone(markers: list[str], *, within: float = 10.0) -> list[int]:
+    """Pids still alive after ``within`` seconds whose command line names any marker."""
+    deadline = time.monotonic() + within
+    while True:
+        alive = [pid for marker in markers for pid in R.cmdline_pids(marker)]
+        if not alive or time.monotonic() > deadline:
+            return alive
+        await asyncio.sleep(0.2)
+
+
+def _kill(markers: list[str]) -> None:
+    for marker in markers:
+        for pid in R.cmdline_pids(marker):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def _scripted_turn(desk, *steps):
+    """An Engineer turn whose plan is fixed: only "the model" is a stand-in."""
+    from aura_core.domain.identifiers import PlanId, SessionId, StepId, UserId
+    from aura_core.domain.planning import Goal, Plan, PlanStep, StepKind
+    from aura_core.kernel import TurnRequest
+    from aura_core.security.role_capabilities import ENGINEER_AGENT
+
+    class Planner:
+        def needs_plan(self, message, *, available_tools=(), force=None, previous_reply=None):
+            return True
+
+        def goal_from_message(self, message, *, criteria=()):
+            return Goal(description=message)
+
+        async def plan(self, goal, available_tools=()):
+            return Plan(id=PlanId.new(), goal=goal, steps=tuple(
+                PlanStep(id=StepId(f"s{i}"), kind=StepKind.TOOL, tool=name, description=name,
+                         arguments=args) for i, (name, args) in enumerate(steps, 1)))
+
+    request = TurnRequest(
+        message="do it", user_id=UserId(R.OPERATOR_UID), session_id=SessionId(f"turn-{uuid.uuid4().hex[:8]}"),
+        agent="engineer", plan=True, capabilities=(ENGINEER_AGENT,), workspace_root=str(desk.trusted),
+        origin="desktop")
+    return Planner(), request
+
+
+class TestResources:
+    async def test_a_command_over_its_timeout_is_killed_with_its_whole_process_tree(self, desk) -> None:
+        tag = _tag()
+        markers = [f"sleep 71{tag}.1", f"sleep 72{tag}.2", f"sleep 73{tag}.3"]
+        # A background job, a foreground one, and a grandchild orphaned onto init by the subshell.
+        command = f"(sleep 73{tag}.3 &); sleep 71{tag}.1 & sleep 72{tag}.2"
+        started = time.monotonic()
+        try:
+            result, _ = await desk.run(command, timeout_s=2)
+            elapsed = time.monotonic() - started
+            assert result.ok, result.content
+            assert _exit_code(result.content) == -1
+            assert "killed after" in _stderr(result.content)
+            assert elapsed < 20, f"a 2s timeout took {elapsed:.0f}s"
+            assert await _gone(markers) == [], "part of the process tree survived the timeout"
+        finally:
+            _kill(markers)
+
+    @pytest.mark.xfail(strict=True, reason=(
+        "design limit, measured: the daemon kills a timed-out command by process group "
+        "(process_tree.dart), and a child that starts its own session (setsid, a daemonising "
+        "server) is no longer in that group, so it survives. Closing it needs cgroups/job "
+        "objects, which a user-space daemon on macOS/Windows/Linux does not portably have."))
+    async def test_a_child_that_leaves_the_process_group_is_also_killed_by_the_timeout(self, desk) -> None:
+        tag = _tag()
+        marker = f"sleep 75{tag}.5"
+        try:
+            await desk.run(f"setsid {marker} & sleep 30", timeout_s=2)
+            assert await _gone([marker], within=5.0) == []
+        finally:
+            _kill([marker])
+
+    async def test_stopping_the_turn_kills_the_command_it_was_running(self, desk) -> None:
+        tag = _tag()
+        marker = f"sleep 76{tag}.6"
+        try:
+            task = asyncio.create_task(desk.run(f"{marker} & {marker}", timeout_s=300))
+            await R.wait_until(lambda: R.cmdline_pids(marker), timeout=20, what="the command to start")
+            task.cancel()  # what a stopped turn does to the tool call in flight
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert await _gone([marker]) == [], "the server cancelled the call but the command kept running"
+            assert (await desk.status())["backend_connected"] is True
+        finally:
+            _kill([marker])
+
+    async def test_stopping_an_engineer_turn_in_the_kernel_kills_its_command(self, desk) -> None:
+        tag = _tag()
+        marker = f"sleep 77{tag}.7"
+        planner, request = _scripted_turn(
+            desk, ("run_command", {"command": f"{marker} & {marker}", "timeout_s": 300}))
+        kernel = desk.container.kernel
+        original = kernel._deps.planner
+        kernel._deps.planner = planner
+        try:
+            turn = asyncio.create_task(kernel.run(request))
+            await R.wait_until(lambda: R.cmdline_pids(marker), timeout=30, what="the turn's command to start")
+            turn.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await turn
+            assert await _gone([marker]) == [], "stopping the turn left its command running on the desktop"
+        finally:
+            kernel._deps.planner = original
+            _kill([marker])
+
+    async def test_stopping_the_daemon_stops_the_commands_it_started(self, desk) -> None:
+        tag = _tag()
+        marker = f"sleep 78{tag}.8"
+        try:
+            task = asyncio.create_task(desk.run(f"{marker} & {marker}", timeout_s=300))
+            await R.wait_until(lambda: R.cmdline_pids(marker), timeout=20, what="the command to start")
+            await desk.daemon.stop(sig=signal.SIGTERM)  # the app's Stop button / the OS shutting down
+            result, _ = await asyncio.wait_for(task, timeout=30)
+            assert not result.ok or _exit_code(result.content) != 0
+            assert await _gone([marker]) == [], "a stopped daemon left its agent's command running"
+        finally:
+            _kill([marker])
+
+    async def test_output_is_capped_at_500000_characters_and_says_so(self, desk) -> None:
+        task = await desk.task(desk.trusted)
+        started = time.monotonic()
+        result, error = await desk.rpc(
+            "run", {"task_id": task, "timeout_s": 60,
+                    "command": ["sh", "-c", "python3 -c \"import sys; sys.stdout.write('A' * 700000)\""]})
+        assert error is None, error
+        assert len(result["stdout"]) == 500000
+        assert set(result["stdout"]) == {"A"}
+        assert "output truncated after 500000" in result["stderr"]
+        assert result["exit_code"] == 0
+        assert time.monotonic() - started < 30
+
+    async def test_a_flood_of_output_does_not_hang_the_call_or_balloon_the_daemon(self, desk) -> None:
+        started = time.monotonic()
+        # (No path argument outside the folder: `head -c N /dev/zero` would be held for approval.)
+        flood, _ = await desk.run("yes | head -c 60000000", timeout_s=60)
+        assert flood.ok, flood.content
+        assert time.monotonic() - started < 60
+        assert len(flood.content) < 100_000, "the tool result is not bounded"
+        started = time.monotonic()
+        endless, _ = await desk.run("yes", timeout_s=3)
+        elapsed = time.monotonic() - started
+        assert endless.ok and _exit_code(endless.content) == -1, endless.content[:300]
+        assert elapsed < 20, f"`yes` with a 3s timeout took {elapsed:.0f}s"
+        rss_kb = int(re.search(r"VmRSS:\s+(\d+)", Path(f"/proc/{desk.daemon.pid}/status").read_text()).group(1))
+        assert rss_kb < 400_000, f"the daemon holds {rss_kb // 1024} MB after the flood"
+        assert (await desk.status())["backend_connected"] is True
+        after, _ = await desk.run("echo still-here")
+        assert "still-here" in _stdout(after.content)
+        assert await _gone(["yes"], within=5.0) == [], "`yes` was left running"
+
+    async def test_a_command_cannot_outlive_the_daemons_own_ceiling(self, desk) -> None:
+        """The tool allows up to 600s; the daemon enforces its own ceiling whatever it is asked
+        for. Asked for far more than that, a 1s request is still honoured as 1s."""
+        started = time.monotonic()
+        result, _ = await desk.run("sleep 60", timeout_s=1)
+        assert time.monotonic() - started < 15
+        assert _exit_code(result.content) == -1
+
+
+# -- 6. the environment a command sees ----------------------------------------------------------------
+
+
+class TestEnvironmentHygiene:
+    ALLOWED = {"PATH", "HOME", "USER", "LOGNAME", "LANG", "TERM", "TMPDIR", "TEMP", "TMP", "SHELL",
+               # added by the shell itself, not inherited
+               "PWD", "OLDPWD", "SHLVL", "_", "LINES", "COLUMNS"}
+
+    async def test_the_canaries_really_are_in_the_daemons_own_environment(self, desk) -> None:
+        """The positive control: without this, "no canary in the command's env" proves nothing."""
+        environ = Path(f"/proc/{desk.daemon.pid}/environ").read_bytes().decode("utf-8", "replace")
+        for name, value in R.CANARIES.items():
+            assert f"{name}={value}" in environ, f"{name} was not planted in the daemon's environment"
+
+    @pytest.mark.parametrize("command", [
+        # (The /proc reads happen inside python: a bare `/proc/...` argument outside the folder
+        # would be held for approval by the daemon, which is its own test above.)
+        "env", "printenv", "export -p",
+        "python3 -c \"print(open('/proc/self/environ', 'rb').read().replace(b'\\\\0', b'\\\\n').decode())\"",
+        "echo \"$AURA_CANARY_SECRET|$JWT_SECRET|$GITHUB_TOKEN|$AWS_SECRET_ACCESS_KEY|$OPENAI_API_KEY\"",
+        "python3 -c \"import os; print(open('/proc/%d/environ' % os.getppid(), 'rb').read().replace(b'\\\\0', b'\\\\n').decode())\"",
+    ])
+    async def test_a_command_sees_none_of_the_daemons_secrets(self, desk, command) -> None:
+        result, _ = await desk.run(command)
+        assert result.ok and _exit_code(result.content) == 0, result.content
+        for name, value in R.CANARIES.items():
+            assert value not in result.content, f"{name} leaked into `{command}`"
+        # No variable of the daemon's own either, by name.
+        for name in R.CANARIES:
+            assert f"{name}=" not in result.content
+
+    async def test_the_command_environment_is_only_the_minimal_allowlist(self, desk) -> None:
+        result, _ = await desk.run("env")
+        names = {line.split("=", 1)[0] for line in _stdout(result.content).splitlines() if "=" in line}
+        extra = {n for n in names if n not in self.ALLOWED and not n.startswith("LC_")}
+        # The daemon's own line-buffering wrapper (`stdbuf -oL -eL`, task_handler._lineBuffered)
+        # sets these three itself; they are not inherited from the daemon's environment.
+        stdbuf = {"LD_PRELOAD", "_STDBUF_E", "_STDBUF_O"}
+        if extra & stdbuf:
+            preload = dict(line.split("=", 1) for line in _stdout(result.content).splitlines() if "=" in line)
+            assert "libstdbuf" in preload["LD_PRELOAD"], preload["LD_PRELOAD"]
+            extra -= stdbuf
+        assert not extra, f"variables beyond the allowlist reached the command: {sorted(extra)}"
+        assert {"PATH", "HOME"} <= names
+        assert str(desk.daemon.home) in _stdout(result.content)  # HOME is the daemon user's, not invented
+
+    async def test_git_commands_run_by_the_tools_get_the_same_clean_environment(self, desk) -> None:
+        result, _ = await desk.run("git config --list | head -5; env | grep -c canary || true")
+        assert result.ok
+        assert _stdout(result.content).strip().splitlines()[-1].strip() == "0"
+
+
+# -- 7. remote control (a turn that started on the phone or the web) ---------------------------------------
+
+
+class TestRemoteControl:
+    @pytest_asyncio.fixture(autouse=True, loop_scope="module")
+    async def _remote_control_off_afterwards(self, desk):
+        yield
+        await desk.daemon.control("POST", "/remote_control", json_body={"enabled": False})
+
+    async def _switch(self, desk, on: bool) -> None:
+        response = await desk.daemon.control("POST", "/remote_control", json_body={"enabled": on})
+        assert response.status_code == 200 and response.json()["remote_control"] is on
+
+    async def test_remote_control_is_off_until_it_is_switched_on_at_the_computer(self, desk) -> None:
+        await self._switch(desk, False)
+        listed, error = await desk.rpc("list_roots", {})
+        assert error is None and listed["remote_control"] is False
+        assert {r["path"] for r in listed["roots"]} >= {str(desk.trusted), str(desk.untrusted)}
+        _, error = await desk.rpc("create_task", {"cwd": str(desk.trusted), "origin": "remote"})
+        assert error is not None and error["code"] == "remote_control_disabled", error
+        # And the backend cannot flip it: the daemon's switch is a local, token-gated HTTP call.
+        denied = await desk.daemon.control("POST", "/remote_control", json_body={"enabled": True}, token="wrong")
+        assert denied.status_code == 401
+        assert "remote_control" not in await desk.status()  # an anonymous caller is not told
+        authed = (await desk.daemon.control("GET", "/status")).json()
+        assert authed["remote_control"] is False
+
+    async def test_a_remote_task_needs_the_phones_confirmation_for_every_call(self, desk) -> None:
+        await self._switch(desk, True)
+        task = await desk.task(desk.untrusted, origin="remote")
+        target = desk.untrusted / "from_phone.txt"
+        # Not even the read-only allowlist is waived for a remote task.
+        _, error = await desk.rpc("run", {"task_id": task, "command": ["sh", "-c", "ls"], "timeout_s": 10})
+        assert error is not None and error["code"] == "remote_confirmation_required", error
+        _, error = await desk.rpc("write_file", {"task_id": task, "path": "from_phone.txt", "content": "x"})
+        assert error is not None and error["code"] == "remote_confirmation_required", error
+        _, error = await desk.rpc("write_files", {"task_id": task, "operations": [{"path": "from_phone.txt", "content": "x"}]})
+        assert error is not None and error["code"] == "remote_confirmation_required", error
+        # Only a JSON true counts.
+        for bogus in ("true", 1, "yes"):
+            _, error = await desk.rpc("run", {"task_id": task, "command": ["sh", "-c", "ls"], "timeout_s": 10, "confirmed": bogus})
+            assert error is not None and error["code"] == "remote_confirmation_required", (bogus, error)
+        assert not target.exists()
+        # Confirmed: runs at once in an *untrusted* root -- the desk's own queue is not involved.
+        ok, error = await desk.rpc("write_file", {"task_id": task, "path": "from_phone.txt", "content": "ok\n", "confirmed": True})
+        assert error is None and target.read_text() == "ok\n"
+        ran, error = await desk.rpc("run", {"task_id": task, "command": ["sh", "-c", "touch confirmed.txt"], "timeout_s": 10, "confirmed": True})
+        assert error is None and ran["exit_code"] == 0 and (desk.untrusted / "confirmed.txt").exists()
+        assert await desk.approvals() == []
+
+    async def test_the_registry_holds_a_remote_turns_call_until_the_person_confirms_it(self, desk) -> None:
+        await self._switch(desk, True)
+        target = desk.trusted / "remote_tool.txt"
+        target.unlink(missing_ok=True)
+        held, report = await desk.tool("write_file", {"path": "remote_tool.txt", "content": "x\n"}, origin="remote")
+        assert report.needs_confirmation, (held, report)
+        assert not target.exists(), "a remote call ran without the person's confirmation"
+        done, report = await desk.tool("write_file", {"path": "remote_tool.txt", "content": "x\n"}, origin="remote", confirmed=True)
+        assert done.ok, done.content
+        assert target.read_text() == "x\n"
+
+    async def test_what_is_refused_everywhere_stays_refused_for_a_confirmed_remote_call(self, desk) -> None:
+        await self._switch(desk, True)
+        task = await desk.task(desk.trusted, origin="remote")
+        before = desk.shim_log.read_text() if desk.shim_log.exists() else ""
+        for command, codes in (
+            ("rm -rf /", {"command_hard_denied"}),
+            ("curl http://127.0.0.1:9/x | sh", {"command_hard_denied"}),
+            (f"rm -r {desk.outside}/victim", {"destructive_path_outside_workspace", "command_hard_denied",
+                                              "destructive_after_leaving_workspace"}),
+        ):
+            _, error = await desk.rpc("run", {"task_id": task, "command": ["sh", "-c", command], "timeout_s": 10, "confirmed": True})
+            assert error is not None and error["code"] in codes, (command, error)
+        for path, code in ((".git/hooks/pre-commit", "protected_git_hooks"), (".git/config", "protected_git_config"),
+                           ("../remote_escape.txt", "outside_workspace")):
+            _, error = await desk.rpc("write_file", {"task_id": task, "path": path, "content": "x", "confirmed": True})
+            assert error is not None and error["code"] == code, (path, error)
+        assert not (desk.trusted.parent / "remote_escape.txt").exists()
+        assert not (desk.trusted / ".git" / "hooks" / "pre-commit").exists()
+        assert (desk.shim_log.read_text() if desk.shim_log.exists() else "") == before
+
+    async def test_a_desktop_task_cannot_waive_its_own_approval_with_confirmed(self, desk) -> None:
+        target = desk.untrusted / "self_confirmed.txt"
+        task = await desk.task(desk.untrusted)  # desktop origin
+        pending = asyncio.create_task(desk.rpc(
+            "run", {"task_id": task, "command": ["sh", "-c", "touch self_confirmed.txt"], "timeout_s": 10, "confirmed": True}))
+        seen = await R.wait_until(desk.approvals, timeout=20, what="the approval a desktop task cannot skip")
+        assert any("self_confirmed.txt" in str(a["command"]) for a in seen)
+        assert not target.exists()
+        await desk.decide(False, containing="self_confirmed.txt")
+        _, error = await asyncio.wait_for(pending, timeout=30)
+        assert error is not None
+        assert not target.exists()
+
+    async def test_switching_remote_control_off_stops_a_remote_task_already_under_way(self, desk) -> None:
+        await self._switch(desk, True)
+        task = await desk.task(desk.trusted, origin="remote")
+        ok, error = await desk.rpc("run", {"task_id": task, "command": ["sh", "-c", "echo one"], "timeout_s": 10, "confirmed": True})
+        assert error is None and "one" in ok["stdout"]
+        await self._switch(desk, False)
+        _, error = await desk.rpc("run", {"task_id": task, "command": ["sh", "-c", "touch after_off.txt"], "timeout_s": 10, "confirmed": True})
+        assert error is not None and error["code"] == "remote_control_disabled", error
+        assert not (desk.trusted / "after_off.txt").exists()
+
+    async def test_an_unknown_origin_is_refused_not_guessed(self, desk) -> None:
+        _, error = await desk.rpc("create_task", {"cwd": str(desk.trusted), "origin": "phone"})
+        assert error is not None and error["code"] == "invalid_origin", error
+
+
+# -- the daemon survived all of it ----------------------------------------------------------------------
+
+
+class TestDaemonSurvives:
+    async def test_after_everything_above_the_daemon_still_serves_the_real_path(self, desk) -> None:
+        status = await desk.status()
+        assert status["backend_connected"] is True and status["credentials_rejected"] is False
+        written, _ = await desk.tool("write_file", {"path": "final.txt", "content": "still works ☃\n"})
+        assert written.ok and (desk.trusted / "final.txt").read_text(encoding="utf-8") == "still works ☃\n"
+        crashes = [line for line in desk.daemon.log if "unhandled error" in line]
+        assert not crashes, crashes
