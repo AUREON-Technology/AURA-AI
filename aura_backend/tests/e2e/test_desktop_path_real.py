@@ -856,9 +856,9 @@ class TestTrustTiers:
     @pytest.mark.skipif(not SLOW, reason="waits out the daemon's fixed five-minute approval timeout; AURA_REAL_DESKTOP_SLOW=1")
     async def test_an_approval_nobody_answers_expires_and_never_runs(self, desk) -> None:
         target = desk.untrusted / "expired.txt"
-        pending = asyncio.create_task(desk.run("touch expired.txt", root=desk.untrusted, timeout_s=30))
+        pending = asyncio.create_task(desk.run("touch expired.txt", root=desk.untrusted, timeout_s=30, timeout=400))
         await R.wait_until(desk.approvals, timeout=30, what="the queued approval")
-        result, _ = await asyncio.wait_for(pending, timeout=360)
+        result, _ = await asyncio.wait_for(pending, timeout=380)
         assert not result.ok and ("expire" in result.content.lower() or "timed out" in result.content.lower()), result.content
         assert not target.exists()
 
@@ -955,15 +955,23 @@ class TestTrustTiers:
         """SEC-05: trust is "run my project's commands", not "read and write anywhere"."""
         secret = desk.outside / "secret.txt"
         copy = desk.trusted / "stolen_secret.txt"
-        pending = asyncio.create_task(desk.run(f"cp {secret} stolen_secret.txt", root=desk.trusted))
-        seen = await R.wait_until(desk.approvals, timeout=30, what="the held command")
-        assert any("secret.txt" in str(a["command"]) for a in seen)
-        await asyncio.sleep(0.5)
-        assert not copy.exists(), "the command ran before the human answered"
-        await desk.decide(False, containing="secret.txt")
-        result, _ = await asyncio.wait_for(pending, timeout=30)
-        assert not result.ok
+        # A destructive verb naming a path outside is refused outright ...
+        task = await desk.task(desk.trusted)
+        _, error = await desk.rpc("run", {"task_id": task, "timeout_s": 10,
+                                          "command": ["sh", "-c", f"cp {secret} stolen_secret.txt"]})
+        assert error is not None and error["code"] == "destructive_path_outside_workspace", error
         assert not copy.exists()
+        # ... and any other command with such an argument waits for the human, nothing runs first.
+        for command in (f"cat {secret} > stolen_secret.txt", "cat /etc/hostname", "ls /etc"):
+            pending = asyncio.create_task(desk.run(command, root=desk.trusted))
+            seen = await R.wait_until(desk.approvals, timeout=30, what=f"{command!r} to be held")
+            assert any(command.split()[1] in str(a["command"]) for a in seen)
+            await asyncio.sleep(0.5)
+            assert not copy.exists(), "the command ran before the human answered"
+            await desk.decide(False)
+            result, _ = await asyncio.wait_for(pending, timeout=30)
+            assert not result.ok, command
+            assert not copy.exists()
 
 
 # -- 5. resource handling -------------------------------------------------------------------------
@@ -1046,6 +1054,23 @@ class TestResources:
         marker = f"sleep 75{tag}.5"
         try:
             await desk.run(f"setsid {marker} & sleep 30", timeout_s=2)
+            assert await _gone([marker], within=5.0) == []
+        finally:
+            _kill([marker])
+
+    @pytest.mark.xfail(strict=True, reason=(
+        "design limit: a daemon killed with SIGKILL (a crash, the OOM killer, power loss) cannot "
+        "run its own cleanup, so the commands it started are orphaned onto init and keep running "
+        "as the user. A graceful stop (SIGTERM, /shutdown) does end them -- see the test below. "
+        "Closing this needs a parent-death signal in the launcher (Linux-only prctl), not built."))
+    async def test_a_killed_daemon_leaves_no_command_behind(self, desk) -> None:
+        tag = _tag()
+        marker = f"sleep 79{tag}.9"
+        try:
+            task = asyncio.create_task(desk.run(f"{marker} & {marker}", timeout_s=300))
+            await R.wait_until(lambda: R.cmdline_pids(marker), timeout=20, what="the command to start")
+            await desk.daemon.stop(sig=signal.SIGKILL)
+            await asyncio.wait_for(task, timeout=30)  # the call itself fails at once
             assert await _gone([marker], within=5.0) == []
         finally:
             _kill([marker])
