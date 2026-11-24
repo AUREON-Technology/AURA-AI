@@ -1279,14 +1279,14 @@ class ReasoningSettings:
     loop_stuck_same_error: int = 3
     loop_stuck_no_progress: int = 4
     #: Decide retries per failure kind (``execution/recovery.py``) instead of retrying every
-    #: failed read-only step. Off: the original rule. ``backoff_s`` is the first transient delay
+    #: failed read-only step. ``backoff_s`` is the first transient delay
     #: (doubling, capped at 8 s).
-    loop_recovery_policy_enabled: bool = False
+    loop_recovery_policy_enabled: bool = True
     loop_recovery_backoff_s: float = 0.5
     #: Read test results as a loop input: a failing test run (or a non-zero command exit) makes the
-    #: pass "not done" and drives a replan with that reason. Off: a pass whose steps all ran is
+    #: pass "not done" and drives a replan with that reason. A pass whose steps all ran is
     #: complete, as before.
-    loop_test_signals_enabled: bool = False
+    loop_test_signals_enabled: bool = True
     #: Deterministic plan/outcome/answer critic, applied to the agent loop of a persona that
     #: replans (today: engineer). ``critic_llm_enabled`` adds an advisory model critic on top.
     critic_enabled: bool = True
@@ -1346,9 +1346,9 @@ class ReasoningSettings:
             loop_stuck_identical_calls=_int("LOOP_STUCK_IDENTICAL_CALLS", 3, minimum=0, maximum=50),
             loop_stuck_same_error=_int("LOOP_STUCK_SAME_ERROR", 3, minimum=0, maximum=50),
             loop_stuck_no_progress=_int("LOOP_STUCK_NO_PROGRESS", 4, minimum=0, maximum=50),
-            loop_recovery_policy_enabled=_bool("LOOP_RECOVERY_POLICY_ENABLED", False),
+            loop_recovery_policy_enabled=_bool("LOOP_RECOVERY_POLICY_ENABLED", True),
             loop_recovery_backoff_s=_float("LOOP_RECOVERY_BACKOFF_S", 0.5, minimum=0.0, maximum=30.0),
-            loop_test_signals_enabled=_bool("LOOP_TEST_SIGNALS_ENABLED", False),
+            loop_test_signals_enabled=_bool("LOOP_TEST_SIGNALS_ENABLED", True),
             critic_enabled=_bool("CRITIC_ENABLED", True),
             critic_llm_enabled=_bool("CRITIC_LLM_ENABLED", False),
             engineer_token_budget=_int("ENGINEER_TOKEN_BUDGET", 400_000, minimum=0),
