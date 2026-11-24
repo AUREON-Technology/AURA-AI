@@ -401,10 +401,14 @@ class TestFileTools:
         ok, _ = await desk.tool("edit_file", {"path": "edit_crlf.txt", "find": "a\r\nb", "replace": "a\r\nB"})
         assert ok.ok, ok.content
         assert target.read_bytes() == b"a\r\nB\r\nc\r\n"
-        # LF-only `find` does not match CRLF text: refused, file untouched.
-        miss, _ = await desk.tool("edit_file", {"path": "edit_crlf.txt", "find": "B\nc", "replace": "x"})
+        # An LF-spelled `find` is the same text as the file's CRLF lines (edit_file matches it and keeps
+        # the file's own line endings); a text that is not there is still refused and changes nothing.
+        lf, _ = await desk.tool("edit_file", {"path": "edit_crlf.txt", "find": "B\nc", "replace": "x"})
+        assert lf.ok, lf.content
+        assert target.read_bytes() == b"a\r\nx\r\n"
+        miss, _ = await desk.tool("edit_file", {"path": "edit_crlf.txt", "find": "nope", "replace": "y"})
         assert not miss.ok and "found 0" in miss.content
-        assert target.read_bytes() == b"a\r\nB\r\nc\r\n"
+        assert target.read_bytes() == b"a\r\nx\r\n"
 
     async def test_edit_file_on_a_file_that_is_not_utf8_fails_and_changes_nothing(self, desk) -> None:
         target = desk.trusted / "binary.bin"
@@ -488,9 +492,14 @@ class TestRunCommand:
         result, _ = await desk.run("cat doc.pdf")
         assert result.ok, result.content
         assert _exit_code(result.content) == 0
-        assert "%PDF-1.4" in _stdout(result.content) and "%%EOF" in _stdout(result.content)
-        again, _ = await desk.run("head -c 8 doc.pdf")
-        assert _stdout(again.content).startswith("%PDF-1.4")
+        out = _stdout(result.content)
+        # `run_command` replaces raw PDF bytes with advice that states how many characters crossed
+        # the relay (the bytes arrived; the model is just not shown them), so either form proves the
+        # daemon decoded the non-UTF-8 bytes instead of failing the call.
+        assert ("%PDF-1.4" in out and "%%EOF" in out) or f"raw bytes ({len(pdf.decode('utf-8', 'replace'))} characters)" in out, out
+        # The file itself is untouched and the daemon still answers with exact byte counts.
+        size, _ = await desk.run("wc -c < doc.pdf")
+        assert _stdout(size.content).strip() == str(len(pdf))
 
 
 class TestGitTools:
