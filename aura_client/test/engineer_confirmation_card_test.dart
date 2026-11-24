@@ -93,6 +93,20 @@ void main() {
     expect(find.byType(SandboxDiffView), findsOneWidget);
   });
 
+  testWidgets('git_commit with paths lists exactly the files it will commit', (tester) async {
+    await _pump(tester, [
+      const PendingToolCall(
+        callId: 'c1',
+        tool: 'git_commit',
+        arguments: {'message': 'fix parser', 'paths': ['src/parser.py', 'tests/test_parser.py']},
+        turnId: 't1',
+      ),
+    ], turnId: 't1');
+    expect(find.text('fix parser'), findsOneWidget);
+    expect(find.text('src/parser.py'), findsOneWidget);
+    expect(find.text('tests/test_parser.py'), findsOneWidget);
+  });
+
   testWidgets('github_create_branch dispatches to GithubBranchSummary', (tester) async {
     await _pump(tester, [
       const PendingToolCall(

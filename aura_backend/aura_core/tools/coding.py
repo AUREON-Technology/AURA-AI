@@ -189,6 +189,31 @@ def _clone_dir(slug: str, destination: str | None) -> str:
     return destination or slug.split("/")[-1]
 
 
+def _find_checkout_dir(root: Path, slug: str) -> Path | None:
+    """The checkout of ``slug`` below ``root`` (one or two levels down), by directory name first.
+
+    A real directory holding a ``.git``; symlinks are never followed out of the workspace.
+    """
+    name = slug.split("/")[-1].lower()
+    found: list[Path] = []
+    try:
+        for child in sorted(root.iterdir()):
+            if child.is_symlink() or not child.is_dir():
+                continue
+            if (child / ".git").exists():
+                found.append(child)
+                continue
+            for grand in sorted(child.iterdir()):
+                if not grand.is_symlink() and grand.is_dir() and (grand / ".git").exists():
+                    found.append(grand)
+    except OSError:
+        return None
+    named = [d for d in found if d.name.lower() == name]
+    if len(named) == 1:
+        return named[0]
+    return found[0] if len(found) == 1 else None
+
+
 def _is_binary_path(path: str) -> bool:
     name = path.rsplit("/", 1)[-1]
     dot = name.rfind(".")
@@ -1276,33 +1301,119 @@ def build_sandbox_tools(
     async def _git(handle: Any, argv: list[str], *, timeout_s: float = 15.0) -> Any:
         return await sandbox_runner.run(handle, argv, timeout_s=timeout_s)
 
-    async def _checkout_args(context: ToolContext, handle: Any) -> list[str]:
-        """``["-C", "<dir>"]`` when this call's git work belongs in a cloned checkout, else ``[]``.
+    # Where this call's git work happens ------------------------------------------------------
+    #
+    # `clone_repository` lands a repository in `<workspace>/<name>/` (or wherever `destination`
+    # says), so in a durable workspace the workspace root is not itself a repository and a bare
+    # `git status` there fails with "not a git repository" right after a successful clone. The git
+    # tools therefore resolve a checkout: the `repo_path` the caller names, else the workspace root
+    # when it is a repository, else the repository found one or two levels down (the one matching
+    # the bound repository's name when there are several). Done with plain `sh` through the same
+    # runner as every other command, so it behaves the same in a server-side workspace and on a
+    # paired desktop. Several repositories and no way to tell which is an error that lists them.
 
-        In a durable workspace ``clone_repository`` lands the repository in ``<workspace>/<name>/``,
-        so the workspace root itself is not a repository and a bare ``git status`` there fails with
-        "not a git repository" right after a successful clone (found by the simulated end-to-end
-        suite). When the root is not a repository but the bound repository's checkout is, git is
-        pointed at the checkout. A workspace whose root *is* a repository, a scratch workspace and a
-        paired desktop (whose root is the user's own folder) are unchanged.
-        """
-        if not sessions.durable or await sessions._desktop_active(context):
+    _REPO_SCAN = (
+        'for g in */.git */*/.git; do [ -e "$g" ] && printf "%s\\n" "${g%/.git}"; done 2>/dev/null; true'
+    )
+
+    def _clean_repo_path(value: str, tool_name: str) -> str:
+        text = value.strip().replace("\\", "/")
+        parts = [part for part in text.split("/") if part not in ("", ".")]
+        if (
+            not text or "\x00" in text or text.startswith(("/", "-", "~")) or ".." in parts
+            or len(text) > 200 or any(part.startswith("-") for part in parts)
+        ):
+            raise ToolExecutionError(
+                f"repo_path {value!r} must be a relative path inside the workspace "
+                "(no '..', no leading '/' or '-')",
+                tool=tool_name,
+            )
+        return "/".join(parts) or "."
+
+    async def _is_checkout(handle: Any, directory: str) -> bool:
+        """``directory`` (relative; ``.`` = the root) is a real directory holding a ``.git``."""
+        probe = await sandbox_runner.run(
+            handle,
+            ["sh", "-c", 'd="$1"; [ -d "$d" ] && [ ! -L "$d" ] && [ -e "$d/.git" ]', "aura-git", directory],
+            timeout_s=10.0,
+        )
+        return probe.exit_code == 0
+
+    async def _checkout_args(
+        context: ToolContext, handle: Any, repo_path: str | None = None, *, tool_name: str = "git",
+    ) -> list[str]:
+        """``["-C", "<dir>"]`` when the git work belongs in a checkout below the root, else ``[]``."""
+        if repo_path is not None and repo_path.strip():
+            directory = _clean_repo_path(repo_path, tool_name)
+            if not await _is_checkout(handle, directory):
+                raise ToolExecutionError(
+                    f"{directory!r} is not a git repository inside the workspace (no .git there); "
+                    "clone one with clone_repository or run `git init` in it",
+                    tool=tool_name,
+                )
+            return [] if directory == "." else ["-C", directory]
+        # Asked with git itself (not a shell probe): on a paired desktop the daemon's command policy
+        # sees a plain `git rev-parse`, the same kind of read the tools already made, instead of an
+        # extra `sh -c` it would put to the user. Only when this fails -- which used to be the end of
+        # the road ("not a git repository") -- does the search below run.
+        inside = await _git(handle, ["git", "rev-parse", "--is-inside-work-tree"], timeout_s=10.0)
+        if inside.exit_code == 0 and inside.stdout.strip() == "true":
             return []
+        scan = await sandbox_runner.run(handle, ["sh", "-c", _REPO_SCAN], timeout_s=10.0)
+        found = sorted({
+            line.strip() for line in scan.stdout.splitlines()
+            if line.strip() and not line.startswith(("/", "-"))
+        })[:50]
+        if not found:
+            return []  # nothing to point at: the caller's own "not a git repository" message applies
         slug = sessions.bound_repo(context.correlation_id)
-        workspace_path = getattr(sandbox_runner, "workspace_path", None)
-        if not slug or slug == _WorkspaceResolver.SCRATCH or workspace_path is None:
+        if slug and slug != _WorkspaceResolver.SCRATCH:
+            name = slug.split("/")[-1].lower()
+            named = [d for d in found if d.rsplit("/", 1)[-1].lower() == name]
+            if len(named) == 1:
+                return ["-C", named[0]]
+        if len(found) == 1:
+            return ["-C", found[0]]
+        listed = ", ".join(found[:8]) + (" ..." if len(found) > 8 else "")
+        raise ToolExecutionError(
+            f"the workspace holds several git repositories ({listed}); pass repo_path to say which one",
+            tool=tool_name,
+        )
+
+    _REV_RE = re.compile(r"^[A-Za-z0-9._/@{}~^+-]+$")
+
+    def _valid_revision(value: str, what: str, tool_name: str) -> str:
+        """A revision (branch, tag, sha, ``HEAD~2``, ``origin/main``) that is safe to hand to git."""
+        text = value.strip()
+        if (
+            not text or len(text) > 200 or text.startswith(("-", "/", ".")) or ".." in text
+            or not _REV_RE.match(text) or text.endswith(".lock")
+        ):
+            raise ToolExecutionError(
+                f"{what} {value!r} is not a plain revision (a branch, tag, commit id or something "
+                "like HEAD~2; no spaces, no '..' ranges, no leading '-')",
+                tool=tool_name,
+            )
+        return text
+
+    def _clean_paths(paths: Any, tool_name: str) -> list[str]:
+        if paths is None:
             return []
-        try:
-            root = Path(await workspace_path(handle))
-        except Exception:
-            return []
-        if (root / ".git").exists():
-            return []
-        directory = _clone_dir(slug, None)
-        checkout = root / directory
-        if (checkout / ".git").is_dir() and not (checkout / ".git").is_symlink() and not checkout.is_symlink():
-            return ["-C", directory]
-        return []
+        if not isinstance(paths, (list, tuple)) or not all(isinstance(p, str) for p in paths):
+            raise ToolExecutionError("paths must be a list of path strings", tool=tool_name)
+        if len(paths) > 200:
+            raise ToolExecutionError("at most 200 paths per call", tool=tool_name)
+        cleaned: list[str] = []
+        for raw in paths:
+            text = raw.strip().replace("\\", "/")
+            parts = [part for part in text.split("/") if part not in ("", ".")]
+            if not text or "\x00" in text or text.startswith(("/", "~")) or ".." in parts or len(text) > 300:
+                raise ToolExecutionError(
+                    f"path {raw!r} must be relative to the repository (no '..', no leading '/')",
+                    tool=tool_name,
+                )
+            cleaned.append("/".join(parts) or ".")
+        return cleaned
 
     def _git_failure(result: Any) -> str:
         """What git said, from whichever stream it used (``nothing to commit`` goes to stdout)."""
@@ -1310,16 +1421,51 @@ def build_sandbox_tools(
 
     @tool(
         "git_diff",
-        "Show the workspace's uncommitted changes against HEAD (staged and unstaged) and list untracked files.",
+        "Show changes in the workspace's git repository. With no options: uncommitted changes against "
+        "HEAD (staged and unstaged) plus a list of untracked files. `staged` shows only what is staged; "
+        "`base` (and optionally `head`) compares any two revisions, or a revision with the working tree; "
+        "`paths` limits it to some files; `format` picks a full patch, a diffstat, or just the changed "
+        "file names. Read-only.",
+        param("repo_path", "string", "Repository directory inside the workspace, when it holds more than one "
+              "or the repository is not at the root (default: the root, else the repository found below it).",
+              required=False, max_length=200),
+        param("staged", "boolean", "Only the changes staged for the next commit (git diff --cached).",
+              required=False, default=False),
+        param("base", "string", "Compare against this revision (branch, tag, commit id, HEAD~2, origin/main).",
+              required=False, max_length=200),
+        param("head", "string", "With `base`: compare `base` to this revision instead of the working tree.",
+              required=False, max_length=200),
+        param("merge_base", "boolean", "With `base` and `head`: diff from their common ancestor (what a pull "
+              "request shows), not from `base` itself.", required=False, default=False),
+        param("paths", "array", "Only these files or directories, relative to the repository.",
+              required=False, item_type="string"),
+        param("format", "string", "patch (default), stat (a summary per file) or names (changed file names "
+              "with A/M/D status).", required=False, default="patch", enum=("patch", "stat", "names")),
         category=ToolCategory.DEVELOPMENT,
         sensitivity=ToolSensitivity.PERSONAL,
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=45.0,
         max_result_chars=20_000,
     )
-    async def git_diff(context: ToolContext) -> str:
+    async def git_diff(
+        context: ToolContext, repo_path: str | None = None, staged: bool = False, base: str | None = None,
+        head: str | None = None, merge_base: bool = False, paths: list | None = None, format: str = "patch",
+    ) -> str:
         handle = await sessions.handle(context)
-        where = await _checkout_args(context, handle)
+        where = await _checkout_args(context, handle, repo_path, tool_name="git_diff")
+        fmt_flag = {"patch": [], "stat": ["--stat"], "names": ["--name-status"]}.get(format)
+        if fmt_flag is None:
+            raise ToolExecutionError("format must be patch, stat or names", tool="git_diff")
+        base_rev = _valid_revision(base, "base", "git_diff") if base else None
+        head_rev = _valid_revision(head, "head", "git_diff") if head else None
+        if head_rev and not base_rev:
+            raise ToolExecutionError("`head` needs a `base` to compare it with", tool="git_diff")
+        if head_rev and staged:
+            raise ToolExecutionError("`staged` compares the index; it cannot be combined with `head`", tool="git_diff")
+        if merge_base and not (base_rev and head_rev):
+            raise ToolExecutionError("`merge_base` needs both `base` and `head`", tool="git_diff")
+        limit = _clean_paths(paths, "git_diff")
+        tail = ["--", *limit] if limit else []
         has_head = await _git(handle, ["git", *where, "rev-parse", "--verify", "--quiet", "HEAD"])
         if has_head.exit_code != 0:
             inside = await _git(handle, ["git", *where, "rev-parse", "--is-inside-work-tree"])
@@ -1329,14 +1475,22 @@ def build_sandbox_tools(
                     "`git init` first",
                     tool="git_diff",
                 )
-        # A repository with no commit yet has no HEAD to diff against: its changes are what is
-        # staged, plus what is edited since. (This used to run `git diff HEAD`, fail, and report
-        # "(no changes)" for a workspace full of them.)
-        commands = (
-            [["git", *where, "diff", "--no-ext-diff", "HEAD"]]
-            if has_head.exit_code == 0
-            else [["git", *where, "diff", "--no-ext-diff", "--cached"], ["git", *where, "diff", "--no-ext-diff"]]
-        )
+        common = ["git", *where, "diff", "--no-ext-diff", "--no-color", *fmt_flag]
+        explicit = bool(staged or base_rev or head_rev)
+        if base_rev and head_rev:
+            commands = [[*common, f"{base_rev}{'...' if merge_base else '..'}{head_rev}", *tail]]
+        elif base_rev:
+            commands = [[*common, *(["--cached"] if staged else []), base_rev, *tail]]
+        elif staged:
+            commands = [[*common, "--cached", *tail]]
+        elif has_head.exit_code == 0:
+            # Everything uncommitted: staged and unstaged together, against HEAD.
+            commands = [[*common, "HEAD", *tail]]
+        else:
+            # A repository with no commit yet has no HEAD to diff against: its changes are what is
+            # staged, plus what is edited since. (This used to run `git diff HEAD`, fail, and report
+            # "(no changes)" for a workspace full of them.)
+            commands = [[*common, "--cached", *tail], [*common, *tail]]
         parts: list[str] = []
         for argv in commands:
             result = await _git(handle, argv)
@@ -1346,9 +1500,12 @@ def build_sandbox_tools(
                 )
             if result.stdout:
                 parts.append(result.stdout)
-        untracked = await _git(handle, ["git", *where, "ls-files", "--others", "--exclude-standard"])
-        names = [line for line in untracked.stdout.splitlines() if line] if untracked.exit_code == 0 else []
         diff = "".join(parts)
+        if explicit or format != "patch":
+            # An explicit comparison is about those revisions; untracked files are not part of it.
+            return diff or "(no differences)"
+        untracked = await _git(handle, ["git", *where, "ls-files", "--others", "--exclude-standard", *tail])
+        names = [line for line in untracked.stdout.splitlines() if line] if untracked.exit_code == 0 else []
         if not names:
             return diff or "(no changes)"
         listed = "\n".join(f"- {name}" for name in names[:50])
@@ -1357,10 +1514,48 @@ def build_sandbox_tools(
         header = diff or "(no changes to tracked files)\n"
         return f"{header}\n\nUntracked files (new, not in the diff above):\n{listed}"
 
+    async def _refuse_default_branch_commit(handle: Any, where: list[str]) -> None:
+        """git_commit's own default-branch protection (git_push has one; a commit made straight on
+        ``main`` is the first step of a push to it, and of a pull request with nothing to review).
+
+        The default is the checkout's ``origin/HEAD``; ``main`` and ``master`` count as the default
+        whenever the repository has a remote, because that ref lives in the checkout where commands
+        can rewrite it. A repository with no remote (a fresh ``git init``) has nothing to protect.
+        """
+        current = await _git(handle, ["git", *where, "symbolic-ref", "--quiet", "--short", "HEAD"], timeout_s=10.0)
+        if current.exit_code != 0 or not current.stdout.strip():
+            return  # detached HEAD: not on any branch
+        branch = current.stdout.strip()
+        remote = await _git(handle, ["git", *where, "remote"], timeout_s=10.0)
+        has_remote = remote.exit_code == 0 and bool(remote.stdout.strip())
+        protected: set[str] = set()
+        origin_head = await _git(
+            handle, ["git", *where, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], timeout_s=10.0
+        )
+        if origin_head.exit_code == 0 and origin_head.stdout.strip():
+            protected.add(origin_head.stdout.strip().split("/", 1)[-1])
+        if has_remote:
+            protected |= {"main", "master"}
+        if branch in protected:
+            raise ToolExecutionError(
+                f"refusing to commit on {branch!r}, the repository's default branch. Create a branch "
+                "first with git_checkout_branch, commit there, and open a pull request.",
+                tool="git_commit",
+            )
+
     @tool(
         "git_commit",
-        "Stage every change in the workspace (new files included) and commit it with `message`. The commit stays local until git_push.",
+        "Commit changes in the workspace's git repository with `message`. By default every change is "
+        "staged first (new files included); pass `paths` to commit only those files. Refuses to commit on "
+        "the repository's default branch (create a branch with git_checkout_branch first). The commit "
+        "stays local until git_push.",
         param("message", "string", "Commit message.", max_length=2000),
+        param("paths", "array", "Commit only these files or directories (relative to the repository); "
+              "anything else that is staged or changed stays out of this commit. Omit to commit everything.",
+              required=False, item_type="string"),
+        param("repo_path", "string", "Repository directory inside the workspace, when it holds more than one "
+              "or the repository is not at the root (default: the root, else the repository found below it).",
+              required=False, max_length=200),
         category=ToolCategory.DEVELOPMENT,
         sensitivity=ToolSensitivity.PERSONAL,
         side_effecting=True,
@@ -1370,12 +1565,16 @@ def build_sandbox_tools(
         # crosses the boundary, and it is deliberately not marked.
         workspace_local=True,
     )
-    async def git_commit(message: str, context: ToolContext) -> str:
+    async def git_commit(
+        message: str, context: ToolContext, paths: list | None = None, repo_path: str | None = None,
+    ) -> str:
         if not message.strip():
             raise ToolExecutionError("commit message must not be empty", tool="git_commit")
+        selected = _clean_paths(paths, "git_commit")
         handle = await sessions.handle(context)
-        where = await _checkout_args(context, handle)
-        added = await _git(handle, ["git", *where, "add", "-A"])
+        where = await _checkout_args(context, handle, repo_path, tool_name="git_commit")
+        await _refuse_default_branch_commit(handle, where)
+        added = await _git(handle, ["git", *where, "add", "-A", *(["--", *selected] if selected else [])])
         if added.exit_code != 0:
             raise ToolExecutionError(f"git add failed: {_git_failure(added)}", tool="git_commit")
         # The sandbox's HOME is a fresh tmpfs for every command, so there is no global identity
@@ -1389,15 +1588,25 @@ def build_sandbox_tools(
         argv = ["git"]
         if identity.exit_code != 0:
             argv += ["-c", "user.name=AURA Engineer Agent", "-c", "user.email=engineer-agent@aura.local"]
-        result = await _git(handle, [*argv, *where, "commit", "-m", message])
+        # `--only -- <paths>` commits exactly those paths whatever else is already staged.
+        result = await _git(
+            handle, [*argv, *where, "commit", "-m", message, *(["--only", "--", *selected] if selected else [])],
+        )
         if result.exit_code != 0:
             raise ToolExecutionError(f"git commit failed: {_git_failure(result)}", tool="git_commit")
         return result.stdout or "committed"
 
     @tool(
         "git_checkout_branch",
-        "Create a git branch in the workspace and switch to it, or just switch if it already exists. An existing branch is never reset.",
+        "Create a git branch in the workspace's repository and switch to it, or just switch if it already "
+        "exists. An existing branch is never reset. `start_point` makes a new branch start from a given "
+        "revision instead of the current commit.",
         param("branch", "string", "Branch name.", max_length=200),
+        param("start_point", "string", "For a new branch: the revision to start from (a branch, tag or "
+              "commit id). Default: the current commit.", required=False, max_length=200),
+        param("repo_path", "string", "Repository directory inside the workspace, when it holds more than one "
+              "or the repository is not at the root (default: the root, else the repository found below it).",
+              required=False, max_length=200),
         category=ToolCategory.DEVELOPMENT,
         sensitivity=ToolSensitivity.PERSONAL,
         side_effecting=True,
@@ -1405,24 +1614,33 @@ def build_sandbox_tools(
         timeout_s=30.0,
         workspace_local=True,
     )
-    async def git_checkout_branch(branch: str, context: ToolContext) -> str:
+    async def git_checkout_branch(
+        branch: str, context: ToolContext, start_point: str | None = None, repo_path: str | None = None,
+    ) -> str:
         if not _valid_ref_name(branch):
             raise ToolExecutionError(
                 f"{branch!r} is not a valid branch name (no spaces, no '..', no leading '-', no "
                 "'~^:?*[\\\\')",
                 tool="git_checkout_branch",
             )
+        start = _valid_revision(start_point, "start_point", "git_checkout_branch") if start_point else None
         handle = await sessions.handle(context)
-        where = await _checkout_args(context, handle)
+        where = await _checkout_args(context, handle, repo_path, tool_name="git_checkout_branch")
         exists = await _git(
             handle, ["git", *where, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], timeout_s=10.0
         )
+        if exists.exit_code == 0 and start:
+            raise ToolExecutionError(
+                f"branch {branch!r} already exists; start_point only applies to a new branch "
+                "(an existing branch is never reset)",
+                tool="git_checkout_branch",
+            )
         # `checkout -B` -- which this used to run -- *resets* an existing branch to the current
         # HEAD: asking for `main` while on a feature branch moved `main` onto the feature's
         # commits. An existing branch is switched to; only a new one is created.
         argv = (
             ["git", *where, "checkout", branch, "--"] if exists.exit_code == 0
-            else ["git", *where, "checkout", "-b", branch]
+            else ["git", *where, "checkout", "-b", branch, *([start] if start else [])]
         )
         result = await _git(handle, argv, timeout_s=10.0)
         if result.exit_code != 0:
@@ -1517,19 +1735,19 @@ def build_sandbox_tools(
 
     @tool(
         "git_status",
-        "Show the workspace's git status: the current branch plus staged and unstaged changes.",
+        "Show the workspace repository's git status: the current branch plus staged and unstaged changes.",
+        param("repo_path", "string", "Repository directory inside the workspace, when it holds more than one "
+              "or the repository is not at the root (default: the root, else the repository found below it).",
+              required=False, max_length=200),
         category=ToolCategory.DEVELOPMENT,
         sensitivity=ToolSensitivity.PERSONAL,
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=30.0,
     )
-    async def git_status(context: ToolContext) -> str:
+    async def git_status(context: ToolContext, repo_path: str | None = None) -> str:
         handle = await sessions.handle(context)
-        where = " ".join(shlex.quote(a) for a in await _checkout_args(context, handle))
-        result = await sandbox_runner.run(
-            handle, ["sh", "-c", "git " + (where + " " if where else "") + "status --short --branch"],
-            timeout_s=15.0,
-        )
+        where = await _checkout_args(context, handle, repo_path, tool_name="git_status")
+        result = await _git(handle, ["git", *where, "status", "--short", "--branch"], timeout_s=15.0)
         if result.exit_code != 0:
             raise ToolExecutionError(
                 f"git status failed: {_git_failure(result)}", tool="git_status"
@@ -1569,7 +1787,12 @@ def build_sandbox_tools(
                 tool="git_push",
             )
         opened = await sessions.opened(context, slug)
-        checkout = Path(await sandbox_runner.workspace_path(opened.handle)) / _clone_dir(slug, None)
+        workspace_root = Path(await sandbox_runner.workspace_path(opened.handle))
+        checkout = workspace_root / _clone_dir(slug, None)
+        if not await host_git.is_repository(checkout):
+            # Cloned under a `destination` of the caller's choosing, or one level further down:
+            # find the checkout by what is on disk rather than by the name it would have had.
+            checkout = _find_checkout_dir(workspace_root, slug) or checkout
         if not await host_git.is_repository(checkout):
             raise ToolExecutionError(
                 f"{checkout.name} is not a git checkout; clone the repository first",

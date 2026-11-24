@@ -401,6 +401,9 @@ class _GitCommitSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final message = call.arguments['message']?.toString() ?? '';
+    // `paths` limits the commit to those files (git_commit); without it every change is committed.
+    final rawPaths = call.arguments['paths'];
+    final paths = rawPaths is List ? rawPaths.map((p) => p.toString()).toList() : const <String>[];
     return _SummaryShell(
       icon: Icons.commit,
       title: context.l10n.chatConfirmCommitSandbox,
@@ -409,6 +412,16 @@ class _GitCommitSummary extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(top: 2),
             child: Text(message, style: Theme.of(context).textTheme.bodyMedium),
+          ),
+        for (final path in paths.take(20))
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(path, style: const TextStyle(fontFamily: 'Courier', fontSize: 12)),
+          ),
+        if (paths.length > 20)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text('... +${paths.length - 20}', style: Theme.of(context).textTheme.bodySmall),
           ),
         if (call.diffPreview != null && call.diffPreview!.trim().isNotEmpty)
           SandboxDiffView(diffText: call.diffPreview!),
