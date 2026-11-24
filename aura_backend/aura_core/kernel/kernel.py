@@ -1629,6 +1629,7 @@ class AIKernel:
             return
         steps_by_call_id = {f"step_{s.id.value}": s for s in outcome.plan.steps}
         now = datetime.now(timezone.utc)
+        rows: list[EngineerRun] = []
         for report in outcome.tool_reports:
             try:
                 spec = deps.tools.spec(report.tool) if deps.tools is not None else None
@@ -1657,25 +1658,35 @@ class AIKernel:
                  "git_checkout_branch")
                 else None
             )
-            try:
-                await deps.engineer_runs.record(EngineerRun(
-                    id=EngineerRunId.new(),
-                    user_id=request.user_id,
-                    turn_id=turn_id.value,
-                    correlation_id=correlation.value,
-                    persona=resolved_agent,
-                    tool=report.tool,
-                    call_id=report.call_id,
-                    status=status,
-                    created_at=now,
-                    updated_at=now,
-                    pr_url=pr_url,
-                    branch=dict(report.arguments).get("branch"),
-                    commit_sha=commit_sha,
-                    sandbox_transcript=sandbox_transcript,
-                ))
-            except Exception:
-                logger.warning("failed to record engineer run", extra={"tool": report.tool})
+            rows.append(EngineerRun(
+                id=EngineerRunId.new(),
+                user_id=request.user_id,
+                turn_id=turn_id.value,
+                correlation_id=correlation.value,
+                persona=resolved_agent,
+                tool=report.tool,
+                call_id=report.call_id,
+                status=status,
+                created_at=now,
+                updated_at=now,
+                pr_url=pr_url,
+                branch=dict(report.arguments).get("branch"),
+                commit_sha=commit_sha,
+                sandbox_transcript=sandbox_transcript,
+            ))
+        if not rows:
+            return
+        # One write for the whole pass, not one per report, and it is awaited before the answer
+        # is generated.
+        try:
+            record_many = getattr(deps.engineer_runs, "record_many", None)
+            if record_many is not None:
+                await record_many(rows)
+            else:
+                for row in rows:
+                    await deps.engineer_runs.record(row)
+        except Exception:
+            logger.warning("failed to record engineer runs", extra={"count": len(rows)})
 
     @staticmethod
     def _execution_notes(outcome: Any) -> list[str]:
