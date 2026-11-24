@@ -1365,7 +1365,9 @@ def build_sandbox_tools(
             if line.strip() and not line.startswith(("/", "-"))
         })[:50]
         if not found:
-            return []  # nothing to point at: the caller's own "not a git repository" message applies
+            cloned = await _auto_clone_bound_repository(context, tool_name)
+            # Nothing to clone either: the caller's own "not a git repository" message applies.
+            return cloned or []
         slug = sessions.bound_repo(context.correlation_id)
         if slug and slug != _WorkspaceResolver.SCRATCH:
             name = slug.split("/")[-1].lower()
@@ -1415,6 +1417,91 @@ def build_sandbox_tools(
             cleaned.append("/".join(parts) or ".")
         return cleaned
 
+    async def _host_git_clone(
+        context: ToolContext, slug: str, subdir: str, ref: str | None, destination: str | None,
+        *, tool_name: str = "clone_repository",
+    ) -> str:
+        """The real ``git clone`` into ``<workspace>/<subdir>``; shared by ``clone_repository`` and
+        by the git tools' own clone when a workspace has no checkout yet."""
+        opened = await sessions.opened(context, slug)
+        await sessions.enforce_quota(opened, tool_name=tool_name)
+        checkout = Path(await sandbox_runner.workspace_path(opened.handle)) / subdir
+        # Belt and braces under `_workspace_subdir`: whatever was joined, the checkout must
+        # still be inside the workspace, because this is the gateway's own filesystem.
+        workspace_root = Path(await sandbox_runner.workspace_path(opened.handle)).resolve()
+        if workspace_root not in checkout.resolve().parents:
+            raise ToolExecutionError(
+                f"destination {destination!r} is outside the workspace", tool=tool_name
+            )
+        # The token travels on its own channel rather than being dug out of the code-host
+        # client: a private attribute would tie this to one adapter and silently yield None
+        # for any other, turning a private clone into a confusing auth failure.
+        token = await token_resolver(context.user_id) if token_resolver else None
+
+        await host_git.clone(slug, dest=checkout, token=token, ref=ref)
+        log = await host_git.log(checkout, limit=5)
+        branch = await host_git.current_branch(checkout)
+        note = "\nNote: " + "; ".join(opened.evicted) if opened.evicted else ""
+        return (
+            f"Cloned {slug} into {subdir}/ with full git history "
+            f"(branch {branch}). Recent commits:\n{log}{note}"
+        )
+
+    _auto_clone_locks: dict[str, asyncio.Lock] = {}
+    _auto_clone_notes: dict[str, str] = {}
+
+    async def _auto_clone_bound_repository(context: ToolContext, tool_name: str) -> list[str] | None:
+        """Clone the workspace's own repository when the git tools find no checkout in it.
+
+        A durable workspace is opened *for* a repository; if its files were never cloned (a new
+        turn, a workspace opened without a clone, a checkout that was deleted) every git tool used
+        to fail with "not a git repository" and leave the model to work out why. The repository is
+        the one the workspace is bound to -- never a model-chosen name -- so this fetches nothing the
+        user did not already attach to the workspace, with the same credentials, quota and real
+        ``git clone`` as ``clone_repository``. ``None`` when there is nothing to clone (a scratch
+        workspace, no bound repository, or host-side git is not wired), so the caller's own
+        "not a git repository" message applies.
+        """
+        if host_git is None or not sessions.durable or await sessions._desktop_active(context):
+            return None
+        slug = sessions.bound_repo(context.correlation_id)
+        if not slug or slug == _WorkspaceResolver.SCRATCH:
+            return None
+        subdir = _workspace_subdir(None, slug, tool_name)
+        lock = _auto_clone_locks.setdefault(f"{context.user_id}:{slug}", asyncio.Lock())
+        async with lock:
+            # Another call may have cloned it while this one waited.
+            opened = await sessions.opened(context, slug)
+            root = Path(await sandbox_runner.workspace_path(opened.handle))
+            existing = _find_checkout_dir(root, slug)
+            if existing is not None:
+                return ["-C", existing.relative_to(root).as_posix()]
+            client = await code_host_resolver(context.user_id) if code_host_resolver else None
+            if client is None:
+                raise ToolExecutionError(
+                    f"the workspace for {slug} has no checkout and GitHub is not connected, so it cannot "
+                    "be cloned -- connect an account via /api/v3/integrations/github/connect",
+                    tool=tool_name,
+                )
+            try:
+                summary = await _host_git_clone(context, slug, subdir, None, None, tool_name=tool_name)
+            except ToolExecutionError:
+                raise
+            except Exception as exc:
+                raise ToolExecutionError(
+                    f"the workspace for {slug} has no checkout and cloning it failed: {exc}", tool=tool_name
+                ) from exc
+            _auto_clone_notes[context.correlation_id] = (
+                f"[The workspace had no checkout of {slug}, so it was cloned into {subdir}/ first. "
+                f"{summary.splitlines()[0]}]"
+            )
+        return ["-C", subdir]
+
+    def _with_clone_note(context: ToolContext, text: str) -> str:
+        """Prefix a git tool's result with the note that it cloned the repository first, once."""
+        note = _auto_clone_notes.pop(context.correlation_id, None)
+        return f"{note}\n{text}" if note else text
+
     def _git_failure(result: Any) -> str:
         """What git said, from whichever stream it used (``nothing to commit`` goes to stdout)."""
         return (result.stderr.strip() or result.stdout.strip() or f"exit code {result.exit_code}")[:300]
@@ -1425,7 +1512,8 @@ def build_sandbox_tools(
         "HEAD (staged and unstaged) plus a list of untracked files. `staged` shows only what is staged; "
         "`base` (and optionally `head`) compares any two revisions, or a revision with the working tree; "
         "`paths` limits it to some files; `format` picks a full patch, a diffstat, or just the changed "
-        "file names. Read-only.",
+        "file names. Read-only."
+        " If the workspace holds no checkout yet, the repository it was opened for is cloned first.",
         param("repo_path", "string", "Repository directory inside the workspace, when it holds more than one "
               "or the repository is not at the root (default: the root, else the repository found below it).",
               required=False, max_length=200),
@@ -1503,16 +1591,16 @@ def build_sandbox_tools(
         diff = "".join(parts)
         if explicit or format != "patch":
             # An explicit comparison is about those revisions; untracked files are not part of it.
-            return diff or "(no differences)"
+            return _with_clone_note(context, diff or "(no differences)")
         untracked = await _git(handle, ["git", *where, "ls-files", "--others", "--exclude-standard", *tail])
         names = [line for line in untracked.stdout.splitlines() if line] if untracked.exit_code == 0 else []
         if not names:
-            return diff or "(no changes)"
+            return _with_clone_note(context, diff or "(no changes)")
         listed = "\n".join(f"- {name}" for name in names[:50])
         if len(names) > 50:
             listed += f"\n... and {len(names) - 50} more"
         header = diff or "(no changes to tracked files)\n"
-        return f"{header}\n\nUntracked files (new, not in the diff above):\n{listed}"
+        return _with_clone_note(context, f"{header}\n\nUntracked files (new, not in the diff above):\n{listed}")
 
     async def _refuse_default_branch_commit(handle: Any, where: list[str]) -> None:
         """git_commit's own default-branch protection (git_push has one; a commit made straight on
@@ -1548,7 +1636,8 @@ def build_sandbox_tools(
         "Commit changes in the workspace's git repository with `message`. By default every change is "
         "staged first (new files included); pass `paths` to commit only those files. Refuses to commit on "
         "the repository's default branch (create a branch with git_checkout_branch first). The commit "
-        "stays local until git_push.",
+        "stays local until git_push."
+        " If the workspace holds no checkout yet, the repository it was opened for is cloned first.",
         param("message", "string", "Commit message.", max_length=2000),
         param("paths", "array", "Commit only these files or directories (relative to the repository); "
               "anything else that is staged or changed stays out of this commit. Omit to commit everything.",
@@ -1594,13 +1683,14 @@ def build_sandbox_tools(
         )
         if result.exit_code != 0:
             raise ToolExecutionError(f"git commit failed: {_git_failure(result)}", tool="git_commit")
-        return result.stdout or "committed"
+        return _with_clone_note(context, result.stdout or "committed")
 
     @tool(
         "git_checkout_branch",
         "Create a git branch in the workspace's repository and switch to it, or just switch if it already "
         "exists. An existing branch is never reset. `start_point` makes a new branch start from a given "
-        "revision instead of the current commit.",
+        "revision instead of the current commit."
+        " If the workspace holds no checkout yet, the repository it was opened for is cloned first.",
         param("branch", "string", "Branch name.", max_length=200),
         param("start_point", "string", "For a new branch: the revision to start from (a branch, tag or "
               "commit id). Default: the current commit.", required=False, max_length=200),
@@ -1647,7 +1737,7 @@ def build_sandbox_tools(
             raise ToolExecutionError(
                 f"{' '.join(argv)} failed: {_git_failure(result)}", tool="git_checkout_branch"
             )
-        return result.stdout or f"switched to {branch}"
+        return _with_clone_note(context, result.stdout or f"switched to {branch}")
 
     @tool(
         "open_workspace",
@@ -1735,7 +1825,8 @@ def build_sandbox_tools(
 
     @tool(
         "git_status",
-        "Show the workspace repository's git status: the current branch plus staged and unstaged changes.",
+        "Show the workspace repository's git status: the current branch plus staged and unstaged changes."
+        " If the workspace holds no checkout yet, the repository it was opened for is cloned first.",
         param("repo_path", "string", "Repository directory inside the workspace, when it holds more than one "
               "or the repository is not at the root (default: the root, else the repository found below it).",
               required=False, max_length=200),
@@ -1752,7 +1843,7 @@ def build_sandbox_tools(
             raise ToolExecutionError(
                 f"git status failed: {_git_failure(result)}", tool="git_status"
             )
-        return result.stdout or "(clean)"
+        return _with_clone_note(context, result.stdout or "(clean)")
 
     @tool(
         "git_push",
@@ -2083,29 +2174,7 @@ def build_sandbox_tools(
             )
 
         if host_git is not None and sessions.durable:
-            opened = await sessions.opened(context, slug)
-            await sessions.enforce_quota(opened, tool_name="clone_repository")
-            checkout = Path(await sandbox_runner.workspace_path(opened.handle)) / subdir
-            # Belt and braces under `_workspace_subdir`: whatever was joined, the checkout must
-            # still be inside the workspace, because this is the gateway's own filesystem.
-            workspace_root = Path(await sandbox_runner.workspace_path(opened.handle)).resolve()
-            if workspace_root not in checkout.resolve().parents:
-                raise ToolExecutionError(
-                    f"destination {destination!r} is outside the workspace", tool="clone_repository"
-                )
-            # The token travels on its own channel rather than being dug out of the code-host
-            # client: a private attribute would tie this to one adapter and silently yield None
-            # for any other, turning a private clone into a confusing auth failure.
-            token = await token_resolver(context.user_id) if token_resolver else None
-
-            await host_git.clone(slug, dest=checkout, token=token, ref=ref)
-            log = await host_git.log(checkout, limit=5)
-            branch = await host_git.current_branch(checkout)
-            note = "\nNote: " + "; ".join(opened.evicted) if opened.evicted else ""
-            return (
-                f"Cloned {slug} into {subdir}/ with full git history "
-                f"(branch {branch}). Recent commits:\n{log}{note}"
-            )
+            return await _host_git_clone(context, slug, subdir, ref, destination)
         try:
             tree = await client.list_files(slug, ref=ref)
         except Exception as exc:
