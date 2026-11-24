@@ -504,6 +504,19 @@ class TestTheSandboxImageBuiltFromTheRepositorysDockerfile:
         )
         assert result.exit_code == 0 and result.stdout.strip() == "first", result
 
+    async def test_home_is_writable_so_git_config_and_the_package_caches_work(self, image_runner) -> None:
+        """Regression: the tmpfs over /home/aura was root-owned with mode 700 in this image, so every
+        write to HOME failed with "Permission denied" (found by this suite; the bare base image has
+        no /home/aura and never showed it)."""
+        runner, handle = image_runner
+        result = await sh(
+            runner, handle,
+            "git config --global user.name tester && git config --global user.name"
+            " && mkdir -p ~/.cache/pip ~/.npm && touch ~/.npm/x && echo caches-ok",
+        )
+        assert result.exit_code == 0, result
+        assert result.stdout.split() == ["tester", "caches-ok"], result
+
     async def test_a_python_test_suite_runs_in_it(self, image_runner) -> None:
         runner, handle = image_runner
         await runner.write_file(handle, "test_demo.py", "def test_ok():\n    assert 1 + 1 == 2\n")

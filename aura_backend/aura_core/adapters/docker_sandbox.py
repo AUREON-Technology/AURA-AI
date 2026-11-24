@@ -462,9 +462,16 @@ class DockerSandboxRunner:
             # reaper has exactly one directory to remove to reclaim a workspace.
             read_only=True,
             tmpfs={
-                "/tmp": "rw,nosuid,nodev,noexec,size=256m",
+                "/tmp": "rw,nosuid,nodev,noexec,size=256m,mode=1777",
                 # git refuses to run with nowhere to write its config; pip and npm want a cache.
-                "/home/aura": "rw,nosuid,nodev,size=64m",
+                # Owned by the sandbox user: a tmpfs is created root:root and, over a mount point
+                # that already exists in the image (`/home/aura` does, mode 700), takes that
+                # directory's mode -- so without `uid`/`gid` HOME was a directory the unprivileged
+                # user could not write, and `git config --global`, pip's and npm's caches all failed
+                # with "Permission denied" in the image the Dockerfile builds. (Found by running
+                # the real image under a real daemon, tests/e2e/test_docker_sandbox_real.py; the bare
+                # python base has no /home/aura, so it never showed.)
+                "/home/aura": f"rw,nosuid,nodev,size=64m,uid={_SANDBOX_UID_N},gid={_SANDBOX_GID_N},mode=0700",
             },
             # A fork bomb should hit a limit rather than the host's process table.
             pids_limit=_PIDS_LIMIT,
