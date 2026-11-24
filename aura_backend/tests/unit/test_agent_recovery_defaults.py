@@ -27,6 +27,7 @@ from aura_core.domain.tools import ToolSensitivity
 from aura_core.kernel import TurnRequest
 from aura_core.tools import param, tool
 
+from aura_core.execution.stuck import stable_text
 from tests.unit._loop_harness import (
     BUGGY, FIXED, TEST_MODULE, collect_stream, engineer_turn, frames_of, make_container,
     pytest_step, ready_engineer, script_model, tool_step, write_step,
@@ -151,3 +152,48 @@ class TestAReadFailureIsOnlyRetriedWhenRetryingCanHelp:
         result = await _run(await self._container(script, probe), "check the data")
         assert probe.calls == {"git_status": 2}
         assert result.agent_loop["stop_reason"] == "completed"
+
+
+class TestAFailureThatCarriesATimestampIsStillTheSameFailure:
+    """Found by running ``npm test`` through the loop: its failure ends with a log path named after
+    the minute it ran, so no two runs looked alike, the detector never saw a repeat, and the plan
+    ran to the iteration limit (nine times). Same failure, different text; it has to count as one."""
+
+    NOISY = ("sh -c 'echo \"build failed at $(date +%s%N) pid $$\"; "
+             "echo \"log: /tmp/run-$$/x-$(date +%Y-%m-%dT%H_%M_%S).log (took 0.$(date +%N | cut -c1-3)s)\"; exit 2'")
+
+    async def test_a_failing_command_with_changing_text_is_stopped_as_stuck(self, monkeypatch) -> None:
+        container = make_container(monkeypatch, CRITIC_ENABLED="false", LLM_MAX_PROMPT_TOKENS="8000")
+        echo = await ready_engineer(container)
+        plan = [tool_step("s1", "run_command", "build", {"command": self.NOISY, "timeout_s": 30})]
+        script = script_model(echo, [plan], final_text="Built.")
+        frames = await collect_stream(container, engineer_turn("build it"))
+        done = frames_of(frames, "done")[0]
+        assert script.planning_calls <= 3, f"not nine (got {script.planning_calls})"
+        assert done["agent_loop"]["stop_reason"] in ("stuck",) or done["agent_loop"]["stop_reason"].startswith("escalated")
+
+    async def test_the_same_holds_for_a_test_runner_whose_output_carries_a_timestamp(self, monkeypatch) -> None:
+        container = make_container(monkeypatch, CRITIC_ENABLED="false", LLM_MAX_PROMPT_TOKENS="8000")
+        echo = await ready_engineer(container)
+        plan = [tool_step("s1", "run_command", "test", {
+            "command": "sh -c 'echo \"npm error A complete log of this run can be found in: "
+                       "/root/.npm/_logs/$(date +%Y-%m-%dT%H_%M_%S_%NZ)-debug-0.log\" >&2; "
+                       "echo \"FAIL tests\"; exit 1' # npm test",
+            "timeout_s": 30})]
+        script = script_model(echo, [plan], final_text="Green.")
+        frames = await collect_stream(container, engineer_turn("run npm test"))
+        assert script.planning_calls <= 3
+
+
+class TestStableText:
+    def test_run_to_run_noise_is_removed(self) -> None:
+        a = "A complete log of this run can be found in: /root/.npm/_logs/2026-11-24T21_31_05_123Z-debug-0.log"
+        b = "A complete log of this run can be found in: /root/.npm/_logs/2026-11-24T21_32_47_981Z-debug-0.log"
+        assert stable_text(a) == stable_text(b)
+        assert stable_text("1 failed in 0.12s at 10:31:55") == stable_text("1 failed in 3.4s at 10:48:02")
+        assert stable_text("wrote /tmp/aura-ab12/out.txt pid 4411") == stable_text("wrote /tmp/aura-cd34/out.txt pid 9")
+
+    def test_a_different_failure_is_still_different(self) -> None:
+        assert stable_text("3 failed, 2 passed") != stable_text("5 failed, 2 passed")
+        assert stable_text("ModuleNotFoundError: No module named 'a'") != stable_text("ModuleNotFoundError: No module named 'b'")
+        assert stable_text("exit 2: permission denied") != stable_text("exit 2: no such file")

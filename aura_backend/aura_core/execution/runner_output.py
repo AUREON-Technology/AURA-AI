@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from ..domain.planning import Plan, StepKind, StepStatus
+from .stuck import stable_text
 
 __all__ = [
     "observe_plan",
@@ -317,7 +318,9 @@ def parse_test_output(text: str) -> TestRun | None:
 
 
 def _signature(*parts: Any) -> str:
-    raw = "|".join(str(p) for p in parts)
+    # Volatile text (timestamps, durations, temp and log paths) is stripped first: two runs of the
+    # same failing command must have the same signature or the stuck detector never sees a repeat.
+    raw = "|".join(stable_text(str(p)) for p in parts)
     return hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:12]
 
 

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
@@ -70,6 +71,35 @@ class StuckVerdict:
     def as_dict(self) -> dict[str, Any]:
         return {"rule": self.rule, "count": self.count, "detail": self.detail,
                 "tool": self.tool, "error_kind": self.error_kind, "iterations": self.iterations}
+
+
+# Text that changes between two runs of the same failing command without the failure being any
+# different: when it ran, how long it took, where a log landed, which temp dir, which process.
+# `npm test` ends its failure with "A complete log of this run can be found in:
+# /root/.npm/_logs/2026-11-24T21_31_05_123Z-debug-0.log" -- a new file name every run, so two
+# identical failures looked different, nothing was ever "the same failure", and one identical
+# failing plan ran to the iteration limit.
+_VOLATILE = tuple(re.compile(p) for p in (
+    r"\d{4}-\d{2}-\d{2}[T_ ]\d{2}[:_.-]\d{2}[:_.-]\d{2}(?:[.,_]\d+)?Z?",   # timestamp
+    r"\d{4}-\d{2}-\d{2}",                                                  # date
+    r"\b\d{1,2}:\d{2}:\d{2}(?:[.,]\d+)?\b",                                # clock time
+    r"\b[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}\b",            # uuid
+    r"0x[0-9a-fA-F]+",                                                      # address
+    r"\b[0-9a-fA-F]{12,}\b",                                                 # long hex id
+    r"\b\d+(?:\.\d+)?\s?(?:ms|msec|s|sec|secs|seconds|minutes|min)\b",      # duration
+    r"\bpid[ =:]*\d+",                                                      # process id
+    r"/(?:tmp|var/folders|private/var)/[^\s'\"`]+",                           # temp path
+))
+
+
+def stable_text(text: str) -> str:
+    """``text`` with the parts that differ run to run replaced by a placeholder.
+
+    Used only to decide whether two failures are *the same failure*; never to show anything.
+    """
+    for pattern in _VOLATILE:
+        text = pattern.sub("~", text)
+    return text
 
 
 def digest(value: Any) -> str:

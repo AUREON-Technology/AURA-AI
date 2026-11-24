@@ -66,7 +66,9 @@ from .recovery import RecoveryAction, RecoveryPolicy
 from .run_recorder import AgentRunContext, RunRecorder
 from .runner_output import observe_plan, unresolved_failures
 from .state_graph import LoopState, Signals, classify, transition
-from .stuck import CallRecord, StuckConfig, StuckDetector, StuckVerdict, digest, escalation_message
+from .stuck import (
+    CallRecord, StuckConfig, StuckDetector, StuckVerdict, digest, escalation_message, stable_text,
+)
 from .token_monitor import RECOMMENDATIONS, TokenMonitor, compress_results
 
 __all__ = ["AgenticExecutor", "AgentRunContext", "RunBudgetGate", "BudgetRefusal", "LoopEvent"]
@@ -329,7 +331,7 @@ class AgenticExecutor:
             records.append(CallRecord(
                 tool=step.tool, args_digest=digest(dict(step.arguments or {})), ok=ok,
                 error_kind=None if ok else step.error_kind,
-                result_digest=digest(body or ""), description=(step.description or "")[:100],
+                result_digest=digest(stable_text(body or "")), description=(step.description or "")[:100],
             ))
         return records
 
