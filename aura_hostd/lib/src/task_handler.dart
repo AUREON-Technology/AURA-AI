@@ -86,8 +86,18 @@ const _maxCommandTimeout = Duration(minutes: 15);
 /// longer captured or forwarded.
 const _maxOutputCapChars = 500000;
 
-/// How a command's stdout and stderr are decoded: UTF-8 everywhere, malformed bytes as U+FFFD.
-const _outputDecoder = Utf8Decoder(allowMalformed: true);
+/// The decoder for a command's stdout and stderr: UTF-8 on every platform, malformed bytes as U+FFFD.
+///
+/// A command's output is not guaranteed to be text: `cat report.pdf`, or a tool printing a legacy code
+/// page, puts bytes that are not valid UTF-8 on the pipe. `SystemEncoding().decoder` is a *strict*
+/// UTF-8 decoder on POSIX, so the first such byte threw a `FormatException` inside the stream listener
+/// and the whole `run` RPC failed ("Invalid UTF-8 byte (at offset 7)"): the command's output was lost
+/// and nothing kept reading the pipe, so a still-running command stalled on a full pipe until its
+/// timeout. On Windows `SystemEncoding` is the ANSI code page, which turned "café" and Arabic into
+/// mojibake before the backend saw them. The wire is JSON, which is UTF-8; malformed sequences are
+/// replaced, as every terminal does, and the command's real exit code and the rest of its output
+/// come back.
+Converter<List<int>, String> commandOutputDecoder() => const Utf8Decoder(allowMalformed: true);
 
 /// The largest file `read_file` returns (audit INT-036), the same 2 MiB the control server's
 /// own `GET /read` allows. A bigger file used to be read whole and sent as one frame, which a
@@ -660,10 +670,10 @@ class TaskHandler {
     // stream and failed the whole call. The wire is JSON, which is UTF-8; bytes that are not valid
     // UTF-8 become U+FFFD, the same way the backend decodes a container's output.
     final stdoutDone = process.stdout
-        .transform(_outputDecoder)
+        .transform(commandOutputDecoder())
         .forEach((chunk) => capture('stdout', stdoutBuf, chunk));
     final stderrDone = process.stderr
-        .transform(_outputDecoder)
+        .transform(commandOutputDecoder())
         .forEach((chunk) => capture('stderr', stderrBuf, chunk));
 
     int exitCode;

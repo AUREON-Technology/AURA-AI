@@ -278,6 +278,19 @@ void main() {
       expect(result['stderr'], contains('timeout'));
     });
 
+    test('output that is not valid UTF-8 comes back (U+FFFD) instead of failing the call', () async {
+      // Found by driving the real daemon through the real gateway: `cat some.pdf` -- any command
+      // printing a byte that is not UTF-8 -- failed the whole run with "Invalid UTF-8 byte".
+      if (Platform.isWindows) return; // sh printf octal escapes; the Windows decoder never throws.
+      roots.setTrusted(workspaceDir.path, true);
+      final result = await handler.run({
+        'command': ['sh', '-c', r"printf 'before-\377\376-after\n'; echo to-err >&2; exit 4"],
+      });
+      expect(result['exit_code'], 4);
+      expect(result['stdout'], allOf(contains('before-'), contains('-after'), contains('�')));
+      expect(result['stderr'], contains('to-err'));
+    });
+
     test('a missing executable names itself, however the platform reports it', () async {
       // This asserted an RpcError unconditionally, and failed on every Linux host -- including
       // hostd-ci.yml's own `analyze-and-test` job, which nobody saw because that job has not
