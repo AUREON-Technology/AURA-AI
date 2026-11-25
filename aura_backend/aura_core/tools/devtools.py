@@ -33,6 +33,7 @@ from ..domain.tools import ToolCategory, ToolSensitivity
 from ..ports.runtime import Tool, ToolContext
 from .base import param, tool
 from .desktop_ops import _relative_path
+from .devtools_security import SCANNERS, parse_bandit, parse_gitleaks, parse_semgrep, scanner_args
 
 __all__ = ["build_devtools", "DEVTOOL_NAMES", "parse_mypy", "parse_pyflakes", "parse_ruff_check", "parse_eslint",
            "parse_prettier_check", "parse_ruff_format_check"]
@@ -40,7 +41,7 @@ __all__ = ["build_devtools", "DEVTOOL_NAMES", "parse_mypy", "parse_pyflakes", "p
 _ENGINEER_CAPABILITY = "engineer_agent"
 
 #: Names, for persona grants (``agents/registry.py``) and the tests that pin them.
-DEVTOOL_NAMES: frozenset[str] = frozenset({"lint_code", "check_format"})
+DEVTOOL_NAMES: frozenset[str] = frozenset({"lint_code", "check_format", "scan_security"})
 
 #: Findings returned in one result. The rest are counted, not listed: a result the model cannot fit
 #: into its context is worse than a short one that says how much it left out.
@@ -63,6 +64,9 @@ _LAUNCHERS: dict[str, tuple[tuple[str, ...], ...]] = {
     "mypy": (("mypy",), ("python3", "-m", "mypy"), ("python", "-m", "mypy")),
     "eslint": (("eslint",), ("npx", "--no-install", "eslint")),
     "prettier": (("prettier",), ("npx", "--no-install", "prettier")),
+    "semgrep": (("semgrep",), ("python3", "-m", "semgrep")),
+    "gitleaks": (("gitleaks",),),
+    "bandit": (("bandit",), ("python3", "-m", "bandit")),
 }
 
 #: Phrases on a launcher's *stderr* that mean the program (not the project) is absent. stdout is never
@@ -345,6 +349,52 @@ async def _lint_one(
     return _Outcome("findings" if found else "ok", found, result.exit_code, launcher)
 
 
+async def _scan_one(runner: Any, handle: Any, scanner: str, paths: Sequence[str], timeout_s: float,
+                    history: bool) -> _Outcome:
+    """Run one security scanner and read its machine output. Never "ok" unless it really ran."""
+    findings: list[dict[str, Any]] = []
+    notes: list[str] = []
+    launcher_used: str | None = None
+    exit_code: int | None = None
+    for args in scanner_args(scanner, paths, history=history):
+        result, launcher = await _run_tool(runner, handle, scanner, args, timeout_s=timeout_s)
+        if result is None:
+            return _Outcome("not_installed", [], detail=f"{scanner} is not installed in this workspace's "
+                            "sandbox image (the server image bundles it; a paired desktop needs it installed)")
+        launcher_used, exit_code = launcher, result.exit_code
+        if _timed_out(result):
+            return _Outcome("timeout", findings, result.exit_code, launcher, f"{scanner} did not finish within "
+                            f"{timeout_s:.0f}s")
+        if len(result.stdout or "") > _MAX_OUTPUT_CHARS:
+            return _Outcome("failed", [], result.exit_code, launcher,
+                            f"{scanner} printed more than {_MAX_OUTPUT_CHARS:,} characters; narrow `paths`")
+        try:
+            if scanner == "gitleaks":
+                found = parse_gitleaks(result.stdout)
+                usable = result.exit_code == 0
+            elif scanner == "bandit":
+                found, errs = parse_bandit(result.stdout)
+                notes += errs
+                usable = result.exit_code in (0, 1)
+            else:
+                found, errs = parse_semgrep(result.stdout)
+                notes += errs
+                usable = result.exit_code in (0, 1)
+        except ValueError:
+            return _Outcome("failed", [], result.exit_code, launcher,
+                            f"{scanner} exited {result.exit_code} and its output could not be read: {_excerpt(result)}")
+        if not usable:
+            return _Outcome("failed", found, result.exit_code, launcher,
+                            f"{scanner} exited {result.exit_code}: {_excerpt(result)}")
+        findings += found
+    # A scanner that reported it could not read some files did not see everything.
+    detail = "; ".join(dict.fromkeys(notes))[:400] if notes else None
+    if notes:
+        return _Outcome("incomplete", findings, exit_code, launcher_used,
+                        f"{scanner} could not analyse part of the input: {detail}")
+    return _Outcome("findings" if findings else "ok", findings, exit_code, launcher_used)
+
+
 def _split_targets(paths: Sequence[str]) -> tuple[bool, bool]:
     """``(python_targets, js_targets)``: which language families the named paths point at."""
     js = any(p.lower().endswith(_JS_SUFFIXES) for p in paths)
@@ -599,4 +649,69 @@ def build_devtools(sandbox_runner: Any, sessions: Any) -> list[Tool]:
             "files": shown,
         }, ensure_ascii=False)
 
-    return [lint_code, check_format]
+    @tool(
+        "scan_security",
+        "Run Semgrep (bundled rules), Gitleaks (secrets, optionally git history) and Bandit (Python) in the "
+        "sandbox; STRUCTURED findings, never secret values. A scanner that is missing, timed out, crashed or "
+        "could not read some files is reported as such and never as clean.",
+        param("paths", "array", "Workspace files or folders (default: all).", required=False, item_type="string"),
+        param("scanners", "array", "Subset of semgrep, gitleaks, bandit (default: all).", required=False,
+              item_type="string"),
+        param("history", "boolean", "Gitleaks: scan git history too.", required=False, default=False),
+        param("limit", "integer", "Most findings listed (default 200).", required=False,
+              default=_DEFAULT_MAX_DIAGNOSTICS, minimum=1, maximum=_HARD_MAX_DIAGNOSTICS),
+        param("timeout_s", "number", "Max seconds per scanner (default 300).", required=False, default=300,
+              minimum=10, maximum=900),
+        timeout_s=2_800.0,
+        **common,
+    )
+    async def scan_security(
+        context: ToolContext,
+        paths: list | None = None,
+        scanners: list | None = None,
+        history: bool = False,
+        limit: int = _DEFAULT_MAX_DIAGNOSTICS,
+        timeout_s: float = 300.0,
+    ) -> str:
+        name = "scan_security"
+        targets = _validated_paths(name, paths)
+        wanted = [str(x).lower() for x in (scanners or SCANNERS)]
+        unknown = [x for x in wanted if x not in SCANNERS]
+        if unknown or not wanted:
+            raise ToolExecutionError(f"scanners must be a subset of {', '.join(SCANNERS)}", tool=name)
+        wanted = list(dict.fromkeys(wanted))
+        if len(targets) > 5 and "gitleaks" in wanted:
+            raise ToolExecutionError("gitleaks takes at most 5 paths; scan the folder that holds them", tool=name)
+        handle = await sessions.handle(context)
+
+        report: list[dict[str, Any]] = []
+        findings: list[dict[str, Any]] = []
+        for scanner in wanted:
+            outcome = await _scan_one(sandbox_runner, handle, scanner, targets, timeout_s, history)
+            findings += outcome.diagnostics
+            report.append({
+                "scanner": scanner, "status": outcome.status, "count": len(outcome.diagnostics),
+                "exit_code": outcome.exit_code, "command": outcome.launcher,
+                **({"detail": outcome.detail} if outcome.detail else {}),
+            })
+        if any(item.get("file") and str(item["file"]).startswith("/") for item in findings):
+            _relativise(findings, await _workspace_root(sandbox_runner, handle))
+        findings.sort(key=_sort_key)
+        order = {"error": 0, "warning": 1, "info": 2}
+        findings.sort(key=lambda f: order.get(f.get("severity"), 3))
+        counts = {sev: sum(1 for f in findings if f["severity"] == sev) for sev in ("error", "warning", "info")}
+        shown = findings[: int(limit)]
+        # Same rule as lint_code: clean only when every requested scanner ran fully and found nothing.
+        clean = all(e["status"] == "ok" for e in report)
+        return json.dumps({
+            "clean": clean,
+            "summary": {**counts, "total": len(findings), "files": len({f["file"] for f in findings}),
+                        "shown": len(shown), "truncated": len(shown) < len(findings),
+                        "withheld": len(findings) - len(shown)},
+            "scanners": report,
+            "findings": shown,
+            "note": "Semgrep rules are the sandbox image's bundled set, pinned at build time; findings are "
+                    "leads to review, and a clean result is not proof the code is secure.",
+        }, ensure_ascii=False)
+
+    return [lint_code, check_format, scan_security]

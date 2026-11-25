@@ -192,7 +192,7 @@ _ENGINEER_OPEN_TOOLS = frozenset({
 # (`tools/media.py`, `tools/websearch.py`) are each only registered when their own setting is present
 # (AURA_TOOLS_FILES_ROOT for the file readers, AURA_WEB_SEARCH_URL for search), so naming them here
 # is a grant, not a guarantee.
-_ENGINEER_DEVTOOLS = frozenset({"lint_code", "check_format"})
+_ENGINEER_DEVTOOLS = frozenset({"lint_code", "check_format", "scan_security"})
 _DOCUMENT_READING_TOOLS = frozenset({"parse_document", "inspect_spreadsheet", "ocr_image"})
 _ENGINEER_READING_TOOLS = _DOCUMENT_READING_TOOLS | frozenset({
     "web_search", "fetch_url", "analyze_image_requirements", "transcribe_audio",
