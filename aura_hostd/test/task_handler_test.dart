@@ -1001,6 +1001,28 @@ void main() {
   });
 
   group('timeout and cancel stop the whole process tree (G-16, SEC-09)', () {
+    // A child that leaves the process group (setsid, a double fork) is not reached by the group kill;
+    // it still carries the run's AURA_HOSTD_COMMAND_ID, and that is how it is found and stopped.
+    for (final (label, build) in <(String, String Function(String))>[
+      ('setsid', (m) => 'setsid $m & sleep 30'),
+      ('a double fork', (m) => '(setsid $m &); sleep 30'),
+      ('nohup', (m) => 'nohup setsid $m >/dev/null 2>&1 & sleep 30'),
+    ]) {
+      test('a child started with $label is stopped with its command on a timeout', () async {
+        roots.setTrusted(workspaceDir.path, true);
+        final tag = DateTime.now().microsecondsSinceEpoch;
+        final marker = 'sleep 7$tag';
+        final result = await handler.run({
+          'command': ['sh', '-c', build(marker)],
+          'timeout_s': 1.0,
+        });
+        expect(result['exit_code'], -1);
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+        final alive = await Process.run('pgrep', ['-f', marker]);
+        expect(alive.exitCode, isNot(0), reason: 'the child survived the timeout: ${alive.stdout}');
+      }, testOn: '!windows');
+    }
+
     // A zombie (state Z) is dead -- this container's PID 1 may never reap an orphan.
     bool alive(int pid) {
       final stat = File('/proc/$pid/stat');

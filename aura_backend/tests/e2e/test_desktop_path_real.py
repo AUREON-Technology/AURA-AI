@@ -1061,11 +1061,8 @@ class TestResources:
         finally:
             _kill(markers)
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "design limit, measured: the daemon kills a timed-out command by process group "
-        "(process_tree.dart), and a child that starts its own session (setsid, a daemonising "
-        "server) is no longer in that group, so it survives. Closing it needs cgroups/job "
-        "objects, which a user-space daemon on macOS/Windows/Linux does not portably have."))
+    # Closed: every command carries AURA_HOSTD_COMMAND_ID, which a child that left the process group
+    # (setsid, a double fork) still inherits, so the kill finds it by that name (process_tree.dart).
     async def test_a_child_that_leaves_the_process_group_is_also_killed_by_the_timeout(self, desk) -> None:
         tag = _tag()
         marker = f"sleep 75{tag}.5"
@@ -1221,6 +1218,13 @@ class TestEnvironmentHygiene:
             preload = dict(line.split("=", 1) for line in _stdout(result.content).splitlines() if "=" in line)
             assert "libstdbuf" in preload["LD_PRELOAD"], preload["LD_PRELOAD"]
             extra -= stdbuf
+        # The one variable the daemon adds itself: a random per-run id (no secret in it) that lets a
+        # timeout or cancel find a child that left the process group (process_tree.dart).
+        marker = "AURA_HOSTD_COMMAND_ID"
+        if marker in extra:
+            value = dict(line.split("=", 1) for line in _stdout(result.content).splitlines() if "=" in line)[marker]
+            assert re.fullmatch(r"[A-Za-z0-9_-]{16}", value), value
+            extra.discard(marker)
         assert not extra, f"variables beyond the allowlist reached the command: {sorted(extra)}"
         assert {"PATH", "HOME"} <= names
         assert str(desk.daemon.home) in _stdout(result.content)  # HOME is the daemon user's, not invented
