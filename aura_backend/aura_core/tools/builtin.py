@@ -977,6 +977,7 @@ def default_tools(
     agent_runs: Any = None,
     advisory_store: Any = None,
     advisory_max_age_days: int = 3,
+    ops: Any = None,
 ) -> list[Tool]:
     """Assemble the tool set for a deployment.
 
@@ -1068,6 +1069,21 @@ def default_tools(
         from .release import build_release_tools
 
         tools += build_release_tools(allowed_http_hosts)
+    if ops is not None:
+        # ADR-047: platform health, live telemetry and CI-workflow deploys. Each registers only when the
+        # operator configured what it needs, so a default deployment gains nothing.
+        from .ops import build_ops_tools
+        from .ops_deploy import build_deploy_tools, parse_deploy_workflows
+
+        tools += build_ops_tools(
+            platform_origins=ops.platform_origins, loki_url=ops.loki_url, prometheus_url=ops.prometheus_url,
+            tempo_url=ops.tempo_url, token_env=ops.telemetry_token_env,
+            railway_project_id=ops.railway_project_id, railway_service_id=ops.railway_service_id,
+            railway_environment_id=ops.railway_environment_id, railway_token_env=ops.railway_token_env)
+        if github_client_resolver is not None:
+            tools += build_deploy_tools(
+                github_client_resolver, repo=github_default_repo,
+                workflows=parse_deploy_workflows(ops.deploy_workflows), refs=ops.deploy_refs)
     if enable_open_exec_tools:
         # ADR-036 group B: runs project code in a child of *this* process. Operator opt-in only,
         # and each tool still needs `engineer_agent` plus a per-call confirmation.

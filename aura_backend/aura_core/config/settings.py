@@ -67,6 +67,7 @@ __all__ = [
     "OpenToolsSettings",
     "ExtractionSettings",
     "AdvisorySettings",
+    "OpsSettings",
     "GitHubSettings",
     "SandboxSettings",
     "AgentTaskSettings",
@@ -2031,6 +2032,72 @@ class AdvisorySettings:
 
 
 @dataclass(frozen=True, slots=True)
+class OpsSettings:
+    """What the operations tools (ADR-047) may reach. Everything is empty by default, and an empty
+    setting means the tool that needs it is not registered.
+
+    ``platform_origins`` -- the platform's own https origins ``check_platform_health`` may probe
+    (``/health/live|version|ready`` only; the tool takes no URL).
+    ``loki_url`` / ``prometheus_url`` / ``tempo_url`` -- the operator's telemetry HTTP APIs, read by
+    ``query_telemetry``; ``telemetry_token_env`` names the environment variable holding a bearer
+    token for them (the token itself is never a setting).
+    ``deploy_workflows`` -- workflow files ``deploy_release`` / ``rollback_release`` may dispatch
+    (``file.yml`` or ``file.yml:sha_input``), only on ``deploy_refs`` and only in the deployment's
+    default GitHub repository.
+    """
+
+    platform_origins: tuple[str, ...] = ()
+    loki_url: str = ""
+    prometheus_url: str = ""
+    tempo_url: str = ""
+    telemetry_token_env: str = ""
+    deploy_workflows: tuple[str, ...] = ()
+    deploy_refs: tuple[str, ...] = ("main",)
+    #: Railway (``source=railway``): the service whose deployments and logs are read, and the name of the
+    #: environment variable holding a read token.
+    railway_project_id: str = ""
+    railway_service_id: str = ""
+    railway_environment_id: str = ""
+    railway_token_env: str = ""
+
+    @classmethod
+    def from_env(cls) -> "OpsSettings":
+        import re
+        from urllib.parse import urlsplit
+
+        origins = _list("OPS_PLATFORM_ORIGINS", ())
+        for origin in origins:
+            parts = urlsplit(origin)
+            if (parts.scheme != "https" or not parts.hostname or parts.path.strip("/") or parts.username
+                    or parts.query or parts.fragment):
+                raise ConfigurationError("AURA_OPS_PLATFORM_ORIGINS entries must be bare https origins",
+                                         details={"value": origin})
+        urls = {}
+        for key in ("LOKI", "PROMETHEUS", "TEMPO"):
+            value = (_env(f"OPS_{key}_URL", "") or "").strip()
+            if value and urlsplit(value).scheme not in ("http", "https"):
+                raise ConfigurationError(f"AURA_OPS_{key}_URL must be an http(s) URL", details={"value": value})
+            urls[key] = value
+        workflows = _list("OPS_DEPLOY_WORKFLOWS", ())
+        for entry in workflows:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.ya?ml(:[A-Za-z_][A-Za-z0-9_-]{0,40})?", entry):
+                raise ConfigurationError("AURA_OPS_DEPLOY_WORKFLOWS entries are 'file.yml' or 'file.yml:input'",
+                                         details={"value": entry})
+        railway = {k: (_env(f"OPS_RAILWAY_{k}_ID", "") or "").strip() for k in ("PROJECT", "SERVICE", "ENVIRONMENT")}
+        if any(railway.values()) and not all(re.fullmatch(r"[0-9a-fA-F-]{36}", v) for v in railway.values()):
+            raise ConfigurationError("AURA_OPS_RAILWAY_PROJECT_ID / _SERVICE_ID / _ENVIRONMENT_ID must all be set, as UUIDs")
+        return cls(
+            railway_project_id=railway["PROJECT"], railway_service_id=railway["SERVICE"],
+            railway_environment_id=railway["ENVIRONMENT"],
+            railway_token_env=(_env("OPS_RAILWAY_TOKEN_ENV", "") or "").strip(),
+            platform_origins=tuple(o.rstrip("/") for o in origins),
+            loki_url=urls["LOKI"], prometheus_url=urls["PROMETHEUS"], tempo_url=urls["TEMPO"],
+            telemetry_token_env=(_env("OPS_TELEMETRY_TOKEN_ENV", "") or "").strip(),
+            deploy_workflows=workflows, deploy_refs=_list("OPS_DEPLOY_REFS", ("main",)),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class GitHubSettings:
     """GitHub access for the engineer agent's read/write tools -- two independent paths.
 
@@ -2822,6 +2889,7 @@ class AuraSettings:
     mcp: McpSettings = field(default_factory=McpSettings)
     open_tools: OpenToolsSettings = field(default_factory=OpenToolsSettings)
     advisories: AdvisorySettings = field(default_factory=AdvisorySettings)
+    ops: OpsSettings = field(default_factory=OpsSettings)
     adaptation: AdaptationSettings = field(default_factory=AdaptationSettings)
     github: GitHubSettings = field(default_factory=GitHubSettings)
     sandbox: SandboxSettings = field(default_factory=SandboxSettings)
@@ -2867,6 +2935,7 @@ class AuraSettings:
             mcp=McpSettings.from_env(),
             open_tools=OpenToolsSettings.from_env(),
             advisories=AdvisorySettings.from_env(),
+            ops=OpsSettings.from_env(),
             adaptation=AdaptationSettings.from_env(),
             github=GitHubSettings.from_env(),
             sandbox=SandboxSettings.from_env(),

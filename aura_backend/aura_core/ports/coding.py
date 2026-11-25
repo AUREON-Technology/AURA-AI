@@ -133,6 +133,22 @@ class CodeHostClient(Protocol):
         ...
 
 
+    async def list_workflow_runs(self, repo: str, workflow: str, *, limit: int = 10) -> list[dict[str, Any]]:
+        """Recent runs of a workflow file, newest first (``deploy.yml``, never an id)."""
+        ...
+
+    async def dispatch_workflow(
+        self, repo: str, workflow: str, *, ref: str, inputs: Mapping[str, str] | None = None
+    ) -> str:
+        """``workflow_dispatch`` on a workflow file. Nothing else about CI is reachable."""
+        ...
+
+    async def commit_is_ancestor(self, repo: str, sha: str, ref: str) -> bool:
+        """Is ``sha`` already part of ``ref``'s history (identical to it or behind it)? A commit that only
+        exists on a fork or an unmerged branch is not."""
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class SandboxHandle:
     """Opaque identity of one ephemeral per-task sandbox."""

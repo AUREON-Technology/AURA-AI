@@ -2123,6 +2123,7 @@ class Container:
                 enable_analysis_tools=self.settings.open_tools.analysis_enabled,
                 advisory_store=self.advisory_store,
                 advisory_max_age_days=self.settings.advisories.max_age_days,
+                ops=self.settings.ops,
                 enable_open_exec_tools=self.settings.open_tools.exec_enabled,
                 enable_desktop_ops_tools=self.settings.open_tools.desktop_ops_enabled,
                 enable_open_pure_tools=self.settings.open_tools.pure_enabled,  # ADR-044

@@ -52,6 +52,13 @@ def _query_value(value: str) -> str:
     return quote(value, safe="")
 
 
+def _workflow_file(name: str) -> str:
+    """A workflow *file name* (``deploy.yml``), the only form we send: never an id or a path."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.ya?ml", name or ""):
+        raise GitHubApiError(f"{name!r} is not a workflow file name such as deploy.yml")
+    return quote(name, safe="")
+
+
 class GitHubClient:
     def __init__(
         self,
@@ -287,6 +294,42 @@ class GitHubClient:
             json={"title": title, "head": branch, "base": base, "body": body, "draft": True},
         )
         return f"Opened draft PR #{data.get('number')}: {data.get('html_url')}"
+
+    async def list_workflow_runs(self, repo: str, workflow: str, *, limit: int = 10) -> list[dict[str, Any]]:
+        """Recent runs of one workflow file (newest first): enough to say what ran, on which commit,
+        and how it ended."""
+        self._assert_repo_allowed(repo)
+        data = await self._request(
+            "GET", f"/repos/{repo}/actions/workflows/{_workflow_file(workflow)}/runs?per_page={max(1, min(limit, 30))}")
+        return [
+            {"id": r.get("id"), "status": r.get("status"), "conclusion": r.get("conclusion"),
+             "branch": r.get("head_branch"), "sha": r.get("head_sha"), "event": r.get("event"),
+             "created_at": r.get("created_at"), "url": r.get("html_url")}
+            for r in data.get("workflow_runs", [])
+        ]
+
+    async def dispatch_workflow(
+        self, repo: str, workflow: str, *, ref: str, inputs: Mapping[str, str] | None = None
+    ) -> str:
+        """``workflow_dispatch`` on one workflow file. GitHub answers 204 with no run id; the run
+        shows up in :meth:`list_workflow_runs` a moment later."""
+        self._assert_repo_allowed(repo)
+        body: dict[str, Any] = {"ref": ref}
+        if inputs:
+            body["inputs"] = {str(k): str(v) for k, v in inputs.items()}
+        await self._request(
+            "POST", f"/repos/{repo}/actions/workflows/{_workflow_file(workflow)}/dispatches", json=body)
+        return f"Dispatched {workflow} on {ref}"
+
+    async def commit_is_ancestor(self, repo: str, sha: str, ref: str) -> bool:
+        """``sha`` is in ``ref``'s history when comparing sha...ref says ref is ahead of it or identical.
+        GitHub resolves a fork's commit by SHA inside the parent repository, so reachability from the ref
+        is the check that matters, not that the SHA exists."""
+        self._assert_repo_allowed(repo)
+        if not re.fullmatch(r"[0-9a-fA-F]{7,40}", sha or ""):
+            raise GitHubApiError("sha must be 7-40 hexadecimal characters")
+        data = await self._request("GET", f"/repos/{repo}/compare/{sha}...{quote(ref, safe='')}")
+        return data.get("status") in ("ahead", "identical")
 
     async def close(self) -> None:
         if self._client is not None:
