@@ -2062,39 +2062,44 @@ class OpsSettings:
 
     @classmethod
     def from_env(cls) -> "OpsSettings":
+        # One literal variable name per field, so the control center can list each setting's variable.
+        settings = cls(
+            platform_origins=_list("OPS_PLATFORM_ORIGINS", ()),
+            loki_url=_env("OPS_LOKI_URL", "") or "",
+            prometheus_url=_env("OPS_PROMETHEUS_URL", "") or "",
+            tempo_url=_env("OPS_TEMPO_URL", "") or "",
+            telemetry_token_env=_env("OPS_TELEMETRY_TOKEN_ENV", "") or "",
+            deploy_workflows=_list("OPS_DEPLOY_WORKFLOWS", ()),
+            deploy_refs=_list("OPS_DEPLOY_REFS", ("main",)),
+            railway_project_id=_env("OPS_RAILWAY_PROJECT_ID", "") or "",
+            railway_service_id=_env("OPS_RAILWAY_SERVICE_ID", "") or "",
+            railway_environment_id=_env("OPS_RAILWAY_ENVIRONMENT_ID", "") or "",
+            railway_token_env=_env("OPS_RAILWAY_TOKEN_ENV", "") or "",
+        )
+        settings._validate()
+        return settings
+
+    def _validate(self) -> None:
         import re
         from urllib.parse import urlsplit
 
-        origins = _list("OPS_PLATFORM_ORIGINS", ())
-        for origin in origins:
+        for origin in self.platform_origins:
             parts = urlsplit(origin)
             if (parts.scheme != "https" or not parts.hostname or parts.path.strip("/") or parts.username
                     or parts.query or parts.fragment):
                 raise ConfigurationError("AURA_OPS_PLATFORM_ORIGINS entries must be bare https origins",
                                          details={"value": origin})
-        urls = {}
-        for key in ("LOKI", "PROMETHEUS", "TEMPO"):
-            value = (_env(f"OPS_{key}_URL", "") or "").strip()
+        for key, value in (("LOKI", self.loki_url), ("PROMETHEUS", self.prometheus_url), ("TEMPO", self.tempo_url)):
             if value and urlsplit(value).scheme not in ("http", "https"):
                 raise ConfigurationError(f"AURA_OPS_{key}_URL must be an http(s) URL", details={"value": value})
-            urls[key] = value
-        workflows = _list("OPS_DEPLOY_WORKFLOWS", ())
-        for entry in workflows:
+        for entry in self.deploy_workflows:
             if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.ya?ml(:[A-Za-z_][A-Za-z0-9_-]{0,40})?", entry):
                 raise ConfigurationError("AURA_OPS_DEPLOY_WORKFLOWS entries are 'file.yml' or 'file.yml:input'",
                                          details={"value": entry})
-        railway = {k: (_env(f"OPS_RAILWAY_{k}_ID", "") or "").strip() for k in ("PROJECT", "SERVICE", "ENVIRONMENT")}
-        if any(railway.values()) and not all(re.fullmatch(r"[0-9a-fA-F-]{36}", v) for v in railway.values()):
-            raise ConfigurationError("AURA_OPS_RAILWAY_PROJECT_ID / _SERVICE_ID / _ENVIRONMENT_ID must all be set, as UUIDs")
-        return cls(
-            railway_project_id=railway["PROJECT"], railway_service_id=railway["SERVICE"],
-            railway_environment_id=railway["ENVIRONMENT"],
-            railway_token_env=(_env("OPS_RAILWAY_TOKEN_ENV", "") or "").strip(),
-            platform_origins=tuple(o.rstrip("/") for o in origins),
-            loki_url=urls["LOKI"], prometheus_url=urls["PROMETHEUS"], tempo_url=urls["TEMPO"],
-            telemetry_token_env=(_env("OPS_TELEMETRY_TOKEN_ENV", "") or "").strip(),
-            deploy_workflows=workflows, deploy_refs=_list("OPS_DEPLOY_REFS", ("main",)),
-        )
+        ids = (self.railway_project_id, self.railway_service_id, self.railway_environment_id)
+        if any(ids) and not all(re.fullmatch(r"[0-9a-fA-F-]{36}", v) for v in ids):
+            raise ConfigurationError(
+                "AURA_OPS_RAILWAY_PROJECT_ID / _SERVICE_ID / _ENVIRONMENT_ID must all be set, as UUIDs")
 
 
 @dataclass(frozen=True, slots=True)

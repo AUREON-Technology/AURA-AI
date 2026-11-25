@@ -617,7 +617,7 @@ class TestWiring:
         monkeypatch.setenv("AURA_OPS_LOKI_URL", "http://loki:3100")
         monkeypatch.setenv("AURA_OPS_DEPLOY_WORKFLOWS", "deploy-backend.yml:sha")
         cfg = OpsSettings.from_env()
-        assert cfg.platform_origins == ("https://aureon-ai.tech", "https://b.example") and cfg.deploy_refs == ("main",)
+        assert cfg.platform_origins == ("https://aureon-ai.tech/", "https://b.example") and cfg.deploy_refs == ("main",)
         for key, value in (("AURA_OPS_PLATFORM_ORIGINS", "http://insecure.example"),
                            ("AURA_OPS_PLATFORM_ORIGINS", "https://a.example/path"),
                            ("AURA_OPS_LOKI_URL", "ftp://x"), ("AURA_OPS_DEPLOY_WORKFLOWS", "../evil.yml")):

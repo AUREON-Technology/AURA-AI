@@ -391,6 +391,10 @@ class TestKernelWiring:
             "load_project_skills", "read_notebook", "inspect_binary_file", "verify_backup",
             # ADR-046: only registered when AURA_TOOLS_HTTP_ALLOWED_HOSTS names a host.
             "verify_release_health",
+            # ADR-049/050: each registers only when the operator configured what it reads or starts (AURA_OPS_*),
+            # and `scan_security` with a sandbox runner like `lint_code`.
+            "check_platform_health", "query_telemetry", "list_workflow_runs", "deploy_release",
+            "rollback_release", "scan_security",
         }
         # The sandbox/git tools (minus `clone_repository`, which additionally needs a GitHub
         # resolver this default container does not configure) are unconditionally *registered*
