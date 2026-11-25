@@ -2267,6 +2267,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         JSONResponse=JSONResponse,
         Request=Request,
         Response=Response,
+        idempotent=idempotent,
     )
 
     from .admin_plans import register_plan_ops
@@ -2284,7 +2285,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
     from .shared_conversations import register_sharing_ops
 
     register_sharing_ops(router, container, principal=principal, Depends=Depends,
-                         JSONResponse=JSONResponse, Response=Response)
+                         JSONResponse=JSONResponse, Response=Response, idempotent=idempotent)
 
     from .workspaces import register_workspace_ops
 
