@@ -1,6 +1,8 @@
 # Plan: Engineer cloud workspaces on Railway Sandboxes
 
-**Status:** Approved by the owner on 2026-11-25. Phase 0 not yet run. No product code written.
+**Status:** Approved by the owner on 2026-11-25. Phase 0 run the same day: the S1–S3 gate passes
+using `nftables` in place of `iptables`; S6 and S7 are not measured
+([report](../reports/railway-sandbox-spike-2026-11-25.md)). No product code written.
 **Base:** `main` at `12eabb00`. Branch `anas/railway-sandboxes`.
 
 ## Goal
