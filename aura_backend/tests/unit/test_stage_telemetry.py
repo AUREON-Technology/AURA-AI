@@ -15,6 +15,7 @@ from aura_core.domain.identifiers import CorrelationId, PlanId, StepId, TurnId, 
 from aura_core.domain.planning import Goal, Plan, PlanStep, StepKind
 from aura_core.domain.telemetry import StageTiming, TurnTelemetry
 from aura_core.execution.agentic_loop import AgenticExecutor
+from aura_core.execution.critic import CriticFinding
 from aura_core.execution.engine import ExecutionOutcome
 from aura_core.kernel import AIKernel, TurnRequest
 from aura_core.observability.metrics import PROMETHEUS_AVAILABLE, Metrics
@@ -85,6 +86,36 @@ class TestLoopAccumulates:
         assert outcome is not None and outcome.succeeded
         assert outcome.tools_ms == pytest.approx(300.0)      # 100 + 200, not just the last pass
         assert outcome.replan_ms >= 40.0                      # one replan that slept 50 ms
+
+    async def test_the_critics_plan_revision_counts_as_replan_time(self) -> None:
+        class _Critic:
+            """Blocks the first plan once, then has nothing to say."""
+
+            enabled = True
+            max_plan_revisions = 1
+            max_corrective_passes = 0
+
+            async def plan_findings(self, plan, **_kw):
+                return [CriticFinding(code="blocked", severity="error", message="revise it",
+                                      blocking=True)]
+
+            async def outcome_findings(self, plan, observations):
+                return []
+
+        class _Succeeds:
+            async def execute(self, plan, **_kw) -> ExecutionOutcome:
+                steps = tuple(s.succeeded("ok", 1.0) for s in plan.steps)
+                return ExecutionOutcome(
+                    plan=plan.with_steps(steps), results={}, succeeded=True, duration_ms=10.0
+                )
+
+        ctx = ToolContext(user_id=UserId("u"), correlation_id="c", deadline_s=30.0)
+        loop = AgenticExecutor(planner=_Planner(), executor=_Succeeds(), critic=_Critic())
+        outcome = await loop.run(_plan(), context=ctx, max_iterations=3, deadline_s=10.0)
+
+        assert outcome is not None and outcome.succeeded
+        assert len(outcome.plan.revisions) == 1  # the revision happened, and no pass failed
+        assert outcome.replan_ms >= 40.0         # so the 50 ms can only be the critic's replan
 
 
 class TestKernelSplit:

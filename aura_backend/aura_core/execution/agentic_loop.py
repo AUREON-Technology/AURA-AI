@@ -571,7 +571,6 @@ class AgenticExecutor:
                     stop_reason = "no_outcome"
                     break
                 tools_ms += float(getattr(outcome, "duration_ms", 0.0) or 0.0)
-
                 go("executed")
                 if recorder is not None:
                     await recorder.observed(
