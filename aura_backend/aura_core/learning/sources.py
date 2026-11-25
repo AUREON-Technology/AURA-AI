@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 
 from ..domain.errors import AuraError, AuthorizationError, NotFoundError, ValidationError
 from ..domain.identifiers import DocumentId
-from ..domain.knowledge import KnowledgeSource, SourceType, TrustTier
+from ..domain.knowledge import KnowledgeSource, LicenseStatus, SourceType, TrustTier
 from ..domain.network import is_internal_address
 from ..observability.logging import get_logger
 from ..ports.connectors import DocumentConnector
@@ -76,6 +76,21 @@ class SourceRegistry(Protocol):
     async def record_success(self, source_id: str, *, cursor: str | None, at: datetime) -> None:
         ...
 
+    async def update_provenance(
+        self,
+        source_id: str,
+        *,
+        name: str | None = None,
+        publisher: str | None = None,
+        domains: Sequence[str] | None = None,
+        language: str | None = None,
+        license_spdx: str | None = None,
+        license_status: LicenseStatus | None = None,
+        attribution: str | None = None,
+    ) -> None:
+        """Set the named provenance fields; fields left as ``None`` are not touched."""
+        ...
+
 
 class InMemorySourceRegistry:
     """Reference registry. Production persists to Postgres via the same interface."""
@@ -114,6 +129,36 @@ class InMemorySourceRegistry:
         source = self._sources.get(source_id)
         if source is not None:
             self._sources[source_id] = source.with_progress(cursor=cursor, at=at)
+
+    async def update_provenance(
+        self,
+        source_id: str,
+        *,
+        name: str | None = None,
+        publisher: str | None = None,
+        domains: Sequence[str] | None = None,
+        language: str | None = None,
+        license_spdx: str | None = None,
+        license_status: LicenseStatus | None = None,
+        attribution: str | None = None,
+    ) -> None:
+        source = self._sources.get(source_id)
+        if source is None:
+            raise NotFoundError(f"unknown source {source_id!r}")
+        changes = {
+            key: value
+            for key, value in {
+                "name": name,
+                "publisher": publisher,
+                "domains": tuple(domains) if domains is not None else None,
+                "language": language,
+                "license_spdx": license_spdx,
+                "license_status": license_status,
+                "attribution": attribution,
+            }.items()
+            if value is not None
+        }
+        self._sources[source_id] = replace(source, **changes)
 
 
 @runtime_checkable

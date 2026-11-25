@@ -301,6 +301,7 @@ class OpenAICompatibleProvider(BaseProvider):
             usage: TokenUsage | None = None
             finish: FinishReason | None = None
             completion_chars = 0
+            completion_text: list[str] = []
             reasoning_so_far = ""
 
             async for line in response.aiter_lines():
@@ -329,6 +330,7 @@ class OpenAICompatibleProvider(BaseProvider):
                         content = None
                     if content:
                         completion_chars += len(content)
+                        completion_text.append(content)
                         yield StreamChunk(delta=content, provider=self.name, model=self._model)
                     for fragment in delta.get("tool_calls") or []:
                         index = int(fragment.get("index", 0))
@@ -345,10 +347,9 @@ class OpenAICompatibleProvider(BaseProvider):
 
             tool_calls = self._parse_tool_calls([pending[k] for k in sorted(pending)])
             if usage is None:
-                usage = TokenUsage(
-                    prompt_tokens=request.conversation.approx_tokens(),
-                    completion_tokens=max(1, (completion_chars + 3) // 4),
-                )
+                # The server sent no usage: AURA's own estimate, with this provider's tokenizer
+                # (KAN-104) and marked so (KAN-106), like the non-streaming path.
+                usage = self._estimate_usage(request, "".join(completion_text))
             yield StreamChunk(
                 tool_calls=tool_calls,
                 finish_reason=finish or (FinishReason.TOOL_CALLS if tool_calls else FinishReason.STOP),

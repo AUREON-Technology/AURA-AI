@@ -55,10 +55,22 @@ def _run(check):
     return asyncio.run(check())
 
 
+def _newest_migration_on_disk() -> str:
+    """The highest-numbered migration file, found without Alembic.
+
+    An independent answer to "what is the head": ``expected_head`` walks Alembic's revision graph,
+    this reads the file names. The two agree while migrations are numbered in sequence, and
+    neither is a constant a new migration can leave stale (this test used to pin the head as a
+    literal, so every migration broke it).
+    """
+    versions = Path(__file__).resolve().parents[2] / "alembic" / "versions"
+    return max(path.name[:4] for path in versions.glob("[0-9][0-9][0-9][0-9]_*.py"))
+
+
 class TestExpectedHead:
     def test_reads_the_head_from_the_packaged_migrations(self) -> None:
         """Derived from the scripts, so a new migration cannot leave a stale constant behind."""
-        assert expected_head() == "0030"
+        assert expected_head() == _newest_migration_on_disk()
 
     def test_unreadable_directory_returns_none(self, tmp_path: Path) -> None:
         assert expected_head(tmp_path / "does-not-exist") is None
@@ -71,7 +83,7 @@ class TestSchemaCheck:
 
         assert result["healthy"] is False
         assert result["revision"] is None
-        assert result["expected"] == "0030"
+        assert result["expected"] == expected_head()
         assert "alembic upgrade head" in result["detail"]
 
     def test_schema_behind_the_image_is_not_ready(self) -> None:
@@ -79,13 +91,14 @@ class TestSchemaCheck:
 
         assert result["healthy"] is False
         assert result["revision"] == "0001"
-        assert result["expected"] == "0030"
+        assert result["expected"] == expected_head()
 
     def test_schema_at_head_is_ready(self) -> None:
-        result = _run(build_schema_check(_Pool(values=["alembic_version", "0030"])))
+        head = _newest_migration_on_disk()
+        result = _run(build_schema_check(_Pool(values=["alembic_version", head])))
 
         assert result["healthy"] is True
-        assert result["revision"] == "0030"
+        assert result["revision"] == head
 
     def test_unreachable_database_does_not_gate(self) -> None:
         """A blip is transient and the chat path still serves; a stale schema is neither."""

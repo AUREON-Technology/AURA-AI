@@ -160,7 +160,7 @@ _CODE_ANALYSIS_TOOLS = frozenset({
     "analyze_python_ast", "analyze_code_complexity", "verify_python_symbols", "review_code_diff",
     "scan_code_security", "analyze_change_impact", "generate_diagram", "check_requirements",
     "scan_dependency_licenses", "compare_api_specs", "inspect_sql", "evaluate_quality_gate",
-    "plan_rollout",
+    "plan_rollout", "validate_structured_text",
 })
 _DATA_ANALYSIS_TOOLS = frozenset({"analyze_logs", "validate_data_records", "check_model_drift"})
 

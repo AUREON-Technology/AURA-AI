@@ -287,12 +287,20 @@ class BaseProvider:
     def _estimate_usage(self, request: CompletionRequest, text: str) -> TokenUsage:
         """Fallback when a provider does not report usage.
 
-        Marked in metadata by callers so cost dashboards can distinguish measured from
-        estimated spend -- an estimate presented as a measurement is worse than no number.
+        Marked ``estimated`` (and in metadata by callers) so cost dashboards can distinguish
+        measured from estimated spend -- an estimate presented as a measurement is worse than no
+        number. Counted with this provider's own tokenizer (KAN-104), the same one the router
+        and the quota use, never ``len/4``.
         """
+        from ...context.tokenizer import tokenizer_for
+
+        caps = self._capabilities
+        tokenizer = tokenizer_for(caps.tokenizer, model_id=caps.model_id)
         return TokenUsage(
-            prompt_tokens=request.conversation.approx_tokens(),
-            completion_tokens=max(1, (len(text) + 3) // 4),
+            prompt_tokens=tokenizer.count_messages(request.conversation.messages)
+            + sum(i.approx_tokens for i in request.images),
+            completion_tokens=max(1, tokenizer.count(text)),
+            estimated=True,
         )
 
     async def health(self) -> HealthStatus:  # pragma: no cover - overridden

@@ -13,7 +13,10 @@ import 'package:aura_client/core/hostd/hostd_providers.dart';
 import 'package:aura_client/core/hostd/hostd_supervisor.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
+import 'package:aura_client/core/platform/web_capabilities.dart';
+
 import 'hostd_pairing_flow.dart';
+import 'web_daemon_notice.dart';
 import 'remote_control_toggle.dart';
 
 /// The desktop Engineer daemon screen (ADR-011 Unit 8) -- supervise `aura_hostd`, pair it,
@@ -139,6 +142,8 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
 
   @override
   Widget build(BuildContext context) {
+    // A browser cannot start or reach a local daemon; say where to pair one instead.
+    if (!localDaemonAvailable()) return const WebDaemonNotice();
     final palette = AuraPalette.of(context);
     final statusAsync = ref.watch(hostdStatusProvider);
     final supervisor = ref.watch(hostdSupervisorProvider);

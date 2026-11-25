@@ -32,6 +32,27 @@ class TurnStatusRow extends StatelessWidget {
       'AURA treated the content it read as untrusted, so nothing with side '
       'effects can run without your confirmation.';
   static const reducedModeCopy = 'AURA ran this turn in a reduced mode.';
+  static const noActionTakenCopy =
+      'No action was taken — nothing was created, changed or sent.';
+  static const toolsUnavailableCopy =
+      "AURA couldn't use its tools for this turn, so nothing was done.";
+  static const toolFailedCopy = 'A tool AURA used failed during this turn.';
+  static const emptyReplyCopy = 'The model returned no reply for this turn.';
+  static const toolOutputTrimmedCopy =
+      "A tool's result was too long to use in full.";
+
+  /// The one note a degraded turn's reasons call for (audit C3), most consequential first:
+  /// an answer that claimed an action, then tools that could not run, then a failed tool.
+  /// `null` leaves the generic notes below in charge (fallback, taint, empty library).
+  static String? degradedNote(AppLocalizations l10n, List<String> reasons) {
+    if (reasons.contains('unbacked_action_claim')) return l10n.chatTurnNoActionTaken;
+    if (reasons.contains('planning_failed')) return l10n.chatTurnToolsUnavailable;
+    if (reasons.contains('tool_failure')) return l10n.chatTurnToolFailed;
+    if (reasons.contains('empty_generation_fallback')) return l10n.chatTurnEmptyReply;
+    if (reasons.contains('tool_output_dropped')) return l10n.chatTurnToolOutputTrimmed;
+    if (reasons.contains('knowledge_unavailable')) return l10n.chatTurnKnowledgeUnavailable;
+    return null;
+  }
   static const ungroundedCopy = 'Ungrounded — no sources attached.';
   static const interruptedCopy = 'Interrupted — this answer is incomplete.';
 
@@ -68,7 +89,13 @@ class TurnStatusRow extends StatelessWidget {
             color: palette.warning,
             text: l10n.chatTurnLowConfidence((meta.confidence! * 100).round()),
           ),
-        if (meta.degraded && meta.searchedButEmpty)
+        if (degradedNote(l10n, meta.degradedReasons) case final note?)
+          _Note(
+            icon: Icons.info_outline,
+            color: palette.warning,
+            text: note,
+          )
+        else if (meta.degraded && meta.searchedButEmpty)
           _Note(
             icon: Icons.link_off,
             color: palette.textSecondary,

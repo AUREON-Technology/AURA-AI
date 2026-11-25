@@ -26,6 +26,7 @@ __all__ = [
     "AuraError",
     "ConfigurationError",
     "ValidationError",
+    "ContextOverflowError",
     "OutputInvalidError",
     "NotFoundError",
     "ConflictError",
@@ -44,6 +45,8 @@ __all__ = [
     "ConsentRequiredError",
     "UserQuotaExhaustedError",
     "EmbeddingError",
+    "ExtractionError",
+    "ExtractionRefusedError",
     "VectorStoreError",
     "MemoryStoreError",
     "KnowledgeError",
@@ -120,6 +123,19 @@ class ConfigurationError(AuraError):
 class ValidationError(AuraError):
     kind = "validation_error"
     http_status = 422
+
+
+class ContextOverflowError(AuraError):
+    """A turn's irreducible prompt -- instructions, fence rules, pinned notes and the user's own
+    message, after every history message, summary, memory, document and tool output that could
+    go has gone -- does not fit the context window with room left to answer (KAN-99).
+
+    Raised instead of sending a prompt the provider would reject or truncate. ``details`` names
+    token counts only, never content.
+    """
+
+    kind = "context_overflow"
+    http_status = 413
 
 
 class OutputInvalidError(AuraError):
@@ -395,6 +411,39 @@ class EmbeddingError(AuraError):
     kind = "embedding_error"
     http_status = 502
     retryable = True
+
+
+class ExtractionError(AuraError):
+    """A structured-extraction call failed upstream (ADR-038): a timeout, a 5xx, a response that
+    could not be read. Retryable, because the same call may succeed later.
+
+    ``details`` names the status and a short reason, never the text that was sent, the answers or
+    the credential.
+    """
+
+    kind = "extraction_error"
+    http_status = 502
+    retryable = True
+
+
+class ExtractionRefusedError(ExtractionError):
+    """The call was refused before anything left the process: the data scope is above ``internal``
+    (``reason="data_ceiling"``) or the capability is off (``reason="not_enabled"``).
+
+    **403** and not retryable: sending the same call again meets the same refusal. A spent daily
+    cap is :class:`BudgetExceededError` and a cooldown is :class:`RateLimitedError`, so each keeps
+    the status code and the ``retry_after`` the rest of the gateway already understands.
+    """
+
+    kind = "extraction_refused"
+    http_status = 403
+    retryable = False
+
+    def __init__(self, message: str, *, reason: str, **kwargs: Any) -> None:
+        details = dict(kwargs.pop("details", None) or {})
+        details.setdefault("reason", reason)
+        super().__init__(message, details=details, **kwargs)
+        self.reason = reason
 
 
 class VectorStoreError(AuraError):

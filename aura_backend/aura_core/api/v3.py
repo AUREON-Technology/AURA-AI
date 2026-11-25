@@ -36,7 +36,7 @@ from ..domain.errors import (
 )
 from ..domain.caller_context import MAX_CALLER_CONTEXT, CallerContext
 from ..domain.connectors import CONNECTOR_ID_PATTERN, Credential
-from ..domain.identifiers import CorrelationId, DocumentId, SessionId, UserId
+from ..domain.identifiers import CorrelationId, DocumentId, SessionId, TurnId, UserId
 from ..domain.engineering import ENGINEER_CONSENT_NOTICE_VERSION
 from ..domain.llm import RoutingPolicy, WorkloadClass
 from ..llm.workload import workload_class_for_turn
@@ -1052,6 +1052,18 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     # -- knowledge ---------------------------------------------------------------------
 
+    async def _index_searchable() -> bool | None:
+        """Whether a document written now can be found by search (KB-001).
+
+        False while the published index was built by another embedding model: an upload is then
+        stored and embedded into the unpublished index, and stays invisible to every query until
+        an admin rebuilds. ``None`` when the index could not be asked.
+        """
+        try:
+            return bool((await container.index_manager.status())["matches_embedder"])
+        except Exception:
+            return None
+
     @router.post("/knowledge/documents", dependencies=idempotent)
     async def ingest_document(
         request: Request, payload: IngestRequest, caller: Principal = Depends(principal)
@@ -1085,6 +1097,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "created": result.created,
                 "quarantined_chunks": result.quarantined,
                 "skipped_reason": result.skipped_reason,
+                "searchable": await _index_searchable(),
             }
         )
 
@@ -1152,6 +1165,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "unreadable_pages": list(extraction.unreadable_pages),
                 "blank_pages": list(extraction.blank_pages),
                 "ocr_used": container.ocr_engine.name if container.ocr_engine is not None else None,
+                "searchable": await _index_searchable(),
             }
         )
 
@@ -1901,6 +1915,38 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         if checkpoint.covers_messages == 0 and checkpoint.is_empty():
             raise HTTPException(status_code=404, detail={"error": "not_found", "reason": "empty_session"})
         return JSONResponse(content={"session_id": session.value, "checkpoint": checkpoint.as_dict()})
+
+    # -- per-turn usage ----------------------------------------------------------------
+
+    @router.get("/turns/{turn_id}/usage")
+    async def turn_usage(
+        request: Request, turn_id: str, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """What one of the caller's own turns consumed: tokens by purpose, cost, model, latency.
+
+        ``turn_id`` is the one ``/chat`` and the stream's ``done`` frame return. The same numbers
+        come back inline on that response; this is for reading them later, when the client did
+        not keep them. Content-free, like the telemetry it reads.
+
+        Owner-scoped by a keyed reference stamped on the turn (``aura_core.security.owner_ref``),
+        because the telemetry table holds no user id. A turn that does not exist, is someone
+        else's, or was recorded before ownership was tracked all answer the same 404, so a turn
+        id cannot be probed for existence. A deployment with no signing secret has no references
+        and therefore answers 404 for every turn: it fails closed.
+        """
+        await enforce_rate_limit(request, caller, "read")
+        try:
+            TurnId(turn_id)
+        except ValueError as exc:
+            raise ValidationError("turn id is not a valid identifier") from exc
+        make_ref = getattr(container, "owner_ref", None)
+        owner_ref = make_ref(caller.user_id.value) if make_ref is not None else None
+        usage = (
+            await container.telemetry_sink.get_turn_usage(turn_id, owner_ref) if owner_ref else None
+        )
+        if usage is None:
+            raise NotFoundError(f"turn {turn_id!r} not found", details={"turn_id": turn_id})
+        return JSONResponse(content=usage)
 
     # -- feedback ----------------------------------------------------------------------
 
@@ -2681,6 +2727,19 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         Request=Request,
     )
 
+    from .admin_control import register_control_ops
+
+    register_control_ops(
+        router,
+        container,
+        principal=principal,
+        require_super_admin=require_super_admin,
+        audit_admin=audit_admin,
+        Depends=Depends,
+        JSONResponse=JSONResponse,
+        Request=Request,
+    )
+
     from .admin_service_keys import register_service_key_ops
 
     register_service_key_ops(
@@ -2805,6 +2864,7 @@ def build_app(
             MetricsAuthMiddleware,
             path=container.settings.observability.metrics_path,
             token=metrics_token or None,
+            challenge=container.settings.observability.metrics_challenge,
         )
     if container.settings.security.security_headers_enabled:
         app.add_middleware(
@@ -2892,6 +2952,10 @@ def build_app(
     @app.on_event("startup")
     async def on_startup() -> None:
         await container.startup()
+        # The gateway, not a Celery worker, watches control-center changes (ADR-037).
+        start = getattr(container, "start_control_reconciler", None)
+        if start is not None:
+            start()
 
     @app.on_event("shutdown")
     async def on_shutdown() -> None:

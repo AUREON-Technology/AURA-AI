@@ -371,7 +371,7 @@ class AppDatabase extends _$AppDatabase {
   static const Uuid _outboxIds = Uuid();
 
   @override
-  int get schemaVersion => 15;
+  int get schemaVersion => 16;
 
   Future<List<TelemetryLog>> getTelemetry() => select(telemetryLogs).get();
   Future<void> insertTelemetry(TelemetryLogsCompanion log) => into(telemetryLogs).insert(log);
@@ -656,6 +656,14 @@ class AppDatabase extends _$AppDatabase {
           }
           if (from < 15) {
             await rekeyHealthDays();
+          }
+          if (from < 16) {
+            // Terminal scrollback is stored sealed from now on (terminal readiness D-1). Rows written
+            // before that hold the user's terminal output in the clear, which routinely includes
+            // secrets; they are wiped rather than migrated -- a restored terminal is a nicety, a
+            // plaintext copy of `printenv` is not. The table keeps its shape: only what is written
+            // into `sessions_json` changed.
+            await customStatement('DELETE FROM desktop_terminal_state');
           }
         },
         beforeOpen: (details) async {

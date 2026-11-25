@@ -51,6 +51,7 @@ from .open.telemetry_ext import analyze_incident, parse_structured_logs
 from .open.review_ext import deep_review
 from .open.sql_schema_ext import generate_select, parse_schema, query_smells, schema_report
 from .open.security_vulnerability_scanner import SecurityVulnerabilityScanner
+from .open.structured_data_parser import StructuredDataParser
 from .open.symbol_and_import_verifier import SymbolAndImportVerifier
 
 __all__ = ["build_analysis_tools", "ANALYSIS_TOOL_NAMES"]
@@ -638,6 +639,36 @@ async def compare_api_specs(
 
 
 @tool(
+    "validate_structured_text",
+    "Check that JSON, YAML, TOML or XML text parses. On failure: the error, line, column and "
+    "offending line. On success: the root type and its top-level keys.",
+    param("content", "string", "The document text.", max_length=_MAX_TEXT),
+    param("data_format", "string", "Its format.", enum=("json", "yaml", "toml", "xml")),
+    **_CODE,
+)
+async def validate_structured_text(content: str, data_format: str) -> str:
+    def check() -> dict:
+        result = StructuredDataParser.parse_with_line_errors(content, data_format=data_format)
+        # Summarise, never echo, the parsed value: the caller already has the text, and a YAML
+        # alias bomb is small as references but exponential once serialised.
+        parsed = result.pop("parsed_data", None)
+        out: dict[str, Any] = {"format": data_format, **result}
+        if result.get("valid"):
+            if data_format == "xml":
+                out.update(root_type="element", root_tag=str(parsed.tag), children_count=len(parsed))
+            else:
+                out["root_type"] = type(parsed).__name__
+                if isinstance(parsed, dict):
+                    keys = [str(k) for k in parsed]
+                    out.update(top_level_keys=keys[:200], keys_count=len(keys))
+                elif isinstance(parsed, list):
+                    out["items_count"] = len(parsed)
+        return out
+
+    return await _run(check)
+
+
+@tool(
     "inspect_sql",
     "Analyse SQL text only (never connects, so no EXPLAIN plans). operation: lint (default: unsafe "
     "statements, tables, index hints, query smells), schema (parse DDL/Alembic text: tables, "
@@ -1041,6 +1072,7 @@ _ANALYSIS_TOOLS: tuple[Tool, ...] = (
     check_requirements,
     scan_dependency_licenses,
     compare_api_specs,
+    validate_structured_text,
     inspect_sql,
     analyze_logs,
     validate_data_records,

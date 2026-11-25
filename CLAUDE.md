@@ -22,6 +22,13 @@ Four independent apps in one repo:
   with Next's rule sets, warnings fail it, and Admin CI runs it from PR #226 on -- no run with that step had executed when this was written). Built, but not
   reachable on any live target as of 2026-11-07. Admin CI ran for the first time on 2026-11-07
   (run #3, dispatched: typecheck, build and Playwright e2e all green).
+- **The web app** — `aura_client/` built for the browser (`scripts/build-web-app.sh`,
+  `--base-href /app/`), served by `aura_web/` at `https://web.aureon-ai.tech/app/` (the same service
+  as the desktop install page, which stays at `/desktop-ide/install`). Same code as the mobile app;
+  it differs only where a browser cannot (no mic, live voice, biometrics, local daemon) and on wide
+  windows, where You and Engineer open a page beside their list (web only, `AuraMasterDetail`).
+  Merged in #288, **TESTED locally, not CI-run, not live** until the owner's CB-50 steps are done.
+  Plan and as-built notes: `docs/plans/client-web-app_plan.md`; runbook: `docs/deployment/web-app.md`.
 - **`aura_hostd/`** — pure-Dart local daemon (no Flutter dependency) that lets the desktop Engineer
   agent act on the user's real files and terminal. Pairs with the backend's
   `/api/v3/host/agent` WebSocket. `dart pub get && dart test` (`.github/workflows/hostd-ci.yml`
@@ -271,10 +278,10 @@ permanent platform adapters mounted outside `aura_core` (ADR-002), not legacy co
 removal.
 
 Full ADR list and the ten essential decisions are in `docs/architecture/00-overview.md` and
-`docs/architecture/001-*.md`–`035-*.md` (there is no 012 or 017; 018–028 are Track AP drafts, Proposed); read the relevant one before touching
+`docs/architecture/001-*.md`–`038-*.md` (there is no 012 or 017; 018–028 are Track AP drafts, Proposed); read the relevant one before touching
 retrieval, memory, routing, safety, indexing, desktop hostd (011), engineer workspaces
 (013/014), service keys / caller context / structured output on `/chat` (029), images on
-`/chat` (031), the Claude provider and complexity routing (033), customer workspaces and team scopes (034), or adaptive knowledge updates (035) — each encodes a reason something is shaped the way it is, not just what it does.
+`/chat` (031), the Claude provider and complexity routing (033), customer workspaces and team scopes (034), adaptive knowledge updates (035), the `tools/open` analysis tools (036), the console's Super-Admin control center (037), or typed field extraction through Cloudflare's `clairic` and its closed-model exception (038) — each encodes a reason something is shaped the way it is, not just what it does.
 
 ## Client architecture — the parts that span files
 
@@ -310,6 +317,20 @@ retrieval, memory, routing, safety, indexing, desktop hostd (011), engineer work
   Reaching the VPS gateway directly means `docker exec`-ing into another container on the same
   Docker network (or using `deploy/nginx/host-proxy.conf.example`'s override pattern for a
   shared-host setup).
+- **The web app and the desktop installer share one Railway service, `AURA-Web`, and `railway up`
+  replaces the whole image.** So `web-app-main-channel.yml` carries the live installer forward
+  (checked against its `latest.json` SHA-256) and `desktop-main-channel.yml` builds the web app too,
+  with one concurrency group, `web-service-deploy`. Change one deploy and check the other. Never put
+  the Flutter output in `aura_web/build-assets/`: the Dockerfile copies that whole directory into
+  the download folder (the app lives in `aura_web/app-build/`).
+- **`/app/` has its own CSP (`aura_web/nginx/security-headers-app.conf`) with no inline script.**
+  The Firebase JS SDK is loaded by `aura_client/web/firebase-sdk.js`, pinned to the version
+  `firebase_core_web` supports (`test/web/web_shell_test.dart` fails when a `firebase_core` upgrade
+  moves it); without that, `firebase_core_web` injects an inline script the policy blocks. Any new
+  host the app talks to goes into that file, and `node scripts/web-app-smoke.js <url>` must still
+  show no violation. The app uses hash routing, so only `/app/invite` and `/app/desktop-sign-in`
+  have a server-side fallback; a new real-path link needs one too. Anything that builds a link into
+  the app must include its base path (`appBaseUrl()` does).
 - **Never re-add `http2 on;` to the HTTPS server blocks in
   `deploy/nginx/templates/aura.conf.template`** (or its `host-proxy.conf.example` mirror). Any
   client whose TLS ALPN offers h2 — curl by default, and Dart's `dart:io` WebSocket client the

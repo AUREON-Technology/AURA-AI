@@ -28,12 +28,49 @@ typedef TerminalSessionLogger = void Function(String message);
 
 void _defaultLogger(String message) => stdout.writeln('[aura_hostd] $message');
 
+/// Builds the PTY a `start` frame asks for. The default picks the OS backend; a test passes a fake
+/// so the `/terminal` protocol can be exercised without spawning a real shell.
+typedef PtySessionFactory = PtySessionInterface Function({
+  required String sessionId,
+  required String workingDirectory,
+  required int cols,
+  required int rows,
+});
+
+/// Windows gets the proven Win32 ConPTY backend; Linux/macOS get the POSIX backend
+/// (posix_pty_session.dart). Both implement [PtySessionInterface], so nothing in the manager cares
+/// which one it got.
+PtySessionInterface _defaultPtyFactory({
+  required String sessionId,
+  required String workingDirectory,
+  required int cols,
+  required int rows,
+}) =>
+    Platform.isWindows
+        ? PtySession(
+            sessionId: sessionId,
+            workingDirectory: workingDirectory,
+            initialCols: cols,
+            initialRows: rows,
+          )
+        : PosixPtySession(
+            sessionId: sessionId,
+            workingDirectory: workingDirectory,
+            initialCols: cols,
+            initialRows: rows,
+          );
+
 class TerminalSessionManager {
-  TerminalSessionManager(this._workspaceStore, {TerminalSessionLogger? logger})
-      : _logger = logger ?? _defaultLogger;
+  TerminalSessionManager(
+    this._workspaceStore, {
+    TerminalSessionLogger? logger,
+    PtySessionFactory? ptyFactory,
+  })  : _logger = logger ?? _defaultLogger,
+        _ptyFactory = ptyFactory ?? _defaultPtyFactory;
 
   final WorkspaceStore _workspaceStore;
   final TerminalSessionLogger _logger;
+  final PtySessionFactory _ptyFactory;
   final Map<String, PtySessionInterface> _sessions = {};
 
   /// Handles one `/terminal` WebSocket connection end to end: trust-checks
@@ -91,23 +128,12 @@ class TerminalSessionManager {
             final cols = (msg['cols'] as num?)?.toInt() ?? 80;
             final rows = (msg['rows'] as num?)?.toInt() ?? 24;
             final sessionId = 'pty_${DateTime.now().microsecondsSinceEpoch}';
-            // Windows gets the proven Win32 ConPTY backend; Linux/macOS get the POSIX backend
-            // (posix_pty_session.dart) -- UNTESTED as of 2026-09-25, see that file's own doc
-            // comment. Both implement PtySessionInterface, so nothing below this branch cares
-            // which one it got.
-            final PtySessionInterface s = Platform.isWindows
-                ? PtySession(
-                    sessionId: sessionId,
-                    workingDirectory: root.canonicalPath,
-                    initialCols: cols,
-                    initialRows: rows,
-                  )
-                : PosixPtySession(
-                    sessionId: sessionId,
-                    workingDirectory: root.canonicalPath,
-                    initialCols: cols,
-                    initialRows: rows,
-                  );
+            final PtySessionInterface s = _ptyFactory(
+              sessionId: sessionId,
+              workingDirectory: root.canonicalPath,
+              cols: cols,
+              rows: rows,
+            );
             try {
               await s.start();
             } catch (error) {

@@ -36,6 +36,7 @@ SERVER_FAILURE_CLASSES = frozenset({ERR_5XX, ERR_503, ERR_TIMEOUT, ERR_CONNECTIO
 ERROR_KIND_STATUS: Mapping[str, int] = {
     "configuration_error": 500,
     "validation_error": 422,
+    "context_overflow": 413,
     "output_invalid": 422,
     "not_found": 404,
     "conflict": 409,
@@ -57,6 +58,8 @@ ERROR_KIND_STATUS: Mapping[str, int] = {
     "consent_required": 403,
     "user_quota_exhausted": 429,
     "embedding_error": 502,
+    "extraction_error": 502,
+    "extraction_refused": 403,
     "vector_store_error": 502,
     "memory_store_error": 502,
     "knowledge_error": 500,

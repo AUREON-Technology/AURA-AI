@@ -1,3 +1,13 @@
+"""Deferred (ADR-036) -- deliberately NOT registered as a tool. Playwright with no SSRF
+policy cannot run in the gateway. The home for this is a ``browser.run`` RPC in ``aura_hostd``
+(not built).
+
+Reachable from no persona: nothing under ``aura_core`` imports this module, which
+``tests/architecture/test_open_tools_classification.py`` checks against
+``tools/open/_classification.py``. Kept as reference code; change that classification and
+ADR-036 before wiring it in.
+"""
+
 import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional

@@ -68,6 +68,8 @@ TRIAGE = (
     ("/api/v3/admin/blueprints", "to wire: Console blueprint review and deploy are Track AP phase AP9"),
     ("/api/v3/admin/", "to wire: admin console page missing for this route"),
     ("/api/v3/learning/", "to wire or remove: learning surface with no caller (GAP-013)"),
+    ("/api/v3/me", "to wire: profile read/update and password change have no app screen yet; register and forgot/reset password stay in the client's Firebase SDK (api/me.py)"),
+    ("/api/v3/turns/", "to wire: usage by turn id (read it later); the app already gets the same numbers inline on /chat and the stream's done frame"),
     ("/api/v3/tools", "to wire: tool catalogue is not shown anywhere"),
     ("/api/v3/memory/lessons", "to wire: pending Engineer lessons (row 60, ADR-038) have no approve/reject view yet; backend scope"),
     ("/api/v3/sessions/{session_id}/checkpoint", "to wire: session checkpoint (row 26, ADR-038) is backend-only until the client shows a resume card; backend scope"),
@@ -111,7 +113,7 @@ def routes() -> list[tuple[str, str]]:
 
 # A wrapper call left open at the end of a line (`await api(` -- the formatter put the argument on
 # the next line) is carried onto that next line, so the matcher sees `api(\`/admin/...\`` as one call.
-_OPEN_WRAPPER = re.compile(r"\bapi(?:<.*>)?\(\s*$")
+_OPEN_WRAPPER = re.compile(r"\b(?:api|stepUp\.write)(?:<.*>)?\(\s*$")
 
 
 def scan_tree(base: Path, exts: tuple[str, ...], *, root: Path = ROOT) -> list[tuple[str, int, str]]:
@@ -158,9 +160,11 @@ _END = r"(?=['\"`?]|$|\$\{?\w*[qQ]uery)"
 _INTERP = r"(?:\$\{[^}]+\}|\$[A-Za-z_]\w*)"
 # A whole path counts only on an API base: the literal `/api/vN`; an interpolated base such as
 # `$_baseUrl` / `${backend}` that the file resolves elsewhere; or the admin console's `api(...)`
-# wrapper (`aura_admin/src/lib/api.ts` prepends `/api/v3` to the path it is given). A bare
+# wrapper (`aura_admin/src/lib/api.ts` prepends `/api/v3` to the path it is given), and its
+# control-center `stepUp.write(...)` (`aura_admin/src/lib/control.ts`), which hands the path to
+# `api(...)` with the step-up header. A bare
 # `'/chat'` is a UI route (go_router, Next.js) and used to credit `/api/v3/chat` (audit FSA-083).
-_WRAPPER = r"\bapi(?:<.*>)?\(\s*[\"'`]"
+_WRAPPER = r"\b(?:api|stepUp\.write)(?:<.*>)?\(\s*[\"'`]"
 _BASE = rf"(?:/api/v\d+|{_INTERP}|{_WRAPPER})"
 
 

@@ -5,11 +5,27 @@ Every mutating handler writes an audit event. SuperAdmin-only routes are
 marked with ``require_super_admin``.
 """
 
-from typing import Any, Callable
+import asyncio
+from typing import Any, Callable, Literal, Sequence
 
-from ..domain.errors import AuthorizationError, ValidationError
-from ..domain.knowledge import IndexIdentity, KnowledgeSource, SourceType, TrustTier
+from ..domain.errors import (
+    AuthorizationError,
+    ConflictError,
+    KnowledgeError,
+    NotFoundError,
+    ValidationError,
+)
+from ..domain.knowledge import (
+    DEFAULT_ALLOWED_LICENSES,
+    IndexIdentity,
+    KnowledgeSource,
+    LicenseStatus,
+    SourceType,
+    TrustTier,
+)
+from ..knowledge.source_retirement import documents_of_source, retire_source_documents
 from ..learning.approval import ApprovalKind
+from ..learning.refresh_runs import RefreshRunTracker
 from ..mlops.model_registry import ModelStage
 from ..observability.logging import get_logger
 
@@ -21,7 +37,9 @@ _SUPER_ADMIN_APPROVAL_KINDS = frozenset(
 )
 
 
-def _source_payload(source: KnowledgeSource) -> dict[str, Any]:
+def _source_payload(
+    source: KnowledgeSource, allowed_licenses: Sequence[str] = DEFAULT_ALLOWED_LICENSES
+) -> dict[str, Any]:
     return {
         "id": source.id,
         "type": str(source.type),
@@ -34,7 +52,40 @@ def _source_payload(source: KnowledgeSource) -> dict[str, Any]:
         "last_success_at": source.last_success_at.isoformat() if source.last_success_at else None,
         "last_cursor": source.last_cursor,
         "owner": source.owner_id.value if source.owner_id else None,
+        "name": source.name,
+        "publisher": source.publisher,
+        "domains": list(source.domains),
+        "language": source.language,
+        "license_spdx": source.license_spdx,
+        "license_status": str(source.license_status),
+        "attribution": source.attribution,
+        # False means the nightly refresh will skip it: a global source needs an approved licence
+        # on the allow-list (D-001). Shown so an operator does not have to infer it.
+        "ingestible": source.permits_global_corpus(allowed_licenses),
     }
+
+
+def _checked_licence(spdx: str | None, allowed: Sequence[str]) -> LicenseStatus:
+    """The status a stated licence earns: approved if it is on the allow-list, else a refusal.
+
+    Stating the licence is the Super Admin's attestation that they read the source's terms.
+    Nothing stated leaves the status unknown, which keeps the source registered but inert.
+    """
+    if not spdx or not spdx.strip():
+        return LicenseStatus.UNKNOWN
+    if spdx.strip().lower() not in {a.strip().lower() for a in allowed}:
+        raise ValidationError(
+            "this licence is not accepted for the global corpus",
+            details={"license_spdx": spdx, "allowed": list(allowed)},
+        )
+    return LicenseStatus.APPROVED
+
+
+def _clean_domains(domains: Sequence[str]) -> tuple[str, ...]:
+    cleaned = tuple(dict.fromkeys(d.strip().lower() for d in domains if d and d.strip()))
+    if any(len(d) > 64 for d in cleaned):
+        raise ValidationError("a domain is at most 64 characters")
+    return cleaned
 
 
 def _parse_index_name(physical_name: str, fallback: IndexIdentity) -> IndexIdentity:
@@ -95,6 +146,33 @@ def register_admin_ops(
         max_documents: int = Field(default=1000, ge=1, le=50_000)
         max_bytes_per_document: int = Field(default=5 * 1024 * 1024, ge=1024)
         schedule_cron: str = "0 2 * * *"
+        # Provenance (WP3). All optional: without a licence the source is registered but inert.
+        name: str = Field(default="", max_length=200)
+        publisher: str = Field(default="", max_length=200)
+        domains: list[str] = Field(default_factory=list, max_length=20)
+        language: str | None = Field(default=None, max_length=16)
+        license_spdx: str | None = Field(default=None, max_length=64)
+        attribution: str = Field(default="", max_length=500)
+
+    class SourceProvenanceRequest(BaseModel):
+        name: str | None = Field(default=None, max_length=200)
+        publisher: str | None = Field(default=None, max_length=200)
+        domains: list[str] | None = Field(default=None, max_length=20)
+        language: str | None = Field(default=None, max_length=16)
+        license_spdx: str | None = Field(default=None, max_length=64)
+        attribution: str | None = Field(default=None, max_length=500)
+        # True marks the source restricted (never ingested, whatever licence it states); False
+        # lifts that and falls back to what the stated licence earns. Left out, a restricted
+        # source stays restricted even when its licence text is corrected (D3).
+        restricted: bool | None = None
+
+    class SourceTakedownRequest(BaseModel):
+        reason: str = Field(min_length=3, max_length=500)
+
+    class RefreshTriggerRequest(BaseModel):
+        # A dry run is the default: it fetches and gates every source and reports what would be
+        # applied, and writes nothing. Changing the corpus has to be asked for.
+        dry_run: bool = True
 
     class SourceEnableRequest(BaseModel):
         enabled: bool
@@ -158,7 +236,8 @@ def register_admin_ops(
         registry = container.sources
         listing = getattr(registry, "list_all", None)
         sources = await listing() if listing else await registry.list_enabled()
-        return JSONResponse(content={"sources": [_source_payload(s) for s in sources]})
+        allowed = container.settings.knowledge.allowed_licenses
+        return JSONResponse(content={"sources": [_source_payload(s, allowed) for s in sources]})
 
     @router.post("/admin/sources", dependencies=list(idempotent))
     async def create_source(
@@ -179,6 +258,13 @@ def register_admin_ops(
             from ..adaptation.knowledge import project_owner
 
             owner_id = project_owner(twins.project_id)
+        allowed = container.settings.knowledge.allowed_licenses
+        # A connector's documents belong to its project, so the global licence policy does not
+        # apply to it; for any other source a stated licence is checked before anything is stored.
+        license_status = (
+            LicenseStatus.UNKNOWN if owner_id is not None
+            else _checked_licence(payload.license_spdx, allowed)
+        )
         source = KnowledgeSource(
             id=payload.id,
             type=source_type,
@@ -189,10 +275,69 @@ def register_admin_ops(
             max_documents=payload.max_documents,
             max_bytes_per_document=payload.max_bytes_per_document,
             schedule_cron=payload.schedule_cron,
+            name=payload.name.strip(),
+            publisher=payload.publisher.strip(),
+            domains=_clean_domains(payload.domains),
+            language=(payload.language or "").strip() or None,
+            license_spdx=(payload.license_spdx or "").strip() or None,
+            license_status=license_status,
+            attribution=payload.attribution.strip(),
         )
         await container.sources.register(source)
-        await audit_admin(request, caller, "admin.source.register", source.id, "ok")
-        return JSONResponse(content={"source": _source_payload(source)})
+        await audit_admin(
+            request, caller, "admin.source.register", source.id, "ok",
+            detail={"license_spdx": source.license_spdx, "license_status": str(source.license_status)},
+        )
+        return JSONResponse(content={"source": _source_payload(source, allowed)})
+
+    @router.put("/admin/sources/{source_id}/provenance")
+    async def update_source_provenance(
+        request: Request,
+        source_id: str,
+        payload: SourceProvenanceRequest,
+        caller=Depends(principal),
+    ) -> JSONResponse:
+        """Add or correct a source's provenance and licence (WP3, D-001).
+
+        Naming a licence on the allow-list approves it; one outside the list is refused and
+        nothing changes. Super Admin only: stating the licence attests the terms were read.
+        """
+        require_super_admin(caller)
+        existing = await container.sources.get(source_id)
+        if existing is None:
+            raise NotFoundError(f"unknown source {source_id!r}")
+        allowed = container.settings.knowledge.allowed_licenses
+        license_status = None
+        if payload.restricted is not None and existing.owner_id is not None:
+            raise ValidationError("restricted applies to global sources only")
+        if existing.owner_id is None:
+            if payload.restricted is True:
+                license_status = LicenseStatus.RESTRICTED
+            elif payload.license_spdx is not None:
+                checked = _checked_licence(payload.license_spdx, allowed)
+                # A takedown is not undone by editing the licence text: lifting it is explicit.
+                if existing.license_status is LicenseStatus.RESTRICTED and payload.restricted is not False:
+                    license_status = None
+                else:
+                    license_status = checked
+            elif payload.restricted is False:
+                license_status = _checked_licence(existing.license_spdx, allowed)
+        await container.sources.update_provenance(
+            source_id,
+            name=payload.name.strip() if payload.name is not None else None,
+            publisher=payload.publisher.strip() if payload.publisher is not None else None,
+            domains=_clean_domains(payload.domains) if payload.domains is not None else None,
+            language=payload.language.strip() if payload.language is not None else None,
+            license_spdx=payload.license_spdx.strip() if payload.license_spdx is not None else None,
+            license_status=license_status,
+            attribution=payload.attribution.strip() if payload.attribution is not None else None,
+        )
+        await audit_admin(
+            request, caller, "admin.source.provenance", source_id, "ok",
+            detail={"license_spdx": payload.license_spdx, "restricted": payload.restricted},
+        )
+        updated = await container.sources.get(source_id)
+        return JSONResponse(content={"source": _source_payload(updated, allowed)})
 
     @router.patch("/admin/sources/{source_id}")
     async def enable_source(
@@ -208,16 +353,119 @@ def register_admin_ops(
             detail={"enabled": payload.enabled},
         )
         source = await container.sources.get(source_id)
-        return JSONResponse(content={"source": _source_payload(source) if source else {"id": source_id}})
+        allowed = container.settings.knowledge.allowed_licenses
+        return JSONResponse(
+            content={"source": _source_payload(source, allowed) if source else {"id": source_id}}
+        )
+
+    async def _retire(source: KnowledgeSource):
+        """Retire a source's documents, then drop what the corpus's caches kept of them."""
+        report = await retire_source_documents(
+            container.knowledge, container.documents, source.id, owner_id=source.owner_id
+        )
+        if report.retired and container.cag is not None:
+            await container.cag.invalidate(source.owner_id)
+        return report
+
+    @router.get("/admin/sources/{source_id}/documents")
+    async def source_documents(source_id: str, caller=Depends(principal)) -> JSONResponse:
+        """How many live documents a source has contributed: what the delete dialog asks about."""
+        require_admin(caller)
+        source = await container.sources.get(source_id)
+        if source is None:
+            raise NotFoundError(f"unknown source {source_id!r}")
+        documents = await documents_of_source(
+            container.documents, source.id, owner_id=source.owner_id
+        )
+        return JSONResponse(content={
+            "source_id": source.id,
+            "count": len(documents),
+            "documents": [
+                {"id": d.id.value, "title": d.title, "version": d.version} for d in documents[:20]
+            ],
+        })
 
     @router.delete("/admin/sources/{source_id}")
     async def delete_source(
-        request: Request, source_id: str, caller=Depends(principal)
+        request: Request,
+        source_id: str,
+        documents: Literal["retire", "keep"] | None = Query(default=None),
+        caller=Depends(principal),
     ) -> JSONResponse:
+        """Remove a source; for a global one, say what happens to its documents (D3).
+
+        A global source that has live documents is not deleted until the caller chooses:
+        ``documents=retire`` removes them from the corpus first, ``documents=keep`` leaves them
+        live and deletes only the registry row. Without a choice the answer is 409 with the count,
+        so nothing is decided silently in either direction.
+        """
         require_super_admin(caller)
+        source = await container.sources.get(source_id)
+        retirement = None
+        if source is not None and source.owner_id is None:
+            live = await documents_of_source(container.documents, source.id, owner_id=None)
+            if live and documents is None:
+                raise ConflictError(
+                    "this source has live documents; choose documents=retire or documents=keep",
+                    details={"source_id": source_id, "live_documents": len(live),
+                             "choices": ["retire", "keep"]},
+                )
+            if live and documents == "retire":
+                retirement = await _retire(source)
+                if not retirement.complete:
+                    # The row stays so the delete can be run again and finish the rest.
+                    await audit_admin(
+                        request, caller, "admin.source.delete", source_id, "partial",
+                        detail=retirement.as_dict(),
+                    )
+                    raise KnowledgeError(
+                        "some documents could not be retired; the source was not deleted",
+                        details=retirement.as_dict(),
+                    )
         removed = await container.sources.remove(source_id)
-        await audit_admin(request, caller, "admin.source.delete", source_id, "ok" if removed else "missing")
-        return JSONResponse(content={"deleted": bool(removed)})
+        await audit_admin(
+            request, caller, "admin.source.delete", source_id, "ok" if removed else "missing",
+            detail={"documents": documents, **(retirement.as_dict() if retirement else {})},
+        )
+        content: dict[str, Any] = {"deleted": bool(removed)}
+        if retirement is not None:
+            content["retirement"] = retirement.as_dict()
+        return JSONResponse(content=content)
+
+    @router.post("/admin/sources/{source_id}/takedown", dependencies=list(idempotent))
+    async def takedown_source(
+        request: Request,
+        source_id: str,
+        payload: SourceTakedownRequest,
+        caller=Depends(principal),
+    ) -> JSONResponse:
+        """Withdraw a global source: stop fetching it and remove everything it contributed (D3).
+
+        The source stays registered, marked ``restricted``, so the decision and its reason remain
+        visible and a later licence edit cannot quietly bring it back. Order matters: the source
+        is made unfetchable first, so a refresh running at the same moment cannot re-ingest what
+        is being removed. Safe to run again after a partial result.
+        """
+        require_super_admin(caller)
+        source = await container.sources.get(source_id)
+        if source is None:
+            raise NotFoundError(f"unknown source {source_id!r}")
+        if source.owner_id is not None:
+            raise ValidationError("takedown applies to global sources only")
+        await container.sources.update_provenance(source_id, license_status=LicenseStatus.RESTRICTED)
+        await container.sources.set_enabled(source_id, False)
+        retirement = await _retire(source)
+        await audit_admin(
+            request, caller, "admin.source.takedown", source_id,
+            "ok" if retirement.complete else "partial",
+            detail={"reason": payload.reason, **retirement.as_dict()},
+        )
+        updated = await container.sources.get(source_id)
+        allowed = container.settings.knowledge.allowed_licenses
+        return JSONResponse(content={
+            "source": _source_payload(updated, allowed) if updated else {"id": source_id},
+            "retirement": retirement.as_dict(),
+        })
 
     @router.post("/admin/knowledge/documents/{document_id}/cag-pin")
     async def admin_pin_cag(
@@ -294,11 +542,77 @@ def register_admin_ops(
         await audit_admin(request, caller, "admin.index.rollback", restored.physical_name, "ok")
         return JSONResponse(content={"index": restored.physical_name, "rolled_back": True})
 
+    refresh_runs = RefreshRunTracker(container.cache_backend)
+    #: Strong references to in-flight refresh tasks: the event loop keeps only a weak one, so a
+    #: task nobody holds can be collected before it finishes.
+    background_refreshes: set[asyncio.Task] = set()
+
+    async def _execute_refresh(run) -> None:
+        try:
+            report = await container.refresh_pipeline.run(dry_run=run.dry_run)
+        except Exception as exc:
+            logger.warning("triggered knowledge refresh failed", extra={"error": type(exc).__name__})
+            await refresh_runs.finish(run, error=type(exc).__name__)
+            return
+        if not run.dry_run and container.cag is not None:
+            # A real run can supersede a pinned global document; drop the prefix built from it.
+            try:
+                await container.cag.invalidate(None)
+            except Exception:
+                logger.warning("CAG invalidation after a refresh failed")
+        await refresh_runs.finish(run, report=report.as_dict())
+
+    @router.post("/admin/refresh", status_code=202)
+    async def trigger_refresh(
+        request: Request, payload: RefreshTriggerRequest, caller=Depends(principal)
+    ) -> JSONResponse:
+        """Start the knowledge refresh now, in the background, and return at once.
+
+        The same pipeline the nightly job runs (ADR-008): fetch each enabled source, gate it,
+        apply it, and rebuild the index only when it is stale. Needed on a deployment with no
+        Celery worker, where nothing else would ever run it. A dry run (the default) needs Admin
+        and writes nothing; a real run changes the live corpus and needs Super Admin. Only one
+        run exists at a time: a second request while one is running is a 409 that names it.
+        Poll ``GET /admin/refresh/latest`` for the outcome.
+        """
+        if payload.dry_run:
+            require_admin(caller)
+        else:
+            require_super_admin(caller)
+        actor = caller.email or caller.user_id.value
+        run = await refresh_runs.start(dry_run=payload.dry_run, triggered_by=actor)
+        if run is None:
+            current = await refresh_runs.latest()
+            raise ConflictError(
+                "a knowledge refresh is already running",
+                details={"run": current.as_dict() if current else None},
+            )
+        await audit_admin(
+            request, caller, "admin.refresh.trigger", "knowledge", "started",
+            detail={"run_id": run.run_id, "dry_run": run.dry_run},
+        )
+        task = asyncio.create_task(_execute_refresh(run))
+        background_refreshes.add(task)
+        task.add_done_callback(background_refreshes.discard)
+        return JSONResponse(status_code=202, content={"run": run.as_dict()})
+
     @router.get("/admin/refresh/latest")
     async def latest_refresh(caller=Depends(principal)) -> JSONResponse:
+        """The latest triggered run (shared across workers) and its report.
+
+        ``report`` is that run's report when there is one, else this worker's last scheduled one,
+        so the response keeps the shape it had before runs could be triggered.
+        """
         require_admin(caller)
-        report = getattr(container.refresh_pipeline, "last_report", None)
-        return JSONResponse(content={"report": report.as_dict() if report else None})
+        run = await refresh_runs.latest()
+        local = getattr(container.refresh_pipeline, "last_report", None)
+        report = run.report if run is not None and run.report is not None else (
+            local.as_dict() if local else None
+        )
+        return JSONResponse(content={
+            "report": report,
+            "run": run.as_dict() if run is not None else None,
+        })
 
     @router.get("/admin/scorecard")
     async def scorecard(

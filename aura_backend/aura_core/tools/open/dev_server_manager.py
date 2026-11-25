@@ -1,3 +1,13 @@
+"""Deferred (ADR-036) -- deliberately NOT registered as a tool. Long-running processes, a
+process-global PID table and ``shell=True`` cannot be made safe in the gateway. The home for this
+is a ``dev_server.*`` RPC in ``aura_hostd`` (not built; needs its own change and Host Daemon CI).
+
+Reachable from no persona: nothing under ``aura_core`` imports this module, which
+``tests/architecture/test_open_tools_classification.py`` checks against
+``tools/open/_classification.py``. Kept as reference code; change that classification and
+ADR-036 before wiring it in.
+"""
+
 import os
 import re
 import shlex

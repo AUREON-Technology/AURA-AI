@@ -283,6 +283,19 @@ class TelemetrySink(Protocol):
         """Delete every turn of the given conversations (erasure); returns how many."""
         ...
 
+    async def get_turn_usage(self, turn_id: str, owner_ref: str) -> dict[str, Any] | None:
+        """The usage view of ``turn_id`` if -- and only if -- ``owner_ref`` is its owner's.
+
+        ``None`` for an unknown turn, someone else's turn, a turn recorded without an owner, and
+        an empty ``owner_ref``: the caller cannot tell these apart, so a turn id cannot be probed
+        for existence. Content-free (see ``TurnTelemetry.usage_view``).
+        """
+        ...
+
+    async def purge_owner(self, owner_ref: str) -> int:
+        """Delete every turn owned by ``owner_ref`` (account erasure); returns how many."""
+        ...
+
 
 class RateLimitDecision:
     """Outcome of a rate-limit check, with the numbers needed for response headers."""

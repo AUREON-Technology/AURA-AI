@@ -1129,6 +1129,10 @@ class AppLocalizationsAr extends AppLocalizations {
   String get knowledgeSaved => 'اتحفظ.';
 
   @override
+  String get knowledgeNotSearchableYet =>
+      'البحث لسه مش شايفه: بحث المعرفة بيتحدّث، وهيظهر أول ما ده يخلص.';
+
+  @override
   String get knowledgePdfUploadFailed => 'معرفناش نرفع الـ PDF ده.';
 
   @override
@@ -3728,6 +3732,29 @@ class AppLocalizationsAr extends AppLocalizations {
   String get chatTurnUngrounded => 'من غير مصادر — مفيش مصادر مرفقة.';
 
   @override
+  String get chatTurnNoActionTaken =>
+      'مفيش أي إجراء اتنفّذ — متعملش ولا اتغيّر ولا اتبعت حاجة.';
+
+  @override
+  String get chatTurnToolsUnavailable =>
+      'AURA مقدرش يستخدم أدواته في الدور ده، فمفيش حاجة اتعملت.';
+
+  @override
+  String get chatTurnToolFailed =>
+      'أداة من اللي AURA استخدمها فشلت في الدور ده.';
+
+  @override
+  String get chatTurnEmptyReply => 'النموذج مرجّعش أي رد في الدور ده.';
+
+  @override
+  String get chatTurnToolOutputTrimmed =>
+      'نتيجة أداة كانت طويلة أوي ومتستخدمتش كلها.';
+
+  @override
+  String get chatTurnKnowledgeUnavailable =>
+      'بحث المعرفة بيتحدّث دلوقتي، فالإجابة دي مش بتستخدم مستنداتك ولا المكتبة المشتركة.';
+
+  @override
   String chatMoreLines(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,
@@ -5572,4 +5599,30 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get hostdCodeProtectedGitInternals =>
       'الكتابة جوّه .git (HEAD أو الـ index أو الـ refs أو الـ objects) ممنوعة دايمًا: ممكن تبوّظ الـ repository. استخدم أوامر Git بدالها.';
+
+  @override
+  String get webDaemonUnavailableTitle => 'اربط كمبيوترك من تطبيق سطح المكتب';
+
+  @override
+  String get webDaemonUnavailableMessage =>
+      'المتصفح مش بيقدر يشغّل خدمة AURA بتاعة الكمبيوتر. نزّل تطبيق سطح المكتب على جهازك واربطه من هناك. وبعد ما يتربط، فعّل التحكم عن بُعد وAURA Engineer يقدر يستخدمه من هنا.';
+
+  @override
+  String get webGetDesktopApp => 'نزّل تطبيق سطح المكتب';
+
+  @override
+  String get webManageDevices => 'إدارة الأجهزة المربوطة';
+
+  @override
+  String get webYouPaneTitle => 'اختار صفحة';
+
+  @override
+  String get webYouPaneMessage => 'اختار إعداد أو أداة من القايمة وهتتفتح هنا.';
+
+  @override
+  String get webEngineerPaneTitle => 'اختار عملية';
+
+  @override
+  String get webEngineerPaneMessage =>
+      'اختار عملية من القايمة تشوف حالتها والفرع والمخرجات بتاعتها.';
 }

@@ -10,11 +10,13 @@ on:
   pull_request:
     paths:
       - "aura_client/**"
+      - "scripts/build-web-app.sh"
       - ".github/workflows/client-ci.yml"
   push:
     branches: [main]
     paths:
       - "aura_client/**"
+      - "scripts/build-web-app.sh"
       - ".github/workflows/client-ci.yml"
 
 permissions:
@@ -62,6 +64,23 @@ jobs:
 
       - name: Test
         run: flutter test
+
+  # The web target is a customer-facing app (docs/plans/client-web-app_plan.md): every client change
+  # proves it still compiles with the flags it is published with. Build only; the publish is
+  # web-app-main-channel.yml.
+  build-web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: analyze-and-test
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.44.6"
+
+      - name: Build the web app
+        run: scripts/build-web-app.sh "$RUNNER_TEMP/web-app"
 
   build-android:
     runs-on: ubuntu-latest

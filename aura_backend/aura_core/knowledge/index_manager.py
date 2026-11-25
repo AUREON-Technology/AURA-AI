@@ -20,7 +20,7 @@ Here:
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Sequence
 
 from ..domain.errors import ConflictError, IndexNotReadyError, NotFoundError
@@ -159,6 +159,33 @@ class IndexManager:
 
     async def active_identity(self) -> IndexIdentity | None:
         return await self._vectors.resolve_alias(self._alias)
+
+    def _reads_through(self, identity: IndexIdentity) -> bool:
+        """Whether a query embedded by the configured embedder can be answered from ``identity``."""
+        return identity.matches_embedding(self._embedder.model_id, self._embedder.dimension)
+
+    async def status(self) -> dict[str, Any]:
+        """What readiness reports about the published index (KM-01).
+
+        ``matches_embedder`` is false when nothing is published, or when the published index was
+        built by a different embedding model -- the state in which every retrieval returns
+        ``strategy="unavailable"`` while chat itself keeps working, so nothing else shows it.
+        """
+        active = await self.active_identity()
+        required = self.identity_for_current_embedder().physical_name
+        published = active.physical_name if active else None
+        return {
+            "published": published,
+            "required": required,
+            "matches_embedder": active is not None and self._reads_through(active),
+            # The published name is the one the running configuration would build. Compared as
+            # physical-name strings, never as ``IndexIdentity`` objects: an identity read back from
+            # the alias is parsed from that name and is lossy (``matches_embedding``), so object
+            # equality can be false when nothing has changed. False on an embedder change *and*
+            # on a ``schema_version`` bump, which ``matches_embedder`` alone would miss; this is
+            # what a refresh asks before deciding whether a rebuild is needed.
+            "up_to_date": published is not None and published == required,
+        }
 
     async def identities_for_removal(self) -> list[IndexIdentity]:
         """Every existing index a document's points may be in, whatever embedder is configured.
@@ -338,9 +365,22 @@ class IndexManager:
         baseline_recall: float | None = None,
     ) -> GateResult:
         baseline = await self.active_identity()
+        gate = self._gate
         baseline_chunks = await self._vectors.count(baseline) if baseline else 0
+        if baseline is not None and not self._reads_through(baseline):
+            # The published index was built by another embedding model, so every read refuses it
+            # (`resolve_for_read`) and it serves nothing. Comparing the candidate with it protects
+            # nothing: a chunk-count "collapse" against an index no query can reach is the repair
+            # this rebuild exists to make, and so is an empty corpus (KM-01). The error-rate gate
+            # still applies, and so does `min_chunks` whenever the build was not simply empty --
+            # a build that embedded nothing because every batch failed (`failures > 0`) must not
+            # promote.
+            baseline_chunks = 0
+            baseline_recall = None
+            if report.chunks == 0 and report.failures == 0:
+                gate = replace(gate, min_chunks=0)
         candidate_chunks = await self._vectors.count(candidate)
-        result = self._gate.evaluate(
+        result = gate.evaluate(
             candidate_recall=candidate_recall,
             baseline_recall=baseline_recall,
             error_rate=report.error_rate,

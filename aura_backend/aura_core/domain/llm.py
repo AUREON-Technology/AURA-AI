@@ -269,6 +269,10 @@ class GenerationTiming:
     decode_ms: float | None = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    #: Why the generation was made (``llm.router.GENERATION_PURPOSES``): a bounded label.
+    purpose: str = "engine"
+    #: The token counts are AURA's estimate, not the provider's report (KAN-106).
+    usage_estimated: bool = False
 
     @property
     def total_ms(self) -> float:
@@ -296,6 +300,10 @@ class ToolChoice(str, enum.Enum):
 class TokenUsage:
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    #: The provider reported nothing and these are AURA's own estimate (KAN-106). A sum is
+    #: estimated when any part of it is: an estimate presented as a measurement is worse than
+    #: no number.
+    estimated: bool = False
 
     @property
     def total_tokens(self) -> int:
@@ -305,6 +313,7 @@ class TokenUsage:
         return TokenUsage(
             self.prompt_tokens + other.prompt_tokens,
             self.completion_tokens + other.completion_tokens,
+            self.estimated or other.estimated,
         )
 
     def cost_usd(self, input_per_1k: float, output_per_1k: float) -> float:
@@ -428,6 +437,12 @@ class ProviderCapabilities:
     #: breaker instead (``AURA_PROVIDER_<NAME>_HEALTH_PROBE=passive``). For a server that wakes
     #: on any request and bills while awake.
     passive_health: bool = False
+    #: Which tokenizer counts this provider's tokens (KAN-103): a family (``qwen2``, ``o200k``,
+    #: ``cl100k``, ``claude``, ``generic``), optionally with ``@<path to tokenizer.json>`` for
+    #: exact counts. Empty = inferred from ``model_id``. Read by ``context/tokenizer.py``'s
+    #: ``tokenizer_for``; the router, the quota and the usage fallback all count with it.
+    #: AURA_PROVIDER_<NAME>_TOKENIZER.
+    tokenizer: str = ""
 
     def __post_init__(self) -> None:
         if self.context_window <= 0:

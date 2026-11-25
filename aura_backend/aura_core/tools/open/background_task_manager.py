@@ -1,3 +1,14 @@
+"""Not exposed (ADR-036, 2026-11-21) -- deliberately NOT registered as a tool. ``start_task`` runs
+``subprocess.Popen`` in the gateway process with ``os.environ.copy()``, so the child inherits the
+gateway's provider keys and JWT secret, and the process table has no owner scoping. Long-running
+processes on the user's machine are ``aura_hostd``'s terminal sessions (KAN-34).
+
+Reachable from no persona: nothing under ``aura_core`` imports this module, which
+``tests/architecture/test_open_tools_classification.py`` checks against
+``tools/open/_classification.py``. Kept as reference code; change that classification and
+ADR-036 before wiring it in.
+"""
+
 import os
 import shlex
 import subprocess

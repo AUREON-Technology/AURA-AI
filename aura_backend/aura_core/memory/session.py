@@ -32,7 +32,15 @@ from ..observability.logging import get_logger
 from ..ports.storage import Cache
 from .checkpoint import SessionCheckpoint, extract_checkpoint, parse_checkpoint_json
 
-__all__ = ["WorkingMemory", "EpisodicMemory", "SessionState", "SessionCheckpoint"]
+__all__ = [
+    "WorkingMemory",
+    "EpisodicMemory",
+    "SessionState",
+    "SessionCheckpoint",
+    "SessionHistory",
+    "FALLBACK_SUMMARY_MARKER",
+    "is_tainted",
+]
 
 logger = get_logger("memory.session")
 
@@ -97,6 +105,11 @@ class SessionState:
     #: grows, so it versions the summary: a summary computed against one value applies only if
     #: no other summary landed while the model was writing it (see ``EpisodicMemory.append``).
     folded: int = 0
+    #: Whether ``summary`` was built from any message of a tainted turn, or from a summary that
+    #: was (KAN-101). The summary is a model's rewrite of that text -- or the raw transcript --
+    #: so an instruction a quarantined document or untrusted tool output planted can survive
+    #: into it. Sticky: folding more messages into a tainted summary keeps it tainted.
+    summary_tainted: bool = False
 
     def to_json(self) -> str:
         return json.dumps(
@@ -104,11 +117,18 @@ class SessionState:
                 "session_id": self.session_id.value,
                 "owner_id": self.owner_id.value,
                 "summary": self.summary,
+                "summary_tainted": self.summary_tainted,
                 "turn_count": self.turn_count,
                 "updated_at": self.updated_at,
                 "folded": self.folded,
                 "messages": [
-                    {"role": str(m.role), "content": m.content} for m in self.messages
+                    {
+                        "role": str(m.role),
+                        "content": m.content,
+                        # Only written when set, so untainted state keeps its old shape.
+                        **({"tainted": True} if is_tainted(m) else {}),
+                    }
+                    for m in self.messages
                 ],
             }
         )
@@ -124,8 +144,12 @@ class SessionState:
                 turn_count=int(data.get("turn_count", 0)),
                 updated_at=float(data.get("updated_at", 0.0)),
                 folded=int(data.get("folded", 0)),
+                summary_tainted=bool(data.get("summary_tainted", False)),
                 messages=tuple(
-                    Message(role=Role(m["role"]), content=m["content"])
+                    _marked(
+                        Message(role=Role(m["role"]), content=m["content"]),
+                        bool(m.get("tainted", False)),
+                    )
                     for m in data.get("messages", [])
                     # System messages are rebuilt per turn from the prompt registry; persisting
                     # them would pin a session to a stale prompt version forever.
@@ -137,6 +161,40 @@ class SessionState:
             # make a user's session permanently unusable.
             logger.warning("discarding unreadable session state")
             return None
+
+
+#: Message metadata key recording that the message came from a tainted turn (KAN-101).
+TAINTED_METADATA_KEY = "tainted"
+
+
+def is_tainted(message: Message) -> bool:
+    """Whether ``message`` was recorded from a tainted turn."""
+    return bool(message.metadata.get(TAINTED_METADATA_KEY, False))
+
+
+def _marked(message: Message, tainted: bool) -> Message:
+    return message.with_metadata(**{TAINTED_METADATA_KEY: True}) if tainted else message
+
+
+@dataclass(frozen=True, slots=True)
+class SessionHistory:
+    """What a turn reads from the session: verbatim messages, the summary, and their taint.
+
+    ``tainted`` is what the kernel acts on (ADR-006, KAN-101): content written while some turn's
+    context held quarantined or untrusted DATA comes back on the next turn's prompt -- verbatim,
+    or folded into the summary -- so the turn reading it is tainted exactly as if it had
+    retrieved that content itself.
+    """
+
+    conversation: Conversation
+    summary: str = ""
+    summary_tainted: bool = False
+
+    @property
+    def tainted(self) -> bool:
+        return (self.summary_tainted and bool(self.summary)) or any(
+            is_tainted(m) for m in self.conversation
+        )
 
 
 def _same_prefix(messages: Sequence[Message], prefix: Sequence[Message]) -> bool:
@@ -265,8 +323,13 @@ class EpisodicMemory:
         *,
         user_message: str,
         assistant_message: str,
+        tainted: bool = False,
     ) -> SessionState:
         """Record one exchange, summarising older turns when the window overflows.
+
+        ``tainted`` says the turn that produced the exchange was tainted (ADR-006). Both its
+        messages carry the mark, and a summary that folds either of them in inherits it
+        (KAN-101), so the taint outlives the verbatim window.
 
         Three steps, so that no concurrent append is lost and none waits on the model:
 
@@ -288,13 +351,14 @@ class EpisodicMemory:
                 owner_id=owner_id,
                 messages=(
                     *loaded.messages,
-                    Message.user(user_message),
-                    Message.assistant(assistant_message),
+                    _marked(Message.user(user_message), tainted),
+                    _marked(Message.assistant(assistant_message), tainted),
                 ),
                 summary=loaded.summary,
                 turn_count=loaded.turn_count + 1,
                 updated_at=time.time(),
                 folded=loaded.folded,
+                summary_tainted=loaded.summary_tainted,
             )
             await self._write(key, state)
 
@@ -316,12 +380,19 @@ class EpisodicMemory:
                         extra={"session": session_id.value},
                     )
                     return current
+                folded_now = current.messages[: len(overflow)]
                 applied = replace(
                     current,
                     messages=current.messages[len(overflow):],
                     summary=summary,
                     folded=current.folded + len(overflow),
                     updated_at=time.time(),
+                    # A summary of a tainted summary, or of any tainted message, is tainted --
+                    # whether a model wrote it or it is the fallback transcript excerpt.
+                    summary_tainted=(
+                        current.summary_tainted
+                        or any(is_tainted(m) for m in (*folded_now, *overflow))
+                    ),
                 )
                 await self._write(key, applied)
                 return applied
@@ -500,8 +571,24 @@ class EpisodicMemory:
         return SessionCheckpoint.from_dict(data) if isinstance(data, Mapping) else None
 
     async def history(self, session_id: SessionId, owner_id: UserId) -> tuple[Conversation, str]:
+        """Every message not yet folded into the summary, and the summary.
+
+        All of them, not a tail: anything held here is by definition not in the summary, so a
+        message cut here would be in neither and the context engine could not even say it was
+        missing (KAN-100). The state is bounded by ``summarise_after`` anyway; the engine
+        decides how many reach the prompt and marks the rest.
+        """
+        snapshot = await self.history_snapshot(session_id, owner_id)
+        return snapshot.conversation, snapshot.summary
+
+    async def history_snapshot(self, session_id: SessionId, owner_id: UserId) -> SessionHistory:
+        """:meth:`history`, with whether what it returns came from a tainted turn (KAN-101)."""
         state = await self.load(session_id, owner_id)
-        return Conversation.of(state.messages[-self._window * 2 :]), state.summary
+        return SessionHistory(
+            conversation=Conversation.of(state.messages),
+            summary=state.summary,
+            summary_tainted=state.summary_tainted,
+        )
 
     async def clear(self, session_id: SessionId, owner_id: UserId) -> None:
         """Forget the owner's state for this session (and any legacy un-namespaced state it
@@ -525,18 +612,36 @@ class EpisodicMemory:
 
         Falls back to a truncated transcript when no summariser is configured. Losing the
         conversation entirely would be worse than keeping a crude record of it, and the fallback
-        is clearly marked so it is never mistaken for a model-written summary.
+        is clearly marked (:data:`FALLBACK_SUMMARY_MARKER`) so it is never mistaken for a
+        model-written summary.
         """
         transcript = "\n".join(f"{m.role}: {m.content}" for m in overflow)
         if self._summariser is None:
-            merged = f"{previous}\n{transcript}" if previous else transcript
-            return merged[-4000:]
+            return _fallback_summary(previous, transcript)
         try:
             return await self._summariser(transcript, previous)
         except Exception:
             logger.warning("conversation summarisation failed; keeping truncated transcript")
-            merged = f"{previous}\n{transcript}" if previous else transcript
-            return merged[-4000:]
+            return _fallback_summary(previous, transcript)
+
+
+#: Leads every summary that is raw transcript rather than a model's summary (KAN-101). The
+#: docstring above always promised this mark; the text never carried it.
+FALLBACK_SUMMARY_MARKER = "[unsummarised transcript excerpt]"
+_FALLBACK_SUMMARY_MAX_CHARS = 4000
+
+
+def _fallback_summary(previous: str, transcript: str) -> str:
+    """The newest ``_FALLBACK_SUMMARY_MAX_CHARS`` of the transcript so far, marker first.
+
+    The marker is stripped from ``previous`` before merging and put back once, so it survives
+    the tail cut and is never repeated.
+    """
+    if previous.startswith(FALLBACK_SUMMARY_MARKER):
+        previous = previous[len(FALLBACK_SUMMARY_MARKER):].lstrip("\n")
+    merged = f"{previous}\n{transcript}" if previous else transcript
+    room = _FALLBACK_SUMMARY_MAX_CHARS - len(FALLBACK_SUMMARY_MARKER) - 1
+    return f"{FALLBACK_SUMMARY_MARKER}\n{merged[-room:]}"
 
 
 def build_session_summariser(router: Any, prompts: Any, *, model_policy: Any = None):

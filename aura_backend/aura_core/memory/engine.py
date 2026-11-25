@@ -25,6 +25,7 @@ are still found -- and still land in ``"shared"``.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import asdict, replace
 from datetime import timedelta
@@ -35,6 +36,7 @@ from ..domain.events import MemoryConsolidated, MemoryWritten
 from ..domain.identifiers import MemoryId, SessionId, UserId
 from ..domain.knowledge import IndexIdentity
 from ..domain.lessons import LESSON_SOURCE, LESSON_SUBJECT, pending_scope
+from ..domain.text import fold_arabic
 from ..domain.memory import (
     BASE_CONFIDENCE_METADATA_KEY,
     MEMORY_POLICIES,
@@ -48,6 +50,7 @@ from ..domain.memory import (
     Provenance,
 )
 from ..llm.embeddings import cosine_similarity
+from ..llm.turn_embeddings import embed_query
 from ..observability.logging import get_logger
 from ..ports.llm import EmbeddingProvider
 from ..ports.storage import MemoryStore, VectorPoint, VectorStore
@@ -55,6 +58,37 @@ from ..ports.storage import MemoryStore, VectorPoint, VectorStore
 __all__ = ["MemoryEngine"]
 
 logger = get_logger("memory")
+
+_NON_WORD = re.compile(r"[\W_]+", re.UNICODE)
+
+
+def _source_trust(source: str | None, document_ref: str | None = None) -> int:
+    """How much a memory's provenance is trusted to say what the person holds true.
+
+    3: the person wrote it directly (``api:v3:*``, the memory endpoint). 2: the model stored it
+    with ``remember_fact``, which only accepts facts restating the person's own words (audit
+    B5). 1: anything else -- an extractor, a document, an unlabelled write.
+    """
+    if document_ref:
+        return 1
+    text = source or ""
+    if text.startswith("api:"):
+        return 3
+    if text.startswith("tool:remember_fact:"):
+        return 2
+    return 1
+
+
+def _same_statement(a: str, b: str) -> bool:
+    """Whether two memory texts say the same thing in the same words.
+
+    Case, spacing, punctuation and Arabic diacritics aside. Anything more is a different
+    statement, which :meth:`MemoryEngine.remember` treats as the newer word on the fact.
+    """
+    def norm(text: str) -> str:
+        return _NON_WORD.sub(" ", fold_arabic(text).casefold()).strip()
+
+    return norm(a) == norm(b)
 
 
 class MemoryEngine:
@@ -122,7 +156,12 @@ class MemoryEngine:
         scope: str = SHARED_MEMORY_SCOPE,
         ttl: timedelta | None = None,
     ) -> MemoryRecord:
-        """Write one memory, merging with a near-duplicate if one exists.
+        """Write one memory, reconciling it with a near-duplicate if one exists.
+
+        A near-duplicate is reinforced (same words), kept alongside (a different subject), kept
+        as stored (same fact, lower-trust write) or superseded (same fact, a correction); the
+        comment in the body spells out each case. The returned record is the one now standing for
+        the fact.
 
         Provenance is mandatory (``source`` has no default that hides its absence) because two
         operations depend on it: rolling back everything a bad extractor version produced, and
@@ -139,19 +178,58 @@ class MemoryEngine:
         duplicate = await self._find_duplicate(
             owner_id, kind, embedding, threshold=policy.duplicate_threshold, scope=scope
         )
+        replacing: MemoryRecord | None = None
         if duplicate is not None:
-            # Restating a fact is reinforcement, not a second fact. Bumping access_count and
-            # confidence is what makes repeated preferences outrank one-off mentions.
+            # Four outcomes for a near-duplicate, in this order:
+            #
+            # 1. REINFORCE -- the same words. Restating a fact is not a second fact; bumping
+            #    access_count and confidence is what makes repeated preferences outrank one-off
+            #    mentions.
+            # 2. KEEP BOTH -- worded differently and not about the same subject. Two memories
+            #    can embed close together without being one fact ("I like tea" / "I also like
+            #    coffee"), and the subject is what says what a memory is about. A record with no
+            #    subject has no claim to be corrected, so it is never replaced.
+            # 3. KEEP STORED -- the same fact, but the new write is less trusted. An extractor's
+            #    paraphrase must never overwrite what the person stated; the stored record is
+            #    returned unreinforced (different words are not a restatement).
+            # 4. SUPERSEDE -- the same fact, written at least as trustworthily: a correction
+            #    ("I moved to Alexandria" after "I live in Cairo"). The old code kept the *old*
+            #    text and raised its confidence, so the correction was lost and the stale fact
+            #    grew surer (audit B4). The old record is marked superseded, not deleted, so what
+            #    was believed when stays auditable. The replacement starts from its own
+            #    confidence; the old text's reinforcement says nothing about the new text.
             touched = duplicate.touched(now=now)
             raised = round(min(1.0, max(touched.confidence, confidence) + 0.05), 6)
-            merged = replace(
-                touched,
-                confidence=raised,
-                metadata={**touched.metadata, BASE_CONFIDENCE_METADATA_KEY: raised},
-            )
-            await self._store.update(merged)
-            logger.info("memory reinforced", extra={"kind": str(kind), "memory_id": merged.id.value})
-            return merged
+            if _same_statement(duplicate.content, text):
+                merged = replace(
+                    touched,
+                    confidence=raised,
+                    metadata={**touched.metadata, BASE_CONFIDENCE_METADATA_KEY: raised},
+                )
+                await self._store.update(merged)
+                logger.info(
+                    "memory reinforced", extra={"kind": str(kind), "memory_id": merged.id.value}
+                )
+                return merged
+            # A write with no subject inherits the old record's, so "my office moved to Giza"
+            # corrects "my office is in Cairo" without the caller having to repeat the subject.
+            effective_subject = subject or duplicate.subject
+            if not duplicate.subject or duplicate.subject != effective_subject:
+                logger.info(
+                    "memory kept alongside a similar one about a different subject",
+                    extra={"kind": str(kind), "memory_id": duplicate.id.value},
+                )
+            elif _source_trust(source, document_ref) < _source_trust(
+                duplicate.provenance.source, duplicate.provenance.document_ref
+            ):
+                logger.info(
+                    "memory kept over a lower-trust rewording",
+                    extra={"kind": str(kind), "memory_id": duplicate.id.value},
+                )
+                return duplicate
+            else:
+                subject = effective_subject
+                replacing = duplicate
 
         record = MemoryRecord(
             id=MemoryId.new(),
@@ -176,7 +254,11 @@ class MemoryEngine:
             # the same source that later decays and ranks it.
             created_at=now,
             last_accessed_at=now,
-            metadata={**dict(metadata or {}), SCOPE_METADATA_KEY: scope or SHARED_MEMORY_SCOPE},
+            metadata={
+                **dict(metadata or {}),
+                SCOPE_METADATA_KEY: scope or SHARED_MEMORY_SCOPE,
+                **({"replaces": replacing.id.value} if replacing is not None else {}),
+            },
         )
 
         await self._enforce_quota(owner_id)
@@ -201,6 +283,19 @@ class MemoryEngine:
                 )
             ],
         )
+
+        if replacing is not None:
+            # After the new record is stored: a failure in between leaves both, never neither.
+            # Superseded, not deleted: the old record stays in the store for audit and erasure
+            # (`forget_owner` includes superseded rows), and `recall` and `_find_duplicate` skip
+            # it because it is no longer active. Its vector point stays in the index; `update`
+            # never creates a row, so a record forgotten in the meantime stays forgotten.
+            await self._store.update(replacing.superseded(record.id))
+            logger.info(
+                "memory superseded by a newer statement",
+                extra={"kind": str(kind), "memory_id": record.id.value,
+                       "superseded": replacing.id.value},
+            )
 
         if self._metrics is not None:
             self._metrics.memory_writes_total.labels(kind=str(kind)).inc()
@@ -243,7 +338,8 @@ class MemoryEngine:
 
         try:
             await self._ensure_index()
-            embedding = await self._embed(query.text, for_query=True)
+            # Shared with retrieval and the semantic cache for this turn (KAN-111).
+            embedding = (await embed_query(self._embedder, query.text)).first
         except EmbeddingError as exc:
             # Memory is an enhancement, not a requirement. Losing it degrades answer quality;
             # failing the turn would be a worse trade.

@@ -698,7 +698,12 @@ class ChatRepository {
             break;
           case SseEventKind.revision:
             displayText = event.text ?? displayText;
-            meta = meta.copyWith(revised: true);
+            // `revised` reads "changed by a safety check" in the status row. A correction the
+            // kernel appended to an unbacked action claim is not that; the done frame's
+            // degraded reasons say what it is instead.
+            if (event.reason != 'unbacked_action_claim') {
+              meta = meta.copyWith(revised: true);
+            }
             await _updateMessageText(assistantMsgId, displayText);
             await _updateMessageTurnMeta(assistantMsgId, meta);
             break;

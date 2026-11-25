@@ -17,11 +17,13 @@ where retrieved documents are concatenated straight into the system instruction.
 
 from __future__ import annotations
 
+import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Sequence
 
 from ..domain.cag import CagPrefix
+from ..domain.errors import ContextOverflowError
 from ..domain.caller_context import CallerContext
 from ..domain.context import (
     ContextBudget,
@@ -57,6 +59,24 @@ DEFAULT_HISTORY_TURNS = 4
 DEFAULT_KNOWLEDGE_CHUNK_MAX_CHARS = 280
 DEFAULT_MAX_KNOWLEDGE_ITEMS = 2
 _CLIP_MARKER = " […truncated]"
+#: The smallest answer a turn may be left room for before its prompt counts as overflowing
+#: the window (KAN-99).
+_MIN_OUTPUT_TOKENS = 64
+#: Below this, a shortened item is too small to be useful and is dropped instead -- the same
+#: threshold `pack()` uses before it truncates rather than drops.
+_MIN_TRUNCATED_TOKENS = 24
+#: Item-id prefix of the pinned note standing in for a dropped tool result (KAN-102).
+_DROPPED_NOTE_PREFIX = "tool_dropped:"
+_TOOL_NAME_UNSAFE = re.compile(r"[^A-Za-z0-9_.:\-]")
+#: Sections rendered into the leading system message; HISTORY gets its own message.
+_SYSTEM_SECTIONS = (
+    ContextSection.INSTRUCTIONS,
+    ContextSection.CAG,
+    ContextSection.MEMORY,
+    ContextSection.KNOWLEDGE,
+    ContextSection.TOOL_OUTPUT,
+    ContextSection.SCRATCHPAD,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +114,19 @@ class AssembledContext:
     duration_ms: float
     dropped: int = 0
     truncated: int = 0
+    #: The answer size to ask for: the request's, clamped to what the context window leaves
+    #: after this prompt (KAN-99). 0 means "not computed" (a hand-built value); callers then
+    #: use the request's own size.
+    max_output_tokens: int = 0
+    #: True when even the irreducible prompt exceeds the prefill cap. It still fits the window,
+    #: so it is sent; telemetry and logs can say why the turn's prefill ran long.
+    over_cap: bool = False
+    #: History messages in neither the prompt nor the summary, which the omission marker in
+    #: the history message accounts for (KAN-100).
+    omitted_messages: int = 0
+    #: Tools whose output was produced but is not in the prompt; each has a pinned scratchpad
+    #: note telling the model so (KAN-102). The kernel reports ``tool_output_dropped``.
+    dropped_tools: tuple[str, ...] = ()
 
     @property
     def utilisation(self) -> float:
@@ -134,6 +167,23 @@ class ContextEngine:
         self._max_prompt_tokens = max_prompt_tokens
         self._knowledge_chunk_max_chars = knowledge_chunk_max_chars
         self._max_knowledge_items = max_knowledge_items
+        # The tokenizer's own chat framing, learned from it rather than assumed: what one more
+        # empty message adds (per-message overhead) and what is left of a one-message
+        # conversation once that is taken out (reply priming). With these, a conversation's
+        # cost is a sum of per-message costs, each counted once (KAN-105).
+        #
+        # Both are measured on non-empty conversations. An empty one is not a prompt, and the
+        # tokenizers price it at 0 (KAN-103, matching ``Conversation.approx_tokens``); learning
+        # the priming from it read the priming as 0 and folded it into every message's
+        # overhead, so each message past the first was overcounted by the priming.
+        one = self._tokenizer.count_messages((Message.user(""),))
+        two = self._tokenizer.count_messages((Message.user(""), Message.user("")))
+        self._message_overhead = two - one
+        self._priming = one - self._message_overhead
+        self._separator = self._tokenizer.count("\n")
+
+    def _message_cost(self, content_tokens: int) -> int:
+        return content_tokens + self._message_overhead
 
     # -- budgeting ---------------------------------------------------------------------
 
@@ -145,11 +195,14 @@ class ContextEngine:
         8k-context local model would still ingest 1k+ token RAG prompts that CPU Ollama cannot
         evaluate before the stream timeout.
         """
-        usable = int(request.context_window * 0.95)
-        reserved = min(request.max_output_tokens, max(256, usable // 4))
+        usable, reserved, window_prompt = self._window_limits(request)
         cap = self._effective_prompt_cap(request)
         if cap is None:
             return ContextBudget(total=usable, reserved_for_output=reserved)
+        # The cap never exceeds what the window leaves after the output reservation (KAN-99):
+        # a large configured cap on a small-window provider used to budget a prompt the model
+        # had no room to answer after.
+        cap = min(cap, window_prompt)
         # Prefill is the assembled prompt. Output reservation must not consume that cap.
         # Hold ~15 % back for fence wrappers, section headers, and per-message framing, which
         # are added at render time and are not in item.token counts.
@@ -163,6 +216,23 @@ class ContextEngine:
         if request.max_prompt_tokens is not None:
             return request.max_prompt_tokens
         return self._max_prompt_tokens or None
+
+    @staticmethod
+    def _window_limits(request: ContextRequest) -> tuple[int, int, int]:
+        """``(usable, reserved_output, window_prompt)`` for the turn's provider window.
+
+        ``usable`` keeps a 5 % margin for tokenizer error; ``window_prompt`` is what is left
+        for the prompt once the output reservation is taken out of it.
+        """
+        usable = int(request.context_window * 0.95)
+        reserved = min(request.max_output_tokens, max(256, usable // 4))
+        return usable, reserved, max(64, usable - reserved)
+
+    def _prompt_limit(self, request: ContextRequest) -> int:
+        """The prompt size assembly aims for: the cap, bounded by the window (KAN-99)."""
+        _, _, window_prompt = self._window_limits(request)
+        cap = self._effective_prompt_cap(request)
+        return min(cap, window_prompt) if cap else window_prompt
 
     # -- candidate construction --------------------------------------------------------
 
@@ -359,9 +429,52 @@ class ContextEngine:
                 tokens=self._tokenizer.count(result),
                 provenance=f"tool:{name}",
                 item_id=f"tool:{name}:{index}",
+                metadata={"tool": name},
             )
             for index, (name, result) in enumerate(request.tool_results)
         ]
+
+    def _with_dropped_tool_notes(self, bundle: ContextBundle) -> ContextBundle:
+        """Pin a note for every tool result that was produced but is not in the prompt (KAN-102).
+
+        Tool output is unpinned and capped, so on a tight budget it can lose the packing fight
+        outright. Without a note the model answers as if the tool never ran -- or worse, guesses
+        what it returned. The note is pinned so it cannot be evicted in turn.
+        """
+        noted = {i.item_id for i in bundle.items if i.item_id.startswith(_DROPPED_NOTE_PREFIX)}
+        notes = []
+        for item in bundle.dropped:
+            if item.section is not ContextSection.TOOL_OUTPUT:
+                continue
+            note_id = f"{_DROPPED_NOTE_PREFIX}{item.item_id}"
+            if note_id in noted:
+                continue
+            tool = _safe_tool_name(str(item.metadata.get("tool") or item.item_id))
+            content = (
+                f"The output of {tool} was produced but did not fit in this context. If the "
+                "answer depends on it, say that you could not show its output."
+            )
+            notes.append(
+                ContextItem(
+                    content=content,
+                    section=ContextSection.SCRATCHPAD,
+                    channel=TrustChannel.SYSTEM,
+                    relevance=1.0,
+                    priority=150,
+                    tokens=self._tokenizer.count(content),
+                    provenance="working_memory",
+                    item_id=note_id,
+                    metadata={"tool": tool},
+                )
+            )
+            noted.add(note_id)
+        if not notes:
+            return bundle
+        return replace(
+            bundle,
+            items=bundle.items + tuple(notes),
+            tokens_used=bundle.tokens_used + sum(n.tokens for n in notes),
+        )
 
     def _scratchpad_items(self, request: ContextRequest) -> list[ContextItem]:
         return [
@@ -382,40 +495,42 @@ class ContextEngine:
 
     def _compress_history(
         self, request: ContextRequest, allowance: int
-    ) -> tuple[Conversation, str, int]:
+    ) -> tuple[list[tuple[Message, int]], str, int]:
         """Fit history into ``allowance`` tokens.
 
         Strategy: keep the most recent turns verbatim, fold everything older into the running
         summary. Recent turns carry the actual conversational state (what "it" refers to, what
         was just agreed); older turns carry facts, which survive summarisation.
 
-        Returns ``(kept_conversation, summary_text, dropped_turn_count)``.
+        Returns ``(kept, summary_text, dropped_turn_count)``. ``kept`` pairs each message with
+        its cost (content plus chat framing), counted here once and reused by every later step
+        (KAN-105). Messages outside the window are never counted at all.
         """
         messages = [m for m in request.history if m.role is not Role.SYSTEM]
         if not messages:
-            return Conversation(), request.history_summary, 0
+            return [], request.history_summary, 0
 
         dropped_by_window = 0
         if self._history_turns > 0 and len(messages) > self._history_turns:
             dropped_by_window = len(messages) - self._history_turns
             messages = messages[-self._history_turns :]
 
-        kept: list[Message] = []
+        kept: list[tuple[Message, int]] = []
         used = 0
         # Walk backwards so the newest turns win the budget.
         for message in reversed(messages):
-            cost = self._tokenizer.count(message.content) + 4
+            cost = self._message_cost(self._tokenizer.count(message.content))
             if used + cost > allowance and kept:
                 break
-            kept.append(message)
+            kept.append((message, cost))
             used += cost
         kept.reverse()
 
         dropped = dropped_by_window + (len(messages) - len(kept))
-        summary = request.history_summary
-        # Do not invent an omission notice: it costs a system message and tokens that the
-        # CPU prefill budget needs for RAG. An operator-supplied episodic summary still lands.
-        return Conversation.of(kept), summary, dropped
+        # Every message here is one the session has not yet folded into the summary, so each
+        # dropped one is in neither the prompt nor the summary. `assemble` adds a one-line
+        # marker that says how many (KAN-100); it used to drop them without a word.
+        return kept, request.history_summary, dropped
 
     # -- assembly ----------------------------------------------------------------------
 
@@ -459,14 +574,19 @@ class ContextEngine:
         history, summary, dropped_turns = self._compress_history(request, history_allowance)
 
         if summary:
+            summary_text = f"Earlier in this conversation: {summary}"
             candidates.append(
                 ContextItem(
-                    content=f"Earlier in this conversation: {summary}",
+                    content=summary_text,
                     section=ContextSection.HISTORY,
-                    channel=TrustChannel.SYSTEM,
+                    # DATA, fenced with the turn nonce (KAN-101). The summary is a model's
+                    # rewrite of what users and tools said -- or, when no summariser ran, the
+                    # raw transcript -- so text a poisoned document planted in an earlier turn
+                    # must not come back on the instruction channel once it is summarised.
+                    channel=TrustChannel.DATA,
                     relevance=0.8,
                     priority=40,
-                    tokens=self._tokenizer.count(summary),
+                    tokens=self._tokenizer.count(summary_text),
                     provenance="episodic_summary",
                     item_id="history_summary",
                 )
@@ -474,9 +594,9 @@ class ContextEngine:
 
         # Reserve CAG tokens before packing the variable tail so the 400-token cap still holds.
         cag_reserved = sum(i.tokens for i in cag_items)
-        history_tokens = sum(self._tokenizer.count(m.content) + 4 for m in history)
-        user_tokens = self._tokenizer.count(request.user_message) + 4
-        remaining = budget.total - history_tokens - user_tokens - cag_reserved
+        history_tokens = sum(cost for _, cost in history)
+        user_cost = self._message_cost(self._tokenizer.count(request.user_message))
+        remaining = budget.total - history_tokens - user_cost - cag_reserved
         # `pack()` drops -- never truncates -- a pinned item that does not fit ("a pinned item
         # that cannot fit at all is a configuration error", domain/context.py). The flat
         # `+ 64` floor below was sized for "some slack for the variable tail", not for what the
@@ -501,7 +621,7 @@ class ContextEngine:
             section_caps=budget.section_caps,
         )
 
-        bundle = pack(candidates, packing_budget)
+        bundle = pack(candidates, packing_budget, count=self._tokenizer.count)
         # Carry both nonces onto the packed bundle so rendered fences match the rules text.
         bundle = ContextBundle(
             items=bundle.items,
@@ -512,46 +632,61 @@ class ContextEngine:
             fence_nonce=seed.fence_nonce,
             prefix_nonce=prefix_nonce,
         )
+        bundle = self._with_dropped_tool_notes(bundle)
 
-        system_text = bundle.render(
-            include_sections=(
-                ContextSection.INSTRUCTIONS,
-                ContextSection.CAG,
-                ContextSection.MEMORY,
-                ContextSection.KNOWLEDGE,
-                ContextSection.TOOL_OUTPUT,
-                ContextSection.SCRATCHPAD,
-            )
+        shape = _HistoryShape(
+            omitted=dropped_turns,
+            had_summary=bool(summary),
+            markers=self._marker_costs(
+                sum(1 for m in request.history if m.role is not Role.SYSTEM)
+            ),
         )
-        history_text = bundle.render(include_sections=(ContextSection.HISTORY,))
+        bundle, fitted = self._enforce_limit(request, bundle, history, user_cost, shape)
+        prompt_tokens = fitted.total
+        usable, _, _ = self._window_limits(request)
+        limit = self._prompt_limit(request)
+        over_cap = prompt_tokens > limit
+        if prompt_tokens > usable - _MIN_OUTPUT_TOKENS:
+            # Nothing left to remove, and the provider would reject (or silently truncate) a
+            # prompt this size: fail the turn with a reason instead of sending it.
+            raise ContextOverflowError(
+                "the message and required instructions do not fit the model's context window",
+                details={
+                    "prompt_tokens": prompt_tokens,
+                    "context_window": request.context_window,
+                    "max_prompt_tokens": limit,
+                },
+            )
+        if over_cap:
+            # Only the irreducible part is left (instructions, fence rules, pinned notes, the
+            # user's message) and it alone exceeds the prefill cap. It fits the window, so it
+            # is sent -- refusing would turn a slow turn into a failed one -- but not silently.
+            logger.warning(
+                "assembled prompt exceeds the prompt cap after trimming",
+                extra={"prompt_tokens": prompt_tokens, "cap": limit},
+            )
+        # Clamp the answer to what the window leaves after this prompt (KAN-99).
+        max_output_tokens = max(1, min(request.max_output_tokens, usable - prompt_tokens))
 
-        cap = self._effective_prompt_cap(request)
-        conversation, prompt_tokens, trimmed = self._fit_to_cap(
-            system_text=system_text,
-            history_text=history_text,
-            history=history,
-            user_message=request.user_message,
-            cap=cap,
+        system_text = bundle.render(include_sections=_SYSTEM_SECTIONS)
+        # The history message: the summary (if it fit), then one line saying what of the
+        # conversation is in neither the summary nor the verbatim turns below (KAN-100).
+        history_parts = []
+        if fitted.keep_block:
+            history_parts.append(bundle.render(include_sections=(ContextSection.HISTORY,)))
+        omitted = shape.omitted + fitted.dropped_messages
+        summary_dropped = shape.had_summary and not fitted.keep_block
+        if omitted or summary_dropped:
+            history_parts.append(_omission_marker(omitted, summary_dropped))
+        history_text = "\n".join(history_parts)
+        conversation = Conversation.of(
+            [
+                Message.system(system_text),
+                *([Message.system(history_text)] if history_text else []),
+                *(message for message, _ in fitted.kept),
+                Message.user(request.user_message),
+            ]
         )
-        if cap and prompt_tokens > cap and bundle.by_section(ContextSection.MEMORY):
-            # Memory lost the budget fight: keep instructions + CAG + citations.
-            system_text = bundle.render(
-                include_sections=(
-                    ContextSection.INSTRUCTIONS,
-                    ContextSection.CAG,
-                    ContextSection.KNOWLEDGE,
-                    ContextSection.TOOL_OUTPUT,
-                    ContextSection.SCRATCHPAD,
-                )
-            )
-            conversation, prompt_tokens, trimmed_more = self._fit_to_cap(
-                system_text=system_text,
-                history_text=history_text,
-                history=history,
-                user_message=request.user_message,
-                cap=cap,
-            )
-            trimmed += trimmed_more
         duration_ms = (time.perf_counter() - started) * 1000.0
 
         if self._metrics is not None and bundle.dropped:
@@ -568,53 +703,173 @@ class ContextEngine:
             citations=bundle.citations,
             prompt_tokens=prompt_tokens,
             duration_ms=duration_ms,
-            dropped=len(bundle.dropped) + dropped_turns + trimmed,
+            dropped=(
+                len(bundle.dropped) + dropped_turns + fitted.dropped_messages
+                + int(fitted.summary_dropped) + fitted.items_removed
+            ),
             truncated=len(bundle.truncated),
+            max_output_tokens=max_output_tokens,
+            over_cap=over_cap,
+            omitted_messages=omitted,
+            dropped_tools=tuple(
+                str(i.metadata.get("tool") or i.item_id)
+                for i in bundle.dropped
+                if i.section is ContextSection.TOOL_OUTPUT
+            ),
         )
 
-    # -- helpers -----------------------------------------------------------------------
+    # -- cap enforcement -----------------------------------------------------------------
+
+    def _enforce_limit(
+        self,
+        request: ContextRequest,
+        bundle: ContextBundle,
+        history: Sequence[tuple[Message, int]],
+        user_cost: int,
+        shape: "_HistoryShape",
+    ) -> tuple[ContextBundle, "_HistoryFit"]:
+        """Bring the assembled prompt within the turn's prompt limit (KAN-99).
+
+        Eviction order, cheapest loss first: the oldest history messages, then the history
+        summary block (both in :meth:`_fit_to_cap`), then recalled memory and goals, then
+        retrieved knowledge and caller evidence, then tool output -- truncated head-and-tail
+        first, dropped only when even that cannot fit -- then unpinned scratchpad notes. After
+        each removal history is refitted, so room an item frees goes back to the conversation.
+
+        What cannot be removed -- pinned items, the omission marker, and the user's message --
+        may still exceed the limit; :meth:`assemble` decides whether that is sendable.
+        """
+        count = self._tokenizer.count
+        limit = self._prompt_limit(request)
+
+        def fit(candidate: ContextBundle) -> _HistoryFit:
+            return self._fit_to_cap(
+                system_cost=self._message_cost(
+                    candidate.rendered_tokens(count, include_sections=_SYSTEM_SECTIONS)
+                ),
+                block_tokens=(
+                    candidate.rendered_tokens(count, include_sections=(ContextSection.HISTORY,))
+                    if candidate.by_section(ContextSection.HISTORY)
+                    else 0
+                ),
+                history=history,
+                user_cost=user_cost,
+                cap=limit,
+                shape=shape,
+            )
+
+        fitted = fit(bundle)
+        if fitted.total <= limit:
+            return bundle, fitted
+
+        removed = 0
+        for section in (
+            ContextSection.MEMORY,
+            ContextSection.KNOWLEDGE,
+            ContextSection.TOOL_OUTPUT,
+            ContextSection.SCRATCHPAD,
+        ):
+            while fitted.total > limit:
+                victims = [i for i in bundle.items if i.section is section and not i.is_pinned]
+                if not victims:
+                    break
+                victim = min(victims, key=lambda i: (i.priority, i.value_density))
+                shortened = None
+                if section is ContextSection.TOOL_OUTPUT:
+                    keep = victim.tokens - (fitted.total - limit)
+                    if keep >= _MIN_TRUNCATED_TOKENS:
+                        shortened = victim.truncated_to(
+                            keep, keep_tail=True, count=self._tokenizer.count
+                        )
+                        if shortened.tokens >= victim.tokens:
+                            shortened = None  # cannot shrink further: drop it, with a note
+                bundle = _replace_item(bundle, victim, shortened)
+                if shortened is None:
+                    removed += 1
+                    # A pinned note replaces a dropped tool result; it is costed by the refit.
+                    bundle = self._with_dropped_tool_notes(bundle)
+                fitted = fit(bundle)
+        return bundle, replace(fitted, items_removed=removed)
+
+    # -- history ------------------------------------------------------------------------
+
+    def _marker_costs(self, messages: int) -> tuple[int, int]:
+        """Upper bounds on the omission marker's cost, without and with a dropped summary.
+
+        Counted once per assembly at the largest count the marker could state, which has the
+        most digits, so a marker with any smaller count costs no more than this.
+        """
+        widest = max(1, messages)
+        return (
+            self._tokenizer.count(_omission_marker(widest, False)),
+            self._tokenizer.count(_omission_marker(widest, True)),
+        )
+
+    def _history_message_cost(
+        self, block_tokens: int, keep_block: bool, omitted: int, summary_dropped: bool,
+        shape: "_HistoryShape",
+    ) -> int:
+        """The history system message: the summary block, if kept, and the marker line, if
+        anything of the conversation is in neither the summary nor the verbatim turns."""
+        marker = 0
+        if omitted or summary_dropped:
+            marker = shape.markers[1] if summary_dropped else shape.markers[0]
+        content = (block_tokens if keep_block else 0) + marker
+        if not content:
+            return 0
+        if keep_block and block_tokens and marker:
+            content += self._separator
+        return self._message_cost(content)
 
     def _fit_to_cap(
         self,
         *,
-        system_text: str,
-        history_text: str,
-        history: Conversation,
-        user_message: str,
+        system_cost: int,
+        block_tokens: int,
+        history: Sequence[tuple[Message, int]],
+        user_cost: int,
         cap: int | None,
-    ) -> tuple[Conversation, int, int]:
+        shape: "_HistoryShape",
+    ) -> "_HistoryFit":
         """Drop oldest history until the assembled prompt fits ``cap``.
 
         RAG and instructions stay. History is already in the session store; trimming it here
-        only changes what the model sees this turn.
+        only changes what the model sees this turn. Works on costs alone: each part was counted
+        once, and dropping one subtracts its cost rather than recounting the prompt (KAN-105).
+
+        Every message dropped here joins those the window already left out, and the marker
+        line that says so is costed in, so a dropped message is never unaccounted for (KAN-100).
         """
-        extra_system = [Message.system(history_text)] if history_text else []
         history_msgs = list(history)
+        keep_block = block_tokens > 0
         dropped = 0
 
-        def build() -> list[Message]:
-            return [
-                Message.system(system_text),
-                *extra_system,
-                *history_msgs,
-                Message.user(user_message),
-            ]
+        def header() -> int:
+            return self._history_message_cost(
+                block_tokens, keep_block, shape.omitted + dropped,
+                shape.had_summary and not keep_block, shape,
+            )
 
-        messages = build()
-        prompt_tokens = self._tokenizer.count_messages(messages)
+        total = (
+            self._priming + system_cost + header()
+            + sum(cost for _, cost in history_msgs) + user_cost
+        )
         if not cap:
-            return Conversation.of(messages), prompt_tokens, 0
-        while prompt_tokens > cap and history_msgs:
-            history_msgs.pop(0)
+            return _HistoryFit(history_msgs, keep_block, total)
+        while total > cap and history_msgs:
+            before = header()
+            _, cost = history_msgs.pop(0)
             dropped += 1
-            messages = build()
-            prompt_tokens = self._tokenizer.count_messages(messages)
-        if prompt_tokens > cap and extra_system:
-            extra_system.clear()
-            dropped += 1
-            messages = build()
-            prompt_tokens = self._tokenizer.count_messages(messages)
-        return Conversation.of(messages), prompt_tokens, dropped
+            total += header() - before - cost
+        summary_dropped = False
+        if total > cap and keep_block:
+            before = header()
+            keep_block = False
+            summary_dropped = True
+            total += header() - before
+        return _HistoryFit(history_msgs, keep_block, total, dropped, summary_dropped)
+
+    # -- helpers -----------------------------------------------------------------------
 
     def count(self, text: str) -> int:
         return self._tokenizer.count(text)
@@ -626,6 +881,75 @@ class ContextEngine:
     @property
     def counts_are_exact(self) -> bool:
         return self._tokenizer.exact
+
+
+@dataclass(frozen=True, slots=True)
+class _HistoryShape:
+    """What history assembly knows before fitting: how many messages the window or the history
+    allowance already left out, whether a summary was supplied, and the marker's costs."""
+
+    omitted: int
+    had_summary: bool
+    markers: tuple[int, int]
+
+
+@dataclass(frozen=True, slots=True)
+class _HistoryFit:
+    """One fit's outcome. ``dropped_messages``/``summary_dropped`` count what the cap fit
+    removed; ``items_removed`` what cap enforcement removed from the bundle."""
+
+    kept: list[tuple[Message, int]]
+    keep_block: bool
+    total: int
+    dropped_messages: int = 0
+    summary_dropped: bool = False
+    items_removed: int = 0
+
+
+def _omission_marker(omitted: int, summary_dropped: bool) -> str:
+    """The one line that accounts for conversation the model cannot see (KAN-100).
+
+    Every message the session holds is verbatim in the prompt, folded into the summary, or
+    counted here -- so "what did I say earlier?" gets "I can't see that part" rather than a
+    confident answer built on a silently missing turn.
+    """
+    if omitted and summary_dropped:
+        return (
+            f"[{omitted} earlier message{'s' if omitted != 1 else ''} of this conversation, "
+            "and a summary of what came before them, are not shown here.]"
+        )
+    if omitted:
+        verb = "are" if omitted != 1 else "is"
+        plural = "s" if omitted != 1 else ""
+        return f"[{omitted} earlier message{plural} of this conversation {verb} not shown here.]"
+    return "[A summary of the earlier conversation is not shown here.]"
+
+
+def _safe_tool_name(name: str) -> str:
+    """A tool name fit for the SYSTEM channel: registry names are plain identifiers, so anything
+    else (an MCP server's odd naming, say) is reduced to them rather than trusted verbatim."""
+    return _TOOL_NAME_UNSAFE.sub("_", name)[:64] or "a tool"
+
+
+def _replace_item(
+    bundle: ContextBundle, victim: ContextItem, shortened: ContextItem | None
+) -> ContextBundle:
+    """``bundle`` with ``victim`` replaced by ``shortened``, or moved to ``dropped``."""
+    index = next(i for i, item in enumerate(bundle.items) if item is victim)
+    if shortened is None:
+        return replace(
+            bundle,
+            items=bundle.items[:index] + bundle.items[index + 1 :],
+            dropped=bundle.dropped + (victim,),
+            tokens_used=bundle.tokens_used - victim.tokens,
+        )
+    label = victim.item_id or victim.provenance or victim.section.value
+    return replace(
+        bundle,
+        items=bundle.items[:index] + (shortened,) + bundle.items[index + 1 :],
+        truncated=bundle.truncated if label in bundle.truncated else bundle.truncated + (label,),
+        tokens_used=bundle.tokens_used - victim.tokens + shortened.tokens,
+    )
 
 
 def _clip_chars(text: str, max_chars: int) -> str:

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/platform/web_capabilities.dart';
 
 import '../../data/agent_config_repository.dart';
 import '../../data/agents_repository.dart';
@@ -97,14 +98,15 @@ class ChatComposer extends ConsumerWidget {
                 ),
                 ),
               ),
-              VoiceRecorderButton(
-                enabled: !locked,
-                onTranscribed: (text) {
-                  final existing = controller.text;
-                  controller.text = existing.isEmpty ? text : '$existing $text';
-                  controller.selection = TextSelection.collapsed(offset: controller.text.length);
-                },
-              ),
+              if (voiceNoteAvailable())
+                VoiceRecorderButton(
+                  enabled: !locked,
+                  onTranscribed: (text) {
+                    final existing = controller.text;
+                    controller.text = existing.isEmpty ? text : '$existing $text';
+                    controller.selection = TextSelection.collapsed(offset: controller.text.length);
+                  },
+                ),
               const SizedBox(width: AuraSpacing.lg),
               Container(
                 decoration: BoxDecoration(gradient: palette.brandGradient, borderRadius: BorderRadius.circular(AuraRadius.md)),

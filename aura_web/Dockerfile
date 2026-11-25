@@ -1,4 +1,9 @@
-# AURA web service: the public Desktop IDE install page (served at web.aureon-ai.tech).
+# AURA web service (web.aureon-ai.tech): the AURA web app at /app/ (the Flutter web build of the
+# mobile app) and the public Desktop IDE install page at /desktop-ide/. "/" goes to /app/.
+#
+# The web app is part of the image like the installer is: .github/workflows/web-app-main-channel.yml
+# builds Flutter web and drops it into aura_web/app-build/ (empty in git, only .gitkeep) before
+# deploying. With no build there, /app/ shows a plain "not built yet" page.
 #
 # BUILD CONTEXT IS THE REPOSITORY ROOT, not this directory, because the page serves the very file
 # scripts/AURA-Desktop-Setup.cmd (one source of truth, no copy to keep in sync):
@@ -7,6 +12,12 @@
 #   docker run --rm -e PORT=8080 -p 8080:8080 aura-web      # http://localhost:8080/desktop-ide/install
 #
 # On Railway: set RAILWAY_DOCKERFILE_PATH=aura_web/Dockerfile and leave the root directory empty.
+#
+# The finished app is part of the image. aura_web/build-assets/ is empty in git (only .gitkeep);
+# .github/workflows/desktop-main-channel.yml builds the Windows installer on a Windows runner and
+# drops `aura-desktop-windows-x64-setup.exe` and `latest.json` there before deploying, so a deploy
+# replaces the installer and the manifest that describes it in one step. With no build yet the page
+# says so and the downloads answer 404.
 #
 # Static files behind nginx, as the unprivileged user (uid 101). No Node, no database, no secrets.
 # The base is pinned by digest (the 1.28-alpine index); update the tag and digest together.
@@ -17,7 +28,11 @@ USER root
 
 COPY aura_web/site/ /usr/share/nginx/html/
 COPY scripts/AURA-Desktop-Setup.cmd /usr/share/nginx/html/desktop-ide/download/AURA-Desktop-Setup.cmd
+COPY aura_web/build-assets/ /usr/share/nginx/html/desktop-ide/download/
+COPY aura_web/app-build/ /usr/share/nginx/html/app/
+COPY aura_web/site/app-missing.html /tmp/app-missing.html
 COPY aura_web/nginx/security-headers.conf /etc/nginx/snippets/security-headers.conf
+COPY aura_web/nginx/security-headers-app.conf /etc/nginx/snippets/security-headers-app.conf
 COPY aura_web/nginx/default.conf.template /etc/nginx/templates/default.conf.template
 
 # Put the served file's SHA-256 on the page, so the number can never disagree with the download.
@@ -30,6 +45,11 @@ RUN set -eu; \
     test "${#sha}" -eq 64; \
     sed -i "s/__SETUP_SHA256__/${sha}/" /usr/share/nginx/html/desktop-ide/install.html; \
     ! grep -q '__SETUP_SHA256__' /usr/share/nginx/html/desktop-ide/install.html; \
+    if [ ! -f /usr/share/nginx/html/app/index.html ]; then \
+      mkdir -p /usr/share/nginx/html/app; \
+      cp /tmp/app-missing.html /usr/share/nginx/html/app/index.html; \
+    fi; \
+    rm -f /tmp/app-missing.html; \
     chmod -R a+rX /usr/share/nginx/html /etc/nginx/snippets; \
     PORT=8080 envsubst '${PORT}' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf; \
     nginx -t; \

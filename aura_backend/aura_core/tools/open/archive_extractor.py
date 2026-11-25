@@ -1,4 +1,13 @@
-"""Archive listing, auditing, extraction and creation for ZIP and TAR (``.tar``, ``.tar.gz``, ...).
+"""Not exposed (ADR-036, 2026-11-21) -- deliberately NOT registered as a tool. It lists, extracts and
+creates archives at filesystem paths: on the gateway that reads and writes the gateway's own
+disk.
+
+Reachable from no persona: nothing under ``aura_core`` imports this module, which
+``tests/architecture/test_open_tools_classification.py`` checks against
+``tools/open/_classification.py``. Kept as reference code; change that classification and
+ADR-036 before wiring it in.
+
+Archive listing, auditing, extraction and creation for ZIP and TAR (``.tar``, ``.tar.gz``, ...).
 
 Hardening notes (review of 2026-11):
 

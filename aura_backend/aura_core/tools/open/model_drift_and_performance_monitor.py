@@ -11,9 +11,9 @@ def _finite(values: List[Any]) -> bool:
 class ModelDriftAndPerformanceMonitor:
     """Monitor for detecting metric degradation, confidence shifts, and drift between baseline and current runs.
 
-    Fails closed. A monitor that cannot compute a verdict -- a NaN or infinite metric, an empty
-    sample -- reports ``drift_detected: True`` with ``status: "invalid_input"`` and an ``error``,
-    because "no drift" is a claim the data does not support. Callers that test only
+    Fails closed (ADR-036). A monitor that cannot compute a verdict -- a NaN or infinite metric, an
+    empty sample -- reports ``drift_detected: True`` with ``status: "invalid_input"`` and an
+    ``error``, because "no drift" is a claim the data does not support. Callers that test only
     ``drift_detected`` therefore still stop and look.
     """
 

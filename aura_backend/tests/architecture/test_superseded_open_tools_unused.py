@@ -14,16 +14,24 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from aura_core.tools.open._classification import SUPERSEDED, modules_with
+
 AURA_CORE = Path(__file__).resolve().parents[2] / "aura_core"
 
-SUPERSEDED_MODULES = {
-    "knowledge_graph_manager",
-    "model_registry_and_evaluation_manager",
-    "workflow_dependency_validator",
-    "agent_tool_test_harness",
-    "data_lineage_provenance_tracker",
-    "gpu_resource_scheduler",
-}
+#: Read from the one classification list (``tools/open/_classification.py``, KAN-35);
+#: ``test_open_tools_classification.py`` covers the other statuses.
+SUPERSEDED_MODULES = set(modules_with(SUPERSEDED))
+
+
+def test_the_six_superseded_modules_are_still_the_ones_adr_036_names() -> None:
+    assert SUPERSEDED_MODULES == {
+        "knowledge_graph_manager",
+        "model_registry_and_evaluation_manager",
+        "workflow_dependency_validator",
+        "agent_tool_test_harness",
+        "data_lineage_provenance_tracker",
+        "gpu_resource_scheduler",
+    }
 
 #: Directories that are not project source (a stray interpreter install, caches, virtualenvs).
 _SKIP_PARTS = {"__pycache__", ".venv", "venv", "Python", "node_modules", "site-packages"}

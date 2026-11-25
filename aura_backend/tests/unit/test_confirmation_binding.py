@@ -284,7 +284,9 @@ class _ScriptedPlanner:
         self.plan_to_return = plan
         self.asked = 0
 
-    def needs_plan(self, message, *, available_tools=(), force=None) -> bool:  # noqa: ANN001
+    def needs_plan(  # noqa: ANN001
+        self, message, *, available_tools=(), force=None, previous_reply=None
+    ) -> bool:
         return True
 
     def goal_from_message(self, message, *, criteria=()):  # noqa: ANN001

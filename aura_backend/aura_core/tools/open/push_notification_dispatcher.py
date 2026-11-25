@@ -1,3 +1,14 @@
+"""Not exposed (ADR-036, 2026-11-21) -- deliberately NOT registered as a tool. ``dispatch_to_webhook``
+POSTs to any caller-named URL with ``urllib`` and no SSRF guard (contrast ``fetch_url``'s
+``_assert_public_url``), and without a URL ``dispatch`` reports ``status: "delivered"`` when nothing
+was sent. AURA's outbound notices go through ``notifications/service.py`` (KAN-34).
+
+Reachable from no persona: nothing under ``aura_core`` imports this module, which
+``tests/architecture/test_open_tools_classification.py`` checks against
+``tools/open/_classification.py``. Kept as reference code; change that classification and
+ADR-036 before wiring it in.
+"""
+
 import base64
 import json
 import time

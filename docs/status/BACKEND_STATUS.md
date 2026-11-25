@@ -7,6 +7,10 @@
 
 ## Summary
 
+**Update 2026-11-22, `GET /api/v3/turns/{turn_id}/usage` (branch `anas/laughing-darwin-6g7r2l`, TESTED locally, not CI-run or deployed; adds migration `0033`).** A turn's tokens by purpose, cost, model and latency, readable later by `turn_id` (the same numbers still come back inline on `/chat` and the stream's `done` frame). `aura_turn_telemetry` holds no user id by design, so the route is scoped by a new `owner_ref` column: the HMAC of the user id under a key derived from the JWT secret (`aura_core/security/owner_ref.py`), not the id itself. A turn that is missing, someone else's, recorded before `0033`, or recorded with no secret configured all answer the same 404, and a deployment without a secret fails closed. `owner_ref` is personal data: account erasure deletes by it (`telemetry_owner_turns` step), retention still purges by age, and it is kept out of `TurnTelemetry.as_dict`, logs and metrics. Rotating the JWT secret orphans existing rows (unreadable, never readable by someone else). No new Railway variable: the key derives from the existing JWT secret. Verified on a real Postgres 16.15 (new `tests/load/test_turn_usage_postgres.py`, the audit-retention test on the same table, and the all-revisions up/down round-trip, 5 passed) and in `tests/unit/test_turn_usage.py` (19 passed; breaking the owner check on purpose fails 4 of them, one over HTTP between two users). The first deploy after the merge applies `0033` in Railway's pre-deploy step (a nullable column and a partial index, no rewrite). No app screen calls the route yet (`docs/guides/api-reachability.md`, triaged "to wire").
+
+**Update 2026-11-22, `/api/v3/me` (branch `anas/laughing-darwin-6g7r2l`, TESTED locally, not CI-run or deployed).** `GET /me`, `PATCH /me` (display name, photo, language, time zone; the email is refused) and `POST /me/password` (`aura_backend/api/me.py`). Sign-in and the password stay at Firebase: this server stores no password. A password change needs a Firebase ID token from signing in with the *current* password in the last 5 minutes, for the same account, then revokes every session and paired device. Register and forgot/reset password remain in the client's Firebase SDK. 41 new tests in `tests/unit/test_me_profile.py` (a mutation of the freshness and account checks makes 3 of them fail); `tests/architecture` and the neighbouring auth tests: 544 passed. The Firebase calls are replaced by a scripted provider, so nothing has run against a real Firebase project, and there is no app screen yet (`docs/guides/api-reachability.md`, triaged "to wire"). A full `pytest -x` stopped at `test_context_window_improve.py::TestCountEachItemOnce::test_history_is_counted_once_even_when_the_cap_drops_messages`. That test was flaky on its own (5 failures in 40 isolated runs), not order-dependent as first written here: the turn's fence nonce is random and the heuristic counts a digit/letter-alternating nonce as more tokens, so the prompt's floor ranged from 188 to 207 against a cap of 200. The test now fixes the nonce (0 failures in 60 runs); production behaviour is unchanged (an over-cap prompt only logs a warning).
+
 **Update 2026-11-18, Phase R (same branch, TESTED locally, not CI-run or deployed).** On Railway,
 `/metrics` was answered by one random uvicorn worker per scrape. The image `CMD` now shares one
 `PROMETHEUS_MULTIPROC_DIR`. Tracing produced no spans at all; requests, provider attempts and turns
@@ -99,6 +103,7 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 | Security regression suite (P1.5) | TESTED | GAP-048 `built_not_proven` |
 | Engineer workspaces (ADR-013/014) | BUILT | GAP-025; off by default; no `verify-engineer-workspaces` report |
 | Open code-analysis tools (ADR-036) | BUILT, tested locally, **not proven** | GAP-066. 17 pure analysis tools (`tools/analysis.py`) on by default; two code-running tools (`tools/open_exec.py`) off by default, `engineer_agent` + per-call confirmation, run in a child of the gateway with no container; three docker/profiling tools (`tools/desktop_ops.py`) that run only on a paired desktop. Six duplicate classes stay unregistered; dev-server and browser tools deferred (need hostd RPCs). Unit and architecture pins only: no live listing, no real desktop run, planner prompt cost on the production model unmeasured |
+| Structured extraction tool, Cloudflare `clairic` (ADR-038) | BUILT, tested locally, **not proven** | GAP-068 `built_not_proven`. An `extract_structured` tool (`tools/extract.py`) behind its own flag (`AURA_ALLOW_EXTRACTION_INFERENCE`, off by default), one adapter at a fixed endpoint, the `internal` data ceiling, a per-process daily cap and a rule that withholds any value below `AURA_EXTRACT_MIN_CONFIDENCE`. 263 unit tests and 6 architecture pins pass on Python 3.14 (not the locked 3.11, not CI-run); `/health/ready` reports an informational `extraction` block. No call has reached Cloudflare from a deployed gateway; the opt-in live check (`tests/load/test_extraction_live.py`) has not been run, so accuracy, Arabic support and the minimum token permissions are unmeasured (O-1 to O-6). One probe on 2026-11-22 returned a wrong due date at confidence 0.096. Not plumbed on the VPS compose stack (needs a docker secret and parity). Runbook: `docs/deployment/control-plane.md`, "Optional: structured extraction" |
 | Engineer on Claude: workload fence, consent, per-user allowance (ADR-033 amendment 2026-11-17) | BUILT; merged in PR #251 (`d47e064`, 2026-11-18) and DEPLOYED: live `/health/ready` at 08:46 UTC showed `git_sha d47e064`, `schema.revision 0023`, `healthy: true` -- the first real deploy where Railway's pre-deploy command applied a new migration; TESTED locally, not CI-run | WP6a `AURA_PROVIDER_<N>_WORKLOADS`; WP1 consent (`/api/v3/engineering/consent`, migration `0023`, kernel refusal `consent_required`); WP2 `USER_TPD` (`user_quota_exhausted`). Real Postgres 16 and Redis tests pass. No Claude slot is configured on Railway yet (WP6: the runbook is `docs/deployment/control-plane.md`, "Claude for the Engineer"; the variables are the owner's to set), so no Engineer turn runs live; notice text awaits owner review (O-03). See `docs/module-readiness/engineer-agent/desktop-github/2026-11-17/` |
 | Desktop hostd bridge | BUILT | GAP-026; F-21 (confirmed): non-streaming `run` returns `''` / `-1` |
 | Observability | OPEN | GAP-036, GAP-037 |
@@ -236,6 +241,103 @@ That needs a check in the Firebase console.
 - #252 (open, 2026-11-17): multi-provider offsite backups with a two-copy quorum, configuration
   checks, `backup-fetch.sh`, and the `AuraBackupUnderReplicated` / `AuraBackupOffsiteStale`
   alerts. Deploy-stack only; no backend code. Local checks pass; CI ran with no logs (CB-44).
+
+- 2026-11-21, merged as #275 and #276 (live at `85258222`, `schema.revision 0031` checked on
+  `/health/ready`): console control center stage 1
+  (ADR-037, GAP-067; plan `docs/plans/console-control-center-plan.md`). It adds:
+  - `/api/v3/admin/control/*`: overview, settings catalog, changes, step-up challenge, redeem
+    and revoke, and platform credential and disconnect. Every route is SuperAdmin-only, and
+    every write is step-up gated and typed-confirmed.
+  - Migration `0031` (four tables); after it merges, `/health/ready`'s `schema.revision` should
+    read `0031`.
+  - Platform tokens are sealed in the vault under `AURA_SECRETS_ENCRYPTION_KEY`. A missing or
+    malformed key disables the control center, not the gateway.
+
+  TESTED locally:
+  - default `pytest`: 6576 passed, 12 failed, 50 skipped. The 12 failures are already on `main`
+    from the `tools/open` work: `test_open_tools_fixes.py` (10), `test_analysis_tools.py` (1),
+    and `test_no_runtime_ddl.py` (`database_intelligence_tool.py:168`);
+  - legacy `unittest`: 148 OK;
+  - `tests/load/test_control_store_postgres.py` and the migration round trip on PG16.
+
+  Not CI-run (CB-44). Not proven: no real Google step-up or platform call has been made.
+
+- 2026-11-22, merged as #278 (live at `6aab72f7`): control center stage 2, Railway
+  (ADR-037, GAP-067). It adds:
+  - `/api/v3/admin/control/railway/*`: services, variables (secret values never returned),
+    deployments, logs (secrets masked), a dry-run validate, and the step-up-gated
+    set-variables, redeploy, restart and rollback actions.
+  - `adapters/railway_platform.py`: the GraphQL client, checked against Railway's live schema.
+  - `adapters/settings_probe.py`: candidate settings validated in a child process.
+  - The rollback Reconciler is started by the gateway in staging/production
+    (`AURA_CONTROL_RECONCILER`).
+  - No migration.
+
+  TESTED locally:
+  - default `pytest` after merging `main` at `7591762f`: 6952 passed, 0 failed, 55 skipped
+    (`main` had fixed the 12 `tools/open` failures);
+  - legacy `unittest`: 148 OK.
+
+  Not CI-run (CB-44). Not proven: no live Railway call has been made with a real project token.
+
+- 2026-11-22, merged as #278: control center stage 3, the GPU Space (ADR-037,
+  GAP-067). It adds:
+  - `/api/v3/admin/control/space/*`: status, variables (watched for
+    `AURA_CONTROL_SPACE_WATCH_S`, 20 minutes, and put back if the Space errors), write-only
+    secrets journaled as not restorable, pause/resume, restart, rebuild, hardware, sleep time
+    and logs.
+  - `adapters/hf_space.py` on `huggingface_hub` 1.28.
+  - The reconciler now watches the Space too.
+
+  TESTED locally after merging `main` at `f880826a`: `pytest` 7035 passed, 0 failed, 55
+  skipped; legacy `unittest` 148 OK. Not CI-run (CB-44). Not proven: no live Hub call has been
+  made from the gateway.
+
+- 2026-11-22, merged as #278: control center stage 4, provider keys (ADR-037,
+  GAP-067). It adds:
+  - `/api/v3/admin/control/keys/*`. Each key is a gateway variable change, checked, watched and
+    rolled back by stage 2's machinery.
+  - Replace (any slot).
+  - Rotate both sides (the GPU Space's `VLLM_API_KEY` and the gateway's variable, with the
+    reconciler's new companion restore).
+  - Cloudflare Workers AI create and revoke (`adapters/cloudflare_tokens.py`).
+
+  TESTED locally (`main` at `f880826a`): `pytest` 7069 passed, 0 failed, 55 skipped; legacy
+  `unittest` 148 OK. Not CI-run (CB-44). Not proven: no live key rotation has been made.
+
+- 2026-11-22, branch `anas/laughing-hamilton-glfevj`, unmerged: control center stage 5 (ADR-037,
+  GAP-067; every stage is now built). It adds:
+  - `/api/v3/admin/control/monitoring`: Grafana Cloud. Alert rule groups are applied to the
+    stack's ruler with per-group results; the scrape job and uptime checks are shown as exact
+    values with their live state; firing alerts are listed.
+  - `/api/v3/admin/control/vector`: Qdrant Cloud. Health, collections, snapshots, and a restore
+    that takes a safety snapshot first.
+  - A packaged copy of `deploy/monitoring/alerts/aura.yml`, kept byte-identical by a test.
+  - Grafana tokens are verified on Connect.
+
+  TESTED locally (`main` at `6aab72f7`): `pytest` 7108 passed, 0 failed, 55 skipped; legacy
+  `unittest` 148 OK. Not CI-run (CB-44). Not proven: no live Grafana or Qdrant call has been
+  made from the gateway, and the Cloud restore path is unconfirmed.
+
+- 2026-11-23, branch `anas/cf-tab-c3-usage-r2-02d523` (on `anas/console-cloudflare-tab`, unmerged): the
+  Cloudflare tab's read-only usage and R2 views (console plan stage 6, C3; GAP-067). It adds:
+  - `CloudflareAccount.usage()` and `.r2_buckets()` (`adapters/cloudflare_account.py`), and
+    `CloudflareControl.usage()` / `.r2()`, answering `ok`, `not_enabled`, `no_permission` or
+    `unavailable` as a named state, never an exception and never a zero.
+  - `GET /api/v3/admin/control/cloudflare/usage` and `.../r2` (Super Admin only, no-store).
+  - Usage reads the GraphQL dataset `aiInferenceAdaptiveGroups` for the UTC day and reports the
+    10,000-neuron figure as the free-plan allowance. R2 reads the bucket list (error 10042 is
+    `not_enabled`) plus each bucket's lock rules, best effort.
+
+  TESTED locally on Python 3.14 (not the locked 3.11, not CI-run): the two new test files 87 passed,
+  and the Cloudflare, control-center and architecture suites 857 passed, 1 failed of 858. The one
+  failure is the pubspec scan in `test_no_external_inference.py`, which skips any path under
+  `.claude/` and so fails in a worktree (it is a path artifact, not a change); the reachability
+  matrix was stale at the first run and passes after `scripts/api_reachability.py`. Console: `tsc`,
+  `lint` (warnings fail) and `build` clean, Playwright 43 of 44 (the one, a Vector DB test, timed
+  out under load and passed 2 of 2 on its own re-run). **Not proven:** nothing
+  has run against real Cloudflare. The neuron field name is unconfirmed (without one the view shows
+  requests only), and the bucket lock endpoint and the bucket cursor are unverified.
 
 ## Next steps
 
