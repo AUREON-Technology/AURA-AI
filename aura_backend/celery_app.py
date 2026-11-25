@@ -249,4 +249,13 @@ if _truthy(os.environ.get("AURA_OSV_SYNC_ENABLED"), default=False):
         "options": {"queue": "learning"},
     }
 
+# Production inference monitoring (ADR-052): per-model metrics from the turn telemetry, checked for drift.
+# Opt-in; measures only -- it never starts an evaluation or a retrain.
+if _truthy(os.environ.get("AURA_MODEL_MONITOR_ENABLED"), default=False):
+    _beat_schedule["model-monitor"] = {
+        "task": "tasks.model_monitor_task",
+        "schedule": _crontab_from_cron(os.environ.get("AURA_MODEL_MONITOR_CRON") or "15 * * * *"),
+        "options": {"queue": "learning"},
+    }
+
 celery_app.conf.beat_schedule = _beat_schedule

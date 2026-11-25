@@ -770,6 +770,11 @@ services:
       AURA_EMBEDDING_DIMENSION: ${AURA_EMBEDDING_DIMENSION:-384}
       AURA_LEARNING_REFRESH_ENABLED: ${AURA_LEARNING_REFRESH_ENABLED:-true}
       AURA_LEARNING_REFRESH_CRON: ${AURA_LEARNING_REFRESH_CRON:-0 2 * * *}
+      # Production-inference monitoring (ADR-052): off by default; measures only, never starts an eval or retrain.
+      AURA_MODEL_MONITOR_ENABLED: ${AURA_MODEL_MONITOR_ENABLED:-false}
+      AURA_MODEL_MONITOR_CRON: ${AURA_MODEL_MONITOR_CRON:-15 * * * *}
+      AURA_MODEL_MONITOR_WINDOW_HOURS: ${AURA_MODEL_MONITOR_WINDOW_HOURS:-24}
+      AURA_MODEL_MONITOR_MIN_TURNS: ${AURA_MODEL_MONITOR_MIN_TURNS:-20}
       # Local copy of public vulnerability advisories (OSV) for the dependency scan. Off by default; when on,
       # the learning worker downloads from storage.googleapis.com only, so it needs an outbound route to it.
       AURA_OSV_SYNC_ENABLED: ${AURA_OSV_SYNC_ENABLED:-false}

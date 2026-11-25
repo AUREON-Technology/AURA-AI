@@ -45,7 +45,7 @@ from ..ports.storage import Cache
 from .base import param, tool
 from .open.model_drift_and_performance_monitor import ModelDriftAndPerformanceMonitor as Drift
 
-__all__ = ["build_drift_tools", "DRIFT_TOOL_NAMES"]
+__all__ = ["build_drift_tools", "DRIFT_TOOL_NAMES", "DriftStore"]
 
 DRIFT_TOOL_NAMES: frozenset[str] = frozenset({"record_model_metric", "compare_model_metric"})
 _NAME = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
@@ -99,20 +99,23 @@ def _k2(owner: str, model: str, metric: str, part: str) -> str:
     return f"aura:drift:v2:{owner}:{model}:{metric}:{part}"
 
 
-def build_drift_tools(cache: Cache) -> list[Tool]:
-    """The two tools over ``cache``.
+class DriftStore:
+    """The model-metric history over a :class:`Cache` -- shared by the agent tools and the scheduled monitor.
 
-    Storage is built so that two writers (two gateway workers, or a worker and a scheduled job) cannot
-    lose each other's observations: each observation is **appended** to a list with one atomic operation
-    (``Cache.append_capped``), its sequence number comes from the cache's atomic counter, and the baseline
-    pin is its own key. The first version kept the whole history as one blob under a get-modify-set, where
-    two concurrent writers read the same blob and the later write erased the earlier observation (and both
-    took the same ``seq``). That blob (``aura:drift:v1:``) is still read, never written, so a history
-    recorded before the change stays visible until its 90-day TTL ends.
+    Storage is built so that two writers (two gateway workers, or a worker and the monitor job) cannot lose
+    each other's observations: each observation is **appended** to a list with one atomic operation
+    (``Cache.append_capped``), its sequence number comes from the cache's atomic counter, and the baseline pin
+    is its own key. The first version kept the whole history as one blob under a get-modify-set, where two
+    concurrent writers read the same blob and the later write erased the earlier observation (and both took the
+    same ``seq``). That blob (``aura:drift:v1:``) is still read, never written, so a history recorded before the
+    change stays visible until its 90-day TTL ends.
     """
 
-    async def load_legacy(key: str) -> dict[str, Any]:
-        raw = await cache.get(key)
+    def __init__(self, cache: Cache) -> None:
+        self._cache = cache
+
+    async def _load_legacy(self, key: str) -> dict[str, Any]:
+        raw = await self._cache.get(key)
         if raw:
             try:
                 data = json.loads(raw)
@@ -122,10 +125,10 @@ def build_drift_tools(cache: Cache) -> list[Tool]:
                 pass
         return {"baseline": None, "entries": []}
 
-    async def load(owner: str, model: str, metric: str) -> dict[str, Any]:
-        legacy = await load_legacy(_key(owner, model, metric))
+    async def load(self, owner: str, model: str, metric: str) -> dict[str, Any]:
+        legacy = await self._load_legacy(_key(owner, model, metric))
         entries = list(legacy["entries"])
-        for raw in await cache.get_list(_k2(owner, model, metric, "entries")):
+        for raw in await self._cache.get_list(_k2(owner, model, metric, "entries")):
             try:
                 item = json.loads(raw)
             except ValueError:
@@ -133,7 +136,7 @@ def build_drift_tools(cache: Cache) -> list[Tool]:
             if isinstance(item, dict):
                 entries.append(item)
         baseline = legacy.get("baseline")
-        pinned = await cache.get(_k2(owner, model, metric, "baseline"))
+        pinned = await self._cache.get(_k2(owner, model, metric, "baseline"))
         if pinned:
             try:
                 baseline = json.loads(pinned)
@@ -141,18 +144,18 @@ def build_drift_tools(cache: Cache) -> list[Tool]:
                 pass
         return {"baseline": baseline, "entries": entries[-_MAX_ENTRIES:], "legacy_seq": int(legacy.get("seq", 0))}
 
-    async def known_series(owner: str) -> list[str]:
+    async def known_series(self, owner: str) -> list[str]:
         names: list[str] = []
-        legacy = await cache.get(f"aura:drift:v1:{owner}:_index")
+        legacy = await self._cache.get(f"aura:drift:v1:{owner}:_index")
         try:
             names += [str(x) for x in (json.loads(legacy) if legacy else [])]
         except ValueError:
             pass
-        names += [raw.decode("utf-8", "replace") for raw in await cache.get_list(f"aura:drift:v2:{owner}:_index")]
+        names += [raw.decode("utf-8", "replace") for raw in await self._cache.get_list(f"aura:drift:v2:{owner}:_index")]
         return list(dict.fromkeys(names))
 
-    async def register_series(owner: str, series: str, tool_name: str) -> None:
-        known = await known_series(owner)
+    async def register_series(self, owner: str, series: str, tool_name: str) -> None:
+        known = await self.known_series(owner)
         if series in known:
             return
         if len(known) >= _MAX_SERIES:
@@ -160,8 +163,30 @@ def build_drift_tools(cache: Cache) -> list[Tool]:
                 f"at most {_MAX_SERIES} model/metric series per owner; clear one first", tool=tool_name)
         # Soft cap under concurrency: two first-writers can both pass the check above, so a burst may
         # exceed the cap by a few. No series is ever lost, which is the property that matters.
-        await cache.append_capped(f"aura:drift:v2:{owner}:_index", series.encode("utf-8"),
-                                  max_len=_MAX_SERIES * 10, ttl_s=_TTL_S)
+        await self._cache.append_capped(f"aura:drift:v2:{owner}:_index", series.encode("utf-8"),
+                                        max_len=_MAX_SERIES * 10, ttl_s=_TTL_S)
+
+    async def append(self, owner: str, model: str, metric: str, entry: dict[str, Any], legacy_seq: int) -> dict[str, Any]:
+        """Add one observation (``entry`` holds ``value`` or ``values``); returns it with its ``seq``."""
+        entry = {**entry, "seq": legacy_seq + await self._cache.incr(_k2(owner, model, metric, "seq"), ttl_s=_TTL_S)}
+        await self._cache.append_capped(_k2(owner, model, metric, "entries"), json.dumps(entry).encode("utf-8"),
+                                        max_len=_MAX_ENTRIES, ttl_s=_TTL_S)
+        return entry
+
+    async def pin_baseline(self, owner: str, model: str, metric: str, baseline: dict[str, Any]) -> None:
+        await self._cache.set(_k2(owner, model, metric, "baseline"), json.dumps(baseline).encode("utf-8"), ttl_s=_TTL_S)
+
+    async def clear(self, owner: str, model: str, metric: str) -> None:
+        for part in ("entries", "baseline"):
+            await self._cache.delete(_k2(owner, model, metric, part))
+        await self._cache.delete(_key(owner, model, metric))
+
+
+def build_drift_tools(cache: Cache) -> list[Tool]:
+    """The two tools over ``cache`` (storage: :class:`DriftStore`)."""
+    store = DriftStore(cache)
+    load = store.load
+    register_series = store.register_series
 
     @tool(
         "record_model_metric",
@@ -185,16 +210,14 @@ def build_drift_tools(cache: Cache) -> list[Tool]:
         owner = _owner(context)
         data = await load(owner, model, metric)
         if operation == "clear":
-            for part in ("entries", "baseline"):
-                await cache.delete(_k2(owner, model, metric, part))
-            await cache.delete(_key(owner, model, metric))
+            await store.clear(owner, model, metric)
             return json.dumps({"cleared": True, "model": model, "metric": metric,
                                "entries_removed": len(data["entries"])})
         if operation == "set_baseline":
             if not data["entries"]:
                 raise ToolExecutionError("nothing recorded for this model/metric yet", tool=name)
             baseline = data["entries"][-1]
-            await cache.set(_k2(owner, model, metric, "baseline"), json.dumps(baseline).encode("utf-8"), ttl_s=_TTL_S)
+            await store.pin_baseline(owner, model, metric, baseline)
             return json.dumps({"baseline_set": True, "baseline": baseline, "entries": len(data["entries"])})
         if (value is None) == (values is None):
             raise ToolExecutionError("record needs exactly one of value or values", tool=name)
@@ -217,9 +240,7 @@ def build_drift_tools(cache: Cache) -> list[Tool]:
         await register_series(owner, f"{model}:{metric}", name)
         # The identity of an observation (two can share a millisecond): an atomic counter, offset past any
         # sequence the legacy blob already used so the two histories never reuse a number.
-        entry["seq"] = data["legacy_seq"] + await cache.incr(_k2(owner, model, metric, "seq"), ttl_s=_TTL_S)
-        await cache.append_capped(_k2(owner, model, metric, "entries"), json.dumps(entry).encode("utf-8"),
-                                          max_len=_MAX_ENTRIES, ttl_s=_TTL_S)
+        entry = await store.append(owner, model, metric, entry, data["legacy_seq"])
         return json.dumps({"recorded": True, "model": model, "metric": metric, "kind": kind,
                            "entries": min(len(data["entries"]) + 1, _MAX_ENTRIES),
                            "seq": entry["seq"], "baseline_pinned": data["baseline"] is not None})

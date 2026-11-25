@@ -1667,6 +1667,12 @@ class LearningSettings:
     #: returning a short error page.
     gate_max_shrink: float = 0.40
     index_retention_days: int = 7
+    #: Hourly job that turns production telemetry into per-model metric series and checks them for drift
+    #: (ADR-052). Off by default; it only measures and never starts an evaluation or a retrain.
+    model_monitor_enabled: bool = False
+    model_monitor_cron: str = "15 * * * *"
+    model_monitor_window_hours: int = 24
+    model_monitor_min_turns: int = 20
     finetune_min_examples: int = 500
     finetune_min_distinct_users: int = 5
     finetune_auto_launch: bool = False  # never true; see validate()
@@ -1713,6 +1719,10 @@ class LearningSettings:
             gate_max_count_delta=_float("LEARNING_GATE_COUNT_DELTA", 0.40, minimum=0.0, maximum=10.0),
             gate_max_shrink=_float("LEARNING_GATE_SHRINK", 0.40, minimum=0.0, maximum=1.0),
             index_retention_days=_int("LEARNING_INDEX_RETENTION_DAYS", 7, minimum=0),
+            model_monitor_enabled=_bool("MODEL_MONITOR_ENABLED", False),
+            model_monitor_cron=_env("MODEL_MONITOR_CRON", "15 * * * *") or "15 * * * *",
+            model_monitor_window_hours=_int("MODEL_MONITOR_WINDOW_HOURS", 24, minimum=1, maximum=24 * 14),
+            model_monitor_min_turns=_int("MODEL_MONITOR_MIN_TURNS", 20, minimum=1),
             finetune_min_examples=_int("LEARNING_FINETUNE_MIN_EXAMPLES", 500, minimum=1),
             finetune_min_distinct_users=_int("LEARNING_FINETUNE_MIN_USERS", 5, minimum=1),
             finetune_auto_launch=_bool("LEARNING_FINETUNE_AUTO_LAUNCH", False),
