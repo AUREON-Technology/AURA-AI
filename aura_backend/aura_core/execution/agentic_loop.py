@@ -529,10 +529,12 @@ class AgenticExecutor:
                     and not (budget.token_budget is not None and tokens_used >= budget.token_budget)
                     and not (watch is not None and watch.cancelled)
                 ):
+                    replan_started = time.perf_counter()
                     revised = await self._replan(
                         current, reason="critic_review", available_tools=available_tools,
                         max_iterations=max_iterations, feedback=feedback_lines(blocking),
                     )
+                    replan_ms += (time.perf_counter() - replan_started) * 1000.0
                     if revised is not None:
                         plan_revisions += 1
                         go("critic_revise")
@@ -568,11 +570,9 @@ class AgenticExecutor:
                 if outcome is None:
                     stop_reason = "no_outcome"
                     break
- claude/exec-lifecycle-telemetry
                 tools_ms += float(getattr(outcome, "duration_ms", 0.0) or 0.0)
 
                 go("executed")
- main
                 if recorder is not None:
                     await recorder.observed(
                         outcome, iteration=iteration, gate=gate,
@@ -713,18 +713,12 @@ class AgenticExecutor:
                     if recorder is not None:
                         await recorder.evaluated(iteration=iteration, stop_reason=stop_reason)
                     break
- claude/exec-lifecycle-telemetry
-                replan_started = time.perf_counter()
-                revised = await self._next_plan(
-                    outcome, available_tools=available_tools, max_iterations=max_iterations
-
-
                 if recorder is not None:
                     await recorder.evaluated(iteration=iteration, stop_reason=None)
+                replan_started = time.perf_counter()
                 revised = await self._replan(
                     outcome.plan, reason=replan_reason, available_tools=available_tools,
                     max_iterations=max_iterations, feedback=feedback,
- main
                 )
                 replan_ms += (time.perf_counter() - replan_started) * 1000.0
                 if revised is None:
