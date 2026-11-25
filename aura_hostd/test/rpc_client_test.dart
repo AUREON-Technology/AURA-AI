@@ -1,3 +1,4 @@
+import 'dart:math';
 // Integration test for HostAgentClient's wire protocol against a real local WebSocket server --
 // no mocking of dart:io, so this exercises the exact frame shapes the backend
 // (aura_backend/aura_core/api/host_agent.py, adapters/host_agent.py) sends and expects:
@@ -58,6 +59,25 @@ Future<void> _settle(bool Function() condition) async {
 }
 
 void main() {
+  // AUD-16: every paired computer reconnects at the same moment after each gateway redeploy.
+  group('reconnect jitter', () {
+    test('a wait is between half of the backoff and all of it', () {
+      const backoff = Duration(seconds: 8);
+      for (final draw in [0.0, 0.25, 0.5, 0.999]) {
+        final wait = HostAgentClient.jittered(backoff, _FixedRandom(draw));
+        expect(wait, greaterThanOrEqualTo(const Duration(seconds: 4)));
+        expect(wait, lessThanOrEqualTo(backoff), reason: 'maxBackoff must still bound it');
+      }
+      expect(HostAgentClient.jittered(backoff, _FixedRandom(0)), const Duration(seconds: 4));
+    });
+
+    test('different draws give different waits, so a fleet does not return together', () {
+      const backoff = Duration(seconds: 8);
+      final waits = {for (final d in [0.1, 0.4, 0.7, 0.95]) HostAgentClient.jittered(backoff, _FixedRandom(d))};
+      expect(waits.length, greaterThan(1));
+    });
+  });
+
   late _FakeServer server;
 
   setUp(() async {
@@ -552,4 +572,16 @@ class _RecordingHandler extends TaskHandler {
     cancelled.add(callId);
     super.cancel(callId);
   }
+}
+
+/// A [Random] whose `nextDouble` is fixed, for the jitter tests.
+class _FixedRandom implements Random {
+  _FixedRandom(this.value);
+  final double value;
+  @override
+  double nextDouble() => value;
+  @override
+  bool nextBool() => false;
+  @override
+  int nextInt(int max) => 0;
 }
