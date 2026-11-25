@@ -207,6 +207,7 @@ class ExecutionEngine:
         handlers: Mapping[StepKind, Callable[[PlanStep], Any]] | None = None,
         on_event: Callable[[StepEvent], Any] | None = None,
         gate: Any = None,
+        deadline_s: float | None = None,
     ) -> ExecutionOutcome:
         """Run the plan to completion, blockage, or budget exhaustion.
 
@@ -220,9 +221,13 @@ class ExecutionEngine:
         :class:`~aura_core.execution.confirmations.ConfirmationGrant` for a resumed turn, which
         admits a call only if it is identical to the one the user approved, and only once. There
         is no name- or position-based confirmation (F-04).
+
+        ``deadline_s`` overrides the engine's default wall-clock bound for this pass only. The
+        agent loop passes the time it has left, so a long Engineer step cannot use up a flat
+        default and leave its dependents ``deadline_exceeded`` while the loop still has time.
         """
         started = time.perf_counter()
-        deadline = started + self._deadline_s
+        deadline = started + (self._deadline_s if deadline_s is None else max(0.0, deadline_s))
         results: dict[str, str] = {}
         tool_reports: list[Any] = []
         pending_calls: list[PendingCall] = []
@@ -670,6 +675,7 @@ class ExecutionEngine:
         confirmations: ConfirmationGrant | None = None,
         handlers: Mapping[StepKind, Callable[[PlanStep], Any]] | None = None,
         gate: Any = None,
+        deadline_s: float | None = None,
     ) -> AsyncIterator[StepEvent | ExecutionOutcome]:
         """Execute while yielding progress, then yield the final outcome.
 
@@ -693,6 +699,7 @@ class ExecutionEngine:
                     handlers=handlers,
                     on_event=emit,
                     gate=gate,
+                    deadline_s=deadline_s,
                 )
                 await queue.put(outcome)
             finally:
