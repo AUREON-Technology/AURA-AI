@@ -30,8 +30,10 @@ from aura_core.tools.policy import ToolPolicy
 from aura_core.tools.registry import ToolRegistry
 
 SHA = "a" * 40
-READY_OK = {"healthy": True, "schema": {"revision": "0031", "expected": "0031", "healthy": True},
-            "database": {"healthy": True}, "providers": {"healthy": True}, "release": {"git_sha": SHA}}
+#: The shape ``Container.health`` returns (checked against the live gateway's /health/ready).
+READY_OK = {"healthy": True, "providers": {"hosted1": {"healthy": True}, "hfspace": {"healthy": False, "detail": "HTTP 503"}},
+            "checks": {"blueprint": {"healthy": True}, "schema": {"healthy": True, "revision": "0033"}},
+            "release": {"git_sha": SHA}}
 
 
 class Backend:
@@ -104,19 +106,21 @@ def ops(backend, **kw):
 class TestPlatformHealth:
     async def test_a_ready_platform_is_reported_with_its_commit_schema_and_components(self, backend) -> None:
         out = data(await call(ops(backend), "check_platform_health", expected_git_sha=SHA[:12],
-                              expected_schema_revision="0031"))
+                              expected_schema_revision="0033"))
         (origin,) = out["origins"]
-        assert out["all_healthy"] and origin["git_sha"] == SHA and origin["schema"]["revision"] == "0031"
-        assert origin["components"] == {"database": True, "providers": True, "schema": True}
+        assert out["all_healthy"] and origin["git_sha"] == SHA and origin["schema"]["revision"] == "0033"
+        assert origin["components"] == {"providers.hosted1": True, "providers.hfspace": False,
+                                        "checks.blueprint": True, "checks.schema": True}
+        assert origin["providers_down"] == ["hfspace"], "a provider down is reported, but does not make it not-ready"
         assert sorted(r.split("?")[0] for r in backend.requests) == sorted(HEALTH_PATHS)
 
     async def test_a_503_ready_with_an_unhealthy_component_names_it(self, backend) -> None:
-        backend.ready = (503, {"healthy": False, "database": {"healthy": False}, "providers": {"healthy": True}})
+        backend.ready = (503, {"healthy": False, "database": {"healthy": False}, "providers": {"a": {"healthy": True}}})
         out = data(await call(ops(backend), "check_platform_health", attempts=1))
         assert not out["all_healthy"] and "unhealthy components: database" in out["verdict"]
 
     async def test_a_schema_behind_the_code_is_called_out_the_cb43_case(self, backend) -> None:
-        backend.ready = (503, {"healthy": False, "schema": {"revision": "0013", "expected": "0015", "healthy": False}})
+        backend.ready = (503, {"healthy": False, "checks": {"schema": {"revision": "0013", "expected": "0015", "healthy": False}}})
         out = data(await call(ops(backend), "check_platform_health", attempts=1))
         assert "migration has not run" in out["verdict"] and "0013" in out["verdict"]
 
@@ -272,6 +276,74 @@ class TestTelemetry:
         monkeypatch.setattr(ops_module, "_get", spy)
         data(await call(self.tools(backend, token_env="OPS_TEST_TOKEN"), "query_telemetry", source="logs", query="{a=\"b\"}"))
         assert seen == ["Bearer s3cret-token"]
+
+
+class TestRailway:
+    """``source=railway``: deployments and their logs from Railway's GraphQL API (shapes checked live)."""
+
+    IDS = dict(railway_project_id="a85f9ca9-b8c6-4ccd-a99c-90cb45fadef9", railway_service_id="d0e5cc8a-0818-4bef-84a1-fbd3ec760011",
+               railway_environment_id="a9a791f3-3ffe-49a6-8760-e5594a9742ec")
+
+    def tools(self, backend, **kw):
+        return build_ops_tools(railway_token_env="RW_TEST_TOKEN", railway_api_url=backend.url + "/graphql", **self.IDS, **kw)
+
+    def serve(self, backend, *, logs, deployments=None):
+        deployments = deployments if deployments is not None else [
+            {"node": {"id": "dep-2", "status": "BUILDING", "createdAt": "2026-11-25T10:00:00Z", "meta": {"commitHash": "f" * 40}}},
+            {"node": {"id": "dep-1", "status": "SUCCESS", "createdAt": "2026-11-24T10:00:00Z",
+                      "meta": {"commitHash": SHA, "branch": "main", "reason": "deploy", "commitMessage": "fix login"}}}]
+        seen: list[dict] = []
+        outer = backend
+
+        class Post(BaseHTTPRequestHandler):
+            def log_message(self, *a): ...
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                seen.append({"auth": self.headers.get("Authorization"), **body})
+                data = ({"deployments": {"edges": deployments}} if "deployments(" in body["query"]
+                        else {"deploymentLogs": logs})
+                raw = json.dumps({"data": data}).encode()
+                self.send_response(200); self.send_header("Content-Length", str(len(raw))); self.end_headers(); self.wfile.write(raw)
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Post)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        backend.url = f"http://127.0.0.1:{server.server_port}"
+        outer.server_extra = server
+        return seen
+
+    async def test_logs_come_from_the_latest_successful_deployment_with_its_history(self, backend, monkeypatch) -> None:
+        monkeypatch.setenv("RW_TEST_TOKEN", "rw-secret")
+        seen = self.serve(backend, logs=[
+            {"timestamp": "2026-11-25T10:00:00Z", "message": '{"level":"error","msg":"database timeout","component":"db"}',
+             "severity": "error"},
+            {"timestamp": "2026-11-25T10:00:01Z", "message": '{"level":"error","msg":"database timeout","component":"db"}',
+             "severity": "error"}])
+        out = data(await call(self.tools(backend), "query_telemetry", source="railway", query="@level:error", minutes=120))
+        assert out["logs_from"] == "dep-1", "BUILDING is skipped: logs come from the deployment that is serving"
+        assert [d["status"] for d in out["deployments"]] == ["BUILDING", "SUCCESS"] and out["deployments"][1]["commit"] == SHA[:12]
+        assert out["lines"] == 2 and out["analysis"]
+        logs_call = seen[-1]
+        assert logs_call["variables"]["f"] == "@level:error" and logs_call["variables"]["d"] == "dep-1"
+        assert all(c["auth"] == "Bearer rw-secret" for c in seen)
+        star = data(await call(self.tools(backend), "query_telemetry", source="railway", query="*"))
+        assert seen[-1]["variables"]["f"] is None
+        backend.server_extra.shutdown()
+
+    async def test_a_missing_token_is_an_actionable_error_and_ids_are_validated(self, backend, monkeypatch) -> None:
+        monkeypatch.delenv("RW_TEST_TOKEN", raising=False)
+        res = await call(self.tools(backend), "query_telemetry", source="railway", query="*")
+        assert not res.ok and "AURA_OPS_RAILWAY_TOKEN_ENV" in res.content
+        with pytest.raises(ValueError):
+            build_ops_tools(railway_project_id="not-a-uuid", railway_service_id="x", railway_environment_id="y")
+        assert build_ops_tools(railway_token_env="X") == []
+
+    async def test_no_deployments_is_reported(self, backend, monkeypatch) -> None:
+        monkeypatch.setenv("RW_TEST_TOKEN", "t")
+        self.serve(backend, logs=[], deployments=[])
+        out = data(await call(self.tools(backend), "query_telemetry", source="railway", query="*"))
+        assert out["deployments"] == [] and "no deployments" in out["note"]
+        backend.server_extra.shutdown()
 
 
 class TestTraceAnalysis:
@@ -481,3 +553,10 @@ class TestWiring:
         for bad in ("../../repos/x/issues", "a.sh", "a b.yml", "deploy.yml?x=1"):
             with pytest.raises(GitHubApiError):
                 await client.dispatch_workflow("acme/aura", bad, ref="main")
+
+
+def test_requests_carry_an_explicit_user_agent_not_urllibs_default() -> None:
+    """Cloudflare-fronted APIs (Railway's) answer urllib's default agent with error 1010 -- found live."""
+    from aura_core.tools import ops as ops_module
+
+    assert ops_module._UA and "urllib" not in ops_module._UA.lower()

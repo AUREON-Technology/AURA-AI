@@ -1063,7 +1063,9 @@ def default_tools(
 
         tools += build_ops_tools(
             platform_origins=ops.platform_origins, loki_url=ops.loki_url, prometheus_url=ops.prometheus_url,
-            tempo_url=ops.tempo_url, token_env=ops.telemetry_token_env)
+            tempo_url=ops.tempo_url, token_env=ops.telemetry_token_env,
+            railway_project_id=ops.railway_project_id, railway_service_id=ops.railway_service_id,
+            railway_environment_id=ops.railway_environment_id, railway_token_env=ops.railway_token_env)
         if github_client_resolver is not None:
             tools += build_deploy_tools(
                 github_client_resolver, repo=github_default_repo,

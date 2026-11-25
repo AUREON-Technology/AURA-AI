@@ -38,11 +38,21 @@ from .base import param, tool
 from .open.telemetry_ext import analyze_incident
 from .open.trace_ext import analyze_trace
 
-__all__ = ["build_ops_tools", "OPS_TOOL_NAMES", "HEALTH_PATHS"]
+__all__ = ["build_ops_tools", "OPS_TOOL_NAMES", "HEALTH_PATHS", "RAILWAY_API"]
+
+#: Railway's public GraphQL API. Fixed: the only host ``source=railway`` talks to.
+RAILWAY_API = "https://backboard.railway.com/graphql/v2"
+_UUID = __import__("re").compile(r"^[0-9a-fA-F-]{36}$")
+_DEPLOYMENTS = ("query($p:String!,$s:String!,$e:String!){deployments(first:5,input:{projectId:$p,serviceId:$s,"
+                "environmentId:$e}){edges{node{id status createdAt meta}}}}")
+_DEPLOYMENT_LOGS = ("query($d:String!,$n:Int!,$f:String,$a:DateTime){deploymentLogs(deploymentId:$d,limit:$n,"
+                    "filter:$f,startDate:$a){timestamp message severity}}")
 
 OPS_TOOL_NAMES: frozenset[str] = frozenset({"check_platform_health", "query_telemetry"})
 #: The only paths the health tool requests.
 HEALTH_PATHS: tuple[str, ...] = ("/health/live", "/health/version", "/health/ready")
+#: Cloudflare-fronted APIs (Railway's) refuse urllib's default agent string with error 1010.
+_UA = "aura-ops/1.0"
 _MAX_BODY = 64 * 1024
 _MAX_TELEMETRY_BODY = 4 * 1024 * 1024
 
@@ -54,7 +64,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def _get(url: str, *, timeout: float, limit: int, headers: dict[str, str] | None = None) -> dict[str, Any]:
     """One GET; never raises for an HTTP status. ``{status, body(bytes), ms}`` or ``{error}``."""
-    request = urllib.request.Request(url, headers={"Accept": "application/json", **(headers or {})})
+    request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": _UA, **(headers or {})})
     opener = urllib.request.build_opener(_NoRedirect())
     started = time.monotonic()
     try:
@@ -64,6 +74,23 @@ def _get(url: str, *, timeout: float, limit: int, headers: dict[str, str] | None
     except urllib.error.HTTPError as exc:
         status, body = exc.code, exc.read(limit + 1)
     except Exception as exc:  # DNS, TLS, refused, timeout: the tool's answer is "could not reach"
+        return {"error": f"{type(exc).__name__}: {str(exc)[:160]}", "ms": round((time.monotonic() - started) * 1000)}
+    return {"status": status, "body": body[:limit], "truncated": len(body) > limit,
+            "ms": round((time.monotonic() - started) * 1000)}
+
+
+def _post(url: str, payload: dict[str, Any], *, timeout: float, limit: int, headers: dict[str, str]) -> dict[str, Any]:
+    request = urllib.request.Request(
+        url, data=json.dumps(payload).encode(), method="POST",
+        headers={"Accept": "application/json", "Content-Type": "application/json", "User-Agent": _UA, **headers})
+    opener = urllib.request.build_opener(_NoRedirect())
+    started = time.monotonic()
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            body, status = response.read(limit + 1), response.status
+    except urllib.error.HTTPError as exc:
+        status, body = exc.code, exc.read(limit + 1)
+    except Exception as exc:
         return {"error": f"{type(exc).__name__}: {str(exc)[:160]}", "ms": round((time.monotonic() - started) * 1000)}
     return {"status": status, "body": body[:limit], "truncated": len(body) > limit,
             "ms": round((time.monotonic() - started) * 1000)}
@@ -84,11 +111,21 @@ def _origin(url: str, *, insecure_ok: bool) -> str:
     return f"{parts.scheme}://{parts.netloc}"
 
 
-def _components(ready: Any) -> dict[str, Any]:
-    """Every top-level entry of the readiness body that carries a ``healthy`` flag."""
+def _components(ready: Any) -> dict[str, bool]:
+    """Health flags from a readiness body: top-level entries with ``healthy``, each provider under
+    ``providers`` and each entry under ``checks`` (the shape ``Container.health`` returns)."""
     if not isinstance(ready, dict):
         return {}
-    return {k: bool(v.get("healthy")) for k, v in ready.items() if isinstance(v, dict) and "healthy" in v}
+    out: dict[str, bool] = {}
+    for key, value in ready.items():
+        if not isinstance(value, dict):
+            continue
+        if key in ("providers", "checks"):
+            out.update({f"{key}.{name}": bool(v.get("healthy")) for name, v in value.items()
+                        if isinstance(v, dict) and "healthy" in v})
+        elif "healthy" in value:
+            out[key] = bool(value["healthy"])
+    return out
 
 
 def judge_health(results: dict[str, dict[str, Any]], *, expected_git_sha: str = "",
@@ -121,9 +158,14 @@ def judge_health(results: dict[str, dict[str, Any]], *, expected_git_sha: str = 
     if isinstance(ready, dict):
         facts["components"] = _components(ready)
         if ready.get("healthy") is not True:
-            down = [k for k, ok in facts["components"].items() if not ok]
+            down = [k for k, ok in facts["components"].items() if not ok and not k.startswith("providers.")]
             problems.append("not ready" + (f": unhealthy components: {', '.join(down)}" if down else ""))
-        schema = ready.get("schema") if isinstance(ready.get("schema"), dict) else {}
+        weak = [k.split(".", 1)[1] for k, ok in facts["components"].items() if k.startswith("providers.") and not ok]
+        if weak:
+            facts["providers_down"] = weak
+        checks = ready.get("checks") if isinstance(ready.get("checks"), dict) else {}
+        schema = ready.get("schema") if isinstance(ready.get("schema"), dict) else (
+            checks.get("schema") if isinstance(checks.get("schema"), dict) else {})
         if schema:
             facts["schema"] = {k: schema.get(k) for k in ("revision", "expected", "healthy") if k in schema}
             if schema.get("healthy") is False:
@@ -141,6 +183,11 @@ def build_ops_tools(
     prometheus_url: str = "",
     tempo_url: str = "",
     token_env: str = "",
+    railway_project_id: str = "",
+    railway_service_id: str = "",
+    railway_environment_id: str = "",
+    railway_token_env: str = "",
+    railway_api_url: str = RAILWAY_API,
     allow_insecure_http: bool = False,
 ) -> list[Tool]:
     """The ops tools the operator's configuration supports (possibly none)."""
@@ -209,15 +256,19 @@ def build_ops_tools(
 
         tools.append(check_platform_health)
 
-    configured = [k for k, v in sources.items() if v]
+    railway_ids = (railway_project_id, railway_service_id, railway_environment_id)
+    if any(railway_ids) and not all(_UUID.match(i or "") for i in railway_ids):
+        raise ValueError("the Railway project, service and environment ids must all be set, as UUIDs")
+    configured = [k for k, v in sources.items() if v] + (["railway"] if all(railway_ids) else [])
     if configured:
         @tool(
             "query_telemetry",
             "Read live telemetry from the operator's stack, bounded and read-only. source: logs (LogQL, "
-            "Loki), metrics (PromQL range query, Prometheus), traces (TraceQL search, Tempo) or trace "
-            "(one trace id, analysed: critical path, slowest spans, errors). Configured: "
+            "Loki), metrics (PromQL range query, Prometheus), traces (TraceQL search, Tempo), trace "
+            "(one trace id, analysed: critical path, slowest spans, errors) or railway (recent deployments "
+            "and their logs; query is Railway's filter such as @level:error, or * for all). Configured: "
             + ", ".join(configured) + ".",
-            param("source", "string", "What to read.", enum=("logs", "metrics", "traces", "trace")),
+            param("source", "string", "What to read.", enum=("logs", "metrics", "traces", "trace", "railway")),
             param("query", "string", "LogQL / PromQL / TraceQL, or the trace id for source=trace.", max_length=500),
             param("minutes", "integer", "Look back this far (default 60, max 1440).", required=False, default=60,
                   minimum=1, maximum=1440),
@@ -230,13 +281,15 @@ def build_ops_tools(
             name = "query_telemetry"
             kind = "traces" if source == "trace" else source
             base = sources.get(kind, "")
-            if not base:
+            if not base and not (source == "railway" and "railway" in configured):
                 raise ToolExecutionError(f"{source} is not configured on this deployment (configured: "
                                          f"{', '.join(configured)})", tool=name)
             if not query.strip() or any(ord(c) < 32 for c in query):
                 raise ToolExecutionError("the query must be non-empty text without control characters", tool=name)
             now = time.time()
             start = now - minutes * 60
+            if source == "railway":
+                return await _railway(query, minutes, limit)
             if source == "logs":
                 qs = urllib.parse.urlencode({"query": query, "start": int(start * 1e9), "end": int(now * 1e9),
                                              "limit": limit, "direction": "backward"})
@@ -287,6 +340,49 @@ def build_ops_tools(
             data = _need(got, name)
             return json.dumps({"source": "Tempo", "trace_id": trace_id, "analysis": analyze_trace(data),
                                "read_only": True}, ensure_ascii=False, default=str)
+
+        async def _railway(query: str, minutes: int, limit: int) -> str:
+            name = "query_telemetry"
+            token = os.environ.get(railway_token_env, "") if railway_token_env else ""
+            if not token:
+                raise ToolExecutionError("the Railway token is not available: the operator must put it in the "
+                                         "environment variable named by AURA_OPS_RAILWAY_TOKEN_ENV", tool=name)
+            headers = {"Authorization": f"Bearer {token}"}
+
+            async def gql(text: str, variables: dict[str, Any]) -> Any:
+                got = await asyncio.to_thread(_post, railway_api_url, {"query": text, "variables": variables},
+                                              timeout=30.0, limit=_MAX_TELEMETRY_BODY, headers=headers)
+                body = _need(got, name)
+                if body.get("errors"):
+                    raise ToolExecutionError("Railway refused the query: " + str(body["errors"][0].get("message"))[:200],
+                                             tool=name)
+                return body.get("data") or {}
+
+            edges = (await gql(_DEPLOYMENTS, {"p": railway_project_id, "s": railway_service_id,
+                                              "e": railway_environment_id})).get("deployments", {}).get("edges", [])
+            deployments = []
+            for edge in edges:
+                node = edge.get("node") or {}
+                meta = node.get("meta") or {}
+                deployments.append({"id": node.get("id"), "status": node.get("status"), "created_at": node.get("createdAt"),
+                                    "commit": str(meta.get("commitHash") or "")[:12], "branch": meta.get("branch"),
+                                    "reason": meta.get("reason"), "message": str(meta.get("commitMessage") or "")[:120]})
+            live = next((d for d in deployments if d["status"] == "SUCCESS"), deployments[0] if deployments else None)
+            if live is None:
+                return json.dumps({"source": "Railway", "deployments": [], "note": "no deployments found",
+                                   "read_only": True})
+            since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - minutes * 60))
+            filt = None if query.strip() in ("*", ".") else query.strip()
+            logs = (await gql(_DEPLOYMENT_LOGS, {"d": live["id"], "n": limit, "f": filt, "a": since})).get(
+                "deploymentLogs") or []
+            lines = [str(entry.get("message") or "") for entry in logs]
+            return json.dumps({
+                "source": "Railway", "deployments": deployments, "logs_from": live["id"], "window_minutes": minutes,
+                "lines": len(lines), "possibly_truncated": len(lines) >= limit,
+                "sample": [{"ts": e.get("timestamp"), "severity": e.get("severity"), "line": str(e.get("message"))[:400]}
+                           for e in logs[-20:]],
+                "analysis": analyze_incident(lines, None, None) if lines else None, "read_only": True,
+            }, ensure_ascii=False, default=str)
 
         tools.append(query_telemetry)
     return tools

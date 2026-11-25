@@ -1924,6 +1924,12 @@ class OpsSettings:
     telemetry_token_env: str = ""
     deploy_workflows: tuple[str, ...] = ()
     deploy_refs: tuple[str, ...] = ("main",)
+    #: Railway (``source=railway``): the service whose deployments and logs are read, and the name of the
+    #: environment variable holding a read token.
+    railway_project_id: str = ""
+    railway_service_id: str = ""
+    railway_environment_id: str = ""
+    railway_token_env: str = ""
 
     @classmethod
     def from_env(cls) -> "OpsSettings":
@@ -1947,7 +1953,13 @@ class OpsSettings:
             if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.ya?ml(:[A-Za-z_][A-Za-z0-9_-]{0,40})?", entry):
                 raise ConfigurationError("AURA_OPS_DEPLOY_WORKFLOWS entries are 'file.yml' or 'file.yml:input'",
                                          details={"value": entry})
+        railway = {k: (_env(f"OPS_RAILWAY_{k}_ID", "") or "").strip() for k in ("PROJECT", "SERVICE", "ENVIRONMENT")}
+        if any(railway.values()) and not all(re.fullmatch(r"[0-9a-fA-F-]{36}", v) for v in railway.values()):
+            raise ConfigurationError("AURA_OPS_RAILWAY_PROJECT_ID / _SERVICE_ID / _ENVIRONMENT_ID must all be set, as UUIDs")
         return cls(
+            railway_project_id=railway["PROJECT"], railway_service_id=railway["SERVICE"],
+            railway_environment_id=railway["ENVIRONMENT"],
+            railway_token_env=(_env("OPS_RAILWAY_TOKEN_ENV", "") or "").strip(),
             platform_origins=tuple(o.rstrip("/") for o in origins),
             loki_url=urls["LOKI"], prometheus_url=urls["PROMETHEUS"], tempo_url=urls["TEMPO"],
             telemetry_token_env=(_env("OPS_TELEMETRY_TOKEN_ENV", "") or "").strip(),
