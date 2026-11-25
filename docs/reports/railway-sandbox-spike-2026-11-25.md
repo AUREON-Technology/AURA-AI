@@ -168,3 +168,9 @@ Result: **87 passed, 0 failed.** All sandboxes and the checkpoint were destroyed
 
 Not covered: `npm install` and `uv` (not installed in the proof sandbox), the official SDK, and an
 independent review of the inspection code.
+
+**After this run**, an automated review of its commit found that, once the client had sent a cipher
+change, a ClientHello declaring 131,072 to 131,396 bytes was passed on unchecked (on the four
+hosts that are not inspected). Reproduced in tests and fixed. The fix has local tests only; it was
+not rerun on a real sandbox. Whether any of those networks would accept so large a greeting was
+not tested.
