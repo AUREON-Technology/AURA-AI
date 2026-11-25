@@ -1,4 +1,4 @@
-"""Dependency files read from the user's workspace, offline (ADR-043).
+"""Dependency files read from the user's workspace, offline (ADR-045).
 
 ``tools/open/dependency_manager_validator.py`` and its siblings judge text a caller pastes in. This
 module reads what is actually on disk -- manifests, lockfiles, a project's own ``site-packages`` and

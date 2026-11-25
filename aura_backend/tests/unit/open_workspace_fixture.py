@@ -1,4 +1,4 @@
-"""A realistic workspace for the ADR-043 tool tests: real-format lockfiles, a venv, a notebook, an ELF, a tarball."""
+"""A realistic workspace for the ADR-045 tool tests: real-format lockfiles, a venv, a notebook, an ELF, a tarball."""
 from __future__ import annotations
 
 import base64

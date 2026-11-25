@@ -1,4 +1,4 @@
-"""Platform operations tools (ADR-047): health of the platform's own hosts, and live telemetry.
+"""Platform operations tools (ADR-049): health of the platform's own hosts, and live telemetry.
 
 Two read-only tools, each registered only when the operator configured what it reads:
 

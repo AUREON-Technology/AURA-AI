@@ -1,4 +1,4 @@
-// Offline queue for agent task submissions (inventory row 91, ADR-041).
+// Offline queue for agent task submissions (inventory row 91, ADR-043).
 //
 // The real outbox, repository and AuraApiClient run against a MockClient that behaves like the
 // gateway's idempotency contract: the first request with a `client_request_id` creates a task

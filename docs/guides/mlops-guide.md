@@ -42,27 +42,34 @@ becomes a suggestion.
 Runs at 02:00 by default (`AURA_LEARNING_REFRESH_CRON`).
 
 ```
-collect → validate → dedupe → clean + guard → embed into a NEW index
-        → refresh graph → evaluate → report → promote (gated) → prune
+per source:  fetch → validate → dedupe → assess (writes nothing) → content gate → apply
+afterwards:  index current for the embedder?  yes → done
+                                              no  → rebuild a new index → gates → promote
 ```
 
-**The live index is never modified.** Everything is built into a new generation identified by
-`(logical_name, schema_version, embedding_model_id, dimension)`, and promotion is an alias
-repoint — O(1), and reversible in the same operation
-([ADR-007](../architecture/007-versioned-indexes.md)).
+**Nothing from a source reaches the live corpus unless that source passes the content gates**
+(quarantine rate ≤ 10 %, updated documents shrink ≤ 40 %); a failing source is held and retried
+next run while the others apply
+([ADR-008 amendment](../architecture/008-human-in-the-loop-learning.md)). The index is rebuilt only
+when the embedder or layout changed: it is identified by
+`(logical_name, schema_version, embedding_model_id, dimension)`, so that candidate is a separate
+physical index, and promotion is an alias repoint — O(1), and reversible in the same operation
+([ADR-007](../architecture/007-versioned-indexes.md)). With an unchanged embedder, new documents are
+embedded into the live index and the report says `index_rebuild: not_needed`.
 
-Promotion gates:
+Index gates (only on that rebuild):
 
 | Gate | Default | Catches |
 | --- | --- | --- |
-| `gate_max_recall_drop` | 0.02 | A rebuild that retrieves worse than what it replaces |
+| `gate_max_recall_drop` | 0.02 | A rebuild that retrieves worse than what it replaces (needs an evaluator; none is wired yet) |
 | `gate_max_error_rate` | 0.05 | An embedding backend degrading part-way through |
-| `gate_max_count_delta` | 0.40 | A source silently returning error pages instead of documents |
-| `min_chunks` | 1 | An empty build promoting cleanly |
+| `gate_max_count_delta` | 0.40 | A rebuild whose chunk count collapsed against a *readable* index |
+| `min_chunks` | 1 | A failed build promoting cleanly |
 
-A blocked promotion is reported in the `RefreshReport` and raises `AuraKnowledgeStale` after
-48 hours. Until then the previous index keeps serving, which is why a blocked promotion is a
-ticket rather than an incident.
+A held source is reported under `held_sources` and raises `AuraKnowledgeSourcesHeld` after two
+runs; a failed fetch or a blocked rebuild raises `AuraKnowledgeStale` after 48 hours. Until then
+nothing is lost: the live corpus is untouched by a held source, which is why a held source or a
+blocked rebuild is a ticket rather than an incident.
 
 ### Deduplication
 

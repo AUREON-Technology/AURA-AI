@@ -1,4 +1,4 @@
-"""Changed-line coverage and operator mutations for ``analyze_test_quality`` (ADR-044, row 21).
+"""Changed-line coverage and operator mutations for ``analyze_test_quality`` (ADR-046, row 21).
 
 ``TestCoverageAndMutationAnalyzer`` measures the whole module and flips only ``True``/``False``. This
 adds, for the same throwaway directory the tool already runs in:

@@ -1,4 +1,4 @@
-"""Turning a screenshot, mockup or diagram into structured requirements (ADR-040).
+"""Turning a screenshot, mockup or diagram into structured requirements (ADR-042).
 
 Two ways to get there, and the result says which one was used (``source``):
 

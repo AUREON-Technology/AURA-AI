@@ -1,4 +1,4 @@
-"""Workspace start/stop/restart/stats and the paired-desktop status (ADR-041, roadmap row 89).
+"""Workspace start/stop/restart/stats and the paired-desktop status (ADR-043, roadmap row 89).
 
 The real ``WorkspaceManager`` over the real in-memory workspace store and the real (unsandboxed,
 temp-directory) ``InMemorySandboxRunner``, driven through the ASGI app. The Docker adapter's new

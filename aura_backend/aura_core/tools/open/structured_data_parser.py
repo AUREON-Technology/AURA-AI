@@ -150,7 +150,14 @@ def _parse_text(content: str, fmt: str) -> Any:
 
 
 class StructuredDataParser:
-    """Parser and validator for JSON, YAML, TOML, and XML structured payloads with schema validation and line diagnostics."""
+    """Parser and validator for JSON, YAML, TOML, and XML structured payloads with schema validation and line diagnostics.
+
+    ADR-036 (2026-11-21): *wrapped* -- ``parse_with_line_errors`` backs the group A tool
+    ``validate_structured_text`` in ``tools/analysis.py``, which returns only a summary of the
+    parsed value, never the value itself (a YAML alias bomb parses to shared references but
+    serialises exponentially). YAML is ``safe_load`` only; XML is ElementTree on expat, which does
+    not fetch external entities and refuses entity-expansion bombs.
+    """
 
     @staticmethod
     def parse(content: str, data_format: str = "json") -> Dict[str, Any]:
@@ -278,14 +285,16 @@ class StructuredDataParser:
                 "offending_line": at(line_no),
             }
         except Exception as exc:
-            mark = getattr(exc, "problem_mark", None)  # PyYAML errors carry the position
-            if mark is not None:
-                line_no = int(mark.line) + 1
+            # PyYAML errors carry a 0-based ``problem_mark`` (``context_mark`` for some scanner
+            # errors); without reading it a YAML failure came back with ``line: None``.
+            mark = getattr(exc, "problem_mark", None) or getattr(exc, "context_mark", None)
+            if mark is not None and isinstance(getattr(mark, "line", None), int):
+                line_no = mark.line + 1
                 return {
                     "valid": False,
                     "error": getattr(exc, "problem", None) or str(exc),
                     "line": line_no,
-                    "column": int(mark.column) + 1,
+                    "column": getattr(mark, "column", 0) + 1,
                     "offending_line": at(line_no),
                 }
             return {

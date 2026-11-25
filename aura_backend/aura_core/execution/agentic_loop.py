@@ -29,7 +29,7 @@ Each iteration also still respects the execution engine's own per-pass step and 
 When a run context is supplied, :class:`~aura_core.execution.run_recorder.RunRecorder` persists
 the run and its steps through the ``AgentRunStore`` port.
 
-ADR-037 adds the loop's *intelligence* around that skeleton, each piece optional (``None`` = off,
+ADR-039 adds the loop's *intelligence* around that skeleton, each piece optional (``None`` = off,
 which is what a bare ``AgenticExecutor(planner=..., executor=...)`` gets) and wired from settings by
 the container:
 
@@ -211,7 +211,7 @@ class AgenticExecutor:
         #: ``AgentRunStore`` (``ports/coding.py``); ``None`` records nothing durable (metrics
         #: are still emitted when a run context is given).
         self._runs = runs
-        #: ADR-037 pieces. All optional; ``None`` / ``False`` is the loop as it was before them.
+        #: ADR-039 pieces. All optional; ``None`` / ``False`` is the loop as it was before them.
         self._stuck = stuck
         self._recovery = recovery
         self._critic = critic
@@ -752,7 +752,7 @@ class AgenticExecutor:
         """Stream step progress across every iteration, then yield the final outcome.
 
         Intermediate outcomes are not yielded -- only :class:`StepEvent`s during each pass,
-        :class:`LoopEvent`s (``budget``, ``context_pressure``, ``critic``, ``stuck``; ADR-037) when
+        :class:`LoopEvent`s (``budget``, ``context_pressure``, ``critic``, ``stuck``; ADR-039) when
         the loop has something to say, and the loop's final :class:`ExecutionOutcome` at the end,
         matching :meth:`~aura_core.execution.engine.ExecutionEngine.stream`'s own "progress, then
         the outcome" contract so callers (``AIKernel._iter_execution``) need no special case for

@@ -7,6 +7,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'core/auth/token_manager.dart';
 import 'core/config/backend_url_policy.dart';
 import 'core/config/config.dart';
+import 'core/config/firebase_web_options.dart';
 import 'core/design_system/design_system.dart';
 import 'core/locale/app_language.dart';
 import 'core/platform/document_language.dart';
@@ -29,7 +30,15 @@ void main() async {
   // Gracefully initialize Firebase for mobile/web,
   // falling back if not configured/supported on current platform
   try {
-    await Firebase.initializeApp();
+    if (kIsWeb) {
+      // The web has no google-services.json: its Firebase app is named by --dart-define values
+      // (core/config/firebase_web_options.dart). A build given none starts without Firebase, and
+      // sign-in then says it is unavailable instead of failing at boot.
+      final options = firebaseWebOptions();
+      if (options != null) await Firebase.initializeApp(options: options);
+    } else {
+      await Firebase.initializeApp();
+    }
   } catch (e) {
     debugPrint("Firebase initialization skipped/failed: $e. Running in local/developer mode.");
   }

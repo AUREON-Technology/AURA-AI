@@ -1,4 +1,4 @@
-"""ADR-040: ``parse_document``, ``inspect_spreadsheet``, ``ocr_image``, ``analyze_image_requirements``
+"""ADR-042: ``parse_document``, ``inspect_spreadsheet``, ``ocr_image``, ``analyze_image_requirements``
 and ``transcribe_audio``.
 
 Everything runs on real substrate: real PDFs / Word / PowerPoint / Excel files built byte by byte,

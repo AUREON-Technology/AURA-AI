@@ -1,4 +1,4 @@
-"""``verify_release_health``: judge a deployed service's health endpoints after a release (ADR-044).
+"""``verify_release_health``: judge a deployed service's health endpoints after a release (ADR-046).
 
 ``plan_rollout`` (``tools/analysis.py``) plans; this is the verification half. It GETs health URLs the
 operator has allowed and decides from the response *body* whether the release is serving: a 200 that

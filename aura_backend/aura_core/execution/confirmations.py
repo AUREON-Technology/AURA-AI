@@ -265,7 +265,7 @@ class PendingConfirmationStore:
     async def peek(
         self, approval_ids: Sequence[str], *, user_id: str, session_id: str | None
     ) -> "HeldTurn":
-        """Read the pending turn these ids name **without consuming it** (ADR-045, row 51).
+        """Read the pending turn these ids name **without consuming it** (ADR-047, row 51).
 
         The same owner and session checks as :meth:`claim`, so a stranger learns nothing and gets
         the same refusal. What it returns is the plan as stored; nothing about it can be executed

@@ -1,4 +1,4 @@
-"""Structured agent handoffs (ADR-038, inventory row 59).
+"""Structured agent handoffs (ADR-040, inventory row 59).
 
 ``delegate_to_agent`` used to hand a sub-agent one string. The sub-agent therefore started with no
 idea what the parent had already decided, finished, tried and failed at, or which files were in

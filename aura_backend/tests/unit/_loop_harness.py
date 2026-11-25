@@ -1,4 +1,4 @@
-"""Shared scaffolding for the agent-loop tests (ADR-037): drive a *real* engineer turn.
+"""Shared scaffolding for the agent-loop tests (ADR-039): drive a *real* engineer turn.
 
 Nothing under test is mocked. The kernel, planner, execution engine, tool registry, policy and
 agent loop are the container's own; the sandbox runs real commands in a temp directory

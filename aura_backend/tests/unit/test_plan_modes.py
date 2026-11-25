@@ -1,4 +1,4 @@
-"""Planning modes ``auto | plan | fast | review`` (planning/modes.py + the kernel, ADR-038, row 63).
+"""Planning modes ``auto | plan | fast | review`` (planning/modes.py + the kernel, ADR-040, row 63).
 
 Three levels. The decision table (``decide_plan``) is pure and tested exhaustively. The kernel tests
 run real turns through the real container, registry, policy and confirmation store; the only
@@ -156,7 +156,7 @@ class _Planner:
     def __init__(self, real, plan: Plan) -> None:
         self._real, self.plan_to_return, self.asked = real, plan, 0
 
-    def needs_plan(self, message, *, available_tools=(), force=None) -> bool:  # noqa: ANN001
+    def needs_plan(self, message, *, available_tools=(), force=None, previous_reply=None) -> bool:  # noqa: ANN001
         return self._real.needs_plan(message, available_tools=available_tools, force=force)
 
     def goal_from_message(self, message, *, criteria=()):  # noqa: ANN001
@@ -193,7 +193,14 @@ def _plan(*steps: PlanStep) -> Plan:
 
 def _container(**reasoning) -> Container:
     base = load_settings(refresh=True, validate=False)
-    return Container(dataclasses.replace(base, reasoning=dataclasses.replace(base.reasoning, **reasoning)))
+    # A prefill cap no turn reaches (0 means 400 here): the system prompt alone now exceeds the 400-token default (the merged branches'
+    # instruction text), and under that cap the context engine clips unpinned scratchpad notes --
+    # including the plan-review note these tests read. What the cap does to such a note in
+    # production is a separate question (see the merge PR's open items).
+    llm = dataclasses.replace(base.llm, max_prompt_tokens=100_000)
+    return Container(
+        dataclasses.replace(base, llm=llm, reasoning=dataclasses.replace(base.reasoning, **reasoning))
+    )
 
 
 async def _ready(calls: _Calls, *steps: PlanStep, **reasoning):

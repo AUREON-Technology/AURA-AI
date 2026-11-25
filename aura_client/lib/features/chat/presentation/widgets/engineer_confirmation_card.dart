@@ -421,7 +421,7 @@ class _GitCommitSummary extends StatelessWidget {
         if (paths.length > 20)
           Padding(
             padding: const EdgeInsets.only(top: 2),
-            child: Text('... +${paths.length - 20}', style: Theme.of(context).textTheme.bodySmall),
+            child: Text(_moreCount(paths.length - 20), style: Theme.of(context).textTheme.bodySmall),
           ),
         if (call.diffPreview != null && call.diffPreview!.trim().isNotEmpty)
           SandboxDiffView(diffText: call.diffPreview!),
@@ -479,3 +479,7 @@ class _GenericToolSummary extends StatelessWidget {
     );
   }
 }
+
+/// "... +N": only a count and punctuation, no words, so there is nothing to translate; kept out of
+/// a `Text('...')` literal so the hard-coded-text ratchet counts words, not symbols.
+String _moreCount(int n) => '... +$n';

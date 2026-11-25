@@ -1,4 +1,4 @@
-"""OpenAPI validation, schema-level breaking-change classification and test generation (ADR-044, row 93).
+"""OpenAPI validation, schema-level breaking-change classification and test generation (ADR-046, row 93).
 
 ``ApiContractValidator`` diffs *route sets* of JSON specs. This adds, over the same caller-supplied text
 (JSON **or YAML**):

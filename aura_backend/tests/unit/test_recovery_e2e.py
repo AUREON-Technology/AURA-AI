@@ -1,4 +1,4 @@
-"""The failure-recovery policy through a real Engineer kernel turn (ADR-037 / ADR-045, row 44).
+"""The failure-recovery policy through a real Engineer kernel turn (ADR-039 / ADR-047, row 44).
 
 ``AURA_LOOP_RECOVERY_POLICY_ENABLED`` stays default OFF. These tests turn it on in a real
 container and run real turns through the kernel -- real registry, tool policy, execution engine,

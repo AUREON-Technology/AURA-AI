@@ -48,6 +48,8 @@ class TestGroupInvariants:
             "check_requirements", "scan_dependency_licenses", "compare_api_specs", "inspect_sql",
             "analyze_logs", "validate_data_records", "evaluate_quality_gate", "check_model_drift",
             "synthesize_research", "plan_rollout",
+            # 2026-11-21 triage of the 25 modules added on 2026-11-19 (ADR-036, KAN-33).
+            "validate_structured_text",
         }
 
     @pytest.mark.parametrize("name", sorted(ANALYSIS_TOOL_NAMES))
@@ -116,20 +118,21 @@ class TestPersonaGrants:
 class TestPlannerPromptBudget:
     """`PlanningEngine` renders every available tool into its prompt, and the CPU-hosted model
     pays for each token of it. Measured when the group landed: +5.8K characters (~1.5K tokens) for
-    17 tools, on a baseline of ~4.6K. This pins that so growth is a decision, not a drift."""
+    17 tools, on a baseline of ~4.6K; 6,077 for 18 after `validate_structured_text` (2026-11-21).
+    This pins that so growth is a decision, not a drift."""
 
     def test_the_group_costs_no_more_than_the_measured_budget(self) -> None:
         from aura_core.planning.engine import _render_tool_line
 
         rendered = [_render_tool_line(t.spec.declaration()) for t in build_analysis_tools()]
         total = sum(len(line) + 1 for line in rendered)
-        # ADR-044 raised this from 7_000 to 8_500: twelve existing tools gained operations
+        # ADR-046 raised this from 7_000 to 8_500: twelve existing tools gained operations
         # (review depth, SQL schema, diagram derivation, OpenAPI diff, release checklist, metrics and
         # incident analysis, data quality) instead of getting twelve new tool names, which is the
         # cheaper way to add capability to this prompt. Measured at landing: 7_6xx.
         assert total < 8_500, (
             f"the analysis tools now take {total} chars of planner prompt (budget 8500, measured "
-            "5837 in ADR-036, about 7600 after ADR-044). Shorten descriptions, drop parameters, or "
+            "5837 in ADR-036, about 7600 after ADR-046). Shorten descriptions, drop parameters, or "
             "merge tools -- or raise the budget deliberately and say why in the ADR."
         )
 
@@ -344,6 +347,64 @@ class TestDependencyApiAndSqlTools:
         assert any("SELECT *" in w for w in out["warnings"])
         assert out["all_tables"] == ["a", "b"]
         assert out["index_hints"]
+
+
+def _yaml_alias_bomb(levels: int = 9) -> str:
+    """Each level is nine references to the previous one: tiny as text, 9**10 strings expanded."""
+    lines = ['a: &a ["x", "x", "x", "x", "x", "x", "x", "x", "x"]']
+    for i in range(levels):
+        prev, cur = chr(97 + i), chr(98 + i)
+        lines.append(f"{cur}: &{cur} [" + ", ".join(["*" + prev] * 9) + "]")
+    return "\n".join(lines) + "\n"
+
+
+def _xml_entity_bomb(levels: int = 9) -> str:
+    entities = ['<!ENTITY a "aaaaaaaaaa">']
+    for i in range(levels):
+        prev, cur = chr(97 + i), chr(98 + i)
+        entities.append(f'<!ENTITY {cur} "' + ("&" + prev + ";") * 10 + '">')
+    return "<!DOCTYPE l [" + "".join(entities) + "]><l>&" + chr(97 + levels) + ";</l>"
+
+
+class TestStructuredTextValidation:
+    """`validate_structured_text` (StructuredDataParser, wrapped 2026-11-21, KAN-33)."""
+
+    @pytest.mark.parametrize(
+        ("data_format", "content", "line"),
+        [
+            ("json", '{"a": 1,\n "b": }', 2),
+            ("yaml", "a: 1\nb: [1, 2\nc: 3\n", 3),
+            ("toml", "x = 1\ny = \n", 2),
+            ("xml", "<r>\n<a></b>\n</r>", 2),
+        ],
+    )
+    async def test_a_broken_document_reports_where(self, ctx, data_format, content, line) -> None:
+        out = await call("validate_structured_text", ctx, content=content, data_format=data_format)
+        assert out["valid"] is False
+        assert out["line"] == line
+        assert out["offending_line"] == content.splitlines()[line - 1]
+
+    async def test_a_valid_document_is_summarised_not_echoed(self, ctx) -> None:
+        out = await call("validate_structured_text", ctx, content="name: x\nport: 80\n", data_format="yaml")
+        assert out["valid"] is True and out["root_type"] == "dict"
+        assert out["top_level_keys"] == ["name", "port"]
+        assert "parsed_data" not in out
+        xml = await call("validate_structured_text", ctx, content="<r><a/><b/></r>", data_format="xml")
+        assert xml["valid"] is True and xml["root_tag"] == "r" and xml["children_count"] == 2
+
+    async def test_a_yaml_alias_bomb_is_not_expanded_into_the_result(self, ctx) -> None:
+        raw = await _TOOLS["validate_structured_text"].execute(
+            {"content": _yaml_alias_bomb(), "data_format": "yaml"}, ctx
+        )
+        out = json.loads(raw)
+        # The parser refuses a document whose aliases expand to too many nodes outright (it used to
+        # load it as shared references); either way nothing exponential reaches the result.
+        assert out["valid"] is False and "alias" in out["error"].lower()
+        assert len(raw) < 2_000
+
+    async def test_an_xml_entity_expansion_bomb_is_refused(self, ctx) -> None:
+        out = await call("validate_structured_text", ctx, content=_xml_entity_bomb(), data_format="xml")
+        assert out["valid"] is False
 
 
 class TestLogDataAndMetricTools:

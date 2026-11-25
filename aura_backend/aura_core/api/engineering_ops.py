@@ -1,4 +1,4 @@
-"""Workspace lifecycle and the paired-desktop status (ADR-041, roadmap row 89).
+"""Workspace lifecycle and the paired-desktop status (ADR-043, roadmap row 89).
 
 * ``POST /api/v3/engineering/workspaces/{id}/start`` | ``/stop`` | ``/restart``
 * ``GET  /api/v3/engineering/workspaces/{id}/stats``

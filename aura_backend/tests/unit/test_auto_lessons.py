@@ -1,4 +1,4 @@
-"""Automatic lessons from Engineer turns (ADR-038, inventory row 60).
+"""Automatic lessons from Engineer turns (ADR-040, inventory row 60).
 
 Layers: the pure extractor, the job against the real in-memory memory engine (what is written,
 where, and what is refused), the review path (approve promotes, reject deletes, nobody else can),
@@ -271,7 +271,7 @@ class _FixedPlanner:
     def __init__(self, plan: Plan) -> None:
         self._plan = plan
 
-    def needs_plan(self, message, *, available_tools=(), force=None) -> bool:  # noqa: ANN001
+    def needs_plan(self, message, *, available_tools=(), force=None, previous_reply=None) -> bool:  # noqa: ANN001
         return True
 
     def goal_from_message(self, message, *, criteria=()):  # noqa: ANN001

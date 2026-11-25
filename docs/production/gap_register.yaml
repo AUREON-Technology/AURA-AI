@@ -1698,3 +1698,121 @@ gaps:
       with no desktop, and (3) either Group B migrated onto SandboxRunner or a recorded decision
       to keep it gateway-side with the flag on in a named environment.
     status: built_not_proven
+  - gap_id: GAP-067
+    component: console/control-center
+    severity: P2
+    current_state: >-
+      Stages 1-5 built, not proven (ADR-037, docs/plans/console-control-center-plan.md). The
+      console's Settings page is Super-Admin-only (nav item hidden, page refuses, every
+      /api/v3/admin/control/* route 403s below SuperAdmin). Platform tokens for Railway, the HF GPU
+      Space, Grafana, Qdrant and Cloudflare are entered in the console, verified where the vendor
+      allows (Railway, HF, Cloudflare, Qdrant), encrypted in Postgres with the credential vault and
+      never returned. Every write needs a five-minute step-up grant bought with a fresh Google
+      re-sign-in (one-time nonce; Google sends no auth_time, so freshness is iat) plus a typed
+      confirmation; sign-out revokes the grant. Stage 2 adds Railway: services, variables (secret
+      values never returned, logs masked), redeploy, restart, rollback and logs. A variable change
+      is refused for protected, RAILWAY_* and ${{...}} names, while another change to the service
+      is watched, and for an AURA service without a health-check path; the candidate environment
+      is validated in a child process first, then written with skipDeploys and redeployed once
+      (same image). The Reconciler runs in staging/production gateways and rolls back a failed
+      or still-unhealthy deployment after 5 minutes, restoring raw values. The AURA settings tab
+      edits the gateway's own Railway variables. Stage 3 adds the GPU Space (the one named when
+      its token was connected): status, pause/resume, restart, rebuild, hardware and sleep time
+      (journaled), variables (watched for AURA_CONTROL_SPACE_WATCH_S, 20 min, and put back if the
+      Space errors), write-only secrets journaled as not restorable, and logs. Stage 4 adds
+      provider keys as gateway variable changes: replace (any slot), rotate both sides (the GPU
+      Space's VLLM_API_KEY and the gateway's variable, with a companion restore on rollback), and
+      Cloudflare Workers AI create and revoke (the key in use cannot be revoked). Stage 5 adds
+      Grafana Cloud (alert rule groups from deploy/monitoring/alerts/aura.yml applied to the
+      stack's ruler with per-group results; the scrape job and uptime checks, which no API
+      covers for this token, shown as exact values with their live state; firing alerts) and
+      Qdrant Cloud (health, collections, snapshots, and a restore that snapshots the current
+      state first). Stage 6 (docs/plans/console-cloudflare-tab-plan.md) adds a Cloudflare tab; its
+      read-only views, today's Workers AI usage against the free allowance and the R2 buckets, are
+      built (a named state for no permission, R2 not enabled and Cloudflare unreachable; the usage
+      neuron field name is unconfirmed). Every stage is built; none is proven.
+    target_state: >-
+      The Super Admin runs every platform operation the plan lists (Railway variables, redeploy,
+      restart, rollback, logs; Space status, restart, hardware; key create, revoke and rotate;
+      Grafana set-up and status; Qdrant status and snapshots) from Settings, each one step-up
+      gated, journaled and, for deployments, rolled back automatically when unhealthy.
+    owner: platform-core
+    dependencies: []
+    test: >-
+      Default pytest: tests/unit/test_control_center.py (role sweep over every control route with
+      an OpenAPI completeness check, step-up refusals, server-side confirmation, canary sweep over
+      responses and audit events, write cap, catalog completeness, reconciler rollback and lease)
+      and tests/unit/test_control_railway.py (Railway refusals, apply/watch/rollback against
+      InMemoryRailway, RailwayPlatform against recorded GraphQL exchanges, the real settings
+      check in a child process) and tests/unit/test_control_space.py (Space refusals, the watch
+      window, variables put back on RUNTIME_ERROR, write-only secrets, runtime actions, stage to
+      health, HfSpaceHost against a stand-in HfApi) and tests/unit/test_control_keys.py (slots,
+      replace, both-sides rotation and its companion restore, Cloudflare create/revoke,
+      HttpCloudflareTokens against recorded exchanges) and tests/unit/test_control_monitoring.py
+      (the packaged rules equal deploy/'s, apply with per-group results, honest status when a
+      query cannot run, snapshot and restore with a safety snapshot, HttpGrafanaCloud and
+      HttpQdrantAdmin against recorded exchanges) and tests/unit/test_cloudflare_usage_r2.py and
+      tests/unit/test_control_cloudflare_usage_r2_api.py (Workers AI usage and R2 buckets:
+      HttpCloudflareAccount against recorded GraphQL and REST exchanges, every state named, the
+      engine and the two routes).
+      Opt-in: tests/load/test_control_store_postgres.py and the migration round trip on Postgres.
+      Console: tests/e2e/control-center.spec.ts against the mock gateway. Nothing here exercises
+      real Google, a real platform API or a deployed gateway.
+    metric: >-
+      Control writes per hour (journal), step-up grants issued and refused (audit
+      admin.control.step_up), automatic rollbacks and FAILED changes
+    exit_condition: >-
+      docs/reports/control-center-*.md committed showing, on the live console: (1) the Super Admin
+      opens Settings and an Admin is refused in the UI and at the API; (2) a real Google step-up
+      round trip; (3) a platform token saved and verified with no response containing it; and,
+      from stage 2, (4) one change rolled back automatically after a forced unhealthy deploy; and,
+      from stage 3, (5) the GPU Space paused and resumed and its sleep time changed from Settings;
+      and, from stage 4, (6) the GPU Space key rotated on both sides with hfspace healthy again
+      afterwards; and, from stage 5, (7) Apply setup loading every rule group with
+      up{job="aura-gateway"} reading 1, and a Qdrant snapshot created and listed.
+    status: built_not_proven
+  - gap_id: GAP-068
+    component: tools/extract-structured
+    severity: P2
+    current_state: >-
+      Built, not proven (ADR-038, 2026-11-22). An extract_structured tool (tools/extract.py), off
+      unless AURA_ALLOW_EXTRACTION_INFERENCE=true, calls Cloudflare's clairic
+      (@cf/cloudflare/clairic, a preview model that fills typed fields from text and returns a
+      confidence per answer) through one adapter (adapters/cloudflare_clairic.py). It sits behind
+      the data-scope ceiling, a per-process daily cap and a withhold-below-threshold rule, and
+      writes an audit record per call. No call has reached the service from a deployed gateway, and
+      the VPS compose stack is not plumbed for it (that needs a docker secret and prod/dev parity;
+      Railway takes plain variables). Background: it is not an OpenAI-compatible chat model, and
+      is_open_weight_model() rejects its ID, so it cannot be a provider slot under ADR-030. One
+      probe call on 2026-11-22 returned HTTP 200 with four of five fields right and a wrong due
+      date at confidence 0.096. Cloudflare's pages do not state whether its weights are published,
+      whether the no-training and no-retention terms cover this model, its Arabic support, its
+      per-model rate limits or free-plan eligibility.
+    target_state: >-
+      An extract_structured tool, off unless AURA_ALLOW_EXTRACTION_INFERENCE=true, calls clairic
+      through exactly one adapter module at a fixed endpoint. It refuses above the internal data
+      scope, returns null for any value below AURA_EXTRACT_MIN_CONFIDENCE, is tagged
+      untrusted_content, writes an audit record that holds no text or answers, and is capped per
+      process so it cannot starve the hosted3 chat slot's daily allowance.
+    owner: platform-core
+    dependencies: [GAP-064]
+    test: >-
+      Default pytest, no network: tests/unit/test_extraction_domain.py (types and the confidence
+      rule), test_extraction_adapters.py (the in-memory reader, and clairic over a replay of the
+      real probe response: request shape, redirects, cooldown, secrecy),
+      test_extraction_settings.py, test_extract_tool.py (data-ceiling refusal, cap, an audit record
+      that holds no content) and test_extraction_container.py (wiring through the real registry),
+      plus the architecture pins in tests/architecture/test_no_external_inference.py
+      (TestExtractionIsGatedNotSilent: exactly one module names /ai/run, the open-weight list is
+      not widened). Opt-in: tests/load/test_extraction_live.py (-m load), which needs a token and
+      prints the per-field table. Nothing in the default run reaches Cloudflare.
+    metric: >-
+      extract_structured calls, refusals by reason (data_ceiling, cap, cooldown, low_confidence)
+      and Workers AI neurons used per day against the 10,000 allowance
+    exit_condition: >-
+      docs/reports/extract-structured-*.md committed showing (1) one call from a deployed gateway
+      with the audit record present, (2) one refusal at sensitive scope, (3) measured per-field
+      accuracy on a small labelled set in English and in Arabic, and (4) recorded answers to
+      ADR-038's open items O-1 to O-4 (token rotated, weight status, free-plan eligibility and
+      limits, whether the data terms cover this model).
+    status: built_not_proven

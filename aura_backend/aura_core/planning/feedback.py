@@ -1,6 +1,6 @@
-"""Free-text feedback on a plan that is held for approval (ADR-045, row 51).
+"""Free-text feedback on a plan that is held for approval (ADR-047, row 51).
 
-A ``review``-mode turn (ADR-038) stops at the gate: the plan is stored server-side and the client
+A ``review``-mode turn (ADR-040) stops at the gate: the plan is stored server-side and the client
 gets ``approval_id`` s. Until now the user had two answers, approve (send the ids back) or walk
 away. This lets them *talk to the plan*: "remove the docs step", "do the migration first", "I don't
 like this, use the staging database". One feedback comment does exactly this, in order:

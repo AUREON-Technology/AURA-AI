@@ -24,6 +24,7 @@ __all__ = [
     "ToolTelemetry",
     "TurnOutcome",
     "TurnTelemetry",
+    "usage_view_from",
 ]
 
 
@@ -105,6 +106,10 @@ class RetrievalTelemetry:
     quarantined: int = 0
     citations: int = 0
     strategy: str = "none"
+    #: The knowledge base could not be searched (index not ready), so the turn answered without
+    #: it. Distinct from ``returned_nothing``: that one means it was searched and held nothing
+    #: relevant.
+    unavailable: bool = False
 
     @property
     def returned_nothing(self) -> bool:
@@ -128,6 +133,11 @@ class TurnTelemetry:
     correlation_id: CorrelationId
     turn_id: TurnId
     session_id: SessionId | None = None
+    #: A keyed one-way reference to the turn's owner (``aura_core.security.owner_ref``), so the
+    #: owner can read this turn's usage back and nobody else can. Not the user id, and
+    #: deliberately absent from ``as_dict``: it goes to the sink's own column and nowhere else
+    #: (no log line, no metric label, no payload JSON).
+    owner_ref: str | None = None
     route: str = "chat"
     agent: str = "orchestrator"
     strategy: str = "direct"
@@ -140,9 +150,23 @@ class TurnTelemetry:
     providers_attempted: tuple[str, ...] = ()
 
     cache: CacheOutcome = field(default_factory=CacheOutcome)
+    #: Turn-wide totals over every generation the turn made -- planner, reasoning, the answer,
+    #: a repair (KAN-106) -- the same scope as ``cost_usd``. A cache hit made none: 0.
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cost_usd: float = 0.0
+    #: Some generation's usage was AURA's estimate, not the provider's report.
+    usage_estimated: bool = False
+    #: Generations that completed, and engine generations started against the engine cap
+    #: (KAN-107).
+    generations: int = 0
+    engine_generations: int = 0
+    #: ``{purpose: {prompt_tokens, completion_tokens, generations, estimated}}``.
+    usage_by_purpose: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    #: The context engine's tokenizer and whether its counts are exact (KAN-103), so a budget
+    #: overrun can be told apart from estimation error.
+    tokenizer: str | None = None
+    context_tokens_exact: bool = False
 
     total_ms: float = 0.0
     ttft_ms: float | None = None
@@ -166,6 +190,14 @@ class TurnTelemetry:
     #: Planning or tool execution raised and the turn answered without tools (CB-14). Without
     #: this the turn reported plain success, and "create a task" read as done when nothing ran.
     planning_failed: bool = False
+    #: A tool ran but its output did not fit the prompt (KAN-102). The model was told so by a
+    #: pinned note; the turn still answered without what the tool returned.
+    tool_output_dropped: bool = False
+    #: The answer said an action was done (created, sent, scheduled...) while no tool ran and
+    #: nothing awaits confirmation (audit A1). The kernel appended a correction to the answer.
+    unbacked_action_claim: bool = False
+    #: The model returned no text, and the kernel answered with a fixed fallback (audit C1).
+    empty_generation_fallback: bool = False
     confidence: float | None = None
     groundedness: float | None = None
 
@@ -188,8 +220,12 @@ class TurnTelemetry:
             self.fallback_count
             or self.tainted
             or self.retrieval.returned_nothing
+            or self.retrieval.unavailable
             or any(not t.ok for t in self.tools)
             or self.planning_failed
+            or self.tool_output_dropped
+            or self.unbacked_action_claim
+            or self.empty_generation_fallback
         )
 
     @property
@@ -199,13 +235,23 @@ class TurnTelemetry:
             ("provider_fallback", self.fallback_count),
             ("tainted_context", self.tainted),
             ("empty_retrieval", self.retrieval.returned_nothing),
+            ("knowledge_unavailable", self.retrieval.unavailable),
             ("tool_failure", any(not t.ok for t in self.tools)),
             ("planning_failed", self.planning_failed),
+            ("tool_output_dropped", self.tool_output_dropped),
+            ("unbacked_action_claim", self.unbacked_action_claim),
+            ("empty_generation_fallback", self.empty_generation_fallback),
         )
         return tuple(reason for reason, hit in reasons if hit)
 
     def with_timing(self, **stages: float) -> "TurnTelemetry":
         return replace(self, timings=replace(self.timings, **stages))
+
+    def usage_view(self) -> dict[str, Any]:
+        """What the owner may read back about this turn's consumption: counts, cost, which model
+        served it, how long it took. Nothing from the conversation and nothing that identifies
+        anyone (``owner_ref`` is not here)."""
+        return usage_view_from(self.as_dict(), started_at=self.started_at)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -230,6 +276,10 @@ class TurnTelemetry:
                 "prompt": self.prompt_tokens,
                 "completion": self.completion_tokens,
                 "total": self.total_tokens,
+                "estimated": self.usage_estimated,
+                "generations": self.generations,
+                "engine_generations": self.engine_generations,
+                "by_purpose": {k: dict(v) for k, v in self.usage_by_purpose.items()},
             },
             "cost_usd": round(self.cost_usd, 6),
             "latency": {"total_ms": round(self.total_ms, 2), "ttft_ms": self.ttft_ms,
@@ -250,7 +300,8 @@ class TurnTelemetry:
                 "identity": self.cag_identity,
                 "cache_hit": self.cag_cache_hit,
             },
-            "context": {"tokens": self.context_tokens, "dropped": self.context_dropped},
+            "context": {"tokens": self.context_tokens, "dropped": self.context_dropped,
+                        "tokenizer": self.tokenizer, "exact": self.context_tokens_exact},
             "guards": list(self.guards),
             "tainted": self.tainted,
             "tools": [
@@ -267,3 +318,34 @@ class TurnTelemetry:
             "degraded_reasons": list(self.degraded_reasons),
             "started_at": self.started_at.isoformat(),
         }
+
+
+def usage_view_from(record: Mapping[str, Any], *, started_at: Any) -> dict[str, Any]:
+    """The owner-facing usage view of a stored ``TurnTelemetry.as_dict()``.
+
+    One function for the in-memory and the Postgres sink, so the two cannot drift apart. ``record``
+    is the stored payload, which never held content or identity.
+    """
+    tokens = record.get("tokens") or {}
+    latency = record.get("latency") or {}
+    when = started_at.isoformat() if hasattr(started_at, "isoformat") else started_at
+    return {
+        "turn_id": record.get("turn_id"),
+        "session_id": record.get("session_id"),
+        "started_at": when,
+        "outcome": record.get("outcome"),
+        "provider": record.get("provider"),
+        "model": record.get("model"),
+        "cached": bool((record.get("cache") or {}).get("hit")),
+        "degraded": bool(record.get("degraded")),
+        "usage": {
+            "prompt_tokens": int(tokens.get("prompt") or 0),
+            "completion_tokens": int(tokens.get("completion") or 0),
+            "total_tokens": int(tokens.get("total") or 0),
+            "estimated": bool(tokens.get("estimated")),
+            "generations": int(tokens.get("generations") or 0),
+            "by_purpose": tokens.get("by_purpose") or {},
+            "cost_usd": float(record.get("cost_usd") or 0.0),
+        },
+        "latency_ms": latency.get("total_ms"),
+    }

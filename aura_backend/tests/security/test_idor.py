@@ -106,6 +106,9 @@ COVERED = {
         "TestConversations::test_bob_cannot_read_alices_session_checkpoint",
     ("POST", "/api/v3/sessions/{session_id}/checkpoint"):
         "TestConversations::test_bob_cannot_checkpoint_alices_session",
+    ("GET", "/api/v3/turns/{turn_id}/usage"):
+        "tests/unit/test_turn_usage.py::TestUsageRoute::"
+        "test_someone_elses_turn_is_indistinguishable_from_a_missing_one",
     ("DELETE", "/api/v3/engineering/workspaces/{workspace_id}"):
         "TestEngineering::test_bob_cannot_delete_alices_workspace",
     ("GET", "/api/v3/agents/runs/{run_id}"):
@@ -482,7 +485,7 @@ class TestEngineering:
 
 
 class TestEngineeringLifecycle:
-    """ADR-041: starting, stopping, restarting or reading the stats of a workspace is its owner's."""
+    """ADR-043: starting, stopping, restarting or reading the stats of a workspace is its owner's."""
 
     def test_bob_cannot_start_stop_restart_or_stat_alices_workspace(self, container) -> None:
         from fastapi.testclient import TestClient
@@ -505,7 +508,7 @@ class TestEngineeringLifecycle:
 
 
 class TestAgentTasks:
-    """ADR-041: a task is its owner's. Another person's id reads as absent on every verb."""
+    """ADR-043: a task is its owner's. Another person's id reads as absent on every verb."""
 
     @staticmethod
     def _alice_task(client) -> str:

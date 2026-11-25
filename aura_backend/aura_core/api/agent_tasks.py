@@ -1,4 +1,4 @@
-"""The agent task gateway (ADR-041, roadmap rows 84, 87 and 91).
+"""The agent task gateway (ADR-043, roadmap rows 84, 87 and 91).
 
 * ``POST   /api/v3/agents/tasks``                 submit a task (202; 200 on an idempotent replay)
 * ``GET    /api/v3/agents/tasks``                 the caller's tasks, filterable
@@ -112,7 +112,7 @@ def register_agent_task_ops(
         use_memory: bool = True
         use_tools: bool = True
         plan: bool | None = None
-        #: ADR-045 (row 41): what "done" means, at most 20 statements of 300 characters; the
+        #: ADR-047 (row 41): what "done" means, at most 20 statements of 300 characters; the
         #: task's ``result.agent_loop.acceptance`` reports which the run's tool results support.
         success_criteria: list[str] = Field(default_factory=list, max_length=20)
         strategy: str | None = None

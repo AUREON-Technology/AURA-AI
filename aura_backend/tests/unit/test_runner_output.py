@@ -1,4 +1,4 @@
-"""Test-runner output as a loop input (state graph, ADR-037; inventory row 14).
+"""Test-runner output as a loop input (state graph, ADR-039; inventory row 14).
 
 ``run_command`` returns ``ok=True`` whenever the command *ran* -- the exit status and the runner's
 summary live only in the result text. These tests pin the parser that reads them, on real runner

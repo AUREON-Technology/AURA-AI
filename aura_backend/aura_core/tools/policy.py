@@ -23,7 +23,7 @@ Four rules, in order of strictness:
 4. **Sensitivity.** Confidential and system-level tools always require confirmation for
    side-effecting operations, tainted or not.
 
-Two layers sit around those rules and can only make a call *stricter* (ADR-039):
+Two layers sit around those rules and can only make a call *stricter* (ADR-041):
 
 * **Declarative rules** (``AURA_TOOL_POLICY_FILE``, :mod:`.policy_rules`) -- operator-written
   deny / require-confirmation rules over a tool's name *and arguments*, scoped by persona and

@@ -1,4 +1,4 @@
-"""Engineer developer tools: ``lint_code`` and ``check_format`` (ADR-040).
+"""Engineer developer tools: ``lint_code`` and ``check_format`` (ADR-042).
 
 The engineer could already run ``ruff`` through ``run_command``, but what came back was a screen of
 text the model had to read, count and re-parse, with a "clean" run indistinguishable from a tool that

@@ -1,4 +1,4 @@
-"""Deploy, redeploy and roll back by starting the operator's own CI workflows (ADR-047).
+"""Deploy, redeploy and roll back by starting the operator's own CI workflows (ADR-049).
 
 The agent never holds a Railway token or an SSH key and never runs a deploy command. It asks GitHub to
 start a workflow that already exists, with the same ``workflow_dispatch`` a person would press, so a

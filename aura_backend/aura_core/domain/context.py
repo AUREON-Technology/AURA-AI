@@ -15,7 +15,7 @@ from __future__ import annotations
 import enum
 import secrets
 from dataclasses import dataclass, field, replace
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from .messages import TrustChannel
 
@@ -126,19 +126,69 @@ class ContextItem:
         """Relevance per token -- the packing heuristic's objective."""
         return self.relevance / self.tokens if self.tokens else 0.0
 
-    def truncated_to(self, tokens: int) -> "ContextItem":
+    def truncated_to(
+        self,
+        tokens: int,
+        *,
+        keep_tail: bool = False,
+        count: Callable[[str], int] | None = None,
+    ) -> "ContextItem":
         """Shorten to approximately ``tokens``, cutting at a word boundary.
 
         Truncation is marked in the text so the model (and a human reading a trace) can tell
         that material was removed rather than silently ending mid-thought.
+
+        ``keep_tail`` keeps the start *and* the end, with the elided middle marked and sized
+        between them (KAN-102). For tool output the end is often the point -- a test run's
+        summary line, a command's exit status, the last lines of a log -- and a head-only cut
+        threw exactly that away.
+
+        Without ``count`` the cut assumes four characters per token and the result claims
+        ``tokens``. With it, the shortened text is measured and cut again until it really fits:
+        dense text (digits, paths, punctuation) runs well under four characters per token, and
+        a budget built on stored counts would otherwise under-count every truncated item.
         """
         if tokens >= self.tokens or tokens <= 0:
             return self
-        approx_chars = max(16, tokens * 4)
-        cut = self.content[:approx_chars]
+        chars = max(16, tokens * 4)
+        for _ in range(6):
+            content = self._cut(chars, keep_tail=keep_tail)
+            if count is None:
+                return replace(self, content=content, tokens=tokens)
+            actual = count(content)
+            if actual <= tokens or chars <= 16:
+                return replace(self, content=content, tokens=max(1, actual))
+            chars = max(16, int(chars * tokens / actual * 0.95))
+        return replace(self, content=content, tokens=max(1, actual))
+
+    def _cut(self, chars: int, *, keep_tail: bool) -> str:
+        if keep_tail and len(self.content) > chars:
+            return _head_and_tail(self.content, chars)
+        cut = self.content[:chars]
         if " " in cut[-32:]:
             cut = cut[: cut.rfind(" ")]
-        return replace(self, content=cut.rstrip() + " […truncated]", tokens=tokens)
+        return cut.rstrip() + " […truncated]"
+
+
+def _head_and_tail(text: str, budget_chars: int) -> str:
+    """The first and last parts of ``text`` within ``budget_chars``, middle elided and marked.
+
+    The marker states how many characters were left out, so neither the model nor a person
+    reading a trace can take the two halves for one continuous output.
+    """
+    # The marker's own length counts against the budget; its digits are bounded by len(text).
+    reserve = len(f"\n[… {len(text)} characters elided …]\n")
+    room = max(16, budget_chars - reserve)
+    head_chars = room * 3 // 5  # the start usually says what the output is; the end, how it ended
+    tail_chars = room - head_chars
+    head = text[:head_chars]
+    if " " in head[-32:]:
+        head = head[: head.rfind(" ")]
+    tail = text[len(text) - tail_chars:] if tail_chars > 0 else ""
+    if " " in tail[:32]:
+        tail = tail[tail.find(" ") + 1:]
+    elided = len(text) - len(head) - len(tail)
+    return f"{head.rstrip()}\n[… {elided} characters elided …]\n{tail.lstrip()}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,6 +331,49 @@ class ContextBundle:
             parts.append("")
         return "\n".join(parts).strip()
 
+    def rendered_tokens(
+        self,
+        count: Callable[[str], int],
+        *,
+        include_sections: Sequence[ContextSection] | None = None,
+    ) -> int:
+        """What :meth:`render` with the same sections costs, without recounting any item.
+
+        Every item already carries its own count (made once, when the context engine built
+        it). Only the framing :meth:`render` adds -- section headers, fence wrappers, and the
+        newlines joining the parts -- is counted here, so an item's content is never tokenised
+        twice in one assembly (KAN-105). The sum of parts can differ from a count of the joined
+        string by a rounding step per part; separators are costed as a newline run, which the
+        heuristic counter prices above what a joined string pays for them.
+        """
+        wanted = tuple(include_sections) if include_sections else _SECTION_ORDER
+        total = 0
+        parts = 0
+        for section in _SECTION_ORDER:
+            if section not in wanted:
+                continue
+            section_items = self.by_section(section)
+            if not section_items:
+                continue
+            total += count(f"## {section.value.replace('_', ' ').title()}")
+            parts += 1
+            nonce = self._nonce_for(section)
+            for item in section_items:
+                total += item.tokens
+                if item.channel is not TrustChannel.SYSTEM:
+                    # The wrapper alone: both delimiters and the two newlines around content.
+                    total += count(
+                        fence_untrusted("", nonce=nonce, source=item.provenance or "unattributed")
+                    )
+                parts += 1
+            parts += 1  # the blank spacer after each section
+        if parts == 0:
+            return 0
+        # "\n".join(parts) has parts-1 separators; strip() removes the one before the final
+        # spacer.
+        separators = max(0, parts - 2)
+        return total + (count("\n" * separators) if separators else 0)
+
     def fence_instructions(self, *, for_prefix: bool = False) -> str:
         """The system-channel statement that makes the fence meaningful.
 
@@ -301,8 +394,12 @@ def pack(
     budget: ContextBudget,
     *,
     allow_truncation: bool = True,
+    count: Callable[[str], int] | None = None,
 ) -> ContextBundle:
     """Greedy priority-then-density packing.
+
+    ``count``, when given, measures a truncated item's new text so its stored cost is real
+    rather than a four-characters-per-token guess (see :meth:`ContextItem.truncated_to`).
 
     Ordering: pinned items first (in priority order), then by value density. Greedy packing by
     density is the standard approximation for the knapsack shape of this problem and is within a
@@ -350,7 +447,9 @@ def pack(
             continue
 
         if allow_truncation and allowance >= 24 and not item.is_pinned:
-            shortened = item.truncated_to(allowance)
+            shortened = item.truncated_to(
+                allowance, keep_tail=item.section is ContextSection.TOOL_OUTPUT, count=count
+            )
             selected.append(shortened)
             used += shortened.tokens
             section_used[item.section] = section_total + shortened.tokens

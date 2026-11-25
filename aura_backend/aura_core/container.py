@@ -47,7 +47,7 @@ from .config.settings import (
     load_settings,
 )
 from .context.engine import ContextEngine
-from .context.tokenizer import get_tokenizer
+from .context.tokenizer import get_tokenizer, tokenizer_for
 from .domain.errors import ConfigurationError
 from .domain.identifiers import SessionId
 from .execution.agentic_loop import AgenticExecutor
@@ -61,8 +61,10 @@ from .knowledge.chunking import ChunkingConfig
 from .knowledge.engine import KnowledgeEngine
 from .knowledge.extraction import RuleEntityExtractor
 from .knowledge.index_manager import IndexManager, PromotionGate
+from .knowledge.refresh_gate import RefreshContentGate
 from .knowledge.reranking import build_reranker
 from .kernel.kernel import AIKernel, KernelDependencies
+from .kernel.turn_scope import current_turn_lookups
 from .llm.cache import InMemoryCache, LLMCache, semantic_tier_useful
 from .llm.embeddings import HashEmbeddingProvider
 from .llm.quota import QuotaTracker
@@ -86,6 +88,7 @@ from .ports.runtime import Closeable
 from .prompts import PIN_SYNC_INTERVAL_S, build_default_registry
 from .reasoning.engine import ReasoningEngine
 from .safety.pipeline import SafetyPipeline
+from .security.owner_ref import owner_ref_maker
 from .tools.builtin import default_tools
 from .tools.policy import ToolPolicy
 from .tools.registry import ToolRegistry
@@ -101,6 +104,10 @@ logger = get_logger("container")
 #: tests/unit/test_deploy_robustness.py, 15 s). A close that takes longer is abandoned and
 #: logged; the process is exiting either way, and the OS reclaims the socket.
 SHUTDOWN_CLOSE_TIMEOUT_S = 5.0
+#: How long ``Container.shutdown()`` lets streamed turns finish what they do after ``done``
+#: (session append, telemetry; KAN-110) before closing the connections that work needs. Plus
+#: the close ceiling above, still inside the 15 s margin.
+POST_TURN_DRAIN_S = 5.0
 
 
 class Container:
@@ -190,6 +197,9 @@ class Container:
         self.feedback = self._build_feedback_store()
         self.audit = self._build_audit_sink()
         self.telemetry_sink = self._build_telemetry_sink()
+        # Keyed one-way owner reference for per-turn telemetry (usage reads, erasure). The key
+        # derives from the JWT secret read at call time; none means turns stay unowned.
+        self.owner_ref = owner_ref_maker(lambda: self.settings.infrastructure.host_agent_relay_secret)
         self.sources = self._build_source_registry()
         self.idempotency = self._build_idempotency_store()
         self.service_keys = self._build_service_keys()
@@ -273,7 +283,7 @@ class Container:
             settings.safety, metrics=self.metrics, event_bus=self.events, audit=self.audit
         )
         self.context = ContextEngine(
-            tokenizer=get_tokenizer(model=self._primary_model()),
+            tokenizer=self._primary_tokenizer(),
             metrics=self.metrics,
             history_turns=settings.memory.prompt_history_messages,
             max_prompt_tokens=settings.llm.max_prompt_tokens,
@@ -338,7 +348,7 @@ class Container:
                 documents=self.documents,
                 cache=self.cache_backend,
                 llm_cache=self.llm_cache,
-                tokenizer=get_tokenizer(model=self._primary_model()),
+                tokenizer=self._primary_tokenizer(),
                 enabled=cag_settings.enabled,
                 max_tokens=cag_settings.max_tokens,
                 global_tokens=cag_settings.global_tokens,
@@ -400,6 +410,11 @@ class Container:
             max_documents=learning.refresh_max_documents,
             promote_requires_gates=learning.promote_requires_gates,
             index_retention_days=learning.index_retention_days,
+            content_gate=RefreshContentGate(
+                max_quarantine_rate=learning.gate_max_quarantine_rate,
+                max_shrink=learning.gate_max_shrink,
+            ),
+            allowed_licenses=settings.knowledge.allowed_licenses,
         )
 
         self.memory = (
@@ -466,6 +481,9 @@ class Container:
         self._github_clients_by_user: dict[str, Any] = {}
         self.github_client_resolver = self._build_github_client_resolver()
         self.mcp_client = self._build_mcp_client()
+        # ADR-038: None unless AURA_ALLOW_EXTRACTION_INFERENCE is on. Before the tools, which
+        # register ``extract_structured`` only when there is an extractor to call.
+        self.structured_extractor = self._build_structured_extractor()
         self.tools = self._build_tools()
         self.planner = (
             PlanningEngine(
@@ -495,7 +513,7 @@ class Container:
             verification_enabled=settings.reasoning.verification_enabled,
             metrics=self.metrics,
         )
-        # ADR-037: failure-kind-aware retries, only when the operator turns them on; the engine
+        # ADR-039: failure-kind-aware retries, only when the operator turns them on; the engine
         # otherwise keeps its original "retry any failed read-only step" rule.
         self.executor = ExecutionEngine(
             tools=self.tools,
@@ -514,7 +532,7 @@ class Container:
             AgenticExecutor(
                 planner=self.planner, executor=self.executor, metrics=self.metrics,
                 clock=self.clock, runs=self.agent_runs,
-                # ADR-037. Each piece is settings-driven; the loop only applies them to a
+                # ADR-039. Each piece is settings-driven; the loop only applies them to a
                 # persona that replans (today: engineer), so single-pass personas are untouched.
                 stuck=StuckConfig(
                     enabled=reasoning.loop_stuck_detection_enabled,
@@ -615,6 +633,10 @@ class Container:
             allow_cpu=settings.learning.finetune_allow_cpu,
         )
 
+        # The console's Super-Admin control center (ADR-037). Always built: its routes are
+        # SuperAdmin-only, and a platform is reachable only after its token is entered.
+        self._build_control(use_postgres=use_postgres)
+
         # Track AP (ADR-018/021). None unless AURA_ADAPTATION_ENABLED; the admin routes answer 503.
         self.connectors = self._build_adaptation(use_postgres=use_postgres)
         self.discovery = None
@@ -647,19 +669,19 @@ class Container:
             self.blueprint_compiler = self._build_compiler(use_postgres=use_postgres)
             self.blueprint_deployment = self._build_deployment()
 
-        # ADR-038 (row 60): lesson extraction after Engineer turns. None unless
+        # ADR-040 (row 60): lesson extraction after Engineer turns. None unless
         # AURA_AUTO_LESSONS_ENABLED (and memory on): the kernel then does nothing extra.
         self.lesson_sink = self._build_lesson_sink()
 
         from .tools.autonomy import AutonomyStore
 
-        # ADR-039: the user's review profile, in the cache port (see tools/autonomy.py for why).
+        # ADR-041: the user's review profile, in the cache port (see tools/autonomy.py for why).
         self.autonomy = AutonomyStore(self.cache_backend, default=settings.tools.autonomy_default)
         #: ``async (uid: str) -> list[dict]`` revoking the paired desktop devices ``uid`` owns,
         #: attached by ``aura_service`` because the device registry lives outside aura_core
         #: (ADR-002). ``None`` where it is not attached; ``stop-all`` then reports it unavailable.
         self.device_revoker = None
-        # ADR-041: per-turn usage and the opt-in run-goal preview, both in the cache port (Redis
+        # ADR-043: per-turn usage and the opt-in run-goal preview, both in the cache port (Redis
         # in production) -- no table. The kernel writes them; the usage and run-search routes read.
         usage = settings.usage
         self.usage_ledger = UsageLedger(
@@ -695,6 +717,7 @@ class Container:
                 metrics=self.metrics,
                 event_bus=self.events,
                 telemetry_sink=self.telemetry_sink,
+                owner_ref=self.owner_ref,
                 clock=self.clock,
                 settings=settings,
                 models=self.models,
@@ -710,7 +733,7 @@ class Container:
                 audit=self.audit,
             )
         )
-        # ADR-041: user agent tasks. The queue runs each task through `self.kernel` -- the same
+        # ADR-043: user agent tasks. The queue runs each task through `self.kernel` -- the same
         # path as /chat -- so it can only exist once the kernel does. `None` is the kill switch
         # (AURA_AGENT_TASKS_ENABLED=false): the routes then answer 503.
         self.agent_task_store = AgentTaskStore(
@@ -733,7 +756,7 @@ class Container:
         from .agents.tasks import AgentTaskManager
         from .tools.delegation import build_delegation_tools
 
-        # ADR-038, both off by default. Status and results of a background task, and handoff
+        # ADR-040, both off by default. Status and results of a background task, and handoff
         # records, live in the shared cache (Redis in production); the running task itself is an
         # asyncio task in this process (agents/tasks.py).
         reasoning = settings.reasoning
@@ -767,7 +790,7 @@ class Container:
             )
         )
 
-        # ADR-044: `research_topic` composes other tools (search_knowledge, web_search, fetch_url) through
+        # ADR-046: `research_topic` composes other tools (search_knowledge, web_search, fetch_url) through
         # this same registry, as the caller, so it is registered once the registry is complete.
         if settings.open_tools.analysis_enabled:
             from .tools.research import build_research_tools
@@ -794,6 +817,16 @@ class Container:
     def _primary_model(self) -> str | None:
         enabled = self.settings.llm.enabled_providers
         return enabled[0].model if enabled else None
+
+    def _primary_tokenizer(self) -> Any:
+        """The primary provider's tokenizer (KAN-103/104): the context engine budgets with the
+        same counter the router and the quota use for that provider, so all three agree."""
+        primary = self._primary_model()
+        for provider in getattr(self, "providers", ()):
+            caps = provider.capabilities
+            if primary is not None and caps.model_id == primary:
+                return tokenizer_for(caps.tokenizer, model_id=caps.model_id)
+        return get_tokenizer(model=primary)
 
     def _ollama_provider(self) -> Any:
         from .llm.providers.ollama import OllamaProvider
@@ -996,6 +1029,217 @@ class Container:
             audit=self.audit,
             metrics=self.metrics,
         )
+
+    def _build_control(self, *, use_postgres: bool) -> None:
+        """The control center (ADR-037): store, vault, step-up and the platform verifiers.
+
+        Platform tokens are sealed by the same vault as connector credentials, under
+        ``AURA_SECRETS_ENCRYPTION_KEY``; with no key the page still opens and says so, and no
+        token can be saved. Outside production-like environments the step-up and platform
+        checks are the in-process adapters, so tests and a local gateway never call Google or a
+        platform: register a re-sign-in token on ``control_reverifier`` to exercise them.
+        """
+        from .adapters.control_store import InMemoryControlStore, PostgresControlStore
+        from .adapters.credential_vault import (
+            SECRETS_KEYS_ENV,
+            EncryptedCredentialVault,
+            InMemoryCiphertextStore,
+        )
+        from .adapters.field_crypto import FieldCipher
+        from .config.settings import secrets_encryption_keys
+        from .control.service import ControlService, StepUpService
+        from .control.wiring import cloudflare_api_root
+
+        settings = self.settings
+        url = settings.infrastructure.database_url
+        if use_postgres:
+            from .adapters.postgres_adaptation import PostgresCiphertextStore
+
+            store: Any = PostgresControlStore(url, pool=self._postgres_pool())
+            ciphertexts: Any = PostgresCiphertextStore(url, pool=self._postgres_pool())
+        else:
+            store = InMemoryControlStore()
+            ciphertexts = InMemoryCiphertextStore()
+        try:
+            cipher = FieldCipher(secrets_encryption_keys(), setting=SECRETS_KEYS_ENV)
+        except ConfigurationError as exc:
+            # Built on every boot, unlike Track AP's vault (behind AURA_ADAPTATION_ENABLED): a
+            # malformed key must cost the control center, not the gateway. The page then shows
+            # the "set the vault key" warning and nothing can be connected.
+            logger.error(
+                "control center vault disabled: the secrets key is not usable",
+                extra={"setting": SECRETS_KEYS_ENV, "error": str(exc)},
+            )
+            cipher = FieldCipher.disabled()
+        vault = EncryptedCredentialVault(cipher=cipher, store=ciphertexts)
+        control = settings.control
+        if settings.environment.is_production_like:
+            from .adapters.identity_reverify import GoogleReverifier
+            from .adapters.platform_verify import HttpPlatformVerifier
+
+            reverifier: Any = GoogleReverifier(client_ids=control.google_client_ids)
+            verifier: Any = HttpPlatformVerifier(
+                default_qdrant_url=settings.infrastructure.qdrant_url,
+                cloudflare_api_root=cloudflare_api_root(settings.llm.providers),
+            )
+        else:
+            from .adapters.identity_reverify import StaticReverifier
+            from .adapters.platform_verify import StaticPlatformVerifier
+
+            reverifier = StaticReverifier()
+            verifier = StaticPlatformVerifier()
+        self.control_store = store
+        self.control_vault = vault
+        self.control_reverifier = reverifier
+        self.control_verifier = verifier
+        self.step_up = StepUpService(
+            store=store, reverifier=reverifier,
+            max_age_s=control.step_up_max_age_s, ttl_s=control.step_up_ttl_s,
+        )
+        self.control = ControlService(
+            store=store, vault=vault, verifier=verifier, writes_per_hour=control.writes_per_hour,
+        )
+
+        import os
+
+        # Stage 2: Railway, reached with the project token stored above. Read from the vault on
+        # every call, so connecting or replacing the token takes effect without a restart.
+        from .control.railway import RailwayService
+        from .control.service import Reconciler
+        from .domain.control import Platform
+
+        if settings.environment.is_production_like:
+            from .adapters.railway_platform import RailwayPlatform
+            from .adapters.settings_probe import SubprocessSettingsValidator
+
+            async def railway_token() -> str:
+                return (await self.control.token(Platform.RAILWAY)).reveal()
+
+            railway_api: Any = RailwayPlatform(token_source=railway_token)
+            validator: Any = SubprocessSettingsValidator()
+        else:
+            from .adapters.railway_platform import InMemoryRailway
+            from .adapters.settings_probe import StaticSettingsValidator
+
+            railway_api = InMemoryRailway()
+            validator = StaticSettingsValidator()
+        # Stage 3: the inference Space, reached with the stored HF token; the Space itself is the
+        # one named when that token was connected.
+        from .control.space import SpaceService
+
+        if settings.environment.is_production_like:
+            from .adapters.hf_space import HfSpaceHost
+
+            async def hf_token() -> str:
+                return (await self.control.token(Platform.HF_SPACE)).reveal()
+
+            space_api: Any = HfSpaceHost(token_source=hf_token)
+        else:
+            from .adapters.hf_space import InMemorySpace
+
+            space_api = InMemorySpace()
+        self.space_api = space_api
+        self.space = SpaceService(
+            control=self.control, api=space_api, store=store, watch_s=control.space_watch_s,
+        )
+        self.railway_api = railway_api
+        self.settings_validator = validator
+        # Railway sets RAILWAY_SERVICE_ID in every service's container: the gateway's own id is
+        # the service whose variables the AURA settings tab (and every key, stage 4) edits.
+        self.railway = RailwayService(
+            control=self.control, api=railway_api, validator=validator,
+            self_service_id=(os.environ.get("RAILWAY_SERVICE_ID") or "").strip(),
+        )
+
+        # Stage 4: provider keys. A key is a gateway variable; the Cloudflare management token
+        # (stored above) creates and revokes Workers AI keys at the API root derived from the
+        # configured Workers AI provider.
+        from .control.keys import KeysService
+        from .control.wiring import key_slots
+
+        if settings.environment.is_production_like:
+            from .adapters.cloudflare_account import HttpCloudflareAccount
+            from .adapters.cloudflare_tokens import HttpCloudflareTokens
+
+            async def cloudflare_token() -> str:
+                return (await self.control.token(Platform.CLOUDFLARE)).reveal()
+
+            cloudflare_api: Any = HttpCloudflareTokens(
+                token_source=cloudflare_token, api_root=cloudflare_api_root(settings.llm.providers),
+            )
+            cloudflare_account: Any = HttpCloudflareAccount(
+                token_source=cloudflare_token, api_root=cloudflare_api_root(settings.llm.providers),
+            )
+        else:
+            from .adapters.cloudflare_account import InMemoryCloudflareAccount
+            from .adapters.cloudflare_tokens import InMemoryCloudflareTokens
+
+            cloudflare_api = InMemoryCloudflareTokens()
+            cloudflare_account = InMemoryCloudflareAccount()
+        self.cloudflare_tokens = cloudflare_api
+        self.cloudflare_account = cloudflare_account
+
+        # Stage 5: Qdrant Cloud (the cluster named when its key was connected, or the gateway's
+        # own) and Grafana Cloud (the stack named with its token).
+        from .control.monitoring import MonitoringService
+        from .control.vector import VectorService
+        from .adapters.alert_rules import load_alert_groups
+
+        qdrant_default = settings.infrastructure.qdrant_url
+        if settings.environment.is_production_like:
+            from .adapters.grafana_cloud import HttpGrafanaCloud
+            from .adapters.qdrant_admin import HttpQdrantAdmin
+
+            async def qdrant_key() -> str:
+                return (await self.control.token(Platform.QDRANT)).reveal()
+
+            async def qdrant_url() -> str:
+                credential = await store.get_credential(Platform.QDRANT)
+                return (credential.target if credential and credential.target else qdrant_default) or ""
+
+            async def grafana_token() -> str:
+                return (await self.control.token(Platform.GRAFANA)).reveal()
+
+            async def grafana_stack_url() -> str:
+                credential = await store.get_credential(Platform.GRAFANA)
+                return credential.target if credential else ""
+
+            vector_api: Any = HttpQdrantAdmin(token_source=qdrant_key, url_source=qdrant_url)
+            grafana_api: Any = HttpGrafanaCloud(token_source=grafana_token, stack_source=grafana_stack_url)
+        else:
+            from .adapters.grafana_cloud import InMemoryGrafana
+            from .adapters.qdrant_admin import InMemoryQdrant
+
+            vector_api = InMemoryQdrant()
+            grafana_api = InMemoryGrafana()
+        self.vector_api = vector_api
+        self.grafana_api = grafana_api
+        self.vector = VectorService(control=self.control, api=vector_api, store=store, default_url=qdrant_default)
+        self.monitoring = MonitoringService(
+            control=self.control, store=store, api=grafana_api, rules=load_alert_groups,
+            metrics_token_set=lambda: bool((os.environ.get("AURA_METRICS_TOKEN") or "").strip()),
+        )
+        self.keys = KeysService(
+            control=self.control, store=store, railway=self.railway, space=self.space,
+            space_api=space_api, cloudflare=cloudflare_api, slots=key_slots(settings.llm.providers),
+            provider_health=lambda: self.router.stats(),
+        )
+        # Stage 6: the Cloudflare tab's engine (providers, model catalog). A removed provider's
+        # token is revoked by the reconciler, and only once the change has stayed healthy.
+        from .control.cloudflare import REVOKE_ACTION, CloudflareControl
+
+        self.cloudflare_control = CloudflareControl(
+            control=self.control, store=store, railway=self.railway, tokens=cloudflare_api,
+            account=cloudflare_account, api_root=cloudflare_api_root(settings.llm.providers),
+            provider_health=lambda: self.router.stats(),
+        )
+        self.control_reconciler = Reconciler(
+            store=store, vault=vault,
+            platforms={Platform.RAILWAY: railway_api, Platform.HF_SPACE: space_api},
+            watch_s=control.rollback_watch_s,
+            success_hooks={REVOKE_ACTION: self.cloudflare_control.revoke_after_success},
+        )
+        self._reconciler_task: Any = None
 
     def _build_adaptation(self, *, use_postgres: bool) -> Any:
         """The connector registry, its vault and its stores -- or ``None`` when Track AP is off.
@@ -1809,8 +2053,22 @@ class Container:
 
     async def _host_routed(self, context) -> bool:
         """Whether this caller's sandbox calls go to their paired desktop: the same predicate
-        ``CompositeSandboxRunner.create_task`` routes on (a live ``aura_hostd`` session)."""
-        return await self.host_agent_registry.resolve(context.user_id) is not None
+        ``CompositeSandboxRunner.create_task`` routes on (a live ``aura_hostd`` session).
+
+        Reuses the turn's own answer only when it was *yes* (KAN-109): a desktop seen this turn
+        means no relay round trip per tool call. A *no* is re-asked live. ``True`` here can only
+        make policy stricter (a tainted or remote-device turn is held for confirmation), so a
+        stale yes costs at most a confirmation; a stale no would let a desktop that connected
+        mid-turn take a side effect under the sandbox's looser rule, so it is never reused.
+        """
+        lookups = current_turn_lookups()
+        key = context.user_id.value if context.user_id is not None else None
+        if lookups is not None and key is not None and lookups.desktop.get(key):
+            return True
+        routed = await self.host_agent_registry.resolve(context.user_id) is not None
+        if routed and lookups is not None and key is not None:
+            lookups.desktop[key] = True
+        return routed
 
     async def _guard_tool_result(self, text: str, tool: str, context) -> Any:
         """Tool output through the safety pipeline's TOOL_RESULT stage (inventory row 34).
@@ -1868,19 +2126,36 @@ class Container:
                 ops=self.settings.ops,
                 enable_open_exec_tools=self.settings.open_tools.exec_enabled,
                 enable_desktop_ops_tools=self.settings.open_tools.desktop_ops_enabled,
-                enable_open_pure_tools=self.settings.open_tools.pure_enabled,  # ADR-042
+                enable_open_pure_tools=self.settings.open_tools.pure_enabled,  # ADR-044
                 episodic_memory=self.episodic,
-                # ADR-043 project_status: the owner-scoped run stores (None when not configured).
+                # ADR-045 project_status: the owner-scoped run stores (None when not configured).
                 engineer_runs=self.engineer_runs,
                 agent_runs=self.agent_runs,
             )
         )
-        # ADR-044 (open partial tools): the model-metric history lives in the Cache port, so these two
+        # ADR-046 (open partial tools): the model-metric history lives in the Cache port, so these two
         # tools need the container's cache and cannot be built by `default_tools`.
         if self.settings.open_tools.analysis_enabled:
             from .tools.drift import build_drift_tools
 
             registry.register_all(build_drift_tools(self.cache_backend))
+        if self.structured_extractor is not None:
+            # ADR-038. Built here, not in ``default_tools``: it needs the audit sink and the clock,
+            # and like every other opt-in resource it exists only when its adapter does.
+            from .tools.extract import build_extract_tools
+
+            extraction = self.settings.extraction
+            registry.register_all(
+                build_extract_tools(
+                    extractor=self.structured_extractor,
+                    audit=self.audit,
+                    clock=self.clock,
+                    min_confidence=extraction.min_confidence,
+                    max_chars=extraction.max_chars,
+                    timeout_s=extraction.timeout_s,
+                    daily_call_cap=extraction.daily_call_cap,
+                )
+            )
         return registry
 
     def _build_lesson_sink(self) -> Any:
@@ -1895,7 +2170,7 @@ class Container:
         from .learning.jobs import run_engineer_lesson_extraction
 
         safety = self.safety if self.settings.safety.enabled else None
-        # ADR-045 (row 60): optional, default off. Local-only by construction (see the module).
+        # ADR-047 (row 60): optional, default off. Local-only by construction (see the module).
         model_extractor = None
         if self.settings.learning.auto_lessons_model_enabled:
             from .learning.model_lessons import build_model_lesson_extractor
@@ -1920,6 +2195,28 @@ class Container:
             logger.info("engineer lessons", extra={"report": report})
 
         return sink
+
+
+    def _build_structured_extractor(self) -> Any:
+        """Cloudflare's ``clairic`` behind the extraction port, or ``None`` when it is off (ADR-038).
+
+        Off is the default and means no adapter and no tool. On, the adapter is built here and
+        connects lazily like every other: nothing touches the network until the first call. A bad
+        account id or an empty credential raises ``ConfigurationError`` from the adapter itself,
+        the same refusal ``AuraSettings.validate`` gives at startup, repeated for callers that
+        loaded settings with ``validate=False``.
+        """
+        extraction = self.settings.extraction
+        if not extraction.enabled:
+            return None
+        from .adapters.cloudflare_clairic import ClairicExtractor
+
+        return ClairicExtractor(
+            account_id=extraction.account_id,
+            api_key=extraction.api_key,
+            clock=self.clock,
+            timeout_s=extraction.timeout_s,
+        )
 
     def _build_sandbox_runner(self) -> Any:
         """Always a `CompositeSandboxRunner` (`adapters/host_agent.py`) wrapping the desktop
@@ -2191,6 +2488,30 @@ class Container:
             except Exception:
                 logger.exception("prompt pin sync failed; keeping the last known pins")
 
+    def start_control_reconciler(self) -> bool:
+        """Start the control center's rollback watcher in this process (the gateway's startup).
+
+        Staging/production only, and only once per process. Every gateway worker runs one; the
+        lease in Postgres lets exactly one act. Celery workers never call this.
+        """
+        settings = self.settings
+        if (self._reconciler_task is not None or not settings.control.reconciler_enabled
+                or not settings.environment.is_production_like):
+            return False
+        self._reconciler_task = asyncio.create_task(
+            self.control_reconciler.run_forever(), name="control-reconciler"
+        )
+        return True
+
+    async def _stop_control_reconciler(self) -> None:
+        task, self._reconciler_task = self._reconciler_task, None
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
     async def shutdown(self) -> None:
         """Release every connection this container opened (R2.7). Idempotent; never raises.
 
@@ -2212,13 +2533,18 @@ class Container:
             return
         self._shut_down = True
         if getattr(self, "task_queue", None) is not None:
-            # ADR-041 gateway queue: first, and on its own -- it cancels running tasks and writes
+            # ADR-043 gateway queue: first, and on its own -- it cancels running tasks and writes
             # their final state to the cache, which must still be open while it does.
             await self._close_quietly("agent task queue", self.task_queue.stop)
         if getattr(self, "agent_tasks", None) is not None:
             # Background sub-turns live in this process: stop them and write their final records
             # first, before the cache they report to (and the providers they call) are closed.
             await self._close_quietly("agent tasks", self.agent_tasks.shutdown)
+        await self._stop_control_reconciler()
+        try:
+            await self.kernel.wait_for_post_turn(timeout_s=POST_TURN_DRAIN_S)
+        except Exception:  # pragma: no cover - defensive; shutdown never raises
+            logger.warning("post-turn drain failed", exc_info=True)
         closers = self._shutdown_closers()
         await asyncio.gather(*(self._close_quietly(name, close) for name, close in closers))
         mark_dead = getattr(self.metrics, "mark_process_dead", None)
@@ -2269,6 +2595,7 @@ class Container:
             ("host agent relay", getattr(getattr(self, "host_agent_registry", None), "relay", None)),
             ("github client", self.github_client),
             ("mcp client", self.mcp_client),
+            ("structured extractor", getattr(self, "structured_extractor", None)),
         ):
             if adapter is not None and isinstance(adapter, Closeable):
                 closers.append((name, adapter.close))
@@ -2325,7 +2652,11 @@ class Container:
     async def health(self) -> dict[str, Any]:
         """Dependency health, for the readiness probe."""
         providers = await self.router.health()
-        index = await self.index_manager.active_identity()
+        knowledge_index = await self.index_manager.status()
+        # Informational, never gates readiness: chat works without knowledge, and only an admin
+        # rebuild repairs this, so evicting the gateway from the load balancer would not help.
+        # The gauge is what an alert reads (AuraKnowledgeIndexMismatch).
+        self.metrics.knowledge_index_mismatch.set(0 if knowledge_index["matches_embedder"] else 1)
         # A passive provider (health_probe=passive) was not called, so its "healthy" means only
         # "not known to be broken". It cannot carry readiness on its own while a provider that
         # *was* checked is down; it counts only when every provider is passive.
@@ -2347,9 +2678,20 @@ class Container:
             if not result.get("healthy", True):
                 healthy = False
 
+        # ADR-038. Informational, never gates readiness: an optional tool, and the adapter has no
+        # free endpoint to probe, so this reports configuration and its own cooldown, never a call.
+        extractor = self.structured_extractor
+        extraction: dict[str, Any] = {"enabled": extractor is not None}
+        if extractor is not None:
+            extraction["model"] = extractor.model_id
+            extraction["cooling_down"] = not (await extractor.health()).healthy
+
         payload = {
             "providers": providers,
-            "index": index.physical_name if index else None,
+            "index": knowledge_index["published"],
+            # Which index is published versus which the running embedder needs. A mismatch means
+            # every retrieval returns nothing until an admin rebuilds (scripts/rebuild_index.py).
+            "knowledge_index": knowledge_index,
             "tools": len(self.tools),
             "prompts": len(self.prompts),
             "agents": len(self.agents),
@@ -2379,6 +2721,7 @@ class Container:
                 "dimension": getattr(self.embedder, "dimension", None),
                 "semantic": not isinstance(self.embedder, HashEmbeddingProvider),
             },
+            "extraction": extraction,
             "healthy": healthy,
             # Informational, never gates readiness: `healthy` needs any provider, but a turn sent
             # with `require_local` (service callers such as Flame default to it) can only use a

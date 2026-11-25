@@ -1,25 +1,34 @@
 name: Desktop Main Channel
 
-# The "always the latest main" desktop installer. Every push to main that touches the desktop app
-# or its daemon builds the Windows installer (aura_hostd bundled, exactly as desktop-package.yml
-# does) and publishes it to ONE rolling GitHub pre-release, tag `desktop-main`, replacing the
-# previous build. scripts/AURA-Desktop-Setup.cmd looks that release up when a person runs it, so
-# whoever installs after a merge gets that merge.
+# Every push to main that touches the desktop app (or its daemon, or the install page) builds the
+# Windows installer and publishes it on the install page, https://web.aureon-ai.tech/desktop-ide/install,
+# so a person can install the newest build from the website WITHOUT any access to the repository.
+#
+#   build       (Windows runner)  Flutter Windows release + aura_hostd + Inno Setup installer, then
+#                                 latest.json (commit, version, installer name/size/SHA-256).
+#   deploy-web  (Linux runner)    puts the installer and latest.json into aura_web/build-assets/ and
+#                                 `railway up`s the AURA-Web service, then checks that the live
+#                                 site reports THIS commit.
+#
+# Why the build is not on Railway: Railway runs Linux containers and Flutter cannot cross-build a
+# Windows app from Linux, so the Windows build needs a Windows machine. This is also the packaging
+# desktop-package.yml uses (bundled aura_hostd, Inno Setup installer), which
+# scripts/deploy_client_desktop.ps1 alone does not produce. Railway only HOSTS the result.
+#
+# One-time setup (repository settings): the secret RAILWAY_WEB_TOKEN, a Railway PROJECT token for
+# the `production` environment of project `intuitive-adaptation`. Without it deploy-web fails
+# loudly instead of skipping.
 #
 # What this is NOT:
 # - It is not the update channel installed apps read. That is desktop-package.yml's signed
-#   desktop-v<version> releases, marked "latest". This release is a pre-release and is never marked
-#   latest, so `releases/latest/download/desktop-update.json` is unaffected. The tag name must not
-#   start with `desktop-v`, or it would trigger that workflow.
-# - It is not gated like a release: no `release` environment, because it holds no signing key and
-#   changes nothing an installed app trusts. A main build is exactly as trustworthy as main (which
-#   the Railway auto-deploy already ships ungated). Authenticode signing is applied when the same
+#   desktop-v<version> releases, marked "latest".
+# - It is not gated like a release: no `release` environment, because it holds no update-signing
+#   key and changes nothing an installed app trusts. A main build is exactly as trustworthy as main
+#   (which the Railway auto-deploy already ships ungated). Authenticode signing is applied when the
 #   AURA_WINDOWS_SIGNING_* secrets desktop-package.yml uses exist.
 #
-# Published assets (stable names, so a link never changes):
-#   aura-desktop-main.json               commit, version, installer name + SHA-256 (stable name)
-#   AURA-Desktop-Setup.cmd               the setup file itself (stable name)
-#   aura-desktop-windows-x64-main-<sha7>-setup.exe   the full installer; only the current one is kept
+# Served files (stable names): /desktop-ide/download/latest.json,
+# /desktop-ide/download/aura-desktop-windows-x64-setup.exe, /desktop-ide/download/AURA-Desktop-Setup.cmd
 
 on:
   push:
@@ -27,7 +36,9 @@ on:
     paths:
       - "aura_client/**"
       - "aura_hostd/**"
+      - "aura_web/**"
       - "scripts/AURA-Desktop-Setup.cmd"
+      - "scripts/build-web-app.sh"
       - ".github/workflows/desktop-main-channel.yml"
   workflow_dispatch:
     inputs:
@@ -39,8 +50,8 @@ on:
 permissions:
   contents: read
 
-# Queue, never cancel: a run cancelled halfway through publishing could leave the release with a
-# new installer and an old manifest. GitHub keeps only the newest waiting run.
+# Queue, never cancel: a run cancelled halfway through a deploy could leave the site mid-update.
+# GitHub keeps only the newest waiting run.
 concurrency:
   group: desktop-main-channel
   cancel-in-progress: false
@@ -49,14 +60,13 @@ env:
   BACKEND_URL: ${{ github.event.inputs.backend_url || 'https://api.aureon-ai.tech' }}
   APP_BASE_URL: ${{ vars.APP_BASE_URL || '' }}
   UPDATE_MANIFEST_URL: https://github.com/${{ github.repository }}/releases/latest/download/desktop-update.json
-  CHANNEL_TAG: desktop-main
+  INSTALLER_BASENAME: aura-desktop-windows-x64-setup
+  SITE_URL: https://web.aureon-ai.tech
 
 jobs:
-  build-and-publish:
+  build:
     runs-on: windows-latest
     timeout-minutes: 60
-    permissions:
-      contents: write
     defaults:
       run:
         shell: pwsh
@@ -75,7 +85,6 @@ jobs:
           $short = $env:GITHUB_SHA.Substring(0, 7)
           "version=$version" >> $env:GITHUB_OUTPUT
           "display=$version-main.$short" >> $env:GITHUB_OUTPUT
-          "installer_base=aura-desktop-windows-x64-main-$short-setup" >> $env:GITHUB_OUTPUT
 
       - name: Compile aura_hostd
         working-directory: aura_hostd
@@ -140,9 +149,8 @@ jobs:
           }
           Remove-Item $pfx
 
-      # /F overrides OutputBaseFilename: the installer's name carries the commit, so a new build
-      # is uploaded NEXT TO the previous one and the manifest (which names it) switches over only
-      # afterwards. The version shown in "Apps & features" carries the commit too.
+      # /F overrides OutputBaseFilename: the served installer has one stable name. The version
+      # shown in "Apps & features" (and compared by the setup file) carries the commit.
       - name: Build the installer
         run: |
           $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
@@ -150,9 +158,9 @@ jobs:
           $release = (Resolve-Path aura_client/build/windows/x64/runner/Release).Path
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           $dist = (Resolve-Path dist).Path
-          & $iscc "/DAppVersion=${{ steps.version.outputs.display }}" "/DSourceDir=$release" "/DOutputDir=$dist" "/F${{ steps.version.outputs.installer_base }}" aura_client/windows/installer/aura.iss
+          & $iscc "/DAppVersion=${{ steps.version.outputs.display }}" "/DSourceDir=$release" "/DOutputDir=$dist" "/F$env:INSTALLER_BASENAME" aura_client/windows/installer/aura.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
-          if (-not (Test-Path "dist/${{ steps.version.outputs.installer_base }}.exe")) { throw "ISCC did not write dist/${{ steps.version.outputs.installer_base }}.exe" }
+          if (-not (Test-Path "dist/$env:INSTALLER_BASENAME.exe")) { throw "ISCC did not write dist/$env:INSTALLER_BASENAME.exe" }
 
       - name: Sign the installer
         if: steps.signing.outputs.enabled == 'true'
@@ -163,15 +171,15 @@ jobs:
           $pfx = Join-Path $env:RUNNER_TEMP 'signing.pfx'
           [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_B64))
           $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' | Sort-Object FullName | Select-Object -Last 1
-          & $signtool.FullName sign /f $pfx /p $env:CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "dist/${{ steps.version.outputs.installer_base }}.exe"
+          & $signtool.FullName sign /f $pfx /p $env:CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "dist/$env:INSTALLER_BASENAME.exe"
           if ($LASTEXITCODE -ne 0) { throw "signing the installer failed" }
           Remove-Item $pfx
 
       # Computed AFTER signing: signing changes the file's bytes, and the setup file verifies
-      # exactly what is published.
-      - name: Write the build manifest
+      # exactly what is served.
+      - name: Write latest.json
         run: |
-          $installer = Get-Item "dist/${{ steps.version.outputs.installer_base }}.exe"
+          $installer = Get-Item "dist/$env:INSTALLER_BASENAME.exe"
           $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
           [ordered]@{
             schema         = 1
@@ -181,9 +189,8 @@ jobs:
             pubspecVersion = '${{ steps.version.outputs.version }}'
             builtAt        = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
             installer      = [ordered]@{ name = $installer.Name; sha256 = $hash; size = $installer.Length }
-          } | ConvertTo-Json -Depth 4 | Set-Content -Path dist/aura-desktop-main.json -Encoding utf8
-          Copy-Item scripts/AURA-Desktop-Setup.cmd dist/AURA-Desktop-Setup.cmd
-          Get-Content dist/aura-desktop-main.json
+          } | ConvertTo-Json -Depth 4 | Set-Content -Path dist/latest.json -Encoding utf8
+          Get-Content dist/latest.json
           Get-ChildItem dist
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -192,48 +199,96 @@ jobs:
           path: dist/
           retention-days: 14
 
-      # Move the tag to this commit, make sure the release exists as a pre-release that is NOT
-      # latest, then replace its assets in place (--clobber): the release is never absent, so a
-      # person installing mid-publish gets the previous complete build, not a 404.
-      - name: Publish to the rolling release
-        env:
-          GH_TOKEN: ${{ github.token }}
+  deploy-web:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Shared with web-app-main-channel.yml's deploy job: both publish the whole web image, so two
+    # must never run at once. Queue, never cancel.
+    concurrency:
+      group: web-service-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_WEB_TOKEN }}
+      FIREBASE_WEB_API_KEY: ${{ vars.FIREBASE_WEB_API_KEY }}
+      FIREBASE_WEB_APP_ID: ${{ vars.FIREBASE_WEB_APP_ID }}
+      FIREBASE_WEB_PROJECT_ID: ${{ vars.FIREBASE_WEB_PROJECT_ID }}
+      FIREBASE_WEB_AUTH_DOMAIN: ${{ vars.FIREBASE_WEB_AUTH_DOMAIN }}
+      FIREBASE_WEB_MESSAGING_SENDER_ID: ${{ vars.FIREBASE_WEB_MESSAGING_SENDER_ID }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.44.6"
+
+      - name: Download the built installer
         run: |
-          git tag -f $env:CHANNEL_TAG $env:GITHUB_SHA
-          git push --force origin "refs/tags/$env:CHANNEL_TAG"
-          if ($LASTEXITCODE -ne 0) { throw "could not move the $env:CHANNEL_TAG tag" }
+          gh run download "${{ github.run_id }}" --repo "${{ github.repository }}" --name aura-desktop-main-windows-x64 --dir artifacts
+          ls -l artifacts
 
-          $notes = @(
-            "Rolling build of ``main`` -- replaced on every push that changes the desktop app.",
-            "",
-            "- Commit: $env:GITHUB_SHA",
-            "- Version: ${{ steps.version.outputs.display }}",
-            "",
-            "Install: download ``AURA-Desktop-Setup.cmd`` and run it. It always fetches the newest build from this release. See docs/guides/desktop-releases.md."
-          ) -join "`n"
-          Set-Content -Path release-notes.md -Value $notes -Encoding utf8
+      # The manifest and the installer must belong together before anything is published.
+      - name: Check the installer matches its manifest
+        run: |
+          set -euo pipefail
+          want="$(python3 -c "import json; print(json.load(open('artifacts/latest.json'))['installer']['sha256'])")"
+          have="$(sha256sum "artifacts/${INSTALLER_BASENAME}.exe" | cut -d' ' -f1)"
+          if [ "$want" != "$have" ]; then
+            echo "::error::installer SHA-256 ($have) does not match latest.json ($want)"
+            exit 1
+          fi
 
-          gh release view $env:CHANNEL_TAG --repo $env:GITHUB_REPOSITORY *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release edit $env:CHANNEL_TAG --repo $env:GITHUB_REPOSITORY --prerelease --latest=false --notes-file release-notes.md
-          } else {
-            gh release create $env:CHANNEL_TAG --repo $env:GITHUB_REPOSITORY --prerelease --latest=false --verify-tag `
-              --title "AURA Desktop (main, rolling)" --notes-file release-notes.md
-          }
-          if ($LASTEXITCODE -ne 0) { throw "could not create or update the $env:CHANNEL_TAG release" }
+      # aura_web/Dockerfile builds from the repository root and copies aura_web/build-assets/ into
+      # the image, so the staged tree has the same layout as the repo.
+      - name: Stage the web service
+        run: |
+          set -euo pipefail
+          mkdir -p stage/scripts
+          cp -r aura_web stage/aura_web
+          cp scripts/AURA-Desktop-Setup.cmd stage/scripts/
+          cp "artifacts/${INSTALLER_BASENAME}.exe" artifacts/latest.json stage/aura_web/build-assets/
+          ls -l stage/aura_web/build-assets
 
-          # 1. The new installer, beside the old one. Nothing a reader follows points at it yet.
-          gh release upload $env:CHANNEL_TAG --repo $env:GITHUB_REPOSITORY --clobber "dist/${{ steps.version.outputs.installer_base }}.exe"
-          if ($LASTEXITCODE -ne 0) { throw "could not upload the installer" }
-          # 2. The manifest and the setup file: the switch-over, after the installer it names exists.
-          gh release upload $env:CHANNEL_TAG --repo $env:GITHUB_REPOSITORY --clobber dist/aura-desktop-main.json dist/AURA-Desktop-Setup.cmd
-          if ($LASTEXITCODE -ne 0) { throw "could not upload the manifest" }
-          # 3. Old installers, now unreferenced. Best effort: a leftover is harmless clutter.
-          $current = "${{ steps.version.outputs.installer_base }}.exe"
-          $assets = gh release view $env:CHANNEL_TAG --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name'
-          foreach ($name in $assets) {
-            if ($name -like 'aura-desktop-windows-x64-*-setup.exe' -and $name -ne $current) {
-              gh release delete-asset $env:CHANNEL_TAG $name --repo $env:GITHUB_REPOSITORY --yes
-            }
-          }
-          $global:LASTEXITCODE = 0
+      # `railway up` replaces the whole web image, and the web app (/app/) is part of it: building
+      # it here keeps an installer deploy from erasing it. The same script as
+      # web-app-main-channel.yml, so the two cannot disagree about how the app is built.
+      - name: Build the web app so this deploy carries it too
+        run: scripts/build-web-app.sh stage/aura_web/app-build
+
+      - name: Deploy to Railway
+        working-directory: stage
+        run: |
+          set -euo pipefail
+          if [ -z "${RAILWAY_TOKEN:-}" ]; then
+            echo "::error::The RAILWAY_WEB_TOKEN secret is not set, so the install page cannot be updated. Create a Railway project token for the production environment and add it as that repository secret."
+            exit 1
+          fi
+          npm install --global @railway/cli@5.23.0
+          railway up --service AURA-Web --ci
+
+      # Railway swaps the container only once the new one is healthy; wait for it and prove the
+      # public site now offers THIS commit and the exact installer that was built.
+      - name: Check the live site serves this build
+        run: |
+          set -euo pipefail
+          want_size="$(python3 -c "import json; print(json.load(open('artifacts/latest.json'))['installer']['size'])")"
+          for attempt in $(seq 1 30); do
+            live="$(curl -fsS "${SITE_URL}/desktop-ide/download/latest.json" | python3 -c "import json,sys; print(json.load(sys.stdin)['commit'])" || true)"
+            if [ "$live" = "$GITHUB_SHA" ]; then
+              got_size="$(curl -fsSI "${SITE_URL}/desktop-ide/download/${INSTALLER_BASENAME}.exe" | tr -d '\r' | awk 'tolower($1)=="content-length:" {print $2}')"
+              if [ "$got_size" = "$want_size" ]; then
+                echo "Live site serves commit ${GITHUB_SHA} (installer ${got_size} bytes)."
+                exit 0
+              fi
+              echo "attempt ${attempt}: commit matches but installer size is '${got_size}', expected ${want_size}"
+            else
+              echo "attempt ${attempt}: live commit is '${live}', waiting for ${GITHUB_SHA}"
+            fi
+            sleep 10
+          done
+          echo "::error::The live site did not start serving this build within 5 minutes."
+          exit 1

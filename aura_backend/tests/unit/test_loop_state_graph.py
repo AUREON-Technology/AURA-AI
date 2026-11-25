@@ -1,4 +1,4 @@
-"""The agent loop's control flow as an explicit graph, with test results as an input (ADR-037;
+"""The agent loop's control flow as an explicit graph, with test results as an input (ADR-039;
 row 14).
 
 ``run_command`` returns ``ok=True`` with the exit status only in its text, so the old loop saw "every

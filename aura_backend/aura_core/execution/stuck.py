@@ -1,4 +1,4 @@
-"""Stuck detection: notice that the agent loop is spinning, and say so (ADR-037).
+"""Stuck detection: notice that the agent loop is spinning, and say so (ADR-039).
 
 The loop's only stop conditions used to be hard bounds -- a replan limit, a deadline, budgets. A
 plan that failed the same way every time therefore ran to the limit: one identical failing plan was

@@ -86,7 +86,7 @@ class ToolContext:
         # session tools (checkpoint save/recall) and the handoff builder; every one of them still
         # scopes by ``user_id`` as well, so a session id is never a capability on its own.
         self.session_id = session_id
-        # The user's review profile (ADR-039): ``strict`` | ``standard`` | ``autonomous``. A policy
+        # The user's review profile (ADR-041): ``strict`` | ``standard`` | ``autonomous``. A policy
         # input like ``max_sensitivity``; ``ToolPolicy`` decides what each value means and falls
         # back to ``standard`` for one it does not honour.
         self.autonomy = autonomy
@@ -281,6 +281,19 @@ class TelemetrySink(Protocol):
 
     async def purge_sessions(self, session_ids: Any) -> int:
         """Delete every turn of the given conversations (erasure); returns how many."""
+        ...
+
+    async def get_turn_usage(self, turn_id: str, owner_ref: str) -> dict[str, Any] | None:
+        """The usage view of ``turn_id`` if -- and only if -- ``owner_ref`` is its owner's.
+
+        ``None`` for an unknown turn, someone else's turn, a turn recorded without an owner, and
+        an empty ``owner_ref``: the caller cannot tell these apart, so a turn id cannot be probed
+        for existence. Content-free (see ``TurnTelemetry.usage_view``).
+        """
+        ...
+
+    async def purge_owner(self, owner_ref: str) -> int:
+        """Delete every turn owned by ``owner_ref`` (account erasure); returns how many."""
         ...
 
 

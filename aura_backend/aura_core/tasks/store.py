@@ -1,4 +1,4 @@
-"""Where agent tasks live: the cache port, namespaced by owner (ADR-041).
+"""Where agent tasks live: the cache port, namespaced by owner (ADR-043).
 
 No table, by decision (Alembic is the only schema authority and a new table needs a real-Postgres
 round trip). A task is small, short-lived and its history is a convenience, so the shared cache --

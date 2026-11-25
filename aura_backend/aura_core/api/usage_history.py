@@ -1,4 +1,4 @@
-"""Usage dashboard and run-history routes (ADR-041, roadmap rows 72 and 71).
+"""Usage dashboard and run-history routes (ADR-043, roadmap rows 72 and 71).
 
 * ``GET /api/v3/usage/summary`` and ``GET /api/v3/usage/turns`` -- the caller's own tokens, cost
   and time, from the per-turn records the kernel keeps (``history/usage.py``).

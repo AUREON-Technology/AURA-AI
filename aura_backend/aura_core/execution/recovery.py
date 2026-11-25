@@ -1,4 +1,4 @@
-"""``RecoveryPolicy``: what to do about one failure, decided from its ``error_kind`` (ADR-037).
+"""``RecoveryPolicy``: what to do about one failure, decided from its ``error_kind`` (ADR-039).
 
 Until now the execution engine had one answer to every failed read-only step: run it again, up to
 ``max_attempts``. That is right for a timeout and wrong for nearly everything else -- a step whose

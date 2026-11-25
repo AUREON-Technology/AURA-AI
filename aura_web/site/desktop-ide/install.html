@@ -17,7 +17,10 @@
         <img src="/desktop-ide/assets/favicon.svg" width="28" height="28" alt="">
         <span>AURA</span>
       </a>
-      <span class="tag">Desktop IDE</span>
+      <span class="top-links">
+        <a class="tag" href="/app/">Open the web app</a>
+        <span class="tag">Desktop IDE</span>
+      </span>
     </div>
   </header>
 
@@ -33,6 +36,8 @@
         </a>
         <span class="file">AURA-Desktop-Setup.cmd</span>
       </div>
+      <p class="build" id="build-info" aria-live="polite">Checking the latest build&hellip;</p>
+      <p class="direct" id="direct" hidden>Prefer a normal installer? <a id="installer-link" href="/desktop-ide/download/aura-desktop-windows-x64-setup.exe" download>Download the installer (.exe)</a> directly.</p>
       <p class="platform-note" id="platform-note" hidden>This device does not look like Windows. AURA Desktop IDE is Windows-only for now &mdash; open this page on your Windows PC.</p>
     </section>
 
@@ -49,14 +54,9 @@
         </li>
         <li>
           <h3>Done</h3>
-          <p>It finds the newest build, downloads it, checks its SHA-256 checksum and starts the installer. No administrator rights needed.</p>
+          <p>It finds the newest build on this website, downloads it, checks its SHA-256 checksum and starts the installer. No administrator rights and no GitHub account needed.</p>
         </li>
       </ol>
-    </section>
-
-    <section class="callout" aria-labelledby="access">
-      <h2 id="access">Early access</h2>
-      <p>While AURA&rsquo;s source repository is private, setup needs a GitHub account that can read it. Install the <a href="https://cli.github.com/" rel="noopener">GitHub CLI</a> and run <code>gh auth login</code> once &mdash; setup picks the sign-in up by itself. Alternatively set an <code>AURA_GITHUB_TOKEN</code> environment variable.</p>
     </section>
 
     <section aria-labelledby="update">
@@ -66,12 +66,19 @@
 
     <section aria-labelledby="verify">
       <h2 id="verify">Verify your download</h2>
-      <p>The SHA-256 checksum of the file offered above:</p>
+      <p>The SHA-256 checksum of the setup file offered above:</p>
       <div class="code" data-copy>
         <code id="sha">__SETUP_SHA256__</code>
         <button type="button" class="copy" aria-label="Copy checksum">Copy</button>
       </div>
-      <p>Compare it with your download in PowerShell:</p>
+      <div id="installer-sha-box" hidden>
+        <p>And of the installer (.exe):</p>
+        <div class="code" data-copy>
+          <code id="installer-sha"></code>
+          <button type="button" class="copy" aria-label="Copy installer checksum">Copy</button>
+        </div>
+      </div>
+      <p>Compare a download with its checksum in PowerShell:</p>
       <div class="code" data-copy>
         <code>Get-FileHash .\AURA-Desktop-Setup.cmd -Algorithm SHA256</code>
         <button type="button" class="copy" aria-label="Copy command">Copy</button>

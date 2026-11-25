@@ -1,4 +1,4 @@
-"""Automatic lessons from Engineer turns (ADR-038, inventory row 60): the shapes only.
+"""Automatic lessons from Engineer turns (ADR-040, inventory row 60): the shapes only.
 
 After an Engineer turn the kernel hands a :class:`LessonTurn` -- a plain record of what was asked,
 what was answered and which tool steps ran or failed -- to a sink; ``learning/lessons.py`` derives

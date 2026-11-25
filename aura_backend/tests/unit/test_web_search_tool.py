@@ -1,4 +1,4 @@
-"""ADR-040: ``web_search`` against an operator-run SearXNG.
+"""ADR-042: ``web_search`` against an operator-run SearXNG.
 
 The HTTP boundary is ``httpx.MockTransport``: the network is the one thing a default test run may not
 touch, so the SearXNG server is stood in for by a handler that answers like one (its real JSON

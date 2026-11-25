@@ -1,5 +1,5 @@
 """The self-reflection critic: a second look at the plan before it runs and at the outcome before it
-is claimed (ADR-037; row 42).
+is claimed (ADR-039; row 42).
 
 The rules are deterministic, so each is tested by building the situation it describes. The loop
 behaviour (a blocking finding buys one revision, fed back into the replan prompt; a code change that

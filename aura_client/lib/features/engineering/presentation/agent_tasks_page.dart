@@ -11,7 +11,7 @@ import 'package:aura_client/l10n/l10n.dart';
 import '../data/agent_task_outbox.dart';
 import '../data/agent_task_repository.dart';
 
-/// Send a task to the agent task gateway and watch it (ADR-041, inventory row 91).
+/// Send a task to the agent task gateway and watch it (ADR-043, inventory row 91).
 ///
 /// A task that cannot be sent yet (offline, server down) is not lost: it is saved on this device
 /// as "waiting to send" and replayed in order under the same `client_request_id`, so the server

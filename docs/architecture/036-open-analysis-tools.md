@@ -34,7 +34,7 @@ on the CPU-hosted model that prompt is the budget.
 
 ### Group A — analysis (`tools/analysis.py`): on by default
 
-Seventeen tools. Each takes text the caller supplies and returns JSON; none reads a path, spawns a
+Seventeen tools (eighteen since 2026-11-21: see the addendum). Each takes text the caller supplies and returns JSON; none reads a path, spawns a
 process, imports user code or keeps state. So none needs a capability or a confirmation, and none
 is tagged `untrusted_content`. Inputs are length-capped, because `asyncio.to_thread` cannot be
 cancelled — the cap, not the timeout, is the CPU bound.
@@ -135,6 +135,100 @@ are literals in `agents/registry.py` (it does not import `tools`), and
   favour of an opt-in, flag-gated, confirmed registration. Recorded as GAP-066 with the migration as
   its exit condition.
 - **One tool per method.** Rejected: ~80 specs in the planner prompt.
+
+## Addendum — triage of the 25 modules added 2026-11-19 (2026-11-21, KAN-30…35)
+
+On 2026-11-19 a commit added 25 more classes under `tools/open/`, and a later merge
+(`a0024eae`/`fee9dc96`) both left conflict markers in the directory (fixed in `9ba1dbd5`: all of
+`aura_core` had stopped importing) and silently reverted two of the fixes above: licence matching
+went back to exact SPDX ids (so `GPL-3.0+`, `BUSL-1.1`, `""` and `NOASSERTION` passed, and OR/AND
+were ignored) and the drift monitor went back to checking NaN only (so `inf` passed and a NaN inside
+a sample was never looked at). Both are restored (KAN-30), with the methods added since kept.
+
+**One list, checked.** `tools/open/_classification.py` now records every module's status —
+`wrapped`, `superseded`, `deferred` or `not_exposed` — and
+`tests/architecture/test_open_tools_classification.py` fails when a module is not in it, when the
+builders import a module that is not `wrapped`, when anything else under `aura_core` imports one
+that is not, when a non-wrapped file lacks its status header, when a module does not import, or
+when a file carries a merge-conflict marker. `test_superseded_open_tools_unused.py` reads its list
+from the same place. "Not exposed" therefore means *imported by nothing, so registered as no tool,
+so granted to no persona* — a checked claim, not a comment. No module was deleted; retiring one is
+a status plus a header.
+
+**Decisions.** One module is wrapped. The bar was: pure text-in/JSON-out *and* something the model
+cannot do reliably by reading the text itself, because each tool costs planner prompt on every
+turn (a separate ticket is shrinking that prompt).
+
+| Module | Decision | Why |
+|---|---|---|
+| `structured_data_parser` | **wrapped** → `validate_structured_text` | Whether JSON/YAML/TOML/XML parses, and the exact line and column when it does not, is deterministic work a model gets wrong. The result summarises the parsed value (root type, top-level keys) instead of echoing it: a YAML alias bomb is small as references and exponential once serialised. YAML is `safe_load`; expat refuses XML entity-expansion bombs and fetches no external entities. Both pinned by tests. YAML errors now report their line. |
+| `background_task_manager` | not exposed (KAN-34) | `Popen` in the gateway with `os.environ.copy()` — the child inherits provider keys and the JWT secret — and a process table with no owner scoping. Long-running processes on the user's machine are `aura_hostd`'s terminal sessions. |
+| `push_notification_dispatcher` | not exposed (KAN-34) | POSTs to any caller-named URL with `urllib` and no SSRF guard (contrast `fetch_url`'s `_assert_public_url`); without a URL it reports `delivered` when nothing was sent. |
+| `binary_file_inspector` | not exposed (KAN-34) | Reads paths on the gateway. |
+| `notebook_reader` | not exposed (KAN-34) | Treats every argument as a path first and reads it on the gateway. |
+| `file_type_detector_router` | not exposed (KAN-34) | Reads paths and walks directories on the gateway. |
+| `stale_context_detector` | not exposed (KAN-34) | Reads and hashes paths on the gateway. The useful version (has a file on the user's machine changed since the agent read it) would be an `aura_hostd` RPC; none is planned. |
+| `remote_session_controller` | not exposed (KAN-34) | A process-local dict of session states connected to nothing: `pause` reports `paused` while the real run continues; no owner scoping. |
+| `archive_extractor` | not exposed | Reads and writes paths on the gateway. |
+| `project_conventions_loader` | not exposed | Reads and walks workspace paths on the gateway; the Engineer reads convention files with `read_file`. |
+| `skills_rules_workflows_loader` | not exposed | Reads workspace paths on the gateway; the rest is frontmatter regex the model replaces by reading. |
+| `repo_semantic_indexer` | not exposed | Walks directories on the gateway; duplicates the knowledge engine's indexing and retrieval. |
+| `ui_visual_verifier` | not exposed | Reads any existing path on the gateway; image bytes do not travel well as tool JSON; the "perceptual" hash is over raw compressed bytes. |
+| `verification_evidence_collector` | not exposed | A digest over caller-supplied evidence proves nothing about whether commands ran; a missing exit code counts as 0; reads paths. |
+| `acceptance_criteria_verifier` | not exposed | Marks criteria `ACCEPTED` on substring overlap (an empty evidence key matches every criterion): a rubber stamp. `evaluate_quality_gate` is the fail-closed gate. |
+| `scope_and_diff_guard` | not exposed | Overlaps `scan_code_security` and `analyze_change_impact`, and `lstrip("./")` strips characters, so a root `.env` becomes `env` and the default `.env*` pattern misses it. Fix before any exposure. |
+| `multi_language_ast_analyzer` | not exposed | Regex line matching for JS/TS/Dart/Go/Rust is imprecise and backtracks quadratically on a long line (40K characters of `a(` took 1.3 s; the 200K cap would be ~30 s, uncancellable under `asyncio.to_thread`). The Python half duplicates `analyze_python_ast`. A candidate after a per-line cap and a better extractor. |
+| `source_content_explainer` | not exposed | Duplicates `analyze_python_ast` plus reading the model does itself. |
+| `architectural_consistency_checker` | not exposed | Pure, but needs a module→imports map the caller assembles first, and its layers are generic; AURA's own layering is enforced by `tests/architecture`. Not worth the prompt today. |
+| `ambiguity_and_clarification_detector` | not exposed | Word-list scoring of vague terms; the model judges ambiguity better. |
+| `artifact_feedback_ingestor` | not exposed | Regex plan edits the model makes itself. |
+| `artifact_generator` | not exposed | Markdown templates the model writes itself; `save_artifact_to_disk` writes any path. |
+| `automated_quiz_generator` | not exposed | Template output (every answer is "A"). |
+| `mobile_artifact_summarizer` | not exposed | Presentation formatting that belongs in `aura_client`. |
+| `project_status_qa_tool` | not exposed | Keyword search over an execution history no AURA engine supplies. |
+
+None is deferred: no module among the 25 is something AURA plans to build as an `aura_hostd` RPC
+now. Two older modules stay deferred (`dev_server_manager`, `browser_subagent`), and the two older
+unwrapped ones not covered above (`performance_profiler`, `backup_restore_verifier`) are now
+recorded as not exposed, with headers.
+
+**Consequences.** Group A is eighteen tools. `validate_structured_text` is granted with the code
+analysis set (`coding_agent`, `engineer`; the orchestrator sees it by capability as before). The
+group's planner-prompt cost went from 5,837 to 6,077 characters; the 7,000 ceiling in
+`TestPlannerPromptBudget` is unchanged. Like the rest of this ADR: built and tested, not measured on
+the production model.
+
+## Update 2026-11-25: twenty of the "not exposed" modules are wrapped after all
+
+When the `princess` branch was merged into `main`, ADR-044 and ADR-045 (formerly numbered 042 and
+043 there) turned out to have rewritten and wired in twenty of the modules this ADR left as
+reference code, under conditions that answer the reason recorded against each:
+
+* **Pure text in, JSON out** (`open_pure.py`, ADR-044): `acceptance_criteria_verifier` (rewritten so
+  a criterion passes only on evidence that says so, which was the "rubber stamp" reason),
+  `ambiguity_and_clarification_detector`, `architectural_consistency_checker` (reads the imports of
+  the files the caller passes, so no hand-built map), `artifact_feedback_ingestor`,
+  `artifact_generator`, `automated_quiz_generator`, `file_type_detector_router` (takes bytes, never a
+  path), `mobile_artifact_summarizer`, `multi_language_ast_analyzer`, `scope_and_diff_guard`,
+  `source_content_explainer`, `verification_evidence_collector`.
+* **Workspace readers** (`open_workspace.py`, ADR-045): `backup_restore_verifier`,
+  `binary_file_inspector`, `notebook_reader`, `project_conventions_loader`, `repo_semantic_indexer`,
+  `skills_rules_workflows_loader`, `stale_context_detector`. Their reason was "reads paths on the
+  gateway". They now register only when `AURA_TOOLS_FILES_ROOT` is set, resolve every path through
+  `tools/confinement.py::resolve_within`, pass the root as the class's own `base_dir`, go to the
+  Engineer only and are tagged `untrusted_content`. `project_status_qa_tool` is wrapped over this
+  user's recorded runs and reads no file.
+
+`_classification.py` is the record of which is which, and
+`test_the_reexposed_kan_34_modules_are_reachable_only_through_their_confining_builder` keeps the four
+modules KAN-34 named (`binary_file_inspector`, `notebook_reader`, `stale_context_detector`,
+`file_type_detector_router`) reachable through exactly the builder that confines them. Still not
+exposed: `archive_extractor`, `ui_visual_verifier`, `push_notification_dispatcher`,
+`remote_session_controller`, `background_task_manager`; deferred: `dev_server_manager`,
+`browser_subagent`; superseded: `gpu_resource_scheduler` and the rest of the list above.
+
+The table above is the 2026-11-21 decision and is left as written. This is **built, not proven**: no
+live run of the workspace readers on a deployment with `AURA_TOOLS_FILES_ROOT` set exists yet.
 
 ## Not proven
 

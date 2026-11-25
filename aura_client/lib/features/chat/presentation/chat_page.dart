@@ -191,7 +191,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       onOpenDrawer: () => _scaffoldKey.currentState?.openDrawer(),
                     ),
                     Expanded(
-                      child: messagesAsync.when(
+                      // Web: a readable column in the middle of a wide window. A no-op elsewhere.
+                      child: AuraReadableWidth(child: messagesAsync.when(
                         data: (messages) {
                           if (messages.isEmpty) {
                             return EmptyStateChat(
@@ -246,15 +247,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                         error: (err, _) => Center(
                           child: AuraFailureView(failure: AuraFailure.from(err)),
                         ),
-                      ),
+                      )),
                     ),
                     const PendingActionsCard(),
                     // WP8: which folder on the user's computer an Engineer turn works in.
                     if (isEngineer) const EngineerDesktopBar(),
-                    ChatComposer(
-                      controller: _messageController,
-                      isMobile: isMobile,
-                      onSend: _sendMessage,
+                    AuraReadableWidth(
+                      child: ChatComposer(
+                        controller: _messageController,
+                        isMobile: isMobile,
+                        onSend: _sendMessage,
+                      ),
                     ),
                   ],
                 ),

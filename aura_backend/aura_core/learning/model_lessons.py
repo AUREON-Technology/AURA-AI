@@ -1,4 +1,4 @@
-"""Model-written lessons from an Engineer turn (ADR-045, row 60). Optional, off by default.
+"""Model-written lessons from an Engineer turn (ADR-047, row 60). Optional, off by default.
 
 ``learning/lessons.py`` derives lessons by keyword and plan shape. That is cheap and safe but
 modest: it can only repeat what a sentence or a step status literally says. This module asks the

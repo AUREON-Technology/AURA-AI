@@ -1,4 +1,4 @@
-"""ADR-044: the capabilities added to the thirteen ``PARTIAL`` open tools.
+"""ADR-046: the capabilities added to the thirteen ``PARTIAL`` open tools.
 
 Each class pins one row of the inventory sheet. Tools are driven through ``Tool.execute`` (what the
 kernel does) or a real ``ToolRegistry``; nothing internal is mocked. Two seams are substituted and are
@@ -1106,9 +1106,10 @@ class TestWiringAndInvariants:
             assert not any(m.startswith(("aura_core.adapters", "aura_core.api", "aura_core.container", "aura_service"))
                            or m in ("adapters", "api", "container") for m in imported), (name, imported)
 
-    def test_every_extension_module_parses_and_the_group_stays_the_same_seventeen_tools(self) -> None:
+    def test_every_extension_module_parses_and_the_group_stays_the_same_eighteen_tools(self) -> None:
         from aura_core.tools.analysis import ANALYSIS_TOOL_NAMES
 
-        assert len(ANALYSIS_TOOL_NAMES) == 17
+        # Seventeen on princess; main's ADR-036 added validate_structured_text (KAN-32), so eighteen.
+        assert len(ANALYSIS_TOOL_NAMES) == 18 and "validate_structured_text" in ANALYSIS_TOOL_NAMES
         assert module_name_from_path("a/b.py") == "a.b"
         assert sys.version_info >= (3, 11)

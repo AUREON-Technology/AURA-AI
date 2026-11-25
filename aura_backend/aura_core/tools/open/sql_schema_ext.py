@@ -1,4 +1,4 @@
-"""SQL schema and query intelligence for ``inspect_sql`` (ADR-044, row 92).
+"""SQL schema and query intelligence for ``inspect_sql`` (ADR-046, row 92).
 
 ``DatabaseIntelligenceTool`` lints one statement with patterns. This reads a whole *schema* from the
 text a caller supplies (SQL DDL or Alembic migration source), builds tables / relationships / indexes,

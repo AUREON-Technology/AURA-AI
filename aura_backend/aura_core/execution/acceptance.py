@@ -1,4 +1,4 @@
-"""Check a finished run against the acceptance criteria the caller supplied (ADR-045, row 41).
+"""Check a finished run against the acceptance criteria the caller supplied (ADR-047, row 41).
 
 ``Goal.success_criteria`` used to be empty on every turn, so "did it work?" had no answer. When a
 request carries ``success_criteria`` this module reads the run's *own evidence* -- the tool results

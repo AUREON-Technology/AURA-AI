@@ -138,7 +138,7 @@ def test_adr_036_tools_that_run_code_are_tagged_untrusted_content() -> None:
 
 def test_adr_040_readers_and_search_are_tagged_untrusted_content() -> None:
     """File readers return whatever the file's author wrote and search returns other people's page
-    titles: a turn that called one is tainted exactly as one that called fetch_url (ADR-040)."""
+    titles: a turn that called one is tainted exactly as one that called fetch_url (ADR-042)."""
     from aura_core.tools.media import MEDIA_TOOL_NAMES, build_media_tools
     from aura_core.tools.websearch import build_web_search_tool
 

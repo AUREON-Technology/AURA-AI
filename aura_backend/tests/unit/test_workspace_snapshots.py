@@ -1,5 +1,5 @@
 """Workspace snapshots and rollback: ``workspace_snapshot``, ``list_workspace_snapshots``,
-``workspace_restore`` (ADR-039).
+``workspace_restore`` (ADR-041).
 
 Real ``git`` in a real directory: ``InMemorySandboxRunner`` runs commands for real, so a snapshot
 here is an actual commit object under ``refs/aura/snapshots`` and a restore actually rewrites the
@@ -378,7 +378,7 @@ class _Steps:
     def __init__(self, steps) -> None:
         self._steps = steps
 
-    def needs_plan(self, message, *, available_tools=(), force=None) -> bool:
+    def needs_plan(self, message, *, available_tools=(), force=None, previous_reply=None) -> bool:
         return True
 
     @staticmethod

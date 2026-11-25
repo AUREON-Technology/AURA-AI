@@ -298,7 +298,7 @@ class WorkspaceManager:
                 return workspace
         return None
 
-    # -- lifecycle on request (ADR-041, roadmap row 89) -------------------------------------
+    # -- lifecycle on request (ADR-043, roadmap row 89) -------------------------------------
     #
     # The same operations ``open``/``pause`` perform inside a turn, exposed so a person can start,
     # stop or restart *their own* workspace from the app. They add no new policy: ``start`` goes

@@ -1,4 +1,4 @@
-"""``web_search``: search the web through an operator-run SearXNG instance (ADR-040).
+"""``web_search``: search the web through an operator-run SearXNG instance (ADR-042).
 
 ``fetch_url`` reads a page the model already has the address of; nothing let it *find* one. Search is
 provided the way everything else on this platform is: by something the operator runs themselves. A

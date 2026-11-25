@@ -1,6 +1,6 @@
 """One definition of "a path inside the workspace root" for the file-reading tools.
 
-``read_file`` and ``list_files`` (``tools/builtin.py``) and the ADR-040 readers (``tools/media.py``:
+``read_file`` and ``list_files`` (``tools/builtin.py``) and the ADR-042 readers (``tools/media.py``:
 ``ocr_image``, ``inspect_spreadsheet``, ``parse_document``, ``transcribe_audio``,
 ``analyze_image_requirements``) all take a path relative to ``AURA_TOOLS_FILES_ROOT``. They share
 this function so the rule cannot drift between them: the path is joined to the root and then

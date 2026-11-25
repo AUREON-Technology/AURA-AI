@@ -1,4 +1,4 @@
-"""Trace / span analysis (ADR-047): critical path, slowest spans, errors, services.
+"""Trace / span analysis (ADR-049): critical path, slowest spans, errors, services.
 
 Reads an OTLP-JSON trace as Tempo serves it (``batches`` / ``resourceSpans`` with ``scopeSpans``),
 a Jaeger-style ``{"data":[{"spans":[...], "processes":{...}}]}`` document, or a flat list of span

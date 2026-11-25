@@ -1,4 +1,4 @@
-"""Model-written lessons (ADR-045, row 60): optional, classified, strict, never blocking.
+"""Model-written lessons (ADR-047, row 60): optional, classified, strict, never blocking.
 
 Layers: the strict parser; the extractor against a real ``ProviderRouter`` (what it sends, and that a
 hosted provider is never even tried); the job (model candidates take the same screening road, every
@@ -208,7 +208,7 @@ class _FixedPlanner:
     def __init__(self, plan: Plan) -> None:
         self._plan = plan
 
-    def needs_plan(self, message, *, available_tools=(), force=None) -> bool:  # noqa: ANN001
+    def needs_plan(self, message, *, available_tools=(), force=None, previous_reply=None) -> bool:  # noqa: ANN001
         return True
 
     def goal_from_message(self, message, *, criteria=()):  # noqa: ANN001

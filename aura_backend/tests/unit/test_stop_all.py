@@ -1,4 +1,4 @@
-"""The remote kill switch: ``POST /api/v3/agents/stop-all`` (ADR-039).
+"""The remote kill switch: ``POST /api/v3/agents/stop-all`` (ADR-041).
 
 Driven through the real ASGI app with a real, long-running turn: a scripted planner picks a slow
 tool, the real executor/registry/policy run it, and the route cancels it mid-flight. What is
