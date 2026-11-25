@@ -18,11 +18,11 @@ NOW = datetime(2026, 11, 25, 12, 0, tzinfo=timezone.utc)
 
 
 def turn(model: str, *, ok: bool = True, ms: float = 800.0, degraded: bool = False, cost: float = 0.001,
-         minutes_ago: float = 10, groundedness: float | None = 0.9) -> TurnTelemetry:
+         minutes_ago: float = 10, groundedness: float | None = 0.9, blocked: bool = False) -> TurnTelemetry:
     return TurnTelemetry(
         correlation_id=CorrelationId.new(), turn_id=TurnId.new(), session_id=SessionId("s"),
         started_at=NOW - timedelta(minutes=minutes_ago), model=model,
-        outcome=TurnOutcome.SUCCESS if ok else TurnOutcome.ERROR, total_ms=ms, fallback_count=1 if degraded else 0,
+        outcome=TurnOutcome.BLOCKED if blocked else (TurnOutcome.SUCCESS if ok else TurnOutcome.ERROR), total_ms=ms, fallback_count=1 if degraded else 0,
         cost_usd=cost, groundedness=groundedness)
 
 
@@ -148,7 +148,7 @@ class TestReportAndLimits:
 
     def test_the_series_table_is_what_the_adr_says(self) -> None:
         assert [s[0] for s in SERIES] == ["success_rate", "non_degraded_rate", "tool_success_rate", "groundedness",
-                                           "p95_latency_ms", "avg_cost_usd"]
+                                           "refusal_rate", "p95_latency_ms", "avg_cost_usd"]
 
     async def test_concurrent_monitors_do_not_lose_observations(self) -> None:
         import asyncio
@@ -218,3 +218,32 @@ class TestAdminRoutes:
         with self.client(container, role="User") as client:
             assert client.get("/api/v3/admin/model-monitor").status_code == 403
             assert client.post("/api/v3/admin/model-monitor/rebaseline").status_code == 403
+
+
+class TestRefusalRateAndAlertSignal:
+    async def test_a_model_that_starts_refusing_more_is_flagged(self) -> None:
+        sink, cache = InMemoryTelemetrySink(), InMemoryCache()
+        await fill(sink, "qwen", 30)
+        first = await monitor(sink, cache)
+        assert next(f for f in first["findings"] if f["metric"] == "refusal_rate")["current"] == 0.0
+        await fill(sink, "qwen", 20, blocked=True, ok=False, minutes_ago=5)
+        second = await monitor(sink, cache)
+        refusal = next(f for f in second["drift"] if f["metric"] == "refusal_rate")
+        assert refusal["model"] == "qwen" and refusal["current"] > refusal["reference"]
+
+    async def test_the_report_becomes_gauges_a_grafana_alert_can_fire_on(self) -> None:
+        from aura_core.observability.metrics import Metrics
+
+        sink, cache = InMemoryTelemetrySink(), InMemoryCache()
+        await fill(sink, "qwen", 30)
+        await monitor(sink, cache)
+        await fill(sink, "qwen", 40, ok=False, minutes_ago=5)
+        report = await monitor(sink, cache)
+        metrics = Metrics(enabled=True)
+        metrics.set_model_drift(report, age_s=42.0)
+        text = metrics.render().decode()
+        assert 'aura_model_drift_active{metric="success_rate",model="qwen"} 1.0' in text.replace(
+            'model="qwen",metric="success_rate"', 'metric="success_rate",model="qwen"')
+        assert 'aura_model_drift_active{metric="refusal_rate",model="qwen"} 0.0' in text.replace(
+            'model="qwen",metric="refusal_rate"', 'metric="refusal_rate",model="qwen"')
+        assert "aura_model_monitor_report_age_seconds 42.0" in text

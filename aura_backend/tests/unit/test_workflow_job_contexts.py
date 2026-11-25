@@ -318,4 +318,15 @@ class TestControlPlaneDeploysTheTestedCommit:
     def test_the_deploy_job_checks_out_the_tested_sha(self) -> None:
         checkout = _job("control-plane-deploy.yml", "deploy")["steps"][0]
         assert checkout["uses"].startswith("actions/checkout@")
-        assert checkout["with"]["ref"] == "${{ github.event.workflow_run.head_sha || github.sha }}"
+        # The tested commit always wins; a named `sha` input (a rollback, dispatch only) comes next.
+        assert checkout["with"]["ref"] == (
+            "${{ github.event.workflow_run.head_sha || inputs.sha || github.sha }}")
+
+    def test_a_named_commit_must_be_well_formed_and_an_ancestor_of_main(self) -> None:
+        steps = _job("control-plane-deploy.yml", "deploy")["steps"]
+        guard = next(s for s in steps if s.get("name") == "Refuse a commit that is not on main")
+        assert guard["if"] == "${{ inputs.sha != '' }}"
+        # The value reaches the script through env, never interpolated into it.
+        assert "${{" not in guard["run"] and guard["env"]["REQUESTED_SHA"] == "${{ inputs.sha }}"
+        assert "merge-base --is-ancestor" in guard["run"] and "[0-9a-f]{40}" in guard["run"]
+        assert steps.index(guard) == 1  # right after checkout, before anything is built or uploaded

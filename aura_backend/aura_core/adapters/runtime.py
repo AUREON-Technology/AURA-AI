@@ -358,7 +358,7 @@ class InMemoryTelemetrySink:
         if not turns:
             return {
                 "turns": 0, "since": since.astimezone(timezone.utc).isoformat(),
-                "error_rate": None, "degraded_rate": None, "cache_hit_rate": None,
+                "error_rate": None, "degraded_rate": None, "refusal_rate": None, "cache_hit_rate": None,
                 "p50_latency_ms": None, "p95_latency_ms": None, "avg_prompt_tokens": None,
                 "avg_completion_tokens": None, "avg_cost_usd": None, "tool_success_rate": None,
                 "avg_groundedness": None,
@@ -372,6 +372,7 @@ class InMemoryTelemetrySink:
             "since": since.astimezone(timezone.utc).isoformat(),
             "error_rate": round(sum(1 for t in turns if str(t.outcome) != "success") / len(turns), 4),
             "degraded_rate": round(sum(1 for t in turns if t.degraded) / len(turns), 4),
+            "refusal_rate": round(sum(1 for t in turns if str(t.outcome) == "blocked") / len(turns), 4),
             "cache_hit_rate": round(sum(1 for t in turns if t.cache.hit) / len(turns), 4),
             "p50_latency_ms": round(_percentile(latencies, 0.5), 2),
             "p95_latency_ms": round(_percentile(latencies, 0.95), 2),

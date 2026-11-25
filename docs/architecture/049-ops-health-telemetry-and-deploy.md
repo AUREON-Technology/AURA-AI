@@ -52,3 +52,12 @@ Railway's GraphQL; registry-level confirmation/capability; the real GitHub adapt
 Live, 2026-11-25: `check_platform_health` against `https://api.aureon-ai.tech` (healthy, schema 0033,
 `hfspace` and `hosted3` down) and `query_telemetry source=railway` against the production service (five
 deployments with commits and reasons).
+
+
+## Update: rollback by commit on the control plane (ADR-060 session)
+
+`control-plane-deploy.yml` now takes an optional `sha` input on `workflow_dispatch`. A named commit must
+be 40 lowercase hex characters and an ancestor of `main`; the workflow checks this itself right after
+checkout (the ops tool checks it before dispatching, this enforces it where the deploy runs). Set
+`AURA_OPS_DEPLOY_WORKFLOWS=control-plane-deploy.yml:sha` to let `rollback_release` use it. The tested
+commit on `workflow_run` still always wins. Not yet run against real GitHub Actions.

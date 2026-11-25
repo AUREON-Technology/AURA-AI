@@ -131,3 +131,34 @@ class TestComplexity:
 
     def test_cyclomatic_of_empty_text_is_one(self) -> None:
         assert cyclomatic("") == 1
+
+
+class TestPackagePrivateMethods:
+    """Java/C# methods declared without a modifier are found, and control flow is not mistaken for one."""
+
+    def test_java_package_private_methods_are_symbols_and_control_flow_is_not(self) -> None:
+        src = (
+            "class Box {\n"
+            "    int size() {\n        if (x > 1) {\n            return compute(x);\n        }\n"
+            "        else if (y) {\n            throw new Oops(y);\n        }\n        return 0;\n    }\n"
+            "    static <T> List<T> copy(List<T> in) {\n        return in;\n    }\n"
+            "}\n"
+        )
+        names = [s["name"] for s in scan_source(src, "java")["symbols"] if s["kind"] == "method"]
+        assert names == ["size", "copy"]
+
+    def test_csharp_methods_without_a_modifier_are_symbols(self) -> None:
+        src = "class Box {\n    int Size() {\n        if (x) { return 1; }\n        return 0;\n    }\n    string Name() => \"b\";\n}\n"
+        names = [s["name"] for s in scan_source(src, "csharp")["symbols"] if s["kind"] == "method"]
+        assert names == ["Size", "Name"]
+
+
+class TestInterfaceMethodsWithoutModifier:
+    def test_java_interface_methods_are_listed_and_statements_in_classes_are_not(self) -> None:
+        src = (
+            "interface Shape {\n    int size();\n    double area() throws Oops;\n    default void log() { }\n}\n"
+            "class Box {\n    void run() {\n        Thing t = make(1);\n        print(t);\n        helper.call(2);\n    }\n}\n"
+        )
+        symbols = scan_source(src, "java")["symbols"]
+        methods = {(s["parent"], s["name"]) for s in symbols if s["kind"] == "method"}
+        assert methods == {("Shape", "size"), ("Shape", "area"), ("Shape", "log"), ("Box", "run")}

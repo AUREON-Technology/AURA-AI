@@ -261,6 +261,7 @@ class Container:
 
         # INT-004: pins live in a store every gateway worker reads, not in this worker's memory.
         self.advisory_store = self._build_advisory_store()
+        self.push_notifier = self._build_push_notifier()
         self.prompt_pins = self._build_prompt_pins()
         self.prompts = build_default_registry(pins=self.prompt_pins)
         self._prompt_pin_sync_task: asyncio.Task[None] | None = None
@@ -709,6 +710,7 @@ class Container:
                 reasoner=self.reasoner,
                 executor=self.executor,
                 agentic_executor=self.agentic_executor,
+                push_notifier=self.push_notifier,
                 engineer_runs=self.engineer_runs,
                 engineer_consent=self.engineer_consent,
                 episodic=self.episodic,
@@ -733,6 +735,10 @@ class Container:
                 audit=self.audit,
             )
         )
+        # ADR-059: with a cache every worker shares (Redis), stop / pause / redirect reach a turn another
+        # worker runs. An in-memory cache is one process's, so it is left unwired and the routes say so.
+        if getattr(self.cache_backend, "shared_across_processes", False):
+            self.kernel.active_turns.shared = self.cache_backend
         # ADR-043: user agent tasks. The queue runs each task through `self.kernel` -- the same
         # path as /chat -- so it can only exist once the kernel does. `None` is the kill switch
         # (AURA_AGENT_TASKS_ENABLED=false): the routes then answer 503.
@@ -1919,6 +1925,28 @@ class Container:
         from .adapters.advisories_memory import InMemoryAdvisoryStore
 
         return InMemoryAdvisoryStore()
+
+    def _build_push_notifier(self) -> Any:
+        """Push notifications (ADR-060). Tokens are stored whenever the app registers one; a sender
+        exists only when push is enabled *and* a Firebase service-account file is configured."""
+        push = self.settings.push
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_push import PostgresPushDeviceStore
+
+            store: Any = PostgresPushDeviceStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool())
+        else:
+            from .adapters.push_memory import InMemoryPushDeviceStore
+
+            store = InMemoryPushDeviceStore()
+        sender: Any = None
+        if push.enabled and push.fcm_credentials_file:
+            from .adapters.fcm_push import FcmPushSender
+
+            sender = FcmPushSender(push.fcm_credentials_file)
+        from .push import PushNotifier
+
+        return PushNotifier(store, sender, include_detail=push.include_detail)
 
     def _build_prompt_pins(self) -> Any:
         """Prompt-version pins (INT-004). Postgres-backed with the other stores, so a pin reaches

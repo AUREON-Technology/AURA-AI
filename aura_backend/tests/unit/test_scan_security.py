@@ -208,3 +208,43 @@ class TestTheTool:
         report = await scan(tools, ctx)
         assert [s["scanner"] for s in report["scanners"]] == ["semgrep", "gitleaks", "bandit"]
         assert report["summary"]["total"] == len(report["findings"]) or report["summary"]["truncated"]
+
+
+class TestSemgrepWithoutTheInternalFlag:
+    """A newer semgrep may reject `--x-ignore-semgrepignore-files`; the scan must still run, and say it may be partial."""
+
+    async def test_a_rejected_internal_flag_is_retried_without_it_and_is_never_reported_clean(self, monkeypatch) -> None:
+        from types import SimpleNamespace
+
+        from aura_core.tools import devtools
+
+        calls: list[list[str]] = []
+        empty = (FIXTURES / "semgrep.json").read_text()
+        empty = json.dumps({"results": [], "errors": [], "version": "9.9"})
+
+        async def fake_run(runner, handle, name, args, *, timeout_s):
+            calls.append(list(args))
+            if "--x-ignore-semgrepignore-files" in args:
+                return SimpleNamespace(exit_code=2, stdout="", stderr="unknown option --x-ignore-semgrepignore-files"), "semgrep"
+            return SimpleNamespace(exit_code=0, stdout=empty, stderr=""), "semgrep"
+
+        monkeypatch.setattr(devtools, "_run_tool", fake_run)
+        out = await devtools._scan_one(object(), object(), "semgrep", ["."], 30.0, False)
+        assert len(calls) == 2 and "--x-ignore-semgrepignore-files" not in calls[1]
+        assert out.status == "incomplete"  # ran, but may have missed files: never "ok"
+        assert ".semgrepignore" in (out.detail or "")
+
+    async def test_other_failures_are_not_retried(self, monkeypatch) -> None:
+        from types import SimpleNamespace
+
+        from aura_core.tools import devtools
+
+        calls: list[list[str]] = []
+
+        async def fake_run(runner, handle, name, args, *, timeout_s):
+            calls.append(list(args))
+            return SimpleNamespace(exit_code=2, stdout="", stderr="config error: bad rules"), "semgrep"
+
+        monkeypatch.setattr(devtools, "_run_tool", fake_run)
+        out = await devtools._scan_one(object(), object(), "semgrep", ["."], 30.0, False)
+        assert len(calls) == 1 and out.status == "failed"

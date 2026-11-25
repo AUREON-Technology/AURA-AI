@@ -75,6 +75,9 @@ __all__ = ["AgenticExecutor", "AgentRunContext", "RunBudgetGate", "BudgetRefusal
 
 logger = get_logger("agentic_loop")
 
+#: Mid-pass redirects one run honours; past it a redirected pass is treated like any other.
+MAX_REDIRECT_PASSES = 5
+
 # Reasons ExecutionOutcome.blocked_reason can carry that mean "budget exhausted for this pass",
 # not "something failed that a revised plan could fix" -- replanning again would just spend
 # another generation to produce a plan that hits the same wall. "needs_confirmation" belongs here
@@ -203,7 +206,11 @@ class AgenticExecutor:
         critic: Critic | None = None,
         test_signals: bool = False,
         pressure_threshold: float = 0.8,
+        turn_controls: Any = None,
     ) -> None:
+        #: ``ActiveTurns`` (ADR-059): where a pause or redirect from the person is waiting. The
+        #: kernel binds it; ``None`` means the loop has no checkpoints (it is then exactly as before).
+        self.turn_controls = turn_controls
         self._planner = planner
         self._executor = executor
         self._metrics = metrics
@@ -220,6 +227,8 @@ class AgenticExecutor:
         self._gate_execute = _accepts(getattr(executor, "execute", None), "gate")
         self._gate_stream = _accepts(getattr(executor, "stream", None), "gate")
         self._replan_takes_feedback = _accepts(getattr(planner, "replan", None), "feedback")
+        self._hold_execute = _accepts(getattr(executor, "execute", None), "hold")
+        self._hold_stream = _accepts(getattr(executor, "stream", None), "hold")
 
     def _monotonic(self) -> float:
         if self._clock is not None and hasattr(self._clock, "monotonic"):
@@ -293,20 +302,33 @@ class AgenticExecutor:
         capabilities: Sequence[str],
         confirmations: ConfirmationGrant | None,
         on_event: Callable[[StepEvent], Any] | None,
+        run_context: AgentRunContext | None = None,
     ) -> AsyncIterator[StepEvent | ExecutionOutcome]:
         common = dict(
             context=context, capabilities=capabilities,
             confirmations=confirmations,
         )
+        controls = self.turn_controls
+        hold = None
+        if controls is not None and run_context is not None:
+            user, turn = run_context.user_id.value, run_context.turn_id
+
+            def hold() -> Any:  # noqa: F811 - bound to this run
+                return controls.hold(user, turn)
+
         stream = getattr(self._executor, "stream", None)
         if streaming and callable(stream):
             if self._gate_stream:
                 common["gate"] = gate
+            if hold is not None and self._hold_stream:
+                common["hold"] = hold
             async for item in stream(plan, **common):
                 yield item
             return
         if self._gate_execute:
             common["gate"] = gate
+        if hold is not None and self._hold_execute:
+            common["hold"] = hold
         yield await self._executor.execute(plan, on_event=on_event, **common)
 
     # -- observation helpers -------------------------------------------------------------------
@@ -460,6 +482,7 @@ class AgenticExecutor:
         report.trace.append(state.value)
         replans_by_kind: dict[str, int] = {}
         plan_revisions = corrective_passes = 0
+        redirect_passes = 0
         verdict_stuck: StuckVerdict | None = None
         unresolved: list[tuple[str, Any]] = []
 
@@ -518,6 +541,26 @@ class AgenticExecutor:
 
             while True:
                 iteration += 1
+                # CHECKPOINT (ADR-059): between passes, hold if the person paused the run, and take
+                # any instruction they sent. Never mid-tool-call, so nothing is left half-applied.
+                if iteration > 1 and self.turn_controls is not None and run_context is not None:
+                    redirects, pause_note = await self.turn_controls.checkpoint(
+                        run_context.user_id.value, run_context.turn_id)
+                    if pause_note:
+                        yield emit("pause_timeout", detail=pause_note)
+                    if redirects:
+                        yield emit("redirected", instructions=redirects, iteration=iteration)
+                        revised = await self._replan(
+                            current, reason="user_redirect", available_tools=available_tools,
+                            max_iterations=max_iterations,
+                            feedback=["The person running you sent this instruction while you worked; it "
+                                      "replaces the remaining plan where they conflict: " + " | ".join(redirects)],
+                        )
+                        if revised is not None:
+                            tokens_used += int(revised.generation_tokens)
+                            if recorder is not None:
+                                await recorder.planned(revised, iteration=iteration, replan_reason="user_redirect")
+                            current = revised
                 before = current
                 succeeded_before = frozenset(
                     s.id.value for s in current.steps if s.status is StepStatus.SUCCEEDED
@@ -526,7 +569,7 @@ class AgenticExecutor:
                 async for item in self._pass(
                     current, streaming=streaming, gate=gate, context=context,
                     capabilities=capabilities, confirmations=confirmations,
-                    on_event=on_event,
+                    on_event=on_event, run_context=run_context,
                 ):
                     if isinstance(item, StepEvent):
                         yield item
@@ -535,6 +578,13 @@ class AgenticExecutor:
                 if outcome is None:
                     stop_reason = "no_outcome"
                     break
+                if outcome.blocked_reason == "redirected" and redirect_passes < MAX_REDIRECT_PASSES:
+                    # The person sent an instruction mid-pass (ADR-059): keep what already ran, and
+                    # let the checkpoint at the top replan with their words. Not a failure, so the
+                    # recovery and stuck machinery below never sees this pass.
+                    redirect_passes += 1
+                    current = outcome.plan
+                    continue
                 go("executed")
                 if recorder is not None:
                     await recorder.observed(

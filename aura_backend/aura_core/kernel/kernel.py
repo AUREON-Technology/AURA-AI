@@ -341,6 +341,9 @@ class KernelDependencies:
     #: instead of the single `executor.execute()` call when the turn's resolved agent declares
     #: `max_plan_iterations > 1`. `None` preserves the pre-agentic-loop behaviour exactly.
     agentic_executor: Any = None
+    #: `PushNotifier` (`push/notifier.py`, ADR-060): nudges the person's phone when a turn holds a call
+    #: for approval. `None` sends nothing.
+    push_notifier: Any = None
     #: `EngineerRunStore` (`ports/coding.py`) -- `None` disables recording engineer-agent tool
     #: outcomes entirely (matching every other optional dependency's "absent means off" contract).
     #: Per-run agent state (GAP-024) is recorded by `agentic_executor` itself, through the
@@ -540,6 +543,9 @@ class AIKernel:
         #: The turns each user has running here, so ``POST /agents/stop-all`` can cancel them
         #: (ADR-041). Process-local, like the host-agent registry without its relay.
         self.active_turns = ActiveTurns()
+        # ADR-059: the agent loop's checkpoints read pause / redirect requests from here.
+        if deps.agentic_executor is not None and hasattr(deps.agentic_executor, "turn_controls"):
+            deps.agentic_executor.turn_controls = self.active_turns
         #: Work a streamed turn does after its ``done`` frame (KAN-110), held so it is neither
         #: garbage-collected nor lost on shutdown, and indexed by session so the session's next
         #: turn can wait for it before reading history.
@@ -2895,7 +2901,20 @@ class AIKernel:
             if approval_id:
                 entry["approval_id"] = approval_id
             pending.append(entry)
+        self._push_approval_needed(request, turn_id, pending)
         return pending
+
+    def _push_approval_needed(self, request: TurnRequest, turn_id: TurnId, pending: Sequence[Mapping[str, Any]]) -> None:
+        """Nudge the person's phone that a call is waiting (ADR-060). Fire-and-forget: held so it is
+        not collected mid-flight, and a failure never reaches the turn."""
+        notifier = self._deps.push_notifier
+        if notifier is None or not pending or not getattr(notifier, "delivering", False):
+            return
+        task = asyncio.ensure_future(notifier.notify_approval_needed(
+            request.user_id.value, headline=str(pending[0].get("headline") or ""),
+            turn_id=turn_id.value, session_id=request.session_id.value if request.session_id else ""))
+        self._lesson_tasks.add(task)
+        task.add_done_callback(self._lesson_tasks.discard)
 
     @staticmethod
     def _format_tool_capabilities(

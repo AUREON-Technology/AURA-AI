@@ -145,11 +145,20 @@ class RunSearchResult {
 /// and how many paired-desktop sessions it closed. [scope] is `this_process`: a turn held by another
 /// gateway worker is not reached.
 class StopAllResult {
-  const StopAllResult({required this.turnsStopped, required this.desktopSessionsClosed, required this.scope});
+  const StopAllResult({
+    required this.turnsStopped,
+    required this.desktopSessionsClosed,
+    required this.scope,
+    this.otherWorkersSignalled = false,
+  });
 
   final int turnsStopped;
   final int desktopSessionsClosed;
   final String scope;
+
+  /// The server also told its other workers (a shared cache is configured), so a turn running there
+  /// stops within about a second even though this process had none.
+  final bool otherWorkersSignalled;
 
   bool get stoppedAnything => turnsStopped > 0 || desktopSessionsClosed > 0;
 
@@ -158,7 +167,16 @@ class StopAllResult {
         desktopSessionsClosed:
             json['desktop_sessions_closed'] is num ? (json['desktop_sessions_closed'] as num).toInt() : 0,
         scope: json['scope']?.toString() ?? '',
+        otherWorkersSignalled: json['other_workers_signalled'] == true,
       );
+}
+
+/// How many turns a pause / resume / redirect reached. The server counts only the turns of the process
+/// that answered; with a shared cache it also tells the other workers, which it reports as `flag: true`
+/// with a count of 0 here. That is still "reached something", so it reads as at least one.
+int _reached(Map<String, dynamic> decoded, String flag, String countKey) {
+  final count = decoded[countKey] is num ? (decoded[countKey] as num).toInt() : 0;
+  return count == 0 && decoded[flag] == true ? 1 : count;
 }
 
 class RunHistoryRepository {
@@ -172,6 +190,26 @@ class RunHistoryRepository {
   Future<StopAllResult> stopAll() async {
     final decoded = await _api.json(method: 'POST', path: '/api/v3/agents/stop-all', body: const {});
     return StopAllResult.fromJson(decoded);
+  }
+
+  /// `POST /agents/pause`: hold running turns at their next checkpoint (ADR-059). Returns how many.
+  Future<int> pause() async {
+    final decoded = await _api.json(method: 'POST', path: '/api/v3/agents/pause', body: const {});
+    return _reached(decoded, 'paused', 'turns_paused');
+  }
+
+  /// `POST /agents/resume`: let paused turns carry on. Returns how many.
+  Future<int> resume() async {
+    final decoded = await _api.json(method: 'POST', path: '/api/v3/agents/resume', body: const {});
+    return _reached(decoded, 'resumed', 'turns_resumed');
+  }
+
+  /// `POST /agents/redirect`: send [instruction] to running turns; they replan with it at the next
+  /// checkpoint. Returns how many turns it reached (0 when nothing is running here).
+  Future<int> redirect(String instruction) async {
+    final decoded = await _api.json(
+      method: 'POST', path: '/api/v3/agents/redirect', body: {'instruction': instruction});
+    return _reached(decoded, 'redirected', 'turns_redirected');
   }
 
   /// `GET /agents/runs/search?q=&status=&limit=`. An empty [query] lists the newest runs.

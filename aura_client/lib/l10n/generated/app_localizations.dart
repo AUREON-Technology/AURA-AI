@@ -9497,6 +9497,72 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Nothing was running.'**
   String get agentStopAllNothing;
+
+  /// No description provided for @agentPauseTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Pause the agent'**
+  String get agentPauseTooltip;
+
+  /// No description provided for @agentResumeTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Resume the agent'**
+  String get agentResumeTooltip;
+
+  /// No description provided for @agentRedirectTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Send the agent a new instruction'**
+  String get agentRedirectTooltip;
+
+  /// No description provided for @agentRedirectTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Tell the agent something new'**
+  String get agentRedirectTitle;
+
+  /// No description provided for @agentRedirectHint.
+  ///
+  /// In en, this message translates to:
+  /// **'e.g. leave the migrations alone and fix only the test'**
+  String get agentRedirectHint;
+
+  /// No description provided for @agentRedirectSend.
+  ///
+  /// In en, this message translates to:
+  /// **'Send'**
+  String get agentRedirectSend;
+
+  /// No description provided for @agentPauseDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Paused. It holds before its next step; it carries on by itself after 15 minutes.'**
+  String get agentPauseDone;
+
+  /// No description provided for @agentResumeDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Resumed.'**
+  String get agentResumeDone;
+
+  /// No description provided for @agentRedirectDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent. The agent replans with it before its next step.'**
+  String get agentRedirectDone;
+
+  /// No description provided for @agentControlNothing.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing is running on this server.'**
+  String get agentControlNothing;
+
+  /// No description provided for @agentStopAllSignalled.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing was running on the server that answered; the stop was also sent to the other server workers.'**
+  String get agentStopAllSignalled;
 }
 
 class _AppLocalizationsDelegate

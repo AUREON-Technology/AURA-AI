@@ -5671,4 +5671,41 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get agentStopAllNothing => 'ماكانش في حاجة شغّالة.';
+
+  @override
+  String get agentPauseTooltip => 'وقّف الوكيل مؤقتًا';
+
+  @override
+  String get agentResumeTooltip => 'كمّل الوكيل';
+
+  @override
+  String get agentRedirectTooltip => 'ابعت للوكيل تعليمات جديدة';
+
+  @override
+  String get agentRedirectTitle => 'قول للوكيل حاجة جديدة';
+
+  @override
+  String get agentRedirectHint =>
+      'مثلًا: سيب الـ migrations واصلّح الاختبار بس';
+
+  @override
+  String get agentRedirectSend => 'ابعت';
+
+  @override
+  String get agentPauseDone =>
+      'اتوقّف مؤقتًا. هيستنّى قبل الخطوة الجاية، ولو محدش كمّله هيكمّل لوحده بعد ١٥ دقيقة.';
+
+  @override
+  String get agentResumeDone => 'كمّل.';
+
+  @override
+  String get agentRedirectDone =>
+      'اتبعتت. الوكيل هيعيد الخطة بيها قبل خطوته الجاية.';
+
+  @override
+  String get agentControlNothing => 'مفيش حاجة شغّالة على السيرفر ده.';
+
+  @override
+  String get agentStopAllSignalled =>
+      'ماكانش في حاجة شغّالة على السيرفر اللي ردّ؛ وأتبعت الإيقاف لباقي السيرفرات كمان.';
 }

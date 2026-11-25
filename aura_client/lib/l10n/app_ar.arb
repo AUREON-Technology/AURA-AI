@@ -1565,5 +1565,16 @@
   "agentStopAllMessage": "ده بيوقّف كل اللي الوكيل بتاعك بيعمله دلوقتي، على السيرفر وعلى جهازك المربوط. أي إجراء مستني موافقتك هيفضل مستني. وأي حاجة خلصت قبل كده مش هتتلغي.",
   "agentStopAllConfirm": "أوقّف دلوقتي",
   "agentStopAllDone": "اتوقّف {turns} تشغيل شغّال واتقفلت {sessions} جلسة على الكمبيوتر.",
-  "agentStopAllNothing": "ماكانش في حاجة شغّالة."
+  "agentStopAllNothing": "ماكانش في حاجة شغّالة.",
+  "agentPauseTooltip": "وقّف الوكيل مؤقتًا",
+  "agentResumeTooltip": "كمّل الوكيل",
+  "agentRedirectTooltip": "ابعت للوكيل تعليمات جديدة",
+  "agentRedirectTitle": "قول للوكيل حاجة جديدة",
+  "agentRedirectHint": "مثلًا: سيب الـ migrations واصلّح الاختبار بس",
+  "agentRedirectSend": "ابعت",
+  "agentPauseDone": "اتوقّف مؤقتًا. هيستنّى قبل الخطوة الجاية، ولو محدش كمّله هيكمّل لوحده بعد ١٥ دقيقة.",
+  "agentResumeDone": "كمّل.",
+  "agentRedirectDone": "اتبعتت. الوكيل هيعيد الخطة بيها قبل خطوته الجاية.",
+  "agentControlNothing": "مفيش حاجة شغّالة على السيرفر ده.",
+  "agentStopAllSignalled": "ماكانش في حاجة شغّالة على السيرفر اللي ردّ؛ وأتبعت الإيقاف لباقي السيرفرات كمان."
 }

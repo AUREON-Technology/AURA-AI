@@ -713,7 +713,29 @@ class Metrics:
             multiprocess_mode="livemax",
         )
 
+        self.model_drift_active = self._gauge(
+            "model_drift_active",
+            "1 while the hourly model monitor reports drift for this model and metric, else 0 (ADR-052).",
+            ("model", "metric"),
+            multiprocess_mode="livemax",
+        )
+        self.model_monitor_age_seconds = self._gauge(
+            "model_monitor_report_age_seconds",
+            "Seconds since the model monitor last produced a report; absent until it has run once.",
+            (),
+            multiprocess_mode="livemax",
+        )
+
     # -- convenience -------------------------------------------------------------------
+
+    def set_model_drift(self, report: Mapping[str, Any], *, age_s: float) -> None:
+        """Publish the monitor's last report so a Grafana alert rule can fire on
+        ``aura_model_drift_active == 1`` (and on a stale ``aura_model_monitor_report_age_seconds``)."""
+        for finding in report.get("findings") or ():
+            self.model_drift_active.labels(
+                model=str(finding.get("model", "")), metric=str(finding.get("metric", ""))
+            ).set(1 if finding.get("status") == "drift" else 0)
+        self.model_monitor_age_seconds.set(max(0.0, age_s))
 
     def observe_legacy_plaintext_read(self, kind: str) -> None:
         self.field_crypto_legacy_reads.labels(kind=kind).inc()

@@ -2293,13 +2293,17 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         devices. Audited. Not replayed by the idempotency cache: a second press must act again.
 
         Limits, reported rather than hidden: turns held in another gateway worker are not seen
-        (``scope: "this_process"``), and a held confirmation stays answerable.
+        (``scope: "this_process"``) unless the deployment shares a Redis cache across workers, in which
+        case they are told too and ``scope`` is ``"all_workers"`` (the count is of this process's
+        turns only). A held confirmation stays answerable.
         """
         _refuse_service_key(caller, "stop a person's agent")
         revoke = bool(payload.revoke_devices) if payload is not None else False
         user_id = caller.user_id
 
         stopped = container.kernel.active_turns.stop_user(user_id.value)
+        # With a shared cache the other workers' turns of this person are told too (ADR-059).
+        published = await container.kernel.active_turns._publish(user_id.value, "stop")
 
         registry = getattr(container, "host_agent_registry", None)
         sessions_closed = 0
@@ -2338,7 +2342,8 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
         return JSONResponse(content={
             "stopped": True,
-            "scope": "this_process",
+            "scope": "all_workers" if published else "this_process",
+            "other_workers_signalled": published,
             "turns": [
                 {"turn_id": s.turn_id, "kind": s.kind, "running_s": s.running_s} for s in stopped
             ],
@@ -2346,6 +2351,94 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             "desktop_sessions_closed": sessions_closed,
             "devices": devices,
         })
+
+    # -- push notification devices (ADR-060) --------------------------------------------
+
+    class PushDeviceRequest(BaseModel):
+        device_id: str = Field(min_length=1, max_length=128)
+        token: str = Field(min_length=1, max_length=4096)
+        platform: str = Field(min_length=1, max_length=16)
+
+    @router.post("/push/devices")
+    async def register_push_device(
+        payload: PushDeviceRequest, caller: Principal = Depends(principal),
+    ) -> JSONResponse:
+        """Register this install for push notifications (its FCM token). Owner-scoped. The same token
+        registered under another account moves here. ``delivering`` says whether this server can send
+        pushes at all; a device may register before it can."""
+        _refuse_service_key(caller, "register a push device")
+        notifier = container.push_notifier
+        try:
+            device = await notifier.register(caller.user_id.value, payload.device_id, payload.token, payload.platform)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return JSONResponse(content={
+            "registered": True, "device_id": device.device_id, "platform": device.platform,
+            "delivering": bool(notifier.delivering),
+        })
+
+    @router.delete("/push/devices/{device_id}")
+    async def unregister_push_device(device_id: str, caller: Principal = Depends(principal)) -> JSONResponse:
+        """Stop pushes to one install (sign-out). Owner-scoped; idempotent."""
+        _refuse_service_key(caller, "remove a push device")
+        removed = await container.push_notifier.unregister(caller.user_id.value, device_id)
+        return JSONResponse(content={"removed": bool(removed)})
+
+    # -- pause / resume / redirect (ADR-059) --------------------------------------------
+
+    class RedirectRequest(BaseModel):
+        instruction: str = Field(min_length=1, max_length=1000)
+
+    async def _audit_control(request: Request, caller: Principal, action: str, detail: dict[str, Any]) -> None:
+        try:
+            await container.audit.record(AuditEvent(
+                action=action, actor=caller.email or caller.user_id.value, actor_role=caller.role,
+                resource=f"user:{caller.user_id.value}", outcome="ok",
+                correlation_id=request.headers.get("x-correlation-id") or "",
+                source_ip=client_ip(request), detail=detail,
+            ))
+        except Exception:
+            logger.warning("%s audit write failed", action, exc_info=False)
+
+    @router.post("/agents/pause")
+    async def pause_agents(request: Request, caller: Principal = Depends(principal)) -> JSONResponse:
+        """Hold the caller's running agent turns at their next checkpoint (between steps, never
+        inside a tool call). Idempotent; auto-resumes after 15 minutes. Same scope as stop-all:
+        this process's turns, plus other workers' when a shared cache is configured."""
+        _refuse_service_key(caller, "pause a person's agent")
+        sent = await container.kernel.active_turns.signal(caller.user_id.value, "pause")
+        n = sent["local"]
+        await _audit_control(request, caller, "agents.pause", {"turns_paused": n, "published": sent["published"]})
+        return JSONResponse(content={
+            "paused": n > 0 or sent["published"], "turns_paused": n,
+            "scope": "all_workers" if sent["published"] else "this_process"})
+
+    @router.post("/agents/resume")
+    async def resume_agents(request: Request, caller: Principal = Depends(principal)) -> JSONResponse:
+        """Let paused turns continue."""
+        _refuse_service_key(caller, "resume a person's agent")
+        sent = await container.kernel.active_turns.signal(caller.user_id.value, "resume")
+        n = sent["local"]
+        await _audit_control(request, caller, "agents.resume", {"turns_resumed": n, "published": sent["published"]})
+        return JSONResponse(content={
+            "resumed": n > 0 or sent["published"], "turns_resumed": n,
+            "scope": "all_workers" if sent["published"] else "this_process"})
+
+    @router.post("/agents/redirect")
+    async def redirect_agents(
+        request: Request, payload: RedirectRequest, caller: Principal = Depends(principal),
+    ) -> JSONResponse:
+        """Send an instruction to the caller's running agent turns. At the next checkpoint the agent
+        replans with it as the person's own words (it also resumes a paused turn). The text is
+        audited by length only, not stored."""
+        _refuse_service_key(caller, "redirect a person's agent")
+        sent = await container.kernel.active_turns.signal(caller.user_id.value, "redirect", payload.instruction)
+        n = sent["local"]
+        await _audit_control(request, caller, "agents.redirect", {
+            "turns_redirected": n, "instruction_chars": len(payload.instruction), "published": sent["published"]})
+        return JSONResponse(content={
+            "redirected": n > 0 or sent["published"], "turns_redirected": n,
+            "scope": "all_workers" if sent["published"] else "this_process"})
 
     @router.get("/host/folders")
     async def host_folders(caller: Principal = Depends(principal)) -> JSONResponse:
@@ -2990,6 +3083,18 @@ async def refresh_scrape_gauges(container: Any) -> None:
         await asyncio.wait_for(probe.refresh_gauges(container.metrics), timeout=SCRAPE_REFRESH_TIMEOUT_S + 2)
     except Exception:
         logger.debug("gpu gauge refresh failed", exc_info=True)
+    try:  # the monitor runs in a worker; its report is in the shared cache, so read it here (ADR-052)
+        from datetime import datetime, timezone
+
+        from ..learning.model_monitor import last_report
+
+        cache = getattr(container, "cache_backend", None)
+        report = await asyncio.wait_for(last_report(cache), timeout=SCRAPE_REFRESH_TIMEOUT_S) if cache else None
+        if report and report.get("generated_at"):
+            made = datetime.fromisoformat(str(report["generated_at"]))
+            container.metrics.set_model_drift(report, age_s=(datetime.now(timezone.utc) - made).total_seconds())
+    except Exception:
+        logger.debug("model drift gauge refresh failed", exc_info=True)
     outbox = getattr(container, "event_outbox", None)
     stats = getattr(outbox, "stats", None)
     if not callable(stats):

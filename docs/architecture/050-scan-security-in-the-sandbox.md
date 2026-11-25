@@ -30,8 +30,9 @@ output, or "could not analyse some files" (`incomplete`) is never clean.
 
 * On a paired desktop the scanners (and the bundled rules path) must exist there; otherwise the status is
   `not_installed` / `failed`, never clean.
-* `--x-ignore-semgrepignore-files` is an *internal* Semgrep flag: pinned version only, and a real-run test
-  (`test_a_rule_file_in_the_repository_is_not_used`) fails if an upgrade breaks it.
+* `--x-ignore-semgrepignore-files` is an *internal* Semgrep flag, pinned to the image's version, with a real-run test
+  (`test_a_rule_file_in_the_repository_is_not_used`). If a newer semgrep rejects it, the scan is retried without it
+  and reported `incomplete` (a workspace `.semgrepignore` may have hidden files), never `ok` and never a hard failure.
 * Semgrep loads thousands of rules per run (about a minute or more on a small repository).
 
 ## Evidence

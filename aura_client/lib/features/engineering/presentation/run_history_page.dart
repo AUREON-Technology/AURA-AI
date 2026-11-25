@@ -79,11 +79,57 @@ class _RunHistoryPageState extends ConsumerState<RunHistoryPage> {
       messenger.showSnackBar(SnackBar(
         content: Text(result.stoppedAnything
             ? l10n.agentStopAllDone(result.turnsStopped, result.desktopSessionsClosed)
-            : l10n.agentStopAllNothing),
+            : result.otherWorkersSignalled
+                ? l10n.agentStopAllSignalled
+                : l10n.agentStopAllNothing),
       ));
     } catch (err) {
       messenger.showSnackBar(SnackBar(content: Text(AuraFailure.from(err).message)));
     }
+  }
+
+  /// Pause, resume or redirect the running agent (ADR-059). All three are cooperative: the agent
+  /// holds or changes course at its next checkpoint, never in the middle of a tool call.
+  Future<void> _control(Future<int> Function(RunHistoryRepository repo) call, String doneText) async {
+    final l10n = context.l10n;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final reached = await call(ref.read(runHistoryRepositoryProvider));
+      messenger.showSnackBar(SnackBar(content: Text(reached > 0 ? doneText : l10n.agentControlNothing)));
+    } catch (err) {
+      messenger.showSnackBar(SnackBar(content: Text(AuraFailure.from(err).message)));
+    }
+  }
+
+  Future<void> _redirect() async {
+    final l10n = context.l10n;
+    final controller = TextEditingController();
+    final text = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.agentRedirectTitle),
+        content: TextField(
+          key: const ValueKey('redirect-field'),
+          controller: controller,
+          autofocus: true,
+          maxLength: 1000,
+          maxLines: 4,
+          decoration: InputDecoration(hintText: l10n.agentRedirectHint),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: Text(l10n.cancel)),
+          FilledButton(
+            key: const ValueKey('redirect-send'),
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            child: Text(l10n.agentRedirectSend),
+          ),
+        ],
+      ),
+    );
+    // Not disposed here: the dialog is still animating out and its field reads this controller; with no
+    // listeners attached there is nothing to release.
+    if (text == null || text.isEmpty || !mounted) return;
+    await _control((repo) => repo.redirect(text), l10n.agentRedirectDone);
   }
 
   @override
@@ -98,6 +144,24 @@ class _RunHistoryPageState extends ConsumerState<RunHistoryPage> {
         backgroundColor: palette.background,
         title: Text(l10n.runSearchTitle),
         actions: [
+          IconButton(
+            key: const ValueKey('pause-button'),
+            tooltip: l10n.agentPauseTooltip,
+            icon: const Icon(Icons.pause_circle_outline),
+            onPressed: () => _control((repo) => repo.pause(), l10n.agentPauseDone),
+          ),
+          IconButton(
+            key: const ValueKey('resume-button'),
+            tooltip: l10n.agentResumeTooltip,
+            icon: const Icon(Icons.play_circle_outline),
+            onPressed: () => _control((repo) => repo.resume(), l10n.agentResumeDone),
+          ),
+          IconButton(
+            key: const ValueKey('redirect-button'),
+            tooltip: l10n.agentRedirectTooltip,
+            icon: const Icon(Icons.alt_route),
+            onPressed: _redirect,
+          ),
           IconButton(
             key: const ValueKey('stop-all-button'),
             tooltip: l10n.agentStopAllTitle,
