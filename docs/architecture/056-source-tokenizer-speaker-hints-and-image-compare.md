@@ -6,8 +6,9 @@ Status: Proposed (built, tested locally, not proven on a device or in CI)
 
 `scan_source` used regexes that were fooled by comments and strings. `_blank` in
 `tools/open_pure_logic.py` is now a small tokenizer (strings, comments, per language), and the
-scan reports a McCabe `complexity` per function. Known limit: Java/C# package-private methods
-without a modifier are not detected by the method pattern.
+scan reports a McCabe `complexity` per function. Java/C# methods declared without a modifier are
+found by a second pattern that excludes control-flow keywords and requires a `{` (Java) or `{`/`=>` (C#);
+an abstract/interface method without a modifier (ends in `;`) is still not listed in Java.
 
 ## ADR-057: speaker turn hints
 

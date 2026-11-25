@@ -32,7 +32,16 @@ on:
     workflows: ["Backend CI"]
     branches: [main]
     types: [completed]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: >-
+          Optional: deploy this exact commit (40 hex characters) instead of the commit the run was
+          dispatched on. It must be an ancestor of main, so a rollback can only go back along main's
+          own history. Empty means the dispatched commit.
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: deploy-control-plane
@@ -115,7 +124,29 @@ jobs:
           # F48: on workflow_run, the commit Backend CI tested -- not whatever main points at by
           # the time this runs, which `railway up` would otherwise upload untested. A manual
           # dispatch has no workflow_run, so it deploys the commit it was dispatched on.
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.event.workflow_run.head_sha || inputs.sha || github.sha }}
+          # Full history only when a commit was named: the ancestry check below needs it.
+          fetch-depth: ${{ inputs.sha != '' && 0 || 1 }}
+
+      # A named commit (a rollback) must be well-formed and reachable from main. The ops tool checks
+      # this too before it dispatches; this is the same rule enforced where the deploy actually runs,
+      # so a dispatch made by hand cannot skip it. The value comes in through env, never the script.
+      - name: Refuse a commit that is not on main
+        if: ${{ inputs.sha != '' }}
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::sha must be 40 lowercase hex characters"
+            exit 1
+          fi
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$REQUESTED_SHA" origin/main; then
+            echo "::error::$REQUESTED_SHA is not an ancestor of main; refusing to deploy it"
+            exit 1
+          fi
+          echo "Deploying $REQUESTED_SHA (an ancestor of main)."
 
       # Exact version (audit F49): this step runs with the production Railway token in the job, so
       # it must not install whatever the registry serves that minute. Bump deliberately, picking

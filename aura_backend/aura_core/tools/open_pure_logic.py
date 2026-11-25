@@ -1015,12 +1015,17 @@ _DECLS: dict[str, tuple[tuple[str, re.Pattern[str]], ...]] = {
         ("interface", re.compile(r"^\s*(?:(?:public|private|protected|static|sealed)\s+)*@?interface\s+([A-Za-z_]\w*)")),
         ("enum", re.compile(r"^\s*(?:(?:public|private|protected|static)\s+)*enum\s+([A-Za-z_]\w*)")),
         ("method", re.compile(r"^\s*(?:(?:public|private|protected|static|final|abstract|synchronized|native|default)\s+)+(?:<[^>]+>\s+)?[\w<>\[\],.? ]+?\s+([A-Za-z_]\w*)\s*\([^;{]*\)\s*(?:throws\s+[\w., ]+)?\s*[{;]")),
+        # Package-private (no modifier): `int size() {`. Control keywords are excluded as the first word and as the
+        # name, and it must open a body with `{`, so `return f(x);` and `else if (x) {` are not methods.
+        ("method", re.compile(r"^\s*(?!(?:return|else|new|throw|case|assert|yield|do|try|await|goto|break|continue)\b)(?:<[^>]+>\s+)?[\w<>\[\],.?]+(?: [\w<>\[\],.?]+)*\s+(?!(?:if|for|while|switch|catch|synchronized|return)\b)([A-Za-z_]\w*)\s*\([^;{=]*\)\s*(?:throws\s+[\w., ]+)?\s*\{")),
     ),
     "csharp": (
         ("class", re.compile(r"^\s*(?:(?:public|private|protected|internal|static|sealed|abstract|partial)\s+)*(?:class|record|struct)\s+([A-Za-z_]\w*)")),
         ("interface", re.compile(r"^\s*(?:(?:public|private|protected|internal|partial)\s+)*interface\s+([A-Za-z_]\w*)")),
         ("enum", re.compile(r"^\s*(?:(?:public|private|protected|internal)\s+)*enum\s+([A-Za-z_]\w*)")),
         ("method", re.compile(r"^\s*(?:(?:public|private|protected|internal|static|virtual|override|abstract|async|sealed|extern)\s+)+[\w<>\[\],.? ]+?\s+([A-Za-z_]\w*)\s*\([^;{]*\)\s*(?:where [^{]+)?\s*(?:\{|=>)")),
+        # No modifier (private by default in C#): `int Size() {`. Same keyword exclusions as the Java rule.
+        ("method", re.compile(r"^\s*(?!(?:return|else|new|throw|case|yield|do|try|await|goto|break|continue|using|lock)\b)[\w<>\[\],.?]+(?: [\w<>\[\],.?]+)*\s+(?!(?:if|for|foreach|while|switch|catch|lock|using|return)\b)([A-Za-z_]\w*)\s*\([^;{=]*\)\s*(?:where [^{]+)?\s*(?:\{|=>)")),
     ),
     "kotlin": (
         ("class", re.compile(r"^\s*(?:(?:public|private|protected|internal|abstract|open|sealed|data|enum|inner)\s+)*(?:class|object)\s+([A-Za-z_]\w*)")),
