@@ -475,6 +475,8 @@ class AgenticExecutor:
             return event
 
         tokens_used = int(plan.generation_tokens)
+        tools_ms = 0.0
+        replan_ms = 0.0
         stop_reason: str | None = None
         exhausted: str | None = None
         outcome: ExecutionOutcome | None = None
@@ -535,7 +537,11 @@ class AgenticExecutor:
                 if outcome is None:
                     stop_reason = "no_outcome"
                     break
+ claude/exec-lifecycle-telemetry
+                tools_ms += float(getattr(outcome, "duration_ms", 0.0) or 0.0)
+
                 go("executed")
+ main
                 if recorder is not None:
                     await recorder.observed(
                         outcome, iteration=iteration, gate=gate,
@@ -662,13 +668,20 @@ class AgenticExecutor:
                     if recorder is not None:
                         await recorder.evaluated(iteration=iteration, stop_reason=stop_reason)
                     break
+ claude/exec-lifecycle-telemetry
+                replan_started = time.perf_counter()
+                revised = await self._next_plan(
+                    outcome, available_tools=available_tools, max_iterations=max_iterations
+
 
                 if recorder is not None:
                     await recorder.evaluated(iteration=iteration, stop_reason=None)
                 revised = await self._replan(
                     outcome.plan, reason=replan_reason, available_tools=available_tools,
                     max_iterations=max_iterations, feedback=feedback,
+ main
                 )
+                replan_ms += (time.perf_counter() - replan_started) * 1000.0
                 if revised is None:
                     go("replan_failed")
                     stop_reason, exhausted = "replan_failed", None
@@ -708,6 +721,12 @@ class AgenticExecutor:
             if outcome is not None:
                 outcome.run_id = recorder.run.id.value
         if outcome is not None:
+            # The outcome describes the last pass; the turn's timings cover every pass.
+            try:
+                outcome.tools_ms = tools_ms
+                outcome.replan_ms = replan_ms
+            except AttributeError:  # an executor double whose outcome has no timing slots
+                pass
             yield outcome
 
     async def run(

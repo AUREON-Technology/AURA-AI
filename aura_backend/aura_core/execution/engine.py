@@ -117,8 +117,12 @@ class StepEvent:
 
 class ExecutionOutcome:
     __slots__ = ("plan", "results", "tool_reports", "succeeded", "duration_ms", "steps_run",
+ claude/exec-lifecycle-telemetry
+                 "blocked_reason", "run_id", "pending_calls", "tainted", "tools_ms", "replan_ms")
+
                  "blocked_reason", "run_id", "pending_calls", "tainted", "failure_messages",
                  "loop")
+ main
 
     def __init__(
         self,
@@ -133,7 +137,12 @@ class ExecutionOutcome:
         run_id: str | None = None,
         pending_calls: Sequence[PendingCall] = (),
         tainted: bool = False,
+ claude/exec-lifecycle-telemetry
+        tools_ms: float | None = None,
+        replan_ms: float = 0.0,
+
         failure_messages: Mapping[str, str] | None = None,
+ main
     ) -> None:
         self.plan = plan
         self.results = dict(results)
@@ -151,6 +160,13 @@ class ExecutionOutcome:
         #: Whether the tool context ended this execution tainted -- an untrusted tool that
         #: already ran taints it, and a resumed turn must start from that, not from clean.
         self.tainted = tainted
+ claude/exec-lifecycle-telemetry
+        #: Wall-clock milliseconds the engine spent executing, summed over every pass of an agent
+        #: loop (``AgenticExecutor`` accumulates it); one pass's ``duration_ms`` otherwise.
+        self.tools_ms = float(duration_ms if tools_ms is None else tools_ms)
+        #: Milliseconds the agent loop spent generating revised plans.
+        self.replan_ms = float(replan_ms)
+
         #: Each failed step's tool message (cut to 400 characters), by step id. ``PlanStep`` keeps
         #: only the machine-readable ``error_kind``; the message is what a validator said about a
         #: bad argument, and is what a replan needs to fix it (``RecoveryPolicy``, ADR-039).
@@ -159,6 +175,7 @@ class ExecutionOutcome:
         #: stopped, the states it visited, any stuck verdict, critic findings. ``None`` for an
         #: outcome that did not come through ``AgenticExecutor``.
         self.loop = None
+ main
 
     def summary_for_context(self) -> list[tuple[str, str]]:
         """Step results as ``(label, text)`` pairs for the context engine.

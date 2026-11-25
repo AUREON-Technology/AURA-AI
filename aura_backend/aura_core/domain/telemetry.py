@@ -52,9 +52,16 @@ class StageTiming:
     memory: float = 0.0
     retrieval: float = 0.0
     context: float = 0.0
+    #: Planning *and* the orchestration around it (the first plan generation, run recording,
+    #: confirmation hold). Tool time and replan time are split out below, so the three sum to
+    #: what ``planning`` alone used to report.
     planning: float = 0.0
+    #: Time spent in the reasoning engine's multi-sample strategies (not a plain direct answer).
     reasoning: float = 0.0
+    #: Wall-clock time the execution engine spent running tools, summed over every pass.
     tools: float = 0.0
+    #: Time spent generating revised plans after a failed or blocked pass.
+    replan: float = 0.0
     generation: float = 0.0
     guards_out: float = 0.0
 
@@ -69,6 +76,7 @@ class StageTiming:
             + self.context
             + self.planning
             + self.tools
+            + self.replan
             + self.guards_out
         )
 
@@ -82,6 +90,7 @@ class StageTiming:
             "planning": self.planning,
             "reasoning": self.reasoning,
             "tools": self.tools,
+            "replan": self.replan,
             "generation": self.generation,
             "guards_out": self.guards_out,
         }
