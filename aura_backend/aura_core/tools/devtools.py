@@ -351,6 +351,9 @@ async def _lint_one(
     return _Outcome("findings" if found else "ok", found, result.exit_code, launcher)
 
 
+_IGNORE_FLAG = "--x-ignore-semgrepignore-files"
+
+
 async def _scan_one(runner: Any, handle: Any, scanner: str, paths: Sequence[str], timeout_s: float,
                     history: bool) -> _Outcome:
     """Run one security scanner and read its machine output. Never "ok" unless it really ran."""
@@ -360,6 +363,17 @@ async def _scan_one(runner: Any, handle: Any, scanner: str, paths: Sequence[str]
     exit_code: int | None = None
     for args in scanner_args(scanner, paths, history=history):
         result, launcher = await _run_tool(runner, handle, scanner, args, timeout_s=timeout_s)
+        if (
+            scanner == "semgrep" and result is not None and result.exit_code == 2
+            and _IGNORE_FLAG in f"{result.stdout or ''}{result.stderr or ''}"
+        ):
+            # An internal (`--x-`) flag is the one way to make semgrep scan files a workspace `.semgrepignore`
+            # would hide. A newer semgrep may drop or rename it: rather than fail every scan, run without it and
+            # say the result may not cover everything (which makes the outcome "incomplete", never "ok").
+            notes.append("this semgrep rejects --x-ignore-semgrepignore-files, so a .semgrepignore in the "
+                         "workspace may have hidden files from the scan")
+            result, launcher = await _run_tool(
+                runner, handle, scanner, [a for a in args if a != _IGNORE_FLAG], timeout_s=timeout_s)
         if result is None:
             return _Outcome("not_installed", [], detail=f"{scanner} is not installed in this workspace's "
                             "sandbox image (the server image bundles it; a paired desktop needs it installed)")

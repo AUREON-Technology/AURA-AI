@@ -151,3 +151,14 @@ class TestPackagePrivateMethods:
         src = "class Box {\n    int Size() {\n        if (x) { return 1; }\n        return 0;\n    }\n    string Name() => \"b\";\n}\n"
         names = [s["name"] for s in scan_source(src, "csharp")["symbols"] if s["kind"] == "method"]
         assert names == ["Size", "Name"]
+
+
+class TestInterfaceMethodsWithoutModifier:
+    def test_java_interface_methods_are_listed_and_statements_in_classes_are_not(self) -> None:
+        src = (
+            "interface Shape {\n    int size();\n    double area() throws Oops;\n    default void log() { }\n}\n"
+            "class Box {\n    void run() {\n        Thing t = make(1);\n        print(t);\n        helper.call(2);\n    }\n}\n"
+        )
+        symbols = scan_source(src, "java")["symbols"]
+        methods = {(s["parent"], s["name"]) for s in symbols if s["kind"] == "method"}
+        assert methods == {("Shape", "size"), ("Shape", "area"), ("Shape", "log"), ("Box", "run")}

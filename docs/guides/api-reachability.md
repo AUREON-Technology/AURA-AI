@@ -131,14 +131,14 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | POST | `/api/v3/admin/users/{subject}/forget` | — | `aura_admin/app/(console)/access/page.tsx:200` | — | called |  |
 | PUT | `/api/v3/admin/workspaces/{workspace_id}/plan` | — | — | — | none | to wire: admin console page missing for this route |
 | GET | `/api/v3/agents` | `aura_client/lib/features/chat/data/agents_repository.dart:9`, `aura_client/lib/features/chat/data/agents_repository.dart:127` (+1) | — | — | called |  |
-| POST | `/api/v3/agents/pause` | `aura_client/lib/features/engineering/data/run_history_repository.dart:179` | — | — | called |  |
-| POST | `/api/v3/agents/redirect` | `aura_client/lib/features/engineering/data/run_history_repository.dart:193` | — | — | called |  |
-| POST | `/api/v3/agents/resume` | `aura_client/lib/features/engineering/data/run_history_repository.dart:185` | — | — | called |  |
+| POST | `/api/v3/agents/pause` | `aura_client/lib/features/engineering/data/run_history_repository.dart:197` | — | — | called |  |
+| POST | `/api/v3/agents/redirect` | `aura_client/lib/features/engineering/data/run_history_repository.dart:211` | — | — | called |  |
+| POST | `/api/v3/agents/resume` | `aura_client/lib/features/engineering/data/run_history_repository.dart:203` | — | — | called |  |
 | GET | `/api/v3/agents/runs` | — | — | — | none | to wire: agent-run history (wave 2) has no client or admin view yet; search and timeline (ADR-043) are backend-only so far |
-| GET | `/api/v3/agents/runs/search` | `aura_client/lib/features/engineering/data/run_history_repository.dart:8`, `aura_client/lib/features/engineering/data/run_history_repository.dart:206` | — | — | called |  |
+| GET | `/api/v3/agents/runs/search` | `aura_client/lib/features/engineering/data/run_history_repository.dart:8`, `aura_client/lib/features/engineering/data/run_history_repository.dart:224` | — | — | called |  |
 | GET | `/api/v3/agents/runs/timeline` | — | — | — | none | to wire: agent-run history (wave 2) has no client or admin view yet; search and timeline (ADR-043) are backend-only so far |
-| GET | `/api/v3/agents/runs/{run_id}` | `aura_client/lib/features/engineering/data/run_history_repository.dart:8`, `aura_client/lib/features/engineering/data/run_history_repository.dart:206` (+1) | — | — | called |  |
-| POST | `/api/v3/agents/stop-all` | `aura_client/lib/features/engineering/data/run_history_repository.dart:144`, `aura_client/lib/features/engineering/data/run_history_repository.dart:173` | — | — | called |  |
+| GET | `/api/v3/agents/runs/{run_id}` | `aura_client/lib/features/engineering/data/run_history_repository.dart:8`, `aura_client/lib/features/engineering/data/run_history_repository.dart:224` (+1) | — | — | called |  |
+| POST | `/api/v3/agents/stop-all` | `aura_client/lib/features/engineering/data/run_history_repository.dart:144`, `aura_client/lib/features/engineering/data/run_history_repository.dart:191` | — | — | called |  |
 | GET | `/api/v3/agents/tasks` | `aura_client/lib/features/engineering/data/agent_task_repository.dart:8`, `aura_client/lib/features/engineering/data/agent_task_repository.dart:65` (+2) | — | — | called |  |
 | POST | `/api/v3/agents/tasks` | `aura_client/lib/features/engineering/data/agent_task_repository.dart:8`, `aura_client/lib/features/engineering/data/agent_task_repository.dart:65` (+2) | — | — | called |  |
 | GET | `/api/v3/agents/tasks/{task_id}` | — | — | — | none | to wire: the agent task gateway (ADR-043, roadmap rows 84/87/91) is backend-only; the client submits, polls, approves and cancels in its next step, with a client-generated idempotency key per submission |

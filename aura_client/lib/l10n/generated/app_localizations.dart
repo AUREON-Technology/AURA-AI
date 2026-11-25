@@ -9557,6 +9557,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Nothing is running on this server.'**
   String get agentControlNothing;
+
+  /// No description provided for @agentStopAllSignalled.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing was running on the server that answered; the stop was also sent to the other server workers.'**
+  String get agentStopAllSignalled;
 }
 
 class _AppLocalizationsDelegate

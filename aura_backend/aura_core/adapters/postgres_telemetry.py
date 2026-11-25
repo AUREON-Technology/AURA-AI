@@ -138,6 +138,7 @@ class PostgresTelemetrySink:
                         count(*) AS turns,
                         avg(CASE WHEN outcome != 'success' THEN 1.0 ELSE 0.0 END) AS error_rate,
                         avg(CASE WHEN degraded THEN 1.0 ELSE 0.0 END) AS degraded_rate,
+                        avg(CASE WHEN outcome = 'blocked' THEN 1.0 ELSE 0.0 END) AS refusal_rate,
                         avg(CASE WHEN cache_hit THEN 1.0 ELSE 0.0 END) AS cache_hit_rate,
                         percentile_cont(0.5) WITHIN GROUP (ORDER BY total_ms) AS p50_latency_ms,
                         percentile_cont(0.95) WITHIN GROUP (ORDER BY total_ms) AS p95_latency_ms,
@@ -162,6 +163,7 @@ class PostgresTelemetrySink:
             out[str(row["model"])] = {
                 "turns": row["turns"] or 0, "since": since.astimezone(timezone.utc).isoformat(),
                 "error_rate": _r(row["error_rate"]), "degraded_rate": _r(row["degraded_rate"]),
+                "refusal_rate": _r(row["refusal_rate"]),
                 "cache_hit_rate": _r(row["cache_hit_rate"]), "p50_latency_ms": _r(row["p50_latency_ms"]),
                 "p95_latency_ms": _r(row["p95_latency_ms"]), "avg_prompt_tokens": _r(row["avg_prompt_tokens"]),
                 "avg_completion_tokens": _r(row["avg_completion_tokens"]),

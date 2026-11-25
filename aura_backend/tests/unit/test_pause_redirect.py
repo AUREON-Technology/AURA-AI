@@ -191,3 +191,95 @@ class TestRoutes:
         assert entry.paused is True
         r = client.post("/api/v3/agents/redirect", headers=auth, json={"instruction": "use staging"})
         assert r.json()["turns_redirected"] == 1 and entry.redirects == ["use staging"] and not entry.paused
+
+
+class TestAcrossWorkers:
+    """Two ``ActiveTurns`` sharing one cache are two gateway workers sharing one Redis."""
+
+    @staticmethod
+    async def _poll(monkeypatch) -> None:
+        monkeypatch.setattr(at, "POLL_S", 0.02)
+
+    async def _until(self, predicate, timeout: float = 2.0) -> bool:
+        end = asyncio.get_event_loop().time() + timeout
+        while asyncio.get_event_loop().time() < end:
+            if predicate():
+                return True
+            await asyncio.sleep(0.02)
+        return False
+
+    async def test_a_stop_on_one_worker_cancels_the_turn_running_on_another(self, monkeypatch) -> None:
+        from aura_core.llm.cache import InMemoryCache
+
+        await self._poll(monkeypatch)
+        cache = InMemoryCache()
+        a, b = ActiveTurns(shared=cache), ActiveTurns(shared=cache)
+        cancelled = asyncio.Event()
+
+        async def turn_on_b():
+            with b.track("u1", "t1", kind="run"):
+                try:
+                    await asyncio.sleep(30)
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+
+        task = asyncio.create_task(turn_on_b())
+        await asyncio.sleep(0.1)  # the watcher has taken its cursor
+        sent = await a.signal("u1", "stop")  # the request landed on worker A, which runs nothing of u1's
+        assert sent == {"local": 0, "published": True}
+        assert await self._until(cancelled.is_set)
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    async def test_a_stop_pressed_before_a_turn_began_does_not_kill_it(self, monkeypatch) -> None:
+        from aura_core.llm.cache import InMemoryCache
+
+        await self._poll(monkeypatch)
+        cache = InMemoryCache()
+        a, b = ActiveTurns(shared=cache), ActiveTurns(shared=cache)
+        await a.signal("u1", "stop")  # nothing running yet
+        survived = asyncio.Event()
+
+        async def later_turn():
+            with b.track("u1", "t2", kind="run"):
+                await asyncio.sleep(0.3)
+                survived.set()
+
+        await asyncio.wait_for(later_turn(), 2)
+        assert survived.is_set()
+
+    async def test_pause_resume_and_redirect_cross_workers_and_only_for_that_user(self, monkeypatch) -> None:
+        from aura_core.llm.cache import InMemoryCache
+
+        await self._poll(monkeypatch)
+        cache = InMemoryCache()
+        a, b = ActiveTurns(shared=cache), ActiveTurns(shared=cache)
+        with b.track("u1", "t1", kind="run") as mine, b.track("u2", "t9", kind="run") as other:
+            await asyncio.sleep(0.1)
+            await a.signal("u1", "pause")
+            assert await self._until(lambda: mine.paused)
+            await a.signal("u1", "redirect", "use   staging")
+            assert await self._until(lambda: mine.redirects == ["use staging"] and not mine.paused)
+            await a.signal("u1", "pause")
+            assert await self._until(lambda: mine.paused)
+            await a.signal("u1", "resume")
+            assert await self._until(lambda: not mine.paused)
+            assert other.paused is False and other.redirects == []
+
+    async def test_without_a_shared_cache_nothing_is_published(self) -> None:
+        turns = ActiveTurns()
+        assert await turns.signal("u1", "stop") == {"local": 0, "published": False}
+
+    async def test_a_cache_outage_never_undoes_the_local_effect(self) -> None:
+        class Down:
+            async def append_capped(self, *a, **k):
+                raise ConnectionError("redis down")
+
+            async def get_list(self, key):
+                return []
+
+        turns = ActiveTurns(shared=Down())
+        with turns.track("u1", "t1", kind="run") as entry:
+            sent = await turns.signal("u1", "pause")
+            assert sent == {"local": 1, "published": False} and entry.paused is True

@@ -39,11 +39,16 @@ __all__ = ["RedisCache"]
 class RedisCache:
     """Implements the ``Cache`` port against Redis.
 
+    ``shared_across_processes`` is true: every gateway worker sees the same keys, which is what lets a
+    stop / pause / redirect reach a turn another worker is running (``kernel/active_turns.py``).
+
     Values are opaque ``bytes``; this adapter never interprets them. Namespacing and key
     construction belong to callers -- ``LLMCache`` namespaces per user, and the rate limiter
     builds ``rl:{scope}:{key}:{bucket}`` -- so a prefix here would only obscure keys during
     debugging.
     """
+
+    shared_across_processes = True
 
     def __init__(
         self,

@@ -79,7 +79,9 @@ class _RunHistoryPageState extends ConsumerState<RunHistoryPage> {
       messenger.showSnackBar(SnackBar(
         content: Text(result.stoppedAnything
             ? l10n.agentStopAllDone(result.turnsStopped, result.desktopSessionsClosed)
-            : l10n.agentStopAllNothing),
+            : result.otherWorkersSignalled
+                ? l10n.agentStopAllSignalled
+                : l10n.agentStopAllNothing),
       ));
     } catch (err) {
       messenger.showSnackBar(SnackBar(content: Text(AuraFailure.from(err).message)));

@@ -45,6 +45,9 @@ SERIES: tuple[tuple[str, str, Callable[[float], float], str, float, bool], ...] 
     ("non_degraded_rate", "degraded_rate", lambda v: 1.0 - v, "drop", 0.05, False),
     ("tool_success_rate", "tool_success_rate", lambda v: v, "drop", 0.05, False),
     ("groundedness", "avg_groundedness", lambda v: v, "drop", 0.05, False),
+    # Turns the safety layer refused (outcome "blocked"). A model change that makes it refuse more, or a
+    # prompt change that makes it comply with things it should refuse, both show here.
+    ("refusal_rate", "refusal_rate", lambda v: v, "rise", 0.05, False),
     ("p95_latency_ms", "p95_latency_ms", lambda v: v, "rise", 0.5, True),
     ("avg_cost_usd", "avg_cost_usd", lambda v: v, "rise", 0.5, True),
 )

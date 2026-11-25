@@ -8,7 +8,7 @@ Status: Proposed (built, tested locally, not proven on a device or in CI)
 `tools/open_pure_logic.py` is now a small tokenizer (strings, comments, per language), and the
 scan reports a McCabe `complexity` per function. Java/C# methods declared without a modifier are
 found by a second pattern that excludes control-flow keywords and requires a `{` (Java) or `{`/`=>` (C#);
-an abstract/interface method without a modifier (ends in `;`) is still not listed in Java.
+a modifier-less interface method (`int size();`) is listed only when it sits directly inside an interface block.
 
 ## ADR-057: speaker turn hints
 

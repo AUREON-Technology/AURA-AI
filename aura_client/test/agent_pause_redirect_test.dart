@@ -102,6 +102,18 @@ void main() {
     expect(jsonDecode(requests.last.body), {'instruction': 'use staging'});
   });
 
+  test('a pause that only reached other workers still counts as reaching something', () async {
+    final client = MockClient((request) async => http.Response(
+        jsonEncode({'paused': true, 'turns_paused': 0, 'scope': 'all_workers'}), 200));
+    final container = ProviderContainer(overrides: [
+      tokenManagerProvider.overrideWith((ref) => _Token(ref)),
+      authProvider.overrideWith(_SignedIn.new),
+      auraApiClientProvider.overrideWith((ref) => AuraApiClient(ref, httpClient: client)),
+    ]);
+    addTearDown(container.dispose);
+    expect(await container.read(runHistoryRepositoryProvider).pause(), 1);
+  });
+
   Future<_Repo> pump(WidgetTester tester, int reached) async {
     final repo = _Repo(reached);
     await tester.pumpWidget(ProviderScope(

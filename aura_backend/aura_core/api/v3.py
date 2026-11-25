@@ -2293,13 +2293,17 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         devices. Audited. Not replayed by the idempotency cache: a second press must act again.
 
         Limits, reported rather than hidden: turns held in another gateway worker are not seen
-        (``scope: "this_process"``), and a held confirmation stays answerable.
+        (``scope: "this_process"``) unless the deployment shares a Redis cache across workers, in which
+        case they are told too and ``scope`` is ``"all_workers"`` (the count is of this process's
+        turns only). A held confirmation stays answerable.
         """
         _refuse_service_key(caller, "stop a person's agent")
         revoke = bool(payload.revoke_devices) if payload is not None else False
         user_id = caller.user_id
 
         stopped = container.kernel.active_turns.stop_user(user_id.value)
+        # With a shared cache the other workers' turns of this person are told too (ADR-059).
+        published = await container.kernel.active_turns._publish(user_id.value, "stop")
 
         registry = getattr(container, "host_agent_registry", None)
         sessions_closed = 0
@@ -2338,7 +2342,8 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
         return JSONResponse(content={
             "stopped": True,
-            "scope": "this_process",
+            "scope": "all_workers" if published else "this_process",
+            "other_workers_signalled": published,
             "turns": [
                 {"turn_id": s.turn_id, "kind": s.kind, "running_s": s.running_s} for s in stopped
             ],
@@ -2399,19 +2404,25 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
     async def pause_agents(request: Request, caller: Principal = Depends(principal)) -> JSONResponse:
         """Hold the caller's running agent turns at their next checkpoint (between steps, never
         inside a tool call). Idempotent; auto-resumes after 15 minutes. Same scope as stop-all:
-        turns running in this process (``scope: "this_process"``)."""
+        this process's turns, plus other workers' when a shared cache is configured."""
         _refuse_service_key(caller, "pause a person's agent")
-        n = container.kernel.active_turns.pause_user(caller.user_id.value)
-        await _audit_control(request, caller, "agents.pause", {"turns_paused": n})
-        return JSONResponse(content={"paused": n > 0, "turns_paused": n, "scope": "this_process"})
+        sent = await container.kernel.active_turns.signal(caller.user_id.value, "pause")
+        n = sent["local"]
+        await _audit_control(request, caller, "agents.pause", {"turns_paused": n, "published": sent["published"]})
+        return JSONResponse(content={
+            "paused": n > 0 or sent["published"], "turns_paused": n,
+            "scope": "all_workers" if sent["published"] else "this_process"})
 
     @router.post("/agents/resume")
     async def resume_agents(request: Request, caller: Principal = Depends(principal)) -> JSONResponse:
         """Let paused turns continue."""
         _refuse_service_key(caller, "resume a person's agent")
-        n = container.kernel.active_turns.resume_user(caller.user_id.value)
-        await _audit_control(request, caller, "agents.resume", {"turns_resumed": n})
-        return JSONResponse(content={"resumed": n > 0, "turns_resumed": n, "scope": "this_process"})
+        sent = await container.kernel.active_turns.signal(caller.user_id.value, "resume")
+        n = sent["local"]
+        await _audit_control(request, caller, "agents.resume", {"turns_resumed": n, "published": sent["published"]})
+        return JSONResponse(content={
+            "resumed": n > 0 or sent["published"], "turns_resumed": n,
+            "scope": "all_workers" if sent["published"] else "this_process"})
 
     @router.post("/agents/redirect")
     async def redirect_agents(
@@ -2421,10 +2432,13 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         replans with it as the person's own words (it also resumes a paused turn). The text is
         audited by length only, not stored."""
         _refuse_service_key(caller, "redirect a person's agent")
-        n = container.kernel.active_turns.redirect_user(caller.user_id.value, payload.instruction)
-        await _audit_control(request, caller, "agents.redirect",
-                             {"turns_redirected": n, "instruction_chars": len(payload.instruction)})
-        return JSONResponse(content={"redirected": n > 0, "turns_redirected": n, "scope": "this_process"})
+        sent = await container.kernel.active_turns.signal(caller.user_id.value, "redirect", payload.instruction)
+        n = sent["local"]
+        await _audit_control(request, caller, "agents.redirect", {
+            "turns_redirected": n, "instruction_chars": len(payload.instruction), "published": sent["published"]})
+        return JSONResponse(content={
+            "redirected": n > 0 or sent["published"], "turns_redirected": n,
+            "scope": "all_workers" if sent["published"] else "this_process"})
 
     @router.get("/host/folders")
     async def host_folders(caller: Principal = Depends(principal)) -> JSONResponse:
@@ -3068,6 +3082,18 @@ async def refresh_scrape_gauges(container: Any) -> None:
         await asyncio.wait_for(probe.refresh_gauges(container.metrics), timeout=SCRAPE_REFRESH_TIMEOUT_S + 2)
     except Exception:
         logger.debug("gpu gauge refresh failed", exc_info=True)
+    try:  # the monitor runs in a worker; its report is in the shared cache, so read it here (ADR-052)
+        from datetime import datetime, timezone
+
+        from ..learning.model_monitor import last_report
+
+        cache = getattr(container, "cache_backend", None)
+        report = await asyncio.wait_for(last_report(cache), timeout=SCRAPE_REFRESH_TIMEOUT_S) if cache else None
+        if report and report.get("generated_at"):
+            made = datetime.fromisoformat(str(report["generated_at"]))
+            container.metrics.set_model_drift(report, age_s=(datetime.now(timezone.utc) - made).total_seconds())
+    except Exception:
+        logger.debug("model drift gauge refresh failed", exc_info=True)
     outbox = getattr(container, "event_outbox", None)
     stats = getattr(outbox, "stats", None)
     if not callable(stats):

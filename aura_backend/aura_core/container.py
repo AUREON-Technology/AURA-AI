@@ -735,6 +735,10 @@ class Container:
                 audit=self.audit,
             )
         )
+        # ADR-059: with a cache every worker shares (Redis), stop / pause / redirect reach a turn another
+        # worker runs. An in-memory cache is one process's, so it is left unwired and the routes say so.
+        if getattr(self.cache_backend, "shared_across_processes", False):
+            self.kernel.active_turns.shared = self.cache_backend
         # ADR-043: user agent tasks. The queue runs each task through `self.kernel` -- the same
         # path as /chat -- so it can only exist once the kernel does. `None` is the kill switch
         # (AURA_AGENT_TASKS_ENABLED=false): the routes then answer 503.

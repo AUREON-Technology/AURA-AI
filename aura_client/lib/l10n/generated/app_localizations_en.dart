@@ -5682,4 +5682,8 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get agentControlNothing => 'Nothing is running on this server.';
+
+  @override
+  String get agentStopAllSignalled =>
+      'Nothing was running on the server that answered; the stop was also sent to the other server workers.';
 }

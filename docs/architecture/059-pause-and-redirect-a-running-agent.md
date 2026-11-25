@@ -25,10 +25,21 @@ Cooperative control, honoured at points where nothing is half-applied:
   (a redirect is audited by length, its text is not stored). The Flutter run-history page has the three
   buttons next to stop-all.
 
+## Across workers
+With a cache every worker shares (Redis: `RedisCache.shared_across_processes`), `stop-all`, `pause`,
+`resume` and `redirect` also append an event to a per-user list (`aura:agentctl:{user}:v1`, capped at 50,
+10-minute TTL -- a redirect's text therefore sits in Redis for at most that long). Each running turn polls
+that list once a second and applies events in order, so a turn on another worker stops, holds or takes the
+instruction within about a second. Events already in the list when a turn begins are ignored for it, so a
+stop pressed earlier never kills a later turn. The routes then report `scope: "all_workers"`; the counts
+are still of the answering process's turns only. With an in-memory cache nothing is published and the scope
+stays `this_process`. A cache outage never undoes the local effect. Verified with two `ActiveTurns` over
+one cache and with two real Redis clients (stop, pause and redirect each crossed).
+
 ## Limits (stated, not hidden)
-- **Process-local**, exactly like stop-all: a turn held by another gateway worker is not reached
-  (`scope: "this_process"`).
 - A single long tool call cannot be paused or redirected until it returns; stop-all is the way to cut one.
+- A control event pressed in the instant between a turn starting and its first poll (well under a second)
+  is treated as predating it and is not applied to that turn.
 - A redirect whose replan fails is dropped (the run continues its old plan); the `redirected` event
   still records that it was received.
 - A turn with a single batch and no later pass has no checkpoint left to apply a redirect to.

@@ -19,7 +19,8 @@ erased each other's observations.
    `AURA_MODEL_MONITOR_ENABLED`). It reads per-model aggregates of the turn telemetry the gateway already records
    (`recent_summary_by_model`, Postgres `GROUP BY model` and the in-memory twin), appends one observation per
    (model, metric) to the platform scope, compares it with the series' pinned baseline and stores the report.
-   Series: success rate, non-degraded rate, tool success rate, groundedness, p95 latency, average cost.
+   Series: success rate, non-degraded rate, tool success rate, groundedness, refusal rate (turns the safety layer
+   blocked; drift = a rise of 0.05), p95 latency, average cost.
 3. **Policy, stated:** the first observation pins itself (`baseline_pinned: auto`); drift is measured against the
    pin until an operator re-baselines on purpose (`POST /admin/model-monitor/rebaseline`, audited); rates falling by
    more than 0.05 or latency/cost rising more than 50% are drift; a model with fewer than `min_turns` (20) turns in
@@ -30,11 +31,12 @@ erased each other's observations.
 
 ## Not built
 
-* Alert delivery (webhook, email, Prometheus gauge): drift is in the log and the admin report. Who is alerted, and how,
-  is an operator decision.
-* Launching an evaluation run (the harness exists: `evaluation/runner.py`, `eval-ci.yml`); a cost-capped,
-  admin-confirmed trigger needs a budget decision.
-* A refusal-rate series: telemetry has no refusal field.
+* Alert *delivery* (webhook, email, paging): the signal now exists as Prometheus gauges set when Prometheus scrapes
+  the gateway from the monitor's last report -- `aura_model_drift_active{model,metric}` (1 while drifting) and
+  `aura_model_monitor_report_age_seconds` (alert on a stale monitor too). A Grafana alert rule on those is how an
+  operator chooses who is told and how; this repo ships no rule or contact point.
+* Launching an evaluation run (the harness exists: `evaluation/runner.py`, `eval-ci.yml`). Deliberately not
+  automatic: it costs money and retraining is human-gated (ADR-008), so a person starts it from the report.
 * Platform-wide series only (no per-workspace scope).
 
 ## Evidence

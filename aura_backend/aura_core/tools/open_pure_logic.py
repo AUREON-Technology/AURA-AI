@@ -1018,6 +1018,9 @@ _DECLS: dict[str, tuple[tuple[str, re.Pattern[str]], ...]] = {
         # Package-private (no modifier): `int size() {`. Control keywords are excluded as the first word and as the
         # name, and it must open a body with `{`, so `return f(x);` and `else if (x) {` are not methods.
         ("method", re.compile(r"^\s*(?!(?:return|else|new|throw|case|assert|yield|do|try|await|goto|break|continue)\b)(?:<[^>]+>\s+)?[\w<>\[\],.?]+(?: [\w<>\[\],.?]+)*\s+(?!(?:if|for|while|switch|catch|synchronized|return)\b)([A-Za-z_]\w*)\s*\([^;{=]*\)\s*(?:throws\s+[\w., ]+)?\s*\{")),
+        # An interface method with no modifier ends in `;` (`int size();`). Kept only when its enclosing
+        # block is an interface (see the post-filter in scan_source); anywhere else this shape is a statement.
+        ("iface_method", re.compile(r"^\s*(?!(?:return|else|new|throw|case|assert|yield|do|try|await|goto|break|continue)\b)(?:<[^>]+>\s+)?[\w<>\[\],.?]+(?: [\w<>\[\],.?]+)*\s+(?!(?:if|for|while|switch|catch|synchronized|return)\b)([A-Za-z_]\w*)\s*\([^;{=]*\)\s*(?:throws\s+[\w., ]+)?\s*;")),
     ),
     "csharp": (
         ("class", re.compile(r"^\s*(?:(?:public|private|protected|internal|static|sealed|abstract|partial)\s+)*(?:class|record|struct)\s+([A-Za-z_]\w*)")),
@@ -1137,12 +1140,18 @@ def scan_source(source: str, lang: str) -> dict[str, Any]:
             break
     containers = [s for s in symbols if s["kind"] in ("class", "struct", "interface", "trait", "impl", "enum") and s["_body"]]
     for sym in symbols:
+        enclosing = None
         if sym["parent"] is None:
             inside = [c for c in containers if c is not sym and c["line"] < sym["line"] <= c["end_line"]]
             if inside:
-                sym["parent"] = max(inside, key=lambda c: c["line"])["name"]
+                enclosing = max(inside, key=lambda c: c["line"])
+                sym["parent"] = enclosing["name"]
         if sym["parent"] and sym["kind"] == "function":
             sym["kind"] = "method"
+        if sym["kind"] == "iface_method":
+            # `int size();` is a method only directly inside an interface; elsewhere it is a statement.
+            sym["kind"] = "method" if enclosing is not None and enclosing["kind"] == "interface" else "drop"
+    symbols = [s for s in symbols if s["kind"] != "drop"]
     if lang in ("javascript", "typescript"):
         # `foo(x) {` outside a class is a call in an expression or a nested block, not a declaration
         symbols = [s for s in symbols if not (s["kind"] == "method" and s["parent"] is None)]

@@ -5704,4 +5704,8 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get agentControlNothing => 'مفيش حاجة شغّالة على السيرفر ده.';
+
+  @override
+  String get agentStopAllSignalled =>
+      'ماكانش في حاجة شغّالة على السيرفر اللي ردّ؛ وأتبعت الإيقاف لباقي السيرفرات كمان.';
 }
