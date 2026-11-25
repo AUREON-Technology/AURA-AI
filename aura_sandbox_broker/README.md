@@ -4,13 +4,9 @@ A small private service between AURA's backend and Railway Sandboxes. It holds t
 and fixes how a sandbox is made. Plan: `docs/plans/railway-sandboxes-plan.md`. Proof of the
 network fence: `docs/reports/railway-sandbox-spike-2026-11-25.md`.
 
-**Do not deploy: the outbound allowlist can still be bypassed** through three allowed hosts
-(`pypi.org`, `files.pythonhosted.org`, `objects.githubusercontent.com`) by sending a different
-HTTP `Host` header inside TLS (confirmed on a real sandbox; see the end of
-`docs/reports/railway-sandbox-spike-2026-11-25.md`).
-
-**Status: built; tested against an in-memory vendor, with the guest scripts run on real sandboxes
-through the CLI. Not deployed, and not proven against the official SDK.** Nothing calls it yet.
+**Status: built; tested against an in-memory vendor, with the guest scripts and proxy run on real
+sandboxes through the CLI (87 of 87 checks, `docs/reports/railway-sandbox-spike-2026-11-25.md`).
+Not deployed, and not proven against the official SDK.** Nothing calls it yet.
 
 ## What it decides (callers cannot)
 
@@ -21,6 +17,7 @@ through the CLI. Not deployed, and not proven against the official SDK.** Nothin
 | Size, region | 2 vCPU, 2 GB, `us-west2` |
 | Idle timeout | 120 minutes (a crash safety net) |
 | Outbound | HTTPS to the seven hosts of `deploy/sandbox/filter`, through `guest/proxy.py`, behind `nftables`. The TLS server name must be the tunnel's host; encrypted ClientHellos are refused |
+| Inspected hosts | `pypi.org`, `files.pythonhosted.org`, `objects.githubusercontent.com`: the proxy terminates TLS and forwards only a body-less `GET` or `HEAD` naming that host, one per connection. Certificates are made at each boot, limited to those names; the authority's key is destroyed |
 | Commands | unprivileged user, own cgroup, deadline enforced inside the sandbox; no user namespaces, `AF_VSOCK` or `io_uring` |
 | Files | moved as the unprivileged user; paths must stay in the workspace |
 
@@ -88,8 +85,14 @@ python3 -m unittest discover -s test -p "test_*.py"
 
 ## Known limits
 
-- **Open and blocking:** the proxy does not decrypt, so it cannot see the HTTP `Host` header.
-  Three allowed hosts serve other sites on their network when asked that way.
+- The four hosts that are not decrypted (`github.com`, `api.github.com`, `codeload.github.com`,
+  `registry.npmjs.org`) are safe from a different `Host` header only because their networks refused
+  or redirected it when tested on 2026-11-25. That can change; the proof run checks it.
+- GitHub **release downloads fail**: they redirect to `release-assets.githubusercontent.com`, which
+  is not allowed (nor is it in the Docker sandbox's list).
+- A client that sends an encrypted-ClientHello extension, even as a placeholder, is refused.
+- A program that ships its own certificate list and ignores the usual variables cannot reach the
+  inspected hosts.
 - One instance is assumed: the "busy while checkpointing" rule is per instance, and nothing here
   limits how many sandboxes exist. The backend enforces per-person and platform limits.
 - A sandbox whose creation fails inside the vendor SDK can be left running until its idle timeout;

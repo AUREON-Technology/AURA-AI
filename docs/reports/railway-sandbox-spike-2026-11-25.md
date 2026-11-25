@@ -1,8 +1,8 @@
 # Railway Sandboxes: Phase 0 proof, 2026-11-25
 
-> **Gate reopened the same day.** A later run showed that the host allowlist can be bypassed
-> through content-delivery networks, so S2 below is **not** met. See
-> [Broker proof](#broker-proof) at the end.
+> **S2 below was disproved later the same day** (the allowlist could be bypassed through
+> content-delivery networks), then met again after the proxy was rebuilt: see
+> [Broker proof](#broker-proof) at the end, whose fourth run is the current result.
 
 Plan: [`docs/plans/railway-sandboxes-plan.md`](../plans/railway-sandboxes-plan.md). Scripts:
 `deploy/scripts/railway-sandbox-spike/` (`run.py` drives the Railway CLI, `guest.sh` runs inside
@@ -142,3 +142,29 @@ passes below is void. All sandboxes and the checkpoint were destroyed.
   that does not decrypt cannot see the `Host` header. Whether an attacker's own site on that
   network would receive a request this way was inferred from these two third-party sites, not
   tested with a site we control.
+
+### Fourth run: TLS inspection for three hosts
+
+The proxy now terminates TLS for `pypi.org`, `files.pythonhosted.org` and
+`objects.githubusercontent.com` and forwards only a body-less `GET` or `HEAD` whose `Host` names
+that host, rewritten from its parts. Certificates are issued in the sandbox at each boot by an
+authority limited to those names, whose key is destroyed. The same change fixes a gap reported by
+an automated review of the third run's commit: a second ClientHello claiming an unusual version
+was not checked (reproduced in tests first).
+
+Result: **87 passed, 0 failed.** All sandboxes and the checkpoint were destroyed.
+
+- A different TLS name was refused through all four hosts tried, including the one that had not
+  connected before.
+- A different `Host` header: **421** from the proxy for the three inspected hosts; 403 from the npm
+  registry's network; 301 back to `github.com`; 400 from `codeload` and `api.github.com`.
+- Through the inspected hosts, `pip` installed into a virtual environment, Python's own HTTPS
+  worked and the release-download host answered. A `POST` was refused, the agent could not read the
+  proxy's key, and no authority key was found on disk.
+- Through the other hosts, `git`, a large registry document, thirty concurrent requests and TLS 1.2
+  worked.
+- A GitHub release download failed: it redirects to `release-assets.githubusercontent.com`, which
+  is not allowed. The Docker sandbox's list does not contain it either.
+
+Not covered: `npm install` and `uv` (not installed in the proof sandbox), the official SDK, and an
+independent review of the inspection code.

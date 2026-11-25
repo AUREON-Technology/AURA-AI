@@ -29,12 +29,16 @@ STAGING = "/var/lib/aura/staging"
 WS = "/home/aura/workspace"
 CHECKPOINT = "aura-broker-proof"
 # The parts of the broker's template the scripts need.
-PACKAGES = "curl ca-certificates iproute2 procps util-linux python3 python3-pip git"
+PACKAGES = "curl ca-certificates openssl iproute2 procps util-linux python3 python3-pip python3-venv git"
+#: `INSPECTED_HOSTS` in aura_sandbox_broker/src/guest.ts: the proxy terminates their TLS.
+INSPECTED = ("objects.githubusercontent.com", "pypi.org", "files.pythonhosted.org")
 HOSTS = [
     line.strip("^$").replace("\\.", ".")
     for line in (ROOT / "deploy" / "sandbox" / "filter").read_text(encoding="utf-8").splitlines()
     if line.strip() and not line.startswith("#")
 ]
+#: What the broker passes to fence.sh.
+ENTRIES = [f"inspect:{host}" if host in INSPECTED else host for host in HOSTS]
 
 
 class Proof(Spike):
@@ -65,7 +69,7 @@ class Proof(Spike):
 
     def fence(self, sandbox: str) -> tuple[int, str, str]:
         started = time.monotonic()
-        result = self.sh(sandbox, f"bash {LIB}/fence.sh " + " ".join(HOSTS))
+        result = self.sh(sandbox, f"bash {LIB}/fence.sh " + " ".join(ENTRIES))
         self.timings.setdefault("fence_s", round(time.monotonic() - started, 1))
         return result
 
@@ -283,7 +287,7 @@ class Proof(Spike):
         code, _, _ = self.file(box, "write", "x", stage)
         self.check("G11", self.refused(box) and code == 97, f"no ready mark, no command or file write ({code})")
 
-        code, _, err = self.sh(box, f"bash {LIB}/fence.sh " + " ".join([*HOSTS, "example.com"]))
+        code, _, err = self.sh(box, f"bash {LIB}/fence.sh " + " ".join([*ENTRIES, "example.com"]))
         self.check("G11", code == 11 and self.refused(box),
                    f"a fence that fails its proof leaves the sandbox unusable: exit {code} {err[-120:]}")
         self.sh(box, "(setsid python3 -m http.server 9999 >/dev/null 2>&1 &); sleep 2")
@@ -370,8 +374,35 @@ class Proof(Spike):
             lines = out.splitlines()
             status = lines[0] if lines else "-"
             rest = " ".join(lines[1:])[:140]
-            served = (status[:1] == "2" and marker in rest) or (status[:1] == "3" and other in rest)
-            self.check("G13", not served, f"tunnel to {allowed}, Host {other}: HTTP {status} {rest}")
+            if allowed in INSPECTED:
+                refused = status == "421"
+            else:
+                refused = status.isdigit() and not (
+                    (status[0] == "2" and marker in rest) or (status[0] == "3" and other in rest))
+            self.check("G13", refused, f"tunnel to {allowed}, Host {other}: HTTP {status} {rest} {err[-80:]}")
+        # The inspected hosts still work, and what the proxy holds stays out of the agent's reach.
+        for label, script in (
+            ("pip installs into a virtual environment",
+             "rm -rf v && python3 -m venv v && v/bin/pip install -q six && v/bin/python -c 'import six' && rm -rf v"),
+            ("python's own HTTPS", "/usr/bin/python3 -c \"import urllib.request as u; u.urlopen('https://pypi.org/simple/six/').read()\""),
+            ("the release-download host answers",
+             "code=$(curl -q -s --max-time 30 -o /dev/null -w '%{http_code}' https://objects.githubusercontent.com/); "
+             "test $code != 000 && test $code != 421"),
+        ):
+            code, _, err, _ = self.agent(box, script, limit=120)
+            self.check("G14", code == 0, f"{label}: exit {code} {err[-160:]}")
+        for label, script in (
+            ("read the proxy's key", "cat /etc/aura-proxy/leaf.key"),
+            ("post to an inspected host", "curl -q -sSf --max-time 20 -d x=1 https://pypi.org/pypi"),
+        ):
+            code, _, _, _ = self.agent(box, script)
+            self.check("G14", code != 0, f"agent cannot: {label} (exit {code})")
+        out = self.sh(box, "find / -xdev -name ca.key 2>/dev/null | head -3; echo end")[1]
+        self.check("G14", out == "end", f"the authority's key is gone: {out!r}")
+        code, out, _, _ = self.agent(
+            box, "curl -q -sSL --max-time 30 -o /dev/null -w '%{http_code} %{url_effective}' "
+                 "https://github.com/cli/cli/releases/download/v2.40.0/gh_2.40.0_checksums.txt")
+        self.record("G14", "INFO", f"a GitHub release download: exit {code} {out[:120]}")
 
     def hostile_restore(self, box: str) -> None:
         """What an agent can leave on disk must not turn into root's actions after a restore."""

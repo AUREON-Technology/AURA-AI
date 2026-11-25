@@ -74,11 +74,12 @@ test("create fences the sandbox before handing it out", async (t) => {
   const id = await broker.sandbox();
   const sandbox = broker.provider.sandboxes.get(id)!;
   assert.match(sandbox.commands[0]!, /fence\.sh/);
+  // "inspect:" marks the hosts whose networks also route by the Host header inside TLS.
   assert.deepEqual(words(sandbox.commands[0]!).slice(2), [
-    "github.com", "api.github.com", "codeload.github.com", "objects.githubusercontent.com",
-    "pypi.org", "files.pythonhosted.org", "registry.npmjs.org",
+    "github.com", "api.github.com", "codeload.github.com", "inspect:objects.githubusercontent.com",
+    "inspect:pypi.org", "inspect:files.pythonhosted.org", "registry.npmjs.org",
   ]);
-  for (const script of ["fence.sh", "run.sh", "file.sh"]) {
+  for (const script of ["fence.sh", "run.sh", "file.sh", "confine.py", "proxy.py"]) {
     assert.ok(sandbox.disk.has(`/usr/local/lib/aura/${script}`), script);
   }
 });

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Installed and run by the broker, as root, after every boot and before any agent command.
-#   fence.sh <allowed host>...
+#   fence.sh <host>... where <host> is an allowed name, or inspect:<name> for one whose TLS the
+#   proxy terminates to check every request.
 # Gives the agent user loopback and an allowlisting proxy, and nothing else, then proves it.
 # Only after every proof does it write the ready mark that run.sh and file.sh require. Exits
 # non-zero if anything fails; the broker then destroys the sandbox.
@@ -17,18 +18,25 @@ PROXY_USER=aura-proxy
 LIB=/usr/local/lib/aura
 STATE=/var/lib/aura
 PROXY=http://127.0.0.1:8888
+CERTS=/etc/aura-proxy
+AUTHORITY=/usr/local/share/ca-certificates/aura-sandbox.crt
 
 [ "$(id -u)" = 0 ] || exit 2
 [ "$#" -gt 0 ] || exit 2
-for host in "$@"; do
+allow=()
+inspect=()
+for entry in "$@"; do
+    host=${entry#inspect:}
     [[ "$host" =~ ^[a-z0-9.-]+$ ]] || exit 2
+    allow+=(--allow "$host")
+    [ "$entry" = "$host" ] || inspect+=(--inspect "$host")
 done
 
 # Withdraw the ready mark first: from here on nothing runs until the end of this script.
 install -d -m 0700 -o root -g root "$STATE" "$STATE/staging" "$STATE/cancelled"
 rm -f "$STATE/ready"
 
-for tool in nft setpriv prlimit curl timeout pkill pgrep realpath ss python3; do
+for tool in nft setpriv prlimit curl timeout pkill pgrep realpath ss python3 openssl update-ca-certificates; do
     command -v "$tool" >/dev/null || { echo "aura: missing $tool" >&2; exit 3; }
 done
 id "$AGENT" >/dev/null 2>&1 || useradd -m -u "$AGENT_UID" -s /bin/bash "$AGENT"
@@ -89,11 +97,24 @@ table inet aura {
 }
 EOF
 
-# An HTTPS tunnel to an allowed host only, and only when the name inside TLS says the same.
-allow=()
-for host in "$@"; do allow+=(--allow "$host"); done
+# Certificates for the inspected hosts, new at every boot: an authority limited to their names,
+# whose own key is destroyed as soon as the proxy's certificate is signed. Only the proxy can
+# read that certificate's key; the agent is told to trust the authority.
+rm -rf "$CERTS"
+rm -f "$AUTHORITY"
+if [ "${#inspect[@]}" -gt 0 ]; then
+    install -d -m 0750 -o root -g "$PROXY_USER" "$CERTS"
+    /usr/bin/python3 -I "$LIB/proxy.py" --issue "$CERTS" "${inspect[@]}" || exit 7
+    chown root:"$PROXY_USER" "$CERTS/leaf.key" "$CERTS/leaf.crt"
+    chmod 0640 "$CERTS/leaf.key" "$CERTS/leaf.crt"
+    install -m 0644 "$CERTS/ca.crt" "$AUTHORITY"
+    inspect+=(--certificates "$CERTS")
+fi
+update-ca-certificates --fresh >/dev/null || exit 7
+
+# An HTTPS tunnel to an allowed host only, and only when the names inside TLS say the same.
 setsid setpriv --reuid="$proxy_uid" --regid="$(id -g "$PROXY_USER")" --clear-groups --no-new-privs \
-    env -i /usr/bin/python3 -I "$LIB/proxy.py" --port 8888 "${allow[@]}" \
+    env -i PATH=/usr/bin:/bin /usr/bin/python3 -I "$LIB/proxy.py" --port 8888 "${allow[@]}" "${inspect[@]}" \
     </dev/null >/dev/null 2>/var/log/aura-proxy.log &
 ready=no
 for _ in $(seq 40); do
@@ -127,6 +148,15 @@ if as_agent 'curl -q -sS --max-time 15 -o /dev/null \
     --connect-to www.cloudflare.com:443:registry.npmjs.org:443 https://www.cloudflare.com/' 2>/dev/null; then
     echo "aura: the proxy let another name through an allowed tunnel" >&2; exit 18
 fi
+# Nor, for an inspected host, a request naming another site inside TLS. The proxy answers this
+# one itself (421), so the proof does not depend on that host being up -- and it can only be
+# answered at all if the agent trusts the new authority.
+for index in "${!inspect[@]}"; do
+    [ "${inspect[$index]}" = --inspect ] || continue
+    host=${inspect[$((index + 1))]}
+    code=$(as_agent "curl -q -sS --max-time 20 -o /dev/null -w '%{http_code}' -H 'Host: other.invalid' https://$host/" 2>/dev/null || true)
+    [ "$code" = 421 ] || { echo "aura: another Host header was not refused for $host ($code)" >&2; exit 19; }
+done
 if as_agent 'curl -q -sS --noproxy "*" --max-time 8 -o /dev/null https://1.1.1.1' 2>/dev/null; then
     echo "aura: a direct connection got out" >&2; exit 12
 fi

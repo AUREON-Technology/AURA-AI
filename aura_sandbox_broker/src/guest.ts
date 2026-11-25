@@ -17,6 +17,15 @@ export const ALLOWED_HOSTS: readonly string[] = [
   "files.pythonhosted.org",
   "registry.npmjs.org",
 ];
+/**
+ * The allowed hosts whose networks serve other sites when asked by the HTTP `Host` header, so the
+ * proxy terminates their TLS and checks each request (confirmed on a real sandbox, 2026-11-25).
+ */
+export const INSPECTED_HOSTS: readonly string[] = [
+  "objects.githubusercontent.com",
+  "pypi.org",
+  "files.pythonhosted.org",
+];
 export const GUEST_SCRIPTS: readonly string[] = ["fence.sh", "run.sh", "file.sh", "confine.py", "proxy.py"];
 
 const LIB = "/usr/local/lib/aura";
@@ -65,7 +74,8 @@ export async function bootstrap(sandbox: ProviderSandbox): Promise<void> {
     const source = await readFile(new URL(`../../guest/${name}`, import.meta.url), "utf8");
     await sandbox.writeFile(`${LIB}/${name}`, Buffer.from(source.replaceAll("\r\n", "\n")), 0o755);
   }
-  const command = `bash ${LIB}/fence.sh ${ALLOWED_HOSTS.map(shellQuote).join(" ")}`;
+  const hosts = ALLOWED_HOSTS.map((host) => (INSPECTED_HOSTS.includes(host) ? `inspect:${host}` : host));
+  const command = `bash ${LIB}/fence.sh ${hosts.map(shellQuote).join(" ")}`;
   const outcome = await sandbox.exec(command, { timeoutSec: FENCE_TIMEOUT_S });
   if (outcome.exitCode !== 0 || outcome.timedOut) {
     throw new FenceError(`fence exited ${outcome.exitCode}`);

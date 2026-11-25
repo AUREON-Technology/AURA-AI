@@ -16,6 +16,10 @@ AGENT_UID=10001
 LIB=/usr/local/lib/aura
 STATE=/var/lib/aura
 PROXY=http://127.0.0.1:8888
+# The system's trusted authorities, which include the proxy's own for this boot. Some tools carry
+# their own list and must be pointed at these.
+BUNDLE=/etc/ssl/certs/ca-certificates.crt
+AUTHORITY=/usr/local/share/ca-certificates/aura-sandbox.crt
 MARK=${AURA_MARK:-unset}
 unset AURA_MARK
 
@@ -82,6 +86,8 @@ started=$SECONDS
         env -i HOME=/home/aura USER=aura LOGNAME=aura LANG=C.UTF-8 PATH=/usr/local/bin:/usr/bin:/bin \
         HTTP_PROXY="$PROXY" HTTPS_PROXY="$PROXY" http_proxy="$PROXY" https_proxy="$PROXY" \
         NO_PROXY=localhost,127.0.0.1 no_proxy=localhost,127.0.0.1 \
+        SSL_CERT_FILE="$BUNDLE" REQUESTS_CA_BUNDLE="$BUNDLE" PIP_CERT="$BUNDLE" CURL_CA_BUNDLE="$BUNDLE" \
+        GIT_SSL_CAINFO="$BUNDLE" NODE_EXTRA_CA_CERTS="$AUTHORITY" UV_NATIVE_TLS=1 \
         /usr/bin/python3 -I "$LIB/confine.py" -- \
         bash --norc --noprofile -c 'cd /home/aura/workspace && exec "$@"' aura "$@"
 ) </dev/null &

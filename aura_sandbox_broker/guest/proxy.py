@@ -8,27 +8,42 @@ network's addresses, so a tunnel "to pypi.org" can ask the network for someone e
 naming it inside TLS. This proxy therefore reads the tunnel's TLS ClientHello and requires the
 server name there to be the host the tunnel was opened to, before it connects anywhere. It does
 the same for any later ClientHello on the connection, and refuses encrypted ClientHellos, which
-would hide the real name. It never decrypts: what a request says inside TLS (its HTTP `Host`
-header) is not visible here.
+would hide the real name.
 
-Standard library only. Runs unprivileged, as its own user.
+Most tunnels are never decrypted. Some hosts sit on networks that also route by the HTTP `Host`
+header inside TLS, which a pass-through proxy cannot see. For those (`--inspect`) the proxy is
+the TLS server, with a certificate from an authority made for this boot and limited to those
+names. It accepts only a body-less GET or HEAD naming that host, writes the request afresh, and
+sends it over its own verified TLS connection.
+
+Standard library only (and the `openssl` program to issue certificates). Runs unprivileged, as
+its own user.
 """
 
 import argparse
 import asyncio
 import ipaddress
+import os
 import socket
+import ssl
+import subprocess
 import sys
+import tempfile
+from http import HTTPStatus
+from pathlib import Path
 
+CHANGE_CIPHER_SPEC = 20
 HANDSHAKE = 22
 #: change_cipher_spec, alert, handshake, application_data.
-RECORD_TYPES = (20, 21, HANDSHAKE, 23)
+RECORD_TYPES = (CHANGE_CIPHER_SPEC, 21, HANDSHAKE, 23)
 CLIENT_HELLO = 1
 MAX_RECORD = 16384 + 2048
 MAX_HELLO = 65536
 SERVER_NAME = 0
 
 MAX_REQUEST = 8192
+#: A request head on an inspected connection. Signed download addresses are long.
+MAX_HEAD = 32768
 HANDSHAKE_TIMEOUT_S = 30
 CONNECT_TIMEOUT_S = 20
 IDLE_TIMEOUT_S = 600
@@ -37,6 +52,114 @@ MAX_TUNNELS = 128
 
 class Refused(Exception):
     pass
+
+
+class Rejected(Refused):
+    """A request on an inspected connection that is answered with a status instead."""
+
+    def __init__(self, status: int) -> None:
+        super().__init__(f"request rejected with {status}")
+        self.status = status
+
+
+#: The only request headers repeated upstream. Anything that could steer a network to another
+#: site (Host, X-Forwarded-Host, Forwarded, vendor headers), carry credentials or frame a body
+#: is left behind.
+FORWARDED_HEADERS = frozenset((
+    b"accept", b"accept-encoding", b"accept-language", b"cache-control", b"if-modified-since",
+    b"if-none-match", b"if-range", b"range", b"user-agent",
+))
+_NAME_BYTES = frozenset(b"!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+
+
+def rebuild_request(head: bytes, host: str) -> bytes:
+    """The upstream request for one client request head on an inspected connection.
+
+    Only body-less GET and HEAD, with exactly one Host header naming the tunnel's host. The
+    result is written afresh from the parsed parts, so nothing ambiguous survives."""
+    lines = head.split(b"\r\n")
+    if any(byte in line for line in lines for byte in (b"\r", b"\n", b"\x00")):
+        raise Rejected(400)
+    words = lines[0].split(b" ")
+    if len(words) != 3:
+        raise Rejected(400)
+    method, target, version = words
+    if method not in (b"GET", b"HEAD"):
+        raise Rejected(405)
+    if (version not in (b"HTTP/1.1", b"HTTP/1.0") or not target.startswith(b"/")
+            or any(not 0x20 < byte < 0x7F for byte in target)):
+        raise Rejected(400)
+    hosts, kept = [], []
+    for line in lines[1:]:
+        name, colon, value = line.partition(b":")
+        if not colon or not name or any(byte not in _NAME_BYTES for byte in name):
+            raise Rejected(400)
+        value = value.strip(b" \t")
+        if any((byte < 0x20 and byte != 0x09) or byte == 0x7F for byte in value):
+            raise Rejected(400)
+        lower = name.lower()
+        if lower == b"host":
+            hosts.append(value.lower())
+        elif lower == b"transfer-encoding" or (lower == b"content-length" and value != b"0"):
+            raise Rejected(400)
+        elif lower in FORWARDED_HEADERS:
+            kept.append(name + b": " + value)
+    expected = host.lower().encode("ascii")
+    if len(hosts) != 1 or hosts[0] not in (expected, expected + b":443"):
+        raise Rejected(421)
+    out = [method + b" " + target + b" HTTP/1.1", b"Host: " + expected, *kept, b"Connection: close"]
+    return b"\r\n".join(out) + b"\r\n\r\n"
+
+
+def issue_certificates(directory, hosts) -> None:
+    """A certificate authority limited to `hosts`, and the one certificate the proxy serves.
+
+    Writes `ca.crt`, `leaf.crt` and `leaf.key` into `directory`. The authority's own key lives
+    only in a temporary folder and is gone when this returns, so nothing else can ever be
+    signed by it."""
+    directory = Path(directory)
+    names = [f"DNS:{host}" for host in hosts]
+    with tempfile.TemporaryDirectory(dir=directory.parent) as scratch:
+        work = Path(scratch)
+
+        def openssl(*args: str) -> None:
+            subprocess.run(["openssl", *args], check=True, capture_output=True, timeout=60)
+
+        key = ("-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes")
+        constraints = ",".join(f"permitted;{name}" for name in names)
+        openssl("req", "-x509", *key, "-days", "3650", "-subj", "/CN=AURA sandbox authority",
+                "-keyout", str(work / "ca.key"), "-out", str(directory / "ca.crt"),
+                "-addext", "basicConstraints=critical,CA:TRUE,pathlen:0",
+                "-addext", "keyUsage=critical,keyCertSign",
+                "-addext", f"nameConstraints=critical,{constraints}")
+        openssl("req", *key, "-subj", f"/CN={hosts[0]}",
+                "-keyout", str(directory / "leaf.key"), "-out", str(work / "leaf.csr"))
+        (work / "leaf.ext").write_text(
+            f"subjectAltName={','.join(names)}\nbasicConstraints=critical,CA:FALSE\n"
+            "keyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\n"
+            "subjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid\n",
+            encoding="ascii",
+        )
+        openssl("x509", "-req", "-in", str(work / "leaf.csr"), "-days", "3650",
+                "-CA", str(directory / "ca.crt"), "-CAkey", str(work / "ca.key"),
+                "-set_serial", str(int.from_bytes(os.urandom(16), "big") >> 1),
+                "-extfile", str(work / "leaf.ext"), "-out", str(directory / "leaf.crt"))
+
+
+def server_context(certificate, key, host: str) -> ssl.SSLContext:
+    """The TLS server the proxy is for one inspected host: HTTP/1.1 only, that name only."""
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(certificate, key)
+    context.set_alpn_protocols(["http/1.1"])
+
+    def only_this_name(_connection, name, _context):
+        if name is None or name.lower() != host.lower():
+            return ssl.ALERT_DESCRIPTION_UNRECOGNIZED_NAME
+        return None
+
+    context.sni_callback = only_this_name
+    return context
 
 
 def public_address(address: str) -> bool:
@@ -123,11 +246,17 @@ def check_hello(message: bytes, host: str) -> None:
         raise Refused("the server name is not the tunnel's host")
 
 
-def _opens_hello(payload: bytes) -> bool:
-    """Whether a handshake record, after the first ClientHello, begins another one. A TLS 1.2
-    encrypted message starts with random-looking bytes and fails the version test; a first
-    fragment too short to test is collected and checked."""
-    return payload[0] == CLIENT_HELLO and (len(payload) < 6 or payload[4:6] == b"\x03\x03")
+def _opens_hello(payload: bytes, cipher_changed: bool) -> bool:
+    """Whether a handshake record, after the first ClientHello, must be checked as another one.
+
+    Until the client changes cipher, every handshake record is plaintext, so any that starts
+    like a ClientHello is one -- whatever version it claims. Afterwards a TLS 1.2 client sends
+    encrypted records here, while a TLS 1.3 client may still send its second ClientHello in the
+    clear. Those are told apart by the length field: no ClientHello is longer than 131,071
+    bytes, so a second byte above 1 can only be ciphertext."""
+    if payload[0] != CLIENT_HELLO:
+        return False
+    return not cipher_changed or len(payload) < 2 or payload[1] <= 1
 
 
 class Inspector:
@@ -137,6 +266,7 @@ class Inspector:
     def __init__(self, host: str) -> None:
         self.host = host
         self.greeted = False
+        self._cipher_changed = False
         self._pending = bytearray()
         self._hello: bytearray | None = None
         self._held = bytearray()
@@ -170,9 +300,10 @@ class Inspector:
             if kind != HANDSHAKE or payload[0] != CLIENT_HELLO:
                 raise Refused("the first message is not a ClientHello")
             self._hello = bytearray(payload)
-        elif kind == HANDSHAKE and _opens_hello(payload):
+        elif kind == HANDSHAKE and _opens_hello(payload, self._cipher_changed):
             self._hello = bytearray(payload)
         else:
+            self._cipher_changed = self._cipher_changed or kind == CHANGE_CIPHER_SPEC
             return record
 
         self._held += record
@@ -200,8 +331,14 @@ async def _lookup(host: str) -> list[tuple[str, int]]:
 
 
 class Proxy:
-    def __init__(self, allowed, resolve=_lookup, address_ok=public_address) -> None:
+    def __init__(self, allowed, resolve=_lookup, address_ok=public_address, inspected=None,
+                 upstream_context=None) -> None:
         self.allowed = frozenset(host.lower() for host in allowed)
+        #: host -> the server context its tunnels are terminated with. Others are passed through.
+        self.inspected = {host.lower(): context for host, context in (inspected or {}).items()}
+        if not set(self.inspected) <= self.allowed:
+            raise ValueError("every inspected host must be an allowed host")
+        self._upstream_context = upstream_context or ssl.create_default_context()
         self._resolve = resolve
         self._address_ok = address_ok
         self._open = 0
@@ -247,6 +384,12 @@ class Proxy:
             print("refused: host or port not allowed", file=sys.stderr, flush=True)
             await self._answer(writer, "403 Forbidden")
             return
+        context = self.inspected.get(host.lower())
+        if context is not None:
+            if early:
+                raise Refused("bytes sent before the tunnel opened")
+            await self._inspect(host.lower(), context, reader, writer)
+            return
         writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
         await writer.drain()
 
@@ -266,12 +409,48 @@ class Proxy:
         finally:
             upstream_writer.close()
 
-    async def _dial(self, host: str):
+    async def _inspect(self, host: str, context, reader, writer) -> None:
+        """Terminate TLS, accept one checked request, and answer it from the real host.
+
+        One request per connection: the client is told to close, so a second request, however it
+        is framed, is never read."""
+        # Paused first, so no byte of the client's TLS is taken by the plaintext reader.
+        writer.transport.pause_reading()
+        writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
+        await writer.drain()
+        await asyncio.wait_for(writer.start_tls(context), HANDSHAKE_TIMEOUT_S)
+        head = b""
+        while b"\r\n\r\n" not in head:
+            if len(head) > MAX_HEAD:
+                return
+            chunk = await asyncio.wait_for(reader.read(4096), HANDSHAKE_TIMEOUT_S)
+            if not chunk:
+                return
+            head += chunk
+        head = head.partition(b"\r\n\r\n")[0]
+        if len(head) > MAX_HEAD:
+            return
+        try:
+            request = rebuild_request(head, host)
+        except Rejected as refusal:
+            await self._answer(writer, f"{refusal.status} {HTTPStatus(refusal.status).phrase}")
+            raise
+        upstream_reader, upstream_writer = await self._dial(host, ssl=self._upstream_context, server_hostname=host)
+        try:
+            upstream_writer.write(request)
+            await upstream_writer.drain()
+            while chunk := await asyncio.wait_for(upstream_reader.read(65536), IDLE_TIMEOUT_S):
+                writer.write(chunk)
+                await writer.drain()
+        finally:
+            upstream_writer.close()
+
+    async def _dial(self, host: str, **tls):
         for address, port in await self._resolve(host):
             if not self._address_ok(address):
                 continue
             try:
-                return await asyncio.wait_for(asyncio.open_connection(address, port), CONNECT_TIMEOUT_S)
+                return await asyncio.wait_for(asyncio.open_connection(address, port, **tls), CONNECT_TIMEOUT_S)
             except (OSError, asyncio.TimeoutError):
                 continue
         raise Refused("no public address of the host is reachable")
@@ -305,18 +484,34 @@ class Proxy:
                 raise result
 
 
-async def serve(allowed: list[str], port: int) -> None:
-    server = await asyncio.start_server(Proxy(allowed).handle, "127.0.0.1", port)
+async def serve(proxy: "Proxy", port: int) -> None:
+    server = await asyncio.start_server(proxy.handle, "127.0.0.1", port)
     async with server:
         await server.serve_forever()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    parser.add_argument("--allow", action="append", required=True)
+    parser.add_argument("--allow", action="append", default=[])
+    parser.add_argument("--inspect", action="append", default=[],
+                        help="an allowed host whose TLS the proxy terminates to check requests")
+    parser.add_argument("--certificates", help="folder holding leaf.crt and leaf.key")
+    parser.add_argument("--issue", metavar="FOLDER",
+                        help="issue the certificates for the --inspect hosts into FOLDER and exit")
     parser.add_argument("--port", type=int, default=8888)
     options = parser.parse_args()
-    asyncio.run(serve(options.allow, options.port))
+    if options.issue:
+        if not options.inspect:
+            parser.error("--issue needs at least one --inspect host")
+        issue_certificates(options.issue, options.inspect)
+        return
+    if not options.allow or (options.inspect and not options.certificates):
+        parser.error("--allow is required, and --inspect needs --certificates")
+    inspected = {
+        host: server_context(Path(options.certificates, "leaf.crt"), Path(options.certificates, "leaf.key"), host)
+        for host in options.inspect
+    }
+    asyncio.run(serve(Proxy(options.allow, inspected=inspected), options.port))
 
 
 if __name__ == "__main__":
