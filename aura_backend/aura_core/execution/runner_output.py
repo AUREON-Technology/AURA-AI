@@ -1,4 +1,4 @@
-"""Turn a tool result into an observation the agent loop can act on (state graph, ADR-037).
+"""Turn a tool result into an observation the agent loop can act on (state graph, ADR-039).
 
 ``run_command`` returns ``ok=True`` whenever the *tool* worked -- the command running and exiting
 non-zero is still a successful dispatch, with the exit status only in the result text

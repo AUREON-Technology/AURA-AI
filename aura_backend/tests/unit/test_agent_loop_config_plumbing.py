@@ -1,4 +1,4 @@
-"""The agent-loop settings (ADR-037) reach every place an operator looks: README, .env.example, and
+"""The agent-loop settings (ADR-039) reach every place an operator looks: README, .env.example, and
 BOTH compose files at parity, with compose defaults equal to the settings defaults."""
 
 from __future__ import annotations

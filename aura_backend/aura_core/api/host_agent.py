@@ -35,7 +35,7 @@ _CLOSE_UNAUTHORIZED = 4401
 _CLOSE_SERVER_ERROR = 1011
 _CLOSE_UNAVAILABLE = 4503
 _CLOSE_BAD_REQUEST = 4400
-#: The user pressed stop-all (ADR-039). Not 4401: the daemon must not unpair itself over this --
+#: The user pressed stop-all (ADR-041). Not 4401: the daemon must not unpair itself over this --
 #: revoking the device is the separate, explicit way to make that happen.
 _CLOSE_STOPPED = 4409
 

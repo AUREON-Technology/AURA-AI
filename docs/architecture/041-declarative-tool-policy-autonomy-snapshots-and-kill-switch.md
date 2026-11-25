@@ -1,4 +1,4 @@
-# ADR-039 — Declarative tool policy, review profiles, workspace snapshots, a kill switch, context redaction and a real egress allowlist
+# ADR-041 — Declarative tool policy, review profiles, workspace snapshots, a kill switch, context redaction and a real egress allowlist
 
 **Status:** Proposed (built, not proven) · **Date:** 2026-11-23 · **Related:** ADR-006 (trust
 channels, confirmation), ADR-011 (desktop engineer agent), ADR-013/014 (engineer workspaces,

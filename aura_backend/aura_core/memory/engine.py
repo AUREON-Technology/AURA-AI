@@ -519,7 +519,7 @@ class MemoryEngine:
         logger.info("memory consolidated", extra=asdict(outcome))
         return outcome
 
-    # -- lesson review (ADR-038; ADR-008's human promotion) ------------------------------------
+    # -- lesson review (ADR-040; ADR-008's human promotion) ------------------------------------
 
     async def list_pending_lessons(self, owner_id: UserId, *, scope: str) -> list[MemoryRecord]:
         """The owner's automatic lessons awaiting review for persona scope ``scope``, newest first."""

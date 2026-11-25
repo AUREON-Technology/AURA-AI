@@ -41,7 +41,7 @@ NETWORK_ALLOWED = {
     "deployment_release_manager.py": {"open_guarded"},
     "push_notification_dispatcher.py": {"open_guarded"},
     "dev_server_manager.py": {"open_owned_local"},
-    # ADR-044: post-release health verification (tools/release.py); same sanctioned helper, redirects off.
+    # ADR-046: post-release health verification (tools/release.py); same sanctioned helper, redirects off.
     "release_ext.py": {"open_guarded"},
 }
 

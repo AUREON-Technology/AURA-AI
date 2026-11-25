@@ -1,5 +1,5 @@
 """The token budget monitor: budget status each pass, a pressure signal, and compression, once
-(ADR-037; row 28).
+(ADR-039; row 28).
 
 The Engineer had no ``token_budget`` at all. It now has a generous default, reports how much of it a
 run has used on every pass, and when use crosses a threshold says so and shortens older tool output --

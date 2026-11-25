@@ -1,6 +1,6 @@
 """A bounded, TTL'd, per-owner append-only log built on nothing but the ``Cache`` port.
 
-Why this exists: ADR-041 adds three small histories (a user's usage records, their agent tasks,
+Why this exists: ADR-043 adds three small histories (a user's usage records, their agent tasks,
 the run-goal previews) and may not add a table (Alembic is the only schema authority, and a new
 table needs a real-Postgres round trip). The cache port has ``get``/``set``/``incr``/
 ``get_many`` and no list or scan, so the log is a *sequence counter plus numbered slots*:

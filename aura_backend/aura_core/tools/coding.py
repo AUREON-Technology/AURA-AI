@@ -88,7 +88,7 @@ _CLONE_MAX_FILE_BYTES = 256_000
 _CLONE_MAX_TOTAL_BYTES = 8_000_000
 _CLONE_CONCURRENCY = 6
 
-#: Workspace snapshots (ADR-039): refs under refs/aura/snapshots/, one commit object each.
+#: Workspace snapshots (ADR-041): refs under refs/aura/snapshots/, one commit object each.
 _SNAPSHOT_REF_PREFIX = "refs/aura/snapshots/"
 #: ``aura-snapshot:<nanosecond clock>: <label>``. Git's own dates have one-second resolution, so
 #: two snapshots taken in the same second could not be told apart by age; the clock in the subject
@@ -871,7 +871,7 @@ def build_sandbox_tools(
 ) -> list[Tool]:
     """Filesystem, command-execution, and git tools against one shared per-task sandbox.
 
-    ``read_ledger`` (ADR-043, ``tools/open_workspace.py::FileReadLedger``) makes ``write_file`` and
+    ``read_ledger`` (ADR-045, ``tools/open_workspace.py::FileReadLedger``) makes ``write_file`` and
     ``edit_file`` *warn* -- never block -- when a file changed since the agent last read or wrote it.
     It needs nothing from the host-daemon protocol: both tools already read through the runner.
 
@@ -935,7 +935,7 @@ def build_sandbox_tools(
         return f"{result}\n{note}" if note else result
 
     async def _stale_note_overwrite(handle: Any, path: str, context: ToolContext) -> str | None:
-        """ADR-043: a warning if the file about to be overwritten differs from what the agent last
+        """ADR-045: a warning if the file about to be overwritten differs from what the agent last
         saw. Only files with a baseline cost the extra read; any failure means "no warning"."""
         from .open_workspace import stale_note_before_write
 
@@ -1936,7 +1936,7 @@ def build_sandbox_tools(
         return f"Pushed {branch} to {slug}."
 
 
-    # -- snapshots (ADR-039) --------------------------------------------------------------
+    # -- snapshots (ADR-041) --------------------------------------------------------------
     #
     # A snapshot is a git commit object holding the workspace's whole working tree -- tracked
     # files, and untracked files that are not ignored -- stored under refs/aura/snapshots/<id>.
@@ -2115,7 +2115,7 @@ def build_sandbox_tools(
         tools.append(git_push)
     if workspace_manager is not None:
         tools += [open_workspace, list_workspaces, destroy_workspace]
-    # ADR-040: structured lint / format checks, in the same workspace run_command uses.
+    # ADR-042: structured lint / format checks, in the same workspace run_command uses.
     tools += build_devtools(sandbox_runner, sessions)
     if desktop_ops and host_agent_registry is not None:
         tools += build_desktop_ops_tools(sandbox_runner, sessions, host_agent_registry)

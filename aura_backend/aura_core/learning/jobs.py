@@ -145,7 +145,7 @@ async def run_engineer_lesson_extraction(
     if turn.agent_id != "engineer":
         return {"status": "skipped", "reason": "not_engineer"}
 
-    # ADR-045 (row 60): an optional model-written path. ``None`` or an empty list -- unavailable,
+    # ADR-047 (row 60): an optional model-written path. ``None`` or an empty list -- unavailable,
     # refused, not valid JSON for the contract, or "nothing worth keeping" from a small model --
     # falls back to the keyword extractor, so enabling it can only add lessons, never lose the
     # ones the heuristic would have found. Its candidates take the same road below.

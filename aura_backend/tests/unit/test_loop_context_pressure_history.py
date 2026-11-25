@@ -1,4 +1,4 @@
-"""Context pressure folds the session's older turns into its summary (ADR-037; row 28).
+"""Context pressure folds the session's older turns into its summary (ADR-039; row 28).
 
 ``EpisodicMemory.compact`` is the existing fold-older-turns-into-a-summary step (the one ``append``
 runs when the window overflows), invoked on demand. The kernel calls it once when the agent loop

@@ -1,4 +1,4 @@
-"""ADR-044: the capabilities added to the thirteen ``PARTIAL`` open tools.
+"""ADR-046: the capabilities added to the thirteen ``PARTIAL`` open tools.
 
 Each class pins one row of the inventory sheet. Tools are driven through ``Tool.execute`` (what the
 kernel does) or a real ``ToolRegistry``; nothing internal is mocked. Two seams are substituted and are

@@ -273,13 +273,13 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         use_memory: bool = True
         use_tools: bool = True
         plan: bool | None = None
-        #: ADR-038 (row 63): ``auto`` | ``plan`` | ``fast`` | ``review``. Wins over ``plan`` (kept:
+        #: ADR-040 (row 63): ``auto`` | ``plan`` | ``fast`` | ``review``. Wins over ``plan`` (kept:
         #: ``true`` means ``plan``, ``false`` means ``fast``). ``review`` plans and then returns the
         #: planned steps with ``approval_id``s instead of running them; send those ids back in
         #: ``approval_ids`` to run the stored plan. Absent (with no ``plan``) is today's behaviour.
         #: The response's ``plan_mode`` says what was decided and why.
         plan_mode: Literal["auto", "plan", "fast", "review"] | None = None
-        #: ADR-045 (row 41): what "done" means for this request, one statement per item (at most
+        #: ADR-047 (row 41): what "done" means for this request, one statement per item (at most
         #: 20 of 300 characters). The planner is told them; the response's
         #: ``agent_loop.acceptance`` says which the run's tool results show met, which they
         #: contradict and which nothing speaks to. Absent is today's behaviour exactly.
@@ -317,7 +317,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         images: list[ImageAttachment] = Field(default_factory=list, max_length=8)
 
     class PlanFeedbackRequest(BaseModel):
-        """ADR-045 (row 51): free-text feedback on a plan held by ``plan_mode: review``."""
+        """ADR-047 (row 51): free-text feedback on a plan held by ``plan_mode: review``."""
 
         #: The ``pending_tool_calls[].approval_id`` s the held plan came back with (any subset).
         approval_ids: list[str] = Field(min_length=1, max_length=32)
@@ -611,7 +611,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         return deployment.caller_capabilities(tuple(caller.capabilities), caller.role)
 
     def _success_criteria(raw: list[str]) -> tuple[str, ...]:
-        """Validated ``success_criteria`` (ADR-045): each item a non-empty statement of at most
+        """Validated ``success_criteria`` (ADR-047): each item a non-empty statement of at most
         300 characters; blanks dropped, duplicates collapsed. Too long is a 422, not a silent cut."""
         from ..execution.acceptance import MAX_CRITERION_CHARS, normalise_criteria
 
@@ -808,7 +808,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             if result.telemetry.error_kind in ("confirmation_invalid", "turn_stopped"):
                 # F-04: a confirmation naming no pending call this caller may resume. One-shot,
                 # so not retryable as sent -- the turn has to be asked again. `turn_stopped`
-                # (ADR-039) is the caller's own stop-all: likewise a decision, not a fault.
+                # (ADR-041) is the caller's own stop-all: likewise a decision, not a fault.
                 status = 409
             if result.telemetry.error_kind in ("consent_required", "user_quota_exhausted"):
                 # D-03 / D-05: refused before anything was sent. Neither clears by retrying the
@@ -850,7 +850,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "pending_tool_calls": list(result.pending_tool_calls),
                 "plan": list(result.plan_summary),
                 "plan_mode": result.plan_mode,
-                # ADR-045: the loop report appears only when the request asked for an
+                # ADR-047: the loop report appears only when the request asked for an
                 # acceptance check, so a request without criteria keeps its old shape.
                 **({"agent_loop": result.agent_loop}
                    if payload.success_criteria and result.agent_loop is not None else {}),
@@ -906,7 +906,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         payload: PlanFeedbackRequest,
         caller: Principal = Depends(principal),
     ) -> JSONResponse:
-        """Tell a plan held for approval what to change (ADR-045, row 51). Nothing runs.
+        """Tell a plan held for approval what to change (ADR-047, row 51). Nothing runs.
 
         The comment is read, the held plan is replanned at most once for it (bounded by
         ``AURA_PLANNING_MAX_REPLANS``), and the revised plan comes back with **new**
@@ -1436,7 +1436,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         """Speech to text for one uploaded file: ``(result, language used, engine)``. The one
         place the STT engine is checked, the language hint validated and the size limit
         enforced, so ``/voice/transcribe`` and ``/voice/task`` cannot drift apart. ``result`` is
-        the transcript text, or -- for ``detail="segments"`` (ADR-040) -- the response body."""
+        the transcript text, or -- for ``detail="segments"`` (ADR-042) -- the response body."""
         from ..ports.speech import LanguageAwareSpeechToText, TimestampedSpeechToText
         from ..voice.session import normalise_language
 
@@ -1523,7 +1523,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         The response's ``language`` (Phase V, additive) is the language the engine used --
         the hint it honoured, or the one it detected -- or ``null`` when it cannot say.
 
-        ``detail=segments`` (ADR-040, additive; the default ``text`` is unchanged) returns the
+        ``detail=segments`` (ADR-042, additive; the default ``text`` is unchanged) returns the
         timestamped transcript: ``segments`` with ``start``/``end`` seconds, ``text``,
         ``confidence`` (0-1) and, unless ``words=false``, per-word times and probabilities.
         Every segment's ``speaker`` is ``null`` and ``diarization.available`` is ``false``: the
@@ -1699,7 +1699,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             raise HTTPException(status_code=404, detail={"error": "not_found"})
         return JSONResponse(content={"deleted": True})
 
-    # -- automatic lessons awaiting review (ADR-038, row 60; ADR-008's human promotion) ------
+    # -- automatic lessons awaiting review (ADR-040, row 60; ADR-008's human promotion) ------
 
     def _lessons_engine(caller: Principal) -> Any:
         if caller.is_service:
@@ -2124,7 +2124,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         await container.workspace_manager.destroy(target)
         return JSONResponse(content={"deleted": workspace_id, "repo": target.repo})
 
-    # ADR-041: start/stop/restart, resource stats and the read-only paired-desktop status.
+    # ADR-043: start/stop/restart, resource stats and the read-only paired-desktop status.
     from .engineering_ops import register_engineering_ops
 
     register_engineering_ops(
@@ -2195,7 +2195,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         consent = await store.withdraw(caller.user_id, at=container.clock.now())
         return JSONResponse(content=_consent_body(consent))
 
-    # -- review profile (ADR-039) -------------------------------------------------------
+    # -- review profile (ADR-041) -------------------------------------------------------
 
     class AutonomyRequest(BaseModel):
         profile: str = Field(min_length=1, max_length=32)
@@ -2273,7 +2273,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             logger.warning("autonomy audit write failed", exc_info=False)
         return JSONResponse(content=await _autonomy_body(caller))
 
-    # -- kill switch (ADR-039) ----------------------------------------------------------
+    # -- kill switch (ADR-041) ----------------------------------------------------------
 
     class StopAllRequest(BaseModel):
         revoke_devices: bool = False
@@ -2482,7 +2482,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             }
         )
 
-    # -- agent tasks (ADR-041) ----------------------------------------------------------
+    # -- agent tasks (ADR-043) ----------------------------------------------------------
     from .agent_tasks import register_agent_task_ops
 
     async def build_task_turn(fields: dict[str, Any], caller: Principal, request: Request) -> TurnRequest:
@@ -2497,7 +2497,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         Depends=Depends, JSONResponse=JSONResponse, Query=Query, Request=Request,
     )
 
-    # -- usage dashboard and run history (ADR-041) -------------------------------------
+    # -- usage dashboard and run history (ADR-043) -------------------------------------
     # Before ``/agents/runs/{run_id}``: a path parameter would swallow "search" and "timeline".
     from .usage_history import register_usage_history
 

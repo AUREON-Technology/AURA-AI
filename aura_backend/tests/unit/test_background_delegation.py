@@ -1,4 +1,4 @@
-"""Background delegation (aura_core/tools/delegation.py + agents/tasks.py, ADR-038, row 57).
+"""Background delegation (aura_core/tools/delegation.py + agents/tasks.py, ADR-040, row 57).
 
 The contract: ``delegate_to_agent(..., background=true)`` returns an ``agent_task_id`` at once and
 runs the *same* child turn -- same depth check, same capability check, same grant intersection, same

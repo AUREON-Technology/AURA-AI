@@ -33,14 +33,14 @@ _EXPECTED_WORKSPACE_LOCAL = {
     "edit_file",
     "write_files",
     "run_command",
-    # ADR-040: start ruff/mypy/eslint/prettier in the workspace and parse what they print. Nothing
+    # ADR-042: start ruff/mypy/eslint/prettier in the workspace and parse what they print. Nothing
     # run_command cannot already do (and no --fix: they never write), so the same exemption applies.
     "lint_code",
     "check_format",
     "git_commit",
     "git_checkout_branch",
     "open_workspace",
-    # ADR-039: writes objects and one ref inside the workspace's own .git; touches no file, the
+    # ADR-041: writes objects and one ref inside the workspace's own .git; touches no file, the
     # index, HEAD or a branch. Same confinement git_commit has.
     "workspace_snapshot",
 }
@@ -51,7 +51,7 @@ _MUST_NOT_BE_WORKSPACE_LOCAL = {
     "clone_repository",
     # Destroys a checkout including unpushed work, and cannot be undone by re-running the step.
     "destroy_workspace",
-    # ADR-039: rewrites the working tree and removes files -- it throws uncommitted work away, so
+    # ADR-041: rewrites the working tree and removes files -- it throws uncommitted work away, so
     # every restore is confirmed, under every autonomy profile.
     "workspace_restore",
     "github_create_branch",

@@ -1,4 +1,4 @@
-"""ADR-042: fourteen pure-computation tools built on ``tools/open`` classes that had no caller.
+"""ADR-044: fourteen pure-computation tools built on ``tools/open`` classes that had no caller.
 
 Same risk profile as ``tools/analysis.py`` (ADR-036 group A): every tool takes text or JSON the
 caller supplies and returns JSON text. None reads a path, spawns a process, makes a network call or
@@ -1030,7 +1030,7 @@ def _apply_feedback(plan: list[str], feedback: str, revision: int) -> dict[str, 
     return result
 
 
-#: The step editor, public for the planning engine's held-plan feedback (ADR-045, row 51): the same
+#: The step editor, public for the planning engine's held-plan feedback (ADR-047, row 51): the same
 #: reading of "remove step 2 / move step 4 to the top / ..." the agent tool uses, so the two never
 #: disagree about what a comment means.
 apply_step_feedback = _apply_feedback
@@ -1550,5 +1550,5 @@ OPEN_PURE_TOOL_NAMES: frozenset[str] = frozenset(t.spec.name for t in _OPEN_PURE
 
 
 def build_open_pure_tools() -> list[Tool]:
-    """The ADR-042 pure tools: no capability, no I/O, no state in this process."""
+    """The ADR-044 pure tools: no capability, no I/O, no state in this process."""
     return list(_OPEN_PURE_TOOLS)

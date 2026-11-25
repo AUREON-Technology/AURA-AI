@@ -406,7 +406,7 @@ class EpisodicMemory:
 
         The same summarise-and-compare-and-set step :meth:`append` runs when the window overflows,
         invoked on demand instead of on a message count -- what the agent loop asks for when a
-        long run reports context pressure (ADR-037), so the *next* turn's prompt carries a summary
+        long run reports context pressure (ADR-039), so the *next* turn's prompt carries a summary
         in place of the verbatim older turns. ``True`` if history was folded; ``False`` when there
         was nothing to fold, a summary of this session was already in flight, or the state moved
         under it (the stale summary is discarded, exactly as in :meth:`append`).

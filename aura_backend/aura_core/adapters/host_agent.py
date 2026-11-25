@@ -209,7 +209,7 @@ class HostAgentSession:
             future.set_result(frame.get("result"))
 
     async def stop(self, reason: str) -> None:
-        """The kill switch (ADR-039): tell the daemon to drop every call this side is waiting on,
+        """The kill switch (ADR-041): tell the daemon to drop every call this side is waiting on,
         unblock them here, and close the socket.
 
         The ``cancel`` frames go first, while the socket is still open: the daemon marks each

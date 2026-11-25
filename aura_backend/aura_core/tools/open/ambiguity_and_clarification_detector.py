@@ -1,4 +1,4 @@
-"""Wrapped (ADR-042, 2026-11-23): ``open_pure.py`` registers it as ``detect_ambiguity``. ADR-036 had kept
+"""Wrapped (ADR-044, 2026-11-23): ``open_pure.py`` registers it as ``detect_ambiguity``. ADR-036 had kept
 this class unexposed because a bare word list does worse than the model; the tool now scores per
 sentence, in English and Arabic, with a question for each finding.
 """

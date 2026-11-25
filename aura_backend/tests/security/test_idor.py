@@ -482,7 +482,7 @@ class TestEngineering:
 
 
 class TestEngineeringLifecycle:
-    """ADR-041: starting, stopping, restarting or reading the stats of a workspace is its owner's."""
+    """ADR-043: starting, stopping, restarting or reading the stats of a workspace is its owner's."""
 
     def test_bob_cannot_start_stop_restart_or_stat_alices_workspace(self, container) -> None:
         from fastapi.testclient import TestClient
@@ -505,7 +505,7 @@ class TestEngineeringLifecycle:
 
 
 class TestAgentTasks:
-    """ADR-041: a task is its owner's. Another person's id reads as absent on every verb."""
+    """ADR-043: a task is its owner's. Another person's id reads as absent on every verb."""
 
     @staticmethod
     def _alice_task(client) -> str:

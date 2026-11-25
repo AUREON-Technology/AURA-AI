@@ -1,4 +1,4 @@
-"""Voice to a structured task (ADR-041, roadmap row 88).
+"""Voice to a structured task (ADR-043, roadmap row 88).
 
 Two layers: the deterministic extractor (English and Arabic cues; pure, so it is tested directly on
 many phrasings) and ``POST /api/v3/voice/task`` over the real app, with the real in-memory STT and

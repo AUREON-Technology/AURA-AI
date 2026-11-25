@@ -1,4 +1,4 @@
-"""Histories kept in the cache port: per-turn usage and agent-run search (ADR-041).
+"""Histories kept in the cache port: per-turn usage and agent-run search (ADR-043).
 
 Engine layer: depends on domain and ports only. The cache itself is injected.
 """

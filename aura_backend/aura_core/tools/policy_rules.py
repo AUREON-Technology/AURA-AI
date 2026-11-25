@@ -2,7 +2,7 @@
 
 ``ToolPolicy`` decides by tool *name*, capability, taint and sensitivity. It cannot say "this
 tool may run, but not with *that* argument" -- the Dart daemon has such rules hard-coded for its
-own command allowlist, and the server had nothing. This module adds them as data (ADR-039):
+own command allowlist, and the server had nothing. This module adds them as data (ADR-041):
 
 .. code-block:: json
 

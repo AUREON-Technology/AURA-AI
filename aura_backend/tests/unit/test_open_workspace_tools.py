@@ -1,4 +1,4 @@
-"""ADR-043: the workspace-reading tools, run through a real ToolRegistry against a real temp workspace.
+"""ADR-045: the workspace-reading tools, run through a real ToolRegistry against a real temp workspace.
 
 Nothing is mocked: the workspace holds real-format files (poetry.lock, package-lock.json, a virtualenv's
 ``*.dist-info``, a notebook with an image output, an ELF binary, a tarball with a checksum file), the

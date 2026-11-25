@@ -25,7 +25,7 @@ String _usageGroupLabel(AppLocalizations l10n, String g) => switch (g) {
     };
 
 /// Tokens, cost and time over the trailing day, week or month, grouped by day, agent or task,
-/// plus the most recent turns (ADR-041 section 6, inventory row 72). No chart dependency: the
+/// plus the most recent turns (ADR-043 section 6, inventory row 72). No chart dependency: the
 /// breakdown is a list of proportional bars built from design-system tokens.
 class UsagePage extends ConsumerStatefulWidget {
   const UsagePage({super.key});

@@ -1,4 +1,4 @@
-"""``RecoveryPolicy``: failures are handled by kind, not all retried alike (ADR-037; row 44).
+"""``RecoveryPolicy``: failures are handled by kind, not all retried alike (ADR-039; row 44).
 
 Three layers, because the claim is about behaviour: the pure table; the *real* execution engine
 (real registry, real policy, real tools that fail in each way) deciding whether a failed step is

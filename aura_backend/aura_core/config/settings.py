@@ -1237,7 +1237,7 @@ class ToolSettings:
     #: default) registers no ``fetch_url``. Private/loopback addresses are refused regardless.
     http_allowed_hosts: tuple[str, ...] = ()
     #: Base URL of an operator-run SearXNG instance (JSON API enabled) that ``web_search`` queries
-    #: (``tools/websearch.py``, ADR-040). Empty (the default) registers no ``web_search``. There is
+    #: (``tools/websearch.py``, ADR-042). Empty (the default) registers no ``web_search``. There is
     #: deliberately no hosted-vendor alternative: search is self-hosted like everything else here.
     web_search_url: str = ""
     #: Seconds the search server gets to answer.
@@ -1247,7 +1247,7 @@ class ToolSettings:
     web_search_language: str = ""
     #: Directory ``ocr_image``, ``inspect_spreadsheet``, ``parse_document`` and ``transcribe_audio``
     #: read from is ``files_root`` (the same confinement as ``read_file``); nothing extra to set.
-    #: Path to a JSON/YAML file of declarative tool-call rules (``tools/policy_rules.py``, ADR-039):
+    #: Path to a JSON/YAML file of declarative tool-call rules (``tools/policy_rules.py``, ADR-041):
     #: deny or require confirmation by tool name + argument pattern. Empty (the default) = none.
     #: Validated when the container is built; a bad rule stops start-up with its index.
     policy_file: str = ""
@@ -1310,7 +1310,7 @@ class ReasoningSettings:
     #: flat 60s every other tool gets (`AIKernel._tool_context`) -- a delegated sub-turn is a full
     #: recursive `kernel.run()`, not a simple API call, and needs room for its own budgets.
     delegation_deadline_s: float = 180.0
-    #: Agent-loop intelligence (ADR-037). Stuck detection stops a loop that is already spinning,
+    #: Agent-loop intelligence (ADR-039). Stuck detection stops a loop that is already spinning,
     #: so it is on; a threshold of ``0`` disables that one rule. ``identical_calls``: the same
     #: tool + arguments with the same outcome N times; ``same_error``: the same failure in N
     #: consecutive passes; ``no_progress``: N consecutive passes in which no step newly succeeded.
@@ -1337,7 +1337,7 @@ class ReasoningSettings:
     #: Fraction of the token budget at which ``context_pressure`` is signalled and older tool
     #: output is compressed, once.
     context_pressure_threshold: float = 0.8
-    #: ADR-038. ``delegate_to_agent(background=true)`` plus ``list_agent_tasks`` /
+    #: ADR-040. ``delegate_to_agent(background=true)`` plus ``list_agent_tasks`` /
     #: ``get_agent_task`` / ``cancel_agent_task``. Off: none of them is registered and the
     #: ``background`` parameter is not advertised, so delegation is the synchronous one-hop
     #: sub-turn it always was.
@@ -1350,12 +1350,12 @@ class ReasoningSettings:
     #: background sub-turn.
     agent_task_ttl_s: int = 3600
     agent_task_deadline_s: float = 900.0
-    #: ADR-038. A delegated sub-turn receives a structured, fenced DATA-channel handoff (goal,
+    #: ADR-040. A delegated sub-turn receives a structured, fenced DATA-channel handoff (goal,
     #: decisions, completed, blockers, pending, relevant paths) built from the parent session's
     #: checkpoint, and its result is stored back as a structured outcome. Off: the child sees only
     #: the subtask text, as before.
     structured_handoff_enabled: bool = False
-    #: ADR-038. What a ``/chat`` turn that names no ``plan_mode`` (and no ``plan``) does:
+    #: ADR-040. What a ``/chat`` turn that names no ``plan_mode`` (and no ``plan``) does:
     #: ``""`` -- the default -- is today's behaviour, unchanged; ``auto``, ``plan``, ``fast`` or
     #: ``review`` make that mode the deployment default.
     default_plan_mode: str = ""
@@ -1684,11 +1684,11 @@ class LearningSettings:
     finetune_estimated_cpu_hours: float | None = None
     #: Max substring-coverage drop vs base before canary is blocked.
     finetune_canary_max_coverage_drop: float = 0.05
-    #: ADR-038. After an Engineer turn, derive candidate lessons (decisions, corrected errors,
+    #: ADR-040. After an Engineer turn, derive candidate lessons (decisions, corrected errors,
     #: conventions) and store them as ``auto_lesson`` memories in the engineer scope's *pending*
     #: partition. Nothing reaches recall until the owner approves it. Off by default.
     auto_lessons_enabled: bool = False
-    #: ADR-045 (row 60). With ``auto_lessons_enabled``, ask a *local* model to write the lessons
+    #: ADR-047 (row 60). With ``auto_lessons_enabled``, ask a *local* model to write the lessons
     #: (strict JSON, validated) instead of only extracting them by keyword; any failure falls back
     #: to the keyword extractor, and lessons still wait in the owner's review queue. Off by default.
     auto_lessons_model_enabled: bool = False
@@ -1902,7 +1902,7 @@ class OpenToolsSettings:
     analysis_enabled: bool = True
     exec_enabled: bool = False
     desktop_ops_enabled: bool = True
-    #: ADR-042: the fourteen pure tools of ``tools/open_pure.py`` (same risk profile as ``analysis_enabled``).
+    #: ADR-044: the fourteen pure tools of ``tools/open_pure.py`` (same risk profile as ``analysis_enabled``).
     pure_enabled: bool = True
 
     @classmethod
@@ -2133,7 +2133,7 @@ class SandboxSettings:
 
 @dataclass(frozen=True, slots=True)
 class AgentTaskSettings:
-    """The agent task gateway and its queue (ADR-041): ``POST /api/v3/agents/tasks``.
+    """The agent task gateway and its queue (ADR-043): ``POST /api/v3/agents/tasks``.
 
     A task is one ``/chat`` turn that runs server-side, so a dropped connection loses nothing.
     Everything here is *per process*: the queue lives in the gateway worker that accepted the
@@ -2166,7 +2166,7 @@ class AgentTaskSettings:
     stale_after_s: float = 90.0
     #: A waiting task gains one priority level per this many seconds, so ``low`` cannot starve.
     aging_s: float = 120.0
-    #: How long a ``client_request_id`` / ``Idempotency-Key`` is remembered (ADR-041).
+    #: How long a ``client_request_id`` / ``Idempotency-Key`` is remembered (ADR-043).
     idempotency_ttl_s: int = 86_400
 
     def __post_init__(self) -> None:
@@ -2204,7 +2204,7 @@ class AgentTaskSettings:
 
 @dataclass(frozen=True, slots=True)
 class UsageSettings:
-    """Per-turn usage records and agent-run search (ADR-041). All of it lives in the cache port
+    """Per-turn usage records and agent-run search (ADR-043). All of it lives in the cache port
     (Redis in production), bounded and TTL'd; none of it is a new table.
 
     ``runs_store_preview`` is the one privacy-relevant switch and is **off** by default: with it
@@ -2269,7 +2269,7 @@ class VoiceSettings:
     #: test container from ever pulling weights.
     stt_warm_on_startup: bool | None = None
     #: ``POST /voice/task`` may refine its deterministic extraction with a model through the router
-    #: (ADR-041). Off, the endpoint is deterministic only. The transcript is personal data, so the
+    #: (ADR-043). Off, the endpoint is deterministic only. The transcript is personal data, so the
     #: router sends it only to a provider cleared for it (a local model by default).
     task_refine_enabled: bool = True
     tts_enabled: bool = True

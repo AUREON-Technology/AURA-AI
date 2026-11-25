@@ -1,4 +1,4 @@
-"""Stuck detection: a loop that is going in circles stops, and says why (ADR-037; row 43).
+"""Stuck detection: a loop that is going in circles stops, and says why (ADR-039; row 43).
 
 Before this the only stops were hard bounds, so an identical failing plan ran nine times with eight
 replans. The detector is exercised three ways: as a pure object; inside the agent loop with a

@@ -1,4 +1,4 @@
-"""Planning modes ``auto | plan | fast | review`` (planning/modes.py + the kernel, ADR-038, row 63).
+"""Planning modes ``auto | plan | fast | review`` (planning/modes.py + the kernel, ADR-040, row 63).
 
 Three levels. The decision table (``decide_plan``) is pure and tested exhaustively. The kernel tests
 run real turns through the real container, registry, policy and confirmation store; the only

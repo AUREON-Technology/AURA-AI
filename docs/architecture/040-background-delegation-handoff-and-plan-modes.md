@@ -1,4 +1,4 @@
-# ADR-038 — Background delegation, structured handoffs, session checkpoints, automatic lessons and plan modes
+# ADR-040 — Background delegation, structured handoffs, session checkpoints, automatic lessons and plan modes
 
 **Status:** Proposed (built, not proven) · **Date:** 2026-11-23 · **Related:** ADR-006 (trust
 channels, taint, confirmation), ADR-008 (human-in-the-loop promotion), ADR-016 (agent platform),

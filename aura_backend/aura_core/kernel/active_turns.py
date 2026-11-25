@@ -1,4 +1,4 @@
-"""The turns a user has in flight on *this* process, so one call can stop them all (ADR-039).
+"""The turns a user has in flight on *this* process, so one call can stop them all (ADR-041).
 
 ``POST /api/v3/agents/stop-all`` is the remote kill switch. It needs to find a user's running
 turns, and nothing did: a turn is a coroutine inside a request handler, known to nobody but the

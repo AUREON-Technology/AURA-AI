@@ -6,7 +6,7 @@ The audit listed three critical problems in how the Engineer agent recovers from
 2. no repeated-failure detection: one identical failing plan was executed nine times;
 3. a failed read-only step was retried even when the failure was a policy refusal or a validation error.
 
-The fixes (ADR-037, ADR-045) existed behind ``AURA_LOOP_TEST_SIGNALS_ENABLED`` and
+The fixes (ADR-039, ADR-047) existed behind ``AURA_LOOP_TEST_SIGNALS_ENABLED`` and
 ``AURA_LOOP_RECOVERY_POLICY_ENABLED``, both off. The "Enable agent recovery defaults" change turned
 them on. The other loop tests pin each mechanism on its own, with the others switched off; these
 three run the way production now runs, with the environment untouched, so they fail if a default

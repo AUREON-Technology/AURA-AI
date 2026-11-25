@@ -1,4 +1,4 @@
-"""File and media readers for the agent (ADR-040): structured, bounded, and honest about what they missed.
+"""File and media readers for the agent (ADR-042): structured, bounded, and honest about what they missed.
 
 ``read_file`` returns text. These tools return **structure**, from files under the same confined
 directory (``AURA_TOOLS_FILES_ROOT``; one path rule, ``tools/confinement.py``):
@@ -830,7 +830,7 @@ def build_media_tools(
     stt_engine: Any = None,
     ffmpeg_path: str | None = None,
 ) -> list[Tool]:
-    """The ADR-040 file readers over ``workspace`` (the same confined directory ``read_file`` uses).
+    """The ADR-042 file readers over ``workspace`` (the same confined directory ``read_file`` uses).
 
     ``inspect_spreadsheet`` and ``parse_document`` need nothing else. ``ocr_image`` needs an OCR engine;
     ``analyze_image_requirements`` needs a vision engine *with* an image normalizer, or a structured

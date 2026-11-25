@@ -228,7 +228,7 @@ class ConfirmationInvalidError(ConflictError):
 
 
 class TurnStoppedError(ConflictError):
-    """The caller stopped this turn (``POST /agents/stop-all``, ADR-039). Not retryable as sent:
+    """The caller stopped this turn (``POST /agents/stop-all``, ADR-041). Not retryable as sent:
     the person asked for it to end, so repeating the same request is a new decision, not a retry."""
 
     kind = "turn_stopped"

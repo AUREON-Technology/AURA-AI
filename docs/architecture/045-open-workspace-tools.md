@@ -1,7 +1,7 @@
-# ADR-043 — Workspace-reading tools: repo index, stale-context ledger, conventions, skills, notebooks, binaries, backups, run status
+# ADR-045 — Workspace-reading tools: repo index, stale-context ledger, conventions, skills, notebooks, binaries, backups, run status
 
 **Status:** Proposed (built, not proven) · **Date:** 2026-11-23 · **Related:** ADR-006 (trust channels,
-confirmation), ADR-014 (`workspace_local`), ADR-036 (open analysis tools), ADR-040 (file readers under the
+confirmation), ADR-014 (`workspace_local`), ADR-036 (open analysis tools), ADR-042 (file readers under the
 `read_file` root), ADR-011 (host daemon) · **Inventory rows:** 17, 18, 19, 22, 25, 29, 30, 61, 70, 77, 83, 96, 101
 
 ## Context

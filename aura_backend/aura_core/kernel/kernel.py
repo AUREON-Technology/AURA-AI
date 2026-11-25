@@ -164,11 +164,11 @@ class TurnRequest:
     use_memory: bool = True
     use_tools: bool = True
     plan: bool | None = None
-    #: ADR-038 (row 63): ``auto`` | ``plan`` | ``fast`` | ``review`` (``planning/modes.py``). Wins
+    #: ADR-040 (row 63): ``auto`` | ``plan`` | ``fast`` | ``review`` (``planning/modes.py``). Wins
     #: over ``plan``; both ``None`` is today's behaviour. ``review`` plans and then holds the plan
     #: for the user's approval instead of executing it.
     plan_mode: str | None = None
-    #: ADR-045 (row 41): acceptance criteria the caller wants the run checked against (at most
+    #: ADR-047 (row 41): acceptance criteria the caller wants the run checked against (at most
     #: 20 of 300 characters, ``execution/acceptance.py``). Empty is today's behaviour exactly.
     #: With criteria the planner is told them, and ``agent_loop.acceptance`` reports
     #: ``{status, met, unmet, unverified}`` read from the run's own tool results.
@@ -231,7 +231,7 @@ class TurnRequest:
     #: Evidence the calling system supplied for this turn (AR-5). DATA channel only: guarded
     #: like retrieved chunks, fenced, and its presence taints the turn.
     caller_context: tuple[CallerContext, ...] = ()
-    #: A structured agent handoff (ADR-038, ``agents/handoff.py``), set only by
+    #: A structured agent handoff (ADR-040, ``agents/handoff.py``), set only by
     #: ``delegate_to_agent`` on the child turn it builds. Rides the DATA channel like
     #: ``caller_context`` -- guarded, fenced with the turn's nonce, dropped if quarantined -- but
     #: does *not* taint the turn merely by being present (the child already inherits its parent's
@@ -255,7 +255,7 @@ class TurnRequest:
     #: when the message has no clear language (a link, a number, code). ``None`` -- an old app,
     #: a service key -- leaves such a message to the model, as before.
     preferred_language: str | None = None
-    #: The agent task (``aura_core/tasks``, ADR-041) this turn runs for, set only by the task
+    #: The agent task (``aura_core/tasks``, ADR-043) this turn runs for, set only by the task
     #: queue. It changes nothing about how the turn runs; it is carried onto the turn's usage
     #: record so spend can be grouped by task.
     task_id: str | None = None
@@ -299,7 +299,7 @@ class TurnResult:
     #: How attached images were understood (``VisionEngine.Perception.as_dict``), or ``None``
     #: for a turn without images.
     vision: Mapping[str, Any] | None = None
-    #: The agent loop's account of itself (ADR-037, ``execution/loop_events.py::LoopReport``): why
+    #: The agent loop's account of itself (ADR-039, ``execution/loop_events.py::LoopReport``): why
     #: it stopped, the states it visited, any stuck verdict and escalation, the critic's findings.
     #: ``None`` for a turn that ran no loop.
     agent_loop: Mapping[str, Any] | None = None
@@ -376,20 +376,20 @@ class KernelDependencies:
     #: `VisionEngine` (`vision/engine.py`, ADR-031). `None` means image turns fail with
     #: `dependency_unavailable`; text turns are unaffected.
     vision: Any = None
-    #: ADR-038 (row 60): ``async (LessonTurn) -> Any``, called in the background after an Engineer
+    #: ADR-040 (row 60): ``async (LessonTurn) -> Any``, called in the background after an Engineer
     #: turn completes so lessons can be derived and queued for the owner's review. ``None`` -- the
     #: default, and what the container wires unless ``AURA_AUTO_LESSONS_ENABLED`` -- does nothing.
     lesson_sink: Any = None
-    #: `AutonomyStore` (`tools/autonomy.py`, ADR-039): the user's review profile, read once per
+    #: `AutonomyStore` (`tools/autonomy.py`, ADR-041): the user's review profile, read once per
     #: turn into `ToolContext.autonomy`. `None` means every turn runs as `standard`.
     autonomy: Any = None
-    #: `UsageLedger` (`history/usage.py`, ADR-041): one compact per-user record per finished turn,
+    #: `UsageLedger` (`history/usage.py`, ADR-043): one compact per-user record per finished turn,
     #: for the usage API. `None` records nothing. Writing never fails a turn.
     usage_ledger: Any = None
-    #: `RunSearchIndex` (`history/run_search.py`, ADR-041): keeps the opt-in redacted goal preview
+    #: `RunSearchIndex` (`history/run_search.py`, ADR-043): keeps the opt-in redacted goal preview
     #: of an agent run (`AURA_AGENT_RUNS_STORE_PREVIEW`). `None`, or the setting off, stores nothing.
     run_index: Any = None
-    #: The audit sink (ADR-045): ``plan.feedback`` is recorded when a person revises a held plan.
+    #: The audit sink (ADR-047): ``plan.feedback`` is recorded when a person revises a held plan.
     #: `None` records nothing.
     audit: Any = None
 
@@ -403,7 +403,7 @@ PLANNING_FAILED_NOTE = (
 )
 
 
-#: Told to the model when a ``review``-mode turn stopped at the approval gate (ADR-038).
+#: Told to the model when a ``review``-mode turn stopped at the approval gate (ADR-040).
 PLAN_REVIEW_NOTE = (
     "Plan review: a plan was prepared for this request and is waiting for the user's approval. No "
     "step has run, so nothing was created, changed, sent, scheduled or read by a tool. Describe "
@@ -537,7 +537,7 @@ class AIKernel:
         #: Lesson-extraction tasks in flight (strong references; see `_dispatch_lessons`).
         self._lesson_tasks: set[asyncio.Task[None]] = set()
         #: The turns each user has running here, so ``POST /agents/stop-all`` can cancel them
-        #: (ADR-039). Process-local, like the host-agent registry without its relay.
+        #: (ADR-041). Process-local, like the host-agent registry without its relay.
         self.active_turns = ActiveTurns()
         #: Work a streamed turn does after its ``done`` frame (KAN-110), held so it is neither
         #: garbage-collected nor lost on shutdown, and indexed by session so the session's next
@@ -823,7 +823,7 @@ class AIKernel:
         except Exception:
             logger.debug("shadow dispatch failed", exc_info=True)
 
-        # 8b. The critic's check of the answer against what the tools reported (ADR-037) ------
+        # 8b. The critic's check of the answer against what the tools reported (ADR-039) ------
         acceptance = (
             None if held is not None and held.held else self._acceptance(request, exec_outcome)
         )
@@ -950,7 +950,7 @@ class AIKernel:
 
     async def stream(self, request: TurnRequest) -> AsyncIterator[Mapping[str, Any]]:
         """Stream a turn as typed frames. A turn the user stops (``stop-all``) ends with an
-        ``error`` frame of kind ``turn_stopped`` rather than a dropped connection (ADR-039).
+        ``error`` frame of kind ``turn_stopped`` rather than a dropped connection (ADR-041).
 
         Tracked for the kill switch here, then delegated to :meth:`_stream_untracked`, which
         holds the pipeline and its own docstring.
@@ -1122,7 +1122,7 @@ class AIKernel:
                                     if isinstance(item, StepEvent):
                                         yield {"type": "step", **item.as_dict()}
                                     elif isinstance(item, LoopEvent):
-                                        # ADR-037: `budget`, `context_pressure`, `critic`, `stuck`.
+                                        # ADR-039: `budget`, `context_pressure`, `critic`, `stuck`.
                                         yield item.as_frame()
                                     elif isinstance(item, ExecutionOutcome):
                                         outcome = item
@@ -1137,7 +1137,7 @@ class AIKernel:
                 if outcome is not None:
                     await self._index_run(request, getattr(outcome, "run_id", None), message)
                     tool_results = outcome.summary_for_context()
-                    # ADR-037: what the loop learned (stopped as stuck, tests still red) -- only
+                    # ADR-039: what the loop learned (stopped as stuck, tests still red) -- only
                     # the loop's own notes; the step notes are `_run_turn`'s, unchanged here.
                     execution_notes.extend(self._loop_notes(outcome))
                     await self._relieve_pressure(request, outcome)
@@ -1264,7 +1264,7 @@ class AIKernel:
 
                 timings["generation"] = (time.perf_counter() - stage_start) * 1000.0
                 # The critic's check of the answer against what the tools reported, and the
-                # loop's own escalation (ADR-037). Appended as more tokens, never as a rewrite.
+                # loop's own escalation (ADR-039). Appended as more tokens, never as a rewrite.
                 acceptance = (
                     None if held is not None and held.held else self._acceptance(request, outcome)
                 )
@@ -1421,7 +1421,7 @@ class AIKernel:
                     "plan_summary": plan_summary,
                     "resolved_agent": resolved_agent,
                     "agent_run_id": getattr(outcome, "run_id", None),
-                    # Why the loop stopped and what it concluded (ADR-037); null with no loop.
+                    # Why the loop stopped and what it concluded (ADR-039); null with no loop.
                     "agent_loop": self._with_acceptance(self._loop_summary(outcome), acceptance),
                     "plan_mode": plan_decision.as_dict(
                         awaiting_approval=bool(held is not None and held.held),
@@ -1473,7 +1473,7 @@ class AIKernel:
                 if self._metrics is not None:
                     self._metrics.turns_in_flight.dec()
 
-    # -- lessons (ADR-038, row 60) ------------------------------------------------------
+    # -- lessons (ADR-040, row 60) ------------------------------------------------------
 
     def _dispatch_lessons(
         self,
@@ -1971,13 +1971,13 @@ class AIKernel:
     async def preflight(self, request: TurnRequest) -> None:
         """Refuse, before anything is queued or run, a turn the kernel would refuse at its start:
         today an Engineer turn without a current consent (D-03). Used by the agent task gateway
-        (ADR-041), which accepts a task now and runs it later -- a person who has not agreed
+        (ADR-043), which accepts a task now and runs it later -- a person who has not agreed
         should hear so when they submit, not find a failed task afterwards. The turn itself still
         re-checks when it runs. Raises the same :class:`ConsentRequiredError` the turn would."""
         await self._require_engineer_consent(request)
 
     async def revise_held_plan(self, request: TurnRequest) -> Any:
-        """ADR-045 (row 51): apply the person's free-text feedback (``request.message``) to the plan
+        """ADR-047 (row 51): apply the person's free-text feedback (``request.message``) to the plan
         held for them (``request.approval_ids``) and return a ``PlanFeedbackResult``.
 
         Planned only: nothing runs, whatever the comment says. The plan is replanned at most once
@@ -2005,7 +2005,7 @@ class AIKernel:
         )
 
     async def _index_run(self, request: TurnRequest, run_id: str | None, goal: str) -> None:
-        """Hand the run's goal to the opt-in preview index (ADR-041). A no-op unless the operator
+        """Hand the run's goal to the opt-in preview index (ADR-043). A no-op unless the operator
         enabled previews; never raises."""
         index = self._deps.run_index
         if index is None or not run_id:
@@ -2095,7 +2095,7 @@ class AIKernel:
                 logger.warning("failed to record engineer run", extra={"tool": report.tool})
 
     async def _relieve_pressure(self, request: TurnRequest, outcome: Any) -> None:
-        """Answer a ``context_pressure`` signal from the agent loop (ADR-037) with the existing
+        """Answer a ``context_pressure`` signal from the agent loop (ADR-039) with the existing
         history compression: fold the session's older turns into its summary now, so the next turn
         carries the summary instead of the verbatim turns. The loop already shortened the tool
         output it held; this is the other half, and it runs at most once per turn because the loop
@@ -2114,7 +2114,7 @@ class AIKernel:
 
     @staticmethod
     def _acceptance(request: TurnRequest, outcome: Any) -> AcceptanceReport | None:
-        """ADR-045 (row 41): the run's tool results checked against the caller's
+        """ADR-047 (row 41): the run's tool results checked against the caller's
         ``success_criteria``; ``None`` when none were supplied. Never raises."""
         if not request.success_criteria:
             return None
@@ -2142,7 +2142,7 @@ class AIKernel:
 
     @staticmethod
     def _loop_notes(outcome: Any) -> list[str]:
-        """SYSTEM-channel notes from the agent loop (ADR-037), beside the step notes.
+        """SYSTEM-channel notes from the agent loop (ADR-039), beside the step notes.
 
         The user is told the full escalation separately and deterministically (``_answer_caveat``);
         this only keeps the model from writing an answer that contradicts what the loop concluded.
@@ -2171,7 +2171,7 @@ class AIKernel:
     def _answer_caveat(
         outcome: Any, answer: str, message: str, acceptance: AcceptanceReport | None = None,
     ) -> tuple[str, list[Any]]:
-        """Caveat text to append to the answer, and the critic findings behind it (ADR-037).
+        """Caveat text to append to the answer, and the critic findings behind it (ADR-039).
 
         Two sources, both deterministic. The loop's own escalation -- what it gave up on and what
         to try -- is always appended when there is one, so a stopped run is never presented as a
@@ -2179,7 +2179,7 @@ class AIKernel:
         a file or test no tool result mentions) run only when the critic is on for this loop.
         """
         loop = getattr(outcome, "loop", None)
-        # ADR-045: a run that did not meet its criteria says so, loop or no loop.
+        # ADR-047: a run that did not meet its criteria says so, loop or no loop.
         acceptance_note = acceptance.caveat() if acceptance is not None else ""
         if loop is None:
             return acceptance_note, []
@@ -2206,7 +2206,7 @@ class AIKernel:
 
     @staticmethod
     def _execution_notes(outcome: Any) -> list[str]:
-        """The step notes (below) plus the agent loop's own (ADR-037)."""
+        """The step notes (below) plus the agent loop's own (ADR-039)."""
         return AIKernel._step_notes(outcome) + AIKernel._loop_notes(outcome)
 
     @staticmethod
@@ -2378,7 +2378,7 @@ class AIKernel:
         resumed: bool = False,
         previous_reply: str | None = None,
     ) -> PlanDecision:
-        """Whether to plan this turn, in which mode, and why (``planning/modes.py``, ADR-038).
+        """Whether to plan this turn, in which mode, and why (``planning/modes.py``, ADR-040).
 
         With no ``plan_mode``, no ``plan`` and no ``AURA_REASONING_DEFAULT_PLAN_MODE`` this is
         today's rule exactly: an agent-loop persona (the Engineer) plans, everyone else by the
@@ -2424,7 +2424,7 @@ class AIKernel:
         return self._plan_decision(request, tools, previous_reply=previous_reply).plan
 
     async def _user_autonomy(self, request: TurnRequest) -> str:
-        """The calling user's review profile (ADR-039), ``standard`` when none is stored.
+        """The calling user's review profile (ADR-041), ``standard`` when none is stored.
 
         Never raises: a store that cannot answer must not fail a turn, and the answer it falls
         back to is the one that changes nothing."""

@@ -1,4 +1,4 @@
-# ADR-041 — The agent task gateway, its queue, idempotent replay, voice-to-task, workspace lifecycle, and the usage and run-history APIs
+# ADR-043 — The agent task gateway, its queue, idempotent replay, voice-to-task, workspace lifecycle, and the usage and run-history APIs
 
 **Status:** Proposed (built, not proven) · **Date:** 2026-11-23 · **Related:** ADR-006 (trust
 channels, confirmation), ADR-011 (desktop engineer agent), ADR-013/014 (engineer workspaces),

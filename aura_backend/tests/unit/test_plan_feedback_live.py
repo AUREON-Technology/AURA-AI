@@ -1,4 +1,4 @@
-"""Free-text feedback on a live plan held for approval (ADR-045, row 51).
+"""Free-text feedback on a live plan held for approval (ADR-047, row 51).
 
 Real container, kernel, confirmation store, tool registry and the real ``PlanningEngine.replan``
 (renumbering, revision record, allowance). The only stand-in is what "the model" writes: the

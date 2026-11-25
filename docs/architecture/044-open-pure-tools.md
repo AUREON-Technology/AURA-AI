@@ -1,7 +1,7 @@
-# ADR-042 — Fourteen more `tools/open` classes become pure agent tools
+# ADR-044 — Fourteen more `tools/open` classes become pure agent tools
 
 **Status:** Proposed (built, not proven) · **Date:** 2026-11-23 · **Related:** ADR-036 (open
-analysis tools, group A), ADR-040 (lint, search, media, document tools), ADR-006 (trust channels),
+analysis tools, group A), ADR-042 (lint, search, media, document tools), ADR-006 (trust channels),
 ADR-014 (`workspace_local`) · **Inventory rows:** 7, 40, 41, 45, 47, 48, 49, 50, 51, 69, 73, 80, 81, 105
 
 ## Context

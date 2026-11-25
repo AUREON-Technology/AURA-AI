@@ -217,7 +217,7 @@ volumes:
   redis_data_dev:
   aura_workspace_dev:
   aura_datasets_dev:
-  # Written by `sandbox-proxy-filter`, read by `sandbox-proxy` (ADR-039).
+  # Written by `sandbox-proxy-filter`, read by `sandbox-proxy` (ADR-041).
   sandbox_filter_dev:
 
 secrets:
@@ -488,7 +488,7 @@ services:
       AURA_ANALYSIS_TOOLS_ENABLED: ${AURA_ANALYSIS_TOOLS_ENABLED:-true}
       AURA_TOOLS_FILES_ROOT: ${AURA_TOOLS_FILES_ROOT:-}
       AURA_TOOLS_HTTP_ALLOWED_HOSTS: ${AURA_TOOLS_HTTP_ALLOWED_HOSTS:-}
-      # web_search (ADR-040): an operator-run SearXNG with the JSON format enabled; empty = no
+      # web_search (ADR-042): an operator-run SearXNG with the JSON format enabled; empty = no
       # web_search tool. Never a hosted search API.
       AURA_WEB_SEARCH_URL: ${AURA_WEB_SEARCH_URL:-}
       AURA_WEB_SEARCH_TIMEOUT_S: ${AURA_WEB_SEARCH_TIMEOUT_S:-10}
@@ -496,7 +496,7 @@ services:
       AURA_WEB_SEARCH_LANGUAGE: ${AURA_WEB_SEARCH_LANGUAGE:-}
       AURA_OPEN_EXEC_TOOLS_ENABLED: ${AURA_OPEN_EXEC_TOOLS_ENABLED:-false}
       AURA_DESKTOP_OPS_TOOLS_ENABLED: ${AURA_DESKTOP_OPS_TOOLS_ENABLED:-true}
-      # Agent-loop intelligence (ADR-037): stuck detection, failure-kind retries, test
+      # Agent-loop intelligence (ADR-039): stuck detection, failure-kind retries, test
       # results as a loop input, the critic, and the Engineer's token budget.
       AURA_LOOP_STUCK_DETECTION_ENABLED: ${AURA_LOOP_STUCK_DETECTION_ENABLED:-true}
       AURA_LOOP_STUCK_IDENTICAL_CALLS: ${AURA_LOOP_STUCK_IDENTICAL_CALLS:-3}
@@ -509,7 +509,7 @@ services:
       AURA_CRITIC_LLM_ENABLED: ${AURA_CRITIC_LLM_ENABLED:-false}
       AURA_ENGINEER_TOKEN_BUDGET: ${AURA_ENGINEER_TOKEN_BUDGET:-400000}
       AURA_CONTEXT_PRESSURE_THRESHOLD: ${AURA_CONTEXT_PRESSURE_THRESHOLD:-0.8}
-      # ADR-038 (rows 26, 57, 59, 60, 63). All off or unchanged by default.
+      # ADR-040 (rows 26, 57, 59, 60, 63). All off or unchanged by default.
       AURA_MEMORY_AUTO_CHECKPOINT_EVERY_TURNS: ${AURA_MEMORY_AUTO_CHECKPOINT_EVERY_TURNS:-0}
       AURA_REASONING_BACKGROUND_DELEGATION: ${AURA_REASONING_BACKGROUND_DELEGATION:-false}
       AURA_REASONING_AGENT_TASKS_PER_USER: ${AURA_REASONING_AGENT_TASKS_PER_USER:-3}
@@ -519,7 +519,7 @@ services:
       AURA_REASONING_STRUCTURED_HANDOFF: ${AURA_REASONING_STRUCTURED_HANDOFF:-false}
       AURA_REASONING_DEFAULT_PLAN_MODE: ${AURA_REASONING_DEFAULT_PLAN_MODE:-}
       AURA_AUTO_LESSONS_ENABLED: ${AURA_AUTO_LESSONS_ENABLED:-false}
-      # ADR-039. All off or empty by default: nothing here changes a turn until an operator sets it.
+      # ADR-041. All off or empty by default: nothing here changes a turn until an operator sets it.
       # A JSON/YAML file of tool-call rules (deny / require confirmation by argument pattern); the
       # path is *inside* the container, so mount the file there. Validated at start-up.
       AURA_TOOL_POLICY_FILE: ${AURA_TOOL_POLICY_FILE:-}
@@ -532,7 +532,7 @@ services:
       AURA_SAFETY_REDACT_CONTEXT_SECRETS: ${AURA_SAFETY_REDACT_CONTEXT_SECRETS:-false}
       AURA_SAFETY_REDACT_INPUT_SECRETS: ${AURA_SAFETY_REDACT_INPUT_SECRETS:-false}
       AURA_SAFETY_REDACT_HISTORY_SECRETS: ${AURA_SAFETY_REDACT_HISTORY_SECRETS:-false}
-      # Agent task gateway and queue, per-turn usage records, run-history search (ADR-041).
+      # Agent task gateway and queue, per-turn usage records, run-history search (ADR-043).
       # All additive: /chat and /chat/stream are unchanged. Queue limits are per gateway process.
       # Goal previews for run search are OFF: with it off a run stores only a digest of its goal.
       AURA_AGENT_TASKS_ENABLED: ${AURA_AGENT_TASKS_ENABLED:-true}
@@ -676,7 +676,7 @@ services:
       resources:
         limits: {cpus: "0.5", memory: 256M}
 
-  # Renders the proxy's `filter` before the proxy starts (ADR-039): the static
+  # Renders the proxy's `filter` before the proxy starts (ADR-041): the static
   # deploy/sandbox/filter (GitHub, PyPI, npm) plus every host in AURA_SANDBOX_ALLOWED_EGRESS_HOSTS,
   # validated and regex-escaped by deploy/scripts/render-sandbox-filter.sh. With the variable unset
   # the output is that static file byte for byte, so nothing changes until someone sets it. A host

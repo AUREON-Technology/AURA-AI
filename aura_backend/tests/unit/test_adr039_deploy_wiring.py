@@ -1,4 +1,4 @@
-"""Every ADR-039 setting is documented and wired the same way in both stacks.
+"""Every ADR-041 setting is documented and wired the same way in both stacks.
 
 CLAUDE.md: the two compose files "are meant to stay at parity". Each new variable must appear in
 the prod gateway, the dev gateway, ``deploy/.env.example`` and the backend README, default to its

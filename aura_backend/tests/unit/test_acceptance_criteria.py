@@ -1,4 +1,4 @@
-"""Acceptance criteria on a real turn (ADR-045, row 41).
+"""Acceptance criteria on a real turn (ADR-047, row 41).
 
 ``Goal.success_criteria`` was never set by the kernel. A request can now carry
 ``success_criteria``; after the plan runs, the run's own tool results are checked against them and

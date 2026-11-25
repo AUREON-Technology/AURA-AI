@@ -1,4 +1,4 @@
-"""``record_model_metric`` / ``compare_model_metric``: model drift against a *stored* history (ADR-044).
+"""``record_model_metric`` / ``compare_model_metric``: model drift against a *stored* history (ADR-046).
 
 ``check_model_drift`` compares two numbers the caller already has. This keeps the history itself, in
 the platform's :class:`~aura_core.ports.storage.Cache` port (Redis in production, in-memory in tests),
@@ -25,7 +25,7 @@ Design points, each pinned by tests:
 
 It does **not** trigger an evaluation or a retraining run. When drift is found the result says
 ``evaluation_triggered: false`` and names what to run; starting one needs a job runner that agent tools
-do not have (ADR-044).
+do not have (ADR-046).
 """
 
 from __future__ import annotations

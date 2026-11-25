@@ -1,4 +1,4 @@
-"""The agent task: one ``/chat`` turn that runs server-side and outlives the connection (ADR-041).
+"""The agent task: one ``/chat`` turn that runs server-side and outlives the connection (ADR-043).
 
 Plain data. A task is *not* a new execution model: when it runs it is a kernel turn made from the
 request the owner submitted, with the owner's identity and the capabilities they held then

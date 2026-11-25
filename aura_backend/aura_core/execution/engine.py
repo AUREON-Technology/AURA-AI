@@ -153,7 +153,7 @@ class ExecutionOutcome:
         self.tainted = tainted
         #: Each failed step's tool message (cut to 400 characters), by step id. ``PlanStep`` keeps
         #: only the machine-readable ``error_kind``; the message is what a validator said about a
-        #: bad argument, and is what a replan needs to fix it (``RecoveryPolicy``, ADR-037).
+        #: bad argument, and is what a replan needs to fix it (``RecoveryPolicy``, ADR-039).
         self.failure_messages = dict(failure_messages or {})
         #: The agent loop's account of itself (``execution/loop_events.py::LoopReport``): why it
         #: stopped, the states it visited, any stuck verdict, critic findings. ``None`` for an
@@ -193,7 +193,7 @@ class ExecutionEngine:
         self._metrics = metrics
         self._events = event_bus
         #: ``None`` keeps the original rule (retry any failed read-only step up to its
-        #: ``max_attempts``); a policy decides per failure kind (ADR-037, ``recovery.py``).
+        #: ``max_attempts``); a policy decides per failure kind (ADR-039, ``recovery.py``).
         self._recovery = recovery
         self._sleep = sleeper or asyncio.sleep
 
@@ -408,7 +408,7 @@ class ExecutionEngine:
                     side_effecting = self._is_side_effecting(step)
                     retry = failed.can_retry and not side_effecting
                     if retry and self._recovery is not None:
-                        # ADR-037: the failure's kind decides. `max_attempts` stays the ceiling
+                        # ADR-039: the failure's kind decides. `max_attempts` stays the ceiling
                         # (`can_retry` above); the policy can only refuse a retry or delay it.
                         decision = self._recovery.decide(
                             error_kind, message=text, attempt=failed.attempts,

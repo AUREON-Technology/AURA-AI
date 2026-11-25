@@ -1,4 +1,4 @@
-"""Computation behind the ADR-042 tools (``tools/open_pure.py``): pure functions, no I/O, no state.
+"""Computation behind the ADR-044 tools (``tools/open_pure.py``): pure functions, no I/O, no state.
 
 The ``tools/open`` classes cover the basics of each capability; this module is what the review of
 2026-11 found missing around them -- the parts that can honestly be built in Python with the
@@ -8,7 +8,7 @@ standard library and PyYAML, and no more:
   question each, and contradiction detection beyond the four fixed keyword pairs.
 * ``python_imports`` / ``js_imports`` / ``convention_findings``: what ``check_architecture`` needs
   to read import edges out of source code itself instead of asking the caller for the map.
-* ``task_alignment``: compares a diff with the *text of the task* (ADR-042 row 45).
+* ``task_alignment``: compares a diff with the *text of the task* (ADR-044 row 45).
 * ``validate_json_schema``: a JSON-Schema subset with nested types, so a contract can be checked
   beyond ``required_keys`` and flat ``{field: "int"}`` pairs (row 80).
 * ``scan_source``: declaration, method, import and call extraction for non-Python languages by

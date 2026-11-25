@@ -1,4 +1,4 @@
-"""Memory figures and baseline comparison for ``profile_python`` (ADR-044, row 23).
+"""Memory figures and baseline comparison for ``profile_python`` (ADR-046, row 23).
 
 ``profile_python`` runs a snippet under cProfile on the user's paired desktop and returns the hottest
 functions. It reported no memory and could not say whether a run was *worse than before*. Two parts:

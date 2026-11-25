@@ -1090,7 +1090,7 @@ def build_analysis_tools(workspace: Any = None) -> list[Tool]:
     """The pure analysis tools: no capability, no I/O, no state.
 
     With a ``workspace`` (``AURA_TOOLS_FILES_ROOT``) five of them gain optional arguments that read
-    files under it (``tools/open_workspace.py``, ADR-043); called without those arguments they behave
+    files under it (``tools/open_workspace.py``, ADR-045); called without those arguments they behave
     exactly as they do here. Without a workspace nothing changes.
     """
     tools = list(_ANALYSIS_TOOLS)

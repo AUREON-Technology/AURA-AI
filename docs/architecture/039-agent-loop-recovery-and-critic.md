@@ -1,4 +1,4 @@
-# ADR-037 — The agent loop: explicit states, recovery by failure kind, a stuck detector, a critic, and a token monitor
+# ADR-039 — The agent loop: explicit states, recovery by failure kind, a stuck detector, a critic, and a token monitor
 
 **Status:** Proposed (built, not proven) · **Date:** 2026-11-23 · **Related:** ADR-006 (trust
 channels, confirmation), ADR-011 (desktop engineer agent), ADR-013/014 (engineer workspaces),

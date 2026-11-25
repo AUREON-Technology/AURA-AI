@@ -1,4 +1,4 @@
-"""Running a task: the owner's stored request, through the same kernel path as ``/chat`` (ADR-041).
+"""Running a task: the owner's stored request, through the same kernel path as ``/chat`` (ADR-043).
 
 :func:`turn_to_spec` / :func:`spec_to_turn` carry a validated :class:`TurnRequest` across the wait
 between acceptance and execution. They carry exactly what the gateway built at submission --
@@ -162,7 +162,7 @@ class KernelTaskRunner:
             "degraded": result.degraded,
             "resolved_agent": result.resolved_agent,
             "agent_run_id": result.agent_run_id,
-            # ADR-045: only for a task submitted with success_criteria.
+            # ADR-047: only for a task submitted with success_criteria.
             # (the stop reason and the acceptance verdict only: the full loop report is bulky)
             **({"agent_loop": {"stop_reason": result.agent_loop.get("stop_reason"),
                                "acceptance": result.agent_loop.get("acceptance")}}

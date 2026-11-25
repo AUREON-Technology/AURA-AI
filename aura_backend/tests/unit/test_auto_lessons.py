@@ -1,4 +1,4 @@
-"""Automatic lessons from Engineer turns (ADR-038, inventory row 60).
+"""Automatic lessons from Engineer turns (ADR-040, inventory row 60).
 
 Layers: the pure extractor, the job against the real in-memory memory engine (what is written,
 where, and what is refused), the review path (approve promotes, reject deletes, nobody else can),

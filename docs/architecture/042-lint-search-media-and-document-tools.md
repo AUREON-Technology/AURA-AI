@@ -1,4 +1,4 @@
-# ADR-040 — Lint and format checks, web search, and structured document, image and audio readers
+# ADR-042 — Lint and format checks, web search, and structured document, image and audio readers
 
 **Status:** Proposed (built, not proven) · **Date:** 2026-11-23 · **Related:** ADR-006 (trust
 channels, confirmation), ADR-011/013/014 (the Engineer's sandbox and `workspace_local`), ADR-030

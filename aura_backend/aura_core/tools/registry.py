@@ -705,7 +705,7 @@ class ToolRegistry:
         detail: dict[str, Any] = {"arguments_digest": digest, "reason": reason,
                                   "tainted": context.tainted}
         if decision is not None:
-            # Which declarative rule fired and under which review profile (ADR-039); the rule's
+            # Which declarative rule fired and under which review profile (ADR-041); the rule's
             # id and the profile name are operator-authored, never argument values.
             for key in ("rule", "autonomy"):
                 if key in decision.audit_fields:

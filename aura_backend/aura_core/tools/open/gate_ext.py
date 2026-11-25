@@ -1,4 +1,4 @@
-"""Evidence-carrying quality gate over any subset of checks (ADR-044, row 24).
+"""Evidence-carrying quality gate over any subset of checks (ADR-046, row 24).
 
 ``QualityGateAggregator`` takes six booleans. This accepts, per check, either a boolean or the
 *result object another tool returned* (``review_code_diff``, ``generate_and_run_tests``,

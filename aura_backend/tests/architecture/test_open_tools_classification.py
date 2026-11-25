@@ -36,7 +36,7 @@ BUILDERS = {
     "analysis.py": AURA_CORE / "tools" / "analysis.py",
     "open_exec.py": AURA_CORE / "tools" / "open_exec.py",
     "desktop_ops.py": AURA_CORE / "tools" / "desktop_ops.py",
-    # ADR-042 / ADR-043 / ADR-044: the pure-text, workspace-reading and research builders.
+    # ADR-044 / ADR-045 / ADR-046: the pure-text, workspace-reading and research builders.
     "open_pure.py": AURA_CORE / "tools" / "open_pure.py",
     "open_workspace.py": AURA_CORE / "tools" / "open_workspace.py",
     "research.py": AURA_CORE / "tools" / "research.py",
@@ -209,8 +209,8 @@ KAN_34 = (
     "remote_session_controller",
 )
 
-#: The other four modules KAN-34 named read paths on the gateway or classify content. ADR-042 /
-#: ADR-043 re-exposed them behind confinement; each may therefore be imported by exactly the one
+#: The other four modules KAN-34 named read paths on the gateway or classify content. ADR-044 /
+#: ADR-045 re-exposed them behind confinement; each may therefore be imported by exactly the one
 #: builder that does the confining, and by nothing else (2026-11-25, decided when princess was
 #: merged into main).
 KAN_34_CONFINED = {

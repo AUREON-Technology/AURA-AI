@@ -398,7 +398,7 @@ def create_app():
     from api.admin_platform import other_approver_exists
 
     container.approvals.use_other_approver_check(other_approver_exists)
-    # ADR-039: the kill switch's "revoke paired devices" step. The device registry is a legacy
+    # ADR-041: the kill switch's "revoke paired devices" step. The device registry is a legacy
     # service module, so it is attached here for the same reason.
     from services.device_kill import revoke_paired_devices
 

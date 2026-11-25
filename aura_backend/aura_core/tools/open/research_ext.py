@@ -1,4 +1,4 @@
-"""Source handling, claim comparison and report rendering for ``research_topic`` (ADR-044, row 106).
+"""Source handling, claim comparison and report rendering for ``research_topic`` (ADR-046, row 106).
 
 Pure text-in/JSON-out; it never searches or fetches (``tools/research.py`` does that, through the tool
 registry). What it adds to ``AutonomousResearchAndSynthesisTool``:

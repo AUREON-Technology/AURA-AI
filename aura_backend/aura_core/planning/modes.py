@@ -1,4 +1,4 @@
-"""Planning modes: ``auto | plan | fast | review`` (ADR-038, inventory row 63).
+"""Planning modes: ``auto | plan | fast | review`` (ADR-040, inventory row 63).
 
 Until now ``/chat`` had one dial -- ``plan: bool | None`` -- that no client ever sent, and a
 heuristic behind ``None`` that the Engineer persona overrode by always planning. This module turns

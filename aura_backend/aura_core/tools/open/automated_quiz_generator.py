@@ -1,4 +1,4 @@
-"""Wrapped (ADR-042, 2026-11-23): ``open_pure.py`` registers it as ``generate_quiz``. ADR-036 had kept
+"""Wrapped (ADR-044, 2026-11-23): ``open_pure.py`` registers it as ``generate_quiz``. ADR-036 had kept
 this class unexposed because every question had the same options and the answer ``"A"``; the tool
 now builds questions from facts in the source and keeps the answer key separate.
 """

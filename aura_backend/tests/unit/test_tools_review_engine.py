@@ -532,7 +532,7 @@ def _all_tools() -> dict[str, ToolSpec]:
     async def resolver(_user: Any) -> None:
         return None
 
-    class _Ocr:  # a structured OCR engine, so ocr_image and analyze_image_requirements register (ADR-040)
+    class _Ocr:  # a structured OCR engine, so ocr_image and analyze_image_requirements register (ADR-042)
         name = "ocr"
 
         async def image_text(self, image, *, page):
@@ -557,14 +557,14 @@ def _all_tools() -> dict[str, ToolSpec]:
         workspace_manager=object(), host_git=object(), github_token_resolver=resolver,
         host_agent_registry=object(), enable_analysis_tools=True, enable_open_exec_tools=True,
         enable_desktop_ops_tools=True, episodic_memory=object(),
-        enable_open_pure_tools=True,  # ADR-042
+        enable_open_pure_tools=True,  # ADR-044
         web_search_url="http://searxng:8080", ocr_engine=_Ocr(), vision_engine=object(),
         image_normalizer=object(), stt_engine=_Stt(),
-        engineer_runs=object(),  # ADR-043: registers project_status
+        engineer_runs=object(),  # ADR-045: registers project_status
     )
     agents = build_default_agent_registry()
     tools += build_delegation_tools(agents=agents, kernel=lambda: None)
-    # ADR-044: the two groups the Container registers itself because they need its cache / registry.
+    # ADR-046: the two groups the Container registers itself because they need its cache / registry.
     from aura_core.llm.cache import InMemoryCache
     from aura_core.tools.drift import build_drift_tools
     from aura_core.tools.research import build_research_tools

@@ -512,7 +512,7 @@ class Container:
             verification_enabled=settings.reasoning.verification_enabled,
             metrics=self.metrics,
         )
-        # ADR-037: failure-kind-aware retries, only when the operator turns them on; the engine
+        # ADR-039: failure-kind-aware retries, only when the operator turns them on; the engine
         # otherwise keeps its original "retry any failed read-only step" rule.
         self.executor = ExecutionEngine(
             tools=self.tools,
@@ -531,7 +531,7 @@ class Container:
             AgenticExecutor(
                 planner=self.planner, executor=self.executor, metrics=self.metrics,
                 clock=self.clock, runs=self.agent_runs,
-                # ADR-037. Each piece is settings-driven; the loop only applies them to a
+                # ADR-039. Each piece is settings-driven; the loop only applies them to a
                 # persona that replans (today: engineer), so single-pass personas are untouched.
                 stuck=StuckConfig(
                     enabled=reasoning.loop_stuck_detection_enabled,
@@ -668,19 +668,19 @@ class Container:
             self.blueprint_compiler = self._build_compiler(use_postgres=use_postgres)
             self.blueprint_deployment = self._build_deployment()
 
-        # ADR-038 (row 60): lesson extraction after Engineer turns. None unless
+        # ADR-040 (row 60): lesson extraction after Engineer turns. None unless
         # AURA_AUTO_LESSONS_ENABLED (and memory on): the kernel then does nothing extra.
         self.lesson_sink = self._build_lesson_sink()
 
         from .tools.autonomy import AutonomyStore
 
-        # ADR-039: the user's review profile, in the cache port (see tools/autonomy.py for why).
+        # ADR-041: the user's review profile, in the cache port (see tools/autonomy.py for why).
         self.autonomy = AutonomyStore(self.cache_backend, default=settings.tools.autonomy_default)
         #: ``async (uid: str) -> list[dict]`` revoking the paired desktop devices ``uid`` owns,
         #: attached by ``aura_service`` because the device registry lives outside aura_core
         #: (ADR-002). ``None`` where it is not attached; ``stop-all`` then reports it unavailable.
         self.device_revoker = None
-        # ADR-041: per-turn usage and the opt-in run-goal preview, both in the cache port (Redis
+        # ADR-043: per-turn usage and the opt-in run-goal preview, both in the cache port (Redis
         # in production) -- no table. The kernel writes them; the usage and run-search routes read.
         usage = settings.usage
         self.usage_ledger = UsageLedger(
@@ -732,7 +732,7 @@ class Container:
                 audit=self.audit,
             )
         )
-        # ADR-041: user agent tasks. The queue runs each task through `self.kernel` -- the same
+        # ADR-043: user agent tasks. The queue runs each task through `self.kernel` -- the same
         # path as /chat -- so it can only exist once the kernel does. `None` is the kill switch
         # (AURA_AGENT_TASKS_ENABLED=false): the routes then answer 503.
         self.agent_task_store = AgentTaskStore(
@@ -755,7 +755,7 @@ class Container:
         from .agents.tasks import AgentTaskManager
         from .tools.delegation import build_delegation_tools
 
-        # ADR-038, both off by default. Status and results of a background task, and handoff
+        # ADR-040, both off by default. Status and results of a background task, and handoff
         # records, live in the shared cache (Redis in production); the running task itself is an
         # asyncio task in this process (agents/tasks.py).
         reasoning = settings.reasoning
@@ -789,7 +789,7 @@ class Container:
             )
         )
 
-        # ADR-044: `research_topic` composes other tools (search_knowledge, web_search, fetch_url) through
+        # ADR-046: `research_topic` composes other tools (search_knowledge, web_search, fetch_url) through
         # this same registry, as the caller, so it is registered once the registry is complete.
         if settings.open_tools.analysis_enabled:
             from .tools.research import build_research_tools
@@ -2108,14 +2108,14 @@ class Container:
                 enable_analysis_tools=self.settings.open_tools.analysis_enabled,
                 enable_open_exec_tools=self.settings.open_tools.exec_enabled,
                 enable_desktop_ops_tools=self.settings.open_tools.desktop_ops_enabled,
-                enable_open_pure_tools=self.settings.open_tools.pure_enabled,  # ADR-042
+                enable_open_pure_tools=self.settings.open_tools.pure_enabled,  # ADR-044
                 episodic_memory=self.episodic,
-                # ADR-043 project_status: the owner-scoped run stores (None when not configured).
+                # ADR-045 project_status: the owner-scoped run stores (None when not configured).
                 engineer_runs=self.engineer_runs,
                 agent_runs=self.agent_runs,
             )
         )
-        # ADR-044 (open partial tools): the model-metric history lives in the Cache port, so these two
+        # ADR-046 (open partial tools): the model-metric history lives in the Cache port, so these two
         # tools need the container's cache and cannot be built by `default_tools`.
         if self.settings.open_tools.analysis_enabled:
             from .tools.drift import build_drift_tools
@@ -2152,7 +2152,7 @@ class Container:
         from .learning.jobs import run_engineer_lesson_extraction
 
         safety = self.safety if self.settings.safety.enabled else None
-        # ADR-045 (row 60): optional, default off. Local-only by construction (see the module).
+        # ADR-047 (row 60): optional, default off. Local-only by construction (see the module).
         model_extractor = None
         if self.settings.learning.auto_lessons_model_enabled:
             from .learning.model_lessons import build_model_lesson_extractor
@@ -2515,7 +2515,7 @@ class Container:
             return
         self._shut_down = True
         if getattr(self, "task_queue", None) is not None:
-            # ADR-041 gateway queue: first, and on its own -- it cancels running tasks and writes
+            # ADR-043 gateway queue: first, and on its own -- it cancels running tasks and writes
             # their final state to the cache, which must still be open while it does.
             await self._close_quietly("agent task queue", self.task_queue.stop)
         if getattr(self, "agent_tasks", None) is not None:

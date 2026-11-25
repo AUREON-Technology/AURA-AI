@@ -1,4 +1,4 @@
-"""Release checklist and post-deploy health verification (ADR-044, row 94).
+"""Release checklist and post-deploy health verification (ADR-046, row 94).
 
 Two parts, deliberately separated by what they may touch:
 

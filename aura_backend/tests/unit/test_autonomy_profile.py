@@ -1,4 +1,4 @@
-"""Per-user review profile (ADR-039): ``strict`` / ``standard`` / ``autonomous``.
+"""Per-user review profile (ADR-041): ``strict`` / ``standard`` / ``autonomous``.
 
 The properties that matter, each pinned through the real policy, the real registry and the real
 engineer tools -- not a stub of the policy:

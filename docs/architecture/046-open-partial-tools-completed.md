@@ -1,8 +1,8 @@
-# ADR-044 — Thirteen partial open tools completed: review depth, behaviour tests, derived diagrams, changed-line mutation, memory profiling, evidenced gates, SQL/OpenAPI/release/telemetry/data intelligence, stored drift history, multi-step research
+# ADR-046 — Thirteen partial open tools completed: review depth, behaviour tests, derived diagrams, changed-line mutation, memory profiling, evidenced gates, SQL/OpenAPI/release/telemetry/data intelligence, stored drift history, multi-step research
 
 **Status:** Proposed (built, not proven) · **Date:** 2026-11-23 · **Related:** ADR-006 (trust
-channels, confirmation), ADR-036 (open analysis tools; groups A, B, C), ADR-039 (tool policy,
-autonomy profiles), ADR-040 (web search, document readers) · **Inventory rows:** 5, 6, 8, 21, 23, 24,
+channels, confirmation), ADR-036 (open analysis tools; groups A, B, C), ADR-041 (tool policy,
+autonomy profiles), ADR-042 (web search, document readers) · **Inventory rows:** 5, 6, 8, 21, 23, 24,
 92, 93, 94, 95, 102, 103, 106
 
 ## Context

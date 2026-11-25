@@ -86,7 +86,7 @@ class ToolContext:
         # session tools (checkpoint save/recall) and the handoff builder; every one of them still
         # scopes by ``user_id`` as well, so a session id is never a capability on its own.
         self.session_id = session_id
-        # The user's review profile (ADR-039): ``strict`` | ``standard`` | ``autonomous``. A policy
+        # The user's review profile (ADR-041): ``strict`` | ``standard`` | ``autonomous``. A policy
         # input like ``max_sensitivity``; ``ToolPolicy`` decides what each value means and falls
         # back to ``standard`` for one it does not honour.
         self.autonomy = autonomy

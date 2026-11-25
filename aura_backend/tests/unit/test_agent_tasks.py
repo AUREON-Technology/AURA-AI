@@ -1,4 +1,4 @@
-"""``AgentTaskManager`` (aura_core/agents/tasks.py, ADR-038, inventory row 57).
+"""``AgentTaskManager`` (aura_core/agents/tasks.py, ADR-040, inventory row 57).
 
 The manager is exercised with real asyncio tasks and the real in-memory ``Cache`` adapter. The only
 stand-in is the *runner* -- the coroutine a sub-turn would be -- because what is under test is the

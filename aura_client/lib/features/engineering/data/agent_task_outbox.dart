@@ -1,4 +1,4 @@
-// Offline queue for agent task submissions (inventory row 91, client half of ADR-041).
+// Offline queue for agent task submissions (inventory row 91, client half of ADR-043).
 //
 // A task sent while the device is offline (or while the server is down) is not lost and is not
 // sent twice. Every submission is written to a small JSON list in local preferences *before* the

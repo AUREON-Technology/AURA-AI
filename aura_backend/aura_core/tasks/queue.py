@@ -1,4 +1,4 @@
-"""The agent task queue: priorities, concurrency caps, scheduled starts, fair ordering (ADR-041).
+"""The agent task queue: priorities, concurrency caps, scheduled starts, fair ordering (ADR-043).
 
 ``AIKernel`` is the only execution path and stays so: the queue never runs anything itself. It
 decides *when* a user's task may start and hands it to a ``runner`` (``KernelTaskRunner``), which

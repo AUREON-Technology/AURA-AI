@@ -129,16 +129,16 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | POST | `/api/v3/admin/users/{subject}/forget` | — | `aura_admin/app/(console)/access/page.tsx:200` | — | called |  |
 | PUT | `/api/v3/admin/workspaces/{workspace_id}/plan` | — | — | — | none | to wire: admin console page missing for this route |
 | GET | `/api/v3/agents` | `aura_client/lib/features/chat/data/agents_repository.dart:9`, `aura_client/lib/features/chat/data/agents_repository.dart:127` (+1) | — | — | called |  |
-| GET | `/api/v3/agents/runs` | — | — | — | none | to wire: agent-run history (wave 2) has no client or admin view yet; search and timeline (ADR-041) are backend-only so far |
+| GET | `/api/v3/agents/runs` | — | — | — | none | to wire: agent-run history (wave 2) has no client or admin view yet; search and timeline (ADR-043) are backend-only so far |
 | GET | `/api/v3/agents/runs/search` | `aura_client/lib/features/engineering/data/run_history_repository.dart:8`, `aura_client/lib/features/engineering/data/run_history_repository.dart:158` | — | — | called |  |
-| GET | `/api/v3/agents/runs/timeline` | — | — | — | none | to wire: agent-run history (wave 2) has no client or admin view yet; search and timeline (ADR-041) are backend-only so far |
+| GET | `/api/v3/agents/runs/timeline` | — | — | — | none | to wire: agent-run history (wave 2) has no client or admin view yet; search and timeline (ADR-043) are backend-only so far |
 | GET | `/api/v3/agents/runs/{run_id}` | `aura_client/lib/features/engineering/data/run_history_repository.dart:8`, `aura_client/lib/features/engineering/data/run_history_repository.dart:158` (+1) | — | — | called |  |
-| POST | `/api/v3/agents/stop-all` | — | — | — | none | to wire: the kill-switch button (ADR-039) has no client or hostd caller yet; backend and API only so far |
+| POST | `/api/v3/agents/stop-all` | — | — | — | none | to wire: the kill-switch button (ADR-041) has no client or hostd caller yet; backend and API only so far |
 | GET | `/api/v3/agents/tasks` | `aura_client/lib/features/engineering/data/agent_task_repository.dart:8`, `aura_client/lib/features/engineering/data/agent_task_repository.dart:65` (+2) | — | — | called |  |
 | POST | `/api/v3/agents/tasks` | `aura_client/lib/features/engineering/data/agent_task_repository.dart:8`, `aura_client/lib/features/engineering/data/agent_task_repository.dart:65` (+2) | — | — | called |  |
-| GET | `/api/v3/agents/tasks/{task_id}` | — | — | — | none | to wire: the agent task gateway (ADR-041, roadmap rows 84/87/91) is backend-only; the client submits, polls, approves and cancels in its next step, with a client-generated idempotency key per submission |
-| POST | `/api/v3/agents/tasks/{task_id}/approve` | — | — | — | none | to wire: the agent task gateway (ADR-041, roadmap rows 84/87/91) is backend-only; the client submits, polls, approves and cancels in its next step, with a client-generated idempotency key per submission |
-| POST | `/api/v3/agents/tasks/{task_id}/cancel` | — | — | — | none | to wire: the agent task gateway (ADR-041, roadmap rows 84/87/91) is backend-only; the client submits, polls, approves and cancels in its next step, with a client-generated idempotency key per submission |
+| GET | `/api/v3/agents/tasks/{task_id}` | — | — | — | none | to wire: the agent task gateway (ADR-043, roadmap rows 84/87/91) is backend-only; the client submits, polls, approves and cancels in its next step, with a client-generated idempotency key per submission |
+| POST | `/api/v3/agents/tasks/{task_id}/approve` | — | — | — | none | to wire: the agent task gateway (ADR-043, roadmap rows 84/87/91) is backend-only; the client submits, polls, approves and cancels in its next step, with a client-generated idempotency key per submission |
+| POST | `/api/v3/agents/tasks/{task_id}/cancel` | — | — | — | none | to wire: the agent task gateway (ADR-043, roadmap rows 84/87/91) is backend-only; the client submits, polls, approves and cancels in its next step, with a client-generated idempotency key per submission |
 | POST | `/api/v3/auth/consumer/token` | `aura_client/lib/core/auth/token_manager.dart:98`, `aura_client/lib/core/auth/token_manager.dart:477` | — | — | called |  |
 | GET | `/api/v3/auth/desktop/devices` | `aura_client/lib/core/auth/desktop_devices_client.dart:41` | — | — | called |  |
 | POST | `/api/v3/auth/desktop/devices/revoke` | `aura_client/lib/core/auth/desktop_devices_client.dart:41` | — | — | called |  |
@@ -161,26 +161,26 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | POST | `/api/v3/billing/google/notify` | — | — | — | none | server-only: Play RTDN via Pub/Sub push (SaaS P1-D2) |
 | GET | `/api/v3/capabilities` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:45`, `aura_client/lib/core/ai/knowledge/knowledge_center.dart:77` (+4) | — | — | called |  |
 | POST | `/api/v3/chat` | — | — | — | none | server-to-server: the non-streaming turn is for integrating systems (ADR-029 service keys, AR-6 structured output); the app streams via /chat/stream |
-| POST | `/api/v3/chat/plan-feedback` | — | — | — | none | to wire: free-text feedback on a plan held by plan_mode review (ADR-045, row 51); the client's review screen only approves or walks away so far |
+| POST | `/api/v3/chat/plan-feedback` | — | — | — | none | to wire: free-text feedback on a plan held by plan_mode review (ADR-047, row 51); the client's review screen only approves or walks away so far |
 | POST | `/api/v3/chat/stream` | `aura_client/lib/core/ai/online_agents/llm_timeouts.dart:10`, `aura_client/lib/core/ai/online_agents/sse_agent_client.dart:17` (+4) | — | — | called |  |
 | POST | `/api/v3/complete` | `aura_client/lib/core/ai/inline_completion_client.dart:9`, `aura_client/lib/core/ai/inline_completion_client.dart:25` | — | — | called |  |
 | DELETE | `/api/v3/engineering/consent` | `aura_client/lib/core/ai/engineer/engineer_consent_repository.dart:17`, `aura_client/lib/core/ai/engineer/engineer_consent_repository.dart:66` (+2) | — | — | called |  |
 | GET | `/api/v3/engineering/consent` | `aura_client/lib/core/ai/engineer/engineer_consent_repository.dart:17`, `aura_client/lib/core/ai/engineer/engineer_consent_repository.dart:66` (+2) | — | — | called |  |
 | POST | `/api/v3/engineering/consent` | `aura_client/lib/core/ai/engineer/engineer_consent_repository.dart:17`, `aura_client/lib/core/ai/engineer/engineer_consent_repository.dart:66` (+2) | — | — | called |  |
-| GET | `/api/v3/engineering/policy` | — | — | — | none | to wire: the review-profile setting (ADR-039) has no client view yet; backend and API only so far |
-| PUT | `/api/v3/engineering/policy` | — | — | — | none | to wire: the review-profile setting (ADR-039) has no client view yet; backend and API only so far |
+| GET | `/api/v3/engineering/policy` | — | — | — | none | to wire: the review-profile setting (ADR-041) has no client view yet; backend and API only so far |
+| PUT | `/api/v3/engineering/policy` | — | — | — | none | to wire: the review-profile setting (ADR-041) has no client view yet; backend and API only so far |
 | GET | `/api/v3/engineering/runs` | `aura_client/lib/features/engineering/data/engineer_run_repository.dart:4`, `aura_client/lib/features/engineering/data/engineer_run_repository.dart:68` | — | — | called |  |
 | GET | `/api/v3/engineering/workspaces` | `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:50`, `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:74` (+1) | — | — | called |  |
 | DELETE | `/api/v3/engineering/workspaces/{workspace_id}` | `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:124` | — | — | called |  |
-| POST | `/api/v3/engineering/workspaces/{workspace_id}/restart` | — | — | — | none | to wire: workspace start/stop/restart and stats (ADR-041, roadmap row 89); no client view yet |
-| POST | `/api/v3/engineering/workspaces/{workspace_id}/start` | — | — | — | none | to wire: workspace start/stop/restart and stats (ADR-041, roadmap row 89); no client view yet |
-| GET | `/api/v3/engineering/workspaces/{workspace_id}/stats` | — | — | — | none | to wire: workspace start/stop/restart and stats (ADR-041, roadmap row 89); no client view yet |
-| POST | `/api/v3/engineering/workspaces/{workspace_id}/stop` | — | — | — | none | to wire: workspace start/stop/restart and stats (ADR-041, roadmap row 89); no client view yet |
+| POST | `/api/v3/engineering/workspaces/{workspace_id}/restart` | — | — | — | none | to wire: workspace start/stop/restart and stats (ADR-043, roadmap row 89); no client view yet |
+| POST | `/api/v3/engineering/workspaces/{workspace_id}/start` | — | — | — | none | to wire: workspace start/stop/restart and stats (ADR-043, roadmap row 89); no client view yet |
+| GET | `/api/v3/engineering/workspaces/{workspace_id}/stats` | — | — | — | none | to wire: workspace start/stop/restart and stats (ADR-043, roadmap row 89); no client view yet |
+| POST | `/api/v3/engineering/workspaces/{workspace_id}/stop` | — | — | — | none | to wire: workspace start/stop/restart and stats (ADR-043, roadmap row 89); no client view yet |
 | POST | `/api/v3/feedback` | `aura_client/lib/features/chat/data/feedback_repository.dart:33` | — | — | called |  |
 | WS | `/api/v3/host/agent` | — | — | `aura_hostd/lib/src/config.dart:36`, `aura_hostd/lib/src/config.dart:43` (+1) | called |  |
 | GET | `/api/v3/host/folders` | `aura_client/lib/core/ai/engineer/host_folders_client.dart:36`, `aura_client/lib/core/ai/engineer/host_folders_client.dart:80` (+2) | — | — | called |  |
 | POST | `/api/v3/host/folders/git-init` | `aura_client/lib/core/ai/engineer/host_folders_client.dart:103` | — | — | called |  |
-| GET | `/api/v3/host/status` | — | — | — | none | to wire: paired-desktop status (ADR-041, roadmap row 89); read-only, no client view yet |
+| GET | `/api/v3/host/status` | — | — | — | none | to wire: paired-desktop status (ADR-043, roadmap row 89); read-only, no client view yet |
 | GET | `/api/v3/insights` | `aura_client/lib/core/insights/insights_client.dart:11`, `aura_client/lib/core/insights/insights_client.dart:48` | — | — | called |  |
 | POST | `/api/v3/insights/generate` | `aura_client/lib/core/insights/insights_client.dart:100` | — | — | called |  |
 | POST | `/api/v3/insights/{insight_id}/dismiss` | `aura_client/lib/core/insights/insights_client.dart:119` | — | — | called |  |
@@ -209,13 +209,13 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | POST | `/api/v3/me/password` | — | — | — | none | to wire: profile read/update and password change have no app screen yet; register and forgot/reset password stay in the client's Firebase SDK (api/me.py) |
 | GET | `/api/v3/memory` | `aura_client/lib/core/sync/sync_client.dart:29`, `aura_client/lib/features/chat/data/memory_repository.dart:81` | — | — | called |  |
 | POST | `/api/v3/memory` | `aura_client/lib/core/sync/sync_client.dart:29`, `aura_client/lib/features/chat/data/memory_repository.dart:81` | — | — | called |  |
-| GET | `/api/v3/memory/lessons` | — | — | — | none | to wire: pending Engineer lessons (row 60, ADR-038) have no approve/reject view yet; backend scope |
-| POST | `/api/v3/memory/lessons/{memory_id}/approve` | — | — | — | none | to wire: pending Engineer lessons (row 60, ADR-038) have no approve/reject view yet; backend scope |
-| POST | `/api/v3/memory/lessons/{memory_id}/reject` | — | — | — | none | to wire: pending Engineer lessons (row 60, ADR-038) have no approve/reject view yet; backend scope |
+| GET | `/api/v3/memory/lessons` | — | — | — | none | to wire: pending Engineer lessons (row 60, ADR-040) have no approve/reject view yet; backend scope |
+| POST | `/api/v3/memory/lessons/{memory_id}/approve` | — | — | — | none | to wire: pending Engineer lessons (row 60, ADR-040) have no approve/reject view yet; backend scope |
+| POST | `/api/v3/memory/lessons/{memory_id}/reject` | — | — | — | none | to wire: pending Engineer lessons (row 60, ADR-040) have no approve/reject view yet; backend scope |
 | DELETE | `/api/v3/memory/{memory_id}` | `aura_client/lib/core/sync/remote_deletes.dart:95`, `aura_client/lib/features/chat/data/memory_repository.dart:230` | — | — | called |  |
 | DELETE | `/api/v3/sessions/{session_id}` | `aura_client/lib/core/sync/remote_deletes.dart:96` | — | — | called |  |
-| GET | `/api/v3/sessions/{session_id}/checkpoint` | — | — | — | none | to wire: session checkpoint (row 26, ADR-038) is backend-only until the client shows a resume card; backend scope |
-| POST | `/api/v3/sessions/{session_id}/checkpoint` | — | — | — | none | to wire: session checkpoint (row 26, ADR-038) is backend-only until the client shows a resume card; backend scope |
+| GET | `/api/v3/sessions/{session_id}/checkpoint` | — | — | — | none | to wire: session checkpoint (row 26, ADR-040) is backend-only until the client shows a resume card; backend scope |
+| POST | `/api/v3/sessions/{session_id}/checkpoint` | — | — | — | none | to wire: session checkpoint (row 26, ADR-040) is backend-only until the client shows a resume card; backend scope |
 | GET | `/api/v3/sync` | `aura_client/lib/core/database/database.dart:230`, `aura_client/lib/core/database/database.dart:257` (+3) | — | — | called |  |
 | POST | `/api/v3/sync` | `aura_client/lib/core/database/database.dart:230`, `aura_client/lib/core/database/database.dart:257` (+3) | — | — | called |  |
 | GET | `/api/v3/tools` | `aura_client/lib/features/chat/data/tool_catalog_repository.dart:7`, `aura_client/lib/features/chat/data/tool_catalog_repository.dart:119` (+3) | — | — | called |  |
@@ -224,7 +224,7 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | GET | `/api/v3/usage/turns` | `aura_client/lib/features/engineering/data/usage_repository.dart:155` | — | — | called |  |
 | WS | `/api/v3/voice/live` | `aura_client/lib/core/ai/voice/live/live_voice_protocol.dart:1`, `aura_client/lib/core/ai/voice/live/live_voice_socket.dart:20` (+2) | — | — | called |  |
 | POST | `/api/v3/voice/speak` | `aura_client/lib/core/ai/voice/speech_text.dart:1`, `aura_client/lib/core/ai/voice/voice_client.dart:15` (+1) | — | — | called |  |
-| POST | `/api/v3/voice/task` | — | — | — | none | to wire: voice-to-task extraction (ADR-041, roadmap row 88); the client confirms the structured task, then POSTs /agents/tasks |
+| POST | `/api/v3/voice/task` | — | — | — | none | to wire: voice-to-task extraction (ADR-043, roadmap row 88); the client confirms the structured task, then POSTs /agents/tasks |
 | POST | `/api/v3/voice/transcribe` | `aura_client/lib/core/ai/voice/voice_client.dart:78`, `aura_client/lib/features/chat/presentation/widgets/voice_recorder_button.dart:18` | — | — | called |  |
 | GET | `/api/v3/workspaces` | `aura_client/lib/core/network/aura_api_client.dart:93`, `aura_client/lib/core/network/aura_api_client.dart:133` (+3) | — | — | called |  |
 | POST | `/api/v3/workspaces` | `aura_client/lib/core/network/aura_api_client.dart:93`, `aura_client/lib/core/network/aura_api_client.dart:133` (+3) | — | — | called |  |

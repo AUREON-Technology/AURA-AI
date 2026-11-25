@@ -34,7 +34,7 @@ final _runSearchProvider = FutureProvider.autoDispose<RunSearchResult>((ref) {
   return ref.read(runHistoryRepositoryProvider).search(query: query);
 });
 
-/// Search the person's agent runs and open any one as a timeline (ADR-041 section 5, inventory
+/// Search the person's agent runs and open any one as a timeline (ADR-043 section 5, inventory
 /// row 71). Reached from the Engineer history page.
 class RunHistoryPage extends ConsumerStatefulWidget {
   const RunHistoryPage({super.key});

@@ -1,9 +1,9 @@
-# ADR-045 — Agent behaviour for partial rows: acceptance criteria on a turn, feedback on a held plan, model-written lessons, recovery proven end to end, deterministic output digests
+# ADR-047 — Agent behaviour for partial rows: acceptance criteria on a turn, feedback on a held plan, model-written lessons, recovery proven end to end, deterministic output digests
 
 **Status:** Proposed (built, not proven) · **Date:** 2026-11-23 · **Related:** ADR-006 (trust channels,
 confirmation), ADR-008 (the system proposes, a person promotes), ADR-030 (data classification of
-generations), ADR-037 (agent loop: recovery, stuck detection, token budget), ADR-038 (plan modes, auto
-lessons), ADR-041 (agent task gateway) · **Inventory rows:** 41, 51, 60, 44, 28
+generations), ADR-039 (agent loop: recovery, stuck detection, token budget), ADR-040 (plan modes, auto
+lessons), ADR-043 (agent task gateway) · **Inventory rows:** 41, 51, 60, 44, 28
 
 ## Context
 

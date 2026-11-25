@@ -458,7 +458,7 @@ class PlanningEngine:
         (``AgenticExecutor``) passes its ``max_plan_iterations`` through here too, so this
         method's own guard cannot reject a revision that its caller already confirmed was allowed.
 
-        ``feedback`` (ADR-037) is extra, already-formatted observations the loop wants the revised
+        ``feedback`` (ADR-039) is extra, already-formatted observations the loop wants the revised
         plan to act on -- a failing test run, a validator's message, the critic's findings. They are
         the loop's own words about what happened, so they ride in the goal text like the
         completed/failed lines do. Empty (the default) leaves the revision prompt exactly as it was.
@@ -551,7 +551,7 @@ class PlanningEngine:
 
 
 def _goal_text(goal: Goal) -> str:
-    """The goal as the planner sees it. With ``success_criteria`` (ADR-045) they are listed, so the
+    """The goal as the planner sees it. With ``success_criteria`` (ADR-047) they are listed, so the
     plan includes a step that produces evidence for each; without them it is the description
     unchanged."""
     if not goal.success_criteria:
