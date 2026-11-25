@@ -10,8 +10,10 @@ import 'dart:convert';
 import 'package:aura_client/core/ai/voice/live/live_voice_protocol.dart';
 import 'package:aura_client/core/ai/voice/live/live_voice_socket.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
+import 'package:aura_client/core/workspaces/active_workspace.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 class _RecordingTokens extends TokenManager {
@@ -75,6 +77,8 @@ void main() {
   late ProviderContainer container;
 
   setUp(() {
+    // Selecting a team persists it; each test starts in the personal scope.
+    SharedPreferences.setMockInitialValues({});
     channel = _FakeChannel();
     final socketProvider = Provider<LiveVoiceSocket>((ref) => LiveVoiceSocket(
           ref,
@@ -103,6 +107,27 @@ void main() {
     expect(tokens.validFor, everyElement(LiveVoiceSocket.reauthMinValidity));
     expect(LiveVoiceSocket.reauthMinValidity, greaterThan(const Duration(seconds: 60)),
         reason: 'must outlast one server re-check interval');
+  });
+
+  // AUD-04: typed chat sends X-Aura-Workspace; the live-voice frames carried only attestation,
+  // so a voice turn in a team was metered to the personal plan and skipped the team's knowledge.
+  test('auth and reauth name the active team, so a voice turn runs in it', () async {
+    await container.read(activeWorkspaceProvider.notifier).select(
+        const WorkspaceSummary(id: 'ws-team', kind: 'team', name: 'Acme', role: 'owner'));
+    await socket.connectAndAuth();
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+
+    final auth = channel.framesOfType('auth').single;
+    expect((auth['attestation'] as Map)[workspaceHeaderName], 'ws-team');
+    expect((auth['attestation'] as Map)['X-Device-Platform'], 'test', reason: 'attestation kept');
+    final reauth = channel.framesOfType('reauth').first;
+    expect((reauth['attestation'] as Map)[workspaceHeaderName], 'ws-team');
+  });
+
+  test('personal scope sends no workspace header', () async {
+    await socket.connectAndAuth();
+    final auth = channel.framesOfType('auth').single;
+    expect((auth['attestation'] as Map).containsKey(workspaceHeaderName), isFalse);
   });
 
   test('a 4401 close from the server surfaces as session_expired', () async {

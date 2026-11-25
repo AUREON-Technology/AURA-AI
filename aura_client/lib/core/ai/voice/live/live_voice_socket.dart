@@ -9,6 +9,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import '../../../auth/token_manager.dart';
 import '../../../config/backend_url_provider.dart';
 import '../../../security/device_validation_service.dart';
+import '../../../workspaces/active_workspace.dart';
 import 'live_voice_protocol.dart';
 
 /// Fetches the attestation headers sent inside `auth` / `reauth` frames.
@@ -99,6 +100,16 @@ class LiveVoiceSocket {
 
   String get _backendUrl => _ref.read(backendUrlProvider);
 
+  /// What goes in the `auth` / `reauth` frame's `attestation` map: the attestation headers plus
+  /// `X-Aura-Workspace` when a team is active. The server copies every entry of that map into the
+  /// request headers it authenticates the socket with (`voice_live.py` `_authenticate_frame`), and
+  /// resolves the workspace from that header like it does for typed chat. Without it a live
+  /// voice turn was metered to the personal plan and answered without the team's knowledge.
+  Future<Map<String, String>> _authAttestation() async => {
+        ...await _attestation(_backendUrl),
+        ...await workspaceHeaders(_ref),
+      };
+
   Uri get _uri {
     final base = _backendUrl.replaceFirst(RegExp(r'^http'), 'ws');
     return Uri.parse('$base/api/v3/voice/live');
@@ -121,7 +132,7 @@ class LiveVoiceSocket {
     if (token == null || token.isEmpty) {
       throw StateError('no access token for live voice');
     }
-    final attestation = await _attestation(_backendUrl);
+    final attestation = await _authAttestation();
 
     final channel = (_connect ?? WebSocketChannel.connect)(_uri);
     _channel = channel;
@@ -156,7 +167,7 @@ class LiveVoiceSocket {
     final tokens = _ref.read(tokenManagerProvider);
     final token = await tokens.getAccessTokenValidFor(reauthMinValidity);
     if (token == null || token.isEmpty) return;
-    final attestation = await _attestation(_backendUrl);
+    final attestation = await _authAttestation();
     // The socket may have been closed or replaced while the token was renewed; a reauth
     // landing on a new socket before its auth frame would be a protocol error there.
     if (!identical(_channel, channel)) return;

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/design_system/design_system.dart';
+import '../../../core/network/aura_api_error.dart';
 import '../../../core/network/aura_failure.dart';
 import '../../../core/workspaces/active_workspace.dart';
 import '../../../l10n/l10n.dart';
@@ -66,10 +67,25 @@ String subscriptionStatusLabel(BuildContext context, String status) => switch (s
 String workspaceName(BuildContext context, WorkspaceSummary ws) =>
     ws.isTeam ? ws.name : context.l10n.workspacePersonal;
 
-/// A failed call, in the plain words [AuraFailure] already has for it.
-void showFailure(BuildContext context, Object error) {
+/// A failed call, in the plain words [AuraFailure] already has for it -- plus the server's own
+/// sentence when it refused a *specific* request (403, 404, 409, 422).
+///
+/// The generic copy for those statuses cannot say why: an unverified email on checkout read as a
+/// permanent "no permission", and a seat count outside the plan's range as "something went wrong".
+/// The workspace and billing routes raise worded refusals ("verify your email address before
+/// buying a plan", "plan 'team' takes 2-50 seats", "transfer ownership first"), so they are shown
+/// after the generic line rather than dropped (audit AUD-07).
+String failureText(Object error) {
   final failure = AuraFailure.from(error);
-  AuraSnackbar.show(context, message: '${failure.title}. ${failure.message}', kind: AuraSnackbarKind.error);
+  final base = '${failure.title}. ${failure.message}';
+  if (error is! AuraApiError || !const {403, 404, 409, 422}.contains(error.statusCode)) return base;
+  final detail = failure.detail?.trim();
+  if (detail == null || detail.isEmpty || base.contains(detail)) return base;
+  return '$base $detail';
+}
+
+void showFailure(BuildContext context, Object error) {
+  AuraSnackbar.show(context, message: failureText(error), kind: AuraSnackbarKind.error);
 }
 
 Future<bool> confirm(BuildContext context, {required String title, required String body, required String action, bool destructive = false}) async {
