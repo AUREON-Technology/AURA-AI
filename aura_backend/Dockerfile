@@ -66,6 +66,9 @@ WORKDIR /app
 # Phase F1/F2: the system binaries pytesseract and the espeak-ng TTS adapter shell out to.
 # Runtime-only, so these belong in the runner stage, not the builder.
 #
+# git: the gateway clones and pushes on the user's behalf itself, so the GitHub token never enters
+# a sandbox (adapters/host_git.py, ADR-013). It also checks a cloud sandbox's bundle before a push.
+#
 # Piper 2023.11.14-2 linux x86_64 is the last rhasspy binary release (repo archived).
 # SHA256 of piper_linux_x86_64.tar.gz was computed from the GitHub release asset.
 # Voices are pinned to huggingface.co/rhasspy/piper-voices v1.0.0 (not committed to git):
@@ -87,6 +90,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     espeak-ng \
     ca-certificates \
     curl \
+    git \
     && curl -fsSL --retry 3 --retry-delay 2 "${PIPER_URL}" -o /tmp/piper.tar.gz \
     && echo "${PIPER_SHA256}  /tmp/piper.tar.gz" | sha256sum -c - \
     && mkdir -p /opt/piper /opt/piper/voices \

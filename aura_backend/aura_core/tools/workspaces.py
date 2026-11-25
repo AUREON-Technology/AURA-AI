@@ -125,7 +125,9 @@ class WorkspaceManager:
         min_free_memory_mb: int = 1024,
         clock: Any = None,
         metrics: Any = None,
+        provider: str = "docker",
     ) -> None:
+        self._provider = provider
         self._runner = runner
         self._store = store
         self._host_root = host_root
@@ -182,6 +184,7 @@ class WorkspaceManager:
                     status=WorkspaceStatus.HOT,
                     created_at=now,
                     last_active_at=now,
+                    provider=self._provider,
                 )
                 await self._store.upsert(record)
             else:

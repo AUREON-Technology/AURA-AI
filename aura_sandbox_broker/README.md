@@ -6,7 +6,9 @@ network fence: `docs/reports/railway-sandbox-spike-2026-11-25.md`.
 
 **Status: built; tested against an in-memory vendor, with the guest scripts and proxy run on real
 sandboxes through the CLI (87 of 87 checks, `docs/reports/railway-sandbox-spike-2026-11-25.md`).
-Not deployed, and not proven against the official SDK.** Nothing calls it yet.
+Not deployed, and not proven against the official SDK.** The backend's caller is
+`aura_backend/aura_core/adapters/railway_sandbox.py`, tested against a stand-in for this API and
+switched off by default (`AURA_SANDBOX_PROVIDER`).
 
 ## What it decides (callers cannot)
 
