@@ -50,6 +50,17 @@ jobs:
       - name: actionlint
         run: '"$RUNNER_TEMP/actionlint" -color'
 
+  secret-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # A committed Google service-account key (5b37323) was found by Google on public GitHub.
+      # Content scan, not just names: scripts/check_secrets.py. Prints file:line, never the value.
+      - name: No credentials in the tracked tree
+        run: python3 scripts/check_secrets.py
+
   tracked-artifacts:
     runs-on: ubuntu-latest
     timeout-minutes: 5

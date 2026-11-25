@@ -22,7 +22,7 @@ from dataclasses import replace
 import json
 import os
 from datetime import datetime, timedelta
-from typing import Any, AsyncIterator, Mapping
+from typing import Any, AsyncIterator, Literal, Mapping
 
 from ..domain.errors import (
     AuraError,
@@ -48,6 +48,7 @@ from ..domain.tenancy import WorkspaceContext, WorkspaceKind, workspace_scope
 from ..domain.tenancy import can as can_in_workspace
 from ..domain.untrusted import MAX_UNTRUSTED_CHARS
 from ..kernel.kernel import TurnRequest
+from ..tools.policy import AUTONOMY_PROFILES
 from ..observability.logging import get_logger
 from ..ports.runtime import AuditEvent
 from ..prompts import PIN_SYNC_INTERVAL_S
@@ -272,6 +273,17 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         use_memory: bool = True
         use_tools: bool = True
         plan: bool | None = None
+        #: ADR-040 (row 63): ``auto`` | ``plan`` | ``fast`` | ``review``. Wins over ``plan`` (kept:
+        #: ``true`` means ``plan``, ``false`` means ``fast``). ``review`` plans and then returns the
+        #: planned steps with ``approval_id``s instead of running them; send those ids back in
+        #: ``approval_ids`` to run the stored plan. Absent (with no ``plan``) is today's behaviour.
+        #: The response's ``plan_mode`` says what was decided and why.
+        plan_mode: Literal["auto", "plan", "fast", "review"] | None = None
+        #: ADR-047 (row 41): what "done" means for this request, one statement per item (at most
+        #: 20 of 300 characters). The planner is told them; the response's
+        #: ``agent_loop.acceptance`` says which the run's tool results show met, which they
+        #: contradict and which nothing speaks to. Absent is today's behaviour exactly.
+        success_criteria: list[str] = Field(default_factory=list, max_length=20)
         strategy: str | None = None
         routing_policy: str | None = None
         require_local: bool = False
@@ -303,6 +315,16 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         #: given to the answer as DATA evidence (never USER text); never stored. The count and
         #: size limits are `AURA_VISION_*` settings, checked before anything is decoded.
         images: list[ImageAttachment] = Field(default_factory=list, max_length=8)
+
+    class PlanFeedbackRequest(BaseModel):
+        """ADR-047 (row 51): free-text feedback on a plan held by ``plan_mode: review``."""
+
+        #: The ``pending_tool_calls[].approval_id`` s the held plan came back with (any subset).
+        approval_ids: list[str] = Field(min_length=1, max_length=32)
+        #: What to change, in the person's own words ("do the migration first, drop the docs step").
+        feedback: str = Field(min_length=1, max_length=2000)
+        #: The conversation the plan was held in: an approval is bound to it.
+        session_id: str | None = None
 
     class IngestRequest(BaseModel):
         title: str = Field(min_length=1, max_length=500)
@@ -588,6 +610,19 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             return tuple(caller.capabilities)
         return deployment.caller_capabilities(tuple(caller.capabilities), caller.role)
 
+    def _success_criteria(raw: list[str]) -> tuple[str, ...]:
+        """Validated ``success_criteria`` (ADR-047): each item a non-empty statement of at most
+        300 characters; blanks dropped, duplicates collapsed. Too long is a 422, not a silent cut."""
+        from ..execution.acceptance import MAX_CRITERION_CHARS, normalise_criteria
+
+        for item in raw:
+            if len(str(item)) > MAX_CRITERION_CHARS:
+                raise ValidationError(
+                    "a success criterion is too long",
+                    details={"field": "success_criteria", "max_chars": MAX_CRITERION_CHARS},
+                )
+        return normalise_criteria(raw)
+
     async def to_turn(payload: ChatRequest, caller: Principal, request: Request) -> TurnRequest:
         # Phase I: shared transcript/message normalize before the kernel (same path live voice uses).
         from ..nlp import normalize_for_turn
@@ -610,6 +645,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             if len(json.dumps(payload.response_schema)) > _MAX_RESPONSE_SCHEMA_CHARS:
                 raise ValidationError("response_schema is too large",
                                       details={"limit_chars": _MAX_RESPONSE_SCHEMA_CHARS})
+        success_criteria = _success_criteria(payload.success_criteria)
         connector_tokens = _connector_tokens(request)
         if caller.is_service and connector_tokens:
             raise ValidationError("a service key cannot act with a person's connector sign-in")
@@ -644,6 +680,8 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             use_memory=payload.use_memory and caller.knowledge_owner == caller.user_id,
             use_tools=payload.use_tools,
             plan=payload.plan,
+            plan_mode=payload.plan_mode,
+            success_criteria=success_criteria,
             strategy=_parse_enum(ReasoningStrategy, payload.strategy),
             routing_policy=_parse_enum(RoutingPolicy, payload.routing_policy),
             require_local=payload.require_local,
@@ -767,9 +805,10 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             status = {"blocked": 400, "budget_exceeded": 429, "rate_limited": 429}.get(
                 result.telemetry.outcome.value, 503
             )
-            if result.telemetry.error_kind == "confirmation_invalid":
+            if result.telemetry.error_kind in ("confirmation_invalid", "turn_stopped"):
                 # F-04: a confirmation naming no pending call this caller may resume. One-shot,
-                # so not retryable as sent -- the turn has to be asked again.
+                # so not retryable as sent -- the turn has to be asked again. `turn_stopped`
+                # (ADR-041) is the caller's own stop-all: likewise a decision, not a fault.
                 status = 409
             if result.telemetry.error_kind in ("consent_required", "user_quota_exhausted"):
                 # D-03 / D-05: refused before anything was sent. Neither clears by retrying the
@@ -810,6 +849,11 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "needs_confirmation": list(result.needs_confirmation),
                 "pending_tool_calls": list(result.pending_tool_calls),
                 "plan": list(result.plan_summary),
+                "plan_mode": result.plan_mode,
+                # ADR-047: the loop report appears only when the request asked for an
+                # acceptance check, so a request without criteria keeps its old shape.
+                **({"agent_loop": result.agent_loop}
+                   if payload.success_criteria and result.agent_loop is not None else {}),
                 "resolved_agent": result.resolved_agent,
                 "agent_run_id": result.agent_run_id,
                 "correlation_id": result.telemetry.correlation_id.value,
@@ -855,6 +899,35 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             },
             "knowledge": {"max_upload_bytes": settings.knowledge.max_document_bytes},
         })
+
+    @router.post("/chat/plan-feedback")
+    async def chat_plan_feedback(
+        request: Request,
+        payload: PlanFeedbackRequest,
+        caller: Principal = Depends(principal),
+    ) -> JSONResponse:
+        """Tell a plan held for approval what to change (ADR-047, row 51). Nothing runs.
+
+        The comment is read, the held plan is replanned at most once for it (bounded by
+        ``AURA_PLANNING_MAX_REPLANS``), and the revised plan comes back with **new**
+        ``approval_ids``; the old ones stop working. An approval with no change, or a question,
+        leaves the plan and its ids as they were (``revised: false``). A stranger's, expired or
+        used ids are a 409 ``confirmation_invalid``, exactly as for an approval; a plan that cannot
+        be revised any more (revision allowance used) is a 500 ``planning_error`` and the held plan
+        stays approvable. Send the final ``approval_ids`` back on ``/chat`` to run it."""
+        if caller.is_service:
+            raise ValidationError("a service key has no held plans to give feedback on")
+        await enforce_rate_limit(request, caller, "chat")
+        turn = await to_turn(
+            ChatRequest(message=payload.feedback, session_id=payload.session_id,
+                        approval_ids=payload.approval_ids),
+            caller, request,
+        )
+        result = await container.kernel.revise_held_plan(turn)
+        body = result.as_dict()
+        if "approval_ids" in result.extra:
+            body["approval_ids"] = result.extra["approval_ids"]
+        return JSONResponse(content=body)
 
     @router.post("/chat/stream")
     async def chat_stream(
@@ -1357,31 +1430,21 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     # -- voice (Phase F2) ----------------------------------------------------------------
 
-    @router.post("/voice/transcribe")
-    async def transcribe_audio(
-        request: Request,
-        file: UploadFile = File(...),
-        language: str | None = Form(default=None, max_length=40),
-        caller: Principal = Depends(principal),
-    ) -> JSONResponse:
-        """Speech to text via the container's `SpeechToText` engine (self-hosted
-        `faster-whisper`, Phase F2). 503s with a clear `dependency_unavailable` body when no
-        engine is configured, rather than pretending an empty transcript is a real answer.
-
-        ``language`` (optional, ISO-639-1 such as ``ar``; ``AR-eg`` folds to ``ar``) is a hint
-        for a multilingual model, validated exactly as a live-voice start frame is; an unknown
-        code is a 422. Without it the model detects the language itself. An English-only
-        (``*.en``) model ignores the hint, exactly as before the field existed: clients already
-        in use send ``ar`` whenever the app is in Arabic, and must keep getting a transcript
-        (docs/plans/arabic-language_plan.md, stage 4).
-
-        The response's ``language`` (Phase V, additive) is the language the engine used --
-        the hint it honoured, or the one it detected -- or ``null`` when it cannot say.
-        """
-        from ..ports.speech import LanguageAwareSpeechToText
+    async def transcribe_upload(
+        file: Any, language: str | None, *, detail: str = "text", words: bool = True
+    ) -> tuple[Any, str | None, Any]:
+        """Speech to text for one uploaded file: ``(result, language used, engine)``. The one
+        place the STT engine is checked, the language hint validated and the size limit
+        enforced, so ``/voice/transcribe`` and ``/voice/task`` cannot drift apart. ``result`` is
+        the transcript text, or -- for ``detail="segments"`` (ADR-042) -- the response body."""
+        from ..ports.speech import LanguageAwareSpeechToText, TimestampedSpeechToText
         from ..voice.session import normalise_language
 
-        await enforce_rate_limit(request, caller, "voice")
+        if detail not in ("text", "segments"):
+            raise ValidationError(
+                "detail must be 'text' or 'segments'",
+                details={"field": "detail", "reason": "detail_unsupported"},
+            )
         engine = container.stt_engine
         if engine is None:
             raise DependencyUnavailableError(
@@ -1409,13 +1472,69 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             raise ValidationError(
                 "uploaded audio exceeds the size limit", details={"limit_bytes": MAX_AUDIO_BYTES}
             )
+        if detail == "segments":
+            if not isinstance(engine, TimestampedSpeechToText):
+                raise DependencyUnavailableError(
+                    "the configured speech-to-text engine does not report timestamps",
+                    dependency="faster-whisper",
+                )
+            transcript = await engine.transcribe_segments(data, language=hint, word_timestamps=words)
+            body = transcript.as_dict(include_words=words)
+            if english_only:
+                body["language"] = "en"
+            body = {
+                **body,
+                "engine": engine.name,
+                "detail": "segments",
+                "diarization": {
+                    "available": False,
+                    "reason": "the speech engine does not identify speakers; every segment's speaker is null",
+                },
+            }
+            return body, body.get("language"), engine
         if language_aware:
             text, used = await engine.transcribe_detect(data, language=hint)
         else:
             text, used = await engine.transcribe(data, language=hint), hint
         if english_only:
             used = "en"
-        return JSONResponse(content={"text": text, "engine": engine.name, "language": used})
+        return text, used, engine
+
+    @router.post("/voice/transcribe")
+    async def transcribe_audio(
+        request: Request,
+        file: UploadFile = File(...),
+        language: str | None = Form(default=None, max_length=40),
+        detail: str = Form(default="text", max_length=16),
+        words: bool = Form(default=True),
+        caller: Principal = Depends(principal),
+    ) -> JSONResponse:
+        """Speech to text via the container's `SpeechToText` engine (self-hosted
+        `faster-whisper`, Phase F2). 503s with a clear `dependency_unavailable` body when no
+        engine is configured, rather than pretending an empty transcript is a real answer.
+
+        ``language`` (optional, ISO-639-1 such as ``ar``; ``AR-eg`` folds to ``ar``) is a hint
+        for a multilingual model, validated exactly as a live-voice start frame is; an unknown
+        code is a 422. Without it the model detects the language itself. An English-only
+        (``*.en``) model ignores the hint, exactly as before the field existed: clients already
+        in use send ``ar`` whenever the app is in Arabic, and must keep getting a transcript
+        (docs/plans/arabic-language_plan.md, stage 4).
+
+        The response's ``language`` (Phase V, additive) is the language the engine used --
+        the hint it honoured, or the one it detected -- or ``null`` when it cannot say.
+
+        ``detail=segments`` (ADR-042, additive; the default ``text`` is unchanged) returns the
+        timestamped transcript: ``segments`` with ``start``/``end`` seconds, ``text``,
+        ``confidence`` (0-1) and, unless ``words=false``, per-word times and probabilities.
+        Every segment's ``speaker`` is ``null`` and ``diarization.available`` is ``false``: the
+        engine cannot say who is talking, and labels are never invented. An engine that cannot
+        report timestamps answers 503 ``dependency_unavailable``.
+        """
+        await enforce_rate_limit(request, caller, "voice")
+        result, used, engine = await transcribe_upload(file, language, detail=detail, words=words)
+        if detail == "segments":
+            return JSONResponse(content=result)
+        return JSONResponse(content={"text": result, "engine": engine.name, "language": used})
 
     @router.post("/voice/speak")
     async def synthesize_speech(
@@ -1438,6 +1557,73 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             content=audio, media_type="audio/wav",
             headers={"X-Engine": container.tts_engine.name},
         )
+
+    @router.post("/voice/task")
+    async def voice_to_task(
+        request: Request,
+        file: UploadFile | None = File(default=None),
+        text: str | None = Form(default=None, max_length=8000),
+        language: str | None = Form(default=None, max_length=40),
+        refine: bool = Form(default=True),
+        caller: Principal = Depends(principal),
+    ) -> JSONResponse:
+        """Spoken (``file``) or typed (``text``) request -> a structured task, **never started**.
+
+        Send exactly one of ``file`` (audio, transcribed as ``/voice/transcribe`` does) or
+        ``text`` (a transcript the client already has) as ``multipart/form-data`` or
+        ``application/x-www-form-urlencoded``; ``language`` is the usual ``en``/``ar`` hint and
+        ``refine=false`` skips the optional model refinement.
+
+        The body is ``{goal, constraints[], repository, deliverable, priority, ambiguities[],
+        needs_clarification, questions[]}`` plus ``transcript``, ``language``, ``source``
+        (``deterministic`` or ``llm``), ``refinement`` (what the model stage did), ``assumptions``
+        and -- only when nothing needs asking -- ``suggested_request``, a body for
+        ``POST /api/v3/agents/tasks``. A gap (no goal, a code task with no repository, a repository
+        without its owner, a goal that is only "fix it", a request with no stated deliverable) is
+        never guessed: it becomes an ambiguity and a localized question, and
+        ``needs_clarification`` is true. The client asks, then submits the task itself; this route
+        starts nothing (``started`` is always false)."""
+        from ..text.language import normalize_language
+        from ..voice.task_extractor import TaskExtractor, task_goal_text
+
+        await enforce_rate_limit(request, caller, "voice")
+        typed = (text or "").strip()
+        if file is not None and typed:
+            raise ValidationError("send audio or text, not both", details={"field": "file"})
+        if file is None and not typed:
+            raise ValidationError("send audio in `file` or a transcript in `text`",
+                                  details={"field": "text"})
+        hint = normalize_language(language) if language else None
+        if language and language.strip() and hint is None:
+            raise ValidationError(
+                "language is not a supported language code; send an ISO-639-1 code such as en or ar",
+                details={"field": "language", "reason": "language_unsupported"},
+            )
+        transcript = typed
+        spoken_language: str | None = None
+        if file is not None:
+            transcript, spoken_language, _engine = await transcribe_upload(file, language)
+        extractor = TaskExtractor(
+            container.router if settings.voice.task_refine_enabled else None,
+        )
+        task, refinement = await extractor.extract(
+            transcript, language=spoken_language or hint, refine=refine and settings.voice.task_refine_enabled,
+        )
+        if refine and not settings.voice.task_refine_enabled:
+            refinement = {"requested": True, "status": "disabled"}
+        body = task.as_dict()
+        suggested = None
+        if not task.needs_clarification:
+            suggested = {"goal": task_goal_text(task), "priority": task.priority or "normal"}
+            if task.repository:
+                suggested["persona_hint"] = "engineer"
+        return JSONResponse(content={
+            **body,
+            "transcript": transcript,
+            "refinement": refinement,
+            "suggested_request": suggested,
+            "started": False,
+        })
 
     # -- memory ------------------------------------------------------------------------
 
@@ -1513,6 +1699,85 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             raise HTTPException(status_code=404, detail={"error": "not_found"})
         return JSONResponse(content={"deleted": True})
 
+    # -- automatic lessons awaiting review (ADR-040, row 60; ADR-008's human promotion) ------
+
+    def _lessons_engine(caller: Principal) -> Any:
+        if caller.is_service:
+            # Memory is a person's (AR-4): a service key has none, so it has no lessons to review.
+            raise HTTPException(status_code=403, detail={"error": "forbidden"})
+        if container.memory is None:
+            raise HTTPException(status_code=503, detail={"error": "memory_disabled"})
+        return container.memory
+
+    @router.get("/memory/lessons")
+    async def list_pending_lessons(
+        request: Request, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """The caller's Engineer lessons waiting for approval, newest first.
+
+        Written by the lesson-extraction job after Engineer turns (``AURA_AUTO_LESSONS_ENABLED``);
+        until approved they sit in a scope no persona's recall reads.
+        """
+        await enforce_rate_limit(request, caller, "read")
+        from ..domain.lessons import ENGINEER_SCOPE
+
+        records = await _lessons_engine(caller).list_pending_lessons(caller.user_id, scope=ENGINEER_SCOPE)
+        return JSONResponse(content={"lessons": [
+            {
+                "id": r.id.value,
+                "content": r.content,
+                "kind": r.metadata.get("lesson_kind"),
+                "turn_outcome": r.metadata.get("turn_outcome"),
+                "created_at": r.created_at.isoformat(),
+                "expires_at": r.expires_at.isoformat() if r.expires_at else None,
+            }
+            for r in records
+        ]})
+
+    @router.post("/memory/lessons/{memory_id}/approve", dependencies=idempotent)
+    async def approve_lesson(
+        request: Request, memory_id: str, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Promote one pending lesson into the Engineer's memory. The approval names the caller
+        and the time, on the record and in the audit log. Not the caller's lesson: 404."""
+        await enforce_rate_limit(request, caller, "read")
+        from ..domain.identifiers import MemoryId
+        from ..domain.lessons import ENGINEER_SCOPE
+
+        engine = _lessons_engine(caller)
+        approver = caller.email or caller.user_id.value
+        try:
+            lesson_id = MemoryId(memory_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail={"error": "not_found"}) from None
+        record = await engine.approve_lesson(
+            lesson_id, owner_id=caller.user_id, scope=ENGINEER_SCOPE, approved_by=approver,
+        )
+        if record is None:
+            raise HTTPException(status_code=404, detail={"error": "not_found"})
+        await audit_admin(request, caller, "memory.lesson.approve", f"memory:{record.id.value}", "success")
+        return JSONResponse(content={"id": record.id.value, "approved": True, "content": record.content})
+
+    @router.post("/memory/lessons/{memory_id}/reject", dependencies=idempotent)
+    async def reject_lesson(
+        request: Request, memory_id: str, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Discard one pending lesson. Not the caller's lesson: 404."""
+        await enforce_rate_limit(request, caller, "read")
+        from ..domain.identifiers import MemoryId
+        from ..domain.lessons import ENGINEER_SCOPE
+
+        engine = _lessons_engine(caller)
+        try:
+            lesson_id = MemoryId(memory_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail={"error": "not_found"}) from None
+        deleted = await engine.reject_lesson(lesson_id, owner_id=caller.user_id, scope=ENGINEER_SCOPE)
+        if not deleted:
+            raise HTTPException(status_code=404, detail={"error": "not_found"})
+        await audit_admin(request, caller, "memory.lesson.reject", f"memory:{memory_id}", "success")
+        return JSONResponse(content={"id": memory_id, "rejected": True})
+
     # -- personal data key (ADR-032) ---------------------------------------------------
 
     #: Own budget, independent of the general limiter (which may be disabled): a DEK changes
@@ -1586,6 +1851,15 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     # -- sessions ----------------------------------------------------------------------
 
+    def _checkpoint_session(session_id: str, caller: Principal) -> SessionId:
+        if caller.is_service:
+            # A service key has no conversation (AR-4); same refusal as a session id on /chat.
+            raise ValidationError("a service key cannot use a session")
+        try:
+            return SessionId(session_id)
+        except ValueError as exc:
+            raise ValidationError("session id is not a valid identifier") from exc
+
     @router.delete("/sessions/{session_id}", dependencies=idempotent)
     async def delete_session(
         request: Request, session_id: str, caller: Principal = Depends(principal)
@@ -1605,6 +1879,42 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             raise ValidationError("session id is not a valid identifier") from exc
         await container.episodic.clear(session, caller.user_id)
         return JSONResponse(content={"deleted": True})
+
+    @router.get("/sessions/{session_id}/checkpoint")
+    async def get_session_checkpoint(
+        request: Request, session_id: str, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """The last saved checkpoint of one of the caller's conversations (row 26).
+
+        Decisions, completed work, blockers and next steps, as ``memory/checkpoint.py`` writes them.
+        Owner-scoped: the checkpoint key is namespaced by the caller's own id, so naming another
+        user's session id reads an empty slot of the caller's own namespace and answers 404 --
+        indistinguishable from a session that was never checkpointed.
+        """
+        await enforce_rate_limit(request, caller, "read")
+        session = _checkpoint_session(session_id, caller)
+        checkpoint = await container.episodic.latest_checkpoint(session, caller.user_id)
+        if checkpoint is None:
+            raise HTTPException(status_code=404, detail={"error": "not_found"})
+        return JSONResponse(content={"session_id": session.value, "checkpoint": checkpoint.as_dict()})
+
+    @router.post("/sessions/{session_id}/checkpoint", dependencies=idempotent)
+    async def write_session_checkpoint(
+        request: Request, session_id: str, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Write (and save) a checkpoint of one of the caller's conversations now.
+
+        Model-written when the deployment has a model that answers, extractive otherwise
+        (``checkpoint.source`` says which). A conversation with nothing saved in it answers 404:
+        there is nothing to write down. Counts against the chat budget because it may be a model
+        call.
+        """
+        await enforce_rate_limit(request, caller, "chat")
+        session = _checkpoint_session(session_id, caller)
+        checkpoint = await container.episodic.checkpoint(session, caller.user_id, save=True)
+        if checkpoint.covers_messages == 0 and checkpoint.is_empty():
+            raise HTTPException(status_code=404, detail={"error": "not_found", "reason": "empty_session"})
+        return JSONResponse(content={"session_id": session.value, "checkpoint": checkpoint.as_dict()})
 
     # -- per-turn usage ----------------------------------------------------------------
 
@@ -1814,6 +2124,15 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         await container.workspace_manager.destroy(target)
         return JSONResponse(content={"deleted": workspace_id, "repo": target.repo})
 
+    # ADR-043: start/stop/restart, resource stats and the read-only paired-desktop status.
+    from .engineering_ops import register_engineering_ops
+
+    register_engineering_ops(
+        router, container, principal=principal, enforce_rate_limit=enforce_rate_limit,
+        idempotent=idempotent, Depends=Depends, HTTPException=HTTPException,
+        JSONResponse=JSONResponse, Request=Request,
+    )
+
     class EngineerConsentRequest(BaseModel):
         notice_version: str = Field(min_length=1, max_length=64)
 
@@ -1875,6 +2194,158 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         store = _consent_store_or_refuse(caller)
         consent = await store.withdraw(caller.user_id, at=container.clock.now())
         return JSONResponse(content=_consent_body(consent))
+
+    # -- review profile (ADR-041) -------------------------------------------------------
+
+    class AutonomyRequest(BaseModel):
+        profile: str = Field(min_length=1, max_length=32)
+
+    async def _autonomy_body(caller: Principal) -> dict[str, Any]:
+        store = container.autonomy
+        record = await store.get_record(caller.user_id)
+        allowed = container.settings.tools.allow_autonomous_profile
+        stored = record["profile"]
+        return {
+            "profile": stored,
+            "source": record["source"],
+            "updated_at": record["updated_at"],
+            "default": store.default,
+            "profiles": list(AUTONOMY_PROFILES),
+            "autonomous_enabled": allowed,
+            # What turns actually run under: ``autonomous`` is honoured only when the deployment
+            # enabled it, and otherwise behaves as ``standard``.
+            "effective": "standard" if stored == "autonomous" and not allowed else stored,
+        }
+
+    def _refuse_service_key(caller: Principal, what: str) -> None:
+        if caller.is_service:
+            # A service key is not a person; it has no review preferences to set and must not be
+            # able to stop, or loosen, a person's agent.
+            raise HTTPException(
+                status_code=403,
+                detail=AuthorizationError(f"a service key cannot {what}").to_dict(),
+            )
+
+    @router.get("/engineering/policy")
+    async def get_autonomy_profile(caller: Principal = Depends(principal)) -> JSONResponse:
+        """How much the caller wants to be asked before the agent acts: ``strict``, ``standard``
+        (today's behaviour, the default) or ``autonomous``. The caller's own, never anyone else's."""
+        _refuse_service_key(caller, "read a review profile")
+        return JSONResponse(content=await _autonomy_body(caller))
+
+    @router.put("/engineering/policy")
+    async def set_autonomy_profile(
+        request: Request, payload: AutonomyRequest, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Choose the review profile. ``strict`` confirms every side effect and refuses network
+        tools; ``autonomous`` is accepted only where the operator enabled it, and even then never
+        skips a taint, remote-origin or tool-declared confirmation. Audited."""
+        _refuse_service_key(caller, "set a review profile")
+        profile = payload.profile.strip().lower()
+        if profile not in AUTONOMY_PROFILES:
+            raise HTTPException(
+                status_code=422,
+                detail=ValidationError(
+                    f"profile must be one of {', '.join(AUTONOMY_PROFILES)}",
+                    details={"allowed": list(AUTONOMY_PROFILES)},
+                ).to_dict(),
+            )
+        if profile == "autonomous" and not container.settings.tools.allow_autonomous_profile:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "autonomy_not_enabled",
+                    "message": "The autonomous profile is not enabled on this deployment.",
+                    "retryable": False,
+                    "details": {"setting": "AURA_AUTONOMY_ALLOW_AUTONOMOUS"},
+                },
+            )
+        before = (await container.autonomy.get_record(caller.user_id))["profile"]
+        await container.autonomy.put(caller.user_id, profile, at=container.clock.now().isoformat())
+        try:
+            await container.audit.record(AuditEvent(
+                action="autonomy.profile_changed", actor=caller.email or caller.user_id.value,
+                actor_role=caller.role, resource=f"user:{caller.user_id.value}", outcome="ok",
+                correlation_id=request.headers.get("x-correlation-id") or "",
+                source_ip=client_ip(request), detail={"from": before, "to": profile},
+            ))
+        except Exception:
+            logger.warning("autonomy audit write failed", exc_info=False)
+        return JSONResponse(content=await _autonomy_body(caller))
+
+    # -- kill switch (ADR-041) ----------------------------------------------------------
+
+    class StopAllRequest(BaseModel):
+        revoke_devices: bool = False
+
+    @router.post("/agents/stop-all")
+    async def stop_all_agents(
+        request: Request, payload: StopAllRequest | None = None,
+        caller: Principal = Depends(principal),
+    ) -> JSONResponse:
+        """Stop everything the caller's agent is doing, now.
+
+        Cancels every turn of the caller running on this server (the cancellation reaches a
+        running tool, and a host-routed call sends its ``cancel`` frame to the desktop), closes
+        the caller's paired-desktop connection, and -- with ``revoke_devices`` -- revokes their
+        paired desktop devices so the daemon cannot reconnect. Idempotent: with nothing running it
+        answers with zeros. Owner-scoped: it acts only on the caller's own turns, sessions and
+        devices. Audited. Not replayed by the idempotency cache: a second press must act again.
+
+        Limits, reported rather than hidden: turns held in another gateway worker are not seen
+        (``scope: "this_process"``), and a held confirmation stays answerable.
+        """
+        _refuse_service_key(caller, "stop a person's agent")
+        revoke = bool(payload.revoke_devices) if payload is not None else False
+        user_id = caller.user_id
+
+        stopped = container.kernel.active_turns.stop_user(user_id.value)
+
+        registry = getattr(container, "host_agent_registry", None)
+        sessions_closed = 0
+        if registry is not None:
+            try:
+                sessions_closed = await registry.stop_user(user_id, reason="stopped by the user")
+            except Exception:
+                logger.warning("closing the desktop session failed", exc_info=True)
+
+        devices: dict[str, Any] = {"requested": revoke}
+        if revoke:
+            revoker = getattr(container, "device_revoker", None)
+            if revoker is None:
+                devices.update(available=False, revoked=[])
+            else:
+                try:
+                    devices.update(available=True, revoked=list(await revoker(user_id.value)))
+                except Exception:
+                    logger.warning("device revocation failed", exc_info=True)
+                    devices.update(available=True, revoked=[], error="revocation_failed")
+
+        try:
+            await container.audit.record(AuditEvent(
+                action="agents.stop_all", actor=caller.email or caller.user_id.value,
+                actor_role=caller.role, resource=f"user:{user_id.value}", outcome="ok",
+                correlation_id=request.headers.get("x-correlation-id") or "",
+                source_ip=client_ip(request),
+                detail={
+                    "turns_stopped": len(stopped), "desktop_sessions_closed": sessions_closed,
+                    "revoke_devices": revoke,
+                    "devices_revoked": len(devices.get("revoked", [])),
+                },
+            ))
+        except Exception:
+            logger.warning("stop-all audit write failed", exc_info=False)
+
+        return JSONResponse(content={
+            "stopped": True,
+            "scope": "this_process",
+            "turns": [
+                {"turn_id": s.turn_id, "kind": s.kind, "running_s": s.running_s} for s in stopped
+            ],
+            "turns_stopped": len(stopped),
+            "desktop_sessions_closed": sessions_closed,
+            "devices": devices,
+        })
 
     @router.get("/host/folders")
     async def host_folders(caller: Principal = Depends(principal)) -> JSONResponse:
@@ -2010,6 +2481,30 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 ]
             }
         )
+
+    # -- agent tasks (ADR-043) ----------------------------------------------------------
+    from .agent_tasks import register_agent_task_ops
+
+    async def build_task_turn(fields: dict[str, Any], caller: Principal, request: Request) -> TurnRequest:
+        """A task's request, validated by exactly the code ``/chat`` uses (``to_turn``). A
+        background task has no live caller to hold a connector sign-in, so none is carried."""
+        turn = await to_turn(ChatRequest(**fields), caller, request)
+        return replace(turn, connector_tokens=None)
+
+    register_agent_task_ops(
+        router, container, principal=principal, enforce_rate_limit=enforce_rate_limit,
+        build_turn=build_task_turn, admit_turn=admit_turn, release_turn=release_turn,
+        Depends=Depends, JSONResponse=JSONResponse, Query=Query, Request=Request,
+    )
+
+    # -- usage dashboard and run history (ADR-043) -------------------------------------
+    # Before ``/agents/runs/{run_id}``: a path parameter would swallow "search" and "timeline".
+    from .usage_history import register_usage_history
+
+    register_usage_history(
+        router, container, principal=principal, enforce_rate_limit=enforce_rate_limit,
+        Depends=Depends, JSONResponse=JSONResponse, Query=Query, Request=Request,
+    )
 
     # -- agent runs (GAP-024) -----------------------------------------------------------
 
@@ -2267,6 +2762,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         JSONResponse=JSONResponse,
         Request=Request,
         Response=Response,
+        idempotent=idempotent,
     )
 
     from .admin_plans import register_plan_ops
@@ -2284,7 +2780,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
     from .shared_conversations import register_sharing_ops
 
     register_sharing_ops(router, container, principal=principal, Depends=Depends,
-                         JSONResponse=JSONResponse, Response=Response)
+                         JSONResponse=JSONResponse, Response=Response, idempotent=idempotent)
 
     from .workspaces import register_workspace_ops
 
@@ -2485,6 +2981,15 @@ async def refresh_scrape_gauges(container: Any) -> None:
     this process's exposition. The backlog is a fact of the database, so it is read here.
     """
     await _refresh_billing_gauges(container)
+    try:  # read-only and cached; a host without a GPU leaves the gauges unset (ADR-055)
+        from ..adapters.gpu_probe import GpuProbe
+
+        probe = getattr(container, "_gpu_probe", None)
+        if probe is None:
+            probe = container._gpu_probe = GpuProbe()
+        await asyncio.wait_for(probe.refresh_gauges(container.metrics), timeout=SCRAPE_REFRESH_TIMEOUT_S + 2)
+    except Exception:
+        logger.debug("gpu gauge refresh failed", exc_info=True)
     outbox = getattr(container, "event_outbox", None)
     stats = getattr(outbox, "stats", None)
     if not callable(stats):

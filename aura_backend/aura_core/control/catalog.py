@@ -39,6 +39,8 @@ _READERS = frozenset({"_env", "_bool", "_int", "_float", "_list", "_bool_aliased
 _EXPLICIT: Mapping[str, str] = {
     "llm.embedding_query_prefix": "AURA_EMBEDDING_QUERY_PREFIX",
     "llm.embedding_document_prefix": "AURA_EMBEDDING_DOCUMENT_PREFIX",
+    # Read through ``_host_list``, which the AST walk above does not recognise as a reader.
+    "sandbox.allowed_egress_hosts": "AURA_SANDBOX_ALLOWED_EGRESS_HOSTS",
 }
 
 #: Sections that are not settings an operator sets (computed at build time, or per provider).

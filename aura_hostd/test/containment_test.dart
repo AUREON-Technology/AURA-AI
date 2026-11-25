@@ -116,6 +116,42 @@ void main() {
       );
     });
 
+    test('judges a dangling symlink by where it leads: outside is a violation, inside is allowed', () {
+      // Found by driving the real daemon: a link to a path that does not exist yet used to
+      // surface as a raw "Cannot resolve symbolic links" error (refused by accident, no code).
+      if (Platform.isWindows) {
+        return; // symlink creation needs elevated privileges on Windows CI runners.
+      }
+      final outside = Directory(p.join(tempDir.path, 'secret'))..createSync();
+      final roots = WorkspaceRoots(const []);
+      final root = roots.addRoot(workspaceDir.path);
+
+      Link(p.join(root.canonicalPath, 'dangling_out')).createSync(p.join(outside.path, 'not_yet.txt'));
+      expect(
+        () => roots.requireContained(root, 'dangling_out'),
+        throwsA(isA<ContainmentViolation>()),
+      );
+      // Relative target that climbs out, through a dangling link.
+      Link(p.join(root.canonicalPath, 'dangling_up')).createSync(p.join('..', 'secret', 'x.txt'));
+      expect(
+        () => roots.requireContained(root, 'dangling_up'),
+        throwsA(isA<ContainmentViolation>()),
+      );
+      // A dangling link that stays inside the root is still writable through.
+      Link(p.join(root.canonicalPath, 'dangling_in')).createSync('later.txt');
+      expect(
+        roots.requireContained(root, 'dangling_in'),
+        p.join(root.canonicalPath, 'later.txt'),
+      );
+      // A link loop is a violation, not a crash.
+      Link(p.join(root.canonicalPath, 'loop_a')).createSync('loop_b');
+      Link(p.join(root.canonicalPath, 'loop_b')).createSync('loop_a');
+      expect(
+        () => roots.requireContained(root, 'loop_a'),
+        throwsA(isA<ContainmentViolation>()),
+      );
+    });
+
     test('rejects a directory junction inside the root that points outside it', () {
       if (!Platform.isWindows) {
         return; // junctions are an NTFS-specific reparse point; nothing to test elsewhere.

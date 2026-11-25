@@ -16,6 +16,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'config.dart' show InvalidBackendUrlError, requireSecureBackendUrl;
 import 'containment.dart';
@@ -33,7 +34,8 @@ class HostAgentClient {
     this.minBackoff = const Duration(seconds: 1),
     this.maxBackoff = const Duration(seconds: 30),
     this.pingInterval = const Duration(seconds: 20),
-  });
+    Random? random,
+  }) : _random = random ?? Random();
 
   final String wsUrl;
   final String authToken;
@@ -41,6 +43,7 @@ class HostAgentClient {
   final Logger logger;
   final Duration minBackoff;
   final Duration maxBackoff;
+  final Random _random;
   /// How often to send a protocol-level WebSocket ping while otherwise idle (`run_command` etc.
   /// only flow when the model calls a tool -- a session sitting between turns sends nothing for
   /// however long that takes). Set on `dart:io`'s `WebSocket` itself (`_socket.pingInterval`
@@ -89,10 +92,16 @@ class HostAgentClient {
 
   static void _defaultLogger(String message) => stdout.writeln('[aura_hostd] $message');
 
+  /// The wait before the next attempt: [backoff] scaled to between half and all of itself, so
+  /// daemons that lost the same connection do not all return in the same instant. There is a herd
+  /// to spread: the gateway redeploys on every push to `main`, and every paired computer
+  /// reconnects at that moment (audit AUD-16). Never longer than [backoff], so [maxBackoff] still
+  /// bounds it.
+  static Duration jittered(Duration backoff, Random random) =>
+      Duration(milliseconds: (backoff.inMilliseconds * (0.5 + random.nextDouble() * 0.5)).round());
+
   /// Runs the connect/serve/reconnect loop until [stop] is called. Each connection attempt that
-  /// fails or drops backs off with jitter-free exponential backoff, capped at [maxBackoff] --
-  /// simple and predictable rather than clever, since this only ever has one peer (the backend)
-  /// and no thundering-herd concern to jitter against.
+  /// fails or drops backs off exponentially, capped at [maxBackoff], with each wait [jittered].
   ///
   /// A close with [closeUnauthorized] ends the loop instead: the server is saying this daemon's
   /// token is expired, revoked or no longer permitted, and reconnecting with the same token can
@@ -134,11 +143,15 @@ class HostAgentClient {
         logger('connection error: $error');
       }
       if (_stopRequested) break;
-      logger('reconnecting in ${backoff.inSeconds}s');
-      await Future.delayed(backoff);
+      final wait = jittered(backoff, _random);
+      logger('reconnecting in ${(wait.inMilliseconds / 1000).toStringAsFixed(1)}s');
+      await Future.delayed(wait);
       backoff = Duration(milliseconds: (backoff.inMilliseconds * 2).clamp(0, maxBackoff.inMilliseconds));
     }
   }
+
+  /// Kills every command this client's handler still has running (the daemon is going away).
+  Future<void> stopRunningCommands() => taskHandler.stopRunningCommands();
 
   void stop() {
     _stopRequested = true;

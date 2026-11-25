@@ -126,6 +126,51 @@ class PostgresTelemetrySink:
             raise _unavailable(f"could not purge turn telemetry: {exc}") from exc
         return int(str(status).rsplit(" ", 1)[-1] or 0)
 
+    async def recent_summary_by_model(self, *, since: datetime, min_turns: int = 1) -> dict[str, dict[str, Any]]:
+        """:meth:`recent_summary`'s figures per ``model`` (models with fewer than ``min_turns`` turns left out)."""
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT
+                        model,
+                        count(*) AS turns,
+                        avg(CASE WHEN outcome != 'success' THEN 1.0 ELSE 0.0 END) AS error_rate,
+                        avg(CASE WHEN degraded THEN 1.0 ELSE 0.0 END) AS degraded_rate,
+                        avg(CASE WHEN cache_hit THEN 1.0 ELSE 0.0 END) AS cache_hit_rate,
+                        percentile_cont(0.5) WITHIN GROUP (ORDER BY total_ms) AS p50_latency_ms,
+                        percentile_cont(0.95) WITHIN GROUP (ORDER BY total_ms) AS p95_latency_ms,
+                        avg(prompt_tokens) AS avg_prompt_tokens,
+                        avg(completion_tokens) AS avg_completion_tokens,
+                        avg(cost_usd) AS avg_cost_usd,
+                        sum(tool_calls) AS tool_calls,
+                        sum(tool_failures) AS tool_failures,
+                        avg(groundedness) AS avg_groundedness
+                    FROM aura_turn_telemetry
+                    WHERE started_at >= $1 AND model IS NOT NULL AND model != ''
+                    GROUP BY model
+                    HAVING count(*) >= $2
+                    """,
+                    since, max(1, int(min_turns)),
+                )
+        except Exception as exc:
+            raise _unavailable(f"could not summarise turn telemetry by model: {exc}") from exc
+        out: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            calls, failures = row["tool_calls"] or 0, row["tool_failures"] or 0
+            out[str(row["model"])] = {
+                "turns": row["turns"] or 0, "since": since.astimezone(timezone.utc).isoformat(),
+                "error_rate": _r(row["error_rate"]), "degraded_rate": _r(row["degraded_rate"]),
+                "cache_hit_rate": _r(row["cache_hit_rate"]), "p50_latency_ms": _r(row["p50_latency_ms"]),
+                "p95_latency_ms": _r(row["p95_latency_ms"]), "avg_prompt_tokens": _r(row["avg_prompt_tokens"]),
+                "avg_completion_tokens": _r(row["avg_completion_tokens"]),
+                "avg_cost_usd": _r(row["avg_cost_usd"], digits=6),
+                "tool_success_rate": round(1 - failures / calls, 4) if calls else None,
+                "avg_groundedness": _r(row["avg_groundedness"]),
+            }
+        return out
+
     async def recent_summary(self, *, since: datetime) -> dict[str, Any]:
         """Real aggregate numbers over every turn recorded since ``since`` -- the query the
         scorecard endpoint reads from, not a hand-maintained figure."""

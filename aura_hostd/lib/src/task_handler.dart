@@ -86,6 +86,19 @@ const _maxCommandTimeout = Duration(minutes: 15);
 /// longer captured or forwarded.
 const _maxOutputCapChars = 500000;
 
+/// The decoder for a command's stdout and stderr: UTF-8 on every platform, malformed bytes as U+FFFD.
+///
+/// A command's output is not guaranteed to be text: `cat report.pdf`, or a tool printing a legacy code
+/// page, puts bytes that are not valid UTF-8 on the pipe. `SystemEncoding().decoder` is a *strict*
+/// UTF-8 decoder on POSIX, so the first such byte threw a `FormatException` inside the stream listener
+/// and the whole `run` RPC failed ("Invalid UTF-8 byte (at offset 7)"): the command's output was lost
+/// and nothing kept reading the pipe, so a still-running command stalled on a full pipe until its
+/// timeout. On Windows `SystemEncoding` is the ANSI code page, which turned "café" and Arabic into
+/// mojibake before the backend saw them. The wire is JSON, which is UTF-8; malformed sequences are
+/// replaced, as every terminal does, and the command's real exit code and the rest of its output
+/// come back.
+Converter<List<int>, String> commandOutputDecoder() => const Utf8Decoder(allowMalformed: true);
+
 /// The largest file `read_file` returns (audit INT-036), the same 2 MiB the control server's
 /// own `GET /read` allows. A bigger file used to be read whole and sent as one frame, which a
 /// backend whose WebSocket message limit is smaller answers by closing the connection (1009),
@@ -178,6 +191,9 @@ class TaskHandler {
   /// Running commands by the RPC call id that started them, so a `cancel` frame stops the command
   /// itself and not only a pending approval (G-16, SEC-09).
   final Map<String, void Function()> _runningByCall = {};
+
+  /// Every command process tree currently running, so [stopRunningCommands] can end them all.
+  final Set<ProcessTree> _runningTrees = {};
   final Map<String, WorkspaceRoot> _boundRoots = {};
   final Set<String> _activeTaskIds = {};
 
@@ -578,6 +594,7 @@ class TaskHandler {
         ? _roots.requireContained(root, cwdParam)
         : root.canonicalPath;
 
+    String? approvalNote;
     final commandForPolicy = _effectiveShellCommand(commandArgv);
     // WP8: a remote task gets neither the trusted tier nor the read-only allowlist -- only the
     // every-workspace refusals, then the remote device's approval (`confirmed`), never the queue.
@@ -595,7 +612,13 @@ class TaskHandler {
     if (remote) {
       _requireRemoteConfirmation(params, 'run');
     } else if (verdict.decision == CommandDecision.needsApproval) {
-      await _awaitApproval(commandForPolicy, cwd: cwd, root: root, callId: callId);
+      final waited = await _awaitApproval(
+        commandForPolicy, cwd: cwd, root: root, callId: callId, reason: verdict.reason,
+      );
+      // The agent sees nothing while a human decides; tell it afterwards that it was held, why, and
+      // that the answer was yes (a no or a timeout is an error that says the same).
+      approvalNote = '[aura_hostd] this command was held for your approval (${verdict.reason}) '
+          'and approved after ${waited.inSeconds}s';
     }
     // G-17 (SEC-10): the untrusted tier's allowlisted git runs with the repository's own
     // fsmonitor, hooks, external diff and textconv programs switched off. An approved command
@@ -633,6 +656,7 @@ class TaskHandler {
     }
 
     final process = tree.process;
+    _runningTrees.add(tree);
     final stdoutBuf = StringBuffer();
     final stderrBuf = StringBuffer();
     var capturedChars = 0;
@@ -651,11 +675,16 @@ class TaskHandler {
       if (piece.length < chunk.length) outputTruncated = true;
     }
 
+    // UTF-8 on every platform, never `SystemEncoding`: that is the ANSI code page on Windows, which
+    // turned "café" and Arabic into mojibake before the backend ever saw them, and on POSIX it is a
+    // strict decoder, so one stray byte (`cat` on a latin-1 file) threw a FormatException out of the
+    // stream and failed the whole call. The wire is JSON, which is UTF-8; bytes that are not valid
+    // UTF-8 become U+FFFD, the same way the backend decodes a container's output.
     final stdoutDone = process.stdout
-        .transform(const SystemEncoding().decoder)
+        .transform(commandOutputDecoder())
         .forEach((chunk) => capture('stdout', stdoutBuf, chunk));
     final stderrDone = process.stderr
-        .transform(const SystemEncoding().decoder)
+        .transform(commandOutputDecoder())
         .forEach((chunk) => capture('stderr', stderrBuf, chunk));
 
     int exitCode;
@@ -685,6 +714,7 @@ class TaskHandler {
       // way, as it always has on timeout.
       if (timedOut || cancelled) exitCode = -1;
     } finally {
+      _runningTrees.remove(tree);
       timer.cancel();
       if (callId != null) _runningByCall.remove(callId);
       // A command that exits normally can still leave a background child holding the
@@ -708,6 +738,7 @@ class TaskHandler {
     if (outputTruncated) {
       stderrBuf.write('\n[aura_hostd] output truncated after $_maxOutputCapChars characters');
     }
+    if (approvalNote != null) stderrBuf.write('\n$approvalNote');
 
     return {
       'stdout': stdoutBuf.toString(),
@@ -732,6 +763,16 @@ class TaskHandler {
   /// still waiting for a human may run afterwards: an approval granted now would execute a
   /// command or write whose result nobody receives, and a model retry could run it twice.
   /// Cancels every approval a call is waiting on; a call already running is unaffected.
+  /// The daemon is stopping (SIGTERM/SIGINT, `POST /shutdown`, a re-pair that replaces this
+  /// handler's connection): kill every command this handler started that is still running, with
+  /// everything it spawned. Found by driving the real daemon: stopping it left the agent's
+  /// commands -- a dev server, a long build -- running as the user with nothing left to read their
+  /// output or stop them. A dropped *socket* deliberately does not do this (see [cancelAll]); only
+  /// the daemon going away does.
+  Future<void> stopRunningCommands() async {
+    await Future.wait([for (final tree in _runningTrees.toList()) tree.kill()]);
+  }
+
   void cancelAll() {
     final approvalIds = _approvalByCall.values.toList();
     _approvalByCall.clear();
@@ -756,12 +797,19 @@ class TaskHandler {
   /// executing something the human no longer sees the same context for (D5 plan design decision
   /// 5). Throws [RpcError] on rejection, expiry, or a revalidation mismatch; returns normally only
   /// when the exact operation that was approved is still safe to run.
-  Future<void> _awaitApproval(
+  ///
+  /// [reason] is why the command was held (the policy's own words); it goes into the messages so the
+  /// agent, which sees nothing while a human decides, learns afterwards *why* it waited and what
+  /// came of it. Returns how long the human took.
+  Future<Duration> _awaitApproval(
     String command, {
     required String cwd,
     required WorkspaceRoot root,
     String? callId,
+    String? reason,
   }) async {
+    final waited = Stopwatch()..start();
+    final why = reason == null || reason.isEmpty ? '' : ' (held for approval because: $reason)';
     final PendingApproval approval;
     try {
       approval = _approvals.createForCommand(canonicalCommand: command, cwd: cwd, rootPath: root.canonicalPath);
@@ -779,11 +827,14 @@ class TaskHandler {
       case ApprovalStatus.approved:
         break;
       case ApprovalStatus.rejected:
-        throw RpcError('command was rejected by the user: $command');
+        throw RpcError(
+            'command was rejected by the user after ${waited.elapsed.inSeconds}s$why: $command');
       case ApprovalStatus.expired:
-        throw RpcError('command approval timed out waiting for a response: $command');
+        throw RpcError(
+            'command approval timed out: the user did not answer on their computer within '
+            '${waited.elapsed.inSeconds}s$why, so it was not run: $command');
       case ApprovalStatus.cancelled:
-        throw RpcError('command approval was cancelled: $command');
+        throw RpcError('command approval was cancelled$why: $command');
       case ApprovalStatus.pending:
         throw RpcError('command approval resolved with no decision -- this should not happen');
     }
@@ -801,6 +852,7 @@ class TaskHandler {
         'refusing to run: $command',
       );
     }
+    return waited.elapsed;
   }
 
   /// Queues [operations] for interactive approval and blocks until a human answers or it times

@@ -56,6 +56,7 @@ String hostdCodeMessage(String? code, String fallback, {String? detail, AppLocal
     'path_outside_trusted_folder' => t.hostdCodePathOutsideTrustedFolder,
     'remote_command_needs_confirmation' => t.hostdCodeRemoteCommandNeedsConfirmation,
     'protected_git_dir_file' => t.hostdCodeProtectedGitDirFile,
+    'protected_git_internals' => t.hostdCodeProtectedGitInternals,
     'remote_control_disabled' => t.hostdCodeRemoteControlDisabled,
     'remote_confirmation_required' => t.hostdCodeRemoteConfirmationRequired,
     'invalid_task_key' => t.hostdCodeInvalidTaskKey,

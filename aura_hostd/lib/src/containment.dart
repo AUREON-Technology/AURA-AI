@@ -160,13 +160,33 @@ class WorkspaceRoot {
 /// throws on a missing target, which is exactly the case a new file being written needs to
 /// tolerate. Resolves the longest existing prefix and reattaches the remainder unresolved (safe:
 /// any symlink component within that remainder does not exist yet either, by definition).
-String _resolveAsFarAsPossible(String rawPath) {
+String _resolveAsFarAsPossible(String rawPath, {int linkHops = 0}) {
   var current = p.normalize(p.isAbsolute(rawPath) ? rawPath : p.absolute(rawPath));
   final trailing = <String>[];
   while (true) {
     final type = FileSystemEntity.typeSync(current, followLinks: false);
     if (type != FileSystemEntityType.notFound) {
-      final resolved = File(current).resolveSymbolicLinksSync();
+      final String resolved;
+      try {
+        resolved = File(current).resolveSymbolicLinksSync();
+      } on FileSystemException {
+        // A *dangling* symlink (its target does not exist yet) cannot be resolved by the OS, but
+        // writing through it creates the target -- wherever it points. Found by driving the real
+        // daemon: a link to a path outside the folder surfaced as a bare "Cannot resolve symbolic
+        // links" error, refused only by accident and without a containment code. Follow the link
+        // by hand instead, so it is judged by where it actually leads (inside: allowed; outside:
+        // `outside_workspace`), and give up -- as a violation -- on a cycle.
+        if (type != FileSystemEntityType.link || linkHops >= 40) {
+          if (type == FileSystemEntityType.link) {
+            throw ContainmentViolation('$rawPath is a symbolic link that cannot be resolved (loop)');
+          }
+          rethrow;
+        }
+        final target = Link(current).targetSync();
+        final next = p.isAbsolute(target) ? target : p.join(p.dirname(current), target);
+        final followed = _resolveAsFarAsPossible(next, linkHops: linkHops + 1);
+        return trailing.isEmpty ? followed : p.joinAll([followed, ...trailing.reversed]);
+      }
       return trailing.isEmpty ? resolved : p.joinAll([resolved, ...trailing.reversed]);
     }
     final parent = p.dirname(current);

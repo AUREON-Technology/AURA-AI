@@ -317,6 +317,8 @@ def _apply_http_limits(app, settings) -> None:
         "/api/v3/knowledge/documents/": _DEFAULT_BODY_BYTES,
         "/api/v3/knowledge/documents": document_body_limit(settings.knowledge),
         "/api/v3/voice/transcribe": transcribe_body_limit(),
+        # Same audio, same ceiling: /voice/task transcribes the upload before extracting a task.
+        "/api/v3/voice/task": transcribe_body_limit(),
     }
     chat_limit = chat_body_limit(settings.vision)
     if chat_limit is not None:
@@ -357,8 +359,10 @@ def _apply_cors(app) -> None:
         allow_headers=["*"],
         # A browser hides response headers from page scripts unless listed here; the web app
         # reads X-Aura-Refusal to explain a plan refusal (api/v2/auth.py REFUSAL_HEADER) and
-        # Retry-After to wait out a 429/503 rather than guess (INT-118).
-        expose_headers=["X-Aura-Refusal", "Retry-After"],
+        # Retry-After to wait out a 429/503 rather than guess (INT-118), and X-Correlation-Id,
+        # which the client puts on every error it shows so a report can be matched to a server
+        # log line; without it the web app never sees the server's id (audit AUD-15).
+        expose_headers=["X-Aura-Refusal", "Retry-After", "X-Correlation-Id"],
     )
 
 
@@ -396,6 +400,11 @@ def create_app():
     from api.admin_platform import other_approver_exists
 
     container.approvals.use_other_approver_check(other_approver_exists)
+    # ADR-041: the kill switch's "revoke paired devices" step. The device registry is a legacy
+    # service module, so it is attached here for the same reason.
+    from services.device_kill import revoke_paired_devices
+
+    container.device_revoker = revoke_paired_devices
     authenticator = _build_authenticator(
         settings, service_keys=container.service_keys, tenancy=container.tenancy
     )

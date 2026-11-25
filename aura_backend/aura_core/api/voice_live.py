@@ -310,8 +310,20 @@ def register_voice_live(
                 elif ftype == "reauth":
                     try:
                         renewed = await _authenticate_frame(frame, authenticator)
-                    except AuthenticationError:
-                        await websocket.close(code=_CLOSE_UNAUTHORIZED)
+                    except Exception as exc:  # noqa: BLE001 -- classified below, not swallowed
+                        # The JWT layer refuses an expired, revoked or deleted-account token with
+                        # an HTTP 401/403, not an AuthenticationError; `is_rejection` is the one
+                        # rule the credential recheck and the host-agent socket already use.
+                        if ws_auth.is_rejection(exc):
+                            await websocket.close(code=_CLOSE_UNAUTHORIZED)
+                        else:
+                            # The server could not check (database or Redis blip): 1011 makes
+                            # the client reconnect rather than read it as a sign-out.
+                            logger.warning(
+                                "voice live reauth unavailable; closing for retry",
+                                extra={"user": principal.user_id.value}, exc_info=True,
+                            )
+                            await websocket.close(code=_CLOSE_SERVER_ERROR)
                         return
                     if renewed.user_id != principal.user_id:
                         # A reauth renews *this* user's session; it is not a way to keep a socket

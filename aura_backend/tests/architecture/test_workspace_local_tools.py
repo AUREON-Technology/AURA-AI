@@ -33,9 +33,21 @@ _EXPECTED_WORKSPACE_LOCAL = {
     "edit_file",
     "write_files",
     "run_command",
+    # ADR-042: start ruff/mypy/eslint/prettier in the workspace and parse what they print. Nothing
+    # run_command cannot already do (and no --fix: they never write), so the same exemption applies.
+    "lint_code",
+    "check_format",
+    # ADR-050: Semgrep/Gitleaks/Bandit started in the workspace, read-only, with bundled rules and no
+    # network; findings are masked and secret values are never read from Gitleaks' report.
+    "scan_security",
+    # ADR-055: runs nvidia-smi (a read) in the workspace's own machine; reports, never allocates.
+    "gpu_status",
     "git_commit",
     "git_checkout_branch",
     "open_workspace",
+    # ADR-041: writes objects and one ref inside the workspace's own .git; touches no file, the
+    # index, HEAD or a branch. Same confinement git_commit has.
+    "workspace_snapshot",
 }
 
 #: Tools that leave the workspace. Each one reaches something that outlives the task -- a
@@ -44,6 +56,9 @@ _MUST_NOT_BE_WORKSPACE_LOCAL = {
     "clone_repository",
     # Destroys a checkout including unpushed work, and cannot be undone by re-running the step.
     "destroy_workspace",
+    # ADR-041: rewrites the working tree and removes files -- it throws uncommitted work away, so
+    # every restore is confirmed, under every autonomy profile.
+    "workspace_restore",
     "github_create_branch",
     "github_commit_files",
     "github_create_draft_pull_request",

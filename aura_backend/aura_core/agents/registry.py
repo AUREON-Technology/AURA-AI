@@ -164,6 +164,22 @@ _CODE_ANALYSIS_TOOLS = frozenset({
 })
 _DATA_ANALYSIS_TOOLS = frozenset({"analyze_logs", "validate_data_records", "check_model_drift"})
 
+# ADR-044 (`tools/open_pure.py`): fourteen more pure text-in/JSON-out tools, the same risk profile as
+# the analysis tools above. None is tagged `untrusted_content`, so `coding_agent` may hold them.
+_OPEN_PURE_CODE_TOOLS = frozenset({
+    "check_architecture", "check_diff_scope", "explain_source", "analyze_source_structure",
+    "parse_structured_data", "detect_file_type", "validate_workflow", "verify_acceptance_criteria",
+    "collect_verification_evidence", "generate_artifact", "apply_plan_feedback", "detect_ambiguity",
+    "generate_quiz",
+})
+_OPEN_PURE_PLANNING_TOOLS = frozenset({
+    "detect_ambiguity", "validate_workflow", "generate_artifact", "apply_plan_feedback",
+    "verify_acceptance_criteria", "summarize_for_mobile",
+})
+_OPEN_PURE_RESEARCH_TOOLS = frozenset({
+    "detect_file_type", "parse_structured_data", "explain_source", "generate_quiz", "detect_ambiguity",
+})
+
 # ADR-036 groups B and C. Both are `engineer_agent`-gated and side-effecting: B runs project code
 # (`tools/open_exec.py`), C acts on the user's paired desktop (`tools/desktop_ops.py`).
 _ENGINEER_OPEN_TOOLS = frozenset({
@@ -171,8 +187,61 @@ _ENGINEER_OPEN_TOOLS = frozenset({
     "docker_build", "docker_compose", "profile_python",
 })
 
+# ADR-042. `lint_code` / `check_format` (`tools/devtools.py`) run in the engineer's workspace through
+# the same runner as `run_command`. The file-reading and search tools the engineer lacked
+# (`tools/media.py`, `tools/websearch.py`) are each only registered when their own setting is present
+# (AURA_TOOLS_FILES_ROOT for the file readers, AURA_WEB_SEARCH_URL for search), so naming them here
+# is a grant, not a guarantee.
+_ENGINEER_DEVTOOLS = frozenset({"lint_code", "check_format", "scan_security", "gpu_status"})
+_DOCUMENT_READING_TOOLS = frozenset({"parse_document", "inspect_spreadsheet", "ocr_image", "compare_images"})
+_ENGINEER_READING_TOOLS = _DOCUMENT_READING_TOOLS | frozenset({
+    "web_search", "fetch_url", "analyze_image_requirements", "transcribe_audio",
+})
 
-def build_default_agent_registry() -> AgentRegistry:
+# ADR-045 (`tools/open_workspace.py`): the tools/open classes that read the user's workspace. Each file
+# tool is registered only with AURA_TOOLS_FILES_ROOT, `project_status` only with a run store, so naming
+# them here is a grant, not a guarantee. Engineer only: `coding_agent` holds no file-reading tool, and
+# these return workspace content (tagged untrusted_content), which that persona must never hold.
+_ENGINEER_WORKSPACE_TOOLS = frozenset({
+    "index_repository", "search_repository", "check_file_staleness", "load_project_conventions",
+    "load_project_skills", "read_notebook", "inspect_binary_file", "verify_backup", "project_status",
+})
+
+
+# ADR-046. `verify_release_health` (`tools/release.py`) is only registered when AURA_TOOLS_HTTP_ALLOWED_HOSTS
+# is set, so naming it here is a grant, not a guarantee. It returns other systems' text (untrusted_content),
+# so the Engineer holds it and the coding agent does not.
+_ENGINEER_RELEASE_TOOLS = frozenset({"verify_release_health"})
+
+# ADR-049. Registered only when the operator configured them (AURA_OPS_*), so naming them is a grant, not a
+# guarantee. The read tools return other systems' text (untrusted_content); the two deploy tools are
+# side-effecting, need `engineer_agent` and a confirmation on every call.
+_ENGINEER_OPS_TOOLS = frozenset({
+    "check_platform_health", "query_telemetry", "list_workflow_runs", "deploy_release", "rollback_release"})
+
+# ADR-046. Model drift against a stored history (`tools/drift.py`): `record_model_metric` writes the
+# owner's own metric series (side-effecting), `compare_model_metric` reads it. Always registered with the
+# analysis group, so unlike the release tool these names are guaranteed to exist.
+_ENGINEER_MODEL_MONITOR_TOOLS = frozenset({"record_model_metric", "compare_model_metric"})
+
+# ADR-053. Pure scoring over numbers and text the caller supplies (`tools/eval_tools.py`): no I/O, no model call.
+_EVAL_SCORING_TOOLS = frozenset({"score_retrieval", "score_answer", "compute_wer", "compare_to_baseline"})
+
+# ADR-054. Read-only questions over the caller's own knowledge graph (`tools/graph_tools.py`), owner taken from the
+# context. Their results quote documents (untrusted_content), so the coding agent does not hold them.
+_GRAPH_READ_TOOLS = frozenset({"graph_find_entities", "graph_neighbours", "graph_path"})
+
+# ADR-046. `research_topic` (`tools/research.py`) calls search_knowledge / web_search / fetch_url through the
+# registry as the caller. Its output is other people's text (untrusted_content), so only the personas that
+# already hold web_search / fetch_url get it, never the coding agent.
+_RESEARCH_TOOLS = frozenset({"research_topic"})
+
+# `tools/session_tools.py`: checkpoint the conversation and read it back. Written out rather than
+# imported, like the sets above (`tests/unit/test_agents.py` pins the names against the builder).
+_SESSION_TOOLS = frozenset({"save_session_checkpoint", "recall_session_checkpoint"})
+
+
+def build_default_agent_registry(*, engineer_token_budget: int | None = None) -> AgentRegistry:
     """The seven personas :data:`AGENT_PROMPT_IDS` used to define, now with real grants.
 
     Prompt template ids are read from ``AGENT_PROMPT_IDS`` rather than repeated here, so which
@@ -181,6 +250,10 @@ def build_default_agent_registry() -> AgentRegistry:
     persona's prompt already claims to do -- narrowing later, as more tools exist, is the expected
     direction; broadening a persona's grant is a decision to make deliberately, not a default to
     fall into.
+
+    ``engineer_token_budget`` (``AURA_ENGINEER_TOKEN_BUDGET``, ADR-039) gives the Engineer a run
+    token budget; ``None`` or ``0`` leaves it unset, which is what a caller that passes nothing
+    (tests, ``evaluation/agent_runs.py``) has always got.
     """
     return AgentRegistry(
         [
@@ -201,7 +274,7 @@ def build_default_agent_registry() -> AgentRegistry:
                     "create_calendar_event", "list_calendar_events",
                     "update_calendar_event", "delete_calendar_event",
                     "prioritize_tasks", "find_calendar_slots",
-                },
+                } | _OPEN_PURE_PLANNING_TOOLS,
                 risk_ceiling=ToolSensitivity.PERSONAL, memory_scope="shared",
             ),
             AgentSpec(
@@ -228,9 +301,9 @@ def build_default_agent_registry() -> AgentRegistry:
                 prompt_template_id=AGENT_PROMPT_IDS["research_agent"],
                 # fetch_url is CONFIDENTIAL (reaches the network) and opt-in server-side; naming
                 # it here only matters once a deployment configures AURA_HTTP_ALLOWED_HOSTS.
-                allowed_tools=_READ_TOOLS | _MEMORY_WRITE_TOOLS | {"calculator", "fetch_url"} | {
+                allowed_tools=_READ_TOOLS | _MEMORY_WRITE_TOOLS | {"calculator", "fetch_url", "web_search"} | {
                     "synthesize_research", "validate_data_records",
-                },
+                } | _DOCUMENT_READING_TOOLS | {"transcribe_audio"} | _OPEN_PURE_RESEARCH_TOOLS | _RESEARCH_TOOLS | _GRAPH_READ_TOOLS,
                 risk_ceiling=ToolSensitivity.CONFIDENTIAL, memory_scope="shared",
             ),
             AgentSpec(
@@ -238,7 +311,7 @@ def build_default_agent_registry() -> AgentRegistry:
                 prompt_template_id=AGENT_PROMPT_IDS["coding_agent"],
                 allowed_tools=(
                     _READ_TOOLS | _MEMORY_WRITE_TOOLS | {"calculator"}
-                    | _CODE_ANALYSIS_TOOLS | _DATA_ANALYSIS_TOOLS
+                    | _CODE_ANALYSIS_TOOLS | _DATA_ANALYSIS_TOOLS | _OPEN_PURE_CODE_TOOLS
                 ),
                 risk_ceiling=ToolSensitivity.PERSONAL, memory_scope="shared",
             ),
@@ -268,6 +341,8 @@ def build_default_agent_registry() -> AgentRegistry:
                     # sandbox and code-host builders register for the capability is granted.
                     "write_file", "write_files", "edit_file", "run_command", "clone_repository",
                     "git_diff", "git_commit", "git_checkout_branch", "git_status", "git_push",
+                    # Snapshot and roll back the workspace (ADR-041); restore always confirms.
+                    "workspace_snapshot", "list_workspace_snapshots", "workspace_restore",
                     # Persistent workspaces (ADR-013). Only registered when a deployment wires a
                     # workspace manager, so naming them here is a grant, not a guarantee they
                     # exist -- the same rule _READ_TOOLS' own comment states.
@@ -276,7 +351,9 @@ def build_default_agent_registry() -> AgentRegistry:
                     "github_get_issue", "github_get_pull_request",
                     "github_create_branch", "github_commit_files",
                     "github_create_draft_pull_request",
-                } | _CODE_ANALYSIS_TOOLS | _DATA_ANALYSIS_TOOLS | _ENGINEER_OPEN_TOOLS,
+                } | _CODE_ANALYSIS_TOOLS | _DATA_ANALYSIS_TOOLS | _ENGINEER_OPEN_TOOLS | _ENGINEER_DEVTOOLS
+                | _ENGINEER_READING_TOOLS | _SESSION_TOOLS | _OPEN_PURE_CODE_TOOLS | _OPEN_PURE_PLANNING_TOOLS
+                | _ENGINEER_WORKSPACE_TOOLS | _ENGINEER_RELEASE_TOOLS | _ENGINEER_OPS_TOOLS | _ENGINEER_MODEL_MONITOR_TOOLS | _EVAL_SCORING_TOOLS | _GRAPH_READ_TOOLS | _RESEARCH_TOOLS,
                 # Every tool the MCP bridge registers (`build_mcp_bridge_tools`). The prefix only
                 # decides *who* may ask: each such tool still needs the `engineer_agent`
                 # capability, and an unreviewed one stays CONFIDENTIAL + side-effecting, hence
@@ -301,6 +378,7 @@ def build_default_agent_registry() -> AgentRegistry:
                 # evidence says; token and time stay unset (the settings deadline governs time).
                 tool_budget=216,
                 risk_budget=864,
+                token_budget=engineer_token_budget or None,
                 memory_scope="engineer",
             ),
         ]

@@ -342,8 +342,19 @@ class InMemoryTelemetrySink:
         self._turns.extend(kept)
         return purged
 
+    async def recent_summary_by_model(self, *, since: datetime, min_turns: int = 1) -> dict[str, dict]:
+        """:meth:`recent_summary`'s figures per ``model`` (models with fewer than ``min_turns`` turns left out)."""
+        groups: dict[str, list] = {}
+        for t in self._turns:
+            if t.started_at >= since and t.model:
+                groups.setdefault(str(t.model), []).append(t)
+        return {m: self._summarise(ts, since) for m, ts in groups.items() if len(ts) >= max(1, min_turns)}
+
     async def recent_summary(self, *, since: datetime) -> dict:
-        turns = [t for t in self._turns if t.started_at >= since]
+        return self._summarise([t for t in self._turns if t.started_at >= since], since)
+
+    @staticmethod
+    def _summarise(turns: list, since: datetime) -> dict:
         if not turns:
             return {
                 "turns": 0, "since": since.astimezone(timezone.utc).isoformat(),

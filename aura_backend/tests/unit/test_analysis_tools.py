@@ -126,10 +126,14 @@ class TestPlannerPromptBudget:
 
         rendered = [_render_tool_line(t.spec.declaration()) for t in build_analysis_tools()]
         total = sum(len(line) + 1 for line in rendered)
-        assert total < 7_000, (
-            f"the analysis tools now take {total} chars of planner prompt (budget 7000, measured "
-            "6077). Shorten descriptions, drop parameters, or merge tools -- or raise the budget "
-            "deliberately and say why in ADR-036."
+        # ADR-046 raised this from 7_000 to 8_500: twelve existing tools gained operations
+        # (review depth, SQL schema, diagram derivation, OpenAPI diff, release checklist, metrics and
+        # incident analysis, data quality) instead of getting twelve new tool names, which is the
+        # cheaper way to add capability to this prompt. Measured at landing: 7_6xx.
+        assert total < 8_500, (
+            f"the analysis tools now take {total} chars of planner prompt (budget 8500, measured "
+            "5837 in ADR-036, about 7600 after ADR-046). Shorten descriptions, drop parameters, or "
+            "merge tools -- or raise the budget deliberately and say why in the ADR."
         )
 
     def test_no_single_tool_line_is_outsized(self) -> None:
@@ -392,7 +396,10 @@ class TestStructuredTextValidation:
         raw = await _TOOLS["validate_structured_text"].execute(
             {"content": _yaml_alias_bomb(), "data_format": "yaml"}, ctx
         )
-        assert json.loads(raw)["valid"] is True
+        out = json.loads(raw)
+        # The parser refuses a document whose aliases expand to too many nodes outright (it used to
+        # load it as shared references); either way nothing exponential reaches the result.
+        assert out["valid"] is False and "alias" in out["error"].lower()
         assert len(raw) < 2_000
 
     async def test_an_xml_entity_expansion_bomb_is_refused(self, ctx) -> None:

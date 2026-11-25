@@ -16,6 +16,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -131,8 +132,8 @@ class DiagnosticsService {
         // Windows' `npx` is a `.cmd` launcher only a shell finds.
         runInShell: true,
       );
-      final stdoutText = tree.process.stdout.transform(systemEncoding.decoder).join();
-      final stderrText = tree.process.stderr.transform(systemEncoding.decoder).join();
+      final stdoutText = tree.process.stdout.transform(const Utf8Decoder(allowMalformed: true)).join();
+      final stderrText = tree.process.stderr.transform(const Utf8Decoder(allowMalformed: true)).join();
       var timedOut = false;
       final exitCode = await tree.process.exitCode.timeout(timeout, onTimeout: () async {
         timedOut = true;

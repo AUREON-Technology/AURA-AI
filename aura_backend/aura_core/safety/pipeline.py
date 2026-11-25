@@ -28,6 +28,7 @@ from ..domain.safety import GuardAction, GuardStage, GuardVerdict, SafetyReport
 from ..observability.logging import get_logger
 from .guards import (
     Guard,
+    SecretGuard,
     default_context_guards,
     default_input_guards,
     default_output_guards,
@@ -75,9 +76,20 @@ class SafetyPipeline:
             GuardStage.CONTEXT: tuple(
                 context_guards if context_guards is not None else default_context_guards()
             ),
+            # Tool output is third-party content (the context chain: size, encoding, injection)
+            # AND may carry whatever the tool read -- a config file, an env dump, a connected
+            # system's record. ``SecretGuard`` declares this stage but was never in the chain, so
+            # credentials in a tool result reached the model and the transcript. It redacts
+            # rather than blocks: the rest of the output is still what the model asked for.
+            # NOT the size guard: every tool's result is already capped by ``ToolSpec.max_result_chars``
+            # with an explicit marker before it gets here, and a second, silent cut at the context
+            # limit (32k) drops text that a paged result (``read_file``'s 36k window) says it
+            # returned -- the next ``offset`` then skips it and the model never learns it is gone.
             GuardStage.TOOL_RESULT: tuple(
-                context_guards if context_guards is not None else default_context_guards()
-            ),
+                g
+                for g in (context_guards if context_guards is not None else default_context_guards())
+                if getattr(g, "name", "") not in ("size", "secret")
+            ) + (SecretGuard(block=False),),
             GuardStage.OUTPUT: tuple(
                 output_guards if output_guards is not None else default_output_guards()
             ),
@@ -96,12 +108,14 @@ class SafetyPipeline:
                 max_chars=settings.max_input_chars,
                 injection_threshold=settings.injection_threshold,
                 jailbreak_threshold=settings.jailbreak_threshold,
+                redact_secrets=getattr(settings, "redact_secrets_in_input", False),
             )
             if settings.input_guards_enabled
             else [],
             context_guards=default_context_guards(
                 max_chars=settings.max_input_chars,
                 injection_threshold=settings.injection_threshold,
+                redact_secrets=getattr(settings, "redact_secrets_in_context", False),
             )
             if settings.context_guards_enabled
             else [],

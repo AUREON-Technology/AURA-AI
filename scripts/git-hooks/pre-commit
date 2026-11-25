@@ -1,0 +1,4 @@
+#!/bin/sh
+# Blocks a commit that stages a credential. Install once per clone:
+#   git config core.hooksPath scripts/git-hooks
+exec python3 "$(git rev-parse --show-toplevel)/scripts/check_secrets.py" --staged

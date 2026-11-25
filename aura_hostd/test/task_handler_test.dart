@@ -278,6 +278,42 @@ void main() {
       expect(result['stderr'], contains('timeout'));
     });
 
+    test('stopRunningCommands ends a running command and everything it spawned', () async {
+      // Found by driving the real daemon: stopping it (SIGTERM, /shutdown) left the agent's
+      // commands running as the user, with nothing left to read them or stop them.
+      if (Platform.isWindows) return; // the check below reads the POSIX process table via pgrep.
+      roots.setTrusted(workspaceDir.path, true);
+      final marker = 'sleep 9${DateTime.now().microsecondsSinceEpoch % 1000000}.5';
+      final running = handler.run({
+        'command': ['sh', '-c', '$marker & $marker'],
+        'timeout_s': 60,
+      });
+      // Wait until the command is really in the process table.
+      for (var i = 0; i < 50 && Process.runSync('pgrep', ['-f', marker]).exitCode != 0; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      expect(Process.runSync('pgrep', ['-f', marker]).exitCode, 0, reason: 'the command never started');
+
+      await handler.stopRunningCommands();
+
+      final result = await running.timeout(const Duration(seconds: 10));
+      expect(result['exit_code'], isNot(0));
+      expect(Process.runSync('pgrep', ['-f', marker]).exitCode, 1, reason: 'something survived');
+    });
+
+    test('output that is not valid UTF-8 comes back (U+FFFD) instead of failing the call', () async {
+      // Found by driving the real daemon through the real gateway: `cat some.pdf` -- any command
+      // printing a byte that is not UTF-8 -- failed the whole run with "Invalid UTF-8 byte".
+      if (Platform.isWindows) return; // sh printf octal escapes; the Windows decoder never throws.
+      roots.setTrusted(workspaceDir.path, true);
+      final result = await handler.run({
+        'command': ['sh', '-c', r"printf 'before-\377\376-after\n'; echo to-err >&2; exit 4"],
+      });
+      expect(result['exit_code'], 4);
+      expect(result['stdout'], allOf(contains('before-'), contains('-after'), contains('�')));
+      expect(result['stderr'], contains('to-err'));
+    });
+
     test('a missing executable names itself, however the platform reports it', () async {
       // This asserted an RpcError unconditionally, and failed on every Linux host -- including
       // hostd-ci.yml's own `analyze-and-test` job, which nobody saw because that job has not
@@ -357,6 +393,56 @@ void main() {
       expect(stderrFromChunks, contains('err1'));
     });
 
+    group('command output is decoded as UTF-8 on every platform', () {
+      // `SystemEncoding` is the ANSI code page on Windows (cp1252 on most installs), so "مرحبا" and
+      // "café" came back as mojibake there, and the backend then fed that to the model. The wire is
+      // JSON, which is UTF-8 by definition: decode as UTF-8 everywhere.
+      test('non-ASCII text survives intact', () async {
+        roots.setTrusted(workspaceDir.path, true);
+        File(p.join(workspaceDir.path, 'hello.txt')).writeAsStringSync('café مرحبا 😀\n');
+        final result = await handler.run({
+          'command': ['sh', '-c', 'cat hello.txt'],
+          'timeout_s': 5.0,
+        });
+        expect(result['exit_code'], 0);
+        expect(result['stdout'], 'café مرحبا 😀\n');
+      });
+
+      test('a multibyte character split across two writes is not corrupted', () async {
+        roots.setTrusted(workspaceDir.path, true);
+        // 0xF0 0x9F 0x98 0x80 is U+1F600, emitted a byte at a time with a pause between.
+        final result = await handler.run({
+          'command': [
+            'sh', '-c',
+            r"printf '\360'; sleep 0.2; printf '\237'; sleep 0.2; printf '\230'; sleep 0.2; printf '\200'",
+          ],
+          'timeout_s': 10.0,
+        });
+        expect(result['stdout'], '😀');
+      });
+
+      test('bytes that are not UTF-8 become replacement characters instead of failing the call',
+          () async {
+        roots.setTrusted(workspaceDir.path, true);
+        final result = await handler.run({
+          'command': ['sh', '-c', r"printf 'caf\351 ok'"],
+          'timeout_s': 5.0,
+        });
+        expect(result['exit_code'], 0);
+        expect(result['stdout'], 'caf\u{FFFD} ok');
+      });
+
+      test('stderr is decoded the same way', () async {
+        roots.setTrusted(workspaceDir.path, true);
+        File(p.join(workspaceDir.path, 'hello.txt')).writeAsStringSync('خطأ\n');
+        final result = await handler.run({
+          'command': ['sh', '-c', 'cat hello.txt 1>&2'],
+          'timeout_s': 5.0,
+        });
+        expect(result['stderr'], contains('خطأ'));
+      });
+    }, testOn: '!windows');
+
     test('run works identically with no onChunk callback at all', () async {
       roots.setTrusted(workspaceDir.path, true);
       final result = await handler.run({
@@ -409,6 +495,51 @@ void main() {
       final result = await future;
       expect(result['exit_code'], 0);
       expect(Directory(p.join(workspaceDir.path, 'newdir')).existsSync(), isTrue);
+    });
+
+    test('the agent is told afterwards that the command was held, why, and that it was approved', () async {
+      final future = handler.run({
+        'command': ['sh', '-c', 'mkdir newdir'],
+        'timeout_s': 5.0,
+      });
+      approvals.respond(approvals.list().single.id, true);
+      final result = await future;
+      expect(result['exit_code'], 0);
+      expect(result['stderr'], contains('held for your approval'));
+      expect(result['stderr'], contains('approved after'));
+    });
+
+    test('a refusal says why the command was held and how long the human took', () async {
+      final future = handler.run({
+        'command': ['sh', '-c', 'mkdir newdir'],
+        'timeout_s': 5.0,
+      });
+      approvals.respond(approvals.list().single.id, false);
+      await expectLater(
+        future,
+        throwsA(isA<RpcError>().having(
+          (e) => e.message, 'message',
+          allOf(contains('rejected by the user after'), contains('held for approval because'), contains('mkdir newdir')),
+        )),
+      );
+    });
+
+    test('an approval nobody answers ends in a message that names the wait and the reason', () async {
+      final slow = ApprovalQueue(timeout: const Duration(milliseconds: 150));
+      handler = TaskHandler(roots, slow);
+      final future = handler.run({
+        'command': ['sh', '-c', 'mkdir newdir'],
+        'timeout_s': 5.0,
+      });
+      // Nobody answers: the queue's own (shortened) timer expires it.
+      await expectLater(
+        future,
+        throwsA(isA<RpcError>().having(
+          (e) => e.message, 'message',
+          allOf(contains('timed out'), contains('did not answer on their computer'), contains('held for approval because')),
+        )),
+      );
+      expect(Directory(p.join(workspaceDir.path, 'newdir')).existsSync(), isFalse);
     });
 
     test('rejecting a queued command throws and never runs it', () async {
@@ -870,6 +1001,28 @@ void main() {
   });
 
   group('timeout and cancel stop the whole process tree (G-16, SEC-09)', () {
+    // A child that leaves the process group (setsid, a double fork) is not reached by the group kill;
+    // it still carries the run's AURA_HOSTD_COMMAND_ID, and that is how it is found and stopped.
+    for (final (label, build) in <(String, String Function(String))>[
+      ('setsid', (m) => 'setsid $m & sleep 30'),
+      ('a double fork', (m) => '(setsid $m &); sleep 30'),
+      ('nohup', (m) => 'nohup setsid $m >/dev/null 2>&1 & sleep 30'),
+    ]) {
+      test('a child started with $label is stopped with its command on a timeout', () async {
+        roots.setTrusted(workspaceDir.path, true);
+        final tag = DateTime.now().microsecondsSinceEpoch;
+        final marker = 'sleep 7$tag';
+        final result = await handler.run({
+          'command': ['sh', '-c', build(marker)],
+          'timeout_s': 1.0,
+        });
+        expect(result['exit_code'], -1);
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+        final alive = await Process.run('pgrep', ['-f', marker]);
+        expect(alive.exitCode, isNot(0), reason: 'the child survived the timeout: ${alive.stdout}');
+      }, testOn: '!windows');
+    }
+
     // A zombie (state Z) is dead -- this container's PID 1 may never reap an orphan.
     bool alive(int pid) {
       final stat = File('/proc/$pid/stat');

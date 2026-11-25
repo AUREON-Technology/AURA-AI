@@ -18,6 +18,7 @@ Three behaviours that matter for tool calling specifically:
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any, Mapping
 
@@ -92,6 +93,14 @@ def coerce_value(spec: ParameterSpec, value: Any) -> Any:
         else:
             raise ValidationError(
                 f"parameter '{spec.name}' must be {expected}, got {type(value).__name__}"
+            )
+        if isinstance(number, float) and not math.isfinite(number):
+            # NaN compares False against every bound, so it would sail through `minimum` and
+            # `maximum` below, and an infinity passes whenever only the opposite bound is
+            # declared. Neither is a quantity a tool can act on; ``float("nan")`` and JSON's
+            # bare ``NaN``/``Infinity`` are both ways a model can emit one.
+            raise ValidationError(
+                f"parameter '{spec.name}' must be a finite {expected}, got {number}"
             )
         if expected == "integer":
             if isinstance(number, float) and not number.is_integer():
@@ -174,7 +183,9 @@ def validate_arguments(tool: ToolSpec, arguments: Mapping[str, Any]) -> dict[str
         )
 
     declared = {p.name: p for p in tool.parameters}
-    unknown = sorted(set(arguments) - set(declared))
+    # ``key=str``: a mapping that reached here from somewhere other than JSON can carry non-string
+    # keys, and sorting a mix of types raises ``TypeError`` instead of the refusal below.
+    unknown = sorted(set(arguments) - set(declared), key=str)
     if unknown:
         raise ValidationError(
             f"unknown parameter(s) for '{tool.name}': {unknown}",
@@ -218,6 +229,18 @@ def validate_arguments(tool: ToolSpec, arguments: Mapping[str, Any]) -> dict[str
     return validated
 
 
+def _has_template_token(value: str) -> bool:
+    """Whether ``value`` contains something :data:`_TEMPLATE_TOKEN` matches, in linear time.
+
+    ``_TEMPLATE_TOKEN.search`` is quadratic on a string of repeated ``${`` with no closing brace
+    (each start scans to the end): 160 000 characters took seven seconds of event loop, and a
+    megabyte-sized argument minutes. The pattern matches exactly when some ``${`` is followed,
+    anywhere later, by a ``}`` -- so the first ``${`` is the only start worth testing.
+    """
+    start = value.find("${")
+    return start != -1 and value.find("}", start + 2) != -1
+
+
 def _check_unresolved(spec: ParameterSpec, value: str) -> None:
     """Reject a string argument that is still a placeholder rather than real data.
 
@@ -232,7 +255,7 @@ def _check_unresolved(spec: ParameterSpec, value: str) -> None:
       ``repository="repo_for_README"`` into an immediate validation failure instead of a
       network round trip that comes back 404/400.
     """
-    if _TEMPLATE_TOKEN.search(value):
+    if _has_template_token(value):
         raise _validation_error(
             f"parameter '{spec.name}' still contains an unresolved reference "
             f"({value!r}); it should have been replaced with an earlier step's actual output "

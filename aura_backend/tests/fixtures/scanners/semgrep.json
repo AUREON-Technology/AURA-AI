@@ -1,0 +1,199 @@
+{
+ "version": "1.187.0",
+ "results": [
+  {
+   "check_id": "tmp.claude-0.-home-user-AURA-AI.ccf1b355-2445-5c18-8e65-7e37a2d0a973.scratchpad.rules.python.lang.security.audit.dangerous-subprocess-use-audit",
+   "path": "app.py",
+   "start": {
+    "line": 3,
+    "col": 5,
+    "offset": 51
+   },
+   "end": {
+    "line": 3,
+    "col": 37,
+    "offset": 83
+   },
+   "extra": {
+    "message": "Detected subprocess function 'call' without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection. Audit the use of this call to ensure it is not controllable by an external resource. You may consider using 'shlex.escape()'.",
+    "metadata": {
+     "owasp": [
+      "A01:2017 - Injection",
+      "A03:2021 - Injection",
+      "A05:2025 - Injection"
+     ],
+     "cwe": [
+      "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+     ],
+     "category": "security",
+     "confidence": "LOW"
+    },
+    "severity": "ERROR",
+    "lines": "requires login",
+    "validation_state": "NO_VALIDATOR"
+   }
+  },
+  {
+   "check_id": "tmp.claude-0.-home-user-AURA-AI.ccf1b355-2445-5c18-8e65-7e37a2d0a973.scratchpad.rules.python.lang.security.audit.subprocess-shell-true",
+   "path": "app.py",
+   "start": {
+    "line": 3,
+    "col": 32,
+    "offset": 78
+   },
+   "end": {
+    "line": 3,
+    "col": 36,
+    "offset": 82
+   },
+   "extra": {
+    "message": "Found 'subprocess' function 'call' with 'shell=True'. This is dangerous because this call will spawn the command using a shell process. Doing so propagates current shell settings and variables, which makes it much easier for a malicious actor to execute commands. Use 'shell=False' instead.",
+    "fix": "False",
+    "metadata": {
+     "owasp": [
+      "A01:2017 - Injection",
+      "A03:2021 - Injection",
+      "A05:2025 - Injection"
+     ],
+     "cwe": [
+      "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+     ],
+     "category": "security",
+     "confidence": "MEDIUM"
+    },
+    "severity": "ERROR",
+    "lines": "requires login",
+    "validation_state": "NO_VALIDATOR"
+   }
+  },
+  {
+   "check_id": "tmp.claude-0.-home-user-AURA-AI.ccf1b355-2445-5c18-8e65-7e37a2d0a973.scratchpad.rules.python.lang.security.insecure-hash-algorithm-md5",
+   "path": "app.py",
+   "start": {
+    "line": 4,
+    "col": 12,
+    "offset": 95
+   },
+   "end": {
+    "line": 4,
+    "col": 29,
+    "offset": 112
+   },
+   "extra": {
+    "message": "Detected MD5 hash algorithm which is considered insecure. MD5 is not collision resistant and is therefore not suitable as a cryptographic signature. Use SHA256 or SHA3 instead.",
+    "metadata": {
+     "cwe": [
+      "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+     ],
+     "owasp": [
+      "A03:2017 - Sensitive Data Exposure",
+      "A02:2021 - Cryptographic Failures",
+      "A04:2025 - Cryptographic Failures"
+     ],
+     "category": "security",
+     "confidence": "MEDIUM"
+    },
+    "severity": "WARNING",
+    "lines": "requires login",
+    "validation_state": "NO_VALIDATOR"
+   }
+  },
+  {
+   "check_id": "tmp.claude-0.-home-user-AURA-AI.ccf1b355-2445-5c18-8e65-7e37a2d0a973.scratchpad.rules.javascript.browser.security.eval-detected",
+   "path": "web.js",
+   "start": {
+    "line": 1,
+    "col": 13,
+    "offset": 12
+   },
+   "end": {
+    "line": 1,
+    "col": 28,
+    "offset": 27
+   },
+   "extra": {
+    "message": "Detected the use of eval(). eval() can be dangerous if used to evaluate dynamic content. If this content can be input from outside the program, this may be a code injection vulnerability. Ensure evaluated content is not definable by external sources.",
+    "metadata": {
+     "cwe": [
+      "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+     ],
+     "owasp": [
+      "A03:2021 - Injection",
+      "A05:2025 - Injection"
+     ],
+     "category": "security",
+     "confidence": "LOW"
+    },
+    "severity": "WARNING",
+    "lines": "requires login",
+    "validation_state": "NO_VALIDATOR"
+   }
+  },
+  {
+   "check_id": "tmp.claude-0.-home-user-AURA-AI.ccf1b355-2445-5c18-8e65-7e37a2d0a973.scratchpad.rules.javascript.browser.security.insecure-document-method",
+   "path": "web.js",
+   "start": {
+    "line": 2,
+    "col": 1,
+    "offset": 29
+   },
+   "end": {
+    "line": 2,
+    "col": 51,
+    "offset": 79
+   },
+   "extra": {
+    "message": "User controlled data in methods like `innerHTML`, `outerHTML` or `document.write` is an anti-pattern that can lead to XSS vulnerabilities",
+    "metadata": {
+     "cwe": [
+      "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+     ],
+     "owasp": [
+      "A07:2017 - Cross-Site Scripting (XSS)",
+      "A03:2021 - Injection",
+      "A05:2025 - Injection"
+     ],
+     "category": "security",
+     "confidence": "LOW"
+    },
+    "severity": "ERROR",
+    "lines": "requires login",
+    "validation_state": "NO_VALIDATOR"
+   }
+  },
+  {
+   "check_id": "tmp.claude-0.-home-user-AURA-AI.ccf1b355-2445-5c18-8e65-7e37a2d0a973.scratchpad.rules.javascript.browser.security.insecure-innerhtml",
+   "path": "web.js",
+   "start": {
+    "line": 2,
+    "col": 1,
+    "offset": 29
+   },
+   "end": {
+    "line": 2,
+    "col": 51,
+    "offset": 79
+   },
+   "extra": {
+    "message": "User controlled data in a `document.getElementById(\"a\").innerHTML` is an anti-pattern that can lead to XSS vulnerabilities",
+    "metadata": {
+     "cwe": [
+      "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+     ],
+     "owasp": [
+      "A07:2017 - Cross-Site Scripting (XSS)",
+      "A03:2021 - Injection",
+      "A05:2025 - Injection"
+     ],
+     "category": "security",
+     "confidence": "LOW"
+    },
+    "severity": "ERROR",
+    "lines": "requires login",
+    "validation_state": "NO_VALIDATOR"
+   }
+  }
+ ],
+ "errors": [],
+ "engine_requested": "OSS"
+}

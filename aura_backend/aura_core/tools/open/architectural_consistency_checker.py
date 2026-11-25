@@ -1,13 +1,4 @@
-"""Not exposed (ADR-036, 2026-11-21) -- deliberately NOT registered as a tool. Pure, but it needs a
-module-to-imports map the caller must assemble first, and its default layer names are generic.
-AURA's own layering is enforced by ``tests/architecture``. Not worth the planner prompt today.
-
-Reachable from no persona: nothing under ``aura_core`` imports this module, which
-``tests/architecture/test_open_tools_classification.py`` checks against
-``tools/open/_classification.py``. Kept as reference code; change that classification and
-ADR-036 before wiring it in.
-"""
-
+import re
 from typing import Any, Dict, List, Optional, Set
 
 
@@ -30,6 +21,28 @@ class ArchitecturalConsistencyChecker:
         "ui": 5,
     }
 
+    @staticmethod
+    def _segments(name: Any) -> List[str]:
+        """``aura_core.domain/x`` -> ``["aura_core", "domain", "x"]`` (lower-case)."""
+        return [seg for seg in re.split(r"[./\\:]+", str(name).lower()) if seg]
+
+    @classmethod
+    def _names_layer(cls, module: Any, layer: str, known: Set[str]) -> bool:
+        """Does ``module`` belong to / point at ``layer``?
+
+        Matching is on whole dotted segments (``aura_backend.api.routes`` is in ``api``;
+        ``rapid_client`` and ``building`` are not in ``api`` / ``ui``). Only when no segment of the
+        name is any known layer (``known``) do its ``_``/``-`` tokens count, so ``domain_models``
+        is ``domain`` but ``aura_core.domain.x`` is not also ``core``.
+        """
+        layer = str(layer).lower()
+        segments = cls._segments(module)
+        if layer in segments:
+            return True
+        if any(seg in known for seg in segments):
+            return False
+        return layer in {tok for seg in segments for tok in re.split(r"[_\-]+", seg) if tok}
+
     @classmethod
     def check_module_imports(
         cls,
@@ -37,15 +50,25 @@ class ArchitecturalConsistencyChecker:
         imported_modules: List[str],
         forbidden_rules: Optional[Dict[str, List[str]]] = None,
     ) -> Dict[str, Any]:
-        """Verify that imported_modules do not violate layer boundaries for module_name."""
+        """Verify that imported_modules do not violate layer boundaries for module_name.
+
+        ``rules_applied`` says how many layer rules matched ``module_name``; when it is 0 the module
+        is in no known layer and nothing was actually checked (``layer_known`` is False).
+        """
         rules = forbidden_rules if forbidden_rules is not None else cls.DEFAULT_FORBIDDEN_RULES
         violations: List[str] = []
+        imports = [i for i in imported_modules if isinstance(i, str)] if isinstance(imported_modules, (list, tuple)) else []
+        rules_applied = 0
+        known = {str(k).lower() for k in rules} | {
+            str(t).lower() for targets in rules.values() for t in targets if t
+        }
 
         for layer, forbidden_targets in rules.items():
-            if layer and layer in module_name:
-                for imp in imported_modules:
+            if layer and cls._names_layer(module_name, layer, known):
+                rules_applied += 1
+                for imp in imports:
                     for forbidden in forbidden_targets:
-                        if forbidden and forbidden in imp:
+                        if forbidden and cls._names_layer(imp, forbidden, known):
                             violations.append(
                                 f"Layer violation: '{module_name}' ({layer}) cannot import '{imp}' ({forbidden})."
                             )
@@ -55,6 +78,8 @@ class ArchitecturalConsistencyChecker:
             "is_consistent": len(violations) == 0,
             "violations_count": len(violations),
             "violations": violations,
+            "rules_applied": rules_applied,
+            "layer_known": rules_applied > 0,
         }
 
     @classmethod
@@ -63,7 +88,23 @@ class ArchitecturalConsistencyChecker:
         module_import_map: Dict[str, List[str]],
         forbidden_rules: Optional[Dict[str, List[str]]] = None,
     ) -> Dict[str, Any]:
-        """Audit multiple modules and return an aggregate architecture report."""
+        """Audit multiple modules and return an aggregate architecture report.
+
+        An empty (or non-mapping) input audited nothing, so it is never ``is_consistent``.
+        Modules that fall in no known layer are listed in ``unclassified_modules``: they were not
+        checked, whatever the verdict says about the others.
+        """
+        if not isinstance(module_import_map, dict) or not module_import_map:
+            return {
+                "is_consistent": False,
+                "error": "No modules were supplied, so nothing was audited.",
+                "modules_checked": 0,
+                "total_violations": 0,
+                "violations": [],
+                "unclassified_modules": [],
+                "module_reports": [],
+            }
+
         reports: List[Dict[str, Any]] = []
         all_violations: List[str] = []
 
@@ -72,13 +113,20 @@ class ArchitecturalConsistencyChecker:
             reports.append(res)
             all_violations.extend(res["violations"])
 
-        return {
+        unclassified = [r["module_name"] for r in reports if not r["layer_known"]]
+        result: Dict[str, Any] = {
             "is_consistent": len(all_violations) == 0,
             "modules_checked": len(module_import_map),
             "total_violations": len(all_violations),
             "violations": all_violations,
+            "unclassified_modules": unclassified,
             "module_reports": reports,
         }
+        if unclassified:
+            result["warnings"] = [
+                f"{len(unclassified)} module(s) belong to no known layer and were not checked."
+            ]
+        return result
 
     @classmethod
     def detect_layering_violations(
@@ -89,12 +137,21 @@ class ArchitecturalConsistencyChecker:
         """Verify that dependencies flow strictly from outer layers to inner layers (lower tier cannot import higher tier)."""
         tiers = layer_tiers or cls.DEFAULT_LAYER_TIERS
         violations: List[Dict[str, Any]] = []
+        if not isinstance(import_graph, dict):
+            return violations
 
         def get_tier(mod: str) -> Optional[int]:
-            mod_low = mod.lower()
-            for name, rank in tiers.items():
-                if name in mod_low:
-                    return rank
+            # Whole dotted segments first, in path order (``aura_core.api.x`` is ``api``, not the
+            # ``core`` that merely appears in the package name); ``_``/``-`` tokens as a fallback.
+            segments = cls._segments(mod)
+            ranked = {str(name).lower(): rank for name, rank in tiers.items()}
+            for seg in segments:
+                if seg in ranked:
+                    return ranked[seg]
+            for seg in segments:
+                for tok in re.split(r"[_\-]+", seg):
+                    if tok in ranked:
+                        return ranked[tok]
             return None
 
         for source_mod, targets in import_graph.items():
@@ -102,7 +159,7 @@ class ArchitecturalConsistencyChecker:
             if source_tier is None:
                 continue
 
-            for target_mod in targets:
+            for target_mod in targets if isinstance(targets, (list, tuple)) else []:
                 target_tier = get_tier(target_mod)
                 if target_tier is None:
                     continue
@@ -122,31 +179,43 @@ class ArchitecturalConsistencyChecker:
     def detect_circular_package_dependencies(
         import_graph: Dict[str, List[str]],
     ) -> List[List[str]]:
-        """Identify circular import cycles using DFS traversal."""
+        """Identify circular import cycles using an iterative DFS (no recursion limit on deep graphs).
+
+        Each cycle is a path that starts and ends on the same node, e.g. ``["A", "B", "C", "A"]``.
+        """
         cycles: List[List[str]] = []
-        visited: Set[str] = set()
-        rec_stack: Set[str] = set()
-        path: List[str] = []
+        if not isinstance(import_graph, dict):
+            return cycles
 
-        def dfs(node: str) -> None:
-            visited.add(node)
-            rec_stack.add(node)
-            path.append(node)
+        def neighbours(node: Any) -> List[Any]:
+            targets = import_graph.get(node, [])
+            return list(targets) if isinstance(targets, (list, tuple)) else []
 
-            for neighbor in import_graph.get(node, []):
+        visited: Set[Any] = set()
+        rec_stack: Set[Any] = set()
+        path: List[Any] = []
+
+        for root in list(import_graph.keys()):
+            if root in visited:
+                continue
+            visited.add(root)
+            rec_stack.add(root)
+            path.append(root)
+            stack = [iter(neighbours(root))]
+            while stack:
+                try:
+                    neighbor = next(stack[-1])
+                except StopIteration:
+                    stack.pop()
+                    rec_stack.discard(path.pop())
+                    continue
                 if neighbor not in visited:
-                    dfs(neighbor)
+                    visited.add(neighbor)
+                    rec_stack.add(neighbor)
+                    path.append(neighbor)
+                    stack.append(iter(neighbours(neighbor)))
                 elif neighbor in rec_stack:
-                    idx = path.index(neighbor)
-                    cycle = path[idx:] + [neighbor]
-                    cycles.append(cycle)
-
-            path.pop()
-            rec_stack.remove(node)
-
-        for mod in list(import_graph.keys()):
-            if mod not in visited:
-                dfs(mod)
+                    cycles.append(path[path.index(neighbor):] + [neighbor])
 
         return cycles
 
@@ -158,6 +227,8 @@ class ArchitecturalConsistencyChecker:
         cycles: Optional[List[List[str]]] = None,
     ) -> str:
         """Render a comprehensive architecture status report in Markdown."""
+        if not isinstance(audit_result, dict):
+            audit_result = {}
         lines = [
             "# Architectural Consistency & Boundary Audit",
             "",
@@ -186,7 +257,8 @@ class ArchitecturalConsistencyChecker:
                 "|---|---|---|---|---|",
             ])
             for lv in layer_violations:
-                lines.append(f"| `{lv['source']}` | {lv['source_tier']} | `{lv['target']}` | {lv['target_tier']} | {lv['description']} |")
+                detail = str(lv["description"]).replace("|", "\\|")
+                lines.append(f"| `{lv['source']}` | {lv['source_tier']} | `{lv['target']}` | {lv['target_tier']} | {detail} |")
             lines.append("")
 
         if cycles:

@@ -76,7 +76,8 @@ def _body(root: Path, *, label: str = "aura.sandbox.oneshot", network: str = _NE
             "Dns": ["127.0.0.11"], "SecurityOpt": ["no-new-privileges"],
             "Binds": [f"{workspace}:/workspace:rw"],
             "Ulimits": [{"Name": "nofile", "Soft": 4096, "Hard": 4096}],
-            "Tmpfs": {"/tmp": "rw,nosuid,nodev,noexec,size=256m"},
+            "Tmpfs": {"/tmp": "rw,nosuid,nodev,noexec,size=256m,mode=1777",
+                      "/home/aura": "rw,nosuid,nodev,size=64m,uid=10001,gid=10001,mode=0700"},
             "PidsLimit": 512, "NanoCpus": 1000000000,
         },
         "NetworkingConfig": {network: None},  # docker-py 7.2's own (odd) encoding

@@ -661,7 +661,8 @@ String? protectedGitWriteReason(String absolutePath) => protectedGitWriteRefusal
 
 /// [protectedGitWriteReason] with its stable machine code: `protected_git_dir_file` for a `.git`
 /// file, `protected_git_hooks` for any hooks directory under `.git` (submodules' included) and
-/// `protected_git_config` for `config`/`config.worktree` anywhere under `.git`.
+/// `protected_git_config` for `config`/`config.worktree` anywhere under `.git`, and
+/// `protected_git_internals` for anything else inside it (HEAD, index, refs, objects, ...).
 PolicyRefusal? protectedGitWriteRefusal(String absolutePath) {
   final parts = absolutePath
       .split(RegExp(r'[/\\]'))
@@ -691,6 +692,13 @@ PolicyRefusal? protectedGitWriteRefusal(String absolutePath) {
       code: HostdErrorCode.protectedGitConfig,
       reason: 'writes to git config files under .git are refused: they can point git at a program '
           'to run (core.hooksPath, core.fsmonitor, filter drivers)',
+    );
+  }
+  if (inside.isNotEmpty) {
+    return (
+      code: HostdErrorCode.protectedGitInternals,
+      reason: 'writes inside .git are refused: HEAD, the index, refs and objects are the '
+          'repository\'s own state, and a file write is not how to change them -- use git commands',
     );
   }
   return null;

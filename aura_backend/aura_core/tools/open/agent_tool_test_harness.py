@@ -10,23 +10,53 @@ Kept for reference only: nothing under ``aura_core`` may import it
 
 import asyncio
 import inspect
+import json
 import random
+import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
 
 _MAX_OUTPUT_PREVIEW_CHARS = 2048
+_MAX_FUZZ_ITERATIONS = 1000
+
+
+class _Outcome:
+    """Result of one tool invocation: a value, an exception, or a timeout."""
+
+    __slots__ = ("value", "exc", "timed_out")
+
+    def __init__(self) -> None:
+        self.value: Any = None
+        self.exc: Optional[BaseException] = None
+        self.timed_out = False
+
+
+async def _await(awaitable: Any, timeout: Optional[float]) -> Any:
+    if timeout is None:
+        return await awaitable
+    return await asyncio.wait_for(awaitable, timeout)
+
+
+def _md_cell(value: Any) -> str:
+    """Text that cannot break out of a Markdown table cell."""
+    return str(value).replace("|", "\\|").replace("\r", " ").replace("\n", " ").replace("`", "'")
 
 
 class AgentToolTestHarness:
     """Harness for testing agent tool callables, input schemas, return types, fuzzing resilience, and latency.
 
-    Bugs fixed (v2):
-    - run_tool_case now detects when a tool returns a coroutine (i.e. the tool is async)
-      and runs it via asyncio instead of silently returning it as "passed".
-    - output_preview is truncated to _MAX_OUTPUT_PREVIEW_CHARS characters to avoid
-      returning arbitrarily large blobs in the result dict.
-    - timeout_seconds parameter added to run_tool_case; execution is cancelled if the
-      limit is exceeded (works for both sync and async callables).
+    Superseded by ``evaluation/harness.py`` and not wired into the platform (ADR-036). It runs the
+    callable it is given, in this process: it is a test helper, not a sandbox. Reads no files.
+
+    Behaviour worth knowing:
+    - a tool that returns a coroutine is run to completion on its own event loop (it is never
+      reported as "passed" without having run);
+    - ``timeout_seconds`` is real: the call runs on a worker thread and the case fails with stage
+      ``timeout`` when it is exceeded. An ``async`` tool is cancelled; a *synchronous* tool cannot be
+      interrupted, so its thread is left running (``still_running: True``) -- the result says so
+      rather than pretending it stopped;
+    - an empty suite is not a pass, and neither is a fuzz run that fuzzed nothing;
+    - ``output_preview`` is bounded and JSON-safe.
     """
 
     @staticmethod
@@ -35,11 +65,14 @@ class AgentToolTestHarness:
         required_keys: List[str],
     ) -> Dict[str, Any]:
         """Check that all required input keys exist in the test payload."""
-        missing = [k for k in required_keys if k not in payload]
+        if not isinstance(payload, dict):
+            return {"valid": False, "missing_keys": list(required_keys or []), "provided_keys": [],
+                    "error": "payload must be a dict."}
+        missing = [k for k in (required_keys or []) if k not in payload]
         return {
             "valid": len(missing) == 0,
             "missing_keys": missing,
-            "provided_keys": sorted(payload.keys()),
+            "provided_keys": sorted(str(k) for k in payload.keys()),
         }
 
     # ------------------------------------------------------------------
@@ -48,27 +81,74 @@ class AgentToolTestHarness:
 
     @staticmethod
     def _truncate_preview(output: Any, max_chars: int = _MAX_OUTPUT_PREVIEW_CHARS) -> Any:
-        """Return a safely-sized preview of tool output."""
-        if isinstance(output, str) and len(output) > max_chars:
-            return output[:max_chars] + f"…[truncated {len(output) - max_chars} chars]"
-        return output
+        """Return a safely-sized, JSON-safe preview of tool output."""
+        if isinstance(output, str):
+            if len(output) > max_chars:
+                return output[:max_chars] + f"…[truncated {len(output) - max_chars} chars]"
+            return output
+        try:
+            encoded = json.dumps(output)
+        except (TypeError, ValueError):
+            encoded = None
+        if encoded is not None:
+            if len(encoded) <= max_chars:
+                return output
+            return encoded[:max_chars] + f"…[truncated {len(encoded) - max_chars} chars]"
+        text = repr(output)
+        if len(text) > max_chars:
+            return text[:max_chars] + f"…[truncated {len(text) - max_chars} chars]"
+        return text
 
     @staticmethod
-    def _run_coroutine(coro: Any) -> Any:
-        """Run a coroutine from synchronous code, reusing an existing loop if possible."""
+    def _run_coroutine(coro: Any, timeout: Optional[float] = None) -> Any:
+        """Run a coroutine to completion from synchronous code on a fresh event loop.
+
+        Inside a running loop the coroutine runs on a worker thread with its own loop (the old
+        ``get_event_loop`` path blocked the running loop and left an unclosed one behind).
+        """
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # We are already inside an event loop (e.g. Jupyter / some test runners).
-                # We cannot call run_until_complete; use a new thread instead.
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    future = pool.submit(asyncio.run, coro)
-                    return future.result()
-            return loop.run_until_complete(coro)
+            asyncio.get_running_loop()
         except RuntimeError:
-            # No current event loop – create one.
-            return asyncio.run(coro)
+            return asyncio.run(_await(coro, timeout))
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, _await(coro, timeout)).result()
+
+    @classmethod
+    def _execute(cls, tool_callable: Callable[..., Any], data: Dict[str, Any],
+                 timeout: Optional[float]) -> _Outcome:
+        """Call the tool (sync or async) on a worker thread, bounded by ``timeout``."""
+        outcome = _Outcome()
+
+        def target() -> None:
+            try:
+                out = tool_callable(**data)
+                if inspect.isawaitable(out):
+                    out = asyncio.run(_await(out, timeout))
+                outcome.value = out
+            except asyncio.TimeoutError:
+                outcome.timed_out = True
+            except BaseException as exc:  # SystemExit / CancelledError from a tool must not escape
+                outcome.exc = exc
+
+        worker = threading.Thread(target=target, daemon=True)
+        worker.start()
+        worker.join(timeout)
+        if worker.is_alive():
+            outcome.timed_out = True
+        return outcome
+
+    @staticmethod
+    def _clean_timeout(timeout_seconds: Any) -> Optional[float]:
+        if timeout_seconds is None:
+            return None
+        try:
+            seconds = float(timeout_seconds)
+        except (TypeError, ValueError):
+            return None
+        if seconds != seconds or seconds <= 0:
+            return None
+        return seconds
 
     # ------------------------------------------------------------------
     # Public API
@@ -97,7 +177,14 @@ class AgentToolTestHarness:
                 "error": "Provided tool_callable is not callable.",
             }
 
-        data = payload or {}
+        data = {} if payload is None else payload
+        if not isinstance(data, dict) or not all(isinstance(k, str) for k in data):
+            return {
+                "tool_name": tool_name,
+                "passed": False,
+                "stage": "input_validation",
+                "error": "payload must be a dict with string keys.",
+            }
         key_check = cls.validate_payload_keys(data, required_keys or [])
         if not key_check["valid"]:
             return {
@@ -107,38 +194,22 @@ class AgentToolTestHarness:
                 "key_check": key_check,
             }
 
+        timeout = cls._clean_timeout(timeout_seconds)
         start = time.perf_counter()
-        try:
-            raw_output = tool_callable(**data)
+        outcome = cls._execute(tool_callable, data, timeout)
+        duration_ms = round((time.perf_counter() - start) * 1000.0, 4)
 
-            # --- async tool detection & execution ---
-            if inspect.iscoroutine(raw_output):
-                try:
-                    raw_output = cls._run_coroutine(raw_output)
-                except Exception as async_exc:
-                    duration_ms = round((time.perf_counter() - start) * 1000.0, 4)
-                    return {
-                        "tool_name": tool_name,
-                        "passed": False,
-                        "stage": "execution",
-                        "duration_ms": duration_ms,
-                        "error": f"{type(async_exc).__name__}: {async_exc}",
-                    }
-
-            duration_ms = round((time.perf_counter() - start) * 1000.0, 4)
-
-            # --- optional timeout check (post-hoc for sync tools) ---
-            if timeout_seconds is not None and (duration_ms / 1000.0) > timeout_seconds:
-                return {
-                    "tool_name": tool_name,
-                    "passed": False,
-                    "stage": "timeout",
-                    "duration_ms": duration_ms,
-                    "error": f"Execution exceeded timeout of {timeout_seconds}s.",
-                }
-
-        except Exception as exc:
-            duration_ms = round((time.perf_counter() - start) * 1000.0, 4)
+        if outcome.timed_out:
+            return {
+                "tool_name": tool_name,
+                "passed": False,
+                "stage": "timeout",
+                "duration_ms": duration_ms,
+                "error": f"Execution exceeded timeout of {timeout}s.",
+                "still_running": not inspect.iscoroutinefunction(tool_callable),
+            }
+        if outcome.exc is not None:
+            exc = outcome.exc
             return {
                 "tool_name": tool_name,
                 "passed": False,
@@ -147,9 +218,14 @@ class AgentToolTestHarness:
                 "error": f"{type(exc).__name__}: {exc}",
             }
 
+        raw_output = outcome.value
         type_ok = True
         if expected_return_type is not None:
-            type_ok = isinstance(raw_output, expected_return_type)
+            try:
+                type_ok = isinstance(raw_output, expected_return_type)
+            except TypeError:
+                return {"tool_name": tool_name, "passed": False, "stage": "setup",
+                        "error": "expected_return_type must be a type."}
 
         return {
             "tool_name": tool_name,
@@ -162,9 +238,16 @@ class AgentToolTestHarness:
 
     @classmethod
     def run_suite(cls, cases: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Run a list of tool test case definitions and summarize pass/fail counts."""
+        """Run a list of tool test case definitions and summarize pass/fail counts.
+
+        ``all_passed`` is False for an empty suite: nothing ran, so nothing passed.
+        """
         results: List[Dict[str, Any]] = []
-        for case in cases:
+        for case in cases if isinstance(cases, (list, tuple)) else []:
+            if not isinstance(case, dict):
+                results.append({"tool_name": "unnamed_tool", "passed": False, "stage": "setup",
+                                "error": "Test case must be a dict."})
+                continue
             fn = case.get("callable")
             if fn is None:
                 results.append({
@@ -186,17 +269,23 @@ class AgentToolTestHarness:
             results.append(res)
 
         passed_count = sum(1 for r in results if r.get("passed"))
-        return {
+        summary: Dict[str, Any] = {
             "total_cases": len(results),
             "passed_count": passed_count,
             "failed_count": len(results) - passed_count,
-            "all_passed": passed_count == len(results),
+            "all_passed": bool(results) and passed_count == len(results),
             "results": results,
         }
+        if not results:
+            summary["error"] = "No test cases were run."
+        return summary
 
     @staticmethod
     def validate_tool_schema(tool_schema_dict: Dict[str, Any]) -> Dict[str, Any]:
         """Validate whether a tool dictionary adheres to OpenAI / Anthropic / Gemini tool schema specifications."""
+        if not isinstance(tool_schema_dict, dict):
+            return {"valid": False, "tool_name": "unknown", "issues_count": 1,
+                    "issues": ["Tool definition must be a dictionary"]}
         issues: List[str] = []
 
         name = tool_schema_dict.get("name")
@@ -216,7 +305,7 @@ class AgentToolTestHarness:
 
         return {
             "valid": len(issues) == 0,
-            "tool_name": name or "unknown",
+            "tool_name": name if isinstance(name, str) and name else "unknown",
             "issues_count": len(issues),
             "issues": issues,
         }
@@ -227,8 +316,15 @@ class AgentToolTestHarness:
         tool_callable: Callable[..., Any],
         base_payload: Dict[str, Any],
         iterations: int = 10,
+        *,
+        timeout_seconds: float = 10.0,
     ) -> Dict[str, Any]:
-        """Fuzz test a tool with unexpected edge cases (None, large strings, negative numbers) to ensure graceful error handling."""
+        """Fuzz test a tool with unexpected edge cases (None, large strings, negative numbers) to ensure graceful error handling.
+
+        One argument per trial is replaced by a hostile value. A trial that hangs past
+        ``timeout_seconds`` counts as a crash. ``resilient`` is False when nothing could be fuzzed (an
+        empty ``base_payload`` or ``iterations < 1``): that is "not tested", not "robust".
+        """
         fuzz_values = [
             None,
             "",
@@ -243,47 +339,70 @@ class AgentToolTestHarness:
             False,
         ]
 
+        if not callable(tool_callable):
+            return {"resilient": False, "total_fuzz_trials": 0, "crashes_count": 0,
+                    "handled_errors_count": 0, "crashes": [], "error": "tool_callable is not callable."}
+        if not isinstance(base_payload, dict) or not base_payload:
+            return {"resilient": False, "total_fuzz_trials": 0, "crashes_count": 0,
+                    "handled_errors_count": 0, "crashes": [],
+                    "error": "base_payload must be a non-empty dict; there is nothing to fuzz."}
+        try:
+            trials = max(0, min(int(iterations), _MAX_FUZZ_ITERATIONS))
+        except (TypeError, ValueError):
+            trials = 10
+        timeout = cls._clean_timeout(timeout_seconds) or 10.0
+
         crashes: List[Dict[str, Any]] = []
         handled_errors: List[Dict[str, Any]] = []
 
-        for i in range(iterations):
+        for i in range(trials):
             fuzzed_payload = dict(base_payload)
-            if fuzzed_payload:
-                target_key = random.choice(list(fuzzed_payload.keys()))
-                fuzzed_payload[target_key] = random.choice(fuzz_values)
+            target_key = random.choice(list(fuzzed_payload.keys()))
+            fuzzed_payload[target_key] = random.choice(fuzz_values)
 
-            try:
-                raw_out = tool_callable(**fuzzed_payload)
-                # Handle async tools
-                if inspect.iscoroutine(raw_out):
-                    raw_out = cls._run_coroutine(raw_out)
-                if isinstance(raw_out, dict) and raw_out.get("error"):
-                    handled_errors.append({"iteration": i, "payload": fuzzed_payload, "result": raw_out})
-            except (ValueError, TypeError, KeyError) as handled_exc:
-                handled_errors.append({"iteration": i, "payload": fuzzed_payload, "exception": str(handled_exc)})
-            except Exception as crash_exc:
+            outcome = cls._execute(tool_callable, {str(k): v for k, v in fuzzed_payload.items()}, timeout)
+            if outcome.timed_out:
                 crashes.append({
                     "iteration": i,
-                    "payload": fuzzed_payload,
-                    "unhandled_exception": f"{type(crash_exc).__name__}: {crash_exc}",
+                    "payload": cls._truncate_preview(fuzzed_payload),
+                    "unhandled_exception": f"Timed out after {timeout}s",
                 })
+            elif isinstance(outcome.exc, (ValueError, TypeError, KeyError)):
+                handled_errors.append({"iteration": i, "payload": fuzzed_payload, "exception": str(outcome.exc)})
+            elif outcome.exc is not None:
+                crashes.append({
+                    "iteration": i,
+                    "payload": cls._truncate_preview(fuzzed_payload),
+                    "unhandled_exception": f"{type(outcome.exc).__name__}: {outcome.exc}",
+                })
+            elif isinstance(outcome.value, dict) and outcome.value.get("error"):
+                handled_errors.append({"iteration": i, "payload": fuzzed_payload, "result": outcome.value})
 
-        return {
-            "resilient": len(crashes) == 0,
-            "total_fuzz_trials": iterations,
+        result: Dict[str, Any] = {
+            "resilient": trials > 0 and len(crashes) == 0,
+            "total_fuzz_trials": trials,
             "crashes_count": len(crashes),
             "handled_errors_count": len(handled_errors),
             "crashes": crashes,
         }
+        if trials == 0:
+            result["error"] = "No fuzz trials were run."
+        return result
 
     @classmethod
     def generate_tool_test_report(cls, suite_summary: Dict[str, Any]) -> str:
         """Render a Markdown test summary table for agent tools."""
+        if not isinstance(suite_summary, dict):
+            return "# Agent Tool Harness Test Report\n\n**Suite Result:** FAILED (no valid summary was given)"
+        total = suite_summary.get("total_cases", 0)
+        verdict = "PASSED" if suite_summary.get("all_passed") is True and total else (
+            "NO TESTS RUN" if not total else "FAILED"
+        )
         lines = [
             "# Agent Tool Harness Test Report",
             "",
-            f"**Suite Result:** {'PASSED' if suite_summary.get('all_passed') else 'FAILED'}",
-            f"**Total Tested:** {suite_summary.get('total_cases', 0)}",
+            f"**Suite Result:** {verdict}",
+            f"**Total Tested:** {total}",
             f"**Passed:** {suite_summary.get('passed_count', 0)}",
             f"**Failed:** {suite_summary.get('failed_count', 0)}",
             "",
@@ -291,10 +410,13 @@ class AgentToolTestHarness:
             "|---|---|---|---|---|",
         ]
 
-        for r in suite_summary.get("results", []):
+        for r in suite_summary.get("results", []) or []:
+            if not isinstance(r, dict):
+                continue
             passed_emoji = "✅" if r.get("passed") else "❌"
             lines.append(
-                f"| `{r.get('tool_name')}` | `{r.get('stage')}` | {passed_emoji} | {r.get('duration_ms', 'N/A')} | {r.get('error', 'OK')} |"
+                f"| `{_md_cell(r.get('tool_name'))}` | `{_md_cell(r.get('stage'))}` | {passed_emoji} | "
+                f"{_md_cell(r.get('duration_ms', 'N/A'))} | {_md_cell(r.get('error', 'OK'))} |"
             )
 
         return "\n".join(lines)

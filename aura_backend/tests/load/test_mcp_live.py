@@ -69,7 +69,22 @@ class TestMcpBridge:
 
     async def test_call_tool_round_trips_through_a_real_subprocess(self, mcp_client) -> None:
         result = await mcp_client.call_tool("echo", "echo", {"text": "hello from the live test"})
-        assert result == "echo: hello from the live test"
+        # mcp 2.x servers return the tool's value as structured content ({"result": ...}) alongside the
+        # text block, and the bridge hands structured content on as JSON so ToolRegistry can check it
+        # against the tool's output schema (ADR-025). Older SDKs returned only the text.
+        import json
+
+        try:
+            value = json.loads(result)["result"]
+        except (ValueError, KeyError, TypeError):
+            value = result
+        assert value == "echo: hello from the live test"
+
+    async def test_the_discovered_tool_carries_its_input_schema(self, mcp_client) -> None:
+        """Regression: against mcp 2.x the schema fields were read under their 1.x names, so every
+        bridged tool registered with no parameters."""
+        (descriptor,) = await mcp_client.list_tools()
+        assert "text" in (descriptor.input_schema or {}).get("properties", {})
 
     async def test_unknown_server_raises(self, mcp_client) -> None:
         with pytest.raises(McpConnectionError, match="unknown MCP server"):

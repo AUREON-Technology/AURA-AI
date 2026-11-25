@@ -1,14 +1,20 @@
-"""Files connector (AP10): CSV and JSON exports read as tables, documents fed to project knowledge.
+"""Files connector (AP10): CSV, TSV, JSON and XLSX exports read as tables, documents fed to project knowledge.
 
 A ``files`` connector's endpoint is a directory, relative to the operator-configured root
-(``AURA_ADAPTATION_FILES_ROOT``). Each top-level ``*.csv`` or ``*.json`` file in it is one table in
-the ``files`` schema, named after the file. Each top-level Markdown, plain-text, HTML or PDF file is
-a DOCUMENT artifact (``document:<file name>``) carrying its format, size and SHA-256 -- never its
-text; :meth:`FilesConnector.fetch_document` hands the bytes to project knowledge
-(``adaptation/knowledge.py``) once a blueprint naming them is deployed. Office formats (DOCX,
-XLSX, ...) are reported as ``unsupported_format`` issues: reading them needs a parser this platform
-does not pin. With no root configured the kind is not offered at all, so a Super Admin cannot point
-AURA at an arbitrary path on its own host.
+(``AURA_ADAPTATION_FILES_ROOT``). Each top-level ``*.csv``, ``*.tsv`` or ``*.json`` file in it is one
+table in the ``files`` schema, named after the file. A top-level ``*.xlsx`` workbook is one table per
+worksheet: named after the file when it has a single sheet, ``<file>__<sheet>`` when it has several.
+Each top-level Markdown, plain-text, HTML, PDF, DOCX or PPTX file is a DOCUMENT artifact
+(``document:<file name>``) carrying its format, size and SHA-256 -- never its text;
+:meth:`FilesConnector.fetch_document` hands the bytes to project knowledge
+(``adaptation/knowledge.py``) once a blueprint naming them is deployed. The legacy binary formats
+(``.doc``, ``.xls``, ``.ppt``) and ODF/RTF are reported as ``unsupported_format`` issues: reading
+them needs a parser this platform does not pin. With no root configured the kind is not offered at
+all, so a Super Admin cannot point AURA at an arbitrary path on its own host.
+
+OOXML (DOCX/PPTX/XLSX) is parsed with the standard library only, under hard decompression and
+structure budgets (``knowledge/ooxml.py``); a workbook over a budget or with an entity declaration
+is reported as ``unparseable``, never read partway.
 
 Discovery builds the same *catalog snapshot* the PostgreSQL connector captures -- relations,
 columns, keys, profiles -- and maps it with :func:`postgres_catalog.artifacts_from_catalog`, so the
@@ -19,6 +25,11 @@ PostgreSQL. Nothing here renders or executes SQL text.
 
 What is inferred, and how strictly:
 
+* **Spreadsheet cells** keep their type: a number is a number, a TRUE/FALSE cell a boolean, a
+  shared or inline string text, and a date-formatted number an ISO date (or timestamp, when any
+  value in its column carries a time). The **header row** is the first row whose cells are mostly
+  text and that is about as wide as the sheet's widest rows, so a title line above the table is
+  skipped; a sheet with no such row gets ``column_1``, ``column_2``, ... and keeps every row as data.
 * **Column types** from every value in the file: a column is ``boolean``, ``bigint``, ``numeric``,
   ``date`` or ``timestamp`` only when *every* non-empty value parses as one; anything mixed is
   ``text``. A number with a leading zero (``00123``) stays text -- it is a code, not a quantity.
@@ -38,7 +49,6 @@ from __future__ import annotations
 
 import csv
 import hashlib
-import io
 import json
 import os
 import re
@@ -49,10 +59,24 @@ from typing import Any, Mapping, Sequence
 
 from ...domain.connectors import CallerIdentity, ConnectorDescriptor, ConnectorHealth, Credential, HealthStatus
 from ...domain.discovery import ArtifactKind, DiscoveryBudget, DiscoveryIssue, DiscoveryReport, RawArtifact, SourceDocument
-from ...domain.errors import DependencyUnavailableError, NotFoundError, ToolExecutionError, ValidationError
+from ...domain.errors import (
+    DependencyUnavailableError,
+    KnowledgeError,
+    NotFoundError,
+    ToolExecutionError,
+    ValidationError,
+)
 from ...domain.templates import ReadTemplate
 from ...domain.untrusted import UntrustedText
 from ...observability.logging import get_logger
+from ...knowledge.tabular import (
+    HEADER_SCAN as _HEADER_SCAN,
+    coerce as _coerce,
+    infer_type as _infer_type,
+    normalise_sheet_dates as _normalise_sheet_dates,
+    read_delimited as _read_csv,
+    sheet_header as _sheet_header,
+)
 from .memory import InMemoryReadConnector
 from .postgres_catalog import _CATEGORICAL_MAX_DISTINCT, _MAX_VALUE_CHARS, _PATTERNS, artifacts_from_catalog
 
@@ -67,12 +91,12 @@ CATALOG_EXTRACTOR = "files_catalog"
 PROFILE_EXTRACTOR = "files_profile"
 DOCUMENT_EXTRACTOR = "files_documents"
 
-_SUFFIXES = (".csv", ".json")
+_SUFFIXES = (".csv", ".tsv", ".json", ".xlsx")
 #: Document files for project knowledge, by suffix -> ``SourceDocument.format``.
 DOCUMENT_SUFFIXES = {".md": "markdown", ".markdown": "markdown", ".txt": "text", ".html": "html",
-                      ".htm": "html", ".pdf": "pdf"}
+                      ".htm": "html", ".pdf": "pdf", ".docx": "docx", ".pptx": "pptx"}
 #: Recognised, but unreadable without a parser the lockfile does not carry: reported, not skipped silently.
-_UNSUPPORTED_DOCUMENTS = frozenset({".docx", ".doc", ".odt", ".rtf", ".pptx", ".ppt", ".xlsx", ".xls"})
+_UNSUPPORTED_DOCUMENTS = frozenset({".doc", ".odt", ".rtf", ".ppt", ".xls"})
 _MAX_DOCUMENT_NAME = 200
 #: A file larger than this is skipped with an issue rather than read into memory.
 MAX_FILE_BYTES = 20 * 1024 * 1024
@@ -81,13 +105,6 @@ MAX_ROWS = 100_000
 _MAX_IDENT = 63
 #: The PostgreSQL connector's pattern rules, as Python regexes (its POSIX class spelled ``\s``).
 _PY_PATTERNS = tuple((name, re.compile(regex.replace("[:space:]", r"\s"))) for name, regex in _PATTERNS)
-
-_INTEGER = re.compile(r"^-?(0|[1-9][0-9]*)$")
-_NUMBER = re.compile(r"^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][-+]?[0-9]+)?$")
-_DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
-_TIMESTAMP = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]+)?)?(Z|[+-][0-9]{2}:?[0-9]{2})?$")
-_BOOLEAN = {"true": True, "false": False}
-_INT32 = 2**31 - 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,57 +139,6 @@ def resolve_directory(root: str | None, endpoint: str) -> Path | None:
     return target if target.is_dir() else None
 
 
-def _infer_type(values: Sequence[Any]) -> str:
-    present = [v for v in values if v is not None]
-    if not present:
-        return "text"
-    if all(isinstance(v, bool) for v in present):
-        return "boolean"
-    if all(isinstance(v, int) and not isinstance(v, bool) for v in present):
-        return "integer" if all(abs(v) <= _INT32 for v in present) else "bigint"
-    if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in present):
-        return "numeric"
-    if all(isinstance(v, str) and _DATE.match(v) for v in present):
-        return "date"
-    if all(isinstance(v, str) and _TIMESTAMP.match(v) for v in present):
-        has_zone = all(v.endswith("Z") or re.search(r"[+-][0-9]{2}:?[0-9]{2}$", v) for v in present)
-        return "timestamp with time zone" if has_zone else "timestamp without time zone"
-    return "text"
-
-
-def _cell(text: str) -> Any:
-    """A CSV cell as its natural JSON value: empty -> None, then bool, int, float, else text."""
-    if text == "":
-        return None
-    lowered = text.lower()
-    if lowered in _BOOLEAN:
-        return _BOOLEAN[lowered]
-    if _INTEGER.match(text):
-        return int(text)
-    if _NUMBER.match(text):
-        return float(text)
-    return text
-
-
-def _coerce(column_type: str, value: Any) -> Any:
-    """A value under its column's inferred type; mixed columns are text, so their cells become text."""
-    if value is None or column_type != "text" or isinstance(value, str):
-        return value
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (dict, list)):
-        return json.dumps(value, ensure_ascii=False, sort_keys=True)
-    return str(value)
-
-
-def _read_csv(data: bytes) -> tuple[list[str], list[list[Any]]]:
-    text = data.decode("utf-8-sig")
-    reader = csv.reader(io.StringIO(text, newline=""))
-    header = next(reader, None) or []
-    rows = [[_cell(cell) for cell in row] for row in reader if any(cell.strip() for cell in row)]
-    return [h.strip() for h in header], rows
-
-
 def _read_json(data: bytes) -> tuple[list[str], list[list[Any]]]:
     parsed = json.loads(data.decode("utf-8-sig"))
     if not isinstance(parsed, list) or not all(isinstance(item, dict) for item in parsed):
@@ -196,6 +162,27 @@ def read_capped(path: Path) -> bytes:
     return data
 
 
+def _build_table(name: str, header: list[str], raw_rows: list[list[Any]], issues: list[dict[str, str]],
+                 *, truncated_hint: bool = False) -> _Table | None:
+    """A table from a header and typed rows -- the one place a CSV, a JSON array and a sheet converge."""
+    locator = f"table:{FILES_SCHEMA}.{name}"
+    keep = [i for i, h in enumerate(header) if _ident_ok(h) and header.index(h) == i]
+    if len(keep) != len(header):
+        issues.append(_issue("columns_skipped", locator))
+    if not keep:
+        issues.append(_issue("no_columns", locator))
+        return None
+    truncated = len(raw_rows) > MAX_ROWS or truncated_hint
+    if truncated:
+        issues.append(_issue("rows_truncated", locator))
+        raw_rows = raw_rows[:MAX_ROWS]
+    columns = tuple(header[i] for i in keep)
+    cells = [[row[i] if i < len(row) else None for i in keep] for row in raw_rows]
+    types = tuple(_infer_type([row[j] for row in cells]) for j in range(len(columns)))
+    rows = tuple({col: _coerce(types[j], row[j]) for j, col in enumerate(columns)} for row in cells)
+    return _Table(name, columns, types, rows, truncated)
+
+
 def _load(path: Path, name: str, issues: list[dict[str, str]]) -> _Table | None:
     locator = f"table:{FILES_SCHEMA}.{name}"
     try:
@@ -206,27 +193,55 @@ def _load(path: Path, name: str, issues: list[dict[str, str]]) -> _Table | None:
     if size > MAX_FILE_BYTES:
         issues.append(_issue("file_too_large", locator))
         return None
+    suffix = path.suffix.lower()
     try:
         data = read_capped(path)
-        header, raw_rows = _read_csv(data) if path.suffix.lower() == ".csv" else _read_json(data)
+        if suffix == ".csv":
+            header, raw_rows = _read_csv(data)
+        elif suffix == ".tsv":
+            header, raw_rows = _read_csv(data, "\t")
+        else:
+            header, raw_rows = _read_json(data)
     except (OSError, UnicodeDecodeError, ValueError, csv.Error):
         issues.append(_issue("unparseable", locator))
         return None
-    keep = [i for i, h in enumerate(header) if _ident_ok(h) and header.index(h) == i]
-    if len(keep) != len(header):
-        issues.append(_issue("columns_skipped", locator))
-    if not keep:
-        issues.append(_issue("no_columns", locator))
-        return None
-    truncated = len(raw_rows) > MAX_ROWS
-    if truncated:
-        issues.append(_issue("rows_truncated", locator))
-        raw_rows = raw_rows[:MAX_ROWS]
-    columns = tuple(header[i] for i in keep)
-    cells = [[row[i] if i < len(row) else None for i in keep] for row in raw_rows]
-    types = tuple(_infer_type([row[j] for row in cells]) for j in range(len(columns)))
-    rows = tuple({col: _coerce(types[j], row[j]) for j, col in enumerate(columns)} for row in cells)
-    return _Table(name, columns, types, rows, truncated)
+    return _build_table(name, header, raw_rows, issues)
+
+
+def _load_workbook(path: Path, stem: str, issues: list[dict[str, str]], seen: set[str]) -> list[_Table]:
+    """One table per worksheet of an ``.xlsx``; none (with an issue) when the workbook is unreadable."""
+    locator = f"table:{FILES_SCHEMA}.{stem}"
+    try:
+        size = path.stat().st_size
+    except OSError:
+        issues.append(_issue("unreadable", locator))
+        return []
+    if size > MAX_FILE_BYTES:
+        issues.append(_issue("file_too_large", locator))
+        return []
+    try:
+        from ...knowledge.ooxml import read_xlsx  # lazy: only a workbook pays for the import
+
+        sheets = read_xlsx(read_capped(path), max_rows_per_sheet=MAX_ROWS + _HEADER_SCAN + 1)
+    except (OSError, ValueError, KnowledgeError):
+        # Corrupt, encrypted, over a decompression budget or carrying an entity declaration: the
+        # same finding for the operator, and never a partly-read workbook.
+        issues.append(_issue("unparseable", locator))
+        return []
+    tables: list[_Table] = []
+    for sheet in sheets:
+        name = stem if len(sheets) == 1 else f"{stem}__{sheet.name}"
+        sheet_locator = f"table:{FILES_SCHEMA}.{name}"
+        if not _ident_ok(name) or name in seen:
+            issues.append(_issue("name_skipped", sheet_locator))
+            continue
+        seen.add(name)
+        header, data = _sheet_header(sheet.rows)
+        _normalise_sheet_dates(data, len(header))
+        table = _build_table(name, header, data, issues, truncated_hint=sheet.truncated)
+        if table is not None:
+            tables.append(table)
+    return tables
 
 
 def load_tables(directory: Path) -> tuple[list[_Table], list[dict[str, str]]]:
@@ -243,6 +258,12 @@ def load_tables(directory: Path) -> tuple[list[_Table], list[dict[str, str]]]:
             issues.append(_issue("symlink_skipped", locator))
             continue
         if not path.is_file():
+            continue
+        if path.suffix.lower() == ".xlsx":
+            if not name or any(ord(c) < 32 for c in name):
+                issues.append(_issue("name_skipped", locator))
+                continue
+            tables.extend(_load_workbook(path, name, issues, seen))
             continue
         if not _ident_ok(name) or name in seen:
             issues.append(_issue("name_skipped", locator))

@@ -53,6 +53,7 @@ from ..observability.logging import get_logger
 
 __all__ = [
     "ConfirmationGrant",
+    "HeldTurn",
     "PendingCall",
     "PendingConfirmationStore",
     "ResumedTurn",
@@ -150,6 +151,18 @@ class ResumedTurn:
     workspace_root: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class HeldTurn:
+    """A pending turn as stored, read without consuming it (:meth:`PendingConfirmationStore.peek`)."""
+
+    message: str
+    agent: str
+    plan: Plan
+    tainted: bool
+    origin_turn_id: str | None = None
+    workspace_root: str | None = None
+
+
 class PendingConfirmationStore:
     """Server-side pending confirmations over the ``Cache`` port (Redis in production).
 
@@ -214,14 +227,10 @@ class PendingConfirmationStore:
 
     # -- claim ---------------------------------------------------------------------------
 
-    async def claim(
-        self,
-        approval_ids: Sequence[str],
-        *,
-        user_id: str,
-        session_id: str | None,
-    ) -> ResumedTurn:
-        """Consume the pending turn these ids belong to. One-shot; raises if anything is off."""
+    async def _load(
+        self, approval_ids: Sequence[str], *, user_id: str, session_id: str | None
+    ) -> tuple[str, tuple[str, ...], dict[str, Any], dict[str, Any]]:
+        """The stored record these ids name, after every ownership check; nothing is consumed."""
         token, nonces = _parse(approval_ids)
         record_key = _RECORD_KEY.format(token=token)
         try:
@@ -251,6 +260,42 @@ class PendingConfirmationStore:
         if unknown:
             raise ConfirmationInvalidError("the confirmation names a call that was not pending")
 
+        return token, nonces, record, by_nonce
+
+    async def peek(
+        self, approval_ids: Sequence[str], *, user_id: str, session_id: str | None
+    ) -> "HeldTurn":
+        """Read the pending turn these ids name **without consuming it** (ADR-047, row 51).
+
+        The same owner and session checks as :meth:`claim`, so a stranger learns nothing and gets
+        the same refusal. What it returns is the plan as stored; nothing about it can be executed
+        from here -- only :meth:`claim` consumes the turn and yields a grant.
+        """
+        token, _nonces, record, _by = await self._load(
+            approval_ids, user_id=user_id, session_id=session_id
+        )
+        return HeldTurn(
+            message=str(record.get("message") or ""),
+            agent=str(record.get("agent") or "orchestrator"),
+            plan=_plan_from_dict(record["plan"]),
+            tainted=bool(record.get("tainted")),
+            origin_turn_id=record.get("turn_id"),
+            workspace_root=record.get("workspace_root") or None,
+        )
+
+
+    async def claim(
+        self,
+        approval_ids: Sequence[str],
+        *,
+        user_id: str,
+        session_id: str | None,
+    ) -> ResumedTurn:
+        """Consume the pending turn these ids belong to. One-shot; raises if anything is off."""
+        token, nonces, record, by_nonce = await self._load(
+            approval_ids, user_id=user_id, session_id=session_id
+        )
+        record_key = _RECORD_KEY.format(token=token)
         try:
             claimed = await self._cache.incr(
                 _CLAIM_KEY.format(token=token), ttl_s=self._ttl_s

@@ -401,6 +401,55 @@ def knowledge_refresh_task() -> dict:
         return {"status": "error", "error": type(e).__name__}
 
 
+async def _run_osv_sync() -> dict:
+    from aura_core.adapters.osv_feed import HttpOsvFeed
+    from aura_core.learning.osv_sync import run_osv_sync
+
+    container = await _ensure_worker_container()
+    cfg = container.settings.advisories
+    if not cfg.sync_enabled:
+        return {"status": "skipped", "reason": "osv_sync_disabled"}
+    feed = HttpOsvFeed(archive_max_bytes=cfg.archive_max_mb * 1024 * 1024)
+    return await run_osv_sync(
+        container.advisory_store, feed, ecosystems=cfg.ecosystems, include_malware=cfg.include_malware)
+
+
+@celery_app.task(name="tasks.osv_sync_task", queue="learning")
+def osv_sync_task() -> dict:
+    """Copy the public OSV advisories into the local store (off unless AURA_OSV_SYNC_ENABLED)."""
+    logger.info("Celery task: syncing vulnerability advisories...")
+    try:
+        return _run_async(_run_osv_sync())
+    except Exception as e:
+        logger.error("OSV sync task failed: %s", e, exc_info=True)
+        return {"status": "error", "error": type(e).__name__}
+
+
+async def _run_model_monitor() -> dict:
+    from aura_core.learning.model_monitor import run_model_monitor
+
+    container = await _ensure_worker_container()
+    cfg = container.settings.learning
+    if not cfg.model_monitor_enabled:
+        return {"status": "skipped", "reason": "model_monitor_disabled"}
+    report = await run_model_monitor(
+        container.telemetry_sink, container.cache_backend,
+        window_hours=cfg.model_monitor_window_hours, min_turns=cfg.model_monitor_min_turns)
+    return {"status": "success", "observations": report["observations"], "drift": len(report["drift"]),
+            "models": report["models_observed"]}
+
+
+@celery_app.task(name="tasks.model_monitor_task", queue="learning")
+def model_monitor_task() -> dict:
+    """Hourly production-inference monitoring (off unless AURA_MODEL_MONITOR_ENABLED)."""
+    logger.info("Celery task: monitoring production inference...")
+    try:
+        return _run_async(_run_model_monitor())
+    except Exception as e:
+        logger.error("Model monitor task failed: %s", e, exc_info=True)
+        return {"status": "error", "error": type(e).__name__}
+
+
 @celery_app.task(name="tasks.memory_consolidate_task", queue="learning")
 def memory_consolidate_task() -> dict:
     """Daily memory consolidation at 02:30 UTC, after refresh."""

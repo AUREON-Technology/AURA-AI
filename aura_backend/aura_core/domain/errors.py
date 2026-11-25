@@ -62,6 +62,7 @@ __all__ = [
     "EvaluationError",
     "ApprovalRequiredError",
     "ConfirmationInvalidError",
+    "TurnStoppedError",
 ]
 
 
@@ -223,6 +224,14 @@ class ConfirmationInvalidError(ConflictError):
     """
 
     kind = "confirmation_invalid"
+    http_status = 409
+
+
+class TurnStoppedError(ConflictError):
+    """The caller stopped this turn (``POST /agents/stop-all``, ADR-041). Not retryable as sent:
+    the person asked for it to end, so repeating the same request is a new decision, not a retry."""
+
+    kind = "turn_stopped"
     http_status = 409
 
 
