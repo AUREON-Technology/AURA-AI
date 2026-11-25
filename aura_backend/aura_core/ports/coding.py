@@ -133,6 +133,17 @@ class CodeHostClient(Protocol):
         ...
 
 
+    async def list_workflow_runs(self, repo: str, workflow: str, *, limit: int = 10) -> list[dict[str, Any]]:
+        """Recent runs of a workflow file, newest first (``deploy.yml``, never an id)."""
+        ...
+
+    async def dispatch_workflow(
+        self, repo: str, workflow: str, *, ref: str, inputs: Mapping[str, str] | None = None
+    ) -> str:
+        """``workflow_dispatch`` on a workflow file. Nothing else about CI is reachable."""
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class SandboxHandle:
     """Opaque identity of one ephemeral per-task sandbox."""

@@ -213,6 +213,12 @@ _ENGINEER_WORKSPACE_TOOLS = frozenset({
 # so the Engineer holds it and the coding agent does not.
 _ENGINEER_RELEASE_TOOLS = frozenset({"verify_release_health"})
 
+# ADR-047. Registered only when the operator configured them (AURA_OPS_*), so naming them is a grant, not a
+# guarantee. The read tools return other systems' text (untrusted_content); the two deploy tools are
+# side-effecting, need `engineer_agent` and a confirmation on every call.
+_ENGINEER_OPS_TOOLS = frozenset({
+    "check_platform_health", "query_telemetry", "list_workflow_runs", "deploy_release", "rollback_release"})
+
 # ADR-044. Model drift against a stored history (`tools/drift.py`): `record_model_metric` writes the
 # owner's own metric series (side-effecting), `compare_model_metric` reads it. Always registered with the
 # analysis group, so unlike the release tool these names are guaranteed to exist.
@@ -340,7 +346,7 @@ def build_default_agent_registry(*, engineer_token_budget: int | None = None) ->
                     "github_create_draft_pull_request",
                 } | _CODE_ANALYSIS_TOOLS | _DATA_ANALYSIS_TOOLS | _ENGINEER_OPEN_TOOLS | _ENGINEER_DEVTOOLS
                 | _ENGINEER_READING_TOOLS | _SESSION_TOOLS | _OPEN_PURE_CODE_TOOLS | _OPEN_PURE_PLANNING_TOOLS
-                | _ENGINEER_WORKSPACE_TOOLS | _ENGINEER_RELEASE_TOOLS | _ENGINEER_MODEL_MONITOR_TOOLS | _RESEARCH_TOOLS,
+                | _ENGINEER_WORKSPACE_TOOLS | _ENGINEER_RELEASE_TOOLS | _ENGINEER_OPS_TOOLS | _ENGINEER_MODEL_MONITOR_TOOLS | _RESEARCH_TOOLS,
                 # Every tool the MCP bridge registers (`build_mcp_bridge_tools`). The prefix only
                 # decides *who* may ask: each such tool still needs the `engineer_agent`
                 # capability, and an unreviewed one stays CONFIDENTIAL + side-effecting, hence
