@@ -2586,7 +2586,11 @@ class AIKernel:
         # degraded (CB-14). Swallowing it here made "no plan was needed" and "planning broke"
         # the same ``None``, so the turn reported plain success either way.
         goal = deps.planner.goal_from_message(message, criteria=request.success_criteria)
-        plan = await deps.planner.plan(goal, available_tools=tools)
+        agent = self._resolve_agent(request)
+        # Only an agentic persona asks for the larger planner-prompt cap; everyone else calls
+        # `plan` exactly as before.
+        extra = {"agentic": True} if agent is not None and agent.max_plan_iterations > 1 else {}
+        plan = await deps.planner.plan(goal, available_tools=tools, **extra)
         if plan.fallback_reason:
             # The planner already answered "respond directly" for us, but only because its own
             # generation failed (a timeout, on the CPU host). That is a degraded turn, not a
