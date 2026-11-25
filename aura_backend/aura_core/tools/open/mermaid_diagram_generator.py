@@ -3,6 +3,13 @@ import re
 from typing import Any, Dict, List, Optional
 
 
+#: Words Mermaid treats as syntax when they appear as a bare id.
+_RESERVED_WORDS = frozenset({
+    "end", "graph", "flowchart", "subgraph", "class", "classdef", "style", "linkstyle", "click",
+    "default", "participant", "actor", "note", "loop", "alt", "opt", "par", "rect", "direction",
+})
+
+
 class MermaidDiagramGenerator:
     """Mermaid diagram generator for code architecture, classes, flows, sequences, and schemas."""
 
@@ -23,17 +30,47 @@ class MermaidDiagramGenerator:
         """
         if not name or not str(name).strip():
             return ""
-        cleaned = re.sub(r"[^A-Za-z0-9_]", "_", str(name).strip())
-        if not re.search(r"[A-Za-z0-9]", cleaned):
+        # ``\w`` is Unicode-aware: Arabic, CJK and accented names stay readable and distinct.
+        # ASCII-only matching turned every such name into "___" (and, with the empty-name rule
+        # above, dropped the node entirely).
+        cleaned = re.sub(r"[^\w]", "_", str(name).strip())
+        if not re.search(r"[^\W_]", cleaned):
             return ""
         if cleaned[0].isdigit():
             cleaned = f"N_{cleaned}"
+        if cleaned.lower() in _RESERVED_WORDS:
+            cleaned = f"n_{cleaned}"  # an id of ``end`` terminates a flowchart subgraph
         return cleaned
+
+    class _Ids:
+        """Raw name -> unique id within ONE diagram, so ``a-b`` and ``a_b`` stay two nodes."""
+
+        def __init__(self) -> None:
+            self._by_raw: Dict[str, str] = {}
+            self._taken: set = set()
+
+        def get(self, raw: Any) -> str:
+            base = MermaidDiagramGenerator.sanitize_identifier(raw)
+            if not base:
+                return ""
+            key = str(raw).strip()
+            if key in self._by_raw:
+                return self._by_raw[key]
+            candidate, n = base, 2
+            while candidate in self._taken:
+                candidate = f"{base}_{n}"
+                n += 1
+            self._taken.add(candidate)
+            self._by_raw[key] = candidate
+            return candidate
 
     @staticmethod
     def escape_label(text: str) -> str:
         """Escape quotes and line breaks for safe Mermaid labels."""
-        return text.replace('"', "'").replace("\r", " ").replace("\n", " ").strip()
+        return (
+            str(text).replace('"', "'").replace("{", "(").replace("}", ")")
+            .replace("\r", " ").replace("\n", " ").strip()[:200]
+        )
 
     @staticmethod
     def _sanitize_token(value: Optional[str], allowed_pattern: str, fallback: str) -> str:
@@ -54,6 +91,14 @@ class MermaidDiagramGenerator:
             return {
                 "valid_syntax": False,
                 "error": f"SyntaxError: {exc}",
+                "classes": [],
+                "relations": [],
+                "imports": [],
+            }
+        except (ValueError, RecursionError, MemoryError) as exc:
+            return {
+                "valid_syntax": False,
+                "error": f"Source code could not be parsed: {type(exc).__name__}",
                 "classes": [],
                 "relations": [],
                 "imports": [],
@@ -115,23 +160,26 @@ class MermaidDiagramGenerator:
         """Generate a Mermaid classDiagram from class names, optional details, and relations."""
         lines: List[str] = ["classDiagram"]
         seen_classes = set()
+        ids = cls._Ids()
 
         for cname in class_names or []:
-            safe_name = cls.sanitize_identifier(cname)
+            safe_name = ids.get(cname)
             if safe_name and safe_name not in seen_classes:
                 lines.append(f"    class {safe_name}")
                 seen_classes.add(safe_name)
 
         for detail in class_details or []:
+            if not isinstance(detail, dict):
+                continue
             raw_name = detail.get("name", "")
-            safe_name = cls.sanitize_identifier(raw_name)
+            safe_name = ids.get(raw_name)
             if not safe_name:
                 continue
             seen_classes.add(safe_name)
             members: List[str] = []
-            for attr in detail.get("attributes", []):
+            for attr in detail.get("attributes") or []:
                 members.append(f"        {cls.escape_label(str(attr))}")
-            for method in detail.get("methods", []):
+            for method in detail.get("methods") or []:
                 members.append(f"        {cls.escape_label(str(method))}")
             if members:
                 lines.append(f"    class {safe_name} {{")
@@ -141,8 +189,10 @@ class MermaidDiagramGenerator:
                 lines.append(f"    class {safe_name}")
 
         for rel in relations or []:
-            src = cls.sanitize_identifier(rel.get("source", ""))
-            tgt = cls.sanitize_identifier(rel.get("target", ""))
+            if not isinstance(rel, dict):
+                continue
+            src = ids.get(rel.get("source", ""))
+            tgt = ids.get(rel.get("target", ""))
             if not src or not tgt:
                 continue
             rel_type = cls._sanitize_token(rel.get("type"), r"[<>|\-o.*()]+", "-->")
@@ -187,12 +237,16 @@ class MermaidDiagramGenerator:
         valid_dirs = {"TD", "TB", "BT", "LR", "RL"}
         dir_clean = direction.upper() if direction.upper() in valid_dirs else "TD"
         lines: List[str] = [f"flowchart {dir_clean}"]
+        ids = cls._Ids()
 
-        for node in nodes:
-            node_id = cls.sanitize_identifier(node.get("id", ""))
+        for node in nodes or []:
+            if not isinstance(node, dict):
+                continue
+            raw_id = node.get("id") or node.get("label") or ""
+            node_id = ids.get(raw_id)
             if not node_id:
                 continue
-            label = cls.escape_label(node.get("label", node_id))
+            label = cls.escape_label(node.get("label") or raw_id)  # the caller's text, not the id
             shape = node.get("shape", "rect")
             if shape == "round":
                 lines.append(f'    {node_id}("{label}")')
@@ -203,9 +257,11 @@ class MermaidDiagramGenerator:
             else:
                 lines.append(f'    {node_id}["{label}"]')
 
-        for edge in edges:
-            src = cls.sanitize_identifier(edge.get("from", ""))
-            tgt = cls.sanitize_identifier(edge.get("to", ""))
+        for edge in edges or []:
+            if not isinstance(edge, dict):
+                continue
+            src = ids.get(edge.get("from", ""))
+            tgt = ids.get(edge.get("to", ""))
             if not src or not tgt:
                 continue
             label = edge.get("label")
@@ -224,14 +280,17 @@ class MermaidDiagramGenerator:
     ) -> str:
         """Generate a Mermaid sequenceDiagram from participants and messages (from, to, text, arrow)."""
         lines: List[str] = ["sequenceDiagram"]
-        for p in participants:
-            safe_p = cls.sanitize_identifier(p)
+        ids = cls._Ids()
+        for p in participants or []:
+            safe_p = ids.get(p)
             if safe_p:
                 lines.append(f"    participant {safe_p}")
 
-        for msg in messages:
-            sender = cls.sanitize_identifier(msg.get("from", ""))
-            receiver = cls.sanitize_identifier(msg.get("to", ""))
+        for msg in messages or []:
+            if not isinstance(msg, dict):
+                continue
+            sender = ids.get(msg.get("from", ""))
+            receiver = ids.get(msg.get("to", ""))
             if not sender or not receiver:
                 continue
             text = cls.escape_label(msg.get("text", ""))
@@ -248,13 +307,16 @@ class MermaidDiagramGenerator:
     ) -> str:
         """Generate a Mermaid erDiagram from entities and relationships."""
         lines: List[str] = ["erDiagram"]
+        ids = cls._Ids()
 
-        for entity_name, fields in entities.items():
-            safe_entity = cls.sanitize_identifier(entity_name)
+        for entity_name, fields in (entities or {}).items():
+            safe_entity = ids.get(entity_name)
             if not safe_entity:
                 continue
             lines.append(f"    {safe_entity} {{")
-            for field in fields:
+            for field in fields if isinstance(fields, list) else []:
+                if not isinstance(field, dict):
+                    continue
                 f_type = cls.sanitize_identifier(field.get("type", "string")) or "string"
                 f_name = cls.sanitize_identifier(field.get("name", "id")) or "id"
                 key = cls._sanitize_token(field.get("key"), r"(?:PK|FK|UK)", "")
@@ -265,8 +327,10 @@ class MermaidDiagramGenerator:
             lines.append("    }")
 
         for rel in relationships or []:
-            e1 = cls.sanitize_identifier(rel.get("left", ""))
-            e2 = cls.sanitize_identifier(rel.get("right", ""))
+            if not isinstance(rel, dict):
+                continue
+            e1 = ids.get(rel.get("left", ""))
+            e2 = ids.get(rel.get("right", ""))
             if not e1 or not e2:
                 continue
             card = cls._sanitize_token(rel.get("cardinality"), cls.ER_CARDINALITY_PATTERN, "||--o{")

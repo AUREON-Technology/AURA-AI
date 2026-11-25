@@ -22,6 +22,7 @@ import unicodedata
 from typing import Iterable, Sequence
 
 from ..domain.safety import GuardAction, GuardStage, GuardVerdict, Span, redact_spans
+from ..domain.secret_catalog import find_secrets
 from ..text import ARABIC_STOPWORDS, arabic_view, fold, is_arabic_token, light_stem
 
 __all__ = [
@@ -500,29 +501,21 @@ class SecretGuard(Guard):
     """
 
     name = "secret"
-    stages = (GuardStage.OUTPUT, GuardStage.TOOL_RESULT)
+    # INPUT and CONTEXT are opt-in chains (``SafetySettings.redact_secrets_in_*``): the same
+    # patterns, but run with ``block=False`` so a credential in a user's own message or in a
+    # retrieved chunk is redacted from what the model sees, never a reason to refuse the turn.
+    stages = (GuardStage.INPUT, GuardStage.CONTEXT, GuardStage.OUTPUT, GuardStage.TOOL_RESULT)
 
-    _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-        (re.compile(r"\b(?:sk|pk|rk)-[A-Za-z0-9_\-]{20,}\b"), "api_key"),
-        (re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}\b"), "google_api_key"),
-        (re.compile(r"\bghp_[A-Za-z0-9]{30,}\b"), "github_token"),
-        (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"), "github_pat"),
-        (re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}\b"), "slack_token"),
-        (re.compile(r"\bya29\.[A-Za-z0-9_\-]{20,}\b"), "google_oauth_token"),
-        (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"), "private_key"),
-        (re.compile(r"\beyJ[A-Za-z0-9_\-]{15,}\.[A-Za-z0-9_\-]{15,}\.[A-Za-z0-9_\-]{10,}\b"), "jwt"),
-        (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "aws_access_key"),
-    )
+    #: The credential formats come from the shared catalogue (``domain/secret_catalog.py``), the same
+    #: one ``scan_code_security`` reports from, so a key one of them recognises the other does too.
+    #: Only the prefix-anchored formats run here; the name-based assignment rules are for code review,
+    #: not for arbitrary model output.
 
     def __init__(self, *, block: bool = True) -> None:
         self._block = block
 
     def _evaluate(self, text: str, *, stage: GuardStage, context: dict) -> GuardVerdict:
-        spans = [
-            Span(m.start(), m.end(), label, "")
-            for pattern, label in self._PATTERNS
-            for m in pattern.finditer(text)
-        ]
+        spans = [Span(hit.start, hit.end, hit.label, "") for hit in find_secrets(text, guard_only=True)]
         if not spans:
             return GuardVerdict.allow(self.name)
 
@@ -684,25 +677,46 @@ class GroundednessGuard(Guard):
 
 
 def default_input_guards(
-    *, max_chars: int = 32_000, injection_threshold: float = 0.6, jailbreak_threshold: float = 0.7
+    *, max_chars: int = 32_000, injection_threshold: float = 0.6, jailbreak_threshold: float = 0.7,
+    redact_secrets: bool = False,
 ) -> list[Guard]:
+    """``redact_secrets`` adds a redact-only :class:`SecretGuard` after the encoding guard (so a
+    key written in full-width characters is folded first), for a credential the user pasted."""
     return [
         SizeGuard(max_chars=max_chars),
         EncodingGuard(),
+        *([SecretGuard(block=False)] if redact_secrets else []),
         PromptInjectionGuard(threshold=injection_threshold),
         JailbreakGuard(threshold=jailbreak_threshold),
     ]
 
 
 def default_context_guards(
-    *, max_chars: int = 32_000, injection_threshold: float = 0.6
+    *, max_chars: int = 32_000, injection_threshold: float = 0.6, redact_secrets: bool = False,
 ) -> list[Guard]:
-    """Guards for retrieved chunks, memories, and tool results -- where injection actually lives."""
+    """Guards for retrieved chunks, memories, and tool results -- where injection actually lives.
+
+    ``redact_secrets`` adds a redact-only :class:`SecretGuard` after the encoding guard, so a key
+    sitting in a document or a memory is replaced by ``[REDACTED:<kind>]`` before the model reads
+    it. Redact, never block: one chunk with a key must not refuse the answer built from the
+    others, and the injection guard still runs on what is left."""
     return [
         SizeGuard(max_chars=max_chars),
         EncodingGuard(),
+        *([SecretGuard(block=False)] if redact_secrets else []),
         PromptInjectionGuard(threshold=injection_threshold),
     ]
+
+
+def redact_secrets(text: str) -> tuple[str, tuple[str, ...]]:
+    """``text`` with every credential-shaped span replaced, and the kinds found.
+
+    The same patterns as :class:`SecretGuard`, for callers that have no chain to run -- the
+    kernel redacting what it is about to persist as session history."""
+    verdict = SecretGuard(block=False).evaluate(text, stage=GuardStage.OUTPUT)
+    if verdict.action is GuardAction.REDACT and verdict.sanitised is not None:
+        return verdict.sanitised, tuple(sorted({s.label for s in verdict.spans}))
+    return text, ()
 
 
 def default_output_guards(

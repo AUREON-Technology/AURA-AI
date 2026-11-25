@@ -98,5 +98,8 @@ def test_no_superseded_class_is_a_registered_tool_name() -> None:
             enable_desktop_ops_tools=True,
         )
     }
-    forbidden_fragments = ("knowledge_graph", "model_registry", "gpu_", "lineage", "workflow_dependency", "tool_harness")
+    # "gpu_" is narrowed to the superseded allocation/scheduling classes: `gpu_status` (ADR-055) is a
+    # real, read-only nvidia-smi probe and is allowed; nothing may *allocate* a GPU.
+    forbidden_fragments = ("knowledge_graph", "model_registry", "gpu_alloc", "gpu_sched", "gpu_reserv", "lineage",
+                           "workflow_dependency", "tool_harness")
     assert not [n for n in names if any(f in n for f in forbidden_fragments)]

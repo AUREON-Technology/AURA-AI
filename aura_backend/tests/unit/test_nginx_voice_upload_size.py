@@ -52,13 +52,16 @@ def _cap_bytes(block: str) -> int:
     return int(caps[0]) * 1024 * 1024
 
 
+@pytest.mark.parametrize("route", ["/api/v3/voice/transcribe", "/api/v3/voice/task"])
 @pytest.mark.parametrize(("path", "count", "twin"), [
     (_TEMPLATE, 2, "location /api/"),
     (_HOST_PROXY, 1, "location /"),
 ])
-def test_every_server_block_lets_a_full_size_recording_through(path: Path, count: int, twin: str) -> None:
+def test_every_server_block_lets_a_full_size_recording_through(
+    path: Path, count: int, twin: str, route: str
+) -> None:
     text = path.read_text(encoding="utf-8")
-    transcribe = _blocks(text, "location = /api/v3/voice/transcribe")
+    transcribe = _blocks(text, f"location = {route}")
     # The HTTPS server blocks are the last ones; host-proxy also has a port-80 `location /`.
     general = _blocks(text, twin)[-count:]
     assert len(transcribe) == count, f"{path.name}: expected {count} transcribe locations"

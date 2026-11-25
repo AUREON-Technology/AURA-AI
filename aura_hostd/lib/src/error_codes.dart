@@ -54,6 +54,12 @@ abstract final class HostdErrorCode {
   /// included. (Hooks under `.git/modules/**/hooks` use [protectedGitHooks].)
   static const protectedGitDirFile = 'protected_git_dir_file';
 
+  /// Refused in every workspace: a write anywhere else under `.git` -- `HEAD`, `index`, `refs/`,
+  /// `objects/`, `packed-refs`, `info/`. Not code execution (hooks and config have their own codes),
+  /// but a file write is not how a repository is changed: a bad `HEAD` or a clobbered `index` or
+  /// object leaves it corrupt, and git commands are the way to move it.
+  static const protectedGitInternals = 'protected_git_internals';
+
   /// Queued in every workspace (G-07, D-07): the command runs `git push`, by any spelling the
   /// daemon can see. A refusal with the same code when there is no approval queue.
   static const gitPushNeedsApproval = 'git_push_needs_approval';
@@ -184,6 +190,7 @@ abstract final class HostdErrorCode {
     debugStartFailed,
     debugUnreachable,
     protectedGitDirFile,
+    protectedGitInternals,
     gitPushNeedsApproval,
     pathOutsideTrustedFolder,
     remoteCommandNeedsConfirmation,

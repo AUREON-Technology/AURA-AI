@@ -157,15 +157,15 @@ class TestDocumentDiscovery:
 
     async def test_office_formats_and_symlinks_are_reported_not_read(self, root, tmp_path_factory) -> None:
         exports = root / "hr-exports"
-        (exports / "handbook.docx").write_bytes(b"PK\x03\x04 not really a docx")
+        (exports / "handbook.doc").write_bytes(b"\xd0\xcf\x11\xe0 not really a legacy doc")
         if hasattr(os, "symlink"):
             secret = tmp_path_factory.mktemp("secret") / "secret.md"
             secret.write_text("the root password is hunter2")
             (exports / "leak.md").symlink_to(secret)
         report = await _discover(root)
         issues = {(i.code, i.locator) for i in report.issues}
-        assert ("unsupported_format", "document:handbook.docx") in issues
-        assert not any(a.locator in ("document:handbook.docx", "document:leak.md") for a in report.artifacts)
+        assert ("unsupported_format", "document:handbook.doc") in issues
+        assert not any(a.locator in ("document:handbook.doc", "document:leak.md") for a in report.artifacts)
         if hasattr(os, "symlink"):
             assert ("symlink_skipped", "document:leak.md") in issues
 

@@ -15,6 +15,7 @@ import asyncio
 import shutil
 import tempfile
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -22,6 +23,11 @@ from ..domain.files import strip_absolute_prefix
 from ..ports.coding import FileWriteOp, McpToolDescriptor, RepoFile, RepoTree, SandboxHandle, SandboxResult
 
 __all__ = ["InMemorySandboxRunner", "InMemoryGitHubClient", "InMemoryMcpClient"]
+
+#: Same ceilings as ``DockerSandboxRunner`` (the fake mirrors the adapter's contract, not just its
+#: happy path), so a test of an oversized file means the same thing against either.
+_MAX_EDIT_BYTES = 10 * 1024 * 1024
+_MAX_READ_BYTES = 100 * 1024 * 1024
 
 
 class InMemorySandboxRunner:
@@ -36,11 +42,14 @@ class InMemorySandboxRunner:
     def __init__(self) -> None:
         self._scratch_dirs: dict[str, Path] = {}
         self._paused: set[str] = set()
+        self._opened_at: dict[str, str] = {}
 
     async def create_task(
         self, *, user_id: Any | None = None, session_id: str | None = None, isolate: bool = False,
-        workspace_root: str | None = None,
+        workspace_root: str | None = None, origin: str | None = None,
     ) -> SandboxHandle:
+        # `origin` (WP8) is only meaningful to a paired desktop; accepted and ignored here, like
+        # `workspace_root`, so a remote-origin turn does not fail with a TypeError on this runner.
         # `workspace_root` (FSA-006) is a path on the user's machine; this fake's workspace is its
         # own scratch directory, so it is accepted and ignored.
         # `user_id`/`session_id`/`isolate` accepted for `SandboxRunner` protocol conformance,
@@ -88,40 +97,56 @@ class InMemorySandboxRunner:
             return SandboxResult(stdout="", stderr=str(exc), exit_code=127)
 
     async def write_file(self, handle: SandboxHandle, path: str, content: str) -> None:
-        target = self._resolve_within(handle, path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        await asyncio.to_thread(target.write_text, content, "utf-8")
+        from .docker_sandbox import apply_write_plan
 
-    async def read_file(self, handle: SandboxHandle, path: str) -> str:
+        target = self._resolve_within(handle, path)
+        root = self._scratch(handle).resolve()
+        await asyncio.to_thread(apply_write_plan, [(target, content.encode("utf-8"))], root)
+
+    def _read_target_bytes(self, handle: SandboxHandle, path: str, limit: int) -> bytes:
         target = self._resolve_within(handle, path)
         if not target.is_file():
             raise RuntimeError(f"{path} is not a file in the sandbox workspace")
-        return await asyncio.to_thread(target.read_text, "utf-8")
+        size = target.stat().st_size
+        if size > limit:
+            raise RuntimeError(f"{path} is too large to read here ({size} bytes; limit {limit})")
+        return target.read_bytes()
+
+    async def read_file(self, handle: SandboxHandle, path: str) -> str:
+        from .docker_sandbox import decode_workspace_text
+
+        data = await asyncio.to_thread(self._read_target_bytes, handle, path, _MAX_EDIT_BYTES)
+        return decode_workspace_text(data, path)
+
+    async def read_file_bytes(self, handle: SandboxHandle, path: str) -> bytes:
+        """The file's exact bytes, for callers that must not assume text (a PDF)."""
+        return await asyncio.to_thread(self._read_target_bytes, handle, path, _MAX_READ_BYTES)
 
     async def write_files(self, handle: SandboxHandle, operations: Sequence[FileWriteOp]) -> None:
         """D6: pre-validate every operation, then write all of them -- mirrors
         `DockerSandboxRunner.write_files` exactly, so tests exercise the same contract."""
-        plan: list[tuple[Any, str]] = []
+        from .docker_sandbox import apply_write_plan, decode_workspace_text
+
+        root = self._scratch(handle).resolve()
+        plan: list[tuple[Path, bytes]] = []
         for op in operations:
             target = self._resolve_within(handle, op.path)
             if op.content is not None:
-                plan.append((target, op.content))
+                plan.append((target, op.content.encode("utf-8")))
             elif op.find is not None and op.replace is not None:
                 if not target.is_file():
                     raise RuntimeError(f"{op.path} does not exist")
-                current = target.read_text("utf-8")
+                current = decode_workspace_text(target.read_bytes(), op.path)
                 occurrences = current.count(op.find)
                 if occurrences != 1:
                     raise RuntimeError(
                         f"expected exactly one occurrence of the given text in {op.path}, "
                         f"found {occurrences}"
                     )
-                plan.append((target, current.replace(op.find, op.replace, 1)))
+                plan.append((target, current.replace(op.find, op.replace, 1).encode("utf-8")))
             else:
                 raise RuntimeError(f"operation for {op.path} must set either content, or both find and replace")
-        for target, content in plan:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            await asyncio.to_thread(target.write_text, content, "utf-8")
+        await asyncio.to_thread(apply_write_plan, plan, root)
 
     async def destroy(self, handle: SandboxHandle) -> None:
         scratch = self._scratch_dirs.pop(handle.task_id, None)
@@ -138,9 +163,18 @@ class InMemorySandboxRunner:
     # this fake can prove the bookkeeping, and only `tests/load/test_docker_sandbox_live.py`
     # against a real daemon can prove a paused workspace actually releases memory.
 
+    async def workspace_stats(self, handle: SandboxHandle) -> dict[str, Any] | None:
+        """When the workspace was last (re)opened. A fake process has no CPU or memory worth
+        reporting, so those are ``None`` -- the manager then says why instead of showing zeros."""
+        started = self._opened_at.get(handle.task_id)
+        if started is None or handle.task_id in self._paused:
+            return None
+        return {"started_at": started, "cpu_percent": None, "memory_mb": None, "memory_limit_mb": None}
+
     async def open_workspace(self, key: str) -> SandboxHandle:
         handle = SandboxHandle(task_id=key)
         self._paused.discard(key)
+        self._opened_at[key] = datetime.now(timezone.utc).isoformat()
         if key not in self._scratch_dirs:
             scratch = await asyncio.to_thread(
                 tempfile.mkdtemp, prefix=f"aura-fake-workspace-{key}-"

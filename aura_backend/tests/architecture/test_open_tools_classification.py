@@ -31,11 +31,17 @@ BACKEND = Path(__file__).resolve().parents[2]
 AURA_CORE = BACKEND / "aura_core"
 OPEN_DIR = AURA_CORE / "tools" / "open"
 OPEN_PACKAGE = "aura_core.tools.open"
-#: The ADR-036 tool builders: the only modules allowed to import a ``tools/open`` class.
+#: The tool builders: the only modules allowed to import a ``tools/open`` class.
 BUILDERS = {
     "analysis.py": AURA_CORE / "tools" / "analysis.py",
     "open_exec.py": AURA_CORE / "tools" / "open_exec.py",
     "desktop_ops.py": AURA_CORE / "tools" / "desktop_ops.py",
+    # ADR-044 / ADR-045 / ADR-046: the pure-text, workspace-reading and research builders.
+    "open_pure.py": AURA_CORE / "tools" / "open_pure.py",
+    "open_workspace.py": AURA_CORE / "tools" / "open_workspace.py",
+    "research.py": AURA_CORE / "tools" / "research.py",
+    "release.py": AURA_CORE / "tools" / "release.py",
+    "ops.py": AURA_CORE / "tools" / "ops.py",
 }
 #: Directories that are not project source (a stray interpreter install, caches, virtualenvs).
 _SKIP_PARTS = {"__pycache__", ".venv", "venv", "Python", "node_modules", "site-packages"}
@@ -196,17 +202,24 @@ def test_each_module_that_is_not_wrapped_says_so_at_the_top(name: str) -> None:
 
 # --- KAN-34 -----------------------------------------------------------------------------
 
-#: Process spawning, outbound network, gateway path reads and fake session control: named in the
-#: ticket as modules no persona may reach.
+#: Process spawning, outbound network and fake session control: named in the ticket as modules no
+#: persona may reach. They stay fenced.
 KAN_34 = (
     "background_task_manager",
     "push_notification_dispatcher",
-    "binary_file_inspector",
-    "notebook_reader",
-    "file_type_detector_router",
-    "stale_context_detector",
     "remote_session_controller",
 )
+
+#: The other four modules KAN-34 named read paths on the gateway or classify content. ADR-044 /
+#: ADR-045 re-exposed them behind confinement; each may therefore be imported by exactly the one
+#: builder that does the confining, and by nothing else (2026-11-25, decided when princess was
+#: merged into main).
+KAN_34_CONFINED = {
+    "binary_file_inspector": "open_workspace.py",   # path under AURA_TOOLS_FILES_ROOT, base_dir enforced
+    "notebook_reader": "open_workspace.py",         # text read through resolve_within first
+    "stale_context_detector": "open_workspace.py",  # path under AURA_TOOLS_FILES_ROOT, base_dir enforced
+    "file_type_detector_router": "open_pure.py",    # bytes only, never a path
+}
 
 
 @pytest.mark.parametrize("name", KAN_34)
@@ -214,3 +227,17 @@ def test_the_dangerous_modules_are_not_exposed(name: str) -> None:
     assert cls.CLASSIFICATION[name][0] == cls.NOT_EXPOSED
     doc = ast.get_docstring(ast.parse((OPEN_DIR / f"{name}.py").read_text(encoding="utf-8"))) or ""
     assert "KAN-34" in doc, f"{name}.py header does not record why it is fenced (KAN-34)"
+
+
+@pytest.mark.parametrize("name", sorted(KAN_34_CONFINED))
+def test_the_reexposed_kan_34_modules_are_reachable_only_through_their_confining_builder(name: str) -> None:
+    assert cls.CLASSIFICATION[name][0] == cls.WRAPPED
+    allowed = KAN_34_CONFINED[name]
+    importers = sorted(
+        path.relative_to(AURA_CORE).as_posix()
+        for path in _project_files()
+        if path.parent != OPEN_DIR and name in _open_modules_imported_by(path)
+    )
+    assert importers == [f"tools/{allowed}"], (
+        f"{name} must be imported by tools/{allowed} alone (the builder that confines it); got {importers}"
+    )

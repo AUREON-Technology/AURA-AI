@@ -83,6 +83,13 @@ void main() {
         '/work/repo/.git/modules/sub/config': HostdErrorCode.protectedGitConfig,
         '/work/repo/.git/config.worktree': HostdErrorCode.protectedGitConfig,
         '/work/repo/.git/worktrees/w1/config.worktree': HostdErrorCode.protectedGitConfig,
+        '/work/repo/.git/HEAD': HostdErrorCode.protectedGitInternals,
+        '/work/repo/.git/index': HostdErrorCode.protectedGitInternals,
+        '/work/repo/.git/refs/heads/main': HostdErrorCode.protectedGitInternals,
+        '/work/repo/.git/objects/ab/cdef': HostdErrorCode.protectedGitInternals,
+        '/work/repo/.git/packed-refs': HostdErrorCode.protectedGitInternals,
+        '/work/repo/.GIT/HEAD': HostdErrorCode.protectedGitInternals,
+        '/work/repo/.git /HEAD': HostdErrorCode.protectedGitInternals,
       };
       for (final MapEntry(key: path, value: code) in cases.entries) {
         final refusal = protectedGitWriteRefusal(path);
@@ -103,6 +110,11 @@ void main() {
       expect(protectedGitWriteRefusal(config)?.code, HostdErrorCode.protectedGitConfig);
       expect(protectedGitWriteReason(hook), protectedGitWriteRefusal(hook)?.reason);
       expect(protectedGitWriteRefusal('/work/repo/src/main.dart'), isNull);
+      // Look-alikes are ordinary files.
+      for (final ordinary in ['/work/repo/.gitignore', '/work/repo/.gitattributes', '/work/repo/.github/workflows/ci.yml',
+        '/work/repo/git/HEAD', '/work/repo/src/.gitkeep']) {
+        expect(protectedGitWriteRefusal(ordinary), isNull, reason: ordinary);
+      }
     });
 
     test('destructiveEscapeReason still returns the English text alone', () {

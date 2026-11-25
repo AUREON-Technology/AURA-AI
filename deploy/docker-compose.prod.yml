@@ -268,6 +268,8 @@ volumes:
   loki_data:
   aura_workspace:
   aura_datasets:
+  # Written by `sandbox-proxy-filter`, read by `sandbox-proxy` (ADR-041).
+  sandbox_filter:
   nginx_certs:
   backup_textfile:
 
@@ -693,6 +695,10 @@ services:
       AURA_SANDBOX_WORKSPACE_DISK_QUOTA_MB: ${AURA_SANDBOX_WORKSPACE_DISK_QUOTA_MB:-2048}
       AURA_SANDBOX_MIN_FREE_MEMORY_MB: ${AURA_SANDBOX_MIN_FREE_MEMORY_MB:-1024}
       AURA_SANDBOX_IN_CONTAINER_GIT: ${AURA_SANDBOX_IN_CONTAINER_GIT:-false}
+      # Extra hosts the workspace proxy may reach, on top of deploy/sandbox/filter. The gateway
+      # validates it at start-up (the same rules as deploy/scripts/render-sandbox-filter.sh, which
+      # applies it to the proxy). Empty = the static list alone.
+      AURA_SANDBOX_ALLOWED_EGRESS_HOSTS: ${AURA_SANDBOX_ALLOWED_EGRESS_HOSTS:-}
       # docker-py's `docker.from_env()` reads this. It names sandbox-broker, never the socket
       # proxy or the socket: the broker refuses any container the sandbox would not create (see
       # its service below and `sandbox_ctl` above).
@@ -714,8 +720,81 @@ services:
       # Code-analysis tool groups (ADR-036). The code-running group is off by default: it runs
       # project code in a child of the gateway, with no container boundary (GAP-066).
       AURA_ANALYSIS_TOOLS_ENABLED: ${AURA_ANALYSIS_TOOLS_ENABLED:-true}
+      AURA_TOOLS_FILES_ROOT: ${AURA_TOOLS_FILES_ROOT:-}
+      AURA_TOOLS_HTTP_ALLOWED_HOSTS: ${AURA_TOOLS_HTTP_ALLOWED_HOSTS:-}
+      # Operations tools (ADR-049). All empty by default: an empty value means the tool is not registered.
+      AURA_OPS_PLATFORM_ORIGINS: ${AURA_OPS_PLATFORM_ORIGINS:-}
+      AURA_OPS_LOKI_URL: ${AURA_OPS_LOKI_URL:-}
+      AURA_OPS_PROMETHEUS_URL: ${AURA_OPS_PROMETHEUS_URL:-}
+      AURA_OPS_TEMPO_URL: ${AURA_OPS_TEMPO_URL:-}
+      AURA_OPS_DEPLOY_WORKFLOWS: ${AURA_OPS_DEPLOY_WORKFLOWS:-}
+      AURA_OPS_DEPLOY_REFS: ${AURA_OPS_DEPLOY_REFS:-main}
+      # web_search (ADR-042): an operator-run SearXNG with the JSON format enabled; empty = no
+      # web_search tool. Never a hosted search API.
+      AURA_WEB_SEARCH_URL: ${AURA_WEB_SEARCH_URL:-}
+      AURA_WEB_SEARCH_TIMEOUT_S: ${AURA_WEB_SEARCH_TIMEOUT_S:-10}
+      AURA_WEB_SEARCH_ENGINES: ${AURA_WEB_SEARCH_ENGINES:-}
+      AURA_WEB_SEARCH_LANGUAGE: ${AURA_WEB_SEARCH_LANGUAGE:-}
       AURA_OPEN_EXEC_TOOLS_ENABLED: ${AURA_OPEN_EXEC_TOOLS_ENABLED:-false}
       AURA_DESKTOP_OPS_TOOLS_ENABLED: ${AURA_DESKTOP_OPS_TOOLS_ENABLED:-true}
+      # Agent-loop intelligence (ADR-039): stuck detection, failure-kind retries, test
+      # results as a loop input, the critic, and the Engineer's token budget.
+      AURA_LOOP_STUCK_DETECTION_ENABLED: ${AURA_LOOP_STUCK_DETECTION_ENABLED:-true}
+      AURA_LOOP_STUCK_IDENTICAL_CALLS: ${AURA_LOOP_STUCK_IDENTICAL_CALLS:-3}
+      AURA_LOOP_STUCK_SAME_ERROR: ${AURA_LOOP_STUCK_SAME_ERROR:-3}
+      AURA_LOOP_STUCK_NO_PROGRESS: ${AURA_LOOP_STUCK_NO_PROGRESS:-4}
+      AURA_LOOP_RECOVERY_POLICY_ENABLED: ${AURA_LOOP_RECOVERY_POLICY_ENABLED:-true}
+      AURA_LOOP_RECOVERY_BACKOFF_S: ${AURA_LOOP_RECOVERY_BACKOFF_S:-0.5}
+      AURA_LOOP_TEST_SIGNALS_ENABLED: ${AURA_LOOP_TEST_SIGNALS_ENABLED:-true}
+      AURA_CRITIC_ENABLED: ${AURA_CRITIC_ENABLED:-true}
+      AURA_CRITIC_LLM_ENABLED: ${AURA_CRITIC_LLM_ENABLED:-false}
+      AURA_ENGINEER_TOKEN_BUDGET: ${AURA_ENGINEER_TOKEN_BUDGET:-400000}
+      AURA_CONTEXT_PRESSURE_THRESHOLD: ${AURA_CONTEXT_PRESSURE_THRESHOLD:-0.8}
+      # ADR-040 (rows 26, 57, 59, 60, 63). All off or unchanged by default.
+      AURA_MEMORY_AUTO_CHECKPOINT_EVERY_TURNS: ${AURA_MEMORY_AUTO_CHECKPOINT_EVERY_TURNS:-0}
+      AURA_REASONING_BACKGROUND_DELEGATION: ${AURA_REASONING_BACKGROUND_DELEGATION:-false}
+      AURA_REASONING_AGENT_TASKS_PER_USER: ${AURA_REASONING_AGENT_TASKS_PER_USER:-3}
+      AURA_REASONING_AGENT_TASKS_GLOBAL: ${AURA_REASONING_AGENT_TASKS_GLOBAL:-16}
+      AURA_REASONING_AGENT_TASK_TTL_S: ${AURA_REASONING_AGENT_TASK_TTL_S:-3600}
+      AURA_REASONING_AGENT_TASK_DEADLINE_S: ${AURA_REASONING_AGENT_TASK_DEADLINE_S:-900}
+      AURA_REASONING_STRUCTURED_HANDOFF: ${AURA_REASONING_STRUCTURED_HANDOFF:-false}
+      AURA_REASONING_DEFAULT_PLAN_MODE: ${AURA_REASONING_DEFAULT_PLAN_MODE:-}
+      AURA_AUTO_LESSONS_ENABLED: ${AURA_AUTO_LESSONS_ENABLED:-false}
+      # ADR-041. All off or empty by default: nothing here changes a turn until an operator sets it.
+      # A JSON/YAML file of tool-call rules (deny / require confirmation by argument pattern); the
+      # path is *inside* the container, so mount the file there. Validated at start-up.
+      AURA_TOOL_POLICY_FILE: ${AURA_TOOL_POLICY_FILE:-}
+      # Whether a user may choose the `autonomous` review profile, and the profile (strict|standard)
+      # a user who chose none gets.
+      AURA_AUTONOMY_ALLOW_AUTONOMOUS: ${AURA_AUTONOMY_ALLOW_AUTONOMOUS:-false}
+      AURA_AUTONOMY_DEFAULT: ${AURA_AUTONOMY_DEFAULT:-standard}
+      # Redact credential-shaped text from what the model sees (context: documents, memories,
+      # loaded history; input: the user's own message) and from what session history stores.
+      AURA_SAFETY_REDACT_CONTEXT_SECRETS: ${AURA_SAFETY_REDACT_CONTEXT_SECRETS:-false}
+      AURA_SAFETY_REDACT_INPUT_SECRETS: ${AURA_SAFETY_REDACT_INPUT_SECRETS:-false}
+      AURA_SAFETY_REDACT_HISTORY_SECRETS: ${AURA_SAFETY_REDACT_HISTORY_SECRETS:-false}
+      # Agent task gateway and queue, per-turn usage records, run-history search (ADR-043).
+      # All additive: /chat and /chat/stream are unchanged. Queue limits are per gateway process.
+      # Goal previews for run search are OFF: with it off a run stores only a digest of its goal.
+      AURA_AGENT_TASKS_ENABLED: ${AURA_AGENT_TASKS_ENABLED:-true}
+      AURA_AGENT_TASKS_MAX_CONCURRENT: ${AURA_AGENT_TASKS_MAX_CONCURRENT:-2}
+      AURA_AGENT_TASKS_MAX_CONCURRENT_PER_USER: ${AURA_AGENT_TASKS_MAX_CONCURRENT_PER_USER:-1}
+      AURA_AGENT_TASKS_MAX_QUEUED: ${AURA_AGENT_TASKS_MAX_QUEUED:-200}
+      AURA_AGENT_TASKS_MAX_QUEUED_PER_USER: ${AURA_AGENT_TASKS_MAX_QUEUED_PER_USER:-20}
+      AURA_AGENT_TASKS_MAX_SCHEDULE_AHEAD_S: ${AURA_AGENT_TASKS_MAX_SCHEDULE_AHEAD_S:-86400}
+      AURA_AGENT_TASKS_TIMEOUT_S: ${AURA_AGENT_TASKS_TIMEOUT_S:-900}
+      AURA_AGENT_TASKS_RECORD_TTL_S: ${AURA_AGENT_TASKS_RECORD_TTL_S:-604800}
+      AURA_AGENT_TASKS_HEARTBEAT_S: ${AURA_AGENT_TASKS_HEARTBEAT_S:-10}
+      AURA_AGENT_TASKS_STALE_AFTER_S: ${AURA_AGENT_TASKS_STALE_AFTER_S:-90}
+      AURA_AGENT_TASKS_AGING_S: ${AURA_AGENT_TASKS_AGING_S:-120}
+      AURA_AGENT_TASKS_IDEMPOTENCY_TTL_S: ${AURA_AGENT_TASKS_IDEMPOTENCY_TTL_S:-86400}
+      AURA_USAGE_LEDGER_ENABLED: ${AURA_USAGE_LEDGER_ENABLED:-true}
+      AURA_USAGE_LEDGER_TTL_DAYS: ${AURA_USAGE_LEDGER_TTL_DAYS:-35}
+      AURA_USAGE_LEDGER_MAX_PER_USER: ${AURA_USAGE_LEDGER_MAX_PER_USER:-5000}
+      AURA_AGENT_RUNS_STORE_PREVIEW: ${AURA_AGENT_RUNS_STORE_PREVIEW:-false}
+      AURA_AGENT_RUNS_PREVIEW_TTL_S: ${AURA_AGENT_RUNS_PREVIEW_TTL_S:-2592000}
+      AURA_AGENT_RUNS_SEARCH_SCAN: ${AURA_AGENT_RUNS_SEARCH_SCAN:-300}
+      AURA_VOICE_TASK_REFINE: ${AURA_VOICE_TASK_REFINE:-true}
       # Track AP connectors (ADR-021), off by default. Credentials are vaulted under the
       # secrets_encryption_key mounted above; without it a credentialed connector is refused.
       AURA_ADAPTATION_ENABLED: ${AURA_ADAPTATION_ENABLED:-false}
@@ -875,9 +954,38 @@ services:
       resources:
         limits: {cpus: "0.5", memory: 256M}
 
+  # Renders the proxy's `filter` before the proxy starts (ADR-041): the static
+  # deploy/sandbox/filter (GitHub, PyPI, npm) plus every host in AURA_SANDBOX_ALLOWED_EGRESS_HOSTS,
+  # validated and regex-escaped by deploy/scripts/render-sandbox-filter.sh. With the variable unset
+  # the output is that static file byte for byte, so nothing changes until someone sets it. A host
+  # the script refuses (a wildcard, a URL, an IP address) makes this container exit non-zero, and
+  # the proxy then does not start -- no egress at all, never an allowlist wider than written.
+  # No network, read-only root, nothing but the rendered volume writable.
+  sandbox-proxy-filter:
+    profiles: [sandbox]
+    image: ${AURA_SANDBOX_PROXY_IMAGE:-vimagick/tinyproxy:latest@sha256:72b441b95ee1e641af948f68f09492f9f795ead72b73954414e339168c98ad8c}
+    entrypoint: ["sh", "/render/render-sandbox-filter.sh", "--base", "/render/filter", "--out", "/rendered/filter"]
+    environment:
+      AURA_SANDBOX_ALLOWED_EGRESS_HOSTS: ${AURA_SANDBOX_ALLOWED_EGRESS_HOSTS:-}
+    volumes:
+      - ./scripts/render-sandbox-filter.sh:/render/render-sandbox-filter.sh:ro
+      - ./sandbox/filter:/render/filter:ro
+      - sandbox_filter:/rendered
+    user: "0:0"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: "no"
+    logging: *logging
+    deploy:
+      resources:
+        limits: {cpus: "0.1", memory: 16M}
+
   # The only route out of `sandbox_egress`, which is `internal: true`. Workspaces get
   # HTTP(S)_PROXY pointing here (AURA_SANDBOX_PROXY_URL), and this forwards only to the hosts in
-  # AURA_SANDBOX_ALLOWED_EGRESS_HOSTS -- enough to clone a repository and install packages, and
+  # the rendered filter (deploy/sandbox/filter plus AURA_SANDBOX_ALLOWED_EGRESS_HOSTS, see
+  # `sandbox-proxy-filter` above) -- enough to clone a repository and install packages, and
   # nothing else. Before this existed the choice was between a workspace with no network (unable
   # to do the job) and one with the whole internet (a model-chosen command exfiltrating a
   # checkout); neither was acceptable for a container that lives for days.
@@ -891,7 +999,11 @@ services:
     logging: *logging
     volumes:
       - ./sandbox/tinyproxy.conf:/etc/tinyproxy/tinyproxy.conf:ro
-      - ./sandbox/filter:/etc/tinyproxy/filter:ro
+      # The rendered filter (tinyproxy.conf's `Filter` points here), not the static file.
+      - sandbox_filter:/etc/tinyproxy/rendered:ro
+    depends_on:
+      sandbox-proxy-filter:
+        condition: service_completed_successfully
     # sandbox_egress to be reachable by workspaces; egress to actually reach the allowed hosts.
     # Deliberately not on `data` or `edge`: a proxy that could reach Postgres would hand every
     # workspace a route to it.
@@ -984,6 +1096,18 @@ services:
       HF_TOKEN: ${HF_TOKEN:-}
       AURA_LEARNING_REFRESH_ENABLED: ${AURA_LEARNING_REFRESH_ENABLED:-true}
       AURA_LEARNING_REFRESH_CRON: ${AURA_LEARNING_REFRESH_CRON:-0 2 * * *}
+      # Production-inference monitoring (ADR-052): off by default; measures only, never starts an eval or retrain.
+      AURA_MODEL_MONITOR_ENABLED: ${AURA_MODEL_MONITOR_ENABLED:-false}
+      AURA_MODEL_MONITOR_CRON: ${AURA_MODEL_MONITOR_CRON:-15 * * * *}
+      AURA_MODEL_MONITOR_WINDOW_HOURS: ${AURA_MODEL_MONITOR_WINDOW_HOURS:-24}
+      AURA_MODEL_MONITOR_MIN_TURNS: ${AURA_MODEL_MONITOR_MIN_TURNS:-20}
+      # Local copy of public vulnerability advisories (OSV) for the dependency scan. Off by default; when on,
+      # the learning worker downloads from storage.googleapis.com only, so it needs an outbound route to it.
+      AURA_OSV_SYNC_ENABLED: ${AURA_OSV_SYNC_ENABLED:-false}
+      AURA_OSV_SYNC_CRON: ${AURA_OSV_SYNC_CRON:-30 3 * * *}
+      AURA_OSV_ECOSYSTEMS: ${AURA_OSV_ECOSYSTEMS:-pypi,npm}
+      AURA_OSV_INCLUDE_MALWARE: ${AURA_OSV_INCLUDE_MALWARE:-false}
+      AURA_OSV_MAX_AGE_DAYS: ${AURA_OSV_MAX_AGE_DAYS:-3}
       # Connection budget (audit FSA-073): each prefork child (`-c N`) holds its own pools, so a
       # worker process gets 2 + 1 + 1 = 4 connections. See the gateway's block for the arithmetic.
       AURA_POSTGRES_POOL_MIN_SIZE: ${AURA_WORKER_POSTGRES_POOL_MIN_SIZE:-1}

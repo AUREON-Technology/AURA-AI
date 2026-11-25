@@ -653,6 +653,37 @@ def register_admin_ops(
             }
         )
 
+    @router.get("/admin/model-monitor")
+    async def model_monitor_report(caller=Depends(principal)) -> JSONResponse:
+        """The last production-inference monitoring pass (ADR-052): per-model metrics against their pinned
+        baselines, and which ones drifted. Empty until the job (``AURA_MODEL_MONITOR_ENABLED``) has run."""
+        require_admin(caller)
+        from ..learning.model_monitor import last_report
+
+        report = await last_report(container.cache_backend)
+        return JSONResponse(content={
+            "enabled": container.settings.learning.model_monitor_enabled, "report": report})
+
+    @router.post("/admin/model-monitor/rebaseline")
+    async def model_monitor_rebaseline(
+        caller=Depends(principal), model: str | None = Query(default=None, max_length=80),
+    ) -> JSONResponse:
+        """Pin each monitored series' latest observation as its new baseline -- the deliberate step after an
+        intended model change. Audited."""
+        require_admin(caller)
+        from ..learning.model_monitor import rebaseline
+        from ..ports.runtime import AuditEvent
+
+        result = await rebaseline(container.cache_backend, model=model)
+        try:
+            await container.audit.record(AuditEvent(
+                action="model_monitor.rebaseline", actor=caller.email or caller.user_id.value,
+                actor_role=caller.role, resource=f"model:{model or '*'}", outcome="ok",
+                detail={"series": len(result["rebaselined"])}))
+        except Exception:
+            logger.warning("model monitor rebaseline audit write failed", exc_info=False)
+        return JSONResponse(content=result)
+
     @router.get("/admin/approvals")
     async def list_approvals(
         caller=Depends(principal),

@@ -285,6 +285,26 @@ class PlanStep {
   }
 }
 
+/// One advisory risk flag the backend attaches to a held call (`confirmation_summary.py`).
+/// [level] is `high`, `medium` or `low`; [code] names the kind (`command`, `sensitive_file`,
+/// `migration`, `pipeline`, `deployment`, `remote_write`, `large_change`); [text] is the backend's
+/// own English sentence. Advisory only: a call without flags is not thereby safe.
+class RiskFlag {
+  final String code;
+  final String level;
+  final String text;
+
+  const RiskFlag({required this.code, required this.level, required this.text});
+
+  Map<String, dynamic> toJson() => {'code': code, 'level': level, 'text': text};
+
+  factory RiskFlag.fromJson(Map<String, dynamic> json) => RiskFlag(
+        code: json['code']?.toString() ?? '',
+        level: json['level']?.toString() ?? 'low',
+        text: json['text']?.toString() ?? '',
+      );
+}
+
 /// One tool call the backend is holding pending the user's explicit confirmation
 /// (`TurnResult.pending_tool_calls` / the `done` SSE frame's `pending_tool_calls`) -- carries the
 /// call's actual arguments, not just its tool name, so the client can show what it's approving.
@@ -306,6 +326,11 @@ class PendingToolCall {
   // held turn and runs only a call identical to this one, once, when this id comes back in
   // `approval_ids`. A call without one (an older backend) cannot be confirmed from here.
   final String? approvalId;
+  // A one-line plain description of the call ("Run: npm test") and its advisory risk flags, made by
+  // the backend so a phone-sized card can lead with what is being approved instead of the raw command
+  // or diff. Both are absent from an older backend: the card then shows the raw detail as before.
+  final String? headline;
+  final List<RiskFlag> riskFlags;
 
   const PendingToolCall({
     this.callId,
@@ -314,6 +339,8 @@ class PendingToolCall {
     this.turnId,
     this.diffPreview,
     this.approvalId,
+    this.headline,
+    this.riskFlags = const [],
   });
 
   bool get canConfirm => approvalId != null && approvalId!.isNotEmpty;
@@ -325,6 +352,8 @@ class PendingToolCall {
         turnId: turnId ?? this.turnId,
         diffPreview: diffPreview,
         approvalId: approvalId,
+        headline: headline,
+        riskFlags: riskFlags,
       );
 
   Map<String, dynamic> toJson() => {
@@ -334,6 +363,8 @@ class PendingToolCall {
         'turn_id': turnId,
         'diff_preview': diffPreview,
         'approval_id': approvalId,
+        'headline': headline,
+        'risk_flags': riskFlags.map((f) => f.toJson()).toList(),
       };
 
   factory PendingToolCall.fromJson(Map<String, dynamic> json) {
@@ -346,6 +377,13 @@ class PendingToolCall {
       turnId: json['turn_id']?.toString(),
       diffPreview: json['diff_preview']?.toString(),
       approvalId: json['approval_id']?.toString(),
+      headline: json['headline']?.toString(),
+      riskFlags: json['risk_flags'] is List
+          ? (json['risk_flags'] as List)
+              .whereType<Map>()
+              .map((f) => RiskFlag.fromJson(Map<String, dynamic>.from(f)))
+              .toList()
+          : const [],
     );
   }
 }

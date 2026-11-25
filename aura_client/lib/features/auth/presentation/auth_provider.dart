@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/workspaces/active_workspace.dart';
+import 'package:aura_client/features/engineering/data/agent_task_outbox.dart';
 import 'package:aura_client/core/auth/account_client.dart';
 import 'package:aura_client/core/auth/desktop_oauth_client.dart';
 import 'package:aura_client/core/auth/identity_service.dart';
@@ -563,6 +564,9 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
 
     // The next account must not start in this one's team (F2 review #1).
     await ref.read(activeWorkspaceProvider.notifier).clear();
+
+    // Nor may it replay this one's queued agent tasks (they are saved locally, not in the DB).
+    await ref.read(agentTaskOutboxProvider.notifier).clear();
 
     await _storage.deleteAll();
     // Shared storage also drops the DB encryption-key copy. Tokens must be

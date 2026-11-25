@@ -198,6 +198,10 @@ Future<void> _runDaemon(ConfigStore configStore, WorkspaceStore workspaceStore) 
     isBackendConnected: () => backend.isConnected,
     isCredentialsRejected: () => backend.credentialsRejected,
     lastCloseCode: () => backend.lastCloseCode,
+    onShutdown: () async {
+      backend.stop();
+      await backend.stopRunningCommands();
+    },
   );
   await controlServer.start(resolveConfigDir());
 
@@ -215,6 +219,8 @@ Future<void> _runDaemon(ConfigStore configStore, WorkspaceStore workspaceStore) 
     shuttingDown = true;
     stdout.writeln('Shutting down...');
     backend.stop();
+    // The agent's still-running commands (and what they spawned) go down with the daemon.
+    await backend.stopRunningCommands();
     await controlServer.stop();
     exit(0);
   }

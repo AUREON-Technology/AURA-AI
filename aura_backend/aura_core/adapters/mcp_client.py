@@ -29,6 +29,21 @@ __all__ = ["McpClient", "McpConnectionError", "McpToolError"]
 logger = get_logger("adapters.mcp_client")
 
 
+def _field(obj: Any, snake: str, camel: str, default: Any = None) -> Any:
+    """A field of an MCP SDK object under either spelling.
+
+    The 1.x SDK names these ``inputSchema`` / ``outputSchema`` / ``structuredContent`` / ``isError``;
+    2.x (``requirements.lock`` pins ``mcp==2.3.0``) renamed them ``input_schema`` / ``output_schema`` /
+    ``structured_content`` / ``is_error``. Reading only the old names made every bridged tool register
+    with no parameters (so any call with arguments failed validation) and turned a tool's own error
+    into a normal successful result.
+    """
+    value = getattr(obj, snake, None)
+    if value is None:
+        value = getattr(obj, camel, None)
+    return default if value is None else value
+
+
 class McpConnectionError(RuntimeError):
     """Raised when a configured MCP server cannot be reached or fails during the handshake."""
 
@@ -254,8 +269,8 @@ class McpClient:
                         server=name,
                         name=getattr(tool, "name", ""),
                         description=getattr(tool, "description", "") or "",
-                        input_schema=dict(getattr(tool, "inputSchema", None) or {}),
-                        output_schema=dict(getattr(tool, "outputSchema", None) or {}) or None,
+                        input_schema=dict(_field(tool, "input_schema", "inputSchema", {}) or {}),
+                        output_schema=dict(_field(tool, "output_schema", "outputSchema", {}) or {}) or None,
                     )
                 )
         return descriptors
@@ -265,14 +280,15 @@ class McpClient:
             raise McpConnectionError(f"unknown MCP server {server!r}")
         session = await self._session_for(server)
         result = await session.call_tool(name, arguments)
-        structured = getattr(result, "structuredContent", None)
-        if structured is not None and not getattr(result, "isError", False):
+        structured = _field(result, "structured_content", "structuredContent")
+        is_error = bool(_field(result, "is_error", "isError", False))
+        if structured is not None and not is_error:
             # A tool with an outputSchema returns structuredContent (MCP 2025-06-18); returning it
             # as JSON is what lets ToolRegistry.execute check it against that schema (ADR-025).
             return json.dumps(structured, ensure_ascii=False, default=str)
         blocks = getattr(result, "content", None) or []
         parts = [text for block in blocks if (text := getattr(block, "text", None))]
-        if getattr(result, "isError", False):
+        if is_error:
             # The tool ran and failed. Raising (rather than returning the error text as if it
             # were output) is what makes ToolRegistry report ok=False; FunctionTool carries this
             # message into the result the model sees.

@@ -30,11 +30,13 @@ from ..domain.identifiers import SessionId, UserId
 from ..domain.messages import Conversation, Message, Role
 from ..observability.logging import get_logger
 from ..ports.storage import Cache
+from .checkpoint import SessionCheckpoint, extract_checkpoint, parse_checkpoint_json
 
 __all__ = [
     "WorkingMemory",
     "EpisodicMemory",
     "SessionState",
+    "SessionCheckpoint",
     "SessionHistory",
     "FALLBACK_SUMMARY_MARKER",
     "is_tainted",
@@ -235,6 +237,9 @@ class EpisodicMemory:
     # Deliberately not under _PREFIX: no session id can make its data key equal a lease key,
     # so releasing a lease can never delete a conversation.
     _LEASE_PREFIX = "session-lease:"
+    # Also its own namespace, owner-keyed like the session itself (tests/security/test_idor.py): a
+    # checkpoint is a digest of a private conversation and must not be reachable by session id alone.
+    _CHECKPOINT_PREFIX = "session-checkpoint:"
 
     def __init__(
         self,
@@ -246,8 +251,17 @@ class EpisodicMemory:
         summariser: Any = None,
         lease_ttl_s: int = 10,
         lease_wait_s: float = 12.0,
+        checkpointer: Any = None,
+        auto_checkpoint_every: int = 0,
     ) -> None:
         self._cache = cache
+        #: ``async (transcript, previous_summary) -> raw model text``; ``None`` = extractive only.
+        self._checkpointer = checkpointer
+        #: Write a checkpoint in the background every N persisted turns of a session (``0`` = never).
+        #: Checked at the end of :meth:`append`, off the caller's path: a checkpoint is a model call.
+        self._auto_checkpoint_every = max(0, int(auto_checkpoint_every))
+        # Strong references: a bare ``create_task`` can be collected before it finishes.
+        self._background: set[asyncio.Task[Any]] = set()
         self._window = window
         self._summarise_after = summarise_after
         self._ttl = ttl_s
@@ -348,6 +362,8 @@ class EpisodicMemory:
             )
             await self._write(key, state)
 
+        self._maybe_auto_checkpoint(session_id, owner_id, state.turn_count)
+
         if len(state.messages) <= self._summarise_after or key in self._summarising:
             return state
 
@@ -380,6 +396,44 @@ class EpisodicMemory:
                 )
                 await self._write(key, applied)
                 return applied
+        finally:
+            self._summarising.discard(key)
+
+    async def compact(
+        self, session_id: SessionId, owner_id: UserId, *, keep_last: int = 4
+    ) -> bool:
+        """Fold everything but the last ``keep_last`` messages into the summary *now*.
+
+        The same summarise-and-compare-and-set step :meth:`append` runs when the window overflows,
+        invoked on demand instead of on a message count -- what the agent loop asks for when a
+        long run reports context pressure (ADR-039), so the *next* turn's prompt carries a summary
+        in place of the verbatim older turns. ``True`` if history was folded; ``False`` when there
+        was nothing to fold, a summary of this session was already in flight, or the state moved
+        under it (the stale summary is discarded, exactly as in :meth:`append`).
+        """
+        key = self._key(session_id, owner_id)
+        if key in self._summarising:
+            return False
+        state = await self.load(session_id, owner_id)
+        keep = max(1, keep_last)
+        if len(state.messages) <= keep:
+            return False
+        self._summarising.add(key)
+        try:
+            overflow = state.messages[: len(state.messages) - keep]
+            summary = await self._summarise(overflow, state.summary)
+            async with self._exclusive(key):
+                current = await self.load(session_id, owner_id)
+                if current.folded != state.folded or not _same_prefix(current.messages, overflow):
+                    return False
+                await self._write(key, replace(
+                    current,
+                    messages=current.messages[len(overflow):],
+                    summary=summary,
+                    folded=current.folded + len(overflow),
+                    updated_at=time.time(),
+                ))
+                return True
         finally:
             self._summarising.discard(key)
 
@@ -425,6 +479,97 @@ class EpisodicMemory:
             await asyncio.sleep(delay)
             delay = min(delay * 2, 0.2)
 
+    # -- checkpoints -------------------------------------------------------------------
+
+    def _checkpoint_key(self, session_id: SessionId, owner_id: UserId) -> str:
+        owner = owner_id.value
+        return f"{self._CHECKPOINT_PREFIX}u{len(owner)}:{owner}:{session_id.value}"
+
+    async def checkpoint(
+        self, session_id: SessionId, owner_id: UserId, *, save: bool = True
+    ) -> SessionCheckpoint:
+        """Write the session's decisions / completed work / blockers / next steps down.
+
+        Model-written when a ``checkpointer`` is configured and its reply parses; otherwise (no
+        model, model error, unparseable reply) extracted by keyword and marked
+        ``source="extractive"``. Never raises for a model failure. An empty session yields an empty
+        checkpoint and saves nothing. The model call happens outside any lock, like summarising.
+        """
+        state = await self.load(session_id, owner_id)
+        if not state.messages and not state.summary:
+            return SessionCheckpoint(created_at=time.time())
+        covers = state.folded + len(state.messages)
+        result: SessionCheckpoint | None = None
+        if self._checkpointer is not None:
+            transcript = "\n".join(f"{m.role}: {m.content}" for m in state.messages)
+            try:
+                raw = await self._checkpointer(transcript, state.summary)
+                result = parse_checkpoint_json(raw, covers_messages=covers)
+            except Exception:
+                logger.warning("session checkpoint generation failed; extracting instead")
+        if result is None or result.is_empty():
+            extracted = extract_checkpoint(state.messages, state.summary)
+            result = replace(extracted, covers_messages=covers) if result is None or not extracted.is_empty() else result
+        if save:
+            await self._cache.set(
+                self._checkpoint_key(session_id, owner_id), result.to_json().encode("utf-8"), ttl_s=self._ttl
+            )
+        return result
+
+    def _maybe_auto_checkpoint(self, session_id: SessionId, owner_id: UserId, turn_count: int) -> None:
+        """Schedule a checkpoint when this was every Nth turn. Never awaits, never raises.
+
+        Through :meth:`append`, the one path every persisted exchange takes (``run`` and
+        ``stream`` alike), so a caller cannot forget it. Background, because the checkpoint may
+        be a model call (seconds to minutes on a CPU host) and the turn it follows has already
+        been answered. A failed one is logged and the next Nth turn tries again.
+        """
+        every = self._auto_checkpoint_every
+        if every <= 0 or turn_count <= 0 or turn_count % every != 0:
+            return
+        try:
+            task = asyncio.get_running_loop().create_task(self._auto_checkpoint(session_id, owner_id))
+        except RuntimeError:  # no running loop: nothing to schedule on
+            return
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+
+    async def _auto_checkpoint(self, session_id: SessionId, owner_id: UserId) -> None:
+        try:
+            await self.checkpoint(session_id, owner_id, save=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("automatic session checkpoint failed", exc_info=True)
+
+    async def drain_background(self) -> None:
+        """Wait for any automatic checkpoint in flight (tests, graceful shutdown)."""
+        while self._background:
+            await asyncio.gather(*list(self._background), return_exceptions=True)
+
+    async def fresh_checkpoint(
+        self, session_id: SessionId, owner_id: UserId, *, max_age_s: float = 600.0
+    ) -> SessionCheckpoint | None:
+        """The saved checkpoint if it is recent enough, else a newly written one; ``None`` for a
+        session with nothing in it. For callers on a live path (a handoff) that should not pay for
+        a model call when one was written a moment ago."""
+        saved = await self.latest_checkpoint(session_id, owner_id)
+        if saved is not None and not saved.is_empty() and time.time() - saved.created_at <= max_age_s:
+            return saved
+        written = await self.checkpoint(session_id, owner_id, save=True)
+        return None if written.is_empty() and written.covers_messages == 0 else written
+
+    async def latest_checkpoint(self, session_id: SessionId, owner_id: UserId) -> SessionCheckpoint | None:
+        """The last saved checkpoint for this owner's session, or ``None``."""
+        raw = await self._cache.get(self._checkpoint_key(session_id, owner_id))
+        if raw is None:
+            return None
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            return None
+        return SessionCheckpoint.from_dict(data) if isinstance(data, Mapping) else None
+
     async def history(self, session_id: SessionId, owner_id: UserId) -> tuple[Conversation, str]:
         """Every message not yet folded into the summary, and the summary.
 
@@ -455,6 +600,7 @@ class EpisodicMemory:
         key = self._key(session_id, owner_id)
         async with self._exclusive(key):
             await self._cache.delete(key)
+            await self._cache.delete(self._checkpoint_key(session_id, owner_id))
             legacy = await self._cache.get(self._key(session_id))
             if legacy is not None:
                 state = SessionState.from_json(legacy)

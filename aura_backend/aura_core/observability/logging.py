@@ -52,6 +52,7 @@ _RESERVED = frozenset(
 _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\b(sk|pk|rk)-[A-Za-z0-9_\-]{16,}\b"), "[redacted:api-key]"),
     (re.compile(r"\bAIza[0-9A-Za-z_\-]{20,}\b"), "[redacted:google-key]"),
+    (re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"), "[redacted:aws-access-key]"),
     (re.compile(r"\bghp_[A-Za-z0-9]{20,}\b"), "[redacted:github-token]"),
     (re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"), "[redacted:jwt]"),
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"), "[redacted:private-key]"),
@@ -126,6 +127,17 @@ class ContentRedactingFilter(logging.Filter):
                 record.__dict__[key] = _redact_value(record.__dict__[key])
         if isinstance(record.msg, str):
             record.msg = _redact_value(record.msg)
+        # ``logger.info("x %s", secret)``: the secret is an *argument*, merged into the text only
+        # when a handler calls getMessage(). Scrub string args in place (tuple stays a tuple, a
+        # mapping stays a mapping, non-strings untouched) so %-formatting and lazy formatting
+        # behave exactly as before for anything that holds no secret.
+        args = record.args
+        if isinstance(args, tuple):
+            if any(isinstance(a, str) for a in args):
+                record.args = tuple(_redact_value(a) if isinstance(a, str) else a for a in args)
+        elif isinstance(args, Mapping):
+            if any(isinstance(a, str) for a in args.values()):
+                record.args = {k: _redact_value(a) if isinstance(a, str) else a for k, a in args.items()}
         return True
 
 

@@ -317,6 +317,8 @@ def _apply_http_limits(app, settings) -> None:
         "/api/v3/knowledge/documents/": _DEFAULT_BODY_BYTES,
         "/api/v3/knowledge/documents": document_body_limit(settings.knowledge),
         "/api/v3/voice/transcribe": transcribe_body_limit(),
+        # Same audio, same ceiling: /voice/task transcribes the upload before extracting a task.
+        "/api/v3/voice/task": transcribe_body_limit(),
     }
     chat_limit = chat_body_limit(settings.vision)
     if chat_limit is not None:
@@ -398,6 +400,11 @@ def create_app():
     from api.admin_platform import other_approver_exists
 
     container.approvals.use_other_approver_check(other_approver_exists)
+    # ADR-041: the kill switch's "revoke paired devices" step. The device registry is a legacy
+    # service module, so it is attached here for the same reason.
+    from services.device_kill import revoke_paired_devices
+
+    container.device_revoker = revoke_paired_devices
     authenticator = _build_authenticator(
         settings, service_keys=container.service_keys, tenancy=container.tenancy
     )

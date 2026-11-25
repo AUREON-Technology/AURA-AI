@@ -66,8 +66,12 @@ __all__ = [
     "McpSettings",
     "OpenToolsSettings",
     "ExtractionSettings",
+    "AdvisorySettings",
+    "OpsSettings",
     "GitHubSettings",
     "SandboxSettings",
+    "AgentTaskSettings",
+    "UsageSettings",
     "DATA_ENCRYPTION_KEYS_ENV",
     "data_encryption_keys",
     "SECRETS_ENCRYPTION_KEYS_ENV",
@@ -227,6 +231,48 @@ def _list(key: str, default: Sequence[str] = ()) -> tuple[str, ...]:
     if raw is None:
         return tuple(default)
     return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
+def _host_list(key: str) -> tuple[str, ...]:
+    """Like :func:`_list`, but whitespace and newlines separate entries too -- the same split
+    ``deploy/scripts/render-sandbox-filter.sh`` applies to the same variable."""
+    raw = _env(key)
+    if raw is None:
+        return ()
+    return tuple(item for item in re.split(r"[,\s]+", raw) if item)
+
+
+def egress_host_problem(host: str) -> str | None:
+    """Why ``host`` is not an acceptable sandbox egress host, or ``None`` when it is.
+
+    The same rules as ``deploy/scripts/render-sandbox-filter.sh``, which is what turns the
+    setting into the proxy's allowlist (``tests/unit/test_render_sandbox_filter.py`` runs both over
+    one corpus and requires them to agree). Here it is the start-up check: a value the renderer
+    would refuse must stop the gateway too, not be discovered when the proxy container exits.
+    """
+    h = host.strip().lower()
+    if "*" in h:
+        return "wildcards are not supported; list each host"
+    if "://" in h or "/" in h:
+        return "give a bare host name, not a URL or a path"
+    if "@" in h:
+        return "credentials are not allowed in a host"
+    if ":" in h:
+        return "a port is not allowed (the proxy only ever connects to 443)"
+    if not h or not re.fullmatch(r"[a-z0-9.-]+", h):
+        return "only letters, digits, hyphens and dots are allowed"
+    if h.startswith((".", "-")) or h.endswith((".", "-")) or ".." in h or ".-" in h or "-." in h:
+        return "malformed (empty label, or a label starting or ending with a hyphen)"
+    if len(h) > 253:
+        return "longer than 253 characters"
+    labels = h.split(".")
+    if len(labels) < 2:
+        return "needs at least two labels (a single name such as 'localhost' is an internal host)"
+    if any(len(label) > 63 for label in labels):
+        return "a label is longer than 63 characters"
+    if labels[-1].isdigit():
+        return "an IP address is not a host name"
+    return None
 
 
 def _redact_url_userinfo(value: str) -> str:
@@ -872,7 +918,10 @@ class LLMSettings:
     #: Declares the image modality (ADR-031) because echo is a pure function of its input, images
     #: included: it is what lets the default test suite exercise image turns with no model.
     ECHO_PROVIDER = ProviderConfig(
-        name="echo", kind="echo", model="echo-1", context_window=8192, max_output_tokens=2048,
+        # 32K rather than 8K: an orchestrator turn's planner prompt is about 9,000 tokens with the
+        # tool catalog of both branches merged (67 tools), and echo must not be the reason a plan
+        # is refused with "context_window_too_small". Echo is a test/dev provider only.
+        name="echo", kind="echo", model="echo-1", context_window=32768, max_output_tokens=2048,
         modalities=("text", "image"),
     )
 
@@ -1104,6 +1153,11 @@ class MemorySettings:
     max_records_per_user: int = 20_000
     #: Verbatim messages injected into the model. Stored session history is unchanged.
     prompt_history_messages: int = 4
+    #: Write a structured session checkpoint (decisions / completed / blockers / next steps) in the
+    #: background every N persisted turns of a session (``EpisodicMemory.append``). ``0`` -- the
+    #: default -- never does it automatically; ``save_session_checkpoint`` and the checkpoint API
+    #: still work on demand. Each one is a model call, so it never runs on the turn's own path.
+    auto_checkpoint_every_turns: int = 0
 
     @classmethod
     def from_env(cls) -> "MemorySettings":
@@ -1119,6 +1173,9 @@ class MemorySettings:
             duplicate_threshold=_float("MEMORY_DUPLICATE_THRESHOLD", 0.94, minimum=0.5, maximum=1.0),
             max_records_per_user=_int("MEMORY_MAX_RECORDS_PER_USER", 20_000, minimum=100),
             prompt_history_messages=_int("MEMORY_PROMPT_HISTORY_MESSAGES", 4, minimum=0, maximum=64),
+            auto_checkpoint_every_turns=_int(
+                "MEMORY_AUTO_CHECKPOINT_EVERY_TURNS", 0, minimum=0, maximum=1000
+            ),
         )
 
 
@@ -1135,6 +1192,18 @@ class SafetySettings:
     block_on_secret_leak: bool = True
     max_input_chars: int = 32_000
     groundedness_min: float = 0.4
+    #: Redact credential-shaped text (``safety/guards.py::SecretGuard``, redact-only, never block)
+    #: from what the model is shown, and from what a session keeps. Three switches because they
+    #: change three different things, and all default off -- today's behaviour:
+    #:   *context*: retrieved chunks, recalled memories and the loaded session history, in the
+    #:   prompt (a key planted in a document does not reach the model);
+    #:   *input*: the user's own message (a key they pasted does not reach the model -- which also
+    #:   means the model cannot use it, so a user asking the agent to configure that key must
+    #:   leave this off);
+    #:   *history*: what is written to session history (the stored transcript is redacted).
+    redact_secrets_in_context: bool = False
+    redact_secrets_in_input: bool = False
+    redact_secrets_in_history: bool = False
 
     @classmethod
     def from_env(cls) -> "SafetySettings":
@@ -1150,6 +1219,9 @@ class SafetySettings:
             block_on_secret_leak=_bool("SAFETY_BLOCK_ON_SECRET_LEAK", True),
             max_input_chars=_int("SAFETY_MAX_INPUT_CHARS", 32_000, minimum=100),
             groundedness_min=_float("SAFETY_GROUNDEDNESS_MIN", 0.4, minimum=0.0, maximum=1.0),
+            redact_secrets_in_context=_bool("SAFETY_REDACT_CONTEXT_SECRETS", False),
+            redact_secrets_in_input=_bool("SAFETY_REDACT_INPUT_SECRETS", False),
+            redact_secrets_in_history=_bool("SAFETY_REDACT_HISTORY_SECRETS", False),
         )
 
 
@@ -1162,6 +1234,36 @@ class ToolSettings:
     default_timeout_s: float = 15.0
     max_parallel: int = 4
     require_confirmation_for_side_effects: bool = True
+    #: Directory ``list_files`` / ``read_file`` are confined to (``tools/builtin.py::build_file_tools``).
+    #: Empty (the default) registers neither tool: a file tool with no root would be advertised and
+    #: then refuse every call. Must be an absolute path that is not ``/``; it is created if missing.
+    files_root: str = ""
+    #: Hosts ``fetch_url`` may reach (``build_http_tool``); subdomains are not implied. Empty (the
+    #: default) registers no ``fetch_url``. Private/loopback addresses are refused regardless.
+    http_allowed_hosts: tuple[str, ...] = ()
+    #: Base URL of an operator-run SearXNG instance (JSON API enabled) that ``web_search`` queries
+    #: (``tools/websearch.py``, ADR-042). Empty (the default) registers no ``web_search``. There is
+    #: deliberately no hosted-vendor alternative: search is self-hosted like everything else here.
+    web_search_url: str = ""
+    #: Seconds the search server gets to answer.
+    web_search_timeout_s: float = 10.0
+    #: Optional SearXNG ``engines`` / ``language`` parameters, passed on verbatim (empty = its defaults).
+    web_search_engines: str = ""
+    web_search_language: str = ""
+    #: Directory ``ocr_image``, ``inspect_spreadsheet``, ``parse_document`` and ``transcribe_audio``
+    #: read from is ``files_root`` (the same confinement as ``read_file``); nothing extra to set.
+    #: Path to a JSON/YAML file of declarative tool-call rules (``tools/policy_rules.py``, ADR-041):
+    #: deny or require confirmation by tool name + argument pattern. Empty (the default) = none.
+    #: Validated when the container is built; a bad rule stops start-up with its index.
+    policy_file: str = ""
+    #: Whether a user may pick the ``autonomous`` review profile (``PUT /api/v3/engineering/policy``)
+    #: and have it honoured. Off by default; ``strict`` and ``standard`` need no switch because
+    #: neither asks for less than today's behaviour.
+    allow_autonomous_profile: bool = False
+    #: The review profile a user who never chose one gets: ``standard`` (today's behaviour) or
+    #: ``strict`` (an operator who wants every side effect confirmed by default). ``autonomous``
+    #: cannot be a default -- it is something a person opts into.
+    autonomy_default: str = "standard"
 
     @classmethod
     def from_env(cls) -> "ToolSettings":
@@ -1173,6 +1275,15 @@ class ToolSettings:
             default_timeout_s=_float("TOOLS_DEFAULT_TIMEOUT_S", 15.0, minimum=0.5),
             max_parallel=_int("TOOLS_MAX_PARALLEL", 4, minimum=1, maximum=32),
             require_confirmation_for_side_effects=_bool("TOOLS_REQUIRE_CONFIRMATION", True),
+            files_root=(_env("TOOLS_FILES_ROOT", "") or "").strip(),
+            http_allowed_hosts=_list("TOOLS_HTTP_ALLOWED_HOSTS"),
+            web_search_url=(_env("WEB_SEARCH_URL", "") or "").strip(),
+            web_search_timeout_s=_float("WEB_SEARCH_TIMEOUT_S", 10.0, minimum=1.0, maximum=60.0),
+            web_search_engines=(_env("WEB_SEARCH_ENGINES", "") or "").strip(),
+            web_search_language=(_env("WEB_SEARCH_LANGUAGE", "") or "").strip(),
+            policy_file=(_env("TOOL_POLICY_FILE", "") or "").strip(),
+            allow_autonomous_profile=_bool("AUTONOMY_ALLOW_AUTONOMOUS", False),
+            autonomy_default=(_env("AUTONOMY_DEFAULT", "standard") or "standard").strip().lower(),
         )
 
 
@@ -1204,6 +1315,55 @@ class ReasoningSettings:
     #: flat 60s every other tool gets (`AIKernel._tool_context`) -- a delegated sub-turn is a full
     #: recursive `kernel.run()`, not a simple API call, and needs room for its own budgets.
     delegation_deadline_s: float = 180.0
+    #: Agent-loop intelligence (ADR-039). Stuck detection stops a loop that is already spinning,
+    #: so it is on; a threshold of ``0`` disables that one rule. ``identical_calls``: the same
+    #: tool + arguments with the same outcome N times; ``same_error``: the same failure in N
+    #: consecutive passes; ``no_progress``: N consecutive passes in which no step newly succeeded.
+    loop_stuck_detection_enabled: bool = True
+    loop_stuck_identical_calls: int = 3
+    loop_stuck_same_error: int = 3
+    loop_stuck_no_progress: int = 4
+    #: Decide retries per failure kind (``execution/recovery.py``) instead of retrying every
+    #: failed read-only step. ``backoff_s`` is the first transient delay
+    #: (doubling, capped at 8 s).
+    loop_recovery_policy_enabled: bool = True
+    loop_recovery_backoff_s: float = 0.5
+    #: Read test results as a loop input: a failing test run (or a non-zero command exit) makes the
+    #: pass "not done" and drives a replan with that reason. A pass whose steps all ran is
+    #: complete, as before.
+    loop_test_signals_enabled: bool = True
+    #: Deterministic plan/outcome/answer critic, applied to the agent loop of a persona that
+    #: replans (today: engineer). ``critic_llm_enabled`` adds an advisory model critic on top.
+    critic_enabled: bool = True
+    critic_llm_enabled: bool = False
+    #: Token budget for the engineer persona's run (planner generations plus held tool output;
+    #: ``0`` = unbounded). Generous: 9 passes of a 1,200-token plan use a small fraction of it.
+    engineer_token_budget: int = 400_000
+    #: Fraction of the token budget at which ``context_pressure`` is signalled and older tool
+    #: output is compressed, once.
+    context_pressure_threshold: float = 0.8
+    #: ADR-040. ``delegate_to_agent(background=true)`` plus ``list_agent_tasks`` /
+    #: ``get_agent_task`` / ``cancel_agent_task``. Off: none of them is registered and the
+    #: ``background`` parameter is not advertised, so delegation is the synchronous one-hop
+    #: sub-turn it always was.
+    background_delegation_enabled: bool = False
+    #: Background tasks one user may have queued or running at once (counted in the shared cache,
+    #: so it holds across workers), and the cap on tasks this process runs at once.
+    agent_tasks_per_user: int = 3
+    agent_tasks_global: int = 16
+    #: How long a finished task's status and result stay readable, and the wall-clock limit on one
+    #: background sub-turn.
+    agent_task_ttl_s: int = 3600
+    agent_task_deadline_s: float = 900.0
+    #: ADR-040. A delegated sub-turn receives a structured, fenced DATA-channel handoff (goal,
+    #: decisions, completed, blockers, pending, relevant paths) built from the parent session's
+    #: checkpoint, and its result is stored back as a structured outcome. Off: the child sees only
+    #: the subtask text, as before.
+    structured_handoff_enabled: bool = False
+    #: ADR-040. What a ``/chat`` turn that names no ``plan_mode`` (and no ``plan``) does:
+    #: ``""`` -- the default -- is today's behaviour, unchanged; ``auto``, ``plan``, ``fast`` or
+    #: ``review`` make that mode the deployment default.
+    default_plan_mode: str = ""
 
     @classmethod
     def from_env(cls) -> "ReasoningSettings":
@@ -1227,6 +1387,28 @@ class ReasoningSettings:
             delegation_deadline_s=_float(
                 "REASONING_DELEGATION_DEADLINE_S", 180.0, minimum=10.0, maximum=3600.0
             ),
+            loop_stuck_detection_enabled=_bool("LOOP_STUCK_DETECTION_ENABLED", True),
+            loop_stuck_identical_calls=_int("LOOP_STUCK_IDENTICAL_CALLS", 3, minimum=0, maximum=50),
+            loop_stuck_same_error=_int("LOOP_STUCK_SAME_ERROR", 3, minimum=0, maximum=50),
+            loop_stuck_no_progress=_int("LOOP_STUCK_NO_PROGRESS", 4, minimum=0, maximum=50),
+            loop_recovery_policy_enabled=_bool("LOOP_RECOVERY_POLICY_ENABLED", True),
+            loop_recovery_backoff_s=_float("LOOP_RECOVERY_BACKOFF_S", 0.5, minimum=0.0, maximum=30.0),
+            loop_test_signals_enabled=_bool("LOOP_TEST_SIGNALS_ENABLED", True),
+            critic_enabled=_bool("CRITIC_ENABLED", True),
+            critic_llm_enabled=_bool("CRITIC_LLM_ENABLED", False),
+            engineer_token_budget=_int("ENGINEER_TOKEN_BUDGET", 400_000, minimum=0),
+            context_pressure_threshold=_float(
+                "CONTEXT_PRESSURE_THRESHOLD", 0.8, minimum=0.1, maximum=1.0
+            ),
+            background_delegation_enabled=_bool("REASONING_BACKGROUND_DELEGATION", False),
+            agent_tasks_per_user=_int("REASONING_AGENT_TASKS_PER_USER", 3, minimum=1, maximum=50),
+            agent_tasks_global=_int("REASONING_AGENT_TASKS_GLOBAL", 16, minimum=1, maximum=500),
+            agent_task_ttl_s=_int("REASONING_AGENT_TASK_TTL_S", 3600, minimum=60, maximum=7 * 86400),
+            agent_task_deadline_s=_float(
+                "REASONING_AGENT_TASK_DEADLINE_S", 900.0, minimum=10.0, maximum=7200.0
+            ),
+            structured_handoff_enabled=_bool("REASONING_STRUCTURED_HANDOFF", False),
+            default_plan_mode=(_env("REASONING_DEFAULT_PLAN_MODE", "") or "").strip().lower(),
         )
 
 
@@ -1485,6 +1667,12 @@ class LearningSettings:
     #: returning a short error page.
     gate_max_shrink: float = 0.40
     index_retention_days: int = 7
+    #: Hourly job that turns production telemetry into per-model metric series and checks them for drift
+    #: (ADR-052). Off by default; it only measures and never starts an evaluation or a retrain.
+    model_monitor_enabled: bool = False
+    model_monitor_cron: str = "15 * * * *"
+    model_monitor_window_hours: int = 24
+    model_monitor_min_turns: int = 20
     finetune_min_examples: int = 500
     finetune_min_distinct_users: int = 5
     finetune_auto_launch: bool = False  # never true; see validate()
@@ -1507,6 +1695,14 @@ class LearningSettings:
     finetune_estimated_cpu_hours: float | None = None
     #: Max substring-coverage drop vs base before canary is blocked.
     finetune_canary_max_coverage_drop: float = 0.05
+    #: ADR-040. After an Engineer turn, derive candidate lessons (decisions, corrected errors,
+    #: conventions) and store them as ``auto_lesson`` memories in the engineer scope's *pending*
+    #: partition. Nothing reaches recall until the owner approves it. Off by default.
+    auto_lessons_enabled: bool = False
+    #: ADR-047 (row 60). With ``auto_lessons_enabled``, ask a *local* model to write the lessons
+    #: (strict JSON, validated) instead of only extracting them by keyword; any failure falls back
+    #: to the keyword extractor, and lessons still wait in the owner's review queue. Off by default.
+    auto_lessons_model_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> "LearningSettings":
@@ -1523,6 +1719,10 @@ class LearningSettings:
             gate_max_count_delta=_float("LEARNING_GATE_COUNT_DELTA", 0.40, minimum=0.0, maximum=10.0),
             gate_max_shrink=_float("LEARNING_GATE_SHRINK", 0.40, minimum=0.0, maximum=1.0),
             index_retention_days=_int("LEARNING_INDEX_RETENTION_DAYS", 7, minimum=0),
+            model_monitor_enabled=_bool("MODEL_MONITOR_ENABLED", False),
+            model_monitor_cron=_env("MODEL_MONITOR_CRON", "15 * * * *") or "15 * * * *",
+            model_monitor_window_hours=_int("MODEL_MONITOR_WINDOW_HOURS", 24, minimum=1, maximum=24 * 14),
+            model_monitor_min_turns=_int("MODEL_MONITOR_MIN_TURNS", 20, minimum=1),
             finetune_min_examples=_int("LEARNING_FINETUNE_MIN_EXAMPLES", 500, minimum=1),
             finetune_min_distinct_users=_int("LEARNING_FINETUNE_MIN_USERS", 5, minimum=1),
             finetune_auto_launch=_bool("LEARNING_FINETUNE_AUTO_LAUNCH", False),
@@ -1542,6 +1742,8 @@ class LearningSettings:
             finetune_canary_max_coverage_drop=_float(
                 "LEARNING_FINETUNE_CANARY_MAX_COVERAGE_DROP", 0.05, minimum=0.0, maximum=1.0
             ),
+            auto_lessons_enabled=_bool("AUTO_LESSONS_ENABLED", False),
+            auto_lessons_model_enabled=_bool("AUTO_LESSONS_MODEL", False),
         )
 
 
@@ -1715,6 +1917,8 @@ class OpenToolsSettings:
     analysis_enabled: bool = True
     exec_enabled: bool = False
     desktop_ops_enabled: bool = True
+    #: ADR-044: the fourteen pure tools of ``tools/open_pure.py`` (same risk profile as ``analysis_enabled``).
+    pure_enabled: bool = True
 
     @classmethod
     def from_env(cls) -> "OpenToolsSettings":
@@ -1722,6 +1926,7 @@ class OpenToolsSettings:
             analysis_enabled=_bool("ANALYSIS_TOOLS_ENABLED", True),
             exec_enabled=_bool("OPEN_EXEC_TOOLS_ENABLED", False),
             desktop_ops_enabled=_bool("DESKTOP_OPS_TOOLS_ENABLED", True),
+            pure_enabled=_bool("OPEN_PURE_TOOLS_ENABLED", True),
         )
 
 
@@ -1796,6 +2001,115 @@ class ExtractionSettings:
         elif not self.api_key.strip():
             found.append(f"{self.api_key_env}, named by AURA_EXTRACT_API_KEY_ENV, is unset or empty")
         return found
+
+
+@dataclass(frozen=True, slots=True)
+class AdvisorySettings:
+    """The local copy of public vulnerability advisories (OSV) that ``scan_code_security`` reads.
+
+    The scan itself never touches the network. This switch lets a *scheduled job* download advisories
+    for the listed ecosystems into the database, from one fixed host (``storage.googleapis.com``;
+    ``domain/advisories.FEED_HOST``, not configurable). Off by default: an operator who wants the
+    dependency scan to know about CVEs turns it on, and the job's worker needs outbound HTTPS to that
+    host.
+
+    ``max_age_days`` -- a copy older than this is reported as stale in every scan, so an expired
+    download is never mistaken for a clean result.
+    """
+
+    sync_enabled: bool = False
+    ecosystems: tuple[str, ...] = ("pypi", "npm")
+    sync_cron: str = "30 3 * * *"
+    include_malware: bool = False
+    max_age_days: int = 3
+    archive_max_mb: int = 400
+
+    @classmethod
+    def from_env(cls) -> "AdvisorySettings":
+        ecosystems = tuple(e.lower() for e in _list("OSV_ECOSYSTEMS", ("pypi", "npm")))
+        unknown = [e for e in ecosystems if e not in ("pypi", "npm")]
+        if unknown:
+            raise ConfigurationError(
+                "AURA_OSV_ECOSYSTEMS accepts only pypi and npm", details={"value": unknown})
+        return cls(
+            sync_enabled=_bool("OSV_SYNC_ENABLED", False),
+            ecosystems=ecosystems or ("pypi", "npm"),
+            sync_cron=_env("OSV_SYNC_CRON", "30 3 * * *") or "30 3 * * *",
+            include_malware=_bool("OSV_INCLUDE_MALWARE", False),
+            max_age_days=_int("OSV_MAX_AGE_DAYS", 3, minimum=1, maximum=365),
+            archive_max_mb=_int("OSV_ARCHIVE_MAX_MB", 400, minimum=10, maximum=4096),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class OpsSettings:
+    """What the operations tools (ADR-049) may reach. Everything is empty by default, and an empty
+    setting means the tool that needs it is not registered.
+
+    ``platform_origins`` -- the platform's own https origins ``check_platform_health`` may probe
+    (``/health/live|version|ready`` only; the tool takes no URL).
+    ``loki_url`` / ``prometheus_url`` / ``tempo_url`` -- the operator's telemetry HTTP APIs, read by
+    ``query_telemetry``; ``telemetry_token_env`` names the environment variable holding a bearer
+    token for them (the token itself is never a setting).
+    ``deploy_workflows`` -- workflow files ``deploy_release`` / ``rollback_release`` may dispatch
+    (``file.yml`` or ``file.yml:sha_input``), only on ``deploy_refs`` and only in the deployment's
+    default GitHub repository.
+    """
+
+    platform_origins: tuple[str, ...] = ()
+    loki_url: str = ""
+    prometheus_url: str = ""
+    tempo_url: str = ""
+    telemetry_token_env: str = ""
+    deploy_workflows: tuple[str, ...] = ()
+    deploy_refs: tuple[str, ...] = ("main",)
+    #: Railway (``source=railway``): the service whose deployments and logs are read, and the name of the
+    #: environment variable holding a read token.
+    railway_project_id: str = ""
+    railway_service_id: str = ""
+    railway_environment_id: str = ""
+    railway_token_env: str = ""
+
+    @classmethod
+    def from_env(cls) -> "OpsSettings":
+        # One literal variable name per field, so the control center can list each setting's variable.
+        settings = cls(
+            platform_origins=_list("OPS_PLATFORM_ORIGINS", ()),
+            loki_url=_env("OPS_LOKI_URL", "") or "",
+            prometheus_url=_env("OPS_PROMETHEUS_URL", "") or "",
+            tempo_url=_env("OPS_TEMPO_URL", "") or "",
+            telemetry_token_env=_env("OPS_TELEMETRY_TOKEN_ENV", "") or "",
+            deploy_workflows=_list("OPS_DEPLOY_WORKFLOWS", ()),
+            deploy_refs=_list("OPS_DEPLOY_REFS", ("main",)),
+            railway_project_id=_env("OPS_RAILWAY_PROJECT_ID", "") or "",
+            railway_service_id=_env("OPS_RAILWAY_SERVICE_ID", "") or "",
+            railway_environment_id=_env("OPS_RAILWAY_ENVIRONMENT_ID", "") or "",
+            railway_token_env=_env("OPS_RAILWAY_TOKEN_ENV", "") or "",
+        )
+        settings._validate()
+        return settings
+
+    def _validate(self) -> None:
+        import re
+        from urllib.parse import urlsplit
+
+        for origin in self.platform_origins:
+            parts = urlsplit(origin)
+            if (parts.scheme != "https" or not parts.hostname or parts.path.strip("/") or parts.username
+                    or parts.query or parts.fragment):
+                raise ConfigurationError("AURA_OPS_PLATFORM_ORIGINS entries must be bare https origins",
+                                         details={"value": origin})
+        for key, value in (("LOKI", self.loki_url), ("PROMETHEUS", self.prometheus_url), ("TEMPO", self.tempo_url)):
+            if value and urlsplit(value).scheme not in ("http", "https"):
+                raise ConfigurationError(f"AURA_OPS_{key}_URL must be an http(s) URL", details={"value": value})
+        for entry in self.deploy_workflows:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.ya?ml(:[A-Za-z_][A-Za-z0-9_-]{0,40})?", entry):
+                raise ConfigurationError("AURA_OPS_DEPLOY_WORKFLOWS entries are 'file.yml' or 'file.yml:input'",
+                                         details={"value": entry})
+        ids = (self.railway_project_id, self.railway_service_id, self.railway_environment_id)
+        if any(ids) and not all(re.fullmatch(r"[0-9a-fA-F-]{36}", v) for v in ids):
+            raise ConfigurationError(
+                "AURA_OPS_RAILWAY_PROJECT_ID / _SERVICE_ID / _ENVIRONMENT_ID must all be set, as UUIDs")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1924,7 +2238,7 @@ class SandboxSettings:
             memory_limit=_env("SANDBOX_MEMORY_LIMIT", "512m") or "512m",
             cpu_limit=_float("SANDBOX_CPU_LIMIT", 1.0, minimum=0.1, maximum=8.0),
             timeout_s=_float("SANDBOX_TIMEOUT_S", 120.0, minimum=1.0, maximum=1800.0),
-            allowed_egress_hosts=_list("SANDBOX_ALLOWED_EGRESS_HOSTS"),
+            allowed_egress_hosts=_host_list("SANDBOX_ALLOWED_EGRESS_HOSTS"),
             host_root=_env("SANDBOX_HOST_ROOT", "") or "",
             workspace_ttl_hours=_float(
                 "SANDBOX_WORKSPACE_TTL_HOURS", 72.0, minimum=0.25, maximum=8760.0
@@ -1938,6 +2252,111 @@ class SandboxSettings:
             min_free_memory_mb=_int("SANDBOX_MIN_FREE_MEMORY_MB", 1024, minimum=0, maximum=1_048_576),
             in_container_git=_bool("SANDBOX_IN_CONTAINER_GIT", False),
             proxy_url=_env("SANDBOX_PROXY_URL", "") or "",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AgentTaskSettings:
+    """The agent task gateway and its queue (ADR-043): ``POST /api/v3/agents/tasks``.
+
+    A task is one ``/chat`` turn that runs server-side, so a dropped connection loses nothing.
+    Everything here is *per process*: the queue lives in the gateway worker that accepted the
+    task, so with N uvicorn workers the effective ceilings are N times these. The record of a
+    task (status, result) is in the shared cache and is readable from any worker.
+
+    ``enabled=False`` is a kill switch: the routes answer 503 and no queue is started. Nothing
+    here changes ``/chat`` or ``/chat/stream``.
+    """
+
+    enabled: bool = True
+    #: Tasks executing at once in this process.
+    max_concurrent: int = 2
+    #: Of those, how many may belong to one user (fairness: one person cannot hold every slot).
+    max_concurrent_per_user: int = 1
+    #: Waiting tasks this process will hold; past it a new task is refused with 429.
+    max_queued: int = 200
+    max_queued_per_user: int = 20
+    #: How far ahead ``run_at`` may be. The task runs with the capabilities the owner had when
+    #: they submitted it, so this also bounds how stale that grant can get.
+    max_schedule_ahead_s: int = 86_400
+    #: Hard ceiling on one task's execution; it then fails with ``timeout``.
+    task_timeout_s: float = 900.0
+    #: How long a task's record (status and result) is kept after its last update.
+    record_ttl_s: int = 7 * 86_400
+    #: How often the owning process refreshes a live task's heartbeat, and how long a silent one
+    #: is believed. A queued/running task whose heartbeat is older reads as ``failed``
+    #: (``interrupted``): its process died.
+    heartbeat_s: float = 10.0
+    stale_after_s: float = 90.0
+    #: A waiting task gains one priority level per this many seconds, so ``low`` cannot starve.
+    aging_s: float = 120.0
+    #: How long a ``client_request_id`` / ``Idempotency-Key`` is remembered (ADR-043).
+    idempotency_ttl_s: int = 86_400
+
+    def __post_init__(self) -> None:
+        if self.max_concurrent_per_user > self.max_concurrent:
+            raise ConfigurationError(
+                "AURA_AGENT_TASKS_MAX_CONCURRENT_PER_USER must be <= AURA_AGENT_TASKS_MAX_CONCURRENT",
+                details={"per_user": self.max_concurrent_per_user, "global": self.max_concurrent},
+            )
+        if self.stale_after_s <= self.heartbeat_s:
+            raise ConfigurationError(
+                "AURA_AGENT_TASKS_STALE_AFTER_S must be greater than AURA_AGENT_TASKS_HEARTBEAT_S"
+            )
+
+    @classmethod
+    def from_env(cls) -> "AgentTaskSettings":
+        return cls(
+            enabled=_bool("AGENT_TASKS_ENABLED", True),
+            max_concurrent=_int("AGENT_TASKS_MAX_CONCURRENT", 2, minimum=1, maximum=64),
+            max_concurrent_per_user=_int("AGENT_TASKS_MAX_CONCURRENT_PER_USER", 1, minimum=1, maximum=64),
+            max_queued=_int("AGENT_TASKS_MAX_QUEUED", 200, minimum=1, maximum=10_000),
+            max_queued_per_user=_int("AGENT_TASKS_MAX_QUEUED_PER_USER", 20, minimum=1, maximum=1000),
+            max_schedule_ahead_s=_int(
+                "AGENT_TASKS_MAX_SCHEDULE_AHEAD_S", 86_400, minimum=60, maximum=30 * 86_400
+            ),
+            task_timeout_s=_float("AGENT_TASKS_TIMEOUT_S", 900.0, minimum=5.0, maximum=86_400.0),
+            record_ttl_s=_int("AGENT_TASKS_RECORD_TTL_S", 7 * 86_400, minimum=3600, maximum=90 * 86_400),
+            heartbeat_s=_float("AGENT_TASKS_HEARTBEAT_S", 10.0, minimum=0.2, maximum=300.0),
+            stale_after_s=_float("AGENT_TASKS_STALE_AFTER_S", 90.0, minimum=1.0, maximum=3600.0),
+            aging_s=_float("AGENT_TASKS_AGING_S", 120.0, minimum=1.0, maximum=86_400.0),
+            idempotency_ttl_s=_int(
+                "AGENT_TASKS_IDEMPOTENCY_TTL_S", 86_400, minimum=60, maximum=30 * 86_400
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class UsageSettings:
+    """Per-turn usage records and agent-run search (ADR-043). All of it lives in the cache port
+    (Redis in production), bounded and TTL'd; none of it is a new table.
+
+    ``runs_store_preview`` is the one privacy-relevant switch and is **off** by default: with it
+    on, each agent run also keeps a 200-character, secret-redacted preview of its goal (in the
+    cache, never in the run store) so ``GET /agents/runs/search?q=`` can match on goal text.
+    With it off a run stores only a digest of its goal, exactly as before.
+    """
+
+    ledger_enabled: bool = True
+    ledger_ttl_days: int = 35
+    #: Most recent turns kept readable per user; older ones fall out of the summary window.
+    ledger_max_per_user: int = 5000
+    runs_store_preview: bool = False
+    runs_preview_ttl_s: int = 30 * 86_400
+    #: How many of a user's most recent runs a search/timeline looks through.
+    runs_search_scan: int = 300
+
+    @classmethod
+    def from_env(cls) -> "UsageSettings":
+        return cls(
+            ledger_enabled=_bool("USAGE_LEDGER_ENABLED", True),
+            ledger_ttl_days=_int("USAGE_LEDGER_TTL_DAYS", 35, minimum=1, maximum=400),
+            ledger_max_per_user=_int("USAGE_LEDGER_MAX_PER_USER", 5000, minimum=100, maximum=50_000),
+            runs_store_preview=_bool("AGENT_RUNS_STORE_PREVIEW", False),
+            runs_preview_ttl_s=_int(
+                "AGENT_RUNS_PREVIEW_TTL_S", 30 * 86_400, minimum=3600, maximum=400 * 86_400
+            ),
+            runs_search_scan=_int("AGENT_RUNS_SEARCH_SCAN", 300, minimum=20, maximum=1000),
         )
 
 
@@ -1973,6 +2392,10 @@ class VoiceSettings:
     #: container. ``None`` means "in production-like environments only", which keeps a local or
     #: test container from ever pulling weights.
     stt_warm_on_startup: bool | None = None
+    #: ``POST /voice/task`` may refine its deterministic extraction with a model through the router
+    #: (ADR-043). Off, the endpoint is deterministic only. The transcript is personal data, so the
+    #: router sends it only to a provider cleared for it (a local model by default).
+    task_refine_enabled: bool = True
     tts_enabled: bool = True
     tts_voice: str = "en-us"
     tts_rate_wpm: int = 142
@@ -2038,6 +2461,7 @@ class VoiceSettings:
             stt_warm_on_startup=(
                 None if not _env("VOICE_STT_WARM_ON_STARTUP", "") else _bool("VOICE_STT_WARM_ON_STARTUP", True)
             ),
+            task_refine_enabled=_bool("VOICE_TASK_REFINE", True),
             tts_enabled=_bool("VOICE_TTS_ENABLED", True),
             tts_voice=_env("VOICE_TTS_VOICE", "en-us") or "en-us",
             tts_rate_wpm=_int("VOICE_TTS_RATE_WPM", 142, minimum=80, maximum=250),
@@ -2479,9 +2903,13 @@ class AuraSettings:
     vision: VisionSettings = field(default_factory=VisionSettings)
     mcp: McpSettings = field(default_factory=McpSettings)
     open_tools: OpenToolsSettings = field(default_factory=OpenToolsSettings)
+    advisories: AdvisorySettings = field(default_factory=AdvisorySettings)
+    ops: OpsSettings = field(default_factory=OpsSettings)
     adaptation: AdaptationSettings = field(default_factory=AdaptationSettings)
     github: GitHubSettings = field(default_factory=GitHubSettings)
     sandbox: SandboxSettings = field(default_factory=SandboxSettings)
+    agent_tasks: AgentTaskSettings = field(default_factory=AgentTaskSettings)
+    usage: UsageSettings = field(default_factory=UsageSettings)
     release: ReleaseSettings = field(default_factory=ReleaseSettings)
     tenancy: TenancySettings = field(default_factory=TenancySettings)
     billing: BillingSettings = field(default_factory=BillingSettings)
@@ -2521,9 +2949,13 @@ class AuraSettings:
             vision=VisionSettings.from_env(),
             mcp=McpSettings.from_env(),
             open_tools=OpenToolsSettings.from_env(),
+            advisories=AdvisorySettings.from_env(),
+            ops=OpsSettings.from_env(),
             adaptation=AdaptationSettings.from_env(),
             github=GitHubSettings.from_env(),
             sandbox=SandboxSettings.from_env(),
+            agent_tasks=AgentTaskSettings.from_env(),
+            usage=UsageSettings.from_env(),
             release=ReleaseSettings.from_env(),
             tenancy=TenancySettings.from_env(),
             billing=BillingSettings.from_env(),
@@ -2542,6 +2974,9 @@ class AuraSettings:
         where one of these is violated.
         """
         problems: list[str] = []
+
+        if self.reasoning.default_plan_mode not in ("", "auto", "plan", "fast", "review"):
+            problems.append("AURA_REASONING_DEFAULT_PLAN_MODE must be empty, auto, plan, fast or review")
 
         if self.security.engineer_for_customers:
             # SaaS P1-E: a customer's Engineer runs on their own computer only. Each of these
@@ -2564,6 +2999,33 @@ class AuraSettings:
 
         if self.email.enabled and not (self.email.smtp_host and self.email.from_address and self.email.app_base_url):
             problems.append("AURA_EMAIL_ENABLED needs AURA_SMTP_HOST, AURA_EMAIL_FROM and AURA_APP_BASE_URL")
+
+        root = self.tools.files_root
+        if root and (not root.startswith("/") or root.rstrip("/") == "" or ".." in root.split("/")):
+            problems.append("AURA_TOOLS_FILES_ROOT must be an absolute path that is not '/' and has no '..'")
+        if self.tools.web_search_url:
+            from ..domain.network import validate_search_url
+
+            try:
+                validate_search_url(self.tools.web_search_url)
+            except ValueError as exc:
+                problems.append(str(exc))
+        if self.tools.policy_file and not self.tools.policy_file.startswith("/"):
+            problems.append("AURA_TOOL_POLICY_FILE must be an absolute path")
+        if self.tools.autonomy_default not in ("strict", "standard"):
+            problems.append("AURA_AUTONOMY_DEFAULT must be 'strict' or 'standard'")
+        for host in self.sandbox.allowed_egress_hosts:
+            problem = egress_host_problem(host)
+            if problem:
+                problems.append(f"AURA_SANDBOX_ALLOWED_EGRESS_HOSTS entry {host!r}: {problem}")
+        if len(self.sandbox.allowed_egress_hosts) > 100:
+            problems.append("AURA_SANDBOX_ALLOWED_EGRESS_HOSTS lists more than 100 hosts")
+        for host in self.tools.http_allowed_hosts:
+            if "://" in host or "/" in host or "*" in host or ":" in host:
+                problems.append(
+                    f"AURA_TOOLS_HTTP_ALLOWED_HOSTS entry {host!r} must be a bare host name "
+                    "(no scheme, path, port or wildcard)"
+                )
 
         if self.billing.apple_environment not in ("", "Production", "Sandbox"):
             problems.append("billing.apple_environment must be Production, Sandbox or empty")

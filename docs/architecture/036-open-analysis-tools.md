@@ -198,6 +198,38 @@ group's planner-prompt cost went from 5,837 to 6,077 characters; the 7,000 ceili
 `TestPlannerPromptBudget` is unchanged. Like the rest of this ADR: built and tested, not measured on
 the production model.
 
+## Update 2026-11-25: twenty of the "not exposed" modules are wrapped after all
+
+When the `princess` branch was merged into `main`, ADR-044 and ADR-045 (formerly numbered 042 and
+043 there) turned out to have rewritten and wired in twenty of the modules this ADR left as
+reference code, under conditions that answer the reason recorded against each:
+
+* **Pure text in, JSON out** (`open_pure.py`, ADR-044): `acceptance_criteria_verifier` (rewritten so
+  a criterion passes only on evidence that says so, which was the "rubber stamp" reason),
+  `ambiguity_and_clarification_detector`, `architectural_consistency_checker` (reads the imports of
+  the files the caller passes, so no hand-built map), `artifact_feedback_ingestor`,
+  `artifact_generator`, `automated_quiz_generator`, `file_type_detector_router` (takes bytes, never a
+  path), `mobile_artifact_summarizer`, `multi_language_ast_analyzer`, `scope_and_diff_guard`,
+  `source_content_explainer`, `verification_evidence_collector`.
+* **Workspace readers** (`open_workspace.py`, ADR-045): `backup_restore_verifier`,
+  `binary_file_inspector`, `notebook_reader`, `project_conventions_loader`, `repo_semantic_indexer`,
+  `skills_rules_workflows_loader`, `stale_context_detector`. Their reason was "reads paths on the
+  gateway". They now register only when `AURA_TOOLS_FILES_ROOT` is set, resolve every path through
+  `tools/confinement.py::resolve_within`, pass the root as the class's own `base_dir`, go to the
+  Engineer only and are tagged `untrusted_content`. `project_status_qa_tool` is wrapped over this
+  user's recorded runs and reads no file.
+
+`_classification.py` is the record of which is which, and
+`test_the_reexposed_kan_34_modules_are_reachable_only_through_their_confining_builder` keeps the four
+modules KAN-34 named (`binary_file_inspector`, `notebook_reader`, `stale_context_detector`,
+`file_type_detector_router`) reachable through exactly the builder that confines them. Still not
+exposed: `archive_extractor`, `ui_visual_verifier`, `push_notification_dispatcher`,
+`remote_session_controller`, `background_task_manager`; deferred: `dev_server_manager`,
+`browser_subagent`; superseded: `gpu_resource_scheduler` and the rest of the list above.
+
+The table above is the 2026-11-21 decision and is left as written. This is **built, not proven**: no
+live run of the workspace readers on a deployment with `AURA_TOOLS_FILES_ROOT` set exists yet.
+
 ## Not proven
 
 Built and unit/architecture tested. No live evidence: Group C needs a paired desktop running a

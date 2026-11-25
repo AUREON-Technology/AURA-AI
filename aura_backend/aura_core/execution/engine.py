@@ -34,6 +34,7 @@ from ..domain.planning import Plan, PlanStep, StepKind, StepStatus
 from ..observability.logging import get_logger
 from ..ports.runtime import ToolContext
 from .confirmations import NEEDS_CONFIRMATION, ConfirmationGrant, PendingCall
+from .recovery import RecoveryPolicy
 
 __all__ = ["ExecutionEngine", "ExecutionOutcome", "StepEvent"]
 
@@ -116,7 +117,8 @@ class StepEvent:
 
 class ExecutionOutcome:
     __slots__ = ("plan", "results", "tool_reports", "succeeded", "duration_ms", "steps_run",
-                 "blocked_reason", "run_id", "pending_calls", "tainted")
+                 "blocked_reason", "run_id", "pending_calls", "tainted", "failure_messages",
+                 "loop")
 
     def __init__(
         self,
@@ -131,6 +133,7 @@ class ExecutionOutcome:
         run_id: str | None = None,
         pending_calls: Sequence[PendingCall] = (),
         tainted: bool = False,
+        failure_messages: Mapping[str, str] | None = None,
     ) -> None:
         self.plan = plan
         self.results = dict(results)
@@ -148,6 +151,14 @@ class ExecutionOutcome:
         #: Whether the tool context ended this execution tainted -- an untrusted tool that
         #: already ran taints it, and a resumed turn must start from that, not from clean.
         self.tainted = tainted
+        #: Each failed step's tool message (cut to 400 characters), by step id. ``PlanStep`` keeps
+        #: only the machine-readable ``error_kind``; the message is what a validator said about a
+        #: bad argument, and is what a replan needs to fix it (``RecoveryPolicy``, ADR-039).
+        self.failure_messages = dict(failure_messages or {})
+        #: The agent loop's account of itself (``execution/loop_events.py::LoopReport``): why it
+        #: stopped, the states it visited, any stuck verdict, critic findings. ``None`` for an
+        #: outcome that did not come through ``AgenticExecutor``.
+        self.loop = None
 
     def summary_for_context(self) -> list[tuple[str, str]]:
         """Step results as ``(label, text)`` pairs for the context engine.
@@ -172,6 +183,8 @@ class ExecutionEngine:
         deadline_s: float = 120.0,
         metrics: Any = None,
         event_bus: Any = None,
+        recovery: RecoveryPolicy | None = None,
+        sleeper: Callable[[float], Any] | None = None,
     ) -> None:
         self._tools = tools
         self._max_parallel = max(1, max_parallel)
@@ -179,6 +192,10 @@ class ExecutionEngine:
         self._deadline_s = deadline_s
         self._metrics = metrics
         self._events = event_bus
+        #: ``None`` keeps the original rule (retry any failed read-only step up to its
+        #: ``max_attempts``); a policy decides per failure kind (ADR-039, ``recovery.py``).
+        self._recovery = recovery
+        self._sleep = sleeper or asyncio.sleep
 
     async def execute(
         self,
@@ -209,6 +226,7 @@ class ExecutionEngine:
         results: dict[str, str] = {}
         tool_reports: list[Any] = []
         pending_calls: list[PendingCall] = []
+        failure_messages: dict[str, str] = {}
         steps_run = 0
         blocked_reason: str | None = None
         current = plan
@@ -283,6 +301,7 @@ class ExecutionEngine:
             )
 
             updated: list[PlanStep] = []
+            backoff_s = 0.0
             for step, outcome in zip(running, outcomes):
                 steps_run += 1
                 if isinstance(outcome, BudgetExceededError):
@@ -383,9 +402,22 @@ class ExecutionEngine:
                     # a replanned attempt can actually act on, where free text is not.
                     error_kind = getattr(report, "error_kind", None) or text[:120]
                     failed = step.failed(error_kind, elapsed)
+                    failure_messages[step.id.value] = text[:400]
                     # Retry only when the step can be safely repeated. A side-effecting tool that
                     # failed may have already acted, so retrying could duplicate the effect.
-                    if failed.can_retry and not self._is_side_effecting(step):
+                    side_effecting = self._is_side_effecting(step)
+                    retry = failed.can_retry and not side_effecting
+                    if retry and self._recovery is not None:
+                        # ADR-039: the failure's kind decides. `max_attempts` stays the ceiling
+                        # (`can_retry` above); the policy can only refuse a retry or delay it.
+                        decision = self._recovery.decide(
+                            error_kind, message=text, attempt=failed.attempts,
+                            max_attempts=failed.max_attempts, side_effecting=side_effecting,
+                        )
+                        retry = decision.retry
+                        if retry:
+                            backoff_s = max(backoff_s, decision.backoff_s)
+                    if retry:
                         # Back to PENDING so the next loop picks it up; `attempts` is already
                         # incremented, so `can_retry` will stop it at max_attempts.
                         failed = replace(
@@ -403,6 +435,9 @@ class ExecutionEngine:
             current = current.with_steps(updated)
             if blocked_reason:
                 break
+            if backoff_s > 0:
+                # One wait for the whole batch (not one per step), and never past the deadline.
+                await self._sleep(max(0.0, min(backoff_s, deadline - time.perf_counter())))
 
         duration = (time.perf_counter() - started) * 1000.0
         return ExecutionOutcome(
@@ -415,7 +450,16 @@ class ExecutionEngine:
             blocked_reason=blocked_reason,
             pending_calls=pending_calls,
             tainted=bool(getattr(context, "tainted", False)),
+            failure_messages=failure_messages,
         )
+
+    def spec_for(self, tool: str) -> Any:
+        """The registered spec for a tool name, or ``None``. Public so the agent loop's critic
+        can ask the same registry the executor dispatches through."""
+        try:
+            return self._tools.spec(tool)
+        except Exception:
+            return None
 
     def _tool_spec(self, step: PlanStep) -> Any:
         if step.kind is not StepKind.TOOL or not step.tool:

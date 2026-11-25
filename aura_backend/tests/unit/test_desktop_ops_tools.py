@@ -116,7 +116,7 @@ class TestNoDesktopNoRun:
         [
             ("docker_build", {"image_tag": "app:dev"}),
             ("docker_compose", {"action": "ps"}),
-            ("profile_python", {"code": "print(1)"}),
+            ("profile_python", {"source_code": "print(1)"}),
         ],
     )
     async def test_a_user_without_a_paired_desktop_is_refused_and_nothing_runs(self, ctx, name, args) -> None:
@@ -194,7 +194,7 @@ class TestDockerCompose:
 class TestProfilePython:
     async def test_the_snippet_travels_as_an_argument_and_no_file_is_written(self, ctx) -> None:
         runner = FakeRunner()
-        await build(runner)["profile_python"].execute({"code": "sum(range(10))", "top_n": 5}, ctx)
+        await build(runner)["profile_python"].execute({"source_code": "sum(range(10))", "limit": 5}, ctx)
         argv = runner.calls[0]
         assert argv[0] == "python3" and argv[1] == "-c"
         assert argv[3:] == ["sum(range(10))", "5"]
@@ -205,7 +205,7 @@ class TestProfilePython:
             SandboxResult(stdout="", stderr="python3: command not found", exit_code=127),
             SandboxResult(stdout="  ncalls  tottime", stderr="", exit_code=0),
         ])
-        out = await build(runner)["profile_python"].execute({"code": "1"}, ctx)
+        out = await build(runner)["profile_python"].execute({"source_code": "1"}, ctx)
         assert [c[0] for c in runner.calls] == ["python3", "python"]
         assert "ncalls" in out
 
@@ -217,7 +217,7 @@ class TestProfilePython:
             SandboxResult(stdout="file not found\n", stderr="command not found: foo", exit_code=2),
         ):
             runner = FakeRunner(results=[result])
-            await build(runner)["profile_python"].execute({"code": "print('key not found')"}, ctx)
+            await build(runner)["profile_python"].execute({"source_code": "print('key not found')"}, ctx)
             assert [c[0] for c in runner.calls] == ["python3"], result
 
     async def test_the_windows_not_recognized_message_does_trigger_the_fallback(self, ctx) -> None:
@@ -225,15 +225,15 @@ class TestProfilePython:
             SandboxResult(stdout="", stderr="'python3' is not recognized as an internal or external command", exit_code=1),
             SandboxResult(stdout="ok", stderr="", exit_code=0),
         ])
-        await build(runner)["profile_python"].execute({"code": "1"}, ctx)
+        await build(runner)["profile_python"].execute({"source_code": "1"}, ctx)
         assert [c[0] for c in runner.calls] == ["python3", "python"]
 
     async def test_a_snippet_error_is_not_mistaken_for_a_missing_interpreter(self, ctx) -> None:
         runner = FakeRunner(results=[SandboxResult(stdout="", stderr="NameError: x", exit_code=1)])
-        out = await build(runner)["profile_python"].execute({"code": "x"}, ctx)
+        out = await build(runner)["profile_python"].execute({"source_code": "x"}, ctx)
         assert [c[0] for c in runner.calls] == ["python3"]
         assert "NameError" in out
 
     def test_the_snippet_is_size_bounded(self) -> None:
-        code = next(p for p in build(FakeRunner())["profile_python"].spec.parameters if p.name == "code")
+        code = next(p for p in build(FakeRunner())["profile_python"].spec.parameters if p.name == "source_code")
         assert code.max_length == 20_000

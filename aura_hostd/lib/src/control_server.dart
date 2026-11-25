@@ -61,6 +61,7 @@ class ControlServer {
     GitService? gitService,
     DiagnosticsService? diagnosticsService,
     ControlServerLogger? logger,
+    this.onShutdown,
   })  : isBackendConnected = isBackendConnected ?? (() => false),
         isCredentialsRejected = isCredentialsRejected ?? (() => false),
         lastCloseCode = lastCloseCode ?? (() => null),
@@ -113,6 +114,10 @@ class ControlServer {
   /// caller doesn't wire a real one (tests, or a daemon that never starts a backend connection at
   /// all), which is the honest answer in both cases.
   final bool Function() isBackendConnected;
+
+  /// Runs before `POST /shutdown` exits the process -- the daemon wires it to ending the agent's
+  /// still-running commands, so stopping the daemon does not orphan them.
+  final Future<void> Function()? onShutdown;
 
   /// Whether the backend refused this daemon's stored token (WebSocket close 4401) and the
   /// daemon stopped reconnecting (audit INT-003). `/status` reports it as `credentials_rejected`
@@ -266,7 +271,14 @@ class ControlServer {
           await _handlePairStatus(request);
         case 'POST /shutdown':
           await _respond(request, 200, {'status': 'shutting down'});
-          unawaited(Future(() => exit(0)));
+          unawaited(Future(() async {
+            try {
+              await onShutdown?.call();
+            } on Object {
+              // Exiting regardless: a failed cleanup must not keep a daemon the person stopped alive.
+            }
+            exit(0);
+          }));
         default:
           await _fail(request, 404, HostdErrorCode.noSuchEndpoint, 'no such endpoint');
       }

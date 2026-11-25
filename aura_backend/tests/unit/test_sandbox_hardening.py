@@ -56,6 +56,10 @@ def test_writable_scratch_is_tmpfs_and_non_executable(kwargs) -> None:
 def test_home_is_writable_because_git_requires_it(kwargs) -> None:
     """git refuses to run with nowhere to write its config, and the rootfs is read-only."""
     assert "/home/aura" in kwargs["tmpfs"]
+    # A tmpfs is root-owned unless told otherwise, and over a mount point that exists in the image
+    # (/home/aura does, mode 700) it takes that mode: HOME was then unwritable for the sandbox user.
+    home = kwargs["tmpfs"]["/home/aura"]
+    assert "uid=10001" in home and "gid=10001" in home, home
 
 
 def test_process_and_file_limits_are_set(kwargs) -> None:

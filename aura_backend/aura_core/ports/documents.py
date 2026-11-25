@@ -11,9 +11,17 @@ Stdlib-only, like every other port (ADR-001). The engine that uses this lives in
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-__all__ = ["OcrEngine"]
+__all__ = [
+    "OcrBox",
+    "OcrEngine",
+    "OcrLine",
+    "OcrResult",
+    "OcrWord",
+    "StructuredOcrEngine",
+]
 
 
 @runtime_checkable
@@ -48,5 +56,79 @@ class OcrEngine(Protocol):
         means "recognition failed", which leaves the page marked as unread rather than as empty.
         Conflating them would let a broken OCR install silently convert every scanned page into a
         page with nothing on it.
+        """
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class OcrBox:
+    """An axis-aligned pixel rectangle: ``left``/``top`` is the upper-left corner, measured from
+    the upper-left of the image, in the pixel grid of the bytes that were recognised."""
+
+    left: int
+    top: int
+    width: int
+    height: int
+
+
+@dataclass(frozen=True, slots=True)
+class OcrWord:
+    """One recognised word. ``confidence`` is 0-100 as the engine reports it, ``None`` when the
+    engine gave no usable figure (never a sentinel such as ``-1``)."""
+
+    text: str
+    confidence: float | None
+    box: OcrBox
+
+
+@dataclass(frozen=True, slots=True)
+class OcrLine:
+    """One text line: its words in the engine's reading order, which for a right-to-left script
+    (Arabic) is *not* left-to-right pixel order and is deliberately not re-sorted. ``text`` is
+    the words joined by single spaces, ``box`` the union of the word boxes, ``confidence`` the
+    mean of the words' known confidences."""
+
+    text: str
+    words: tuple[OcrWord, ...]
+    confidence: float | None
+    box: OcrBox
+
+
+@dataclass(frozen=True, slots=True)
+class OcrResult:
+    """Structured recognition result for one image.
+
+    ``mean_confidence`` is the mean over every word that has a confidence (0-100), or ``None``
+    when the image has none -- an empty page has *no* confidence, which is not the same as a
+    confidence of 0. ``image_width``/``image_height`` are the decoded pixel size, so a consumer
+    can normalise the boxes.
+    """
+
+    text: str
+    lines: tuple[OcrLine, ...]
+    mean_confidence: float | None
+    image_width: int = 0
+    image_height: int = 0
+
+    @property
+    def words(self) -> tuple[OcrWord, ...]:
+        """Every word of every line, in reading order."""
+        return tuple(word for line in self.lines for word in line.words)
+
+
+@runtime_checkable
+class StructuredOcrEngine(OcrEngine, Protocol):
+    """An :class:`OcrEngine` that can also report *where* and *how sure*.
+
+    A second port rather than a change to :class:`OcrEngine`, so every existing implementer and
+    test fake keeps satisfying the plain port; callers that want boxes or confidences check
+    ``isinstance(engine, StructuredOcrEngine)``.
+    """
+
+    async def image_data(self, image: bytes, *, page: int) -> OcrResult:
+        """Recognise ``image`` and return words, lines, confidences and bounding boxes.
+
+        Same contract as :meth:`OcrEngine.image_text`: an image with no text yields a result with
+        no lines (and ``mean_confidence=None``); a recognition failure raises.
         """
         ...
