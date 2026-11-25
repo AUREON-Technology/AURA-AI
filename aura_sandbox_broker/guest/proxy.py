@@ -39,6 +39,9 @@ RECORD_TYPES = (CHANGE_CIPHER_SPEC, 21, HANDSHAKE, 23)
 CLIENT_HELLO = 1
 MAX_RECORD = 16384 + 2048
 MAX_HELLO = 65536
+#: Every field of a ClientHello at its protocol limit: version 2, random 32, session id 1+32,
+#: cipher suites 2+65534, compression 1+255, extensions 2+65535.
+LONGEST_POSSIBLE_HELLO = 131396
 SERVER_NAME = 0
 
 MAX_REQUEST = 8192
@@ -252,11 +255,14 @@ def _opens_hello(payload: bytes, cipher_changed: bool) -> bool:
     Until the client changes cipher, every handshake record is plaintext, so any that starts
     like a ClientHello is one -- whatever version it claims. Afterwards a TLS 1.2 client sends
     encrypted records here, while a TLS 1.3 client may still send its second ClientHello in the
-    clear. Those are told apart by the length field: no ClientHello is longer than 131,071
-    bytes, so a second byte above 1 can only be ciphertext."""
+    clear. The client controls that cipher change, so it switches nothing off: a record is
+    taken for ciphertext only when it declares a length no ClientHello can have. Anything else
+    is checked, and refused if it is larger than this proxy accepts."""
     if payload[0] != CLIENT_HELLO:
         return False
-    return not cipher_changed or len(payload) < 2 or payload[1] <= 1
+    if not cipher_changed or len(payload) < 4:
+        return True
+    return int.from_bytes(payload[1:4], "big") <= LONGEST_POSSIBLE_HELLO
 
 
 class Inspector:

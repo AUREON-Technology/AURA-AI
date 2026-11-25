@@ -226,6 +226,21 @@ class InspectorTests(unittest.TestCase):
                     inspector.feed(record(payload))
                     inspector.feed(record(b"\x01", kind=20))
 
+    def test_no_possible_hello_length_slips_past_after_a_cipher_change(self):
+        # 131,396 bytes is the longest a ClientHello can be: every field at its limit.
+        for claimed in (65_537, 131_071, 131_072, 131_396):
+            with self.subTest(claimed=claimed):
+                inspector = self.greeted()
+                inspector.feed(record(b"\x01", kind=20))
+                with self.assertRaises(proxy.Refused):
+                    inspector.feed(record(b"\x01" + claimed.to_bytes(3, "big") + b"q" * 38))
+
+    def test_a_length_no_hello_can_have_is_ciphertext(self):
+        inspector = self.greeted()
+        inspector.feed(record(b"\x01", kind=20))
+        encrypted = record(b"\x01" + (131_397).to_bytes(3, "big") + b"q" * 38)
+        self.assertEqual(inspector.feed(encrypted), encrypted)
+
     def test_after_a_cipher_change_an_encrypted_record_is_not_mistaken_for_a_hello(self):
         inspector = self.greeted()
         inspector.feed(record(b"\x01", kind=20))
