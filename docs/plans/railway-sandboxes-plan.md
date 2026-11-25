@@ -1,8 +1,9 @@
 # Plan: Engineer cloud workspaces on Railway Sandboxes
 
 **Status:** Approved by the owner on 2026-11-25. The broker is built (`aura_sandbox_broker/`) and
-nothing calls it. **Gate S2 is not met:** the host allowlist can be bypassed through
-content-delivery networks, so decision 4 keeps the feature off until that is fixed
+nothing calls it. **Gate S2 is not met:** the proxy now checks the TLS server name (owner's
+choice, 2026-11-25), but three allowed hosts still serve other sites through the HTTP `Host`
+header, so decision 4 keeps the feature off until that is fixed
 ([report](../reports/railway-sandbox-spike-2026-11-25.md)). S6 and S7 are not measured.
 **Base:** `main` at `12eabb00`. Branch `anas/railway-sandboxes`.
 

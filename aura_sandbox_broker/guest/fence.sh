@@ -13,7 +13,7 @@ export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 AGENT_UID=10001
 AGENT=aura
-CONF=/etc/aura-proxy
+PROXY_USER=aura-proxy
 LIB=/usr/local/lib/aura
 STATE=/var/lib/aura
 PROXY=http://127.0.0.1:8888
@@ -28,11 +28,15 @@ done
 install -d -m 0700 -o root -g root "$STATE" "$STATE/staging" "$STATE/cancelled"
 rm -f "$STATE/ready"
 
-for tool in nft tinyproxy setpriv prlimit curl timeout pkill pgrep realpath ss python3; do
+for tool in nft setpriv prlimit curl timeout pkill pgrep realpath ss python3; do
     command -v "$tool" >/dev/null || { echo "aura: missing $tool" >&2; exit 3; }
 done
 id "$AGENT" >/dev/null 2>&1 || useradd -m -u "$AGENT_UID" -s /bin/bash "$AGENT"
 [ "$(id -u "$AGENT")" = "$AGENT_UID" ] || exit 3
+# The proxy's own user: the one non-root user the firewall lets out.
+id "$PROXY_USER" >/dev/null 2>&1 || useradd -r -M -s /usr/sbin/nologin "$PROXY_USER"
+proxy_uid=$(id -u "$PROXY_USER")
+[ "$proxy_uid" != 0 ] && [ "$proxy_uid" != "$AGENT_UID" ] || exit 3
 pkill -KILL -u "$AGENT_UID" || true
 find "$STATE/staging" "$STATE/cancelled" -mindepth 1 -delete
 
@@ -50,36 +54,10 @@ restrict() {
 restrict /proc/sys/kernel/yama/ptrace_scope 2
 restrict /proc/sys/user/max_user_namespaces 0
 
-install -d -m 0755 "$CONF"
-: >"$CONF/filter"
-for host in "$@"; do
-    printf '^%s$\n' "${host//./\\.}" >>"$CONF/filter"
-done
-cat >"$CONF/tinyproxy.conf" <<EOF
-User tinyproxy
-Group tinyproxy
-Port 8888
-Listen 127.0.0.1
-Allow 127.0.0.1
-Timeout 600
-MaxClients 40
-LogLevel Notice
-LogFile "/var/log/aura-proxy/tinyproxy.log"
-FilterDefaultDeny Yes
-FilterURLs Off
-FilterExtended On
-FilterCaseSensitive Off
-Filter "$CONF/filter"
-ConnectPort 443
-DisableViaHeader Yes
-EOF
-chmod 0644 "$CONF/filter" "$CONF/tinyproxy.conf"
-install -d -m 0750 -o tinyproxy -g tinyproxy /var/log/aura-proxy
-
 # A privileged service listening on TCP would be reachable over loopback. The agent's processes
 # are gone, so anything listening now other than our proxy (restarted below) is unexpected.
-pkill -x tinyproxy || true
-for _ in $(seq 20); do pgrep -x tinyproxy >/dev/null || break; sleep 0.1; done
+pkill -KILL -u "$proxy_uid" || true
+for _ in $(seq 20); do pgrep -u "$proxy_uid" >/dev/null || break; sleep 0.1; done
 listeners=$(ss -H -lnt | awk '{print $4}' | tr '\n' ' ')
 [ -z "$listeners" ] || { echo "aura: unexpected listening sockets: $listeners" >&2; exit 14; }
 # Datagram sockets the platform holds open are closed to the agent, loopback included.
@@ -105,13 +83,18 @@ table inet aura {
         oifname "lo" accept
         meta l4proto ipv6-icmp accept
         meta skuid 0 accept
-        meta skuid $(id -u tinyproxy) tcp dport 443 accept
-        meta skuid $(id -u tinyproxy) meta l4proto { tcp, udp } th dport 53 accept
+        meta skuid $proxy_uid tcp dport 443 accept
+        meta skuid $proxy_uid meta l4proto { tcp, udp } th dport 53 accept
     }
 }
 EOF
 
-setsid tinyproxy -c "$CONF/tinyproxy.conf" </dev/null
+# An HTTPS tunnel to an allowed host only, and only when the name inside TLS says the same.
+allow=()
+for host in "$@"; do allow+=(--allow "$host"); done
+setsid setpriv --reuid="$proxy_uid" --regid="$(id -g "$PROXY_USER")" --clear-groups --no-new-privs \
+    env -i /usr/bin/python3 -I "$LIB/proxy.py" --port 8888 "${allow[@]}" \
+    </dev/null >/dev/null 2>/var/log/aura-proxy.log &
 ready=no
 for _ in $(seq 40); do
     if (exec 3<>/dev/tcp/127.0.0.1/8888) 2>/dev/null; then ready=yes; break; fi
@@ -138,6 +121,11 @@ as_agent 'curl -q -sSf --max-time 20 -o /dev/null https://pypi.org/simple/pip/' 
     { echo "aura: no allowed host is reachable" >&2; exit 10; }
 if as_agent 'curl -q -sSf --max-time 15 -o /dev/null https://example.com' 2>/dev/null; then
     echo "aura: the proxy let a refused host through" >&2; exit 11
+fi
+# A tunnel opened to an allowed host must not carry a request for another site on its network.
+if as_agent 'curl -q -sS --max-time 15 -o /dev/null \
+    --connect-to www.cloudflare.com:443:registry.npmjs.org:443 https://www.cloudflare.com/' 2>/dev/null; then
+    echo "aura: the proxy let another name through an allowed tunnel" >&2; exit 18
 fi
 if as_agent 'curl -q -sS --noproxy "*" --max-time 8 -o /dev/null https://1.1.1.1' 2>/dev/null; then
     echo "aura: a direct connection got out" >&2; exit 12

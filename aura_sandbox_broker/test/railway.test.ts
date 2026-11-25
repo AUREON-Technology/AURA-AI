@@ -121,9 +121,11 @@ test("the template is built once, in the fixed region, with the tools the agent 
   assert.equal(builds.length, 1);
   assert.deepEqual(builds[0]!.args[0], { ...connection, region: "us-west2" });
   const packages = steps.find((s) => s[0] === "packages")!;
-  for (const name of ["tinyproxy", "git", "python3", "nodejs", "npm", "build-essential", "curl"]) {
+  for (const name of ["git", "python3", "nodejs", "npm", "build-essential", "curl"]) {
     assert.ok(packages.includes(name), name);
   }
+  // The proxy is the broker's own: a package that forwards by host name alone must not return.
+  assert.ok(!packages.includes("tinyproxy"));
 });
 
 test("a failed template build is retried on the next use", async () => {

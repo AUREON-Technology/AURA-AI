@@ -113,3 +113,32 @@ The four failures:
 - **Replaced workspace (1, test fault).** An earlier check left a mode-000 folder, so the setup's
   `rm` failed and the workspace was never replaced. The test now asserts the replacement. Not yet
   rerun.
+
+### Third run: the TLS-name-checking proxy
+
+`tinyproxy` was replaced by `guest/proxy.py`, which requires the TLS server name to be the
+tunnel's host and refuses encrypted ClientHellos. Result: **77 passed, 3 failed**, and one of the
+passes below is void. All sandboxes and the checkpoint were destroyed.
+
+- `git ls-remote` and clone, a `pip` wheel download, a registry document over 1 MB, thirty
+  concurrent requests and a TLS 1.2 request all worked through the proxy.
+- The two earlier open items passed: cancel by id, and a replaced workspace (with its control).
+- A different **TLS name** was refused through `pypi.org`, `files.pythonhosted.org` and
+  `registry.npmjs.org`. The fourth case (`objects.githubusercontent.com`) printed a pass, but the
+  CLI could not connect, so it is **not verified** live; the fence's own proof and the unit tests
+  cover the rule.
+- **Still open (3 failures).** With the TLS name correct and only the HTTP `Host` header changed:
+
+| Tunnel and TLS name | Host header | Answer |
+|---|---|---|
+| `pypi.org` | `www.fastly.com` | **200, Fastly's page** |
+| `files.pythonhosted.org` | `www.fastly.com` | **200, Fastly's page** |
+| `objects.githubusercontent.com` | `pages.github.com` | **200, GitHub Pages' page** |
+| `registry.npmjs.org` | `www.cloudflare.com` | 403 |
+| `github.com` | `pages.github.com` | 301 back to `github.com` |
+| `codeload.github.com`, `api.github.com` | `pages.github.com` | 400 |
+
+  Three of the seven allowed hosts therefore still lead elsewhere on the same network. A proxy
+  that does not decrypt cannot see the `Host` header. Whether an attacker's own site on that
+  network would receive a request this way was inferred from these two third-party sites, not
+  tested with a site we control.

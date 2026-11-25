@@ -17,7 +17,7 @@ export const ALLOWED_HOSTS: readonly string[] = [
   "files.pythonhosted.org",
   "registry.npmjs.org",
 ];
-export const GUEST_SCRIPTS: readonly string[] = ["fence.sh", "run.sh", "file.sh", "confine.py"];
+export const GUEST_SCRIPTS: readonly string[] = ["fence.sh", "run.sh", "file.sh", "confine.py", "proxy.py"];
 
 const LIB = "/usr/local/lib/aura";
 const STAGING = "/var/lib/aura/staging";

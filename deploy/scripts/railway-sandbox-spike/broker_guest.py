@@ -29,7 +29,7 @@ STAGING = "/var/lib/aura/staging"
 WS = "/home/aura/workspace"
 CHECKPOINT = "aura-broker-proof"
 # The parts of the broker's template the scripts need.
-PACKAGES = "tinyproxy curl ca-certificates iproute2 procps util-linux python3"
+PACKAGES = "curl ca-certificates iproute2 procps util-linux python3 python3-pip git"
 HOSTS = [
     line.strip("^$").replace("\\.", ".")
     for line in (ROOT / "deploy" / "sandbox" / "filter").read_text(encoding="utf-8").splitlines()
@@ -60,7 +60,7 @@ class Proof(Spike):
         if packages:
             self.text(sandbox, "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && "
                                f"apt-get install -y -qq {PACKAGES} >/dev/null", check=True)
-        for name in ("fence.sh", "run.sh", "file.sh", "confine.py"):
+        for name in ("fence.sh", "run.sh", "file.sh", "confine.py", "proxy.py"):
             self.push(sandbox, f"{LIB}/{name}", (GUEST / name).read_bytes().replace(b"\r\n", b"\n"))
 
     def fence(self, sandbox: str) -> tuple[int, str, str]:
@@ -112,6 +112,7 @@ class Proof(Spike):
         self.check("G1", code == 0, f"fence again (idempotent): exit {code} {err[-200:]}")
 
         self.commands(first)
+        self.real_clients(first)
         self.fence_loss(first)
         self.files(first)
         self.review_findings(first)
@@ -195,8 +196,22 @@ class Proof(Spike):
         code, out, _ = self.sh(box, "ls -d /sys/fs/cgroup/aura-* 2>/dev/null || echo none")
         self.check("G6", out == "none", f"no command cgroups left: {out}")
 
+    def real_clients(self, box: str) -> None:
+        """The tools the agent actually uses, through the proxy's name check."""
+        for label, script in (
+            ("git reads a repository", "git ls-remote https://github.com/octocat/Hello-World HEAD"),
+            ("git clones a repository", "rm -rf hw && git clone -q --depth 1 https://github.com/octocat/Hello-World hw && test -f hw/README"),
+            ("pip downloads a wheel", "python3 -m pip download -q --no-deps --only-binary=:all: -d dl numpy && ls dl/*.whl"),
+            ("a large registry document", "curl -q -sSf --max-time 60 -o react.json https://registry.npmjs.org/react && test $(stat -c %s react.json) -gt 1000000"),
+            ("thirty requests at once", "seq 30 | xargs -P 30 -I{} curl -q -sSf --max-time 60 -o /dev/null https://pypi.org/simple/pip/"),
+            ("TLS 1.2 still works", "curl -q -sSf --tls-max 1.2 --max-time 30 -o /dev/null https://github.com/robots.txt"),
+        ):
+            code, _, err, _ = self.agent(box, script, limit=120)
+            self.check("G3b", code == 0, f"{label}: exit {code} {err[-160:]}")
+        self.agent(box, "rm -rf hw dl react.json")
+
     def fence_loss(self, box: str) -> None:
-        for label, damage in (("firewall", "nft delete table inet aura"), ("proxy", "pkill -x tinyproxy; sleep 1")):
+        for label, damage in (("firewall", "nft delete table inet aura"), ("proxy", "pkill -u aura-proxy; sleep 1")):
             self.sh(box, damage)
             code, out, err, mark = self.agent(box, "echo ran")
             self.check("G7", code == 97 and "ran" not in out and f"aura:fence-missing:{mark}" in err,
@@ -332,8 +347,31 @@ class Proof(Spike):
                 box, f"curl -q -sS --max-time 20 -o /dev/null -w '%{{http_code}}' "
                      f"--connect-to {other}:443:{allowed}:443 https://{other}/")
             served = code == 0 and out[:1] in ("2", "3")
+            if "ssh.railway.com" in err:
+                # The CLI never reached the sandbox: that is no evidence of a refusal.
+                self.record("G12", "FAIL", f"inconclusive for {allowed} to {other}: the CLI could not connect")
+                continue
             self.check("G12", not served,
-                       f"tunnel to {allowed}, then ask for {other}: curl {code}, HTTP {out or '-'} {err[-100:]}")
+                       f"tunnel to {allowed}, TLS name {other}: curl {code}, HTTP {out or '-'} {err[-100:]}")
+        # The proxy cannot see inside TLS: does the network honour a different Host header?
+        for allowed, other, marker in (
+            ("pypi.org", "www.fastly.com", "Fastly"),
+            ("files.pythonhosted.org", "www.fastly.com", "Fastly"),
+            ("registry.npmjs.org", "www.cloudflare.com", "Cloudflare"),
+            ("objects.githubusercontent.com", "pages.github.com", "GitHub Pages"),
+            ("github.com", "pages.github.com", "GitHub Pages"),
+            ("codeload.github.com", "pages.github.com", "GitHub Pages"),
+            ("api.github.com", "pages.github.com", "GitHub Pages"),
+        ):
+            code, out, err, _ = self.agent(
+                box, f"curl -q -sS --max-time 20 -D /tmp/h -o /tmp/b -w '%{{http_code}}' -H 'Host: {other}' "
+                     f"https://{allowed}/; echo; grep -io '<title>[^<]*' /tmp/b | head -1; "
+                     f"grep -i '^location:' /tmp/h | head -1; rm -f /tmp/h /tmp/b")
+            lines = out.splitlines()
+            status = lines[0] if lines else "-"
+            rest = " ".join(lines[1:])[:140]
+            served = (status[:1] == "2" and marker in rest) or (status[:1] == "3" and other in rest)
+            self.check("G13", not served, f"tunnel to {allowed}, Host {other}: HTTP {status} {rest}")
 
     def hostile_restore(self, box: str) -> None:
         """What an agent can leave on disk must not turn into root's actions after a restore."""

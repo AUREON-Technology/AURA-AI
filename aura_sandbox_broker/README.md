@@ -4,8 +4,9 @@ A small private service between AURA's backend and Railway Sandboxes. It holds t
 and fixes how a sandbox is made. Plan: `docs/plans/railway-sandboxes-plan.md`. Proof of the
 network fence: `docs/reports/railway-sandbox-spike-2026-11-25.md`.
 
-**Do not deploy: the outbound allowlist can be bypassed** through content-delivery networks that
-serve the allowed hosts (confirmed on a real sandbox; see the end of
+**Do not deploy: the outbound allowlist can still be bypassed** through three allowed hosts
+(`pypi.org`, `files.pythonhosted.org`, `objects.githubusercontent.com`) by sending a different
+HTTP `Host` header inside TLS (confirmed on a real sandbox; see the end of
 `docs/reports/railway-sandbox-spike-2026-11-25.md`).
 
 **Status: built; tested against an in-memory vendor, with the guest scripts run on real sandboxes
@@ -19,7 +20,7 @@ through the CLI. Not deployed, and not proven against the official SDK.** Nothin
 | Variables | none passed into a sandbox |
 | Size, region | 2 vCPU, 2 GB, `us-west2` |
 | Idle timeout | 120 minutes (a crash safety net) |
-| Outbound | the seven hosts of `deploy/sandbox/filter`, through a proxy, behind `nftables` |
+| Outbound | HTTPS to the seven hosts of `deploy/sandbox/filter`, through `guest/proxy.py`, behind `nftables`. The TLS server name must be the tunnel's host; encrypted ClientHellos are refused |
 | Commands | unprivileged user, own cgroup, deadline enforced inside the sandbox; no user namespaces, `AF_VSOCK` or `io_uring` |
 | Files | moved as the unprivileged user; paths must stay in the workspace |
 
@@ -74,6 +75,7 @@ any other credential.
 ```
 npm ci --ignore-scripts
 npm test
+python3 -m unittest discover -s test -p "test_*.py"
 ```
 
 ## Deploy (not done yet)
@@ -86,8 +88,8 @@ npm test
 
 ## Known limits
 
-- **Open and blocking:** the proxy checks the host named when a tunnel opens, not the name inside
-  TLS, so other sites on an allowed host's network are reachable.
+- **Open and blocking:** the proxy does not decrypt, so it cannot see the HTTP `Host` header.
+  Three allowed hosts serve other sites on their network when asked that way.
 - One instance is assumed: the "busy while checkpointing" rule is per instance, and nothing here
   limits how many sandboxes exist. The backend enforces per-person and platform limits.
 - A sandbox whose creation fails inside the vendor SDK can be left running until its idle timeout;

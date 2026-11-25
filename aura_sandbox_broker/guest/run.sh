@@ -54,7 +54,8 @@ shift 3
 
 # Fail closed: no proven fence, no command.
 if [ ! -f "$STATE/ready" ] || [ "$(cat "$STATE/ready")" != "$(cat /proc/sys/kernel/random/boot_id)" ] ||
-    ! nft list table inet aura >/dev/null 2>&1 || ! pgrep -u tinyproxy -x tinyproxy >/dev/null; then
+    ! nft list table inet aura >/dev/null 2>&1 ||
+    ! pgrep -u aura-proxy -f "$LIB/proxy.py" >/dev/null; then
     echo "aura:fence-missing:$MARK" >&2
     exit 97
 fi

@@ -145,7 +145,7 @@ test("workspace paths must be relative and stay inside", () => {
 
 test("guest scripts are present, parse, and have Unix line endings", () => {
   const shell = GUEST_SCRIPTS.filter((name) => name.endsWith(".sh"));
-  assert.deepEqual(GUEST_SCRIPTS.filter((name) => !shell.includes(name)), ["confine.py"]);
+  assert.deepEqual(GUEST_SCRIPTS.filter((name) => !shell.includes(name)), ["confine.py", "proxy.py"]);
   for (const name of shell) {
     const path = fileURLToPath(new URL(`guest/${name}`, root));
     const text = readFileSync(path, "utf8").replaceAll("\r\n", "\n");

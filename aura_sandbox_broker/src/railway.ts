@@ -17,7 +17,7 @@ const IDLE_MINUTES = 120;
 /** The Docker sandbox's tools, plus what the fence needs. The image's own python and node live
  * under /root, out of the agent user's reach, so the system packages are installed. */
 const PACKAGES = [
-  "tinyproxy", "curl", "ca-certificates", "iproute2", "procps", "util-linux",
+  "curl", "ca-certificates", "iproute2", "procps", "util-linux",
   "git", "python3", "python3-pip", "python3-venv", "nodejs", "npm", "build-essential",
 ];
 

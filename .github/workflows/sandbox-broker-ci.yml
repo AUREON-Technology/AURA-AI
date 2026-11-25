@@ -51,6 +51,9 @@ jobs:
       - name: Build and test
         run: npm test
 
+      - name: Test the egress proxy
+        run: python3 -m unittest discover -s test -p "test_*.py"
+
       - name: Shellcheck the guest scripts
         run: shellcheck --severity=warning guest/*.sh
 
