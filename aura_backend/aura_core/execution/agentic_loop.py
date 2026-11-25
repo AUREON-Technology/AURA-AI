@@ -182,6 +182,8 @@ class AgenticExecutor:
         self._runs = runs
         self._gate_execute = _accepts(getattr(executor, "execute", None), "gate")
         self._gate_stream = _accepts(getattr(executor, "stream", None), "gate")
+        self._deadline_execute = _accepts(getattr(executor, "execute", None), "deadline_s")
+        self._deadline_stream = _accepts(getattr(executor, "stream", None), "deadline_s")
 
     def _monotonic(self) -> float:
         if self._clock is not None and hasattr(self._clock, "monotonic"):
@@ -269,6 +271,7 @@ class AgenticExecutor:
         capabilities: Sequence[str],
         confirmations: ConfirmationGrant | None,
         on_event: Callable[[StepEvent], Any] | None,
+        pass_deadline_s: float | None = None,
     ) -> AsyncIterator[StepEvent | ExecutionOutcome]:
         common = dict(
             context=context, capabilities=capabilities,
@@ -278,11 +281,15 @@ class AgenticExecutor:
         if streaming and callable(stream):
             if self._gate_stream:
                 common["gate"] = gate
+            if self._deadline_stream and pass_deadline_s is not None:
+                common["deadline_s"] = pass_deadline_s
             async for item in stream(plan, **common):
                 yield item
             return
         if self._gate_execute:
             common["gate"] = gate
+        if self._deadline_execute and pass_deadline_s is not None:
+            common["deadline_s"] = pass_deadline_s
         yield await self._executor.execute(plan, on_event=on_event, **common)
 
     # -- the loop ----------------------------------------------------------------------------
@@ -335,6 +342,9 @@ class AgenticExecutor:
                     current, streaming=streaming, gate=gate, context=context,
                     capabilities=capabilities, confirmations=confirmations,
                     on_event=on_event,
+                    # The pass may use whatever the loop has left (already the min of the loop
+                    # deadline and the run's time budget), not the engine's flat default.
+                    pass_deadline_s=max(0.0, deadline - self._monotonic()),
                 ):
                     if isinstance(item, StepEvent):
                         yield item
