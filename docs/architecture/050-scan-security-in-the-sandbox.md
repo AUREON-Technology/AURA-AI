@@ -1,7 +1,7 @@
 # ADR-050: `scan_security` — Semgrep, Gitleaks and Bandit in the sandbox
 
-Status: Proposed (built; parsers verified on real tool output and the tool on real Bandit, Gitleaks and Semgrep
-runs; the sandbox image build itself is not yet run). Extends ADR-048 (the in-gateway pattern scanner).
+Status: Proposed (built and run: the image was built and all three scanners ran inside it under the sandbox's
+own restrictions). Extends ADR-048 (the in-gateway pattern scanner).
 
 ## Problem
 
@@ -37,4 +37,11 @@ output, or "could not analyse some files" (`incomplete`) is never clean.
 ## Evidence
 
 `tests/unit/test_scan_security.py` (parsers on `tests/fixtures/scanners/*`, real tool runs that skip rather than
-fake when a scanner is absent, the empty-PATH not-installed case). Not yet run: the image build.
+fake when a scanner is absent, the empty-PATH not-installed case).
+
+Image, 2026-11-25: `deploy/sandbox/Dockerfile` built (image 1.16 GB in total) and, in a container with `--network
+none --read-only --user 10001 --cap-drop ALL --security-opt no-new-privileges` and tmpfs `/home/aura`, Bandit 1.9.4
+found 4 issues, Gitleaks 8.28.0 found the planted token (value `REDACTED`), and Semgrep 1.187.0 with the bundled rules
+found 8 issues in 15 s with no network. The build in the verifying environment needed its egress proxy's CA added
+to the build (a test-only change; the committed Dockerfile has none). Semgrep prints a warning on stderr for the
+internal `--x-` flag, which the tool ignores.
