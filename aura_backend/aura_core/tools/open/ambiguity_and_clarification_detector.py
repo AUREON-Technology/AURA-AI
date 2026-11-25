@@ -1,11 +1,6 @@
-"""Not exposed (ADR-036, 2026-11-21) -- deliberately NOT registered as a tool. Scores ambiguity from a
-list of vague words; the model judges whether a request is ambiguous better than a word list,
-so it is not worth the planner prompt it would cost.
-
-Reachable from no persona: nothing under ``aura_core`` imports this module, which
-``tests/architecture/test_open_tools_classification.py`` checks against
-``tools/open/_classification.py``. Kept as reference code; change that classification and
-ADR-036 before wiring it in.
+"""Wrapped (ADR-042, 2026-11-23): ``open_pure.py`` registers it as ``detect_ambiguity``. ADR-036 had kept
+this class unexposed because a bare word list does worse than the model; the tool now scores per
+sentence, in English and Arabic, with a question for each finding.
 """
 
 import re

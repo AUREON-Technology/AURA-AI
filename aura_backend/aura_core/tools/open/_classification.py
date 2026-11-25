@@ -5,8 +5,9 @@ Each public module under ``aura_core/tools/open/`` must appear here with one of 
 entry, when an entry names a module that does not exist, when a module the builders import is not
 ``wrapped``, or when anything under ``aura_core`` imports a module that is not ``wrapped``.
 
-- ``wrapped``: a tool builder (``tools/analysis.py`` group A, ``tools/open_exec.py`` group B)
-  imports it; the note names the tool.
+- ``wrapped``: a tool builder (``tools/analysis.py`` group A, ``tools/open_exec.py`` group B,
+  ``tools/open_pure.py`` ADR-042, ``tools/open_workspace.py`` ADR-043, and the others
+  ``BUILDERS`` in the architecture test lists) imports it; the note names the tool.
 - ``superseded``: an engine the platform already has does the job better; the file says which.
 - ``deferred``: only safe as an ``aura_hostd`` RPC on the user's machine, which is not built.
 - ``not_exposed``: kept as reference code, reachable from no tool and so from no persona; the note
@@ -60,51 +61,72 @@ CLASSIFICATION: dict[str, tuple[str, str]] = {
     "dev_server_manager": (DEFERRED, "needs a dev_server.* aura_hostd RPC (shell=True, PID table)"),
     "browser_subagent": (DEFERRED, "needs a browser.run aura_hostd RPC (Playwright, no SSRF policy)"),
     "performance_profiler": (NOT_EXPOSED, "eval/exec removed; desktop_ops.py profile_python replaces it"),
-    "backup_restore_verifier": (NOT_EXPOSED, "reads and hashes paths on the gateway"),
+    "backup_restore_verifier": (
+        WRAPPED, "open_workspace.py: verify_backup (ADR-043; confined to AURA_TOOLS_FILES_ROOT, verify only)"),
     # --- the 25 modules added 2026-11-19, triaged 2026-11-21 (KAN-32) ----------------------
     "structured_data_parser": (WRAPPED, "analysis.py: validate_structured_text"),
     "acceptance_criteria_verifier": (
-        NOT_EXPOSED, "substring matching marks criteria ACCEPTED on keyword overlap; a rubber stamp"),
+        WRAPPED, "open_pure.py: verify_acceptance_criteria (ADR-042; evidence-based: a criterion passes only on evidence that says so)"),
     "ambiguity_and_clarification_detector": (
-        NOT_EXPOSED, "word-list scoring the model does better; not worth planner prompt"),
+        WRAPPED, "open_pure.py: detect_ambiguity (ADR-042)"),
     "architectural_consistency_checker": (
-        NOT_EXPOSED, "needs a caller-built import map; generic layers; not worth planner prompt"),
+        WRAPPED, "open_pure.py: check_architecture (ADR-042; reads imports from the files the caller passes)"),
     "archive_extractor": (NOT_EXPOSED, "reads and writes paths on the gateway"),
     "artifact_feedback_ingestor": (
-        NOT_EXPOSED, "regex edits of plans from feedback the model makes itself; not worth prompt"),
+        WRAPPED, "open_pure.py: apply_plan_feedback (ADR-042; ADR-045 live plan feedback)"),
     "artifact_generator": (
-        NOT_EXPOSED, "Markdown templates the model writes itself; save_artifact_to_disk writes paths"),
-    "automated_quiz_generator": (NOT_EXPOSED, "template output (every answer is 'A'); not useful"),
+        WRAPPED, "open_pure.py: generate_artifact (ADR-042; writes nothing)"),
+    "automated_quiz_generator": (
+        WRAPPED, "open_pure.py: generate_quiz (ADR-042; questions built from facts, answer key kept separate)"),
     "background_task_manager": (
         NOT_EXPOSED, "spawns processes in the gateway with os.environ.copy(); no owner scoping"),
-    "binary_file_inspector": (NOT_EXPOSED, "reads paths on the gateway"),
-    "file_type_detector_router": (NOT_EXPOSED, "reads paths and walks directories on the gateway"),
-    "mobile_artifact_summarizer": (NOT_EXPOSED, "client presentation formatting; not worth prompt"),
+    "binary_file_inspector": (
+        WRAPPED, "open_workspace.py: inspect_binary_file (ADR-043; confined to AURA_TOOLS_FILES_ROOT)"),
+    "file_type_detector_router": (
+        WRAPPED, "open_pure.py: detect_file_type (ADR-042; takes bytes, never a path)"),
+    "mobile_artifact_summarizer": (
+        WRAPPED, "open_pure.py: summarize_for_mobile (ADR-042)"),
     "multi_language_ast_analyzer": (
-        NOT_EXPOSED, "imprecise regex matching, quadratic on a long line; Python half duplicates "
-        "analyze_python_ast"),
-    "notebook_reader": (NOT_EXPOSED, "treats every argument as a path first and reads it on the gateway"),
-    "project_conventions_loader": (NOT_EXPOSED, "reads and walks workspace paths on the gateway"),
+        WRAPPED, "open_pure.py: analyze_source_structure (ADR-042; Python by AST, other languages by declaration scan)"),
+    "notebook_reader": (
+        WRAPPED, "open_workspace.py: read_notebook (ADR-043; confined to AURA_TOOLS_FILES_ROOT)"),
+    "project_conventions_loader": (
+        WRAPPED, "open_workspace.py: load_project_conventions (ADR-043; confined to AURA_TOOLS_FILES_ROOT)"),
     "project_status_qa_tool": (
-        NOT_EXPOSED, "keyword search over a history no engine supplies; not worth prompt"),
+        WRAPPED, "open_workspace.py: project_status (ADR-043; reads this user's recorded runs, no file)"),
     "push_notification_dispatcher": (
         NOT_EXPOSED, "POSTs to any caller-named URL with no SSRF guard; 'local' reports delivered"),
     "remote_session_controller": (
         NOT_EXPOSED, "in-memory session states not connected to the kernel; reports a pause that "
         "never happens"),
     "repo_semantic_indexer": (
-        NOT_EXPOSED, "walks directories on the gateway; duplicates the knowledge indexing engine"),
+        WRAPPED, "open_workspace.py: index_repository, search_repository (ADR-043; confined to AURA_TOOLS_FILES_ROOT)"),
     "scope_and_diff_guard": (
-        NOT_EXPOSED, "overlaps scan_code_security/analyze_change_impact; lstrip('./') misses .env"),
-    "skills_rules_workflows_loader": (NOT_EXPOSED, "reads workspace paths on the gateway"),
+        WRAPPED, "open_pure.py: check_diff_scope (ADR-042)"),
+    "skills_rules_workflows_loader": (
+        WRAPPED, "open_workspace.py: load_project_skills (ADR-043; confined to AURA_TOOLS_FILES_ROOT)"),
     "source_content_explainer": (
-        NOT_EXPOSED, "duplicates analyze_python_ast plus reading the model does itself"),
-    "stale_context_detector": (NOT_EXPOSED, "reads and hashes paths on the gateway"),
+        WRAPPED, "open_pure.py: explain_source (ADR-042)"),
+    "stale_context_detector": (
+        WRAPPED, "open_workspace.py: check_file_staleness (ADR-043; confined to AURA_TOOLS_FILES_ROOT)"),
     "ui_visual_verifier": (
         NOT_EXPOSED, "reads any existing path on the gateway; the 'perceptual' hash is over raw bytes"),
     "verification_evidence_collector": (
-        NOT_EXPOSED, "hashes caller-supplied evidence (proves nothing); missing exit codes pass; "
-        "reads paths"),
+        WRAPPED, "open_pure.py: collect_verification_evidence (ADR-042; state travels with the caller, not the process)"),
+    # --- princess (ADR-042..044): re-decided 2026-11-25 when it was merged into main ---------
+    # --- ADR-044: extensions that live beside the tool they extend ----------------------------
+    "api_ext": (WRAPPED, "analysis.py: compare_api_specs (ADR-044)"),
+    "data_ext": (WRAPPED, "analysis.py: validate_data_records (ADR-044)"),
+    "diagram_ext": (WRAPPED, "analysis.py: generate_diagram (ADR-044)"),
+    "gate_ext": (WRAPPED, "analysis.py: evaluate_quality_gate (ADR-044)"),
+    "profile_ext": (WRAPPED, "desktop_ops.py: profile_python (ADR-044)"),
+    "quality_ext": (WRAPPED, "open_exec.py: analyze_test_quality (ADR-044)"),
+    "release_ext": (WRAPPED, "analysis.py: plan_rollout (ADR-044); release.py: verify_release_health"),
+    "research_ext": (WRAPPED, "research.py: research_topic (ADR-044)"),
+    "review_ext": (WRAPPED, "analysis.py: review_code_diff (ADR-044)"),
+    "sql_schema_ext": (WRAPPED, "analysis.py: inspect_sql (ADR-044)"),
+    "telemetry_ext": (WRAPPED, "analysis.py: analyze_logs (ADR-044)"),
+    "testgen_ext": (WRAPPED, "open_exec.py: generate_and_run_tests (ADR-044)"),
 }
 
 
