@@ -780,15 +780,214 @@ def resolve_language(language: str | None, filename: str | None) -> str | None:
     return None
 
 
+#: Where something that needs the tokenizer's attention can start: a comment, a quote, a backtick or a Rust raw string.
+_TOKEN_START = re.compile(r"//|/\*|\"|'|`|\br#*\"|@\"|\$@?\"")
+_RUST_RAW = re.compile(r'r(#*)"')
+_CHAR_LITERAL = re.compile(r"'(?:\\(?:u\{[0-9a-fA-F]+\}|x[0-9a-fA-F]{2}|.)|[^\\'\n])'")
+#: A ``/`` right after one of these starts a regular-expression literal (JavaScript/TypeScript), not a division.
+_REGEX_PRECEDERS = frozenset("(,=:[!&|?{};+-*%<>~^")
+_REGEX_KEYWORDS = ("return", "typeof", "case", "in", "of", "delete", "void", "throw", "yield", "await")
+
+
+def _end_of_quoted(source: str, i: int, quote: str, *, multiline: bool = False) -> int:
+    """Index just past the string that starts at ``i`` (escapes honoured); an unterminated one ends at its line."""
+    n, j = len(source), i + 1
+    while j < n:
+        c = source[j]
+        if c == "\\":
+            j += 2
+            continue
+        if c == quote:
+            return j + 1
+        if c == "\n" and not multiline:
+            return j
+        j += 1
+    return n
+
+
+def _end_of_template(source: str, i: int) -> int:
+    """Index just past the JavaScript template literal at ``i``, ``${ ... }`` (with nested templates) included."""
+    n, j = len(source), i + 1
+    while j < n:
+        c = source[j]
+        if c == "\\":
+            j += 2
+        elif c == "`":
+            return j + 1
+        elif source.startswith("${", j):
+            depth, j = 1, j + 2
+            while j < n and depth:
+                d = source[j]
+                if d == "`":
+                    j = _end_of_template(source, j)
+                    continue
+                if d in "\"'":
+                    j = _end_of_quoted(source, j, d)
+                    continue
+                depth += (d == "{") - (d == "}")
+                j += 1
+        else:
+            j += 1
+    return n
+
+
+def _end_of_regex(source: str, i: int) -> int:
+    """Index just past the regex literal at ``i`` (``[...]`` classes may contain ``/``), or ``i`` if it is not one."""
+    n, j, in_class = len(source), i + 1, False
+    while j < n:
+        c = source[j]
+        if c == "\n":
+            return i
+        if c == "\\":
+            j += 2
+            continue
+        if c == "[":
+            in_class = True
+        elif c == "]":
+            in_class = False
+        elif c == "/" and not in_class:
+            j += 1
+            while j < n and (source[j].isalpha()):
+                j += 1
+            return j
+        j += 1
+    return i
+
+
+def _regex_allowed(source: str, i: int) -> bool:
+    k = i - 1
+    while k >= 0 and source[k] in " \t":
+        k -= 1
+    if k < 0 or source[k] == "\n" or source[k] in _REGEX_PRECEDERS:
+        return True
+    word = re.search(r"([A-Za-z_]+)$", source[max(0, k - 12):k + 1])
+    return bool(word and word.group(1) in _REGEX_KEYWORDS)
+
+
 def _blank(source: str, lang: str) -> str:
-    """Source with comments and string contents blanked, newlines and offsets kept."""
+    """Source with comments, string contents and regex literals blanked, newlines and offsets kept.
 
-    def mask(m: re.Match[str]) -> str:
-        return re.sub(r"[^\n]", " ", m.group(0))
+    A single-pass tokenizer, not the regex pair it replaced: it understands JavaScript template literals with nested
+    ``${...}``, regular-expression literals, Go raw strings, Java/Kotlin text blocks, C# verbatim and interpolated
+    strings, Rust raw strings and character literals versus lifetimes, and block comments that nest (Rust, Kotlin).
+    A brace or keyword inside any of those no longer reaches the declaration and brace-matching code.
+    """
+    n = len(source)
+    out = list(source)
 
-    text = _BLOCK.sub(mask, source) if "*/" in source else source  # no terminator: every "/*" would rescan to the end
-    text = _LINE_C.sub(mask, text)
-    return (_RUST_STRING if lang == "rust" else _STRING).sub(mask, text)
+    def blank(a: int, b: int) -> None:
+        for k in range(a, min(b, n)):
+            if out[k] != "\n":
+                out[k] = " "
+
+    nested = lang in ("rust", "kotlin")
+    js = lang in ("javascript", "typescript")
+    i = 0
+    while i < n:
+        m = _TOKEN_START.search(source, i)
+        j = m.start() if m else n
+        if js:  # a regex literal can start before the next token-start candidate
+            slash = source.find("/", i, j)
+            while slash != -1:
+                if source.startswith(("//", "/*"), slash):
+                    break
+                if _regex_allowed(source, slash):
+                    end = _end_of_regex(source, slash)
+                    if end > slash:
+                        blank(slash, end)
+                        i = end
+                        break
+                slash = source.find("/", slash + 1, j)
+            else:
+                slash = -1
+            if slash != -1 and i > slash:
+                continue
+        if not m:
+            break
+        i, token = m.start(), m.group(0)
+        if token == "//":
+            end = source.find("\n", i)
+            end = n if end == -1 else end
+            blank(i, end)
+            i = end
+        elif token == "/*":
+            depth, k = 1, i + 2
+            while k < n and depth:
+                if source.startswith("*/", k):
+                    depth -= 1
+                    k += 2
+                elif nested and source.startswith("/*", k):
+                    depth += 1
+                    k += 2
+                else:
+                    k += 1
+            blank(i, k)
+            i = k
+        elif lang == "rust" and token.startswith("r") and token != '"':
+            raw = _RUST_RAW.match(source, i)
+            closing = '"' + (raw.group(1) if raw else "")
+            end = source.find(closing, raw.end()) if raw else -1
+            end = n if end == -1 else end + len(closing)
+            blank(i, end)
+            i = end
+        elif token in ('@"', '$@"', '$"') and lang == "csharp":
+            quote = i + len(token) - 1
+            if "@" in token:  # verbatim: only "" escapes a quote
+                k = quote + 1
+                while k < n:
+                    if source[k] == '"':
+                        if source.startswith('""', k):
+                            k += 2
+                            continue
+                        k += 1
+                        break
+                    k += 1
+                end = k
+            else:
+                end = _end_of_quoted(source, quote, '"')
+            blank(i, end)
+            i = end
+        elif token in ('@"', '$@"', '$"') or (lang != "rust" and token.startswith("r")):
+            i += 1  # `$"`/`@"`/`r"` in a language that has no such literal: just an identifier char
+        elif token == '"':
+            if source.startswith('"""', i) and lang in ("java", "kotlin", "csharp", "dart"):
+                end = source.find('"""', i + 3)
+                end = n if end == -1 else end + 3
+            else:
+                end = _end_of_quoted(source, i, '"', multiline=lang in ("javascript", "typescript") and False)
+            blank(i, end)
+            i = end
+        elif token == "'":
+            if lang in ("javascript", "typescript", "dart", "kotlin") and lang != "kotlin":
+                end = _end_of_quoted(source, i, "'")
+            else:
+                ch = _CHAR_LITERAL.match(source, i)
+                end = ch.end() if ch else (_end_of_quoted(source, i, "'") if lang in ("kotlin",) else i + 1)
+            blank(i, end)
+            i = end
+        elif token == "`":
+            end = _end_of_template(source, i) if js else (source.find("`", i + 1) + 1 or n)
+            if lang in ("go",) or js:
+                blank(i, end)
+                i = end
+            else:
+                i += 1
+        else:
+            i += 1
+    return "".join(out)
+
+
+_DECISION = re.compile(r"\b(?:if|for|foreach|while|case|catch|when|elif|except)\b|&&|\|\||\?\?|\?(?![.?:])")
+
+
+def cyclomatic(blanked_body: str) -> int:
+    """McCabe-style complexity of a function body (comments and strings already blanked): 1 + decision points.
+
+    Counted by keyword and operator on the token-clean text, not by a control-flow graph, so a ternary and a
+    ``catch`` each add one, ``else`` and ``default`` add none, and a nested function's decisions are counted in
+    its parent as well as in itself. An estimate that ranks functions; not a certified metric.
+    """
+    return 1 + len(_DECISION.findall(blanked_body))
 
 
 _DECLS: dict[str, tuple[tuple[str, re.Pattern[str]], ...]] = {
@@ -957,6 +1156,7 @@ def scan_source(source: str, lang: str) -> dict[str, Any]:
                 if len(names) >= 30:
                     break
             sym["calls"] = names
+            sym["complexity"] = cyclomatic(blanked[body[0] + 1: body[1]][:200_000])
             call_graph[f"{sym['parent']}.{sym['name']}" if sym["parent"] else sym["name"]] = names
     imports: list[dict[str, Any]] = []
     pattern = _IMPORT_PATTERNS.get(lang)
@@ -991,6 +1191,15 @@ def scan_source(source: str, lang: str) -> dict[str, Any]:
     result: dict[str, Any] = {
         "language": lang, "symbols": symbols, "imports": imports, "call_graph": call_graph,
         "skipped_long_lines": skipped,
+        "complexity": {
+            "method": "McCabe-style count of decision points on tokenizer-clean text (an estimate that ranks "
+                      "functions, not a control-flow graph)",
+            "functions": sum(1 for s in symbols if "complexity" in s),
+            "most_complex": [
+                {"name": f"{s['parent']}.{s['name']}" if s["parent"] else s["name"], "line": s["line"],
+                 "complexity": s["complexity"]}
+                for s in sorted((s for s in symbols if "complexity" in s), key=lambda s: -s["complexity"])[:5]],
+        },
     }
     if lang == "go":
         pkg = re.search(r"(?m)^\s*package\s+(\w+)", blanked)
