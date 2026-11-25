@@ -39,6 +39,7 @@ import posixpath
 import re
 import unicodedata
 import shlex
+import tempfile
 import time
 import weakref
 from collections import OrderedDict
@@ -55,6 +56,7 @@ from ..ports.coding import (
     TOOL_CALL_CONFIRMED,
     FileWriteOp,
     McpToolDescriptor,
+    RepositoryTransferRunner,
     SandboxResult,
     StreamingSandboxRunner,
 )
@@ -813,6 +815,20 @@ class _SessionAdapter:
     def bound_repo(self, correlation_id: str) -> str | None:
         return self._resolver.bound_repo(correlation_id) if self._resolver else None
 
+
+def _transfer_runner(runner: Any, handle: Any) -> Any:
+    """The runner behind ``handle`` when its files are not on this host, else ``None``.
+
+    Such a runner (``RepositoryTransferRunner``) is handed a checkout made here and gives back a
+    bundle; the others are worked on at ``workspace_path``. A runner that routes between several
+    (``CompositeSandboxRunner``) says which one serves this handle.
+    """
+    choose = getattr(runner, "transfer_for", None)
+    if choose is not None:
+        return choose(handle)
+    return runner if isinstance(runner, RepositoryTransferRunner) else None
+
+
 async def _drain_streaming_run(
     runner: StreamingSandboxRunner, handle: Any, command: Sequence[str], *, timeout_s: float
 ) -> SandboxResult:
@@ -1339,6 +1355,26 @@ def build_sandbox_tools(
         )
         return probe.exit_code == 0
 
+    async def _scan_checkouts(handle: Any) -> list[str]:
+        """Folders one or two levels below the root that hold a ``.git``."""
+        scan = await sandbox_runner.run(handle, ["sh", "-c", _REPO_SCAN], timeout_s=10.0)
+        return sorted({
+            line.strip() for line in scan.stdout.splitlines()
+            if line.strip() and not line.startswith(("/", "-"))
+        })[:50]
+
+    async def _find_checkout_in_workspace(handle: Any, slug: str) -> str | None:
+        """:func:`_find_checkout_dir` for a workspace that can only be asked: the folder a clone
+        lands in, else the one named after the repository, else the only checkout there is."""
+        default = _clone_dir(slug, None)
+        if await _is_checkout(handle, default):
+            return default
+        found = await _scan_checkouts(handle)
+        named = [d for d in found if d.rsplit("/", 1)[-1].lower() == default.lower()]
+        if len(named) == 1:
+            return named[0]
+        return found[0] if len(found) == 1 else None
+
     async def _checkout_args(
         context: ToolContext, handle: Any, repo_path: str | None = None, *, tool_name: str = "git",
     ) -> list[str]:
@@ -1359,11 +1395,7 @@ def build_sandbox_tools(
         inside = await _git(handle, ["git", "rev-parse", "--is-inside-work-tree"], timeout_s=10.0)
         if inside.exit_code == 0 and inside.stdout.strip() == "true":
             return []
-        scan = await sandbox_runner.run(handle, ["sh", "-c", _REPO_SCAN], timeout_s=10.0)
-        found = sorted({
-            line.strip() for line in scan.stdout.splitlines()
-            if line.strip() and not line.startswith(("/", "-"))
-        })[:50]
+        found = await _scan_checkouts(handle)
         if not found:
             cloned = await _auto_clone_bound_repository(context, tool_name)
             # Nothing to clone either: the caller's own "not a git repository" message applies.
@@ -1425,22 +1457,35 @@ def build_sandbox_tools(
         by the git tools' own clone when a workspace has no checkout yet."""
         opened = await sessions.opened(context, slug)
         await sessions.enforce_quota(opened, tool_name=tool_name)
-        checkout = Path(await sandbox_runner.workspace_path(opened.handle)) / subdir
-        # Belt and braces under `_workspace_subdir`: whatever was joined, the checkout must
-        # still be inside the workspace, because this is the gateway's own filesystem.
-        workspace_root = Path(await sandbox_runner.workspace_path(opened.handle)).resolve()
-        if workspace_root not in checkout.resolve().parents:
-            raise ToolExecutionError(
-                f"destination {destination!r} is outside the workspace", tool=tool_name
-            )
+        transfer = _transfer_runner(sandbox_runner, opened.handle)
         # The token travels on its own channel rather than being dug out of the code-host
         # client: a private attribute would tie this to one adapter and silently yield None
         # for any other, turning a private clone into a confusing auth failure.
         token = await token_resolver(context.user_id) if token_resolver else None
 
-        await host_git.clone(slug, dest=checkout, token=token, ref=ref)
-        log = await host_git.log(checkout, limit=5)
-        branch = await host_git.current_branch(checkout)
+        if transfer is None:
+            checkout = Path(await sandbox_runner.workspace_path(opened.handle)) / subdir
+            # Belt and braces under `_workspace_subdir`: whatever was joined, the checkout must
+            # still be inside the workspace, because this is the gateway's own filesystem.
+            workspace_root = Path(await sandbox_runner.workspace_path(opened.handle)).resolve()
+            if workspace_root not in checkout.resolve().parents:
+                raise ToolExecutionError(
+                    f"destination {destination!r} is outside the workspace", tool=tool_name
+                )
+            await host_git.clone(slug, dest=checkout, token=token, ref=ref)
+            log = await host_git.log(checkout, limit=5)
+            branch = await host_git.current_branch(checkout)
+        else:
+            # The workspace is not on this host: clone into a folder only this process writes
+            # to, then move the checkout in. The token stays behind.
+            with tempfile.TemporaryDirectory(
+                prefix="aura-clone-", ignore_cleanup_errors=True
+            ) as staging:
+                checkout = Path(staging) / "checkout"
+                await host_git.clone(slug, dest=checkout, token=token, ref=ref)
+                log = await host_git.log(checkout, limit=5)
+                branch = await host_git.current_branch(checkout)
+                await transfer.import_repository(opened.handle, checkout, subdir)
         note = "\nNote: " + "; ".join(opened.evicted) if opened.evicted else ""
         return (
             f"Cloned {slug} into {subdir}/ with full git history "
@@ -1472,10 +1517,14 @@ def build_sandbox_tools(
         async with lock:
             # Another call may have cloned it while this one waited.
             opened = await sessions.opened(context, slug)
-            root = Path(await sandbox_runner.workspace_path(opened.handle))
-            existing = _find_checkout_dir(root, slug)
-            if existing is not None:
-                return ["-C", existing.relative_to(root).as_posix()]
+            if _transfer_runner(sandbox_runner, opened.handle) is None:
+                root = Path(await sandbox_runner.workspace_path(opened.handle))
+                existing = _find_checkout_dir(root, slug)
+                found = None if existing is None else existing.relative_to(root).as_posix()
+            else:
+                found = await _find_checkout_in_workspace(opened.handle, slug)
+            if found is not None:
+                return ["-C", found]
             client = await code_host_resolver(context.user_id) if code_host_resolver else None
             if client is None:
                 raise ToolExecutionError(
@@ -1878,6 +1927,11 @@ def build_sandbox_tools(
                 tool="git_push",
             )
         opened = await sessions.opened(context, slug)
+        transfer = _transfer_runner(sandbox_runner, opened.handle)
+        if transfer is not None:
+            await _push_from_bundle(context, opened.handle, transfer, slug, branch)
+            return f"Pushed {branch} to {slug}."
+
         workspace_root = Path(await sandbox_runner.workspace_path(opened.handle))
         checkout = workspace_root / _clone_dir(slug, None)
         if not await host_git.is_repository(checkout):
@@ -1890,41 +1944,56 @@ def build_sandbox_tools(
                 tool="git_push",
             )
 
+        _require_plain_branch(branch)
+        # The checkout's idea of the default branch is a ref (`refs/remotes/origin/HEAD`) that
+        # commands in the workspace can rewrite or delete, after which `main` would stop being
+        # refused. GitHub's own answer cannot be edited from there, so it is asked as well and
+        # both names are refused.
+        default_branch = await host_git.default_branch(checkout)
+        _refuse_default(branch, {default_branch} | await _forge_default(context, slug))
+
+        token = await _push_token(context)
+        await host_git.push(checkout, branch=branch, token=token, repo=slug)
+        return f"Pushed {branch} to {slug}."
+
+    def _require_plain_branch(branch: str) -> None:
         if not _is_plain_branch_name(branch):
-            # The default-branch check below compares *names*; a refspec (`HEAD:main`,
-            # `+x:main`, `:main`) or an option (`--mirror`) would pass it and still write to or
-            # delete the default branch (tests/security/test_workspace_boundaries.py).
+            # The default-branch check compares *names*; a refspec (`HEAD:main`, `+x:main`,
+            # `:main`) or an option (`--mirror`) would pass it and still write to or delete the
+            # default branch (tests/security/test_workspace_boundaries.py).
             raise ToolExecutionError(
                 f"{branch!r} is not a plain branch name; pass just the branch to push, "
                 "e.g. 'feature/login-fix'",
                 tool="git_push",
             )
+
+    async def _forge_default(context: ToolContext, slug: str) -> set[str]:
+        """The default branch according to GitHub's API, when there is a client to ask."""
+        if code_host_resolver is None:
+            return set()
+        client = await code_host_resolver(context.user_id)
+        if client is None:
+            return set()
+        try:
+            return {await client.default_branch(slug)}
+        except Exception as exc:
+            raise ToolExecutionError(
+                f"could not confirm {slug}'s default branch with GitHub ({exc}); not pushing "
+                "without knowing which branch is protected",
+                tool="git_push",
+            ) from exc
+
+    def _refuse_default(branch: str, defaults: set[str]) -> None:
         # Refused here rather than left to the forge's branch protection: not every repository
         # has any, and "the agent pushed straight to main" is not a thing to discover afterwards.
-        default_branch = await host_git.default_branch(checkout)
-        refused = {default_branch}
-        if code_host_resolver is not None:
-            # The checkout's idea of the default branch is a ref (`refs/remotes/origin/HEAD`) that
-            # commands in the workspace can rewrite or delete, after which `main` would stop being
-            # refused. GitHub's own answer cannot be edited from there, so it is asked as well and
-            # both names are refused.
-            client = await code_host_resolver(context.user_id)
-            if client is not None:
-                try:
-                    refused.add(await client.default_branch(slug))
-                except Exception as exc:
-                    raise ToolExecutionError(
-                        f"could not confirm {slug}'s default branch with GitHub ({exc}); not pushing "
-                        "without knowing which branch is protected",
-                        tool="git_push",
-                    ) from exc
-        if branch in refused:
+        if branch in defaults:
             raise ToolExecutionError(
                 f"refusing to push to {branch!r}, the default branch. Push a feature "
                 "branch and open a pull request from it.",
                 tool="git_push",
             )
 
+    async def _push_token(context: ToolContext) -> str | None:
         token = await token_resolver(context.user_id) if token_resolver else None
         if token_resolver is not None and not token:
             raise ToolExecutionError(
@@ -1932,8 +2001,66 @@ def build_sandbox_tools(
                 "connect an account via /api/v3/integrations/github/connect",
                 tool="git_push",
             )
-        await host_git.push(checkout, branch=branch, token=token, repo=slug)
-        return f"Pushed {branch} to {slug}."
+        return token
+
+    async def _push_from_bundle(
+        context: ToolContext, handle: Any, transfer: Any, slug: str, branch: str
+    ) -> None:
+        """``git_push`` for a workspace that is not on this host.
+
+        Only a bundle leaves the sandbox. It is checked and added to a clone made here, and the
+        push runs from that clone, so nothing the sandbox configured takes part in a command that
+        carries the credential. The default branch is the fresh clone's own answer.
+        """
+        directory = await _find_checkout_in_workspace(handle, slug)
+        if directory is None:
+            raise ToolExecutionError(
+                f"{_clone_dir(slug, None)} is not a git checkout; clone the repository first",
+                tool="git_push",
+            )
+        _require_plain_branch(branch)
+        _refuse_default(branch, await _forge_default(context, slug))
+        token = await _push_token(context)
+        try:
+            with tempfile.TemporaryDirectory(
+                prefix="aura-push-", ignore_cleanup_errors=True
+            ) as staging:
+                # The branch comes out first: it is quick, and a branch that is not there is
+                # found out before a full clone has been paid for.
+                export = await transfer.export_branch(
+                    handle, directory, branch, Path(staging) / "branch.bundle"
+                )
+                bare = Path(staging) / "push.git"
+                await host_git.clone_for_push(slug, dest=bare, token=token)
+                _refuse_default(branch, {await host_git.default_branch_of(bare)})
+                if export.bundle is not None:
+                    tip = await host_git.import_bundle(bare, export.bundle, branch=branch)
+                elif await host_git.has_commit(bare, export.tip):
+                    tip = export.tip
+                else:
+                    raise ToolExecutionError(
+                        f"{branch} points at a commit the remote does not have, and the "
+                        "workspace sent none; fetch in the workspace and rebase, or clone again",
+                        tool="git_push",
+                    )
+                await host_git.push_commit(bare, tip=tip, branch=branch, repo=slug, token=token)
+        except ToolExecutionError:
+            raise
+        except Exception as exc:
+            raise ToolExecutionError(f"could not push {branch}: {exc}", tool="git_push") from exc
+        # So the workspace's own git sees what is now on the remote. The push has happened either
+        # way, so a failure here is not the call's failure.
+        try:
+            await sandbox_runner.run(
+                handle,
+                ["sh", "-c",
+                 'git -C "$1" update-ref "refs/remotes/origin/$2" "$3" && '
+                 'git -C "$1" branch --quiet --set-upstream-to="origin/$2" "$2"',
+                 "aura-pushed", directory, branch, tip],
+                timeout_s=20.0,
+            )
+        except Exception:
+            logger.warning("could not record a push in the workspace", exc_info=True)
 
 
     # -- snapshots (ADR-041) --------------------------------------------------------------

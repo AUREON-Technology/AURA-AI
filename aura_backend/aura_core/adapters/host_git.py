@@ -23,11 +23,20 @@ systems:
 Everything here shells out rather than using a git library on purpose: the deployment already
 depends on the ``git`` binary (it is in the sandbox image and on the host), and a pure-Python
 implementation would be a second, subtly different notion of what a repository is.
+
+**When the workspace's files are not on this host** (a cloud sandbox), git never runs where the
+sandbox can write at all. A clone is made in a folder of the gateway's own and moved in
+(``ports/coding.py::RepositoryTransferRunner``). A push takes a *bundle* out of the sandbox into
+a second clone made here (:meth:`HostGitService.clone_for_push`): the bundle's header must carry
+exactly the branch asked for, its commits must build on history the remote really has, and its
+objects pass ``git``'s own receive-time checks (:meth:`HostGitService.import_bundle`). The
+sandbox's configuration and hooks never reach this host.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import re
 import shutil
@@ -35,7 +44,7 @@ import stat
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 from ..observability.logging import get_logger
 
@@ -95,8 +104,61 @@ _SAFE_CONFIG_KEYS = re.compile(
 _CREDENTIAL_REMOTE_URL = re.compile(r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?(?:\.git)?/?$")
 
 
+#: Object checks that are only warnings by default, raised to errors for a sandbox's bundle: each
+#: is a path that would escape or poison a later checkout. The ``gitmodules*`` ones already fail.
+_BUNDLE_FSCK = ",".join(
+    f"{check}=error"
+    for check in ("hasDot", "hasDotdot", "hasDotgit", "emptyName", "fullPathname")
+)
+_OBJECT_ID = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
+#: A bundle header is a handful of short lines; anything far beyond that is not one.
+_BUNDLE_LINE_BYTES = 4096
+_BUNDLE_HEADER_LINES = 10_000
+
+
 class GitCommandError(RuntimeError):
     """A git invocation failed. Carries stderr, with the token scrubbed if it ever appeared."""
+
+
+def _bundle_header(path: Path) -> tuple[list[str], list[tuple[str, str]], int]:
+    """``(prerequisite commits, (ref, commit) pairs, offset of the pack)`` of a git bundle.
+
+    Read here rather than asked of ``git`` so that exactly what is imported is what was checked,
+    and so that the same rules hold whichever git version the image carries.
+    """
+    unreadable = GitCommandError("refusing the bundle: it is not a plain git bundle")
+    prerequisites: list[str] = []
+    refs: list[tuple[str, str]] = []
+    with path.open("rb") as stream:
+        version = stream.readline(_BUNDLE_LINE_BYTES)
+        if version not in (b"# v2 git bundle\n", b"# v3 git bundle\n"):
+            raise unreadable
+        for _ in range(_BUNDLE_HEADER_LINES):
+            line = stream.readline(_BUNDLE_LINE_BYTES)
+            if line == b"\n":
+                return prerequisites, refs, stream.tell()
+            if not line.endswith(b"\n"):
+                break
+            try:
+                text = line[:-1].decode("utf-8")
+            except UnicodeDecodeError:
+                raise unreadable from None
+            if text.startswith("@"):
+                # A capability. Only the object format is understood; a partial ("filter")
+                # bundle would import a history with holes in it.
+                if not text.startswith("@object-format="):
+                    raise unreadable
+            elif text.startswith("-"):
+                oid = text[1:].split(" ", 1)[0]
+                if not _OBJECT_ID.fullmatch(oid):
+                    raise unreadable
+                prerequisites.append(oid)
+            else:
+                oid, _, name = text.partition(" ")
+                if not _OBJECT_ID.fullmatch(oid) or not name:
+                    raise unreadable
+                refs.append((name, oid))
+    raise unreadable
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +197,7 @@ class HostGitService:
         cwd: Path,
         token: str | None = None,
         timeout_s: float | None = None,
+        stdin: Any = None,
     ) -> GitResult:
         if token:
             await self._assert_safe_config_for_credential(cwd, fetches=bool(args) and args[0] in ("fetch", "pull"))
@@ -165,6 +228,7 @@ class HostGitService:
                 "git", *_HARDENING, *args,
                 cwd=str(cwd),
                 env=env,
+                stdin=stdin,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -178,6 +242,15 @@ class HostGitService:
                 raise GitCommandError(
                     f"git {args[0]} timed out after {timeout_s or self._timeout_s:.0f}s"
                 ) from None
+            except BaseException:
+                # The caller gave up (a tool's own deadline). Left running, git would go on
+                # writing to a folder about to be removed, or finish a push reported as failed.
+                if process.returncode is None:
+                    process.kill()
+                    # Bounded: a helper git started may hold the pipes a moment longer.
+                    with contextlib.suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(process.wait(), timeout=5.0)
+                raise
 
             return GitResult(
                 stdout=_scrub(stdout.decode("utf-8", errors="replace"), token),
@@ -379,6 +452,82 @@ class HostGitService:
             self.remote_url(repo) if repo else "origin", f"{ref}:{ref}",
         ]
         return await self._checked(args, cwd=repo_dir, token=token)
+
+    # -- pushing from a sandbox whose files are not here -----------------------------------
+
+    async def clone_for_push(
+        self, repo: str, *, dest: Path, token: str | None = None
+    ) -> GitResult:
+        """A bare, full clone of ``repo`` in a folder only this process writes to.
+
+        Full history, because the sandbox's commits may build on anything the remote has; bare,
+        because nothing is ever checked out; from an empty template, so it starts with no hook.
+        """
+        template = dest.parent / "empty-template"
+        template.mkdir(parents=True, exist_ok=True)
+        return await self._checked(
+            ["clone", "--bare", f"--template={template}", "--", self.remote_url(repo), str(dest)],
+            cwd=dest.parent, token=token,
+        )
+
+    async def default_branch_of(self, bare: Path) -> str:
+        """The remote's default branch, as a fresh :meth:`clone_for_push` recorded it."""
+        result = await self._checked(["symbolic-ref", "--short", "HEAD"], cwd=bare)
+        return result.stdout.strip()
+
+    async def has_commit(self, repo_dir: Path, oid: str) -> bool:
+        if not _OBJECT_ID.fullmatch(oid):
+            return False
+        return (await self._run(["cat-file", "-e", f"{oid}^{{commit}}"], cwd=repo_dir)).ok
+
+    async def import_bundle(self, bare: Path, bundle: Path, *, branch: str) -> str:
+        """Add a sandbox's bundle to ``bare`` after checking it, and return the branch's tip.
+
+        Refuses a bundle carrying anything but ``refs/heads/<branch>``, commits that build on
+        history this clone does not have, and objects ``index-pack --strict`` rejects (the check
+        a server applies to a push).
+        """
+        prerequisites, refs, offset = await asyncio.to_thread(_bundle_header, bundle)
+        wanted = f"refs/heads/{branch}"
+        if [name for name, _ in refs] != [wanted]:
+            raise GitCommandError(
+                f"refusing the bundle: it must carry exactly {wanted}, not "
+                f"{', '.join(name for name, _ in refs)[:200] or 'nothing'}"
+            )
+        tip = refs[0][1]
+        for oid in prerequisites:
+            if not await self.has_commit(bare, oid):
+                raise GitCommandError(
+                    "the new commits build on history the remote does not have (it may have been "
+                    "rewritten); fetch in the workspace and rebase, or clone again"
+                )
+        # Unbuffered, so git reads from exactly where the header ended.
+        with open(bundle, "rb", buffering=0) as pack:
+            pack.seek(offset)
+            result = await self._run(
+                ["index-pack", "--stdin", "--fix-thin", f"--strict={_BUNDLE_FSCK}"],
+                cwd=bare, stdin=pack,
+            )
+        if result.ok:
+            # Every object the tip needs is now present.
+            result = await self._run(
+                ["rev-list", "--objects", "--quiet", tip, "--not", "--all"], cwd=bare
+            )
+        if not result.ok or not await self.has_commit(bare, tip):
+            raise GitCommandError(
+                "the commits failed the object check and were not pushed: "
+                f"{result.stderr.strip()[:300]}"
+            )
+        return tip
+
+    async def push_commit(
+        self, bare: Path, *, tip: str, branch: str, repo: str, token: str | None = None
+    ) -> GitResult:
+        """Push ``tip`` to ``refs/heads/<branch>`` from a :meth:`clone_for_push`. Never forced."""
+        return await self._checked(
+            ["push", "--", self.remote_url(repo), f"{tip}:refs/heads/{branch}"],
+            cwd=bare, token=token,
+        )
 
     async def log(self, repo_dir: Path, *, limit: int = 20) -> str:
         return (

@@ -11,6 +11,7 @@ from __future__ import annotations
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any, AsyncIterator, Mapping, Protocol, Sequence, runtime_checkable
 
 from ..domain.agent_runs import AgentRun, AgentStep
@@ -31,6 +32,10 @@ __all__ = [
     "SandboxRunner",
     "SandboxOutputEvent",
     "StreamingSandboxRunner",
+    "BranchExport",
+    "RepositoryTransferRunner",
+    "CloudSandbox",
+    "CloudSandboxStore",
     "EngineerRunStore",
     "AgentRunStore",
     "WorkspaceStore",
@@ -359,6 +364,141 @@ class StreamingSandboxRunner(Protocol):
     def run_streaming(
         self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float
     ) -> AsyncIterator[SandboxOutputEvent]:
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class BranchExport:
+    """A branch taken out of a workspace: its tip, and the commits the remote does not have yet.
+
+    Both values come from a place model-chosen commands can write to, so whoever receives them
+    checks them (``adapters/host_git.py``) before anything is pushed.
+    """
+
+    tip: str
+    #: A git bundle on this host holding the new commits, or ``None`` when there are none.
+    bundle: Path | None = None
+
+
+@runtime_checkable
+class RepositoryTransferRunner(Protocol):
+    """Optional capability of a runner whose workspace files are not on this host.
+
+    It stands in for :meth:`SandboxRunner.workspace_path`: instead of running git where the files
+    are, the gateway makes a checkout of its own and moves it in, and takes new commits out as a
+    bundle. The gateway therefore never runs git in a folder the sandbox can write to, and a
+    credential never goes where model-chosen commands run (ADR-013).
+    """
+
+    async def import_repository(
+        self, handle: SandboxHandle, source: Path, destination: str
+    ) -> None:
+        """Copy the checkout at ``source`` (on this host) to ``destination`` in the workspace.
+
+        ``destination`` is a folder below the workspace root that does not exist or is empty;
+        anything else is refused and left untouched.
+        """
+        ...
+
+    async def export_branch(
+        self, handle: SandboxHandle, directory: str, branch: str, destination: Path
+    ) -> BranchExport:
+        """``refs/heads/<branch>`` of the checkout in ``directory``, with a bundle written to
+        ``destination`` (on this host) when it holds commits no remote-tracking branch has."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class CloudSandbox:
+    """What the platform remembers about one cloud sandbox key.
+
+    A key is a durable workspace or a single task. It outlives the sandboxes that serve it: at most
+    one is attached at a time, and ``checkpoint_name`` is the saved disk the next one boots from.
+    """
+
+    key: str
+    kind: str  #: ``"workspace"`` or ``"task"``.
+    sandbox_id: str | None = None
+    booted_at: datetime | None = None
+    checkpoint_name: str | None = None
+    #: A save in progress: nothing else may use or save the sandbox until it ends or expires.
+    saving_name: str | None = None
+    saving_until: datetime | None = None
+    #: Calls in progress on the attached sandbox; ignored once ``in_use_until`` has passed, so a
+    #: worker that died cannot hold a workspace for ever.
+    in_use: int = 0
+    in_use_until: datetime | None = None
+    #: The workspace's size when last measured. Still true while no sandbox is attached.
+    used_bytes: int | None = None
+    #: A sandbox vanished with unsaved changes and nobody using the key has been told yet.
+    lost: bool = False
+
+
+@runtime_checkable
+class CloudSandboxStore(Protocol):
+    """Which sandbox serves which key, shared by every web worker.
+
+    Every method that changes a row is a single conditional write that reports whether it applied,
+    because the callers race: two workers booting one workspace, or one saving it while another
+    runs a command in it.
+    """
+
+    async def ensure(self, key: str, kind: str, *, at: datetime) -> CloudSandbox:
+        """The row for ``key``, created empty if there was none."""
+        ...
+
+    async def get(self, key: str) -> CloudSandbox | None:
+        ...
+
+    async def list_keys(self, *, kind: str) -> Sequence[str]:
+        ...
+
+    async def attach(
+        self, key: str, sandbox_id: str, *, expected_checkpoint: str | None, at: datetime
+    ) -> bool:
+        """Record a booted sandbox, only if none is attached and the checkpoint it booted from is
+        still the key's."""
+        ...
+
+    async def detach(self, key: str, sandbox_id: str, *, lost: bool = False) -> bool:
+        """Forget ``sandbox_id`` (and every claim on it) if it is still the attached one.
+        ``lost`` leaves a report for the key's next user (:meth:`take_loss`)."""
+        ...
+
+    async def take_loss(self, key: str) -> bool:
+        """Take the pending loss report: ``True`` for exactly one caller per loss."""
+        ...
+
+    async def begin_use(
+        self, key: str, sandbox_id: str, *, at: datetime, until: datetime
+    ) -> bool:
+        """Count one more call on the attached sandbox, unless a save is in progress."""
+        ...
+
+    async def end_use(self, key: str, sandbox_id: str) -> None:
+        ...
+
+    async def begin_save(
+        self, key: str, sandbox_id: str, name: str, *, at: datetime, until: datetime
+    ) -> bool:
+        """Claim the attached sandbox for a save, unless it is in use or already being saved."""
+        ...
+
+    async def commit_save(self, key: str, name: str, *, used_bytes: int | None) -> bool:
+        """Make ``name`` the key's checkpoint. The claim stays until released or detached."""
+        ...
+
+    async def release_save(self, key: str, name: str) -> None:
+        """Drop the claim ``name`` made, leaving the checkpoint as it is."""
+        ...
+
+    async def record_usage(self, key: str, used_bytes: int) -> None:
+        ...
+
+    async def delete(
+        self, key: str, *, sandbox_id: str | None, checkpoint_name: str | None
+    ) -> bool:
+        """Remove the row only if it still names exactly what the caller has cleaned up."""
         ...
 
 

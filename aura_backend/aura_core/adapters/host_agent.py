@@ -29,6 +29,7 @@ from ..observability.logging import get_logger
 from ..ports.coding import (
     TOOL_CALL_CONFIRMED,
     FileWriteOp,
+    RepositoryTransferRunner,
     SandboxHandle,
     SandboxOutputEvent,
     SandboxResult,
@@ -660,6 +661,13 @@ class CompositeSandboxRunner:
 
     async def workspace_path(self, handle: SandboxHandle) -> str:
         return await self._runner_for(handle).workspace_path(handle)
+
+    def transfer_for(self, handle: SandboxHandle) -> RepositoryTransferRunner | None:
+        """The runner serving ``handle`` when its files are moved rather than worked on in place
+        (a cloud sandbox). A capability of one runner, not of this router, so it is answered per
+        handle."""
+        runner = self._runner_for(handle)
+        return runner if isinstance(runner, RepositoryTransferRunner) else None
 
     async def write_files(self, handle: SandboxHandle, operations: Sequence[FileWriteOp]) -> None:
         await self._runner_for(handle).write_files(handle, operations)

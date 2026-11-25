@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Mapping, Sequence
+from typing import Any, AsyncIterator, Callable, Mapping, Sequence
 
 from ..domain.agent_runs import AgentRun, AgentStep
 from ..domain.engineering import AgentWorkspace, EngineerRun
@@ -44,6 +44,7 @@ from ..domain.memory import BASE_CONFIDENCE_METADATA_KEY, MemoryKind, MemoryReco
 from ..domain.personal_os import PersonalOsRecord, RecordKind
 from dataclasses import replace as _dc_replace
 from ..llm.embeddings import cosine_similarity
+from ..ports.coding import CloudSandbox
 from ..ports.storage import GLOBAL_OWNER, VectorPoint, require_point_owner
 
 __all__ = [
@@ -56,6 +57,7 @@ __all__ = [
     "InMemoryInsightSink",
     "InMemoryGitHubIdentityPort",
     "InMemoryWorkspaceStore",
+    "InMemoryCloudSandboxStore",
 ]
 
 
@@ -701,6 +703,118 @@ class InMemoryWorkspaceStore:
     async def delete(self, workspace_id: WorkspaceId) -> None:
         async with self._lock:
             self._by_id.pop(workspace_id.value, None)
+
+
+class InMemoryCloudSandboxStore:
+    """Reference implementation of :class:`~aura_core.ports.coding.CloudSandboxStore`.
+
+    Each method checks its condition and writes without awaiting in between, which on one event
+    loop is the same all-or-nothing step the Postgres adapter gets from a conditional ``UPDATE``.
+    """
+
+    def __init__(self) -> None:
+        self._rows: dict[str, CloudSandbox] = {}
+
+    def _change(self, key: str, applies: Callable[[CloudSandbox], bool], **changes: Any) -> bool:
+        row = self._rows.get(key)
+        if row is None or not applies(row):
+            return False
+        self._rows[key] = _dc_replace(row, **changes)
+        return True
+
+    async def ensure(self, key: str, kind: str, *, at: datetime) -> CloudSandbox:
+        return self._rows.setdefault(key, CloudSandbox(key=key, kind=kind))
+
+    async def get(self, key: str) -> CloudSandbox | None:
+        return self._rows.get(key)
+
+    async def list_keys(self, *, kind: str) -> list[str]:
+        return sorted(key for key, row in self._rows.items() if row.kind == kind)
+
+    async def attach(
+        self, key: str, sandbox_id: str, *, expected_checkpoint: str | None, at: datetime
+    ) -> bool:
+        return self._change(
+            key,
+            lambda r: r.sandbox_id is None and r.checkpoint_name == expected_checkpoint,
+            sandbox_id=sandbox_id, booted_at=at, in_use=0, in_use_until=None,
+            saving_name=None, saving_until=None,
+        )
+
+    async def detach(self, key: str, sandbox_id: str, *, lost: bool = False) -> bool:
+        row = self._rows.get(key)
+        if row is None:
+            return False
+        return self._change(
+            key, lambda r: r.sandbox_id == sandbox_id,
+            sandbox_id=None, booted_at=None, in_use=0, in_use_until=None,
+            saving_name=None, saving_until=None, lost=row.lost or lost,
+        )
+
+    async def take_loss(self, key: str) -> bool:
+        return self._change(key, lambda r: r.lost, lost=False)
+
+    @staticmethod
+    def _saving(row: CloudSandbox, at: datetime) -> bool:
+        return row.saving_until is not None and row.saving_until > at
+
+    @staticmethod
+    def _busy(row: CloudSandbox, at: datetime) -> bool:
+        return row.in_use > 0 and row.in_use_until is not None and row.in_use_until > at
+
+    async def begin_use(self, key: str, sandbox_id: str, *, at: datetime, until: datetime) -> bool:
+        row = self._rows.get(key)
+        if row is None:
+            return False
+        busy = self._busy(row, at)
+        return self._change(
+            key,
+            lambda r: r.sandbox_id == sandbox_id and not self._saving(r, at),
+            in_use=row.in_use + 1 if busy else 1,
+            in_use_until=max(row.in_use_until, until) if busy else until,
+        )
+
+    async def end_use(self, key: str, sandbox_id: str) -> None:
+        row = self._rows.get(key)
+        if row is not None:
+            self._change(
+                key, lambda r: r.sandbox_id == sandbox_id, in_use=max(0, row.in_use - 1)
+            )
+
+    async def begin_save(
+        self, key: str, sandbox_id: str, name: str, *, at: datetime, until: datetime
+    ) -> bool:
+        return self._change(
+            key,
+            lambda r: (
+                r.sandbox_id == sandbox_id and not self._saving(r, at) and not self._busy(r, at)
+            ),
+            saving_name=name, saving_until=until,
+        )
+
+    async def commit_save(self, key: str, name: str, *, used_bytes: int | None) -> bool:
+        row = self._rows.get(key)
+        if row is None:
+            return False
+        return self._change(
+            key, lambda r: r.saving_name == name, checkpoint_name=name,
+            used_bytes=row.used_bytes if used_bytes is None else used_bytes,
+        )
+
+    async def release_save(self, key: str, name: str) -> None:
+        self._change(key, lambda r: r.saving_name == name, saving_name=None, saving_until=None)
+
+    async def record_usage(self, key: str, used_bytes: int) -> None:
+        self._change(key, lambda r: True, used_bytes=used_bytes)
+
+    async def delete(
+        self, key: str, *, sandbox_id: str | None, checkpoint_name: str | None
+    ) -> bool:
+        row = self._rows.get(key)
+        if row is None or (row.sandbox_id, row.checkpoint_name) != (sandbox_id, checkpoint_name):
+            return False
+        del self._rows[key]
+        return True
 
 
 _FAR_FUTURE = datetime(9999, 12, 31, tzinfo=timezone.utc)

@@ -2175,9 +2175,36 @@ class GitHubSettings:
         return os.environ.get(self.oauth_client_secret_env, "")
 
 
+def broker_url_problem(url: str) -> str | None:
+    """Why ``url`` must not be used for the sandbox broker, or ``None``.
+
+    Every request carries the broker's secret and the user's code, so plain HTTP is accepted only
+    for an address that cannot leave a private network: Railway's private DNS, this machine, or a
+    single-label service name.
+    """
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname or ""
+    except ValueError:
+        return "is not a valid URL"
+    if parts.scheme not in ("http", "https") or not host:
+        return "must be an http(s) URL"
+    if parts.username or parts.password:
+        return "must not carry credentials"
+    private = (
+        host in ("localhost", "127.0.0.1", "::1")
+        or host.endswith(".railway.internal")
+        or re.fullmatch(r"[a-z][a-z0-9_-]*", host) is not None
+    )
+    if parts.scheme == "http" and not private:
+        return "may use plain http only for a private address (*.railway.internal or localhost)"
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class SandboxSettings:
-    """Docker sandbox for the engineer agent's ``run_command``/``write_file`` tools.
+    """Server-side sandbox for the engineer agent's ``run_command``/``write_file`` tools: Docker
+    by default, or cloud sandboxes (``provider="railway"``).
 
     ``enabled`` alone is not enough to get a runner: ``Container._build_sandbox_runner`` also
     probes that the ``docker`` package is importable and a daemon is actually reachable, the same
@@ -2218,8 +2245,35 @@ class SandboxSettings:
     min_free_memory_mb: int = 1024
     in_container_git: bool = False
     proxy_url: str = ""
+    #: ``docker`` (a daemon beside the gateway) or ``railway`` (cloud sandboxes reached through
+    #: the private broker, ``aura_sandbox_broker/``).
+    provider: str = "docker"
+    broker_url: str = ""
+
+    @property
+    def broker_token(self) -> str:
+        """The broker's shared secret. Read from the environment, never held on the object."""
+        return os.environ.get("AURA_SANDBOX_BROKER_TOKEN", "")
+
+    def broker_problems(self) -> list[str]:
+        """Why cloud sandboxes cannot be switched on with this configuration."""
+        if not (self.enabled and self.provider == "railway"):
+            return []
+        problems: list[str] = []
+        problem = broker_url_problem(self.broker_url)
+        if problem:
+            problems.append(f"AURA_SANDBOX_BROKER_URL {problem}")
+        if len(self.broker_token) < 32:
+            problems.append("AURA_SANDBOX_BROKER_TOKEN must be set to the broker's shared secret "
+                            "(at least 32 characters)")
+        return problems
 
     def __post_init__(self) -> None:
+        if self.provider not in ("docker", "railway"):
+            raise ConfigurationError(
+                "AURA_SANDBOX_PROVIDER must be 'docker' or 'railway'",
+                details={"provider": self.provider},
+            )
         # A ceiling on running workspaces above the ceiling on workspaces that may exist is not a
         # harmless contradiction: it reads as "2 may run" while only 1 can ever be provisioned,
         # which hides a mis-set variable until someone wonders why the second one never starts.
@@ -2252,6 +2306,8 @@ class SandboxSettings:
             min_free_memory_mb=_int("SANDBOX_MIN_FREE_MEMORY_MB", 1024, minimum=0, maximum=1_048_576),
             in_container_git=_bool("SANDBOX_IN_CONTAINER_GIT", False),
             proxy_url=_env("SANDBOX_PROXY_URL", "") or "",
+            provider=(_env("SANDBOX_PROVIDER", "docker") or "docker").strip().lower(),
+            broker_url=(_env("SANDBOX_BROKER_URL", "") or "").strip(),
         )
 
 
@@ -3020,6 +3076,7 @@ class AuraSettings:
                 problems.append(f"AURA_SANDBOX_ALLOWED_EGRESS_HOSTS entry {host!r}: {problem}")
         if len(self.sandbox.allowed_egress_hosts) > 100:
             problems.append("AURA_SANDBOX_ALLOWED_EGRESS_HOSTS lists more than 100 hosts")
+        problems.extend(self.sandbox.broker_problems())
         for host in self.tools.http_allowed_hosts:
             if "://" in host or "/" in host or "*" in host or ":" in host:
                 problems.append(
