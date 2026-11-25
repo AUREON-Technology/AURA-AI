@@ -273,6 +273,22 @@ class SandboxRunner(Protocol):
         """
         ...
 
+    async def delete_file(self, handle: SandboxHandle, path: str) -> None:
+        """Delete one file (or symlink) -- never a directory -- inside the workspace.
+
+        Raises if the path escapes the workspace, does not exist, names a directory, or is inside a
+        ``.git`` directory. The desktop daemon enforces the same rules on the user's machine and
+        additionally asks the person first in a folder they have not marked trusted.
+        """
+        ...
+
+    async def rename_file(self, handle: SandboxHandle, path: str, new_path: str) -> None:
+        """Move ``path`` to ``new_path`` inside the workspace. Both must resolve inside it and
+        neither may be in a ``.git`` directory; the destination must not exist (a rename never
+        replaces), and a directory cannot be moved into itself. Parent directories of the
+        destination are created."""
+        ...
+
     async def destroy(self, handle: SandboxHandle) -> None:
         ...
 
@@ -405,6 +421,10 @@ class EngineerRunStore(Protocol):
     async def record(self, run: EngineerRun) -> None:
         ...
 
+    async def record_many(self, runs: Sequence[EngineerRun]) -> None:
+        """Insert ``runs`` in one write (one transaction on a real database)."""
+        ...
+
     async def list_for_user(
         self, user_id: UserId, *, since: datetime | None = None, limit: int = 200,
     ) -> Sequence[EngineerRun]:
@@ -431,6 +451,10 @@ class AgentRunStore(EngineerRunStore, Protocol):
     async def append_step(self, step: AgentStep) -> None:
         ...
 
+    async def append_steps(self, steps: Sequence[AgentStep]) -> None:
+        """Append ``steps`` in one write (one transaction on a real database). Order is kept."""
+        ...
+
     async def get_run(self, run_id: AgentRunId, *, user_id: UserId) -> AgentRun | None:
         ...
 
@@ -441,12 +465,24 @@ class AgentRunStore(EngineerRunStore, Protocol):
         agent_id: str | None = None,
         status: str | None = None,
         limit: int = 50,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        retry_of: str | None = None,
+        before: tuple[datetime, str] | None = None,
     ) -> Sequence[AgentRun]:
+        """The owner's runs, newest first (``created_at DESC, id DESC``).
+
+        ``since`` / ``until`` bound ``created_at`` (``>=`` / ``<``); ``retry_of`` lists the retries
+        of one run; ``before`` is a keyset position ``(created_at, id)`` -- only runs strictly
+        after it in that ordering are returned, which is how a page continues.
+        """
         ...
 
     async def list_steps(
-        self, run_id: AgentRunId, *, user_id: UserId, limit: int = 500,
+        self, run_id: AgentRunId, *, user_id: UserId, limit: int = 500, after_seq: int = -1,
     ) -> Sequence[AgentStep]:
+        """The run's steps in ``seq`` order; ``after_seq`` returns only those after that ``seq``,
+        so a client following a live run asks for what it has not seen."""
         ...
 
 

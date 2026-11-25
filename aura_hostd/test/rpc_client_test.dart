@@ -272,6 +272,49 @@ void main() {
     expect(response['id'], 'w1');
   });
 
+  test('rename_file and delete_file are served over the wire and answer with a result frame',
+      () async {
+    final tempDir = Directory.systemTemp.createTempSync('aura_hostd_rpc_fileops_test_');
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+    final roots = WorkspaceRoots(const []);
+    roots.addRoot(tempDir.path, trusted: true);
+    File('${roots.all.single.canonicalPath}/old.txt').writeAsStringSync('content');
+    final client = HostAgentClient(
+      wsUrl: server.wsUrl,
+      authToken: 't',
+      taskHandler: TaskHandler(roots),
+      logger: (_) {},
+    );
+    unawaited(client.run());
+    addTearDown(client.stop);
+
+    final socket = await server.clientSocket;
+    final frames = StreamQueue(socket.map((m) => jsonDecode(m as String) as Map<String, dynamic>));
+    await frames.next; // auth frame
+
+    socket.add(jsonEncode({
+      'type': 'call',
+      'id': 'm1',
+      'method': 'rename_file',
+      'params': {'path': 'old.txt', 'new_path': 'new.txt'},
+    }));
+    final renamed = await frames.next;
+    expect(renamed['type'], 'result');
+    expect(renamed['id'], 'm1');
+    expect(renamed['result'], {'renamed': 'old.txt', 'to': 'new.txt'});
+
+    socket.add(jsonEncode({
+      'type': 'call',
+      'id': 'd1',
+      'method': 'delete_file',
+      'params': {'path': 'new.txt'},
+    }));
+    final deleted = await frames.next;
+    expect(deleted['type'], 'result');
+    expect(deleted['result'], {'deleted': 'new.txt'});
+    expect(Directory(roots.all.single.canonicalPath).listSync(), isEmpty);
+  });
+
   test('a refused command carries its policy code next to the English message', () async {
     final tempDir = Directory.systemTemp.createTempSync('aura_hostd_rpc_code_test_');
     addTearDown(() => tempDir.deleteSync(recursive: true));

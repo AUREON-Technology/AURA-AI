@@ -415,7 +415,9 @@ def check_url(url: Any) -> str:
         raise UrlRefused("URL is malformed.") from None
     scheme = parts.scheme.lower()
     if scheme not in ("http", "https"):
-        raise UrlRefused(f"Only http and https URLs are allowed (got {parts.scheme or 'none'!r}).")
+        raise UrlRefused(
+            f"URL scheme {parts.scheme or 'none'!r} is not allowed; only http and https URLs are."
+        )
     host = (parts.hostname or "").lower().rstrip(".")
     if not host:
         raise UrlRefused("URL has no host.")
@@ -499,7 +501,9 @@ def open_owned_local(url: Any, port_ok: Callable[[int], bool], *, timeout: float
     except ValueError:
         raise UrlRefused("URL is malformed.") from None
     if parts.scheme.lower() != "http":
-        raise UrlRefused("Only http URLs on a server this tool started are allowed.")
+        raise UrlRefused(
+            "URL scheme is not allowed here; only http URLs on a server this tool started are."
+        )
     host = (parts.hostname or "").lower()
     if host not in ("127.0.0.1", "localhost") or parts.username or parts.password:
         raise UrlRefused("Only http://127.0.0.1:<port>/ on a server this tool started is allowed.")

@@ -31,6 +31,7 @@ from ..domain.github_identity import GitHubIdentity
 from ..domain.goals import GoalSnapshot
 from ..domain.identifiers import DocumentId, MemoryId, PersonalOsRecordId, UserId, WorkspaceId
 from ..domain.knowledge import (
+    DocumentStats,
     Chunk,
     Document,
     DocumentStatus,
@@ -275,6 +276,18 @@ class InMemoryDocumentStore:
         ]
         active.sort(key=lambda d: (d.id.value, -d.version))
         return active[offset : offset + limit]
+
+    async def owner_stats(self, *, owner_id: UserId | None) -> DocumentStats:
+        owner = owner_id.value if owner_id else None
+        mine = [
+            d for d in self._documents.values()
+            if d.status is DocumentStatus.ACTIVE and ((d.owner_id.value if d.owner_id else None) == owner)
+        ]
+        return DocumentStats(
+            documents=len(mine),
+            content_bytes=sum(len(d.content.encode("utf-8")) for d in mine),
+            pinned=sum(1 for d in mine if d.cag_pinned),
+        )
 
     async def set_cag_pin(
         self, document_id: DocumentId, *, owner_id: UserId | None, pinned: bool
@@ -572,6 +585,11 @@ class InMemoryEngineerRunStore:
         async with self._lock:
             self._agent_steps.setdefault(step.run_id.value, []).append(step)
 
+    async def append_steps(self, steps: Sequence[AgentStep]) -> None:
+        async with self._lock:
+            for step in steps:
+                self._agent_steps.setdefault(step.run_id.value, []).append(step)
+
     async def get_run(self, run_id: Any, *, user_id: UserId) -> AgentRun | None:
         run = self._agent_runs.get(run_id.value)
         if run is None or run.user_id != user_id:
@@ -585,22 +603,31 @@ class InMemoryEngineerRunStore:
         agent_id: str | None = None,
         status: str | None = None,
         limit: int = 50,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        retry_of: str | None = None,
+        before: tuple[datetime, str] | None = None,
     ) -> list[AgentRun]:
         matches = [
             r for r in self._agent_runs.values()
             if r.user_id == user_id
             and (agent_id is None or r.agent_id == agent_id)
             and (status is None or r.status == status)
+            and (since is None or r.created_at >= since)
+            and (until is None or r.created_at < until)
+            and (retry_of is None or r.retry_of == retry_of)
+            and (before is None or (r.created_at, r.id.value) < before)
         ]
         matches.sort(key=lambda r: (r.created_at, r.id.value), reverse=True)
         return matches[:limit]
 
     async def list_steps(
-        self, run_id: Any, *, user_id: UserId, limit: int = 500,
+        self, run_id: Any, *, user_id: UserId, limit: int = 500, after_seq: int = -1,
     ) -> list[AgentStep]:
         if await self.get_run(run_id, user_id=user_id) is None:
             return []
-        steps = [s for s in self._agent_steps.get(run_id.value, []) if s.user_id == user_id]
+        steps = [s for s in self._agent_steps.get(run_id.value, [])
+                 if s.user_id == user_id and s.seq > after_seq]
         steps.sort(key=lambda s: s.seq)
         return steps[:limit]
 
@@ -609,6 +636,10 @@ class InMemoryEngineerRunStore:
     async def record(self, run: EngineerRun) -> None:
         async with self._lock:
             self._runs.append(run)
+
+    async def record_many(self, runs: Sequence[EngineerRun]) -> None:
+        async with self._lock:
+            self._runs.extend(runs)
 
     async def list_for_user(
         self, user_id: UserId, *, since: datetime | None = None, limit: int = 200,

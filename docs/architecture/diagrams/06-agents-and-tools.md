@@ -372,8 +372,8 @@ erDiagram
 | `error` | daemon → server | `id`, `message` | terminal failure |
 | `reauth` | daemon → server | `token` | renew the credential; a token for a different user ends the session |
 
-RPC methods the daemon dispatches: `create_task`, `run`, `write_file`, `write_files`, `read_file`,
-`list_roots`, `init_git`. Close codes: `4401` unauthorised (the daemon stops and asks to be paired
+RPC methods the daemon dispatches: `create_task`, `run`, `write_file`, `write_files`,
+`delete_file`, `rename_file`, `read_file`, `list_roots`, `init_git`. Close codes: `4401` unauthorised (the daemon stops and asks to be paired
 again), `1011` server error (the daemon reconnects with backoff), `4503` unavailable, `4400` bad
 request. An unknown frame type is ignored, so a newer daemon does not break an older server.
 

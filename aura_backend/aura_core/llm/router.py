@@ -1559,6 +1559,44 @@ class ProviderRouter:
             out.append(snap)
         return out
 
+    def catalog(self) -> list[dict[str, Any]]:
+        """What each provider can do and whether it is serving right now, for a *person* to see.
+
+        Capabilities and circuit state only. Never an endpoint, a key, a cost, a capacity or an
+        operator's pool and group settings: those are ``stats()``'s, for administrators. ``state`` is
+        this worker's own circuit view, like ``stats()``'s.
+        """
+        out: list[dict[str, Any]] = []
+        for name, provider in self._providers.items():
+            caps = provider.capabilities
+            state = self._stats[name].breaker.state
+            out.append({
+                "id": name,
+                "model": caps.model_id,
+                "local": caps.is_local,
+                "state": str(state),
+                "available": state is not CircuitState.OPEN,
+                "context_window": caps.context_window,
+                "max_output_tokens": caps.max_output_tokens,
+                "supports": {
+                    "streaming": caps.supports_streaming,
+                    "tools": caps.supports_tools,
+                    "json_mode": caps.supports_json_mode,
+                    "vision": caps.supports_vision,
+                    "reasoning": caps.supports_reasoning,
+                },
+                "modalities": [str(m) for m in caps.modalities],
+                "languages": list(caps.languages),
+                "quality_tier": caps.quality_tier,
+                "speed_tier": caps.speed_tier,
+                "privacy": {
+                    "third_party": caps.third_party,
+                    "max_data_classification": caps.max_data_classification.value,
+                    "may_train_on_prompts": caps.may_train_on_prompts,
+                },
+            })
+        return out
+
     @property
     def admission(self) -> AdmissionController:
         return self._admission

@@ -292,6 +292,15 @@ class TelemetrySink(Protocol):
         """
         ...
 
+    async def usage_by_day(
+        self, owner_ref: str, *, since: datetime, until: datetime
+    ) -> list[dict[str, Any]]:
+        """One owner's token use, a row per UTC day (newest first) for turns started in
+        ``[since, until)``: ``{day, turns, prompt_tokens, completion_tokens, cost_usd,
+        estimated_turns}``. Content-free, like the telemetry it reads, and bounded by its
+        retention. An empty ``owner_ref`` has no turns."""
+        ...
+
     async def purge_owner(self, owner_ref: str) -> int:
         """Delete every turn owned by ``owner_ref`` (account erasure); returns how many."""
         ...

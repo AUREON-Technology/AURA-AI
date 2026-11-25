@@ -86,7 +86,7 @@ logger = get_logger("agentic_loop")
 _TERMINAL_BLOCKS = frozenset(
     {
         "deadline_exceeded", "step_budget_exceeded", "budget_exceeded", "needs_confirmation",
-        "tool_budget_exceeded", "risk_budget_exceeded",
+        "tool_budget_exceeded", "risk_budget_exceeded", "run_cancelled",
     }
 )
 
@@ -147,6 +147,9 @@ class RunBudgetGate:
         self.risk_spent = 0
         self.costs: dict[str, int] = {}
         self._refusals: list[BudgetRefusal] = []
+        #: Set by the loop to the run's cancel watch. Consulted before every dispatch: once the
+        #: owner has asked the run to stop, no further tool call is admitted.
+        self.cancelled: Callable[[], bool] | None = None
 
     def admit(self, step: PlanStep, spec: Any) -> str | None:
         sensitivity = int(getattr(spec, "sensitivity", 0) or 0) if spec is not None else 0
@@ -155,7 +158,9 @@ class RunBudgetGate:
         side_effecting = bool(getattr(spec, "side_effecting", True)) if spec is not None else True
         cost = risk_cost(sensitivity, side_effecting=side_effecting) if spec is not None else 0
         reason: str | None = None
-        if self._budget.tool_budget is not None and self.tools_used + 1 > self._budget.tool_budget:
+        if self.cancelled is not None and self.cancelled():
+            reason = "run_cancelled"
+        elif self._budget.tool_budget is not None and self.tools_used + 1 > self._budget.tool_budget:
             reason = "tool_budget_exceeded"
         elif (
             self._budget.risk_budget is not None
@@ -203,7 +208,14 @@ class AgenticExecutor:
         critic: Critic | None = None,
         test_signals: bool = False,
         pressure_threshold: float = 0.8,
+        cancellation: Any = None,
+        inbox: Any = None,
     ) -> None:
+        #: The in-app ``Inbox``: told when a run ends failed or out of budget (``run_recorder.py``).
+        self._inbox = inbox
+        #: ``RunCancellation`` (``execution/cancellation.py``); ``None`` means runs cannot be
+        #: cancelled by id (a client closing its connection still ends the turn).
+        self._cancellation = cancellation
         self._planner = planner
         self._executor = executor
         self._metrics = metrics
@@ -220,6 +232,8 @@ class AgenticExecutor:
         self._gate_execute = _accepts(getattr(executor, "execute", None), "gate")
         self._gate_stream = _accepts(getattr(executor, "stream", None), "gate")
         self._replan_takes_feedback = _accepts(getattr(planner, "replan", None), "feedback")
+        self._deadline_execute = _accepts(getattr(executor, "execute", None), "deadline_s")
+        self._deadline_stream = _accepts(getattr(executor, "stream", None), "deadline_s")
 
     def _monotonic(self) -> float:
         if self._clock is not None and hasattr(self._clock, "monotonic"):
@@ -293,6 +307,7 @@ class AgenticExecutor:
         capabilities: Sequence[str],
         confirmations: ConfirmationGrant | None,
         on_event: Callable[[StepEvent], Any] | None,
+        pass_deadline_s: float | None = None,
     ) -> AsyncIterator[StepEvent | ExecutionOutcome]:
         common = dict(
             context=context, capabilities=capabilities,
@@ -302,11 +317,15 @@ class AgenticExecutor:
         if streaming and callable(stream):
             if self._gate_stream:
                 common["gate"] = gate
+            if self._deadline_stream and pass_deadline_s is not None:
+                common["deadline_s"] = pass_deadline_s
             async for item in stream(plan, **common):
                 yield item
             return
         if self._gate_execute:
             common["gate"] = gate
+        if self._deadline_execute and pass_deadline_s is not None:
+            common["deadline_s"] = pass_deadline_s
         yield await self._executor.execute(plan, on_event=on_event, **common)
 
     # -- observation helpers -------------------------------------------------------------------
@@ -443,7 +462,7 @@ class AgenticExecutor:
         recorder = (
             RunRecorder(
                 context=run_context, budget=budget, store=self._runs, clock=self._clock,
-                metrics=self._metrics,
+                metrics=self._metrics, inbox=self._inbox,
             )
             if run_context is not None else None
         )
@@ -474,6 +493,14 @@ class AgenticExecutor:
             report.events.append(event.as_frame())
             return event
 
+        # A run that records itself can be cancelled by id; the watch is how the gate and this
+        # loop learn of it. Closed on every way out (below).
+        watch = (
+            self._cancellation.watch(run_context.user_id.value, recorder.run.id.value)
+            if recorder is not None and self._cancellation is not None else None
+        )
+        if watch is not None:
+            gate.cancelled = lambda: watch.cancelled
         tokens_used = int(plan.generation_tokens)
         tools_ms = 0.0
         replan_ms = 0.0
@@ -500,6 +527,7 @@ class AgenticExecutor:
                     blocking and plan_revisions < critic.max_plan_revisions
                     and self._planner.can_replan(current, limit=max_iterations)
                     and not (budget.token_budget is not None and tokens_used >= budget.token_budget)
+                    and not (watch is not None and watch.cancelled)
                 ):
                     replan_started = time.perf_counter()
                     revised = await self._replan(
@@ -531,6 +559,9 @@ class AgenticExecutor:
                     current, streaming=streaming, gate=gate, context=context,
                     capabilities=capabilities, confirmations=confirmations,
                     on_event=on_event,
+                    # The pass may use whatever the loop has left (already the min of the loop
+                    # deadline and the run's time budget), not the engine's flat default.
+                    pass_deadline_s=max(0.0, deadline - self._monotonic()),
                 ):
                     if isinstance(item, StepEvent):
                         yield item
@@ -561,6 +592,15 @@ class AgenticExecutor:
                 stop_kind, surface_kind, escalate_kind, recovery_notes, unknown_kinds = (
                     self._recovery_signals(outcome, replans_by_kind)
                 )
+                # The owner asked the run to stop. Once a pass has not succeeded, nothing more is
+                # planned or dispatched: the gate has already refused the rest of this pass.
+                cancelled = watch is not None and watch.cancelled
+                if cancelled and not outcome.succeeded:
+                    go("escalate")
+                    stop_reason, exhausted = "run_cancelled", None
+                    if recorder is not None:
+                        await recorder.evaluated(iteration=iteration, stop_reason=stop_reason)
+                    break
 
                 status = monitor.status(
                     outcome.plan, generation_tokens=tokens_used, iteration=iteration
@@ -604,7 +644,12 @@ class AgenticExecutor:
                     tokens_exhausted=(
                         budget.token_budget is not None and tokens_used >= budget.token_budget
                     ),
-                    can_replan=self._planner.can_replan(outcome.plan, limit=max_iterations),
+                    # A single pass never replans (classify() decides that first), so the
+                    # planner is only asked when there are iterations to spend.
+                    can_replan=(
+                        max_iterations > 0
+                        and self._planner.can_replan(outcome.plan, limit=max_iterations)
+                    ),
                 )
                 verdict = classify(signals)
                 feedback: list[str] = []
@@ -625,7 +670,7 @@ class AgenticExecutor:
                         blocking and critic is not None
                         and corrective_passes < critic.max_corrective_passes
                         and signals.can_replan and not signals.tokens_exhausted
-                        and self._monotonic() <= deadline
+                        and self._monotonic() <= deadline and not cancelled
                     ):
                         corrective_passes += 1
                         go("corrective")  # VERIFY -> REPLAN: one more pass, with the critic's words
@@ -692,6 +737,8 @@ class AgenticExecutor:
                     await recorder.crashed(exc)
                 except Exception:  # pragma: no cover - recording must never mask the error
                     logger.debug("recording a crashed run failed", exc_info=True)
+            if watch is not None:
+                await watch.close()
             raise
 
         if outcome is not None:
@@ -713,6 +760,8 @@ class AgenticExecutor:
             await recorder.finish(outcome, stop_reason=stop_reason, exhausted_budget=exhausted)
             if outcome is not None:
                 outcome.run_id = recorder.run.id.value
+        if watch is not None:
+            await watch.close()
         if outcome is not None:
             # The outcome describes the last pass; the turn's timings cover every pass.
             try:

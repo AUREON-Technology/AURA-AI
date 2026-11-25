@@ -126,6 +126,7 @@ def _build_authenticator(settings: Any, *, service_keys: Any = None, tenancy: An
             role=role,
             capabilities=capabilities_for_role(settings.security, role),
             email_verified=claims.get("email_verified") is True,
+            device_id=str(claims["device_id"]) if claims.get("device_id") else None,
             # WP8: a desktop-app token carries both a signed ``platform: desktop`` claim and its
             # device id; require both, so a stray claim alone never makes a caller "desktop".
             client_platform=(
@@ -141,6 +142,7 @@ def _build_authenticator(settings: Any, *, service_keys: Any = None, tenancy: An
 def _mount_platform_routers(app) -> None:
     from api.account import router as account_router
     from api.admin_platform import router as admin_platform_router
+    from api.chats import router as chats_router
     from api.automation import router as automation_router
     from api.learning import router as learning_router
     from api.me import router as me_router
@@ -157,6 +159,7 @@ def _mount_platform_routers(app) -> None:
     app.include_router(admin_platform_router)
     app.include_router(account_router)
     app.include_router(me_router)
+    app.include_router(chats_router)
     app.include_router(github_integration_router)
 
 

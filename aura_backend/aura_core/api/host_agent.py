@@ -18,6 +18,9 @@ reason ``voice_live.py`` documents.
 
 import asyncio
 import json
+import time
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
 from ..adapters.host_agent import HostAgentSession
@@ -40,6 +43,8 @@ _CLOSE_BAD_REQUEST = 4400
 _CLOSE_STOPPED = 4409
 
 _AUTH_TIMEOUT_S = 5.0
+#: How often a connected socket re-writes its presence record (the record lives longer than this).
+_PRESENCE_REFRESH_S = 30.0
 
 
 class _HeaderCarrier:
@@ -162,8 +167,21 @@ def register_host_agent(
         )
         await registry.register(session)
         logger.info("host agent connected", extra={"user_id": principal.user_id.value})
+        # Which computer this is, for ``GET /runtime/status`` on any worker. A hint: every call
+        # below swallows its own failures, so a cache blip never touches the socket.
+        presence = getattr(container, "runtime_presence", None)
+        connection_id = uuid.uuid4().hex
+        if presence is not None:
+            await presence.announce(
+                principal.user_id.value, connection_id=connection_id,
+                device_id=getattr(principal, "device_id", None), connected_at=datetime.now(timezone.utc),
+            )
+        last_refresh = time.monotonic()
         try:
             while True:
+                if presence is not None and time.monotonic() - last_refresh >= _PRESENCE_REFRESH_S:
+                    await presence.refresh(principal.user_id.value, connection_id)
+                    last_refresh = time.monotonic()
                 try:
                     message = await asyncio.wait_for(
                         websocket.receive(), timeout=credential.seconds_until_due() or 0.001
@@ -227,6 +245,8 @@ def register_host_agent(
             logger.exception("host agent session failed")
         finally:
             await registry.unregister(session)
+            if presence is not None:
+                await presence.clear(principal.user_id.value, connection_id)
             try:
                 await websocket.close()
             except Exception:

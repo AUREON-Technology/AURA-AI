@@ -474,6 +474,27 @@ class HostAgentSandboxRunner:
             timeout_s=max(self._call_timeout_s, 330.0),  # daemon-side approval can wait up to 5m
         )
 
+    async def delete_file(self, handle: SandboxHandle, path: str) -> None:
+        """One ``delete_file`` RPC. The daemon refuses a directory, anything inside ``.git`` and any
+        path outside the granted root itself, and in a folder the person has not marked trusted it
+        queues the delete for their approval -- hence the call timeout sized for a human, as for
+        ``write_file``."""
+        session = await self._session_for(handle)
+        await session.call(
+            "delete_file",
+            _with_confirmation({"task_id": handle.task_id, "path": path}),
+            timeout_s=max(self._call_timeout_s, 330.0),
+        )
+
+    async def rename_file(self, handle: SandboxHandle, path: str, new_path: str) -> None:
+        """One ``rename_file`` RPC, gated by the daemon like :meth:`delete_file`."""
+        session = await self._session_for(handle)
+        await session.call(
+            "rename_file",
+            _with_confirmation({"task_id": handle.task_id, "path": path, "new_path": new_path}),
+            timeout_s=max(self._call_timeout_s, 330.0),
+        )
+
     async def run_streaming(
         self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float
     ) -> AsyncIterator[SandboxOutputEvent]:
@@ -663,6 +684,12 @@ class CompositeSandboxRunner:
 
     async def write_files(self, handle: SandboxHandle, operations: Sequence[FileWriteOp]) -> None:
         await self._runner_for(handle).write_files(handle, operations)
+
+    async def delete_file(self, handle: SandboxHandle, path: str) -> None:
+        await self._runner_for(handle).delete_file(handle, path)
+
+    async def rename_file(self, handle: SandboxHandle, path: str, new_path: str) -> None:
+        await self._runner_for(handle).rename_file(handle, path, new_path)
 
     async def destroy(self, handle: SandboxHandle) -> None:
         runner = self._handle_runner.pop(handle.task_id, None)

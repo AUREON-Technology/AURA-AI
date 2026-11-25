@@ -14,6 +14,17 @@
       "title_enc"
     ]
   },
+  "conversations": {
+    "columns": [
+      "archived",
+      "conversation_key",
+      "pinned",
+      "title_enc"
+    ],
+    "required": [
+      "conversation_key"
+    ]
+  },
   "finance_records": {
     "columns": [
       "amount",

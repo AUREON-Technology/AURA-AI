@@ -66,6 +66,12 @@ class SkillsRulesWorkflowsLoader:
         ".aura/skills",
         ".aura/rules",
         ".aura/workflows",
+        # This repository keeps its agent skills and rules under these two.
+        ".agents/skills",
+        ".agents/rules",
+        ".agents/workflows",
+        ".claude/skills",
+        ".claude/rules",
         "skills",
         "rules",
         "workflows",
@@ -152,11 +158,15 @@ class SkillsRulesWorkflowsLoader:
                         break
                     seen_paths.add(resolved)
 
-                    stem = md_file.stem
-                    stem_lower = stem.lower()
-                    is_active = True if not tags_lower else any(tag in stem_lower for tag in tags_lower)
+                    # `skills/lint/SKILL.md` is the skill "lint": every skill file is called
+                    # SKILL.md, so its stem alone would name them all the same.
+                    skill_name = md_file.parent.name if md_file.stem.upper() == "SKILL" else md_file.stem
+                    skill_lower = skill_name.lower()
+                    is_active = True if not tags_lower else any(
+                        tag in skill_lower for tag in tags_lower
+                    )
                     discovered.append({
-                        "name": stem,
+                        "name": skill_name,
                         "category": rel_dir,
                         "path": md_file.relative_to(root).as_posix(),
                         "active": is_active,

@@ -88,6 +88,8 @@ def _alice_can_still_find_her_document(client) -> bool:
 COVERED = {
     ("DELETE", "/api/v3/knowledge/documents/{document_id}"):
         "TestKnowledgeDocuments::test_bob_cannot_delete_alices_document",
+    ("GET", "/api/v3/knowledge/documents/{document_id}"):
+        "TestKnowledgeDocuments::test_bob_cannot_read_alices_document_or_clear_her_corpus",
     ("POST", "/api/v3/knowledge/documents/{document_id}/cag-pin"):
         "TestKnowledgeDocuments::test_bob_cannot_pin_alices_document",
     ("DELETE", "/api/v3/knowledge/documents/{document_id}/cag-pin"):
@@ -109,6 +111,8 @@ COVERED = {
     ("GET", "/api/v3/turns/{turn_id}/usage"):
         "tests/unit/test_turn_usage.py::TestUsageRoute::"
         "test_someone_elses_turn_is_indistinguishable_from_a_missing_one",
+    ("GET", "/api/v3/sessions/{session_id}/export"):
+        "TestSessionExport::test_bob_cannot_export_alices_conversation_or_find_it_in_his_bundle",
     ("DELETE", "/api/v3/engineering/workspaces/{workspace_id}"):
         "TestEngineering::test_bob_cannot_delete_alices_workspace",
     ("GET", "/api/v3/agents/runs/{run_id}"):
@@ -127,6 +131,20 @@ COVERED = {
         "TestEngineeringLifecycle::test_bob_cannot_start_stop_restart_or_stat_alices_workspace",
     ("GET", "/api/v3/engineering/workspaces/{workspace_id}/stats"):
         "TestEngineeringLifecycle::test_bob_cannot_start_stop_restart_or_stat_alices_workspace",
+    ("GET", "/api/v3/agents/runs/{run_id}/status"):
+        "TestAgentRuns::test_bob_cannot_read_alices_run_status_or_logs",
+    ("GET", "/api/v3/agents/runs/{run_id}/logs"):
+        "TestAgentRuns::test_bob_cannot_read_alices_run_status_or_logs",
+    ("POST", "/api/v3/agents/runs/{run_id}/cancel"):
+        "TestAgentRuns::test_bob_cannot_cancel_alices_run",
+    ("POST", "/api/v3/notifications/{notification_id}/read"):
+        "TestNotifications::test_bob_cannot_read_mark_or_delete_alices_notifications",
+    ("DELETE", "/api/v3/notifications/{notification_id}"):
+        "TestNotifications::test_bob_cannot_read_mark_or_delete_alices_notifications",
+    ("GET", "/api/v3/approvals/{approval_id}"):
+        "TestApprovals::test_bob_cannot_read_or_list_alices_approval",
+    ("POST", "/api/v3/approvals/{approval_id}/reject"):
+        "TestApprovals::test_bob_cannot_reject_alices_approval",
     ("DELETE", "/api/v3/workspaces/{workspace_id}"):
         "TestWorkspaces::test_bob_cannot_delete_alices_team",
     ("GET", "/api/v3/workspaces/{workspace_id}/members"):
@@ -161,6 +179,38 @@ COVERED = {
         "TestWorkspaces::test_bob_cannot_unshare_alices_shared_chat",
     ("POST", "/api/v3/workspaces/{workspace_id}/billing/store-token"):
         "TestWorkspaces::test_bob_cannot_bind_a_purchase_to_alices_workspace",
+    ("GET", "/api/v3/chats/{chat_id}/messages"):
+        "Postgres-only route (api/chats.py): every statement is scoped to the caller's user row and chat key, and a stranger's chat or message id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_messages_postgres.py::test_bob_cannot_list_read_edit_or_delete_alices_messages and test_two_people_with_the_same_chat_key_each_see_only_their_own_messages",
+    ("GET", "/api/v3/chats/{chat_id}/messages/{message_id}"):
+        "Postgres-only route (api/chats.py): every statement is scoped to the caller's user row and chat key, and a stranger's chat or message id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_messages_postgres.py::test_bob_cannot_list_read_edit_or_delete_alices_messages",
+    ("PATCH", "/api/v3/chats/{chat_id}/messages/{message_id}"):
+        "Postgres-only route (api/chats.py): every statement is scoped to the caller's user row and chat key, and a stranger's chat or message id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_messages_postgres.py::test_bob_cannot_list_read_edit_or_delete_alices_messages",
+    ("DELETE", "/api/v3/chats/{chat_id}/messages/{message_id}"):
+        "Postgres-only route (api/chats.py): every statement is scoped to the caller's user row and chat key, and a stranger's chat or message id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_messages_postgres.py::test_bob_cannot_list_read_edit_or_delete_alices_messages",
+    ("GET", "/api/v3/chats/{chat_id}"):
+        "Postgres-only route (api/chats.py, FULL JOIN over messages and conversations): every statement is scoped to the caller's user row and a stranger's chat id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_chats_postgres.py::test_bob_cannot_see_change_or_delete_alices_chat_and_the_same_key_is_separate",
+    ("PATCH", "/api/v3/chats/{chat_id}"):
+        "Postgres-only route (api/chats.py, FULL JOIN over messages and conversations): every statement is scoped to the caller's user row and a stranger's chat id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_chats_postgres.py::test_bob_cannot_see_change_or_delete_alices_chat_and_the_same_key_is_separate",
+    ("DELETE", "/api/v3/chats/{chat_id}"):
+        "Postgres-only route (api/chats.py, FULL JOIN over messages and conversations): every statement is scoped to the caller's user row and a stranger's chat id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_chats_postgres.py::test_bob_cannot_see_change_or_delete_alices_chat_and_the_same_key_is_separate",
+    ("POST", "/api/v3/chats/{chat_id}/archive"):
+        "Postgres-only route (api/chats.py, FULL JOIN over messages and conversations): every statement is scoped to the caller's user row and a stranger's chat id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_chats_postgres.py::test_bob_cannot_see_change_or_delete_alices_chat_and_the_same_key_is_separate",
+    ("POST", "/api/v3/chats/{chat_id}/unarchive"):
+        "Postgres-only route (api/chats.py, FULL JOIN over messages and conversations): every statement is scoped to the caller's user row and a stranger's chat id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_chats_postgres.py::test_bob_cannot_see_change_or_delete_alices_chat_and_the_same_key_is_separate",
+    ("POST", "/api/v3/chats/{chat_id}/pin"):
+        "Postgres-only route (api/chats.py, FULL JOIN over messages and conversations): every statement is scoped to the caller's user row and a stranger's chat id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_chats_postgres.py::test_bob_cannot_see_change_or_delete_alices_chat_and_the_same_key_is_separate",
+    ("POST", "/api/v3/chats/{chat_id}/unpin"):
+        "Postgres-only route (api/chats.py, FULL JOIN over messages and conversations): every statement is scoped to the caller's user row and a stranger's chat id answers exactly what a missing one does (404). Exercised against a real database, over HTTP with two people, by tests/load/test_chats_postgres.py::test_bob_cannot_see_change_or_delete_alices_chat_and_the_same_key_is_separate",
+    ("GET", "/api/v3/agents/{agent_id}"):
+        "TestCustomAgents::test_bob_cannot_read_alices_agent",
+    ("PATCH", "/api/v3/agents/{agent_id}"):
+        "TestCustomAgents::test_bob_cannot_change_alices_agent",
+    ("PUT", "/api/v3/agents/{agent_id}/config"):
+        "TestCustomAgents::test_bob_cannot_reconfigure_alices_agent",
+    ("DELETE", "/api/v3/agents/{agent_id}"):
+        "TestCustomAgents::test_bob_cannot_delete_alices_agent",
+    ("POST", "/api/v3/agents/{agent_id}/clone"):
+        "TestCustomAgents::test_bob_cannot_clone_alices_agent",
     ("POST", "/api/v3/insights/{insight_id}/dismiss"):
         "Postgres-only route (api/v2/insights.py): `row.user_id != user.id` -> 404; exercised "
         "against a real database by test_insights_integration.py in the legacy suite",
@@ -172,6 +222,11 @@ NOT_USER_RESOURCES = {
     # in tests/unit/test_api_surface.py::TestAuthorisation and test_route_auth.py; the ids they
     # take are deployment objects (sources, models, approvals, jobs, operators), not user data.
     "/api/v3/admin/",
+    # The model catalog: `{model_id}` is a provider the deployment serves, the same for everybody.
+    # What it shows is capabilities and circuit state, never an endpoint, a key or a cost
+    # (tests/unit/test_model_management.py::TestCatalog). The per-person part, `/me/model-settings`,
+    # takes no id: it is the caller's row by construction.
+    "/api/v3/models/",
 }
 
 
@@ -218,6 +273,20 @@ class TestKnowledgeDocuments:
         _alice_document(client)
         listing = client.get("/api/v3/knowledge/documents", headers=AUTH_B).json()["documents"]
         assert listing == []
+
+    def test_bob_cannot_read_alices_document_or_clear_her_corpus(self, client) -> None:
+        """Reading one document by id answers Bob exactly as it answers a missing id; and Bob's
+        delete-all, the only corpus-wide write, touches his own corpus and nothing of Alice's."""
+        document_id = _alice_document(client)
+        theirs = client.get(f"/api/v3/knowledge/documents/{document_id}", params={"content": "true"}, headers=AUTH_B)
+        gone = client.get("/api/v3/knowledge/documents/no-such-document", params={"content": "true"}, headers=AUTH_B)
+        assert theirs.status_code == gone.status_code == 404 and theirs.json()["error"] == gone.json()["error"]
+        assert "PELICAN" not in theirs.text
+
+        cleared = client.delete("/api/v3/knowledge/documents", params={"confirm": "true"}, headers=AUTH_B)
+        assert cleared.status_code == 200 and cleared.json()["deleted"] == 0, "Bob's delete-all deleted something"
+        assert _alice_can_still_find_her_document(client), "Bob's delete-all removed Alice's document"
+        assert client.get(f"/api/v3/knowledge/documents/{document_id}", headers=AUTH_A).status_code == 200
 
     def test_bob_cannot_retrieve_alices_content_by_search(self, client) -> None:
         _alice_document(client)
@@ -550,6 +619,87 @@ class TestAgentTasks:
             "goal": "same goal", "run_at": later, "use_tools": False, "client_request_id": "shared"})
         assert first.json()["task"]["id"] != second.json()["task"]["id"]
         assert second.json()["idempotent_replay"] is False
+class TestNotifications:
+    """A notification is the person's own: listing, marking read, deleting, the badge and read-all."""
+
+    @staticmethod
+    def _alice_notification(container) -> str:
+        asyncio.run(container.inbox.notify(
+            ALICE, "run_failed", {"run_id": "r1", "agent_id": "engineer", "status": "failed"}, dedupe_key="run:r1",
+        ))
+        (row,) = asyncio.run(container.notification_store.list(UserId(ALICE)))
+        return row.id
+
+    def test_bob_cannot_read_mark_or_delete_alices_notifications(self, container) -> None:
+        from fastapi.testclient import TestClient
+
+        notification_id = self._alice_notification(container)
+        with TestClient(_app(container)) as client:
+            listing = client.get("/api/v3/notifications", headers=AUTH_B)
+            count = client.get("/api/v3/notifications/unread-count", headers=AUTH_B)
+            marked = client.post(f"/api/v3/notifications/{notification_id}/read", headers=AUTH_B)
+            gone = client.post("/api/v3/notifications/no-such-id/read", headers=AUTH_B)
+            deleted = client.delete(f"/api/v3/notifications/{notification_id}", headers=AUTH_B)
+            read_all = client.post("/api/v3/notifications/read-all", headers=AUTH_B)
+            still = client.get("/api/v3/notifications", headers=AUTH_A).json()
+
+        assert listing.json()["notifications"] == [] and count.json() == {"unread": 0}
+        assert marked.status_code == deleted.status_code == gone.status_code == 404
+        assert marked.json()["error"] == gone.json()["error"], "Bob can tell Alice's id from a missing one"
+        assert read_all.json()["marked"] == 0, "Bob's read-all touched Alice's"
+        (mine,) = still["notifications"]
+        assert mine["id"] == notification_id and mine["read"] is False and still["unread_count"] == 1
+
+
+class TestApprovals:
+    """A held tool call, and the approval that releases it, are the person's own: by id, by listing,
+    and for the one write (reject). The mechanism's own owner binding is in
+    ``test_confirmation_binding.py``; this is the route surface over it."""
+
+    @staticmethod
+    def _alice_hold(container) -> tuple[str, dict]:
+        from aura_core.domain.identifiers import PlanId, StepId
+        from aura_core.domain.planning import Goal, Plan, PlanStep, StepKind
+        from aura_core.execution.confirmations import PendingCall
+
+        step = PlanStep(
+            id=StepId("s1"), kind=StepKind.TOOL, tool="delete_record", description="delete",
+            arguments={"target": "PELICAN-7731"},
+        ).blocked("needs_confirmation")
+        ids = asyncio.run(container.tool_confirmations.issue(
+            user_id=ALICE, session_id="conv-1", agent="orchestrator", message="do it",
+            plan=Plan(id=PlanId.new(), goal=Goal(description="g"), steps=(step,)), tainted=False,
+            turn_id="t1", calls=[PendingCall("s1", "step_s1", "delete_record", {"target": "PELICAN-7731"})],
+        ))
+        return ids["step_s1"], {"session_id": "conv-1"}
+
+    def test_bob_cannot_read_or_list_alices_approval(self, container) -> None:
+        from fastapi.testclient import TestClient
+
+        approval_id, _ = self._alice_hold(container)
+        with TestClient(_app(container)) as client:
+            theirs = client.get(f"/api/v3/approvals/{approval_id}", headers=AUTH_B)
+            gone = client.get("/api/v3/approvals/apr.no.such", headers=AUTH_B)
+            listing = client.get("/api/v3/approvals", headers=AUTH_B)
+            mine = client.get(f"/api/v3/approvals/{approval_id}", headers=AUTH_A)
+        assert theirs.status_code == gone.status_code == 404 and theirs.json()["error"] == gone.json()["error"]
+        assert listing.json()["approvals"] == [] and "delete_record" not in listing.text
+        assert mine.status_code == 200 and mine.json()["tool"] == "delete_record"
+
+    def test_bob_cannot_reject_alices_approval(self, container) -> None:
+        """A reject discards the held turn: it must neither do that for Bob nor tell him it exists."""
+        from fastapi.testclient import TestClient
+
+        approval_id, _ = self._alice_hold(container)
+        with TestClient(_app(container)) as client:
+            refused = client.post(f"/api/v3/approvals/{approval_id}/reject", headers=AUTH_B)
+            still = client.get(f"/api/v3/approvals/{approval_id}", headers=AUTH_A).json()
+        assert refused.status_code == 404
+        assert still["status"] == "pending", "Bob's reject changed Alice's approval"
+        token = approval_id.split(".")[1]
+        assert asyncio.run(container.cache_backend.get(f"tool-confirm:pending:v1:{token}")) is not None, (
+            "Bob's reject discarded Alice's held turn"
+        )
 
 
 class TestAgentRuns:
@@ -586,6 +736,44 @@ class TestAgentRuns:
             mine = client.get(f"/api/v3/agents/runs/{run_id}", headers=AUTH_A)
         assert mine.status_code == 200
         assert [s["tool"] for s in mine.json()["steps"]] == ["git_status"]
+
+    def test_bob_cannot_read_alices_run_status_or_logs(self, container) -> None:
+        from fastapi.testclient import TestClient
+
+        run_id = self._alice_run(container)
+        missing = "00000000-0000-4000-8000-000000000000"
+        with TestClient(_app(container)) as client:
+            for suffix in ("status", "logs"):
+                theirs = client.get(f"/api/v3/agents/runs/{run_id}/{suffix}", headers=AUTH_B)
+                gone = client.get(f"/api/v3/agents/runs/{missing}/{suffix}", headers=AUTH_B)
+                assert theirs.status_code == gone.status_code == 404, f"Bob read Alice's run {suffix}"
+                assert theirs.json()["error"] == gone.json()["error"]
+                assert "git_status" not in theirs.text
+                assert client.get(f"/api/v3/agents/runs/{run_id}/{suffix}", headers=AUTH_A).status_code == 200
+
+    def test_bob_cannot_cancel_alices_run(self, container) -> None:
+        """A cancel is a write: it must neither stop Alice's run nor leave a flag that would."""
+        from datetime import datetime, timezone
+
+        from fastapi.testclient import TestClient
+
+        from aura_core.domain.agent_runs import AgentRun, AgentRunStatus
+        from aura_core.domain.identifiers import AgentRunId
+
+        now = datetime.now(timezone.utc)
+        run = AgentRun(id=AgentRunId.new(), user_id=UserId(ALICE), agent_id="orchestrator", turn_id="t",
+                       correlation_id="c", status=AgentRunStatus.RUNNING, created_at=now, updated_at=now)
+        asyncio.run(container.agent_runs.save_run(run))
+        with TestClient(_app(container)) as client:
+            theirs = client.post(f"/api/v3/agents/runs/{run.id.value}/cancel", headers=AUTH_B)
+            gone = client.post("/api/v3/agents/runs/00000000-0000-4000-8000-000000000000/cancel", headers=AUTH_B)
+            assert theirs.status_code == gone.status_code == 404, "Bob reached Alice's run"
+            assert theirs.json()["error"] == gone.json()["error"]
+            status = client.get(f"/api/v3/agents/runs/{run.id.value}/status", headers=AUTH_A).json()
+        assert status["status"] == "running", "Bob's cancel changed Alice's run"
+        for owner in (ALICE, BOB):
+            flag = asyncio.run(container.cache_backend.get(f"agent_run_cancel:{owner}:{run.id.value}"))
+            assert not flag, f"a cancel flag was left under {owner}"
 
     def test_bob_cannot_list_alices_agent_runs(self, container) -> None:
         from fastapi.testclient import TestClient
@@ -710,6 +898,118 @@ class TestConversations:
         assert response.status_code == 404 and "PELICAN-7731" not in response.text
         still = asyncio.run(container.episodic.latest_checkpoint(session, UserId(ALICE)))
         assert still is not None and still.as_dict() == saved.as_dict()
+
+
+class TestSessionExport:
+    """``GET /api/v3/sessions/{id}/export`` and ``/me/export``: a session id is not a capability."""
+
+    def test_bob_cannot_export_alices_conversation_or_find_it_in_his_bundle(self, container) -> None:
+        from fastapi.testclient import TestClient
+
+        from aura_core.domain.identifiers import SessionId
+
+        session = SessionId("shared-guessable-id")
+        asyncio.run(container.episodic.append(
+            session, UserId(ALICE), user_message="My flight is on the 14th.", assistant_message="Noted.",
+        ))
+        with TestClient(_app(container)) as client:
+            as_bob = client.get(f"/api/v3/sessions/{session.value}/export", headers=AUTH_B)
+            as_bob_md = client.get(f"/api/v3/sessions/{session.value}/export?format=markdown", headers=AUTH_B)
+            nothing = client.get("/api/v3/sessions/no-such-session/export", headers=AUTH_B)
+            bundle = client.get("/api/v3/me/export", headers=AUTH_B)
+            as_alice = client.get(f"/api/v3/sessions/{session.value}/export", headers=AUTH_A)
+
+        assert as_bob.status_code == as_bob_md.status_code == nothing.status_code == 404
+        assert "14th" not in as_bob.text + as_bob_md.text + bundle.text, "Alice's words reached Bob"
+        assert (as_bob.json()["error"], as_bob.json()["message"]) == (nothing.json()["error"], nothing.json()["message"])
+        assert as_alice.status_code == 200 and "14th" in as_alice.text
+
+
+class TestTurnUsage:
+    """``GET /api/v3/turns/{turn_id}/usage``: the telemetry table holds no user id, so ownership is
+    a keyed reference stamped on the turn (migration 0033). Bob naming Alice's turn id must get
+    exactly what he gets for a turn that does not exist."""
+
+    def test_bob_cannot_read_alices_turn_usage_by_turn_id(self, client, monkeypatch) -> None:
+        import time
+
+        monkeypatch.setenv("AURA_JWT_SECRET", "idor-test-signing-secret-0123456789abcdef")
+        monkeypatch.delenv("JWT_SECRET", raising=False)
+
+        chat = client.post("/api/v3/chat", json={"message": "hello", "use_tools": False}, headers=AUTH_A)
+        assert chat.status_code == 200, chat.text
+        turn_id = chat.json()["turn_id"]
+
+        mine = None
+        for _ in range(40):  # the record is written just after the response is built
+            mine = client.get(f"/api/v3/turns/{turn_id}/usage", headers=AUTH_A)
+            if mine.status_code == 200:
+                break
+            time.sleep(0.05)
+        assert mine is not None and mine.status_code == 200, "Alice cannot read her own turn's usage"
+
+        theirs = client.get(f"/api/v3/turns/{turn_id}/usage", headers=AUTH_B)
+        missing = client.get("/api/v3/turns/00000000-0000-4000-8000-000000000000/usage", headers=AUTH_B)
+        assert theirs.status_code == missing.status_code == 404, "Bob reached Alice's turn"
+        assert theirs.json()["error"] == missing.json()["error"] == "not_found"
+        assert "usage" not in theirs.json() and "prompt_tokens" not in theirs.text
+
+
+class TestCustomAgents:
+    """A custom agent carries its owner's own instructions and tool choices: another person naming
+    its id must get what a missing id gets (404) and change nothing. Also: running a turn as it."""
+
+    @pytest.fixture
+    def alices(self, client):
+        created = client.post("/api/v3/agents", headers=AUTH_A, json={
+            "name": "Alice's planner", "base_agent": "task_planner", "instruction": "ALICE-PRIVATE-NOTES"})
+        assert created.status_code == 201, created.text
+        return created.json()["id"]
+
+    MISSING = "00000000-0000-4000-8000-000000000000"
+
+    def _same_as_missing(self, client, method: str, path_for, body, alices: str) -> None:
+        theirs = client.request(method, path_for(alices), headers=AUTH_B, json=body)
+        missing = client.request(method, path_for(self.MISSING), headers=AUTH_B, json=body)
+        assert theirs.status_code == missing.status_code == 404, f"Bob reached Alice's agent: {theirs.status_code} {theirs.text}"
+        assert theirs.json()["error"] == missing.json()["error"]
+        assert "ALICE-PRIVATE-NOTES" not in theirs.text
+
+    def _unchanged(self, client, alices: str) -> None:
+        agent = client.get(f"/api/v3/agents/{alices}", headers=AUTH_A).json()
+        assert agent["name"] == "Alice's planner" and agent["instruction"] == "ALICE-PRIVATE-NOTES"
+        assert agent["allowed_tools"] is None and agent["risk_ceiling"] is None
+
+    def test_bob_cannot_read_alices_agent(self, client, alices) -> None:
+        self._same_as_missing(client, "GET", lambda i: f"/api/v3/agents/{i}", None, alices)
+        assert client.get("/api/v3/agents", headers=AUTH_B).json()["custom_agents"] == [], "Alice's agent is in Bob's list"
+
+    def test_bob_cannot_change_alices_agent(self, client, alices) -> None:
+        self._same_as_missing(client, "PATCH", lambda i: f"/api/v3/agents/{i}", {"name": "hijacked", "instruction": "x"}, alices)
+        self._unchanged(client, alices)
+
+    def test_bob_cannot_reconfigure_alices_agent(self, client, alices) -> None:
+        self._same_as_missing(client, "PUT", lambda i: f"/api/v3/agents/{i}/config", {"instruction": "x", "risk_ceiling": "PUBLIC"}, alices)
+        self._unchanged(client, alices)
+
+    def test_bob_cannot_delete_alices_agent(self, client, alices) -> None:
+        self._same_as_missing(client, "DELETE", lambda i: f"/api/v3/agents/{i}", None, alices)
+        self._unchanged(client, alices)
+
+    def test_bob_cannot_clone_alices_agent(self, client, alices) -> None:
+        self._same_as_missing(client, "POST", lambda i: f"/api/v3/agents/{i}/clone", {}, alices)
+        assert client.get("/api/v3/agents", headers=AUTH_B).json()["custom_agents"] == [], "Bob now holds a copy of Alice's agent"
+
+    def test_bob_cannot_run_a_turn_as_alices_agent(self, client, alices, container) -> None:
+        echo = container.router.get("echo")
+        before = len(echo.calls)
+        for stream in (False, True):
+            path = "/api/v3/chat/stream" if stream else "/api/v3/chat"
+            theirs = client.post(path, json={"message": "hi", "agent": alices}, headers=AUTH_B)
+            missing = client.post(path, json={"message": "hi", "agent": self.MISSING}, headers=AUTH_B)
+            assert theirs.status_code == missing.status_code == 404, path
+            assert "ALICE-PRIVATE-NOTES" not in theirs.text
+        assert len(echo.calls) == before, "a model was called for a turn that should have been refused"
 
 
 class TestWorkspaces:

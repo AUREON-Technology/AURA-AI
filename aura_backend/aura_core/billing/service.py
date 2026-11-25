@@ -68,6 +68,9 @@ class BillingService:
     #: past-due notices go to the Owner's address stored at checkout. Either unset: no email.
     contacts: Any = None
     notifier: Any = None
+    #: The in-app ``Inbox`` (``notifications/inbox.py``): the same events as the emails, for the
+    #: workspace's owners. Unset: none. Never raises.
+    inbox: Any = None
     #: A Cache shared with the gateway (Redis on Railway). After each cycle that ran, a small JSON
     #: heartbeat goes to ``BILLING_HEARTBEAT_KEY`` for the gateway's scrape gauges (SaaS P1-H):
     #: the cycle is a cron process nothing scrapes.
@@ -346,6 +349,10 @@ class BillingService:
                           {"payment_id": payment.id, "period_end": sub.period_end.isoformat()})
         await self._email(payment.workspace_id, lambda to, name: self.notifier.receipt(
             to, name, payment.plan_id, payment.amount_piastres, now, sub.period_end, payment.id))
+        await self._inbox(payment.workspace_id, "payment_received", {
+            "workspace_id": payment.workspace_id, "plan_id": payment.plan_id,
+            "amount_piastres": payment.amount_piastres, "period_end": sub.period_end.isoformat(),
+        }, f"payment:{payment.id}")
         return "applied"
 
     # -- the scheduled cycle --------------------------------------------------------------
@@ -465,6 +472,10 @@ class BillingService:
                 if renewal.method == "PAYATFAWRY":  # a card renewal needs nothing from the payer
                     await self._email(workspace_id, lambda to, name: self.notifier.renewal_due(
                         to, name, renewal.amount_piastres, renewal.reference_number, renewal.expires_at))
+                    await self._inbox(workspace_id, "renewal_due", {
+                        "workspace_id": workspace_id, "amount_piastres": renewal.amount_piastres,
+                        "expires_at": renewal.expires_at.isoformat() if renewal.expires_at else None,
+                    }, f"renewal:{renewal.id}")
             except Exception:
                 counts["errors"] += 1
                 logger.warning("renewal payment could not be issued", exc_info=True, extra={"workspace_id": workspace_id})
@@ -487,6 +498,10 @@ class BillingService:
                 # Once, when it first falls behind; the stores tell their own customers.
                 await self._email(workspace_id, lambda to, name: self.notifier.past_due(
                     to, name, moved.grace_until or (moved.period_end + grace)))
+                await self._inbox(workspace_id, "payment_past_due", {
+                    "workspace_id": workspace_id,
+                    "grace_until": (moved.grace_until or (moved.period_end + grace)).isoformat(),
+                }, f"past_due:{workspace_id}:{moved.period_end.isoformat()}")
             if moved.status is SubscriptionStatus.EXPIRED:
                 await self._audit("billing.expired", "billing", workspace_id, {"plan": sub.plan_id})
                 counts["expired"] += 1
@@ -561,6 +576,17 @@ class BillingService:
             await send(to, workspace.name if workspace is not None else "your workspace")
         except Exception:
             logger.warning("billing email could not be prepared", exc_info=True)
+
+    async def _inbox(self, workspace_id: str, kind: str, params: dict, dedupe_key: str) -> None:
+        """Tell the workspace's owners in their in-app inbox. Never raises."""
+        if self.inbox is None:
+            return
+        try:
+            for member in await self.tenancy.store.list_members(workspace_id):
+                if member.role is WorkspaceRole.OWNER:
+                    await self.inbox.notify(member.user_id, kind, params, dedupe_key=dedupe_key)
+        except Exception:
+            logger.warning("billing notification could not be prepared", exc_info=True)
 
     async def _audit(self, action: str, actor: str, workspace_id: str, detail: dict) -> None:
         await self.audit.record(AuditEvent(

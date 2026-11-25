@@ -32,6 +32,12 @@ _EXPECTED_WORKSPACE_LOCAL = {
     "write_file",
     "edit_file",
     "write_files",
+    # Added with the Coding Workspace file operations. Sound for the same reason write_file is: a
+    # file these remove or move is one `run_command` can already remove or move, they refuse a
+    # directory and anything inside .git, and on the user's own machine it is the daemon (not this
+    # policy) that asks the person first in a folder they have not marked trusted.
+    "delete_file",
+    "rename_file",
     "run_command",
     # ADR-042: start ruff/mypy/eslint/prettier in the workspace and parse what they print. Nothing
     # run_command cannot already do (and no --fix: they never write), so the same exemption applies.
