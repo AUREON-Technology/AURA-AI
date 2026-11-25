@@ -1,0 +1,61 @@
+name: Sandbox Broker CI
+
+# Gates the Railway sandbox broker (aura_sandbox_broker): clean install, build, tests against an
+# in-memory vendor, a shellcheck of the scripts it runs inside a sandbox, and the image build.
+# It needs no Railway token and creates no sandbox, so it proves the service's own behaviour and
+# not Railway's; the live proof is run by hand (docs/reports/).
+
+on:
+  pull_request:
+    paths:
+      - "aura_sandbox_broker/**"
+      - "deploy/sandbox/filter"
+      - ".github/workflows/sandbox-broker-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "aura_sandbox_broker/**"
+      - "deploy/sandbox/filter"
+      - ".github/workflows/sandbox-broker-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  broker:
+    name: Sandbox Broker
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: aura_sandbox_broker
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: aura_sandbox_broker/package-lock.json
+
+      - name: Install
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Build and test
+        run: npm test
+
+      - name: Test the egress proxy
+        run: python3 -m unittest discover -s test -p "test_*.py"
+
+      - name: Shellcheck the guest scripts
+        run: shellcheck --severity=warning guest/*.sh
+
+      - name: Build the image
+        run: docker build --tag aura-sandbox-broker:ci .
