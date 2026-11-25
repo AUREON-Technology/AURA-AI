@@ -20,6 +20,7 @@ revisions are capped and counted.
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 import time
@@ -635,13 +636,19 @@ class PlanningEngine:
             priority=plan.goal.priority,
         )
 
+        # `limit` is only set by the agent loop, which only replans for a persona with an
+        # iteration budget -- i.e. the agentic personas that get the larger prompt. A replaced
+        # `plan` without that argument is called without it.
+        extra: dict[str, Any] = {}
+        if limit is not None and limit > 1:
+            params = inspect.signature(self.plan).parameters.values()
+            if any(p.name == "agentic" or p.kind is inspect.Parameter.VAR_KEYWORD for p in params):
+                extra["agentic"] = True
         fresh = await self.plan(
             revised_goal,
             available_tools=available_tools,
             max_steps=self._max_steps - len(completed),
-            # `limit` is only set by the agent loop, which only replans for a persona with an
-            # iteration budget -- i.e. the agentic personas that get the larger prompt.
-            agentic=limit is not None and limit > 1,
+            **extra,
         )
         # Renumber the new steps after the highest preserved id, not after how many were kept:
         # with s1 and s3 succeeded and s2 failed, "s{len(completed) + 1}" is s3 again, the

@@ -462,12 +462,17 @@ class TestIntrospection:
             # Bob cannot delete Alice's by id (existing guard), and creating did not give him a way in.
             assert bob.delete(f"/api/v3/engineering/workspaces/{a['workspace']['id']}").status_code == 404
 
-    def test_a_host_that_cannot_afford_another_workspace_refuses_with_503_and_keeps_nothing(self, container) -> None:
+    def test_a_host_that_cannot_afford_another_workspace_refuses_with_503_and_keeps_nothing(
+        self, container, monkeypatch
+    ) -> None:
         import asyncio
 
         from aura_core.adapters.coding_fakes import InMemorySandboxRunner
         from aura_core.tools.workspaces import WorkspaceManager
 
+        # The reading comes from /proc/meminfo, which not every host has (the check is skipped
+        # without it), so it is supplied here.
+        monkeypatch.setattr("aura_core.tools.workspaces.available_memory_mb", lambda: 512.0)
         # An impossible free-memory floor: the admission check must refuse, not start it anyway.
         container.workspace_manager = WorkspaceManager(
             runner=InMemorySandboxRunner(), store=container.workspaces, min_free_memory_mb=10**9

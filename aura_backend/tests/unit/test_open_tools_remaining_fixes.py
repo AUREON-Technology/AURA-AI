@@ -8,6 +8,7 @@ before anyone wires the module in.
 from __future__ import annotations
 
 import http.server
+import inspect
 import json
 import threading
 
@@ -286,7 +287,10 @@ class TestWebhookDispatch:
         result = PushNotificationDispatcher.dispatch_to_webhook(url, {"a": 1})
         assert result["success"] is False and "not a public address" in result["error"]
 
-    def test_a_redirect_is_not_followed(self) -> None:
+    def test_a_redirect_is_not_followed(self, monkeypatch) -> None:
+        # The outbound policy refuses loopback with no switch to relax it, so the check is
+        # replaced here only to reach a local server; the no-redirect behaviour is the real one.
+        monkeypatch.setattr("aura_core.tools.open._ops_common.check_url", lambda url: url)
         hits: list[str] = []
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -308,14 +312,20 @@ class TestWebhookDispatch:
         thread.start()
         try:
             url = f"http://127.0.0.1:{server.server_address[1]}/start"
-            result = PushNotificationDispatcher.dispatch_to_webhook(url, {"a": 1}, allow_private=True)
+            result = PushNotificationDispatcher.dispatch_to_webhook(url, {"a": 1})
         finally:
             server.shutdown()
 
         assert hits == ["/start"]
         assert result["success"] is False and result["status_code"] == 302
 
-    def test_a_loopback_target_works_when_the_caller_opts_in(self) -> None:
+    def test_there_is_no_switch_to_reach_private_targets(self) -> None:
+        parameters = inspect.signature(PushNotificationDispatcher.dispatch_to_webhook).parameters
+        assert set(parameters) == {"url", "payload", "headers", "timeout_seconds"}
+
+    def test_a_2xx_reply_is_success(self, monkeypatch) -> None:
+        monkeypatch.setattr("aura_core.tools.open._ops_common.check_url", lambda url: url)
+
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_POST(self):  # noqa: N802
                 self.send_response(204)
@@ -328,7 +338,7 @@ class TestWebhookDispatch:
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
             url = f"http://127.0.0.1:{server.server_address[1]}/"
-            result = PushNotificationDispatcher.dispatch_to_webhook(url, {"a": 1}, allow_private=True)
+            result = PushNotificationDispatcher.dispatch_to_webhook(url, {"a": 1})
         finally:
             server.shutdown()
         assert result["success"] is True and result["status_code"] == 204

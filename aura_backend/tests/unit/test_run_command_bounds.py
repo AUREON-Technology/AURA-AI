@@ -17,7 +17,11 @@ from aura_core.domain.identifiers import ToolCallId
 from aura_core.domain.messages import ToolCall
 from aura_core.ports.coding import SandboxResult
 from aura_core.ports.runtime import ToolContext
-from aura_core.tools.coding import _RUN_COMMAND_STREAM_CAP_CHARS, build_sandbox_tools
+from aura_core.tools.coding import (
+    _COMMAND_RESULT_BUDGET,
+    _RUN_COMMAND_STREAM_CAP_CHARS,
+    build_sandbox_tools,
+)
 from aura_core.tools.policy import ToolPolicy
 from aura_core.tools.registry import ToolRegistry
 
@@ -74,7 +78,10 @@ class TestNonStreamingOutputIsCapped:
     async def test_output_beyond_the_cap_is_truncated_and_says_so(self, ctx) -> None:
         out = await _run_command(_HugeOutputRunner()).execute({"command": "yes"}, ctx)
         stdout = out.split("--- stdout ---\n", 1)[1].split("\n--- stderr ---", 1)[0]
-        assert len(stdout) == _RUN_COMMAND_STREAM_CAP_CHARS
+        # The stream cap applies first; the result is then fitted to the result budget, keeping
+        # both ends, so the truncation note at the end survives.
+        assert len(stdout) < _COMMAND_RESULT_BUDGET + 200
+        assert "characters of stdout omitted from the middle" in out
         assert "output truncated after" in out
 
     async def test_output_under_the_cap_is_left_alone(self, ctx) -> None:

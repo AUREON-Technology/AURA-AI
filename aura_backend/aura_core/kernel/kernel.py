@@ -84,7 +84,7 @@ from ..domain.telemetry import (
     TurnTelemetry,
 )
 from ..execution.acceptance import AcceptanceReport, check_acceptance
-from ..execution.agentic_loop import AgentRunContext
+from ..execution.agentic_loop import AgentRunContext, _accepts
 from ..execution.confirmations import PendingCall, PendingConfirmationStore, ResumedTurn
 from ..execution.critic import critique_answer
 from ..execution.engine import ExecutionOutcome, StepEvent
@@ -2617,8 +2617,13 @@ class AIKernel:
         goal = deps.planner.goal_from_message(message, criteria=request.success_criteria)
         agent = self._resolve_agent(request)
         # Only an agentic persona asks for the larger planner-prompt cap; everyone else calls
-        # `plan` exactly as before.
-        extra = {"agentic": True} if agent is not None and agent.max_plan_iterations > 1 else {}
+        # `plan` exactly as before. A planner without that argument is called without it.
+        extra = (
+            {"agentic": True}
+            if agent is not None and agent.max_plan_iterations > 1
+            and _accepts(deps.planner.plan, "agentic")
+            else {}
+        )
         plan = await deps.planner.plan(goal, available_tools=tools, **extra)
         if plan.fallback_reason:
             # The planner already answered "respond directly" for us, but only because its own

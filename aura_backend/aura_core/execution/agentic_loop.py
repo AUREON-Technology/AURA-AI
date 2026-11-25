@@ -639,7 +639,12 @@ class AgenticExecutor:
                     tokens_exhausted=(
                         budget.token_budget is not None and tokens_used >= budget.token_budget
                     ),
-                    can_replan=self._planner.can_replan(outcome.plan, limit=max_iterations),
+                    # A single pass never replans (classify() decides that first), so the
+                    # planner is only asked when there are iterations to spend.
+                    can_replan=(
+                        max_iterations > 0
+                        and self._planner.can_replan(outcome.plan, limit=max_iterations)
+                    ),
                 )
                 verdict = classify(signals)
                 feedback: list[str] = []
