@@ -142,7 +142,7 @@ def scanner_args(scanner: str, paths: Sequence[str], *, history: bool = False) -
     if scanner == "semgrep":
         configs = [arg for fam in SEMGREP_RULE_FAMILIES for arg in ("--config", f"{SEMGREP_RULES_DIR}/{fam}")]
         return [["scan", *configs, "--json", "--quiet", "--metrics=off", "--disable-version-check",
-                 "--no-git-ignore", "--timeout", "30", "--exclude", "node_modules", "--exclude", ".venv",
+                 "--no-git-ignore", "--x-ignore-semgrepignore-files", "--timeout", "30", "--exclude", "node_modules", "--exclude", ".venv",
                  "--exclude", ".git", *paths]]
     if scanner == "bandit":
         return [["-r", *paths, "-f", "json", "-q", "-x", _BANDIT_EXCLUDES]]

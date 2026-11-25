@@ -116,7 +116,16 @@ async def ready_engineer(container: Container) -> Any:
     await container.engineer_consent.accept(
         ENGINEER, ENGINEER_CONSENT_NOTICE_VERSION, at=datetime(2026, 11, 17, tzinfo=timezone.utc)
     )
-    return container.router.get("echo")
+    echo = container.router.get("echo")
+    # The scripted provider stands in for a model. Its default 8,192-token window is smaller than the
+    # Engineer's own tool catalogue plus a planning prompt (the catalogue grows with every tool added),
+    # so a plan would be refused as `context_window_too_small` before any loop behaviour is exercised.
+    # A real planning model has a far larger window; the tests that care about the *prompt budget*
+    # set AURA_LLM_MAX_PROMPT_TOKENS themselves.
+    import dataclasses
+
+    echo._capabilities = dataclasses.replace(echo.capabilities, context_window=32_768)
+    return echo
 
 
 def engineer_turn(message: str = "fix the failing test in calc.py", **extra: Any) -> TurnRequest:

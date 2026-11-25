@@ -675,7 +675,7 @@ def build_devtools(sandbox_runner: Any, sessions: Any) -> list[Tool]:
     ) -> str:
         name = "scan_security"
         targets = _validated_paths(name, paths)
-        wanted = [str(x).lower() for x in (scanners or SCANNERS)]
+        wanted = [str(x).lower() for x in (scanners if scanners is not None else SCANNERS)]
         unknown = [x for x in wanted if x not in SCANNERS]
         if unknown or not wanted:
             raise ToolExecutionError(f"scanners must be a subset of {', '.join(SCANNERS)}", tool=name)

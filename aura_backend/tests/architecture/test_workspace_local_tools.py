@@ -37,6 +37,9 @@ _EXPECTED_WORKSPACE_LOCAL = {
     # run_command cannot already do (and no --fix: they never write), so the same exemption applies.
     "lint_code",
     "check_format",
+    # ADR-048: Semgrep/Gitleaks/Bandit started in the workspace, read-only, with bundled rules and no
+    # network; findings are masked and secret values are never read from Gitleaks' report.
+    "scan_security",
     "git_commit",
     "git_checkout_branch",
     "open_workspace",
