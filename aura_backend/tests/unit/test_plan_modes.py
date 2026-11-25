@@ -156,7 +156,7 @@ class _Planner:
     def __init__(self, real, plan: Plan) -> None:
         self._real, self.plan_to_return, self.asked = real, plan, 0
 
-    def needs_plan(self, message, *, available_tools=(), force=None) -> bool:  # noqa: ANN001
+    def needs_plan(self, message, *, available_tools=(), force=None, previous_reply=None) -> bool:  # noqa: ANN001
         return self._real.needs_plan(message, available_tools=available_tools, force=force)
 
     def goal_from_message(self, message, *, criteria=()):  # noqa: ANN001

@@ -343,7 +343,7 @@ class TestThroughTheRealContainer:
         loop = asyncio.get_running_loop()
         began = loop.time()
         result, report = await _call(container, "delegate_to_agent", {
-            "target_agent_id": "finance_advisor", "subtask": "Summarise my spending", "background": True,
+            "target_agent_id": "finance_advisor", "subtask": "Give me a one-line outlook", "background": True,
         }, context)
         elapsed = loop.time() - began
         assert result.ok and report.allowed, result.content

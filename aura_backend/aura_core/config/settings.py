@@ -916,7 +916,10 @@ class LLMSettings:
     #: Declares the image modality (ADR-031) because echo is a pure function of its input, images
     #: included: it is what lets the default test suite exercise image turns with no model.
     ECHO_PROVIDER = ProviderConfig(
-        name="echo", kind="echo", model="echo-1", context_window=8192, max_output_tokens=2048,
+        # 32K rather than 8K: an orchestrator turn's planner prompt is about 9,000 tokens with the
+        # tool catalog of both branches merged (67 tools), and echo must not be the reason a plan
+        # is refused with "context_window_too_small". Echo is a test/dev provider only.
+        name="echo", kind="echo", model="echo-1", context_window=32768, max_output_tokens=2048,
         modalities=("text", "image"),
     )
 

@@ -396,7 +396,10 @@ class TestStructuredTextValidation:
         raw = await _TOOLS["validate_structured_text"].execute(
             {"content": _yaml_alias_bomb(), "data_format": "yaml"}, ctx
         )
-        assert json.loads(raw)["valid"] is True
+        out = json.loads(raw)
+        # The parser refuses a document whose aliases expand to too many nodes outright (it used to
+        # load it as shared references); either way nothing exponential reaches the result.
+        assert out["valid"] is False and "alias" in out["error"].lower()
         assert len(raw) < 2_000
 
     async def test_an_xml_entity_expansion_bomb_is_refused(self, ctx) -> None:

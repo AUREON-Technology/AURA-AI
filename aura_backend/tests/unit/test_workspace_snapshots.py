@@ -378,7 +378,7 @@ class _Steps:
     def __init__(self, steps) -> None:
         self._steps = steps
 
-    def needs_plan(self, message, *, available_tools=(), force=None) -> bool:
+    def needs_plan(self, message, *, available_tools=(), force=None, previous_reply=None) -> bool:
         return True
 
     @staticmethod

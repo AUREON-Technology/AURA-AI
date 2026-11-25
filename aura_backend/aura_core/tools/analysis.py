@@ -655,7 +655,13 @@ async def validate_structured_text(content: str, data_format: str) -> str:
         out: dict[str, Any] = {"format": data_format, **result}
         if result.get("valid"):
             if data_format == "xml":
-                out.update(root_type="element", root_tag=str(parsed.tag), children_count=len(parsed))
+                # The parser returns the XML tree as a dict (``tag``, ``children_count``, ...) so the
+                # same call serves other callers; summarise only the root here.
+                tag = parsed.get("tag") if isinstance(parsed, dict) else getattr(parsed, "tag", "")
+                count = (
+                    parsed.get("children_count", 0) if isinstance(parsed, dict) else len(parsed)
+                )
+                out.update(root_type="element", root_tag=str(tag), children_count=int(count))
             else:
                 out["root_type"] = type(parsed).__name__
                 if isinstance(parsed, dict):

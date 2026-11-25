@@ -45,7 +45,7 @@ class ScriptedPlanner:
         self._tool = tool
         self._arguments = dict(arguments or {})
 
-    def needs_plan(self, message, *, available_tools=(), force=None) -> bool:
+    def needs_plan(self, message, *, available_tools=(), force=None, previous_reply=None) -> bool:
         return True
 
     @staticmethod

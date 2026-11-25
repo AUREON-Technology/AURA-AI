@@ -106,6 +106,9 @@ COVERED = {
         "TestConversations::test_bob_cannot_read_alices_session_checkpoint",
     ("POST", "/api/v3/sessions/{session_id}/checkpoint"):
         "TestConversations::test_bob_cannot_checkpoint_alices_session",
+    ("GET", "/api/v3/turns/{turn_id}/usage"):
+        "tests/unit/test_turn_usage.py::TestUsageRoute::"
+        "test_someone_elses_turn_is_indistinguishable_from_a_missing_one",
     ("DELETE", "/api/v3/engineering/workspaces/{workspace_id}"):
         "TestEngineering::test_bob_cannot_delete_alices_workspace",
     ("GET", "/api/v3/agents/runs/{run_id}"):

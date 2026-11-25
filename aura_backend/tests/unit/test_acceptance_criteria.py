@@ -29,7 +29,7 @@ class _Planner:
         self._real, self.plan_to_return = real, plan
         self.goals: list[Goal] = []
 
-    def needs_plan(self, message, *, available_tools=(), force=None) -> bool:  # noqa: ANN001
+    def needs_plan(self, message, *, available_tools=(), force=None, previous_reply=None) -> bool:  # noqa: ANN001
         return self._real.needs_plan(message, available_tools=available_tools, force=force)
 
     def goal_from_message(self, message, *, criteria=()):  # noqa: ANN001
