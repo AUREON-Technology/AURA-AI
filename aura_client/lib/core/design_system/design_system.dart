@@ -20,4 +20,5 @@ export 'components/aura_text_field.dart';
 export 'components/aura_dialog.dart';
 export 'components/aura_snackbar.dart';
 export 'components/aura_list_tile.dart';
+export 'components/aura_master_detail.dart';
 export 'motion/aura_motion_widgets.dart';

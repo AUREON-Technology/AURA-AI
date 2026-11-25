@@ -380,16 +380,16 @@ class TestKernelWiring:
             # `AURA_OPEN_EXEC_TOOLS_ENABLED`.
             "generate_and_run_tests", "analyze_test_quality",
             "docker_build", "docker_compose", "profile_python",
-            # ADR-040: registered only with their engine / AURA_WEB_SEARCH_URL / files root, none of
+            # ADR-042: registered only with their engine / AURA_WEB_SEARCH_URL / files root, none of
             # which this default container configures (`test_media_tools` registers them for real).
             "web_search", "ocr_image", "inspect_spreadsheet", "parse_document", "transcribe_audio",
             "analyze_image_requirements",
             # `engineer_agent`-gated like the other sandbox tools (registered in build_sandbox_tools).
             "lint_code", "check_format",
-            # ADR-043: need AURA_TOOLS_FILES_ROOT (file tools) or a run store (project_status).
+            # ADR-045: need AURA_TOOLS_FILES_ROOT (file tools) or a run store (project_status).
             "index_repository", "search_repository", "check_file_staleness", "load_project_conventions",
             "load_project_skills", "read_notebook", "inspect_binary_file", "verify_backup",
-            # ADR-044: only registered when AURA_TOOLS_HTTP_ALLOWED_HOSTS names a host.
+            # ADR-046: only registered when AURA_TOOLS_HTTP_ALLOWED_HOSTS names a host.
             "verify_release_health",
         }
         # The sandbox/git tools (minus `clone_repository`, which additionally needs a GitHub

@@ -6,7 +6,7 @@ Map<String, dynamic> _asMap(Object? value) =>
     value is Map ? value.map((k, v) => MapEntry(k.toString(), v)) : <String, dynamic>{};
 
 /// One agent run from `GET /api/v3/agents/runs/search` or `GET /api/v3/agents/runs/{id}`
-/// (ADR-041 section 5). Distinct from [EngineerRun], which is one engineer *tool call*; this is a
+/// (ADR-043 section 5). Distinct from [EngineerRun], which is one engineer *tool call*; this is a
 /// whole run of an agent with its plan and tool counts.
 class AgentRunSummary {
   const AgentRunSummary({

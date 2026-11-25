@@ -26,10 +26,12 @@ from typing import ClassVar, Any, Mapping, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 from ..domain.errors import ConfigurationError
+from ..domain.knowledge import DEFAULT_ALLOWED_LICENSES
 from ..domain.llm import DataClassification, Modality, ModelPool, RoutingPolicy, WorkloadClass
 from .external_inference import (
     CLAUDE_PROVIDER_KIND,
     is_claude_model,
+    is_cloudflare_account_id,
     is_external_inference_host,
     is_hosted_open_weight_host,
     is_open_weight_model,
@@ -63,6 +65,7 @@ __all__ = [
     "McpServerConfig",
     "McpSettings",
     "OpenToolsSettings",
+    "ExtractionSettings",
     "AdvisorySettings",
     "OpsSettings",
     "GitHubSettings",
@@ -303,6 +306,12 @@ def _redact_url_userinfo(value: str) -> str:
 # --------------------------------------------------------------------------------------
 
 
+#: Largest accepted prompt cap, global or per provider (KAN-98). Was 32768 for the global, which
+#: made a long-context provider (a 200K-window Engineer model) unreachable: the global is the
+#: upper bound of every per-provider cap, and each turn is still bounded by its providers'
+#: context windows, so a large global no longer widens a small model's prompt.
+_MAX_PROMPT_TOKENS_CEILING = 2_000_000
+
 #: How readiness may learn a provider's health (``ProviderConfig.health_probe``).
 HEALTH_PROBE_MODES = frozenset({"active", "passive"})
 
@@ -400,6 +409,17 @@ class ProviderConfig:
     #: this consent is capped below ``sensitive`` and is named as such in every audit record.
     #: AURA_PROVIDER_<NAME>_ALLOW_PROMPT_TRAINING.
     allow_prompt_training: bool = False
+    #: Which tokenizer counts this provider's tokens (KAN-103): ``qwen2`` | ``o200k`` |
+    #: ``cl100k`` | ``claude`` | ``generic``, optionally ``<family>@<path to tokenizer.json>``
+    #: for exact counts (e.g. the Qwen Space's own file). Empty = inferred from the model id,
+    #: and ``claude`` for the ``claude`` kind. AURA_PROVIDER_<NAME>_TOKENIZER.
+    tokenizer: str = ""
+    #: This provider's own assembled-prompt cap (KAN-98). 0 = undeclared: the global
+    #: ``AURA_LLM_MAX_PROMPT_TOKENS`` applies. Never above the global, which stays the upper
+    #: bound, so a per-provider value can only narrow a turn's prompt. A turn is sized to the
+    #: smallest cap among the providers that are healthy and eligible for it.
+    #: AURA_PROVIDER_<NAME>_MAX_PROMPT_TOKENS.
+    max_prompt_tokens: int = 0
 
     #: Request-body fields an ``extra_body`` may not set. See :attr:`extra_body`.
     _RESERVED_BODY_FIELDS: ClassVar[frozenset[str]] = frozenset({
@@ -815,6 +835,10 @@ class ProviderConfig:
             tokens_per_second=_float(f"{p}_TOKENS_PER_SECOND", 0.0, minimum=0.0),
             extra_body=(_env(f"{p}_EXTRA_BODY", "") or "").strip(),
             allow_prompt_training=_bool(f"{p}_ALLOW_PROMPT_TRAINING", False),
+            tokenizer=(_env(f"{p}_TOKENIZER", "") or "").strip(),
+            max_prompt_tokens=_int(
+                f"{p}_MAX_PROMPT_TOKENS", 0, minimum=0, maximum=_MAX_PROMPT_TOKENS_CEILING
+            ),
         )
 
 
@@ -846,6 +870,13 @@ class LLMSettings:
     semantic_cache_enabled: bool = True
     semantic_cache_threshold: float = 0.97
     max_generations_per_turn: int = 8
+    #: Ceiling on generations other engines make on a turn's behalf (KAN-107): planning and
+    #: every replan, reasoning samples and tree-of-thoughts nodes, summaries. Counted apart from
+    #: ``max_generations_per_turn`` so neither kind can starve the other. 32 covers the worst
+    #: shipped turn with room: the Engineer's plan plus 8 replans (9), a tree-of-thoughts search
+    #: at the default breadth/depth with its answer and verification (14), a session summary and
+    #: a query expansion. 0 = no cap. AURA_LLM_MAX_ENGINE_GENERATIONS_PER_TURN.
+    max_engine_generations_per_turn: int = 32
     #: USD ceiling on every generation in one turn (F30); 0 disables. Checked before each generation.
     max_cost_per_turn_usd: float = 0.0
     #: Assembled prompt cap (prefill). Independent of the provider context window so a local
@@ -887,7 +918,10 @@ class LLMSettings:
     #: Declares the image modality (ADR-031) because echo is a pure function of its input, images
     #: included: it is what lets the default test suite exercise image turns with no model.
     ECHO_PROVIDER = ProviderConfig(
-        name="echo", kind="echo", model="echo-1", context_window=8192, max_output_tokens=2048,
+        # 32K rather than 8K: an orchestrator turn's planner prompt is about 9,000 tokens with the
+        # tool catalog of both branches merged (67 tools), and echo must not be the reason a plan
+        # is refused with "context_window_too_small". Echo is a test/dev provider only.
+        name="echo", kind="echo", model="echo-1", context_window=32768, max_output_tokens=2048,
         modalities=("text", "image"),
     )
 
@@ -924,8 +958,13 @@ class LLMSettings:
             semantic_cache_enabled=_bool("LLM_SEMANTIC_CACHE_ENABLED", True),
             semantic_cache_threshold=_float("LLM_SEMANTIC_CACHE_THRESHOLD", 0.97, minimum=0.5, maximum=1.0),
             max_generations_per_turn=_int("LLM_MAX_GENERATIONS_PER_TURN", 8, minimum=1, maximum=64),
+            max_engine_generations_per_turn=_int(
+                "LLM_MAX_ENGINE_GENERATIONS_PER_TURN", 32, minimum=0, maximum=512
+            ),
             max_cost_per_turn_usd=_float("LLM_MAX_COST_PER_TURN_USD", 0.0, minimum=0.0),
-            max_prompt_tokens=_int("LLM_MAX_PROMPT_TOKENS", 400, minimum=64, maximum=32768),
+            max_prompt_tokens=_int(
+                "LLM_MAX_PROMPT_TOKENS", 400, minimum=64, maximum=_MAX_PROMPT_TOKENS_CEILING
+            ),
             admission_max_queue=_int("LLM_ADMISSION_MAX_QUEUE", -1, minimum=-1),
             admission_queue_timeout_s=_float("LLM_ADMISSION_QUEUE_TIMEOUT_S", 0.0, minimum=0.0),
             # Unset, the gateway's own worker count: Railway runs the image's
@@ -1009,10 +1048,14 @@ class KnowledgeSettings:
     #: Qdrant never sees readable content, and retrieval resolves the text from the owner-scoped
     #: document store instead. ``True``/``False`` override the rule.
     vector_payload_content: bool | None = None
+    #: SPDX ids the global corpus accepts (owner decision D-001: CC0, CC BY and permissive). A
+    #: global source whose licence is not approved against this list is never refreshed.
+    allowed_licenses: tuple[str, ...] = DEFAULT_ALLOWED_LICENSES
 
     @classmethod
     def from_env(cls) -> "KnowledgeSettings":
         return cls(
+            allowed_licenses=_list("KNOWLEDGE_ALLOWED_LICENSES", DEFAULT_ALLOWED_LICENSES),
             vector_payload_content=(
                 None if not _env("KNOWLEDGE_VECTOR_PAYLOAD_CONTENT", "")
                 else _bool("KNOWLEDGE_VECTOR_PAYLOAD_CONTENT", True)
@@ -1199,7 +1242,7 @@ class ToolSettings:
     #: default) registers no ``fetch_url``. Private/loopback addresses are refused regardless.
     http_allowed_hosts: tuple[str, ...] = ()
     #: Base URL of an operator-run SearXNG instance (JSON API enabled) that ``web_search`` queries
-    #: (``tools/websearch.py``, ADR-040). Empty (the default) registers no ``web_search``. There is
+    #: (``tools/websearch.py``, ADR-042). Empty (the default) registers no ``web_search``. There is
     #: deliberately no hosted-vendor alternative: search is self-hosted like everything else here.
     web_search_url: str = ""
     #: Seconds the search server gets to answer.
@@ -1209,7 +1252,7 @@ class ToolSettings:
     web_search_language: str = ""
     #: Directory ``ocr_image``, ``inspect_spreadsheet``, ``parse_document`` and ``transcribe_audio``
     #: read from is ``files_root`` (the same confinement as ``read_file``); nothing extra to set.
-    #: Path to a JSON/YAML file of declarative tool-call rules (``tools/policy_rules.py``, ADR-039):
+    #: Path to a JSON/YAML file of declarative tool-call rules (``tools/policy_rules.py``, ADR-041):
     #: deny or require confirmation by tool name + argument pattern. Empty (the default) = none.
     #: Validated when the container is built; a bad rule stops start-up with its index.
     policy_file: str = ""
@@ -1272,7 +1315,7 @@ class ReasoningSettings:
     #: flat 60s every other tool gets (`AIKernel._tool_context`) -- a delegated sub-turn is a full
     #: recursive `kernel.run()`, not a simple API call, and needs room for its own budgets.
     delegation_deadline_s: float = 180.0
-    #: Agent-loop intelligence (ADR-037). Stuck detection stops a loop that is already spinning,
+    #: Agent-loop intelligence (ADR-039). Stuck detection stops a loop that is already spinning,
     #: so it is on; a threshold of ``0`` disables that one rule. ``identical_calls``: the same
     #: tool + arguments with the same outcome N times; ``same_error``: the same failure in N
     #: consecutive passes; ``no_progress``: N consecutive passes in which no step newly succeeded.
@@ -1299,7 +1342,7 @@ class ReasoningSettings:
     #: Fraction of the token budget at which ``context_pressure`` is signalled and older tool
     #: output is compressed, once.
     context_pressure_threshold: float = 0.8
-    #: ADR-038. ``delegate_to_agent(background=true)`` plus ``list_agent_tasks`` /
+    #: ADR-040. ``delegate_to_agent(background=true)`` plus ``list_agent_tasks`` /
     #: ``get_agent_task`` / ``cancel_agent_task``. Off: none of them is registered and the
     #: ``background`` parameter is not advertised, so delegation is the synchronous one-hop
     #: sub-turn it always was.
@@ -1312,12 +1355,12 @@ class ReasoningSettings:
     #: background sub-turn.
     agent_task_ttl_s: int = 3600
     agent_task_deadline_s: float = 900.0
-    #: ADR-038. A delegated sub-turn receives a structured, fenced DATA-channel handoff (goal,
+    #: ADR-040. A delegated sub-turn receives a structured, fenced DATA-channel handoff (goal,
     #: decisions, completed, blockers, pending, relevant paths) built from the parent session's
     #: checkpoint, and its result is stored back as a structured outcome. Off: the child sees only
     #: the subtask text, as before.
     structured_handoff_enabled: bool = False
-    #: ADR-038. What a ``/chat`` turn that names no ``plan_mode`` (and no ``plan``) does:
+    #: ADR-040. What a ``/chat`` turn that names no ``plan_mode`` (and no ``plan``) does:
     #: ``""`` -- the default -- is today's behaviour, unchanged; ``auto``, ``plan``, ``fast`` or
     #: ``review`` make that mode the deployment default.
     default_plan_mode: str = ""
@@ -1386,6 +1429,13 @@ class ObservabilitySettings:
     #: found /metrics world-readable there, publishing which safety bypasses are on and which
     #: dependencies are down.
     metrics_token: str = ""
+    #: Answer a request that sends no ``Authorization`` header with ``401`` and a
+    #: ``WWW-Authenticate: Bearer`` challenge instead of the usual ``404``. Off by default: the 404
+    #: is deliberate, so an unauthenticated caller learns nothing about the path. Turn it on only for
+    #: a scraper that sends credentials after a challenge -- Grafana Cloud's Metrics Endpoint test
+    #: sends none up front (live, 2026-11-22), so with 404 it can never pass. A wrong or malformed
+    #: credential still gets 404, and the metrics stay unreadable without the token.
+    metrics_challenge: bool = False
     #: How long audit events and turn telemetry are kept (audit FSA-016). Both hold personal
     #: data (the audit actor is an email or subject, with a source IP; telemetry names a user's
     #: conversations) and were kept forever. ``0`` keeps rows indefinitely. The daily
@@ -1409,6 +1459,7 @@ class ObservabilitySettings:
             telemetry_persist=_bool("TELEMETRY_PERSIST", True),
             trace_content_sampling=_float("TRACE_CONTENT_SAMPLING", 0.0, minimum=0.0, maximum=1.0),
             metrics_token=(_env("METRICS_TOKEN", "") or "").strip(),
+            metrics_challenge=_bool("METRICS_CHALLENGE", False),
         )
 
 
@@ -1611,6 +1662,10 @@ class LearningSettings:
     gate_max_error_rate: float = 0.05
     gate_max_quarantine_rate: float = 0.10
     gate_max_count_delta: float = 0.40
+    #: The most a source's updated documents may shrink in total before the whole source is held
+    #: back (the content gate, run before anything is written). Catches a source that started
+    #: returning a short error page.
+    gate_max_shrink: float = 0.40
     index_retention_days: int = 7
     finetune_min_examples: int = 500
     finetune_min_distinct_users: int = 5
@@ -1634,11 +1689,11 @@ class LearningSettings:
     finetune_estimated_cpu_hours: float | None = None
     #: Max substring-coverage drop vs base before canary is blocked.
     finetune_canary_max_coverage_drop: float = 0.05
-    #: ADR-038. After an Engineer turn, derive candidate lessons (decisions, corrected errors,
+    #: ADR-040. After an Engineer turn, derive candidate lessons (decisions, corrected errors,
     #: conventions) and store them as ``auto_lesson`` memories in the engineer scope's *pending*
     #: partition. Nothing reaches recall until the owner approves it. Off by default.
     auto_lessons_enabled: bool = False
-    #: ADR-045 (row 60). With ``auto_lessons_enabled``, ask a *local* model to write the lessons
+    #: ADR-047 (row 60). With ``auto_lessons_enabled``, ask a *local* model to write the lessons
     #: (strict JSON, validated) instead of only extracting them by keyword; any failure falls back
     #: to the keyword extractor, and lessons still wait in the owner's review queue. Off by default.
     auto_lessons_model_enabled: bool = False
@@ -1656,6 +1711,7 @@ class LearningSettings:
             gate_max_error_rate=_float("LEARNING_GATE_ERROR_RATE", 0.05, minimum=0.0, maximum=1.0),
             gate_max_quarantine_rate=_float("LEARNING_GATE_QUARANTINE_RATE", 0.10, minimum=0.0, maximum=1.0),
             gate_max_count_delta=_float("LEARNING_GATE_COUNT_DELTA", 0.40, minimum=0.0, maximum=10.0),
+            gate_max_shrink=_float("LEARNING_GATE_SHRINK", 0.40, minimum=0.0, maximum=1.0),
             index_retention_days=_int("LEARNING_INDEX_RETENTION_DAYS", 7, minimum=0),
             finetune_min_examples=_int("LEARNING_FINETUNE_MIN_EXAMPLES", 500, minimum=1),
             finetune_min_distinct_users=_int("LEARNING_FINETUNE_MIN_USERS", 5, minimum=1),
@@ -1851,7 +1907,7 @@ class OpenToolsSettings:
     analysis_enabled: bool = True
     exec_enabled: bool = False
     desktop_ops_enabled: bool = True
-    #: ADR-042: the fourteen pure tools of ``tools/open_pure.py`` (same risk profile as ``analysis_enabled``).
+    #: ADR-044: the fourteen pure tools of ``tools/open_pure.py`` (same risk profile as ``analysis_enabled``).
     pure_enabled: bool = True
 
     @classmethod
@@ -1862,6 +1918,79 @@ class OpenToolsSettings:
             desktop_ops_enabled=_bool("DESKTOP_OPS_TOOLS_ENABLED", True),
             pure_enabled=_bool("OPEN_PURE_TOOLS_ENABLED", True),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ExtractionSettings:
+    """The ``extract_structured`` tool (ADR-038): typed fields from user-supplied text, through
+    Cloudflare's ``clairic``.
+
+    ``enabled`` is ``AURA_ALLOW_EXTRACTION_INFERENCE`` and it is the only switch. Text leaves our
+    infrastructure when it is on, so it is a consent flag as much as a feature flag: neither
+    ``AURA_ALLOW_HOSTED_INFERENCE`` nor ``AURA_ALLOW_CLAUDE_INFERENCE`` implies it. Off by default,
+    and off means the adapter is never built and the tool is never registered.
+
+    There is no endpoint setting and no model setting. The host and the model are fixed in
+    ``config/external_inference.py``, so no configuration value can redirect the credential.
+
+    ``api_key_env`` names the variable holding the Cloudflare token. The secret is a property, never
+    a dataclass field, so :meth:`AuraSettings.as_dict` cannot reach it (the same rule as
+    :class:`ProviderConfig` and :class:`GitHubSettings`).
+
+    ``daily_call_cap`` is per *process*: the count is not shared between gateway workers, so the
+    effective cap is this times the worker count. It exists so one busy day of extraction cannot
+    spend the Workers AI allowance the ``hosted3`` chat slot also draws on.
+    """
+
+    enabled: bool = False
+    account_id: str = ""
+    api_key_env: str = ""
+    min_confidence: float = 0.5
+    max_chars: int = 20_000
+    timeout_s: float = 30.0
+    daily_call_cap: int = 100
+
+    @property
+    def api_key(self) -> str:
+        return os.environ.get(self.api_key_env, "") if self.api_key_env else ""
+
+    @classmethod
+    def from_env(cls) -> "ExtractionSettings":
+        return cls(
+            enabled=_bool("ALLOW_EXTRACTION_INFERENCE", False),
+            account_id=(_env("EXTRACT_CLOUDFLARE_ACCOUNT_ID", "") or "").strip(),
+            api_key_env=(_env("EXTRACT_API_KEY_ENV", "") or "").strip(),
+            min_confidence=_float("EXTRACT_MIN_CONFIDENCE", 0.5, minimum=0.0, maximum=1.0),
+            max_chars=_int("EXTRACT_MAX_CHARS", 20_000, minimum=100, maximum=100_000),
+            timeout_s=_float("EXTRACT_TIMEOUT_S", 30.0, minimum=1.0, maximum=300.0),
+            daily_call_cap=_int("EXTRACT_DAILY_CALL_CAP", 100, minimum=1, maximum=100_000),
+        )
+
+    def problems(self) -> list[str]:
+        """What stops this from running, as ``validate()`` messages.
+
+        The threshold is checked whether or not the tool is on, and with a comparison that a NaN
+        fails (``_float`` lets ``nan`` through its own range check). Everything else is checked only
+        when the tool is on, so a deployment that never enables it is never blocked by it.
+        """
+        found: list[str] = []
+        if not 0.0 <= self.min_confidence <= 1.0:
+            found.append("extraction.min_confidence (AURA_EXTRACT_MIN_CONFIDENCE) must be between 0 and 1")
+        if not self.enabled:
+            return found
+        if not is_cloudflare_account_id(self.account_id):
+            found.append(
+                "AURA_ALLOW_EXTRACTION_INFERENCE needs AURA_EXTRACT_CLOUDFLARE_ACCOUNT_ID: the "
+                "32-character hexadecimal Cloudflare account id"
+            )
+        if not self.api_key_env:
+            found.append(
+                "AURA_ALLOW_EXTRACTION_INFERENCE needs AURA_EXTRACT_API_KEY_ENV: the name of the "
+                "variable that holds the Cloudflare token (the token itself is never configured here)"
+            )
+        elif not self.api_key.strip():
+            found.append(f"{self.api_key_env}, named by AURA_EXTRACT_API_KEY_ENV, is unset or empty")
+        return found
 
 
 @dataclass(frozen=True, slots=True)
@@ -1904,7 +2033,7 @@ class AdvisorySettings:
 
 @dataclass(frozen=True, slots=True)
 class OpsSettings:
-    """What the operations tools (ADR-047) may reach. Everything is empty by default, and an empty
+    """What the operations tools (ADR-049) may reach. Everything is empty by default, and an empty
     setting means the tool that needs it is not registered.
 
     ``platform_origins`` -- the platform's own https origins ``check_platform_health`` may probe
@@ -2113,7 +2242,7 @@ class SandboxSettings:
 
 @dataclass(frozen=True, slots=True)
 class AgentTaskSettings:
-    """The agent task gateway and its queue (ADR-041): ``POST /api/v3/agents/tasks``.
+    """The agent task gateway and its queue (ADR-043): ``POST /api/v3/agents/tasks``.
 
     A task is one ``/chat`` turn that runs server-side, so a dropped connection loses nothing.
     Everything here is *per process*: the queue lives in the gateway worker that accepted the
@@ -2146,7 +2275,7 @@ class AgentTaskSettings:
     stale_after_s: float = 90.0
     #: A waiting task gains one priority level per this many seconds, so ``low`` cannot starve.
     aging_s: float = 120.0
-    #: How long a ``client_request_id`` / ``Idempotency-Key`` is remembered (ADR-041).
+    #: How long a ``client_request_id`` / ``Idempotency-Key`` is remembered (ADR-043).
     idempotency_ttl_s: int = 86_400
 
     def __post_init__(self) -> None:
@@ -2184,7 +2313,7 @@ class AgentTaskSettings:
 
 @dataclass(frozen=True, slots=True)
 class UsageSettings:
-    """Per-turn usage records and agent-run search (ADR-041). All of it lives in the cache port
+    """Per-turn usage records and agent-run search (ADR-043). All of it lives in the cache port
     (Redis in production), bounded and TTL'd; none of it is a new table.
 
     ``runs_store_preview`` is the one privacy-relevant switch and is **off** by default: with it
@@ -2249,7 +2378,7 @@ class VoiceSettings:
     #: test container from ever pulling weights.
     stt_warm_on_startup: bool | None = None
     #: ``POST /voice/task`` may refine its deterministic extraction with a model through the router
-    #: (ADR-041). Off, the endpoint is deterministic only. The transcript is personal data, so the
+    #: (ADR-043). Off, the endpoint is deterministic only. The transcript is personal data, so the
     #: router sends it only to a provider cleared for it (a local model by default).
     task_refine_enabled: bool = True
     tts_enabled: bool = True
@@ -2535,6 +2664,56 @@ class BillingSettings:
         )
 
 
+#: The Google OAuth client the operator console signs in with. Not a secret: it is in every
+#: page the console serves. ``config.py`` (the legacy app) carries the same default.
+DEFAULT_CONSOLE_GOOGLE_CLIENT_ID = (
+    "87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ControlSettings:
+    """The console's Super-Admin control center (docs/plans/console-control-center-plan.md).
+
+    Every write there needs a step-up: a Google sign-in the person completed within
+    ``step_up_max_age_s``, checked against ``google_client_ids``. The grant it buys lasts
+    ``step_up_ttl_s``. ``writes_per_hour`` caps changes per Super Admin, counted from the change
+    journal so every gateway worker sees the same count. ``rollback_watch_s`` is how long a
+    change's deployment may stay unhealthy before it is rolled back.
+    """
+
+    google_client_ids: tuple[str, ...] = (DEFAULT_CONSOLE_GOOGLE_CLIENT_ID,)
+    step_up_max_age_s: int = 300
+    step_up_ttl_s: int = 300
+    writes_per_hour: int = 30
+    rollback_watch_s: int = 300
+    #: The gateway's public URL (``https://api.aureon-ai.tech``), for the scrape job and uptime
+    #: checks the Monitoring tab tells you to create. Empty: the URL the request came in on.
+    public_api_url: str = ""
+    #: How long a GPU Space change may take to come back RUNNING before it is undone. Longer
+    #: than ``rollback_watch_s``: a Space rebuilds its image and reloads its model.
+    space_watch_s: int = 1200
+    #: Run the rollback watcher in this gateway (staging/production only). Turn off only to stop
+    #: automatic rollbacks while someone repairs a deployment by hand.
+    reconciler_enabled: bool = True
+
+    @classmethod
+    def from_env(cls) -> "ControlSettings":
+        ids = _list("CONTROL_GOOGLE_CLIENT_IDS") or tuple(
+            filter(None, ((os.environ.get("GOOGLE_CLIENT_ID") or "").strip(),))
+        )
+        return cls(
+            google_client_ids=ids or (DEFAULT_CONSOLE_GOOGLE_CLIENT_ID,),
+            step_up_max_age_s=_int("CONTROL_STEP_UP_MAX_AGE_S", 300, minimum=30, maximum=900),
+            step_up_ttl_s=_int("CONTROL_STEP_UP_TTL_S", 300, minimum=30, maximum=900),
+            writes_per_hour=_int("CONTROL_WRITES_PER_HOUR", 30, minimum=1, maximum=500),
+            rollback_watch_s=_int("CONTROL_ROLLBACK_WATCH_S", 300, minimum=60, maximum=3600),
+            space_watch_s=_int("CONTROL_SPACE_WATCH_S", 1200, minimum=300, maximum=7200),
+            public_api_url=(_env("CONTROL_PUBLIC_API_URL", "") or "").rstrip("/"),
+            reconciler_enabled=_bool("CONTROL_RECONCILER", True),
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class EmailSettings:
     """Customer email over SMTP (SaaS P1-F1): invites, receipts, renewal and past-due notices.
@@ -2720,6 +2899,8 @@ class AuraSettings:
     tenancy: TenancySettings = field(default_factory=TenancySettings)
     billing: BillingSettings = field(default_factory=BillingSettings)
     email: EmailSettings = field(default_factory=EmailSettings)
+    control: ControlSettings = field(default_factory=ControlSettings)
+    extraction: ExtractionSettings = field(default_factory=ExtractionSettings)
 
     @classmethod
     def from_env(cls) -> "AuraSettings":
@@ -2764,6 +2945,8 @@ class AuraSettings:
             tenancy=TenancySettings.from_env(),
             billing=BillingSettings.from_env(),
             email=EmailSettings.from_env(),
+            control=ControlSettings.from_env(),
+            extraction=ExtractionSettings.from_env(),
         )
 
     # -- validation --------------------------------------------------------------------
@@ -2982,6 +3165,8 @@ class AuraSettings:
 
         if self.observability.tracing_enabled and not self.observability.otlp_endpoint:
             problems.append("tracing_enabled requires AURA_OTLP_ENDPOINT")
+
+        problems.extend(self.extraction.problems())
 
         if problems:
             raise ConfigurationError(

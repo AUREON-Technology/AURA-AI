@@ -1,4 +1,4 @@
-"""Structured agent handoffs (aura_core/agents/handoff.py, ADR-038, inventory row 59).
+"""Structured agent handoffs (aura_core/agents/handoff.py, ADR-040, inventory row 59).
 
 Three levels, as in ``test_delegation.py``: the pure record/store, the tool against a fake kernel
 (what child ``TurnRequest`` does it build?), and the whole path through the real container and a

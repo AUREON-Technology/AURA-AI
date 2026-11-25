@@ -1,4 +1,4 @@
-"""Deeper static review for ``review_code_diff`` (ADR-044, row 5).
+"""Deeper static review for ``review_code_diff`` (ADR-046, row 5).
 
 ``PeerCodeReviewerAgent`` applies fixed line rules. This adds three things it lacked, all pure
 text-in/JSON-out and all reported with line numbers:

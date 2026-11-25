@@ -54,9 +54,13 @@ Firebase console → Authentication → Sign-in method:
 - **Android:** `android/app/google-services.json` exists already.
 - **iOS / macOS:** add `GoogleService-Info.plist` to `ios/Runner/` and `macos/Runner/`. It is not
   in the repository today.
-- **Web:** there is no `firebase_options.dart`. Run `flutterfire configure` for the web app, or
-  pass the web config to `Firebase.initializeApp`. Until then, web sign-in reports "This sign-in
-  method isn't available right now".
+- **Web:** there is no `firebase_options.dart`. The web app reads its Firebase config from
+  `--dart-define` values (`core/config/firebase_web_options.dart`): register a *Web* app in the same
+  Firebase project, then save `FIREBASE_WEB_API_KEY`, `FIREBASE_WEB_APP_ID`,
+  `FIREBASE_WEB_PROJECT_ID` (and optionally `..._AUTH_DOMAIN`, `..._MESSAGING_SENDER_ID`) as GitHub
+  repository variables; the web workflows pass them to the build. Until they exist, web sign-in
+  reports "This sign-in method isn't available right now". Full setup:
+  [`web-app.md`](web-app.md).
 
 ## 5. Move existing users into Firebase under their current ids (before shipping the client)
 
@@ -130,12 +134,14 @@ Build flags for the customer builds:
 
 | `--dart-define` | Value |
 |---|---|
-| `APP_BASE_URL` | where the web app is served, for example `https://app.aureon-ai.tech`. Invite links point at `{APP_BASE_URL}/invite?token=…`, and the backend's `AURA_APP_BASE_URL` must be the same. |
+| `APP_BASE_URL` | where the web app is served: `https://web.aureon-ai.tech/app` (path included; the web build derives it from its `<base href>` when unset). Invite links point at `{APP_BASE_URL}/invite?token=…`, and the backend's `AURA_APP_BASE_URL` must be the same. |
 | `TERMS_URL`, `PRIVACY_URL`, `REFUND_URL` | the owner's legal pages, `https://` only. A page that is not set is not linked. |
 | `DIRECT_DISTRIBUTION` | `true` only for a macOS build distributed outside the Mac App Store. It allows Fawry checkout there. Never set it for a Mac App Store build: Apple rejects outside payment. |
 
-The web build must serve `index.html` for `/invite`, so an invite link opened in a browser reaches
-the app's router. That is the normal single-page-app fallback on any static host.
+The web build must serve `index.html` for `/invite` (and `/desktop-sign-in`), so a link opened in a
+browser reaches the app's router. `aura_web/nginx/default.conf.template` does that for exactly those
+two paths under `/app/` (the app uses hash routing, so no other path is ever requested). A different
+static host needs the same two rules.
 
 Sign-in methods (You → Sign-in methods) adds Google, Apple or a password to an existing account.
 It needs those providers enabled in Firebase, as in the steps above.

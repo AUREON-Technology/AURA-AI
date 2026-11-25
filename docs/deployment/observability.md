@@ -28,6 +28,16 @@ scrape sends `Authorization: Bearer $AURA_METRICS_TOKEN`** (fail closed;
    ```bash
    curl -sS -H "Authorization: Bearer $AURA_METRICS_TOKEN" https://api.aureon-ai.tech/metrics | grep -c '^aura_'
    ```
+4. **If Grafana's *Test connection* fails** with "did not return a valid response", check the
+   gateway log for `metrics scrape refused: ...` (one line per reason per minute, never the
+   token). Observed live on 2026-11-22: reason `no Authorization header` with user-agent
+   `grafanacloud`, for Bearer and Basic alike, which suggests the test sends no credentials until it is
+   challenged and the deliberate 404 ends it (inferred, not yet shown to fix it). Try
+   **`AURA_METRICS_CHALLENGE=true`**: a request with
+   no `Authorization` header then gets `401` with `WWW-Authenticate: Bearer` (a wrong or malformed
+   credential still gets 404, and without a configured token nothing changes). The cost is that
+   anyone can tell the path exists; the metrics stay unreadable without the token. Leave it off
+   anywhere the test is not needed.
 
 **One scrape covers every worker.** Railway runs the image's `CMD` with `${AURA_WORKERS:-4}`
 uvicorn workers. Since Phase R the `CMD` gives them one shared `PROMETHEUS_MULTIPROC_DIR`

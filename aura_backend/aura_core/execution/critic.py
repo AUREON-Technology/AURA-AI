@@ -1,5 +1,5 @@
 """The self-reflection critic: check the plan before it runs and the outcome before it is claimed
-(ADR-037).
+(ADR-039).
 
 A planner is a model, and models write plans that look right: they name a tool that does not exist,
 edit a file they never read, change code and never run the tests. The loop used to execute whatever

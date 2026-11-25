@@ -1,5 +1,5 @@
 """What the agent loop reports besides step progress: frames for the client, and a record of why it
-stopped (ADR-037).
+stopped (ADR-039).
 
 ``StepEvent`` (``execution/engine.py``) says how a *step* went. The loop has its own news -- it
 stopped because it was going in circles, a budget is filling up, the critic found a problem -- and

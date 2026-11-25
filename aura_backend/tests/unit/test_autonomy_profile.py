@@ -1,4 +1,4 @@
-"""Per-user review profile (ADR-039): ``strict`` / ``standard`` / ``autonomous``.
+"""Per-user review profile (ADR-041): ``strict`` / ``standard`` / ``autonomous``.
 
 The properties that matter, each pinned through the real policy, the real registry and the real
 engineer tools -- not a stub of the policy:
@@ -45,7 +45,7 @@ class ScriptedPlanner:
         self._tool = tool
         self._arguments = dict(arguments or {})
 
-    def needs_plan(self, message, *, available_tools=(), force=None) -> bool:
+    def needs_plan(self, message, *, available_tools=(), force=None, previous_reply=None) -> bool:
         return True
 
     @staticmethod

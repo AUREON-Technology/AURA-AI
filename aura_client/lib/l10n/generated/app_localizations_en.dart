@@ -1129,6 +1129,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get knowledgeSaved => 'Saved.';
 
   @override
+  String get knowledgeNotSearchableYet =>
+      'Search can\'t find it yet: knowledge search is being updated, and this will show up once that finishes.';
+
+  @override
   String get knowledgePdfUploadFailed => 'Could not upload this PDF.';
 
   @override
@@ -3694,6 +3698,28 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatTurnUngrounded => 'Ungrounded — no sources attached.';
 
   @override
+  String get chatTurnNoActionTaken =>
+      'No action was taken — nothing was created, changed or sent.';
+
+  @override
+  String get chatTurnToolsUnavailable =>
+      'AURA couldn\'t use its tools for this turn, so nothing was done.';
+
+  @override
+  String get chatTurnToolFailed => 'A tool AURA used failed during this turn.';
+
+  @override
+  String get chatTurnEmptyReply => 'The model returned no reply for this turn.';
+
+  @override
+  String get chatTurnToolOutputTrimmed =>
+      'A tool\'s result was too long to use in full.';
+
+  @override
+  String get chatTurnKnowledgeUnavailable =>
+      'Knowledge search is being updated, so this answer doesn\'t use your documents or the shared library.';
+
+  @override
   String chatMoreLines(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,
@@ -5550,4 +5576,31 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get hostdCodeProtectedGitInternals =>
       'Writing inside .git (HEAD, the index, refs, objects) is never allowed: it can corrupt the repository. Use Git commands instead.';
+
+  @override
+  String get webDaemonUnavailableTitle => 'Pair a computer in the desktop app';
+
+  @override
+  String get webDaemonUnavailableMessage =>
+      'A browser can\'t run the AURA desktop daemon. Install the desktop app on your computer and pair it there. Once it\'s paired, turn on remote control and the Engineer can use it from here.';
+
+  @override
+  String get webGetDesktopApp => 'Get the desktop app';
+
+  @override
+  String get webManageDevices => 'Manage paired devices';
+
+  @override
+  String get webYouPaneTitle => 'Choose a page';
+
+  @override
+  String get webYouPaneMessage =>
+      'Pick a setting or tool from the list to open it here.';
+
+  @override
+  String get webEngineerPaneTitle => 'Choose a run';
+
+  @override
+  String get webEngineerPaneMessage =>
+      'Pick a run from the list to see its status, branch and output.';
 }

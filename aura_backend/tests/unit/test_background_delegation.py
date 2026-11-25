@@ -1,4 +1,4 @@
-"""Background delegation (aura_core/tools/delegation.py + agents/tasks.py, ADR-038, row 57).
+"""Background delegation (aura_core/tools/delegation.py + agents/tasks.py, ADR-040, row 57).
 
 The contract: ``delegate_to_agent(..., background=true)`` returns an ``agent_task_id`` at once and
 runs the *same* child turn -- same depth check, same capability check, same grant intersection, same
@@ -343,7 +343,7 @@ class TestThroughTheRealContainer:
         loop = asyncio.get_running_loop()
         began = loop.time()
         result, report = await _call(container, "delegate_to_agent", {
-            "target_agent_id": "finance_advisor", "subtask": "Summarise my spending", "background": True,
+            "target_agent_id": "finance_advisor", "subtask": "Give me a one-line outlook", "background": True,
         }, context)
         elapsed = loop.time() - began
         assert result.ok and report.allowed, result.content

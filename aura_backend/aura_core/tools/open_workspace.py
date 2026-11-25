@@ -1,4 +1,4 @@
-"""Workspace-reading tools for the Engineer (ADR-043): the ``tools/open`` classes that need real files.
+"""Workspace-reading tools for the Engineer (ADR-045): the ``tools/open`` classes that need real files.
 
 ``tools/analysis.py`` wraps the pure half of ``tools/open``: text in, JSON out. The classes wrapped
 here, and the five analysis tools extended below, need the *user's workspace* -- the same directory

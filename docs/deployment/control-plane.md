@@ -271,6 +271,63 @@ Two things already set on this target that the Engineer depends on:
 **Rollback:** take `claude1` out of `AURA_LLM_PROVIDERS` and redeploy. Engineer turns go back to
 `capability_unavailable`; nothing else changes. Consents and usage counters stay where they are.
 
+### Optional: structured extraction through Cloudflare `clairic` (ADR-038)
+
+**Off by default, and off means absent**: with `AURA_ALLOW_EXTRACTION_INFERENCE` unset there is no
+adapter and no `extract_structured` tool. Turning it on sends text a person typed into a turn to
+Cloudflare Workers AI, so it is a consent flag as much as a switch. Neither
+`AURA_ALLOW_HOSTED_INFERENCE` nor `AURA_ALLOW_CLAUDE_INFERENCE` implies it. It is separate from the
+`hosted3` chat slot: a different endpoint (`/ai/run`, not `/ai/v1`) and a different model, but the
+same Workers AI daily allowance (10,000 neurons on the free plan), so heavy use can starve chat.
+
+```bash
+AURA_ALLOW_EXTRACTION_INFERENCE=true
+AURA_EXTRACT_CLOUDFLARE_ACCOUNT_ID=<32-character hexadecimal Cloudflare account id>
+# The NAME of the variable that holds the token, never the token itself. Set that variable too,
+# as a Railway secret:
+AURA_EXTRACT_API_KEY_ENV=AURA_EXTRACT_API_KEY
+AURA_EXTRACT_API_KEY=<a dedicated Workers AI token>
+# Optional, with their defaults:
+# AURA_EXTRACT_MIN_CONFIDENCE=0.5     # a value below this is withheld: null, with the guess shown
+# AURA_EXTRACT_MAX_CHARS=20000        # at most 100000
+# AURA_EXTRACT_TIMEOUT_S=30           # at most 300
+# AURA_EXTRACT_DAILY_CALL_CAP=100     # per process: multiply by AURA_WORKERS for the real ceiling
+```
+
+There is no endpoint setting and no model setting: the host and the model are fixed in
+`aura_core/config/external_inference.py`, so no variable can redirect the token. A missing or
+malformed account id, or an empty token variable, stops the gateway at startup.
+
+**What to expect from the tool.** It runs only when the turn holds nothing but the person's own
+words: a turn that retrieved memory, documents, pinned documents or goals, followed a sensitive
+turn, or already ran any tool is refused, and the refusal names why. A user with stored memories
+will therefore often be refused. Values the service is not confident in come back withheld, never
+as answers. Every call writes an `extraction.third_party_call` audit record (user, field count,
+character count, status counts; never the text or the answers).
+
+**Verify, in this order**
+
+1. `/health/ready` shows `"extraction": {"enabled": true, "model": "@cf/cloudflare/clairic",
+   "cooling_down": false}`. That reports configuration only; it makes no call and never gates
+   readiness.
+2. Run the live check once, from `aura_backend/`, with a token that is not the production one:
+   `AURA_EXTRACT_LIVE_ACCOUNT_ID`, `AURA_EXTRACT_LIVE_TOKEN`, then
+   `python -m pytest tests/load/test_extraction_live.py -m load -s`. It costs a few hundred neurons,
+   asserts that no English answer is confidently wrong, and prints a per-field table (English and
+   Arabic) to commit as `docs/reports/extract-structured-<date>.md` (GAP-068's exit condition).
+
+**Know before enabling**
+
+- It is a **preview** model: Cloudflare may change or withdraw it. The tool fails closed and
+  `AURA_ALLOW_EXTRACTION_INFERENCE=false` is the rollback.
+- Create a **dedicated** token for it so it can be rotated on its own. The minimum permissions
+  `/ai/run` needs are not verified (ADR-038 O-6): confirm the live check passes with the token you
+  create. Never paste a token into a chat, an issue or a file in the repository.
+- Whether clairic's weights are published, whether the Workers AI no-training terms cover it, its
+  Arabic support and whether the free plan may call it are all open (ADR-038 O-2 to O-4).
+- The **VPS compose stack does not forward these variables** (ADR-038 O-5), so setting them in a VPS
+  `.env` changes nothing. That fails safe. Supporting it needs a docker secret and prod/dev parity.
+
 ### Capacity and latency settings (provider performance audit, 2026-11-08)
 
 Without these, the code defaults apply on Railway:
@@ -307,6 +364,13 @@ AURA_LLM_STREAM_MAX_S=120
 
 # Prompt cap (PP-09). 400 is sized for qwen2.5:3b on CPU; nothing on this target is that slow.
 AURA_LLM_MAX_PROMPT_TOKENS=<rule below>
+
+# How much retrieved knowledge reaches the model (docs/reports/PROMPT_BUDGET_EVAL_2026-11-22.md).
+# At the defaults (400 / 2 / 280) no retrieved text reached the prompt in the offline evaluation.
+# Measured offline, hash embedder, not with a real model: cap 3000, top_k 4, 1200 chars put the
+# answer text in the prompt for 70% of questions against 0% at the defaults.
+AURA_KNOWLEDGE_TOP_K=4
+AURA_KNOWLEDGE_PROMPT_CHUNK_CHARS=1200
 ```
 
 Why each value:
@@ -343,9 +407,12 @@ Why each value:
   Use `min(context_window) − max_output_tokens − 500` across `hosted1` and `hfspace`. Also mind
   `TPM`: a chat turn sends roughly the prompt twice (planner, then answer), so
   `2 × prompt × turns per minute` must stay under it. `3000` is a reasonable first value for
-  8k-context models with a generous TPM. The cap is one global value, not per provider. That is
-  fine here because no provider on this target is slow enough to need a small prompt. A mixed
-  deployment with a CPU model would need a per-provider cap, which does not exist yet.
+  8k-context models with a generous TPM. This is also what lets retrieved knowledge into the
+  prompt at all: at the default 400 the evaluation above showed none reaching the model, whatever
+  `AURA_KNOWLEDGE_TOP_K` and `AURA_KNOWLEDGE_PROMPT_CHUNK_CHARS` were. The variable is the global
+  ceiling; a provider can narrow it with `AURA_PROVIDER_<NAME>_MAX_PROMPT_TOKENS`, and a turn is
+  sized to the smallest cap among the providers eligible for it (KAN-98). A mixed deployment with a
+  CPU model therefore raises the global value and sets the small cap on the CPU provider.
 
 What these do not fix: sensitive turns (memory, documents, tools, images, Engineer) still have
 no eligible model while only `hosted1` is healthy, because its ceiling is `internal`. For the

@@ -30,7 +30,7 @@ import re
 import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Mapping, Sequence
+from typing import Any, AsyncIterator, Callable, Mapping, Sequence
 
 from ..context.engine import ContextEngine, ContextRequest, AssembledContext
 from ..domain.errors import (
@@ -69,7 +69,8 @@ from ..domain.llm import (
 )
 from ..domain.memory import MemoryHit, MemoryKind, MemoryQuery, readable_scopes
 from ..domain.output_schema import parse_structured
-from ..domain.messages import Conversation, Message
+from ..domain.messages import Conversation, Message, Role
+from ..domain.text import restates
 from ..domain.planning import StepKind, StepStatus
 from ..domain.reasoning import ReasoningStrategy
 from ..domain.tools import ToolSensitivity, intersect_tool_grants, tool_grant_permits
@@ -91,8 +92,14 @@ from ..execution.runner_output import observe_plan
 from ..llm.cache import InMemoryCache
 from ..llm.complexity import assess_complexity
 from ..llm.deadline import generation_budget, no_generation_budget
-from ..llm.router import TurnBudget, current_turn_budget, no_turn_budget, turn_budget_scope
-from ..llm.sensitivity import DataScope, data_scope, escalate
+from ..llm.router import (
+    TurnBudget,
+    current_turn_budget,
+    generation_purpose,
+    no_turn_budget,
+    turn_budget_scope,
+)
+from ..llm.sensitivity import DataScope, current_data_scope, data_scope, escalate
 from ..llm.workload import effective_workload, workload_for_turn, workload_scope
 from ..observability.logging import LogContext, get_logger
 from ..observability.tracing import record_span
@@ -106,6 +113,9 @@ from ..reasoning.engine import ReasoningRequest
 from ..safety.guards import redact_secrets
 from ..tools.personal_os import actions_from_tool_results
 from .active_turns import ActiveTurns
+from ..planning.engine import follow_up_goal
+from .claims import claims_completed_action, unbacked_action_note
+from .turn_scope import current_turn_lookups, turn_lookup_scope
 
 __all__ = ["AIKernel", "TurnRequest", "TurnResult", "KernelDependencies"]
 
@@ -130,6 +140,11 @@ _SESSION_CLEAN_KEY = "llm:session-clean:v1:{user}:{session}"
 #: it can never expire while a clean mark written alongside it survives.
 _SESSION_SENSITIVE_KEY = "llm:session-sensitive:v1:{user}:{session}"
 _SESSION_CLEAN_TTL_S = 30 * 86400
+#: How long a turn's history load waits for its session's previous turn to finish the work it
+#: does after ``done`` (KAN-110). The exchange itself is written in the first step of that work,
+#: well inside this; only a slow session summary can take longer, and history read without it is
+#: still complete -- the overflow messages are simply not folded yet.
+_PENDING_POST_TURN_WAIT_S = 30.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,11 +164,11 @@ class TurnRequest:
     use_memory: bool = True
     use_tools: bool = True
     plan: bool | None = None
-    #: ADR-038 (row 63): ``auto`` | ``plan`` | ``fast`` | ``review`` (``planning/modes.py``). Wins
+    #: ADR-040 (row 63): ``auto`` | ``plan`` | ``fast`` | ``review`` (``planning/modes.py``). Wins
     #: over ``plan``; both ``None`` is today's behaviour. ``review`` plans and then holds the plan
     #: for the user's approval instead of executing it.
     plan_mode: str | None = None
-    #: ADR-045 (row 41): acceptance criteria the caller wants the run checked against (at most
+    #: ADR-047 (row 41): acceptance criteria the caller wants the run checked against (at most
     #: 20 of 300 characters, ``execution/acceptance.py``). Empty is today's behaviour exactly.
     #: With criteria the planner is told them, and ``agent_loop.acceptance`` reports
     #: ``{status, met, unmet, unverified}`` read from the run's own tool results.
@@ -216,7 +231,7 @@ class TurnRequest:
     #: Evidence the calling system supplied for this turn (AR-5). DATA channel only: guarded
     #: like retrieved chunks, fenced, and its presence taints the turn.
     caller_context: tuple[CallerContext, ...] = ()
-    #: A structured agent handoff (ADR-038, ``agents/handoff.py``), set only by
+    #: A structured agent handoff (ADR-040, ``agents/handoff.py``), set only by
     #: ``delegate_to_agent`` on the child turn it builds. Rides the DATA channel like
     #: ``caller_context`` -- guarded, fenced with the turn's nonce, dropped if quarantined -- but
     #: does *not* taint the turn merely by being present (the child already inherits its parent's
@@ -240,7 +255,7 @@ class TurnRequest:
     #: when the message has no clear language (a link, a number, code). ``None`` -- an old app,
     #: a service key -- leaves such a message to the model, as before.
     preferred_language: str | None = None
-    #: The agent task (``aura_core/tasks``, ADR-041) this turn runs for, set only by the task
+    #: The agent task (``aura_core/tasks``, ADR-043) this turn runs for, set only by the task
     #: queue. It changes nothing about how the turn runs; it is carried onto the turn's usage
     #: record so spend can be grouped by task.
     task_id: str | None = None
@@ -284,7 +299,7 @@ class TurnResult:
     #: How attached images were understood (``VisionEngine.Perception.as_dict``), or ``None``
     #: for a turn without images.
     vision: Mapping[str, Any] | None = None
-    #: The agent loop's account of itself (ADR-037, ``execution/loop_events.py::LoopReport``): why
+    #: The agent loop's account of itself (ADR-039, ``execution/loop_events.py::LoopReport``): why
     #: it stopped, the states it visited, any stuck verdict and escalation, the critic's findings.
     #: ``None`` for a turn that ran no loop.
     agent_loop: Mapping[str, Any] | None = None
@@ -343,6 +358,10 @@ class KernelDependencies:
     metrics: Any = None
     event_bus: Any = None
     telemetry_sink: Any = None
+    #: ``user id -> keyed reference`` (``aura_core.security.owner_ref``) stamped on each turn's
+    #: telemetry so its owner can read the usage back. ``None`` leaves turns unowned: their
+    #: usage is then readable by no one.
+    owner_ref: Callable[[str], str | None] | None = None
     clock: Any = None
     settings: Any = None
     models: Any = None
@@ -357,20 +376,20 @@ class KernelDependencies:
     #: `VisionEngine` (`vision/engine.py`, ADR-031). `None` means image turns fail with
     #: `dependency_unavailable`; text turns are unaffected.
     vision: Any = None
-    #: ADR-038 (row 60): ``async (LessonTurn) -> Any``, called in the background after an Engineer
+    #: ADR-040 (row 60): ``async (LessonTurn) -> Any``, called in the background after an Engineer
     #: turn completes so lessons can be derived and queued for the owner's review. ``None`` -- the
     #: default, and what the container wires unless ``AURA_AUTO_LESSONS_ENABLED`` -- does nothing.
     lesson_sink: Any = None
-    #: `AutonomyStore` (`tools/autonomy.py`, ADR-039): the user's review profile, read once per
+    #: `AutonomyStore` (`tools/autonomy.py`, ADR-041): the user's review profile, read once per
     #: turn into `ToolContext.autonomy`. `None` means every turn runs as `standard`.
     autonomy: Any = None
-    #: `UsageLedger` (`history/usage.py`, ADR-041): one compact per-user record per finished turn,
+    #: `UsageLedger` (`history/usage.py`, ADR-043): one compact per-user record per finished turn,
     #: for the usage API. `None` records nothing. Writing never fails a turn.
     usage_ledger: Any = None
-    #: `RunSearchIndex` (`history/run_search.py`, ADR-041): keeps the opt-in redacted goal preview
+    #: `RunSearchIndex` (`history/run_search.py`, ADR-043): keeps the opt-in redacted goal preview
     #: of an agent run (`AURA_AGENT_RUNS_STORE_PREVIEW`). `None`, or the setting off, stores nothing.
     run_index: Any = None
-    #: The audit sink (ADR-045): ``plan.feedback`` is recorded when a person revises a held plan.
+    #: The audit sink (ADR-047): ``plan.feedback`` is recorded when a person revises a held plan.
     #: `None` records nothing.
     audit: Any = None
 
@@ -384,7 +403,7 @@ PLANNING_FAILED_NOTE = (
 )
 
 
-#: Told to the model when a ``review``-mode turn stopped at the approval gate (ADR-038).
+#: Told to the model when a ``review``-mode turn stopped at the approval gate (ADR-040).
 PLAN_REVIEW_NOTE = (
     "Plan review: a plan was prepared for this request and is waiting for the user's approval. No "
     "step has run, so nothing was created, changed, sent, scheduled or read by a tool. Describe "
@@ -518,8 +537,13 @@ class AIKernel:
         #: Lesson-extraction tasks in flight (strong references; see `_dispatch_lessons`).
         self._lesson_tasks: set[asyncio.Task[None]] = set()
         #: The turns each user has running here, so ``POST /agents/stop-all`` can cancel them
-        #: (ADR-039). Process-local, like the host-agent registry without its relay.
+        #: (ADR-041). Process-local, like the host-agent registry without its relay.
         self.active_turns = ActiveTurns()
+        #: Work a streamed turn does after its ``done`` frame (KAN-110), held so it is neither
+        #: garbage-collected nor lost on shutdown, and indexed by session so the session's next
+        #: turn can wait for it before reading history.
+        self._post_turn_tasks: set[asyncio.Task[None]] = set()
+        self._post_turn_by_session: dict[str, set[asyncio.Task[None]]] = {}
 
     # -- public API --------------------------------------------------------------------
 
@@ -564,7 +588,8 @@ class AIKernel:
                 )
             )
             try:
-                with workload_scope(self._workload_hint(request)), data_scope(
+                # The lookup memo first (KAN-109): the hint, baseline and budget below read it.
+                with turn_lookup_scope(), workload_scope(self._workload_hint(request)), data_scope(
                     *self._baseline_classification(request)
                 ) as scope, generation_budget(
                     self._turn_generation_budget_s(request)
@@ -626,16 +651,22 @@ class AIKernel:
             message = decision.text
             guard_records.extend(decision.report.summary())
             timings["guards_in"] = (time.perf_counter() - stage_start) * 1000.0
+            # From here on the guarded text *is* the message (audit B3): session history, the
+            # planner gate and the reasoner all read `request.message`, and before this they
+            # got what the input guard had redacted -- history then replayed it on every turn.
+            request = replace(request, message=message)
 
         # 1b. Images become DATA evidence before anything reads the turn (ADR-031) ----
         request, perception = await self._perceive_images(request, message)
 
         # 2-4. Memory, retrieval, and history concurrently ---------------------------
         stage_start = time.perf_counter()
-        memories, retrieval, history, history_summary, goals, cag_prefix = await self._gather_context(
-            request, message
-        )
+        (
+            memories, retrieval, history, history_summary, goals, cag_prefix, history_tainted,
+        ) = await self._gather_context(request, message)
         timings["memory"] = timings["retrieval"] = (time.perf_counter() - stage_start) * 1000.0
+        self._note_user_statements(request, message, history)
+        previous_reply = self._previous_reply(history)
         await self._classify_context(request, memories, retrieval, history, goals, cag_prefix)
 
         # 5. Guard retrieved content and recalled memories ----------------------------
@@ -654,9 +685,13 @@ class AIKernel:
         )
         quarantined_count += handoff_quarantined
         caller_context = (*caller_context, *handoff_context)
+        # History from a tainted turn taints this one (KAN-101). Decided here, before planning,
+        # because the tool context needs it: a summary the context cap later drops still taints
+        # the turn -- fail closed, as quarantined retrieval does whatever the cap keeps of it.
         tainted = (
             tainted or bool(request.caller_context) or bool(resume and resume.tainted)
-            or request.inherited_taint or handoff_quarantined > 0
+            or request.inherited_taint or history_tainted
+            or handoff_quarantined > 0
         )
 
         # 6. Plan and execute --------------------------------------------------------
@@ -672,24 +707,29 @@ class AIKernel:
         exec_outcome: Any = None
         planning_failed = False
         plan_outcome: Any = None
+        tools_tainted = False
 
         tool_declarations = await self._tool_declarations(request)
-        plan_decision = self._plan_decision(request, tool_declarations, resumed=resume is not None)
+        plan_decision = self._plan_decision(
+            request, tool_declarations, resumed=resume is not None, previous_reply=previous_reply
+        )
+        planner_message = self._planner_message(message, previous_reply, resume)
         held: _ReviewHold | None = None
         if resume is not None or plan_decision.plan:
             stage_start = time.perf_counter()
             try:
                 if plan_decision.review and resume is None:
                     held = await self._hold_plan_for_review(
-                        request, message, tool_declarations, tainted, turn_id
+                        request, planner_message, tool_declarations, tainted, turn_id
                     )
                 if held is not None and (held.held or held.plan is None):
                     outcome = None  # stopped at the gate, or nothing needed planning
                 else:
-                    outcome = await self._plan_and_execute(
-                        request, message, tool_declarations, tainted,
-                        turn_id=turn_id, correlation=correlation, resume=resume,
-                        precomposed=held.plan if held is not None else None,
+                    with generation_purpose("planner"):
+                        outcome = await self._plan_and_execute(
+                            request, planner_message, tool_declarations, tainted,
+                            turn_id=turn_id, correlation=correlation, resume=resume,
+                            precomposed=held.plan if held is not None else None,
                     )
             except Exception:
                 logger.warning("planning or execution failed; answering directly", exc_info=True)
@@ -701,6 +741,7 @@ class AIKernel:
                 exec_outcome = outcome
                 plan_outcome = outcome
                 agent_run_id = getattr(outcome, "run_id", None)
+                tools_tainted = bool(getattr(outcome, "tainted", False))
                 await self._relieve_pressure(request, outcome)
                 agent_loop = self._loop_summary(outcome)
                 await self._index_run(request, agent_run_id, message)
@@ -751,9 +792,9 @@ class AIKernel:
                 tool_results=tool_results,
                 scratchpad=execution_notes,
                 history_summary=history_summary,
-                context_window=self._context_window(),
+                context_window=self._context_window(request),
                 max_output_tokens=request.max_output_tokens,
-                max_prompt_tokens=self._max_prompt_tokens(),
+                max_prompt_tokens=self._max_prompt_tokens(request),
                 caller_context=caller_context,
             )
         )
@@ -773,7 +814,7 @@ class AIKernel:
                 conversation=assembled.conversation,
                 sampling=SamplingParams(
                     temperature=request.temperature,
-                    max_output_tokens=request.max_output_tokens,
+                    max_output_tokens=self._answer_tokens(request, assembled),
                 ),
                 policy=request.routing_policy,
                 require_local=request.require_local,
@@ -782,7 +823,7 @@ class AIKernel:
         except Exception:
             logger.debug("shadow dispatch failed", exc_info=True)
 
-        # 8b. The critic's check of the answer against what the tools reported (ADR-037) ------
+        # 8b. The critic's check of the answer against what the tools reported (ADR-039) ------
         acceptance = (
             None if held is not None and held.held else self._acceptance(request, exec_outcome)
         )
@@ -819,18 +860,21 @@ class AIKernel:
             if repair_usage is not None:
                 usage = (usage or TokenUsage(prompt_tokens=assembled.prompt_tokens)) + repair_usage
 
+        # 9c. Answers nothing backs (audit A1, C1) ------------------------------------
+        empty_generation_fallback = unbacked_claim = False
+        if request.response_schema is None:
+            if not answer.strip():
+                empty_generation_fallback = True
+                answer = self._empty_answer_text(needs_confirmation)
+            elif self._is_unbacked_claim(
+                answer, tool_telemetry, needs_confirmation, pending_tool_calls
+            ):
+                unbacked_claim = True
+                answer = self._with_unbacked_note(request, answer)
+
         # 10. Persist session state --------------------------------------------------
-        if deps.episodic is not None and request.session_id is not None:
-            try:
-                await deps.episodic.append(
-                    request.session_id, request.user_id,
-                    user_message=self._persistable(self._history_message(request)),
-                    assistant_message=self._persistable(answer),
-                )
-            except Exception:
-                # Losing session persistence degrades the next turn; failing this one would be
-                # a worse trade.
-                logger.warning("failed to persist session state")
+        # Awaited here: `run` returns one complete result, so nothing is gained by deferring it.
+        await self._persist_exchange(request, answer, tainted=tainted or tools_tainted)
 
         self._dispatch_lessons(
             request, resolved_agent, message, answer, plan_outcome,
@@ -841,18 +885,20 @@ class AIKernel:
             correlation_id=correlation,
             turn_id=turn_id,
             session_id=request.session_id,
+            owner_ref=self._owner_ref(request),
             route=request.route,
             agent=request.agent,
             strategy=str(strategy),
             outcome=TurnOutcome.SUCCESS,
             provider=provider,
             model=model,
-            fallback_count=fallbacks,
+            # Every generation of the turn the router served from a fallback (audit C2);
+            # `_generate`'s own count was a hard-coded 0.
+            fallback_count=max(fallbacks, budget.fallbacks),
             cache=CacheOutcome(hit=cached, tier=cache_tier),
-            prompt_tokens=usage.prompt_tokens if usage else assembled.prompt_tokens,
-            completion_tokens=usage.completion_tokens if usage else 0,
             # Every generation the turn made -- planning, reasoning, the answer, a repair --
-            # was charged to its budget (F30), not just the last one.
+            # was charged to its budget (F30): its cost and, since KAN-106, its tokens.
+            **self._turn_usage_fields(budget),
             cost_usd=budget.cost_used_usd,
             total_ms=(time.perf_counter() - started) * 1000.0,
             timings=StageTiming(**timings),
@@ -870,6 +916,9 @@ class AIKernel:
             plan_steps=plan_steps,
             plan_revisions=plan_revisions,
             planning_failed=planning_failed,
+            tool_output_dropped=bool(assembled.dropped_tools),
+            unbacked_action_claim=unbacked_claim,
+            empty_generation_fallback=empty_generation_fallback,
             confidence=confidence,
             groundedness=groundedness,
         )
@@ -901,7 +950,7 @@ class AIKernel:
 
     async def stream(self, request: TurnRequest) -> AsyncIterator[Mapping[str, Any]]:
         """Stream a turn as typed frames. A turn the user stops (``stop-all``) ends with an
-        ``error`` frame of kind ``turn_stopped`` rather than a dropped connection (ADR-039).
+        ``error`` frame of kind ``turn_stopped`` rather than a dropped connection (ADR-041).
 
         Tracked for the kill switch here, then delegated to :meth:`_stream_untracked`, which
         holds the pipeline and its own docstring.
@@ -962,7 +1011,9 @@ class AIKernel:
             )
         )
 
-        with LogContext(correlation_id=correlation.value, route=request.route), workload_scope(
+        with LogContext(
+            correlation_id=correlation.value, route=request.route
+        ), turn_lookup_scope(), workload_scope(
             self._workload_hint(request)
         ), data_scope(*self._baseline_classification(request)) as scope, generation_budget(
             self._turn_generation_budget_s(request)
@@ -986,6 +1037,8 @@ class AIKernel:
                     message = decision.text
                     guard_records.extend(decision.report.summary())
                     timings["guards_in"] = (time.perf_counter() - stage_start) * 1000.0
+                    # As in `run` (audit B3): history keeps the guarded text, not the raw one.
+                    request = replace(request, message=message)
 
                 perception = None
                 if request.images:
@@ -1005,12 +1058,15 @@ class AIKernel:
                     }
 
                 stage_start = time.perf_counter()
-                memories, retrieval, history, history_summary, goals, cag_prefix = await self._gather_context(
-                    request, message
-                )
+                (
+                    memories, retrieval, history, history_summary, goals, cag_prefix,
+                    history_tainted,
+                ) = await self._gather_context(request, message)
                 timings["memory"] = timings["retrieval"] = (
                     time.perf_counter() - stage_start
                 ) * 1000.0
+                self._note_user_statements(request, message, history)
+                previous_reply = self._previous_reply(history)
                 await self._classify_context(
                     request, memories, retrieval, history, goals, cag_prefix
                 )
@@ -1027,9 +1083,11 @@ class AIKernel:
                 )
                 quarantined_count += handoff_quarantined
                 caller_context = (*caller_context, *handoff_context)
+                # As in `run`: history from a tainted turn taints this one (KAN-101).
                 tainted = (
                     tainted or bool(request.caller_context) or bool(resume and resume.tainted)
-                    or request.inherited_taint or handoff_quarantined > 0
+                    or request.inherited_taint or history_tainted
+                    or handoff_quarantined > 0
                 )
 
                 tool_declarations = await self._tool_declarations(request)
@@ -1041,28 +1099,33 @@ class AIKernel:
                 execution_notes: list[str] = []
                 planning_failed = False
                 outcome: ExecutionOutcome | None = None
-                plan_decision = self._plan_decision(request, tool_declarations, resumed=resume is not None)
+                plan_decision = self._plan_decision(
+                    request, tool_declarations, resumed=resume is not None,
+                    previous_reply=previous_reply,
+                )
+                planner_message = self._planner_message(message, previous_reply, resume)
                 held: _ReviewHold | None = None
                 if resume is not None or plan_decision.plan:
                     stage_start = time.perf_counter()
                     try:
                         if plan_decision.review and resume is None:
                             held = await self._hold_plan_for_review(
-                                request, message, tool_declarations, tainted, turn_id
+                                request, planner_message, tool_declarations, tainted, turn_id
                             )
                         if held is None or not (held.held or held.plan is None):
-                            async for item in self._iter_execution(
-                                request, message, tool_declarations, tainted,
-                                turn_id=turn_id, correlation=correlation, resume=resume,
-                                precomposed=held.plan if held is not None else None,
-                            ):
-                                if isinstance(item, StepEvent):
-                                    yield {"type": "step", **item.as_dict()}
-                                elif isinstance(item, LoopEvent):
-                                    # ADR-037: `budget`, `context_pressure`, `critic`, `stuck`.
-                                    yield item.as_frame()
-                                elif isinstance(item, ExecutionOutcome):
-                                    outcome = item
+                            with generation_purpose("planner"):
+                                async for item in self._iter_execution(
+                                    request, planner_message, tool_declarations, tainted,
+                                    turn_id=turn_id, correlation=correlation, resume=resume,
+                                    precomposed=held.plan if held is not None else None,
+                                ):
+                                    if isinstance(item, StepEvent):
+                                        yield {"type": "step", **item.as_dict()}
+                                    elif isinstance(item, LoopEvent):
+                                        # ADR-039: `budget`, `context_pressure`, `critic`, `stuck`.
+                                        yield item.as_frame()
+                                    elif isinstance(item, ExecutionOutcome):
+                                        outcome = item
                     except Exception:
                         logger.warning(
                             "planning or execution failed; answering directly", exc_info=True
@@ -1074,7 +1137,7 @@ class AIKernel:
                 if outcome is not None:
                     await self._index_run(request, getattr(outcome, "run_id", None), message)
                     tool_results = outcome.summary_for_context()
-                    # ADR-037: what the loop learned (stopped as stuck, tests still red) -- only
+                    # ADR-039: what the loop learned (stopped as stuck, tests still red) -- only
                     # the loop's own notes; the step notes are `_run_turn`'s, unchanged here.
                     execution_notes.extend(self._loop_notes(outcome))
                     await self._relieve_pressure(request, outcome)
@@ -1122,9 +1185,9 @@ class AIKernel:
                         tool_results=tool_results,
                         scratchpad=execution_notes,
                         history_summary=history_summary,
-                        context_window=self._context_window(),
+                        context_window=self._context_window(request),
                         max_output_tokens=request.max_output_tokens,
-                        max_prompt_tokens=self._max_prompt_tokens(),
+                        max_prompt_tokens=self._max_prompt_tokens(request),
                         caller_context=caller_context,
                     )
                 )
@@ -1148,7 +1211,7 @@ class AIKernel:
                     model=assigned,
                     sampling=SamplingParams(
                         temperature=request.temperature,
-                        max_output_tokens=request.max_output_tokens,
+                        max_output_tokens=self._answer_tokens(request, assembled),
                     ),
                     policy=request.routing_policy,
                     require_local=request.require_local,
@@ -1183,27 +1246,25 @@ class AIKernel:
 
                 answer = "".join(collected)
                 empty_generation_fallback = False
-                if not answer.strip() and saw_tool_calls:
-                    # The model answered with a native tool-call and no text. Those calls are
-                    # informational only here (ADR-006) and were never executed, so without this
-                    # the turn would otherwise end as a bare "success" with an empty answer -- the
+                if not answer.strip():
+                    # No text: either native tool-calls only (informational here, ADR-006, never
+                    # executed) or nothing at all (audit C1). Either way the turn would otherwise
+                    # end as a bare "success" with an empty answer, persisted to history -- the
                     # client has no way to tell that apart from a genuine failure.
                     logger.warning(
-                        "generation returned tool-calls-only with no text; synthesizing fallback",
-                        extra={"needs_confirmation": bool(needs_confirmation)},
+                        "generation returned no text; synthesizing fallback",
+                        extra={
+                            "needs_confirmation": bool(needs_confirmation),
+                            "tool_calls_only": saw_tool_calls,
+                        },
                     )
                     empty_generation_fallback = True
-                    answer = (
-                        "I have a suggested action ready for your confirmation below."
-                        if needs_confirmation
-                        else "I wasn't able to put together a reply for that -- "
-                        "could you rephrase your message or try again?"
-                    )
+                    answer = self._empty_answer_text(needs_confirmation)
                     yield {"type": "token", "text": answer}
 
                 timings["generation"] = (time.perf_counter() - stage_start) * 1000.0
                 # The critic's check of the answer against what the tools reported, and the
-                # loop's own escalation (ADR-037). Appended as more tokens, never as a rewrite.
+                # loop's own escalation (ADR-039). Appended as more tokens, never as a rewrite.
                 acceptance = (
                     None if held is not None and held.held else self._acceptance(request, outcome)
                 )
@@ -1256,15 +1317,18 @@ class AIKernel:
                         }
                         return
 
-                if deps.episodic is not None and request.session_id is not None:
-                    try:
-                        await deps.episodic.append(
-                            request.session_id, request.user_id,
-                            user_message=self._persistable(self._history_message(request)),
-                            assistant_message=self._persistable(answer),
-                        )
-                    except Exception:
-                        logger.warning("failed to persist session state")
+                # An action claim nothing backs (audit A1): the text already streamed, so the
+                # correction goes out as a revision, and the corrected text is what history keeps.
+                unbacked_claim = not empty_generation_fallback and self._is_unbacked_claim(
+                    answer, tool_telemetry, needs_confirmation, pending_tool_calls
+                )
+                if unbacked_claim:
+                    answer = self._with_unbacked_note(request, answer)
+                    yield {
+                        "type": "revision",
+                        "reason": "unbacked_action_claim",
+                        "text": answer,
+                    }
 
                 self._dispatch_lessons(
                     request, resolved_agent, message, answer, outcome,
@@ -1281,22 +1345,29 @@ class AIKernel:
                 searched_empty = bool(
                     retrieval is not None and retrieval.is_empty_but_searched
                 )
-                await self._remember_session_classification(request, scope)
-                prompt_tokens = last_usage.prompt_tokens if last_usage else assembled.prompt_tokens
-                completion_tokens = (
-                    last_usage.completion_tokens if last_usage else len(collected)
-                )
+                # Only a SENSITIVE mark is written before `done` (KAN-110, F32): it is what keeps
+                # this answer, now in the session's history, off a hosted provider on the next
+                # turn -- one that may reach another worker before deferred work lands. A clean
+                # mark can wait: until it lands the session reads "not clean", which fails closed.
+                mark_after_done = scope.level.rank <= DataClassification.INTERNAL.rank
+                if not mark_after_done:
+                    await self._remember_session_classification(request, scope)
+                # Turn-wide (KAN-106): every generation the router charged to this turn, the
+                # same scope as cost_usd -- not the answer's last chunk, and never a chunk count.
+                usage_fields = self._turn_usage_fields(budget)
                 telemetry = TurnTelemetry(
                     correlation_id=correlation,
                     turn_id=turn_id,
                     session_id=request.session_id,
+                    owner_ref=self._owner_ref(request),
                     route=request.route,
                     agent=request.agent,
                     outcome=TurnOutcome.SUCCESS,
                     provider=provider,
                     model=model,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
+                    # A failover before the first token is invisible in the frames (audit C2).
+                    fallback_count=budget.fallbacks,
+                    **usage_fields,
                     cost_usd=budget.cost_used_usd,
                     total_ms=(time.perf_counter() - started) * 1000.0,
                     ttft_ms=ttft_ms,
@@ -1318,13 +1389,28 @@ class AIKernel:
                     ),
                     plan_revisions=len(outcome.plan.revisions) if outcome is not None else 0,
                     planning_failed=planning_failed,
+                    tool_output_dropped=bool(assembled.dropped_tools),
+                    unbacked_action_claim=unbacked_claim,
+                    empty_generation_fallback=empty_generation_fallback,
                 )
-                await self._record(telemetry, request)
+                # Metrics and the span are in-process; the sink write, the event, the session
+                # append (which can run a whole summarising generation) and a clean mark go
+                # after `done` (KAN-110). Scheduled before the yield, so a client that stops
+                # reading at `done` cannot cancel them.
+                self._observe_turn(telemetry)
+                self._schedule_post_turn(
+                    request,
+                    self._finish_streamed_turn(
+                        request, answer, scope if mark_after_done else None, telemetry,
+                        tainted=tainted or bool(getattr(outcome, "tainted", False)),
+                    ),
+                )
                 degraded_reasons = list(telemetry.degraded_reasons)
                 if searched_empty and "empty_retrieval" not in degraded_reasons:
                     degraded_reasons.append("empty_retrieval")
-                if empty_generation_fallback:
-                    degraded_reasons.append("empty_generation_fallback")
+                lookups = current_turn_lookups()
+                if lookups is not None and lookups.skipped_private_context:
+                    degraded_reasons.append("private_context_skipped")
                 yield {
                     "type": "done",
                     "tainted": tainted,
@@ -1335,7 +1421,7 @@ class AIKernel:
                     "plan_summary": plan_summary,
                     "resolved_agent": resolved_agent,
                     "agent_run_id": getattr(outcome, "run_id", None),
-                    # Why the loop stopped and what it concluded (ADR-037); null with no loop.
+                    # Why the loop stopped and what it concluded (ADR-039); null with no loop.
                     "agent_loop": self._with_acceptance(self._loop_summary(outcome), acceptance),
                     "plan_mode": plan_decision.as_dict(
                         awaiting_approval=bool(held is not None and held.held),
@@ -1351,10 +1437,14 @@ class AIKernel:
                     "degraded_reasons": degraded_reasons,
                     "searched_but_empty": searched_empty,
                     "empty_generation_fallback": empty_generation_fallback,
+                    # What ran and whether it worked -- names and outcomes only, as `run`'s
+                    # telemetry reports them -- so the stream can be evaluated like `run`
+                    # (audit C4).
+                    "tools": [{"name": t.name, "ok": t.ok} for t in tool_telemetry],
                     "vision": perception.as_dict() if perception is not None else None,
                     "usage": {
-                        "prompt_tokens": last_usage.prompt_tokens if last_usage else 0,
-                        "completion_tokens": completion_tokens,
+                        **budget.usage.as_dict(),
+                        "engine_generations": budget.engine_generations_used,
                         "cost_usd": round(budget.cost_used_usd, 6),
                     },
                 }
@@ -1383,7 +1473,7 @@ class AIKernel:
                 if self._metrics is not None:
                     self._metrics.turns_in_flight.dec()
 
-    # -- lessons (ADR-038, row 60) ------------------------------------------------------
+    # -- lessons (ADR-040, row 60) ------------------------------------------------------
 
     def _dispatch_lessons(
         self,
@@ -1479,8 +1569,11 @@ class AIKernel:
         str,
         Sequence[GoalSnapshot],
         Any,
+        bool,
     ]:
         """Run memory recall, knowledge retrieval, history, goals, and CAG concurrently.
+
+        The last element says the history came from a tainted turn (KAN-101).
 
         These are independent. Running them in sequence is the single largest avoidable latency
         in the legacy pipeline, which additionally embeds the same message four separate times
@@ -1491,9 +1584,14 @@ class AIKernel:
         # no personas, so every scope (the pre-scope behaviour).
         spec = self._resolve_agent(request)
         scopes = readable_scopes(spec.memory_scope) if spec is not None else None
+        # KAN-112: when nothing could serve this turn once private context made it SENSITIVE,
+        # don't fetch that context only to fail the turn on it.
+        skip_private = self._private_context_unservable(request)
+        if skip_private:
+            self._note_private_context_skipped(request)
 
         async def recall() -> list[MemoryHit]:
-            if not (request.use_memory and deps.memory is not None):
+            if skip_private or not (request.use_memory and deps.memory is not None):
                 return []
             try:
                 return await deps.memory.recall(
@@ -1514,7 +1612,7 @@ class AIKernel:
                 return []
 
         async def retrieve() -> RetrievalResult | None:
-            if not (request.use_knowledge and deps.knowledge is not None):
+            if skip_private or not (request.use_knowledge and deps.knowledge is not None):
                 return None
             try:
                 return await deps.knowledge.retrieve(message, owner_id=request.knowledge_owner or request.user_id)
@@ -1522,18 +1620,32 @@ class AIKernel:
                 logger.warning("knowledge retrieval failed; continuing without it")
                 return None
 
-        async def load_history() -> tuple[Conversation, str]:
+        async def load_history() -> tuple[Conversation, str, bool]:
             if deps.episodic is None or request.session_id is None:
-                return Conversation(), ""
+                return Conversation(), "", False
+            # The session's previous turn may still be appending after its `done` (KAN-110).
+            await self._await_session_post_turn(request)
             try:
-                loaded = await deps.episodic.history(request.session_id, request.user_id)
+                snapshot = getattr(deps.episodic, "history_snapshot", None)
+                if snapshot is None:
+                    conversation, summary = await deps.episodic.history(
+                        request.session_id, request.user_id
+                    )
+                    conversation, summary = self._redact_loaded_history(conversation, summary)
+                    return conversation, summary, False
+                loaded = await snapshot(request.session_id, request.user_id)
+                # KAN-101: history written by a tainted turn -- verbatim, or folded into the
+                # summary -- taints this one, as retrieved content that was quarantined does.
+                conversation, summary = self._redact_loaded_history(
+                    loaded.conversation, loaded.summary
+                )
+                return conversation, summary, loaded.tainted
             except Exception:
                 logger.warning("session history load failed; continuing without it")
-                return Conversation(), ""
-            return self._redact_loaded_history(*loaded)
+                return Conversation(), "", False
 
         async def load_goals() -> Sequence[GoalSnapshot]:
-            if deps.goals is None:
+            if skip_private or deps.goals is None:
                 return ()
             try:
                 return await deps.goals.active_summaries(request.user_id)
@@ -1542,7 +1654,7 @@ class AIKernel:
                 return ()
 
         async def load_cag() -> Any:
-            if deps.cag is None:
+            if skip_private or deps.cag is None:
                 return None
             try:
                 return await deps.cag.prefix_for(request.knowledge_owner or request.user_id)
@@ -1550,10 +1662,10 @@ class AIKernel:
                 logger.warning("cag prefix load failed; continuing without it")
                 return None
 
-        memories, retrieval, (history, summary), goals, cag_prefix = await asyncio.gather(
-            recall(), retrieve(), load_history(), load_goals(), load_cag()
+        memories, retrieval, (history, summary, history_tainted), goals, cag_prefix = (
+            await asyncio.gather(recall(), retrieve(), load_history(), load_goals(), load_cag())
         )
-        return memories, retrieval, history, summary, goals, cag_prefix
+        return memories, retrieval, history, summary, goals, cag_prefix, history_tainted
 
     # -- data classification (ADR-030 Phase 4) ----------------------------------------------
 
@@ -1658,6 +1770,84 @@ class AIKernel:
     def _restricts_data(self) -> bool:
         return bool(getattr(self._deps.router, "restricts_data_classification", False))
 
+    def _private_context_unservable(self, request: TurnRequest) -> bool:
+        """Whether fetching this turn's private context could only make it fail (KAN-112).
+
+        Memory, retrieval, goals and pinned documents run before classification, and anything
+        they return makes the turn SENSITIVE. On a deployment whose only reachable providers
+        take INTERNAL content -- the chat-only launch: a hosted open-weight slot, its
+        self-hosted fallback down -- that content is refused, and the turn paid for embedding
+        and search and then failed ``capability_unavailable``.
+
+        The choice, when no provider could serve the turn at SENSITIVE but one could at its
+        current level: skip those sources and answer as a plain chat turn, rather than fail
+        early. Failing early would refuse every turn a document *might* have touched, including
+        the many where retrieval finds nothing; skipping answers them all, and the ``done``
+        frame says ``private_context_skipped`` so the client can say the answer did not use
+        the person's documents or memories.
+
+        The skipped sources are the ones :meth:`_classify_context` escalates on whenever they
+        return anything. Session history is kept: it is the conversation itself, and escalates
+        only when an earlier turn of the session was SENSITIVE (then the turn fails as before).
+        Nothing is weakened: skipped content never enters the prompt, classification still
+        escalates on everything that does (history, tool output), and the router still refuses
+        SENSITIVE content to an INTERNAL provider.
+
+        Asked of the router's own :meth:`plan` (no provider is called), so health, circuit
+        breakers, ``require_local``, workload fences and quotas count exactly as they will for
+        the turn. Only for a turn that starts at INTERNAL: one that is SENSITIVE from the
+        start (Engineer, caller evidence, images) is unchanged. ``False`` whenever the answer
+        is not known.
+        """
+        if not self._restricts_data():
+            return False
+        scope = current_data_scope()
+        if scope is None or scope.level.rank > DataClassification.INTERNAL.rank:
+            return False
+        plan = getattr(self._deps.router, "plan", None)
+        if plan is None:
+            return False
+        probe = CompletionRequest(
+            conversation=Conversation.of([Message.user(request.message)]),
+            sampling=SamplingParams(
+                temperature=request.temperature, max_output_tokens=request.max_output_tokens
+            ),
+            policy=request.routing_policy,
+            require_local=request.require_local,
+            tools=(),
+            data_classification=DataClassification.SENSITIVE,
+        )
+        try:
+            if plan(probe).candidates:
+                return False
+            # Skip only when it changes the outcome: with nothing serving the turn even as it
+            # is, it fails either way, and the failure should be the router's usual one.
+            return bool(plan(replace(probe, data_classification=None)).candidates)
+        except Exception:
+            logger.debug("serviceability probe failed; gathering context as usual", exc_info=True)
+            return False
+
+    def _note_private_context_skipped(self, request: TurnRequest) -> None:
+        skipped = tuple(
+            name for name, wanted in (
+                ("memory", request.use_memory and self._deps.memory is not None),
+                ("documents", request.use_knowledge and self._deps.knowledge is not None),
+                ("pinned_documents", self._deps.cag is not None),
+                ("goals", self._deps.goals is not None),
+            ) if wanted
+        )
+        if not skipped:
+            return
+        lookups = current_turn_lookups()
+        if lookups is not None:
+            lookups.skipped_private_context = skipped
+        logger.info(
+            "private context skipped: no provider can take this turn's content",
+            extra={"skipped": list(skipped)},
+        )
+        if self._metrics is not None:
+            self._metrics.turn_degraded_total.labels(reason="private_context_skipped").inc()
+
     def _session_clean_key(self, request: TurnRequest) -> str | None:
         if request.session_id is None:
             return None
@@ -1728,7 +1918,21 @@ class AIKernel:
 
         Uses the *resolved* persona, so a caller who asked for ``engineer`` without the
         capability (and was silently given the orchestrator) is not queued as Engineer work.
+
+        Computed once per request object per turn (KAN-109): the scope, the baseline
+        classification, the generation budget and the consent check all ask, and each asking
+        re-scored the message's complexity. A resumed confirmation is a new request object, so
+        its restored persona gets its own hint.
         """
+        lookups = current_turn_lookups()
+        if lookups is not None and lookups.workload is not None and lookups.workload[0] is request:
+            return lookups.workload[1]
+        hint = self._compute_workload_hint(request)
+        if lookups is not None:
+            lookups.workload = (request, hint)
+        return hint
+
+    def _compute_workload_hint(self, request: TurnRequest) -> WorkloadHint:
         spec = self._resolve_agent(request)
         llm = getattr(self._deps.settings, "llm", None)
         threshold = (
@@ -1767,13 +1971,13 @@ class AIKernel:
     async def preflight(self, request: TurnRequest) -> None:
         """Refuse, before anything is queued or run, a turn the kernel would refuse at its start:
         today an Engineer turn without a current consent (D-03). Used by the agent task gateway
-        (ADR-041), which accepts a task now and runs it later -- a person who has not agreed
+        (ADR-043), which accepts a task now and runs it later -- a person who has not agreed
         should hear so when they submit, not find a failed task afterwards. The turn itself still
         re-checks when it runs. Raises the same :class:`ConsentRequiredError` the turn would."""
         await self._require_engineer_consent(request)
 
     async def revise_held_plan(self, request: TurnRequest) -> Any:
-        """ADR-045 (row 51): apply the person's free-text feedback (``request.message``) to the plan
+        """ADR-047 (row 51): apply the person's free-text feedback (``request.message``) to the plan
         held for them (``request.approval_ids``) and return a ``PlanFeedbackResult``.
 
         Planned only: nothing runs, whatever the comment says. The plan is replanned at most once
@@ -1801,7 +2005,7 @@ class AIKernel:
         )
 
     async def _index_run(self, request: TurnRequest, run_id: str | None, goal: str) -> None:
-        """Hand the run's goal to the opt-in preview index (ADR-041). A no-op unless the operator
+        """Hand the run's goal to the opt-in preview index (ADR-043). A no-op unless the operator
         enabled previews; never raises."""
         index = self._deps.run_index
         if index is None or not run_id:
@@ -1891,7 +2095,7 @@ class AIKernel:
                 logger.warning("failed to record engineer run", extra={"tool": report.tool})
 
     async def _relieve_pressure(self, request: TurnRequest, outcome: Any) -> None:
-        """Answer a ``context_pressure`` signal from the agent loop (ADR-037) with the existing
+        """Answer a ``context_pressure`` signal from the agent loop (ADR-039) with the existing
         history compression: fold the session's older turns into its summary now, so the next turn
         carries the summary instead of the verbatim turns. The loop already shortened the tool
         output it held; this is the other half, and it runs at most once per turn because the loop
@@ -1910,7 +2114,7 @@ class AIKernel:
 
     @staticmethod
     def _acceptance(request: TurnRequest, outcome: Any) -> AcceptanceReport | None:
-        """ADR-045 (row 41): the run's tool results checked against the caller's
+        """ADR-047 (row 41): the run's tool results checked against the caller's
         ``success_criteria``; ``None`` when none were supplied. Never raises."""
         if not request.success_criteria:
             return None
@@ -1938,7 +2142,7 @@ class AIKernel:
 
     @staticmethod
     def _loop_notes(outcome: Any) -> list[str]:
-        """SYSTEM-channel notes from the agent loop (ADR-037), beside the step notes.
+        """SYSTEM-channel notes from the agent loop (ADR-039), beside the step notes.
 
         The user is told the full escalation separately and deterministically (``_answer_caveat``);
         this only keeps the model from writing an answer that contradicts what the loop concluded.
@@ -1967,7 +2171,7 @@ class AIKernel:
     def _answer_caveat(
         outcome: Any, answer: str, message: str, acceptance: AcceptanceReport | None = None,
     ) -> tuple[str, list[Any]]:
-        """Caveat text to append to the answer, and the critic findings behind it (ADR-037).
+        """Caveat text to append to the answer, and the critic findings behind it (ADR-039).
 
         Two sources, both deterministic. The loop's own escalation -- what it gave up on and what
         to try -- is always appended when there is one, so a stopped run is never presented as a
@@ -1975,7 +2179,7 @@ class AIKernel:
         a file or test no tool result mentions) run only when the critic is on for this loop.
         """
         loop = getattr(outcome, "loop", None)
-        # ADR-045: a run that did not meet its criteria says so, loop or no loop.
+        # ADR-047: a run that did not meet its criteria says so, loop or no loop.
         acceptance_note = acceptance.caveat() if acceptance is not None else ""
         if loop is None:
             return acceptance_note, []
@@ -2002,7 +2206,7 @@ class AIKernel:
 
     @staticmethod
     def _execution_notes(outcome: Any) -> list[str]:
-        """The step notes (below) plus the agent loop's own (ADR-037)."""
+        """The step notes (below) plus the agent loop's own (ADR-039)."""
         return AIKernel._step_notes(outcome) + AIKernel._loop_notes(outcome)
 
     @staticmethod
@@ -2115,10 +2319,24 @@ class AIKernel:
     _DESKTOP_ONLY_UNAVAILABLE = frozenset({"open_workspace", "list_workspaces", "destroy_workspace"})
 
     async def _desktop_active(self, user_id: Any) -> bool:
+        """Whether ``user_id`` has a paired desktop session, resolved once per turn (KAN-109).
+
+        The tool list and the system prompt both ask, and each asking was a relay round trip
+        (Redis, on a multi-worker gateway). Both only shape what the model is told, so one
+        answer per turn is what they should agree on anyway. Where a tool call actually runs is
+        still decided live, per call, by the sandbox runner.
+        """
         registry = self._deps.host_agent_registry
         if registry is None or user_id is None:
             return False
-        return await registry.resolve(user_id) is not None
+        lookups = current_turn_lookups()
+        key = str(getattr(user_id, "value", user_id))
+        if lookups is not None and key in lookups.desktop:
+            return lookups.desktop[key]
+        active = await registry.resolve(user_id) is not None
+        if lookups is not None:
+            lookups.desktop[key] = active
+        return active
 
     async def _tool_declarations(self, request: TurnRequest) -> tuple[Mapping[str, Any], ...]:
         deps = self._deps
@@ -2153,9 +2371,14 @@ class AIKernel:
             return False
 
     def _plan_decision(
-        self, request: TurnRequest, tools: Sequence[Mapping[str, Any]], *, resumed: bool = False
+        self,
+        request: TurnRequest,
+        tools: Sequence[Mapping[str, Any]],
+        *,
+        resumed: bool = False,
+        previous_reply: str | None = None,
     ) -> PlanDecision:
-        """Whether to plan this turn, in which mode, and why (``planning/modes.py``, ADR-038).
+        """Whether to plan this turn, in which mode, and why (``planning/modes.py``, ADR-040).
 
         With no ``plan_mode``, no ``plan`` and no ``AURA_REASONING_DEFAULT_PLAN_MODE`` this is
         today's rule exactly: an agent-loop persona (the Engineer) plans, everyone else by the
@@ -2186,16 +2409,22 @@ class AIKernel:
             requested_mode=request.plan_mode, plan_flag=request.plan, default_mode=default_mode,
             message=request.message, side_effecting_tools=side_effecting, agentic_persona=agentic,
             heuristic=lambda force: deps.planner.needs_plan(
-                request.message, available_tools=names, force=force
+                request.message, available_tools=names, force=force,
+                previous_reply=previous_reply,
             ),
             complex_message=moded and assess_complexity(request.message).is_complex(threshold),
         )
 
-    def _should_plan(self, request: TurnRequest, tools: Sequence[Mapping[str, Any]]) -> bool:
-        return self._plan_decision(request, tools).plan
+    def _should_plan(
+        self,
+        request: TurnRequest,
+        tools: Sequence[Mapping[str, Any]],
+        previous_reply: str | None = None,
+    ) -> bool:
+        return self._plan_decision(request, tools, previous_reply=previous_reply).plan
 
     async def _user_autonomy(self, request: TurnRequest) -> str:
-        """The calling user's review profile (ADR-039), ``standard`` when none is stored.
+        """The calling user's review profile (ADR-041), ``standard`` when none is stored.
 
         Never raises: a store that cannot answer must not fail a turn, and the answer it falls
         back to is the one that changes nothing."""
@@ -2208,6 +2437,86 @@ class AIKernel:
         except Exception:
             logger.warning("autonomy profile lookup failed; using standard", exc_info=True)
             return "standard"
+
+    @staticmethod
+    def _previous_reply(history: Any) -> str | None:
+        """The assistant's last message in this session's history, or ``None``."""
+        for message in reversed(tuple(history or ())):
+            if getattr(message, "role", None) is Role.ASSISTANT:
+                return message.content
+        return None
+
+    @staticmethod
+    def _planner_message(message: str, previous_reply: str | None, resume: Any) -> str:
+        """What the planner plans from: the message, plus its referent for a follow-up (A2).
+
+        A resumed confirmation runs its stored plan, so it is given the message unchanged.
+        """
+        if resume is not None:
+            return message
+        return follow_up_goal(message, previous_reply)
+
+    @staticmethod
+    def _note_user_statements(request: TurnRequest, message: str, history: Any) -> None:
+        """Record what the person wrote this session, for ``remember_fact`` (audit B5).
+
+        A delegated sub-turn keeps what it inherited: its message is a brief another model
+        wrote, and treating it as the person's words would reopen the hole this closes.
+        """
+        lookups = current_turn_lookups()
+        if lookups is None or request.delegation_depth > 0:
+            return
+        earlier = tuple(
+            m.content for m in (history or ()) if getattr(m, "role", None) is Role.USER
+        )
+        lookups.user_statements = (message, *earlier)
+
+    @staticmethod
+    def _user_stated() -> Callable[[str], bool] | None:
+        """A predicate: does a fact restate something the person wrote this session (B5)?
+
+        ``None`` outside a turn, which leaves ``remember_fact`` as it was. The tool gets the
+        predicate, never the words: a tool must not read the conversation.
+        """
+        lookups = current_turn_lookups()
+        if lookups is None:
+            return None
+        statements = lookups.user_statements
+        return lambda fact: restates(fact, statements)
+
+    @staticmethod
+    def _empty_answer_text(needs_confirmation: Sequence[str]) -> str:
+        """The fixed answer for a generation that returned no text (audit C1)."""
+        if needs_confirmation:
+            return "I have a suggested action ready for your confirmation below."
+        return (
+            "I wasn't able to put together a reply for that -- "
+            "could you rephrase your message or try again?"
+        )
+
+    @staticmethod
+    def _is_unbacked_claim(
+        answer: str,
+        tools: Sequence[ToolTelemetry],
+        needs_confirmation: Sequence[str],
+        pending_tool_calls: Sequence[Any],
+    ) -> bool:
+        """The answer claims a completed action, and nothing this turn did could back it (A1).
+
+        Backed means any tool ran and succeeded, or something awaits the person's confirmation.
+        Deliberately generous: a succeeded read-only tool also counts, so the check fires only
+        when no tool ran at all -- the case the audit found, and one with no false "backing".
+        """
+        if needs_confirmation or pending_tool_calls:
+            return False
+        if any(t.ok and t.allowed for t in tools):
+            return False
+        return claims_completed_action(answer)
+
+    @staticmethod
+    def _with_unbacked_note(request: TurnRequest, answer: str) -> str:
+        language = reply_language(request.message, request.preferred_language)
+        return f"{answer.rstrip()}\n\n{unbacked_action_note(language)}"
 
     def _tool_context(
         self, request: TurnRequest, tainted: bool, autonomy: str = "standard"
@@ -2252,6 +2561,8 @@ class AIKernel:
             # doesn't carry one (e.g. a request with no `session_id`), which
             # `_SandboxSessionCache` treats as "isolation not possible, ignore the flag."
             metadata={
+                # A predicate, not the text (audit B5): see `_user_stated`.
+                "user_stated": self._user_stated(),
                 "session_id": str(request.session_id) if request.session_id else None,
                 "desktop_task_isolation": request.desktop_task_isolation,
                 "workspace_root": request.workspace_root,
@@ -2663,6 +2974,7 @@ class AIKernel:
             tools=(),
             timeout_s=self._completion_timeout_s(),
             response_schema=self._json_mode_hint(schema),
+            metadata={"purpose": "repair"},
         )
         response = await deps.router.complete(repair, budget=budget)
         repaired = response.text
@@ -2683,14 +2995,32 @@ class AIKernel:
 
         Charged by every generation made inside the turn, not only the kernel's own: the router
         reads it ambiently. A sub-turn (delegation) also charges the turn it was started from.
-        ``max_cost_per_turn_usd`` of 0 (the default) leaves the cost ceiling off.
+        ``max_cost_per_turn_usd`` of 0 (the default) leaves the cost ceiling off. Engine
+        generations (planner, reasoning, summaries) have their own ceiling (KAN-107).
         """
         llm = getattr(self._deps.settings, "llm", None)
         return TurnBudget(
             max_generations=getattr(llm, "max_generations_per_turn", 8),
             max_cost_usd=float(getattr(llm, "max_cost_per_turn_usd", 0.0) or 0.0),
+            max_engine_generations=int(getattr(llm, "max_engine_generations_per_turn", 32) or 0),
             parent=current_turn_budget(),
         )
+
+    def _turn_usage_fields(self, budget: TurnBudget) -> dict[str, Any]:
+        """``TurnTelemetry`` token fields from the turn's usage ledger (KAN-106), plus which
+        tokenizer the context was counted with (KAN-103)."""
+        usage = budget.usage
+        context = self._deps.context
+        return {
+            "prompt_tokens": usage.prompt_tokens,
+            "completion_tokens": usage.completion_tokens,
+            "usage_estimated": usage.estimated,
+            "generations": usage.generations,
+            "engine_generations": budget.engine_generations_used,
+            "usage_by_purpose": {k: v.as_dict() for k, v in usage.by_purpose.items()},
+            "tokenizer": getattr(context, "tokenizer_name", None),
+            "context_tokens_exact": bool(getattr(context, "counts_are_exact", False)),
+        }
 
     async def _guard_context(
         self,
@@ -2846,24 +3176,75 @@ class AIKernel:
                 AGENT_PROMPT_IDS["orchestrator"], {"fence_rules": ""}
             ).text
 
-    def _context_window(self) -> int:
-        """Smallest context window among healthy providers.
+    def _turn_providers(self, request: TurnRequest | None = None) -> tuple[str, ...]:
+        """The providers this turn could actually be served by (KAN-98).
+
+        Asks the router's own ``plan`` -- under the turn's ambient workload and data scopes --
+        rather than re-deriving routing here: workload fences, pool tiering, data
+        classification, ``require_local`` and open circuits all exclude a provider exactly as
+        they would for the real generation. Falls back to every provider when the router
+        cannot plan or excludes them all, which sizes to the old all-provider minimum.
+        """
+        router = self._deps.router
+        names = tuple(getattr(router, "provider_names", ()) or ())
+        plan = getattr(router, "plan", None)
+        if plan is None:
+            return names
+        try:
+            probe = CompletionRequest(
+                conversation=Conversation.of([Message.user("")]),
+                sampling=SamplingParams(
+                    max_output_tokens=request.max_output_tokens if request is not None else None
+                ),
+                policy=request.routing_policy if request is not None else None,
+                require_local=bool(request is not None and request.require_local),
+            )
+            candidates = tuple(plan(probe).candidates)
+        except Exception:
+            logger.debug("routing plan for context sizing failed", exc_info=True)
+            return names
+        return candidates or names
+
+    def _context_window(self, request: TurnRequest | None = None) -> int:
+        """Smallest context window among the providers healthy and eligible for this turn.
 
         Sizing to the smallest rather than the largest means a failover to a smaller model does
-        not immediately overflow -- which would turn a latency event into an outage.
+        not immediately overflow -- which would turn a latency event into an outage. Only
+        providers the turn could fail over *to* count: an unhealthy provider, or one fenced to
+        another workload, must not shrink every turn's window.
         """
         router = self._deps.router
         try:
             windows = [
-                router.get(name).capabilities.context_window for name in router.provider_names
+                router.get(name).capabilities.context_window
+                for name in self._turn_providers(request)
+                if router.get(name) is not None
             ]
             return min(windows) if windows else 8192
         except Exception:
             return 8192
 
-    def _max_prompt_tokens(self) -> int:
+    @staticmethod
+    def _answer_tokens(request: TurnRequest, assembled: Any) -> int:
+        """The output size to ask for: the request's, clamped to what the window leaves after
+        the assembled prompt (KAN-99). A context without the clamp uses the request's size."""
+        clamped = int(getattr(assembled, "max_output_tokens", 0) or 0)
+        return min(request.max_output_tokens, clamped) if clamped > 0 else request.max_output_tokens
+
+    def _max_prompt_tokens(self, request: TurnRequest | None = None) -> int:
+        """The assembled-prompt cap for this turn: the global ``max_prompt_tokens``, narrowed
+        by any per-provider cap among the turn's eligible providers (KAN-98)."""
         llm = getattr(self._deps.settings, "llm", None) if self._deps.settings is not None else None
-        return int(getattr(llm, "max_prompt_tokens", 400) or 400)
+        ceiling = int(getattr(llm, "max_prompt_tokens", 400) or 400)
+        declared = {
+            config.name: int(getattr(config, "max_prompt_tokens", 0) or 0)
+            for config in (getattr(llm, "providers", ()) or ())
+        }
+        caps = [
+            min(declared[name], ceiling) if declared.get(name) else ceiling
+            for name in self._turn_providers(request)
+        ]
+        return min(caps) if caps else ceiling
 
     def _turn_generation_budget_s(self, request: TurnRequest) -> float | None:
         """The generation budget for this turn (PP-06), or ``None`` for no budget.
@@ -2907,10 +3288,35 @@ class AIKernel:
         return str(getattr(learning, "finetune_model_id", "aura-ft") or "aura-ft")
 
     async def _assigned_model(self, request: TurnRequest) -> str | None:
-        """Resolve a registry canary/production artefact for this user, if any."""
+        """Resolve a registry canary/production artefact for this user, if any.
+
+        Once per turn (KAN-109), and from the registry's short-lived serving snapshot where it
+        has one, so a deployment with nothing registered pays no store read on most turns.
+        """
         deps = self._deps
         if deps.models is None:
             return None
+        lookups = current_turn_lookups()
+        key = request.user_id.value
+        if lookups is not None and key in lookups.assigned_model:
+            return lookups.assigned_model[key]
+        tag = await self._lookup_assigned_model(request)
+        if lookups is not None:
+            lookups.assigned_model[key] = tag
+        return tag
+
+    async def _lookup_assigned_model(self, request: TurnRequest) -> str | None:
+        deps = self._deps
+        serving_version = getattr(deps.models, "serving_version", None)
+        if serving_version is not None:
+            try:
+                version = await serving_version(
+                    self._registry_model_id(), subject=request.user_id.value
+                )
+            except Exception:
+                logger.debug("model registry lookup failed", exc_info=True)
+                return None
+            return self._servable_model_tag(version.artefact_uri) if version is not None else None
         try:
             assignment = await deps.models.assign(
                 self._registry_model_id(), subject=request.user_id.value
@@ -3055,7 +3461,8 @@ class AIKernel:
             conversation=assembled.conversation,
             model=assigned,
             sampling=SamplingParams(
-                temperature=request.temperature, max_output_tokens=request.max_output_tokens
+                temperature=request.temperature,
+                max_output_tokens=self._answer_tokens(request, assembled),
             ),
             policy=request.routing_policy,
             require_local=request.require_local,
@@ -3076,20 +3483,35 @@ class AIKernel:
         strength = retrieval.top_score if retrieval and retrieval.chunks else None
 
         # Multi-sample strategies vote over prose; a structured answer is one direct generation.
+        result = None
         if deps.reasoner is not None and request.response_schema is None:
-            result = await deps.reasoner.reason(
-                ReasoningRequest(
-                    question=request.message,
-                    conversation=assembled.conversation,
-                    citations=[c.chunk.content for c in (retrieval.chunks if retrieval else ())],
-                    retrieval_strength=strength,
-                    strategy=request.strategy,
-                    max_output_tokens=request.max_output_tokens,
-                    require_local=request.require_local,
-                )
-            )
+            try:
+                with generation_purpose("reasoning"):
+                    result = await deps.reasoner.reason(
+                        ReasoningRequest(
+                            question=request.message,
+                            conversation=assembled.conversation,
+                            citations=[
+                                c.chunk.content for c in (retrieval.chunks if retrieval else ())
+                            ],
+                            retrieval_strength=strength,
+                            strategy=request.strategy,
+                            max_output_tokens=self._answer_tokens(request, assembled),
+                            require_local=request.require_local,
+                        )
+                    )
+            except BudgetExceededError as exc:
+                if (exc.details or {}).get("scope") != "engine":
+                    raise
+                # The engine-generation cap ran out mid-reasoning (KAN-107): answer with one
+                # direct generation from the kernel's own budget rather than fail the turn.
+                logger.warning("reasoning hit the engine generation cap; answering directly")
+                result = None
+        if result is not None:
             confidence = result.confidence.score if result.confidence else None
-            if cache is not None:
+            # Never cache an empty answer (audit C1): it would be served to every later turn
+            # the cache matches, each time as the kernel's fallback text instead of a reply.
+            if cache is not None and result.text.strip():
                 await cache.store(
                     completion,
                     CompletionResponse(
@@ -3110,7 +3532,7 @@ class AIKernel:
         except AllProvidersFailedError:
             raise
 
-        if cache is not None:
+        if cache is not None and response.text.strip():
             await cache.store(completion, response, namespace=namespace)
 
         return (
@@ -3135,6 +3557,7 @@ class AIKernel:
             quarantined=quarantined,
             citations=len(retrieval.citations()),
             strategy=retrieval.strategy,
+            unavailable=retrieval.is_unavailable,
         )
 
     def _error_result(
@@ -3155,6 +3578,7 @@ class AIKernel:
             correlation_id=correlation,
             turn_id=turn_id,
             session_id=request.session_id,
+            owner_ref=self._owner_ref(request),
             route=request.route,
             agent=request.agent,
             outcome=outcome,
@@ -3183,16 +3607,41 @@ class AIKernel:
         )
 
     async def _record(self, telemetry: TurnTelemetry, request: TurnRequest | None = None) -> None:
+        self._observe_turn(telemetry)
+        await self._persist_telemetry(telemetry, request)
+
+    def _observe_turn(self, telemetry: TurnTelemetry) -> None:
+        """The in-process half of recording a turn: its span and its metrics. No I/O."""
         _trace_turn(telemetry)
-        ledger = self._deps.usage_ledger
-        if ledger is not None and request is not None:
-            # Per user, which the content-free telemetry above deliberately is not. Never raises.
-            await ledger.record(request.user_id.value, telemetry, task_id=request.task_id)
         if self._metrics is not None:
             try:
                 self._metrics.observe_turn(telemetry)
             except Exception:  # pragma: no cover - defensive
                 logger.debug("metric observation failed", exc_info=True)
+
+    def _owner_ref(self, request: "TurnRequest") -> str | None:
+        """The turn owner's keyed reference, or ``None`` when no maker is wired or it fails.
+
+        Telemetry must never fail the turn it describes, so a maker that raises leaves the turn
+        unowned (unreadable) rather than breaking it.
+        """
+        make = self._deps.owner_ref
+        if make is None:
+            return None
+        try:
+            return make(request.user_id.value)
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("owner reference could not be derived", exc_info=True)
+            return None
+
+    async def _persist_telemetry(
+        self, telemetry: TurnTelemetry, request: TurnRequest | None = None
+    ) -> None:
+        """The I/O half: the usage ledger, the telemetry sink and the ``TurnCompleted`` event."""
+        ledger = self._deps.usage_ledger
+        if ledger is not None and request is not None:
+            # Per user, which the content-free telemetry deliberately is not. Never raises.
+            await ledger.record(request.user_id.value, telemetry, task_id=request.task_id)
         if self._deps.telemetry_sink is not None:
             try:
                 await self._deps.telemetry_sink.record_turn(telemetry)
@@ -3211,6 +3660,102 @@ class AIKernel:
                 degraded=telemetry.degraded,
             )
         )
+
+    # -- after the answer (KAN-110) -------------------------------------------------------
+
+    async def _persist_exchange(
+        self, request: TurnRequest, answer: str, *, tainted: bool = False
+    ) -> None:
+        """Append the exchange to session history. Never raises.
+
+        ``tainted`` is the turn's taint, including any its tools picked up while executing: it
+        travels with the exchange into history and into any summary of it (KAN-101).
+        """
+        deps = self._deps
+        if deps.episodic is None or request.session_id is None:
+            return
+        try:
+            await deps.episodic.append(
+                request.session_id, request.user_id,
+                user_message=self._persistable(self._history_message(request)),
+                assistant_message=self._persistable(answer),
+                tainted=tainted,
+            )
+        except Exception:
+            # Losing session persistence degrades the next turn; failing this one would be
+            # a worse trade.
+            logger.warning("failed to persist session state")
+
+    async def _finish_streamed_turn(
+        self,
+        request: TurnRequest,
+        answer: str,
+        clean_scope: DataScope | None,
+        telemetry: TurnTelemetry,
+        *,
+        tainted: bool = False,
+    ) -> None:
+        """What a streamed turn still owes once its ``done`` frame is out.
+
+        Outside the turn's generation and cost budgets: the person is no longer waiting, and the
+        session summary ``append`` may generate is the session's upkeep, not this answer. The
+        task keeps the turn's data scope (a copy of its context), so that summary of a SENSITIVE
+        session still cannot reach a hosted provider. Order: the clean mark and the telemetry
+        are quick and wait on nothing; the append last, since its summary can take a generation.
+        """
+        with no_generation_budget(), no_turn_budget():
+            if clean_scope is not None:
+                await self._remember_session_classification(request, clean_scope)
+            await self._persist_telemetry(telemetry, request)
+            await self._persist_exchange(request, answer, tainted=tainted)
+
+    @staticmethod
+    def _post_turn_key(request: TurnRequest) -> str | None:
+        if request.session_id is None:
+            return None
+        return f"{request.user_id.value}|{len(request.user_id.value)}|{request.session_id.value}"
+
+    def _schedule_post_turn(self, request: TurnRequest, work: Any) -> None:
+        task = asyncio.get_running_loop().create_task(work)
+        self._post_turn_tasks.add(task)
+        key = self._post_turn_key(request)
+        if key is not None:
+            self._post_turn_by_session.setdefault(key, set()).add(task)
+
+        def finished(done: asyncio.Task[None]) -> None:
+            self._post_turn_tasks.discard(done)
+            if key is not None:
+                pending = self._post_turn_by_session.get(key)
+                if pending is not None:
+                    pending.discard(done)
+                    if not pending:
+                        self._post_turn_by_session.pop(key, None)
+            if not done.cancelled() and done.exception() is not None:
+                logger.warning("post-turn work failed", exc_info=done.exception())
+
+        task.add_done_callback(finished)
+
+    async def _await_session_post_turn(self, request: TurnRequest) -> None:
+        """Wait for this session's earlier turns to finish their post-``done`` work.
+
+        So a quick follow-up never reads history (or the session's clean mark) from before the
+        previous answer landed. Bounded by :data:`_PENDING_POST_TURN_WAIT_S`; a turn that waited
+        that long proceeds with what is stored, which already holds the exchange. In-process
+        only: a follow-up reaching another worker reads what is stored, and the exchange is
+        written first and within milliseconds of ``done`` -- well before a person can reply.
+        """
+        key = self._post_turn_key(request)
+        pending = self._post_turn_by_session.get(key) if key is not None else None
+        if not pending:
+            return
+        _, still_running = await asyncio.wait(set(pending), timeout=_PENDING_POST_TURN_WAIT_S)
+        if still_running:
+            logger.warning("previous turn's session update still running; reading history anyway")
+
+    async def wait_for_post_turn(self, timeout_s: float | None = None) -> None:
+        """Wait for every streamed turn's post-``done`` work. For tests and graceful shutdown."""
+        if self._post_turn_tasks:
+            await asyncio.wait(set(self._post_turn_tasks), timeout=timeout_s)
 
     async def _publish(self, event: Any) -> None:
         if self._deps.event_bus is None:

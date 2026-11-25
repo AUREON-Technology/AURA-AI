@@ -1,4 +1,4 @@
-"""Deterministic digest of clipped tool output (ADR-045, row 28).
+"""Deterministic digest of clipped tool output (ADR-047, row 28).
 
 Under context pressure the token monitor shortens older tool output to its head and tail. A failing
 test's name, a stack frame or a warning usually sits in the middle, so head-and-tail alone dropped

@@ -1,4 +1,4 @@
-"""Search and timeline over a user's agent runs (ADR-041, roadmap row 71).
+"""Search and timeline over a user's agent runs (ADR-043, roadmap row 71).
 
 A stored run keeps a digest of its goal, never the goal (``domain/agent_runs.py``: the content
 rule), so a stored run cannot be searched by what the person asked. This module adds what can be

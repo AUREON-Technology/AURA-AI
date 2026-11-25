@@ -65,6 +65,8 @@ class TestStreamedRedactionIsStored:
         assert revisions, "the output guard must have redacted something for this test to mean anything"
         assert "078-05-1120" not in revisions[-1]["text"]
 
+        # The append runs after `done` (KAN-110); read the store once it has landed.
+        await container.kernel.wait_for_post_turn()
         history, _ = await container.episodic.history(session, USER)
         stored = [m.content for m in history if str(m.role) == "assistant"]
         assert stored

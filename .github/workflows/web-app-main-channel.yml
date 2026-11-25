@@ -1,0 +1,184 @@
+name: Web App Main Channel
+
+# Every push to main that touches the client (or the web host) builds the Flutter web app and
+# publishes it at https://web.aureon-ai.tech/app/, the same service that serves the desktop install
+# page. Plan and decisions: docs/plans/client-web-app_plan.md; runbook: docs/deployment/web-app.md.
+#
+#   build       (Linux)  flutter analyze + flutter test as a gate, then scripts/build-web-app.sh
+#                        (--base-href /app/, CanvasKit bundled) -> artifact.
+#   deploy-web  (Linux)  stages the web service with the new app AND the installer that is live
+#                        now, `railway up`s AURA-Web, then checks the live site reports THIS commit.
+#
+# One service, two workflows. `railway up` replaces the whole image, so a deploy from here would
+# erase the Windows installer, and desktop-main-channel.yml's deploy would erase /app/. Each
+# therefore carries the other's half: this one restores the installer from the live site (verified
+# against its own latest.json SHA-256), and that one builds the app too. Both deploy jobs share the
+# concurrency group `web-service-deploy` so two never run at once.
+#
+# One-time setup (repository settings):
+#   secret    RAILWAY_WEB_TOKEN   the same project token desktop-main-channel.yml uses.
+#   variables FIREBASE_WEB_API_KEY, FIREBASE_WEB_APP_ID, FIREBASE_WEB_PROJECT_ID, and optionally
+#             FIREBASE_WEB_AUTH_DOMAIN, FIREBASE_WEB_MESSAGING_SENDER_ID: the Firebase web app's
+#             public config. Without them the app still deploys; web sign-in says it is unavailable.
+#
+# Not a gate on Railway's own GitHub auto-deploy of main (CB-44): it ships whatever main holds, with
+# or without this workflow. This workflow only decides whether /app/ is refreshed.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "aura_client/**"
+      - "aura_web/**"
+      - "scripts/build-web-app.sh"
+      - ".github/workflows/web-app-main-channel.yml"
+  workflow_dispatch:
+    inputs:
+      backend_url:
+        description: "Backend URL to bake into the build"
+        required: false
+        default: "https://api.aureon-ai.tech"
+
+permissions:
+  contents: read
+
+env:
+  BACKEND_URL: ${{ github.event.inputs.backend_url || 'https://api.aureon-ai.tech' }}
+  SITE_URL: https://web.aureon-ai.tech
+  FIREBASE_WEB_API_KEY: ${{ vars.FIREBASE_WEB_API_KEY }}
+  FIREBASE_WEB_APP_ID: ${{ vars.FIREBASE_WEB_APP_ID }}
+  FIREBASE_WEB_PROJECT_ID: ${{ vars.FIREBASE_WEB_PROJECT_ID }}
+  FIREBASE_WEB_AUTH_DOMAIN: ${{ vars.FIREBASE_WEB_AUTH_DOMAIN }}
+  FIREBASE_WEB_MESSAGING_SENDER_ID: ${{ vars.FIREBASE_WEB_MESSAGING_SENDER_ID }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.44.6"
+
+      - name: Install dependencies and generate code
+        working-directory: aura_client
+        run: |
+          flutter pub get
+          dart run build_runner build --delete-conflicting-outputs
+
+      # The web app ships to customers; a main that fails its own checks does not replace it.
+      - name: Analyze
+        working-directory: aura_client
+        run: flutter analyze
+
+      - name: Test
+        working-directory: aura_client
+        run: flutter test
+
+      - name: Build the web app
+        env:
+          SKIP_PUB_GET: "1"
+        run: scripts/build-web-app.sh aura_web/app-build
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aura-web-app
+          path: aura_web/app-build/
+          retention-days: 14
+
+  deploy-web:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Shared with desktop-main-channel.yml's deploy job. Queue, never cancel: a run cancelled
+    # halfway through a deploy could leave the site mid-update.
+    concurrency:
+      group: web-service-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_WEB_TOKEN }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Download the built web app
+        run: |
+          set -euo pipefail
+          gh run download "${{ github.run_id }}" --repo "${{ github.repository }}" --name aura-web-app --dir app-artifact
+          test -f app-artifact/index.html
+          test -f app-artifact/app-version.json
+
+      # aura_web/Dockerfile builds from the repository root. The staged tree has the same layout.
+      - name: Stage the web service
+        run: |
+          set -euo pipefail
+          mkdir -p stage/scripts
+          cp -r aura_web stage/aura_web
+          cp scripts/AURA-Desktop-Setup.cmd stage/scripts/
+          rm -rf stage/aura_web/app-build
+          mkdir -p stage/aura_web/app-build
+          cp -r app-artifact/. stage/aura_web/app-build/
+
+      # Keep the installer that is live. A first deploy (nothing published yet, 404) simply has
+      # none to keep. A manifest that does not match its installer is not carried forward.
+      - name: Carry the live desktop installer into this deploy
+        run: |
+          set -euo pipefail
+          dest=stage/aura_web/build-assets
+          status="$(curl -sS -o live-latest.json -w '%{http_code}' "${SITE_URL}/desktop-ide/download/latest.json" || true)"
+          if [ "$status" != "200" ]; then
+            echo "::notice::No desktop installer is published yet (latest.json answered ${status}); nothing to carry."
+            exit 0
+          fi
+          name="$(python3 -c "import json; print(json.load(open('live-latest.json'))['installer']['name'])")"
+          want="$(python3 -c "import json; print(json.load(open('live-latest.json'))['installer']['sha256'])")"
+          case "$name" in
+            *[!A-Za-z0-9._-]*|'') echo "::error::unexpected installer name '${name}' in the live latest.json"; exit 1 ;;
+          esac
+          curl -fsS -o "installer.bin" "${SITE_URL}/desktop-ide/download/${name}"
+          have="$(sha256sum installer.bin | cut -d' ' -f1)"
+          if [ "$want" != "$have" ]; then
+            echo "::error::the live installer's SHA-256 (${have}) does not match the live latest.json (${want}); not carrying it forward"
+            exit 1
+          fi
+          mkdir -p "$dest"
+          mv installer.bin "${dest}/${name}"
+          cp live-latest.json "${dest}/latest.json"
+          ls -l "$dest"
+
+      - name: Deploy to Railway
+        working-directory: stage
+        run: |
+          set -euo pipefail
+          if [ -z "${RAILWAY_TOKEN:-}" ]; then
+            echo "::error::The RAILWAY_WEB_TOKEN secret is not set, so the web app cannot be published. Create a Railway project token for the production environment and add it as that repository secret."
+            exit 1
+          fi
+          npm install --global @railway/cli@5.23.0
+          railway up --service AURA-Web --ci
+
+      # Railway swaps the container only once the new one is healthy. Prove the public site now
+      # serves THIS commit's app, that / still leads to it, and that the installer page is intact.
+      - name: Check the live site serves this build
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            live="$(curl -fsS "${SITE_URL}/app/app-version.json" | python3 -c "import json,sys; print(json.load(sys.stdin)['commit'])" || true)"
+            if [ "$live" = "$GITHUB_SHA" ]; then
+              root="$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' "${SITE_URL}/")"
+              install="$(curl -sS -o /dev/null -w '%{http_code}' "${SITE_URL}/desktop-ide/install")"
+              echo "Live site serves commit ${GITHUB_SHA}; / -> ${root}; installer page ${install}."
+              case "$root" in "302 ${SITE_URL}/app/"*) ;; *) echo "::error::/ does not redirect to /app/ (${root})"; exit 1 ;; esac
+              [ "$install" = "200" ] || { echo "::error::the installer page answered ${install}"; exit 1; }
+              exit 0
+            fi
+            echo "attempt ${attempt}: live commit is '${live}', waiting for ${GITHUB_SHA}"
+            sleep 10
+          done
+          echo "::error::The live site did not start serving this build within 5 minutes."
+          exit 1

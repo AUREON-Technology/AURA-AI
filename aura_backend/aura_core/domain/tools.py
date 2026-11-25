@@ -45,7 +45,7 @@ __all__ = [
 NESTED_DISPATCH_TAG = "nested_dispatch"
 
 #: Marks a tool that reaches a network service on the caller's behalf (a web fetch, a forge call,
-#: a bridged MCP server). The ``strict`` autonomy profile refuses these outright (ADR-039).
+#: a bridged MCP server). The ``strict`` autonomy profile refuses these outright (ADR-041).
 NETWORK_TAG = "network"
 
 

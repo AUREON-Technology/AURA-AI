@@ -1,4 +1,4 @@
-"""Agent tasks: submit, queue, run, poll (ADR-041). Engine layer: domain, ports and peer engines."""
+"""Agent tasks: submit, queue, run, poll (ADR-043). Engine layer: domain, ports and peer engines."""
 
 from .models import (
     AgentTask,

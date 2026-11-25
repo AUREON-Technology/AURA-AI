@@ -1,4 +1,4 @@
-"""The usage dashboard API and agent-run search/timeline (ADR-041, roadmap rows 72 and 71).
+"""The usage dashboard API and agent-run search/timeline (ADR-043, roadmap rows 72 and 71).
 
 Driven through the real ASGI app and the real kernel on the in-memory substrate: a turn is sent
 to ``/chat``, the kernel writes its usage record, and ``/usage/*`` reads it back. Nothing here

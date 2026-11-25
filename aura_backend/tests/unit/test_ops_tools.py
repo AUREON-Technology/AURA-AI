@@ -1,4 +1,4 @@
-"""ADR-047: platform health, live telemetry, trace analysis and CI-workflow deploys.
+"""ADR-049: platform health, live telemetry, trace analysis and CI-workflow deploys.
 
 REAL: the tools, the HTTP code (urllib, no-redirect opener, caps), the registry pipeline (grants,
 confirmation, capability), the analyzers. SIMULATED: the far side -- a local HTTP server that answers

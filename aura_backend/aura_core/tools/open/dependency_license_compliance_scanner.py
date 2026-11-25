@@ -53,21 +53,23 @@ def _normalise_spdx(raw: str) -> str:
 
 
 class DependencyLicenseComplianceScanner:
-    """Scanner for checking software package licenses against policy allowlists,
-    denylists, and copyleft compatibility.
+    """Scanner for checking software package licenses against policy allowlists and denylists.
 
-    Bugs fixed (v2):
-    - LGPL-3.0 is no longer flagged by a "GPL-3.0" rule (substring matching removed).
-    - BSL-1.0 (Boost, permissive) is NOT forbidden; only BSL-1.1 / SSPL-1.0 are.
-    - UNKNOWN licenses fail by default (instead of passing silently).
-    - GPLv3 and similar aliases are resolved to canonical SPDX IDs before matching.
-    - All forbidden checks use exact SPDX ID membership, not substring search.
+    A licence string is read as a (simplified) SPDX expression: ``OR`` alternatives, ``AND``
+    components, ``WITH`` exceptions and parentheses. A package is compliant when at least one
+    ``OR`` alternative has no forbidden token, passes the allowlist (when one is given) and is not
+    an unknown/blank label. Forbidden tokens match on a *token boundary*, not as a substring, so
+    ``GPL-3.0`` does not flag ``LGPL-3.0`` and ``BUSL`` does not flag ``BSL-1.0`` (Boost).
+
+    ADR-036: this token-boundary behaviour was reverted once by a merge (a0024eae) to exact-ID
+    matching, which let ``GPL-3.0+`` and ``BUSL-1.1`` through and passed ``""`` and
+    ``NOASSERTION``. ``tests/unit/test_open_tools_fixes.py::TestLicenseScanner`` pins it.
     """
 
     #: Strong-copyleft and source-available families. ``GPL-3`` / ``GPLV3`` are the spellings
     #: package metadata uses instead of the SPDX id; ``BSL-1.0`` is the permissive Boost licence,
     #: so the Business Source License is listed by its own ids only.
-    DEFAULT_FORBIDDEN_LICENSES = [
+    DEFAULT_FORBIDDEN_LICENSES: List[str] = [
         "AGPL",
         "GPL",
         "GPL-3.0",

@@ -1,4 +1,4 @@
-"""Per-user review profile storage (ADR-039): how much a user wants to be asked before the agent
+"""Per-user review profile storage (ADR-041): how much a user wants to be asked before the agent
 acts. The profile itself is applied by :class:`~aura_core.tools.policy.ToolPolicy`; this module
 only remembers it.
 
@@ -11,7 +11,7 @@ the deployment's default (``standard`` unless the operator set ``AURA_AUTONOMY_D
 for a user who chose ``strict`` means *losing* that choice until they set it again. It can never
 turn into ``autonomous``: that value is only honoured when it is read back intact *and* the
 deployment enabled it (``ToolPolicy.effective_autonomy``). Moving this to a durable row is the
-one thing the profile still needs (ADR-039, "What is not built").
+one thing the profile still needs (ADR-041, "What is not built").
 """
 
 from __future__ import annotations

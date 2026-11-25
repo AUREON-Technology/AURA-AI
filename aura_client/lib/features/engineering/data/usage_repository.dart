@@ -6,7 +6,7 @@ Map<String, dynamic> _asMap(Object? value) =>
     value is Map ? value.map((k, v) => MapEntry(k.toString(), v)) : <String, dynamic>{};
 
 /// Totals for one bucket (the whole period, or one day / agent / task) of
-/// `GET /api/v3/usage/summary` (ADR-041 section 6).
+/// `GET /api/v3/usage/summary` (ADR-043 section 6).
 class UsageTotals {
   const UsageTotals({
     required this.turns,

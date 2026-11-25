@@ -3,11 +3,14 @@ rem ----------------------------------------------------------------------------
 rem AURA Desktop IDE -- setup.  One file: double-click it, or run it from a terminal.
 rem
 rem Every run installs the NEWEST build of the AURA Desktop IDE that was published from the `main`
-rem branch on GitHub (.github/workflows/desktop-main-channel.yml).  Nothing here is a snapshot:
-rem the build is looked up and downloaded when this file runs, so a copy of this file that is a
-rem year old still installs today's app.  Running it again later updates an existing install.
+rem branch.  Nothing here is a snapshot: the build is looked up and downloaded when this file runs
+rem (from https://web.aureon-ai.tech/desktop-ide/download/), so a copy of this file that is a year
+rem old still installs today's app.  Running it again later updates an existing install.  No GitHub
+rem account or repository access is needed.
 rem
-rem Options (all optional):  -Silent  -Force  -DownloadOnly  -Token <github token>  -Repo owner/name
+rem The build is made and published by .github/workflows/desktop-main-channel.yml.
+rem
+rem Options (all optional):  -Silent  -Force  -DownloadOnly  -BaseUrl <https://host/path>
 rem Docs: docs/guides/desktop-releases.md ("Always-latest setup")
 rem
 rem How this file is built: the batch lines below start Windows PowerShell on this very file and
@@ -24,18 +27,14 @@ echo "%cmdcmdline%" | find /i "%~nx0" >nul && pause
 exit /b %AURA_RC%
 ##POWERSHELL##
 param(
-    [string]$Repo = 'anasibrahimgnedy-collab/AURA-AI',
+    [string]$BaseUrl = 'https://web.aureon-ai.tech/desktop-ide/download',
     [switch]$Silent,
     [switch]$Force,
-    [switch]$DownloadOnly,
-    [string]$Token,
-    [string]$ApiBase = 'https://api.github.com'
+    [switch]$DownloadOnly
 )
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-$ChannelTag = 'desktop-main'
-$ManifestName = 'aura-desktop-main.json'
 # Inno Setup's registry key for the installer's AppId (aura_client/windows/installer/aura.iss).
 $UninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{62D1F24E-FBE0-4CD3-AA49-031547C5B4E4}_is1'
 
@@ -49,54 +48,25 @@ function Stop-Setup($message) {
     exit 1
 }
 
-# Windows PowerShell 5.1 may not offer TLS 1.2 by default; GitHub requires it.
+# Windows PowerShell 5.1 may not offer TLS 1.2 by default.
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
 Add-Type -AssemblyName System.Net.Http
 
-function Get-GitHubToken {
-    if ($Token) { return $Token }
-    if ($env:AURA_GITHUB_TOKEN) { return $env:AURA_GITHUB_TOKEN }
-    if ($env:GITHUB_TOKEN) { return $env:GITHUB_TOKEN }
-    # A signed-in GitHub CLI is the easy way to reach a private repository.
-    $gh = Get-Command gh -ErrorAction SilentlyContinue
-    if ($gh) {
-        try {
-            $t = (& $gh.Source auth token 2>$null | Select-Object -First 1)
-            if ($LASTEXITCODE -eq 0 -and $t) { return "$t".Trim() }
-        } catch { }
-    }
-    return $null
-}
-
-# Downloads a URL to a file. Redirects are followed by hand so the GitHub token is sent only to
-# the first host (api.github.com) and never on to the storage host a release asset redirects to.
+# Downloads a URL to a file, with a coarse progress line. Returns $true, or $false for HTTP 404 when
+# -NotFoundOk is given; any other failure throws.
 function Save-Url {
-    param([string]$Url, [string]$OutFile, [hashtable]$Headers = @{}, [string]$Label = 'file')
-    $handler = New-Object System.Net.Http.HttpClientHandler
-    $handler.AllowAutoRedirect = $false
-    $client = New-Object System.Net.Http.HttpClient($handler)
+    param([string]$Url, [string]$OutFile, [string]$Label = 'file', [switch]$NotFoundOk)
+    $client = New-Object System.Net.Http.HttpClient
     $client.Timeout = [TimeSpan]::FromMinutes(30)
-    $current = $Url
-    $sendHeaders = $Headers
     try {
-        for ($hop = 0; $hop -lt 6; $hop++) {
-            $req = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, $current)
-            [void]$req.Headers.TryAddWithoutValidation('User-Agent', 'AURA-Desktop-Setup')
-            foreach ($k in $sendHeaders.Keys) { [void]$req.Headers.TryAddWithoutValidation($k, [string]$sendHeaders[$k]) }
-            $resp = $client.SendAsync($req, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+        $req = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, $Url)
+        [void]$req.Headers.TryAddWithoutValidation('User-Agent', 'AURA-Desktop-Setup')
+        [void]$req.Headers.TryAddWithoutValidation('Cache-Control', 'no-cache')
+        $resp = $client.SendAsync($req, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+        try {
             $code = [int]$resp.StatusCode
-            if ($code -ge 300 -and $code -lt 400 -and $resp.Headers.Location) {
-                $next = $resp.Headers.Location
-                if (-not $next.IsAbsoluteUri) { $next = New-Object Uri((New-Object Uri($current)), $next) }
-                $current = $next.AbsoluteUri
-                $sendHeaders = @{}
-                $resp.Dispose()
-                continue
-            }
-            if (-not $resp.IsSuccessStatusCode) {
-                $resp.Dispose()
-                throw "HTTP $code while downloading the $Label"
-            }
+            if ($code -eq 404 -and $NotFoundOk) { return $false }
+            if (-not $resp.IsSuccessStatusCode) { throw "HTTP $code while downloading the $Label" }
             $total = $resp.Content.Headers.ContentLength
             $in = $resp.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
             $out = [IO.File]::Create($OutFile)
@@ -118,20 +88,14 @@ function Save-Url {
             } finally {
                 $out.Dispose()
                 $in.Dispose()
-                $resp.Dispose()
             }
-            return
+            return $true
+        } finally {
+            $resp.Dispose()
         }
-        throw "too many redirects while downloading the $Label"
     } finally {
         $client.Dispose()
     }
-}
-
-function Get-StatusCode($err) {
-    $r = $err.Exception.Response
-    if ($r) { try { return [int]$r.StatusCode } catch { } }
-    return $null
 }
 
 # ------------------------------------------------------------------------------------------------
@@ -142,63 +106,35 @@ Write-Host '----------------------'
 if (-not [Environment]::Is64BitOperatingSystem) { Stop-Setup 'AURA Desktop needs 64-bit Windows.' }
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { Stop-Setup 'AURA Desktop setup runs on Windows only.' }
 
+# https only, so a build cannot be swapped on the wire. Plain http is accepted for this machine
+# alone (testing a local copy of the site).
+try { $base = [Uri]$BaseUrl } catch { Stop-Setup "-BaseUrl is not a valid URL: $BaseUrl" }
+$localHost = @('localhost', '127.0.0.1') -contains $base.Host
+if (-not ($base.Scheme -eq 'https' -or ($base.Scheme -eq 'http' -and $localHost))) {
+    Stop-Setup '-BaseUrl must be an https:// address.'
+}
+$baseText = $BaseUrl.TrimEnd('/')
+
 $work = Join-Path ([IO.Path]::GetTempPath()) ('aura-setup-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $work | Out-Null
 
 try {
-    # 1. Find the newest main-branch build -----------------------------------------------------
-    Write-Step 'Looking up the latest AURA Desktop build on GitHub'
-    $tokenValue = Get-GitHubToken
-    $apiHeaders = @{ 'Accept' = 'application/vnd.github+json'; 'User-Agent' = 'AURA-Desktop-Setup'; 'X-GitHub-Api-Version' = '2022-11-28' }
-    if ($tokenValue) { $apiHeaders['Authorization'] = "Bearer $tokenValue" }
+    # 1. Find the newest build -----------------------------------------------------------------
+    Write-Step 'Looking up the latest AURA Desktop build'
+    $manifestPath = Join-Path $work 'latest.json'
+    $found = $false
+    try { $found = Save-Url -Url "$baseText/latest.json" -OutFile $manifestPath -Label 'build manifest' -NotFoundOk }
+    catch { Stop-Setup "Could not reach $baseText. Check the internet connection and try again." }
+    if (-not $found) { Stop-Setup 'No AURA Desktop build has been published yet. Please try again later.' }
 
-    $release = $null
-    try {
-        $release = Invoke-RestMethod -Uri "$ApiBase/repos/$Repo/releases/tags/$ChannelTag" -Headers $apiHeaders -Method Get
-    } catch {
-        $status = Get-StatusCode $_
-        if ($status -eq 404) {
-            if ($tokenValue) {
-                Stop-Setup "No '$ChannelTag' build is published on $Repo yet (or this GitHub account cannot see the repository). Ask the maintainer to run the 'Desktop Main Channel' workflow once."
-            }
-            Stop-Setup "Could not find the '$ChannelTag' build on $Repo. Either none is published yet, or the repository is private: sign in with 'gh auth login' (or set AURA_GITHUB_TOKEN) with an account that can read it, then run this again."
-        }
-        if ($status -eq 403 -or $status -eq 429) {
-            Stop-Setup 'GitHub refused the request (rate limit?). Wait a few minutes, or set AURA_GITHUB_TOKEN, then run this again.'
-        }
-        if ($status -eq 401) { Stop-Setup 'GitHub rejected the token. Check AURA_GITHUB_TOKEN / the -Token value / gh auth status.' }
-        Stop-Setup "Could not reach GitHub ($($_.Exception.Message)). Check the internet connection and try again."
-    }
-
-    function Get-ReleaseAsset($name) {
-        foreach ($a in $release.assets) { if ($a.name -eq $name) { return $a } }
-        return $null
-    }
-    # With a token, assets come from the API (works for a private repo); without one, from the
-    # public download URL (not rate limited).
-    function Save-Asset($asset, $outFile, $label) {
-        if ($tokenValue) {
-            Save-Url -Url $asset.url -OutFile $outFile -Headers @{ 'Accept' = 'application/octet-stream'; 'Authorization' = "Bearer $tokenValue" } -Label $label
-        } else {
-            Save-Url -Url $asset.browser_download_url -OutFile $outFile -Label $label
-        }
-    }
-
-    $manifestAsset = Get-ReleaseAsset $ManifestName
-    if (-not $manifestAsset) { Stop-Setup "The '$ChannelTag' release has no $ManifestName; the build looks incomplete. Try again after the next successful build." }
-    $manifestPath = Join-Path $work $ManifestName
-    Save-Asset $manifestAsset $manifestPath 'build manifest'
     $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if (-not $manifest.installer -or -not $manifest.installer.name -or -not $manifest.installer.sha256 -or -not $manifest.version) {
-        Stop-Setup "$ManifestName is missing fields; refusing to continue."
+        Stop-Setup 'The build manifest is missing fields; refusing to continue.'
     }
     $installerName = [string]$manifest.installer.name
     if ($installerName -ne [IO.Path]::GetFileName($installerName) -or $installerName -notlike '*.exe') {
-        Stop-Setup "$ManifestName names an unexpected installer file; refusing to continue."
+        Stop-Setup 'The build manifest names an unexpected installer file; refusing to continue.'
     }
-    $installerAsset = Get-ReleaseAsset $installerName
-    if (-not $installerAsset) { Stop-Setup "The release has no $installerName." }
-
     $shortCommit = ([string]$manifest.commit).Substring(0, [Math]::Min(7, ([string]$manifest.commit).Length))
     Write-Note "Latest build : $($manifest.version)  (main @ $shortCommit, built $($manifest.builtAt))"
 
@@ -220,7 +156,7 @@ try {
             Write-Step 'Installing the Microsoft Visual C++ runtime (AURA Desktop needs it)'
             $vcPath = Join-Path $work 'vc_redist.x64.exe'
             try {
-                Save-Url -Url 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile $vcPath -Label 'Visual C++ runtime'
+                [void](Save-Url -Url 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile $vcPath -Label 'Visual C++ runtime')
                 $vcSig = Get-AuthenticodeSignature -LiteralPath $vcPath
                 if ($vcSig.Status -ne 'Valid' -or $vcSig.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
                     throw 'the download is not signed by Microsoft'
@@ -238,11 +174,14 @@ try {
     # 4. Download and verify the installer -----------------------------------------------------
     Write-Step "Downloading $installerName"
     $installerPath = Join-Path $work $installerName
-    Save-Asset $installerAsset $installerPath 'installer'
+    $ok = $false
+    try { $ok = Save-Url -Url ("$baseText/" + [Uri]::EscapeDataString($installerName)) -OutFile $installerPath -Label 'installer' -NotFoundOk }
+    catch { Stop-Setup $_.Exception.Message }
+    if (-not $ok) { Stop-Setup 'The installer is not on the server (a new build may be going up right now). Please run setup again in a minute.' }
     $actual = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actual -ne ([string]$manifest.installer.sha256).ToLowerInvariant()) {
         Remove-Item -LiteralPath $installerPath -Force -ErrorAction SilentlyContinue
-        Stop-Setup 'The downloaded installer does not match its published SHA-256 checksum. It was deleted and NOT run.'
+        Stop-Setup 'The downloaded installer does not match its published SHA-256 checksum. It was deleted and NOT run. If this keeps happening, a new build may be going up: try again in a minute.'
     }
     Write-Note 'Checksum OK.'
     $sig = Get-AuthenticodeSignature -LiteralPath $installerPath

@@ -673,10 +673,11 @@ class TestGenerationMetrics:
         assert sample("aura_llm_generation_ttft_seconds_sum", labels) == pytest.approx(0.4)
         assert sample("aura_llm_generation_decode_seconds_sum", labels) == pytest.approx(1.0)
         assert sample("aura_llm_generation_queue_wait_seconds_count", labels) == 1
+        # An unbudgeted, unlabelled generation is purpose="engine" (KAN-107).
         assert sample("aura_llm_generation_total_seconds_count",
-                      {**labels, "outcome": "success"}) == 1
+                      {**labels, "outcome": "success", "purpose": "engine"}) == 1
         assert sample("aura_llm_generation_tokens_total",
-                      {**labels, "direction": "output"}) == 6
+                      {**labels, "direction": "output", "purpose": "engine"}) == 6
         assert sample("aura_llm_generation_tokens_per_second_count", labels) == 1
         assert sample("aura_llm_admission_total",
                       {"group": "coder", "outcome": "admitted", "priority": "2"}) == 1

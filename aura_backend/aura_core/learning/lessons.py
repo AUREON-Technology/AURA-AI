@@ -1,4 +1,4 @@
-"""Derive candidate lessons from an Engineer turn (ADR-038, inventory row 60).
+"""Derive candidate lessons from an Engineer turn (ADR-040, inventory row 60).
 
 What a lesson is: one short sentence an Engineer would want in front of it next time -- *a decision
 that was made*, *a convention the user stated*, *a step that failed and what it failed on*. What

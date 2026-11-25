@@ -1,4 +1,4 @@
-"""Background agent tasks (ADR-038, inventory row 57).
+"""Background agent tasks (ADR-040, inventory row 57).
 
 ``delegate_to_agent`` is a synchronous one-hop sub-turn: the orchestrator waits for the answer
 inside its own plan step, so a long sub-task (a research pass, a code review) holds the whole turn

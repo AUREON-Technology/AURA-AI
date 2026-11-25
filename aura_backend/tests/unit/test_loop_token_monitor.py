@@ -1,5 +1,5 @@
 """The token budget monitor: budget status each pass, a pressure signal, and compression, once
-(ADR-037; row 28).
+(ADR-039; row 28).
 
 The Engineer had no ``token_budget`` at all. It now has a generous default, reports how much of it a
 run has used on every pass, and when use crosses a threshold says so and shortens older tool output --
@@ -320,7 +320,7 @@ class TestEndToEnd:
     async def test_the_default_budget_emits_status_but_no_pressure(self, monkeypatch) -> None:
         _, frames = await self._turn(monkeypatch)
         budgets = frames_of(frames, "budget")
-        assert budgets and budgets[0]["budget"] == 400_000 and budgets[-1]["percent"] < 5
+        assert budgets and budgets[0]["budget"] == 400_000 and budgets[-1]["percent"] < 10  # was 5 before the planner prompt carried the merged tool catalog (~10k tokens a pass)
         assert frames_of(frames, "context_pressure") == []
 
     async def test_unbounded_means_no_budget_frames(self, monkeypatch) -> None:

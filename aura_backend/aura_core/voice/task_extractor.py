@@ -1,4 +1,4 @@
-"""Voice (or typed) request to a structured task, without guessing (ADR-041, roadmap row 88).
+"""Voice (or typed) request to a structured task, without guessing (ADR-043, roadmap row 88).
 
 Spoken instructions are loose: "hey, can you fix the login bug in acme/web and open a PR, no rush,
 and don't touch the payments code". A task the agent can run needs the parts named. This turns the

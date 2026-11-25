@@ -1,4 +1,4 @@
-"""Metrics, structured logs and ranked root-cause hypotheses for ``analyze_logs`` (ADR-044, row 95).
+"""Metrics, structured logs and ranked root-cause hypotheses for ``analyze_logs`` (ADR-046, row 95).
 
 ``ObservabilityIncidentAnalyzer`` greps lines for error words. This works on what an operator actually
 has to hand and reads it as data:

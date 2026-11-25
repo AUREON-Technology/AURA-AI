@@ -81,7 +81,7 @@ class AuraApiClient {
     // One key per logical write, shared by the 401 re-send below (audit FSA-046).
     //
     // A caller that replays a write from a durable queue passes its own [idempotencyKey]
-    // (ADR-041: the key is also the body's `client_request_id`, and the two must agree).
+    // (ADR-043: the key is also the body's `client_request_id`, and the two must agree).
     final writeKey = idempotencyKey ?? (isSideEffecting(method) ? newIdempotencyKey() : null);
 
     Future<http.Response> send() async {

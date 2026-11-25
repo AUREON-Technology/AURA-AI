@@ -1,4 +1,4 @@
-"""Format, corruption, outlier and type checks for ``validate_data_records`` (ADR-044, row 102).
+"""Format, corruption, outlier and type checks for ``validate_data_records`` (ADR-046, row 102).
 
 The tool already finds blanks, duplicates and numeric bounds. This adds the other things "data quality
 before ingestion, training or retrieval" asks for, over rows the caller passes (a list of objects):

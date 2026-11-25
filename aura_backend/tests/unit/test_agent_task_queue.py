@@ -1,5 +1,5 @@
 """The agent task queue: priority, fairness, concurrency caps, bounds, scheduling, shutdown
-(ADR-041, roadmap row 87).
+(ADR-043, roadmap row 87).
 
 The queue is the real one over the real task store (on the in-memory cache). The only stand-in is
 the *runner*: an async function that records when a task starts and waits on a gate the test opens,

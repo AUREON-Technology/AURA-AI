@@ -1,5 +1,5 @@
 """Token budget monitor: say how much of the budget a run has used, and act before it runs out
-(ADR-037).
+(ADR-039).
 
 ``AgentBudget.token_budget`` was enforced -- the loop refuses another replan once the planner's
 generations alone have spent it -- but silently, and only that one number. Nothing told the client
@@ -97,7 +97,7 @@ _OMITTED_MARK = "omitted to save context"
 
 
 def digest_omitted(middle: str) -> str:
-    """The salient lines of the part a clip drops, without a model (ADR-045, row 28).
+    """The salient lines of the part a clip drops, without a model (ADR-047, row 28).
 
     Distinct lines that look like failures or warnings, first occurrences, each cut to 110
     characters with a repeat count, at most 8 of them and 500 characters in all. ``""`` when the

@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/network/aura_api_client.dart';
 import 'package:aura_client/core/network/aura_api_error.dart';
 
-/// One task as `GET /api/v3/agents/tasks` and `POST /api/v3/agents/tasks` return it (ADR-041).
+/// One task as `GET /api/v3/agents/tasks` and `POST /api/v3/agents/tasks` return it (ADR-043).
 class AgentTask {
   const AgentTask({
     required this.id,
@@ -62,7 +62,7 @@ class AgentTaskAccepted {
 Map<String, dynamic> _asMap(Object? value) =>
     value is Map ? value.map((k, v) => MapEntry(k.toString(), v)) : <String, dynamic>{};
 
-/// Thin client for the agent task gateway (`/api/v3/agents/tasks`, ADR-041).
+/// Thin client for the agent task gateway (`/api/v3/agents/tasks`, ADR-043).
 class AgentTaskRepository {
   AgentTaskRepository(this._api);
 

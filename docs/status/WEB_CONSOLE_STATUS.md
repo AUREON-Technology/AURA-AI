@@ -21,6 +21,35 @@ Plan and user decisions: [`docs/plans/console-subdomain-plan.md`](../plans/conso
 
 **Re-read against commit:** `b2e14c4` (2026-11-08) for every row dated 2026-11-07 or later (their live checks came first; the re-read confirmed that tree holds what they describe); older rows carry the commit they were checked at. Refresh this line whenever a row is re-verified (audit FSA-120).
 
+## Settings becomes the Super-Admin control center (stage 1 2026-11-21, stages 2-5 2026-11-22)
+
+Plan and user decisions: [`docs/plans/console-control-center-plan.md`](../plans/console-control-center-plan.md);
+design: [ADR-037](../architecture/037-console-control-center.md); gap: GAP-067. Stage 1 merged
+(#275, #276, live at `85258222`); stages 2-4 merged as #278 (live at `6aab72f7`); stage 5 on branch `anas/laughing-hamilton-glfevj`, unmerged.
+
+| Step | Status | Evidence |
+| --- | --- | --- |
+| Settings is Super-Admin-only: no nav item or command-palette entry below SuperAdmin; the page renders a refusal and makes no control call | TESTED locally 2026-11-21, not CI-run (CB-44) | `src/lib/nav.ts` (`superAdminOnly`), `app/(console)/settings/layout.tsx`; `tests/e2e/control-center.spec.ts` |
+| Overview: release, open changes, one card per platform (Railway, HF Space, Grafana, Qdrant, Cloudflare) with Connect / Replace token / Disconnect | TESTED locally, mock gateway only | `settings/page.tsx`; e2e checks that a typed token never appears in the page or comes back from the gateway |
+| Step-up: a fresh Google sign-in in a popup (`prompt=login`, `max_age`), a five-minute grant held in memory, a typed confirmation on every write; sign-out revokes the grant | TESTED locally against the mock. First live try 2026-11-21: `redirect_uri_mismatch` (fixed by registering `/console/step-up/callback`, since the console still runs under `/console`), then refused because Google sends no `auth_time` (fixed in #276: falls back to `iat`; live at `85258222`) | `src/lib/control.ts`, `app/step-up/callback/page.tsx`, `app/api/auth/logout/route.ts`. Redirect URIs to register: `/console/step-up/callback` now, `/step-up/callback` after the domain move |
+| AURA settings (catalog of every `AURA_*` variable: value, default, range, secret set or not, protected); stage 2: edited through the gateway's own Railway variables once Railway is connected, with a "next deploy" marker | TESTED locally, mock gateway only | `settings/aura/page.tsx`, `src/components/change-tray.tsx` |
+| Railway tab (stage 2): services and status, variables (secrets write-only; protected, provided and reference rows locked), a pending-changes tray (check, then apply behind the service name), deployments with rollback, deploy/build logs with secrets masked, redeploy and restart | TESTED locally 2026-11-22, mock gateway only, not CI-run | `settings/railway/page.tsx`; 8 Railway tests in `tests/e2e/control-center.spec.ts` |
+| Changes journal | TESTED locally, mock gateway only | `settings/changes/page.tsx` |
+| Egyptian Arabic, right to left | TESTED locally (one e2e) | 58 `settings.*` keys in `src/lib/i18n/{en,ar}.ts`; not reviewed by a native speaker |
+| GPU Space tab (stage 3): stage, hardware and sleep time; pause/resume, restart, rebuild; hardware with a billing warning; variables through the shared tray (watched 20 minutes); write-only secrets that warn they cannot be undone; run and build logs | TESTED locally 2026-11-22, mock gateway only, not CI-run | `settings/space/page.tsx`; 7 GPU Space tests in `tests/e2e/control-center.spec.ts` |
+| Keys tab (stage 4): each provider slot with its key variable, set or not, and health; Replace (write-only), Rotate both sides (GPU Space), Create new key (Workers AI); Cloudflare tokens with the one in use marked and only the others revocable | TESTED locally 2026-11-22, mock gateway only, not CI-run | `settings/keys/page.tsx`; 4 Keys tests in `tests/e2e/control-center.spec.ts` check no key value reaches the page |
+| Monitoring tab (stage 5): alert rule groups with Apply setup and each group's result; the scrape job and two uptime checks as exact values with live state; firing alerts; unreadable status shown as such | TESTED locally 2026-11-22, mock gateway only, not CI-run | `settings/monitoring/page.tsx` |
+| Vector DB tab (stage 5): health, collections, snapshots, restore that keeps the replaced state | TESTED locally 2026-11-22, mock gateway only, not CI-run | `settings/vector/page.tsx`; 4 stage-5 tests in `tests/e2e/control-center.spec.ts` |
+| Cloudflare tab, Usage and R2 views (stage 6, C3): today's Workers AI requests and neurons against the 10,000-neuron free-plan allowance (a bar, with "not for billing" and the plan caveat), requests only when Cloudflare names no neuron field; the R2 buckets with lock rules where known; a clear state for no permission, Cloudflare unreachable and "R2 is not enabled on this account" | BUILT, TESTED locally 2026-11-23, mock gateway only, not CI-run, **not proven** | `src/components/cloudflare/{usage,r2}-panel.tsx`; 6 tests at the end of `tests/e2e/control-center.spec.ts` (usage ok, no permission, no neuron figure and outage, R2 not enabled, R2 list, Arabic right to left). Nothing has run against real Cloudflare; the neuron field name is unconfirmed |
+| Live: Super Admin opens Settings, Admin refused; a real step-up; a token saved and verified; one change rolled back automatically after a forced unhealthy deploy | OPEN | GAP-067 exit condition |
+
+Local checks: on 2026-11-21 (stage 1), `tsc --noEmit`, `npm run lint` and `npm run build` were clean
+and Playwright gave 72 passed. On 2026-11-22 (stage 2), the same checks were clean and Playwright
+gave 80 passed, 17 of them in `control-center.spec.ts`. With stage 3 the same checks were clean
+and Playwright gave 87 passed, 24 of them in `control-center.spec.ts`. With stage 4 the same checks
+were clean and Playwright gave 91 passed, 28 of them in `control-center.spec.ts`. With stage 5 the
+same checks were clean and Playwright gave 95 passed, 32 of them in `control-center.spec.ts`.
+
 ## Summary
 
 The console is built: 10 pages (11 with the unmerged Customers page, PR #246), Google sign-in for Developer+ roles, and a same-origin proxy that
@@ -41,7 +70,8 @@ and both nginx server blocks. None of it is proven:
 | Login (Google ID token → `POST /api/v3/auth/web/token`, Developer+, httpOnly SameSite=strict cookies) | TESTED (backend side only) | `app/api/auth/login/route.ts`; `tests/unit/test_web_token.py`, `test_console_operator_bootstrap.py` |
 | `/api/v3/*` proxy and refresh rotation | BUILT; F-35 fix TESTED locally (2026-10-30), not CI-run | Single-flight refresh keyed by refresh token (`src/lib/refresh.ts`); `tests/e2e/refresh.spec.ts` against a mock gateway that enforces single-use refresh tokens fails without it (`[200, 401, 401]`); `tests/unit/refresh.spec.ts`. Dedupes within one server process only; the state lives on `globalThis` so the proxy and `middleware.ts` share it |
 | Session gate (layout, plus nginx `auth_request` for Grafana) | BUILT; refresh-on-render TESTED locally (2026-10-30), not CI-run | `middleware.ts` (Node.js runtime) refreshes before a console page renders when the access cookie is missing or its JWT `exp` is within 30 s, through the same single-flight refresh as the proxy, sets the rotated cookies and forwards them to `app/(console)/layout.tsx` on the same request; a failed refresh clears both cookies and redirects to `/login`. `tests/e2e/session-gate.spec.ts` (4 tests: reload and sidebar navigation after expiry, an expired-`exp` cookie, an invalid refresh token, and a page render plus a proxied request sharing one refresh) — the first three fail without the middleware, the fourth fails if the refresh state is module-local. The sharing was also checked against `next build` + `next start`: 0 replays |
-| Overview / Settings | BUILT; heading asserted in e2e | `tests/e2e/admin.spec.ts` |
+| Overview | BUILT; heading asserted in e2e | `tests/e2e/admin.spec.ts` |
+| Settings (Super-Admin control center, ADR-037) | Stage 1 TESTED locally 2026-11-21, not CI-run, unmerged | See "Settings becomes the Super-Admin control center" above |
 | Providers (breaker state, circuit reset) | BUILT; e2e spec, never run in CI | `providers/page.tsx` |
 | Providers: ADR-030 ceiling, `third_party`, `may_train_on_prompts` | OPEN | `router.stats()` emits them, but `src/lib/types.ts` `ProviderRow` lacks the fields |
 | Prompts (pin version) | BUILT; e2e spec | `prompts/page.tsx` |

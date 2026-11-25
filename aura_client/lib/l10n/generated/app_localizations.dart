@@ -2120,6 +2120,12 @@ abstract class AppLocalizations {
   /// **'Saved.'**
   String get knowledgeSaved;
 
+  /// Knowledge page: appended to the saved message while the server's search index is not ready (the document is stored but not yet searchable)
+  ///
+  /// In en, this message translates to:
+  /// **'Search can\'t find it yet: knowledge search is being updated, and this will show up once that finishes.'**
+  String get knowledgeNotSearchableYet;
+
   /// Knowledge page: message when a PDF upload fails
   ///
   /// In en, this message translates to:
@@ -6296,6 +6302,42 @@ abstract class AppLocalizations {
   /// **'Ungrounded — no sources attached.'**
   String get chatTurnUngrounded;
 
+  /// Chat: note when the answer claimed an action but no tool ran
+  ///
+  /// In en, this message translates to:
+  /// **'No action was taken — nothing was created, changed or sent.'**
+  String get chatTurnNoActionTaken;
+
+  /// Chat: note when tool planning failed for the turn
+  ///
+  /// In en, this message translates to:
+  /// **'AURA couldn\'t use its tools for this turn, so nothing was done.'**
+  String get chatTurnToolsUnavailable;
+
+  /// Chat: note when a tool call failed during the turn
+  ///
+  /// In en, this message translates to:
+  /// **'A tool AURA used failed during this turn.'**
+  String get chatTurnToolFailed;
+
+  /// Chat: note when the model produced no text and a fallback was shown
+  ///
+  /// In en, this message translates to:
+  /// **'The model returned no reply for this turn.'**
+  String get chatTurnEmptyReply;
+
+  /// Chat: note when a tool's output did not fit the prompt
+  ///
+  /// In en, this message translates to:
+  /// **'A tool\'s result was too long to use in full.'**
+  String get chatTurnToolOutputTrimmed;
+
+  /// Chat: note when the server could not search the knowledge base for this turn
+  ///
+  /// In en, this message translates to:
+  /// **'Knowledge search is being updated, so this answer doesn\'t use your documents or the shared library.'**
+  String get chatTurnKnowledgeUnavailable;
+
   /// Chat: note under a truncated code, file, diff or terminal preview
   ///
   /// In en, this message translates to:
@@ -9323,6 +9365,54 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Writing inside .git (HEAD, the index, refs, objects) is never allowed: it can corrupt the repository. Use Git commands instead.'**
   String get hostdCodeProtectedGitInternals;
+
+  /// Web only: title of the Engineer daemon page, which a browser cannot run
+  ///
+  /// In en, this message translates to:
+  /// **'Pair a computer in the desktop app'**
+  String get webDaemonUnavailableTitle;
+
+  /// Web only: why the daemon page is unavailable and what to do
+  ///
+  /// In en, this message translates to:
+  /// **'A browser can\'t run the AURA desktop daemon. Install the desktop app on your computer and pair it there. Once it\'s paired, turn on remote control and the Engineer can use it from here.'**
+  String get webDaemonUnavailableMessage;
+
+  /// Web only: button that opens the desktop installer page
+  ///
+  /// In en, this message translates to:
+  /// **'Get the desktop app'**
+  String get webGetDesktopApp;
+
+  /// Web only: button that opens the paired desktop devices list
+  ///
+  /// In en, this message translates to:
+  /// **'Manage paired devices'**
+  String get webManageDevices;
+
+  /// Web wide layout: empty detail pane beside the You menu
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a page'**
+  String get webYouPaneTitle;
+
+  /// Web wide layout: what to do in the empty You detail pane
+  ///
+  /// In en, this message translates to:
+  /// **'Pick a setting or tool from the list to open it here.'**
+  String get webYouPaneMessage;
+
+  /// Web wide layout: empty detail pane beside the Engineer run list
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a run'**
+  String get webEngineerPaneTitle;
+
+  /// Web wide layout: what to do in the empty Engineer detail pane
+  ///
+  /// In en, this message translates to:
+  /// **'Pick a run from the list to see its status, branch and output.'**
+  String get webEngineerPaneMessage;
 }
 
 class _AppLocalizationsDelegate

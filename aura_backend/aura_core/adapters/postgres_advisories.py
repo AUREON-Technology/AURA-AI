@@ -1,6 +1,6 @@
 """Postgres :class:`~aura_core.ports.advisories.AdvisoryStore`.
 
-Reads and writes ``aura_osv_advisories`` and ``aura_osv_sync``, which Alembic revision 0031 creates;
+Reads and writes ``aura_osv_advisories`` and ``aura_osv_sync``, which Alembic revision 0034 creates;
 the adapter issues no DDL (one schema authority, CB-20). Shares the container's ``PostgresPool``.
 """
 

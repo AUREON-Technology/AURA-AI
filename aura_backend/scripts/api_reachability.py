@@ -51,26 +51,28 @@ TRIAGE = (
     ("/api/v3/billing/apple/notify", "server-only: App Store Server Notifications V2 (SaaS P1-D2)"),
     ("/api/v3/billing/google/notify", "server-only: Play RTDN via Pub/Sub push (SaaS P1-D2)"),
     ("/api/v3/chat$", "server-to-server: the non-streaming turn is for integrating systems (ADR-029 service keys, AR-6 structured output); the app streams via /chat/stream"),
-    ("/api/v3/chat/plan-feedback", "to wire: free-text feedback on a plan held by plan_mode review (ADR-045, row 51); the client's review screen only approves or walks away so far"),
+    ("/api/v3/chat/plan-feedback", "to wire: free-text feedback on a plan held by plan_mode review (ADR-047, row 51); the client's review screen only approves or walks away so far"),
     ("/api/v3/auth/desktop/", "to wire: desktop pairing flow (ADR-011), no caller in client or hostd yet"),
-    ("/api/v3/agents/stop-all", "to wire: the kill-switch button (ADR-039) has no client or hostd caller yet; backend and API only so far"),
-    ("/api/v3/engineering/policy", "to wire: the review-profile setting (ADR-039) has no client view yet; backend and API only so far"),
+    ("/api/v3/agents/stop-all", "to wire: the kill-switch button (ADR-041) has no client or hostd caller yet; backend and API only so far"),
+    ("/api/v3/engineering/policy", "to wire: the review-profile setting (ADR-041) has no client view yet; backend and API only so far"),
 
-    ("/api/v3/agents/runs", "to wire: agent-run history (wave 2) has no client or admin view yet; search and timeline (ADR-041) are backend-only so far"),
-    ("/api/v3/agents/tasks", "to wire: the agent task gateway (ADR-041, roadmap rows 84/87/91) is backend-only; the client submits, polls, approves and cancels in its next step, with a client-generated idempotency key per submission"),
-    ("/api/v3/usage", "to wire: usage dashboard API (ADR-041, roadmap row 72); the client's usage view is not built"),
-    ("/api/v3/voice/task", "to wire: voice-to-task extraction (ADR-041, roadmap row 88); the client confirms the structured task, then POSTs /agents/tasks"),
-    ("/api/v3/engineering/workspaces/", "to wire: workspace start/stop/restart and stats (ADR-041, roadmap row 89); no client view yet"),
-    ("/api/v3/host/status", "to wire: paired-desktop status (ADR-041, roadmap row 89); read-only, no client view yet"),
+    ("/api/v3/agents/runs", "to wire: agent-run history (wave 2) has no client or admin view yet; search and timeline (ADR-043) are backend-only so far"),
+    ("/api/v3/agents/tasks", "to wire: the agent task gateway (ADR-043, roadmap rows 84/87/91) is backend-only; the client submits, polls, approves and cancels in its next step, with a client-generated idempotency key per submission"),
+    ("/api/v3/usage", "to wire: usage dashboard API (ADR-043, roadmap row 72); the client's usage view is not built"),
+    ("/api/v3/voice/task", "to wire: voice-to-task extraction (ADR-043, roadmap row 88); the client confirms the structured task, then POSTs /agents/tasks"),
+    ("/api/v3/engineering/workspaces/", "to wire: workspace start/stop/restart and stats (ADR-043, roadmap row 89); no client view yet"),
+    ("/api/v3/host/status", "to wire: paired-desktop status (ADR-043, roadmap row 89); read-only, no client view yet"),
     ("/api/v3/knowledge/graph", "to wire: knowledge-graph read API (wave 2) has no view yet"),
     ("/api/v3/admin/connectors", "to wire: Console Project Factory is Track AP phase AP9"),
     ("/api/v3/admin/twin", "to wire: Console twin browser and diff are Track AP phase AP9"),
     ("/api/v3/admin/blueprints", "to wire: Console blueprint review and deploy are Track AP phase AP9"),
     ("/api/v3/admin/", "to wire: admin console page missing for this route"),
     ("/api/v3/learning/", "to wire or remove: learning surface with no caller (GAP-013)"),
+    ("/api/v3/me", "to wire: profile read/update and password change have no app screen yet; register and forgot/reset password stay in the client's Firebase SDK (api/me.py)"),
+    ("/api/v3/turns/", "to wire: usage by turn id (read it later); the app already gets the same numbers inline on /chat and the stream's done frame"),
     ("/api/v3/tools", "to wire: tool catalogue is not shown anywhere"),
-    ("/api/v3/memory/lessons", "to wire: pending Engineer lessons (row 60, ADR-038) have no approve/reject view yet; backend scope"),
-    ("/api/v3/sessions/{session_id}/checkpoint", "to wire: session checkpoint (row 26, ADR-038) is backend-only until the client shows a resume card; backend scope"),
+    ("/api/v3/memory/lessons", "to wire: pending Engineer lessons (row 60, ADR-040) have no approve/reject view yet; backend scope"),
+    ("/api/v3/sessions/{session_id}/checkpoint", "to wire: session checkpoint (row 26, ADR-040) is backend-only until the client shows a resume card; backend scope"),
     ("/api/v3/workspaces", "client: team workspaces, plan, billing and shared chats are called from aura_client/lib/features/workspaces/data/workspaces_client.dart through AuraApiClient's string-built paths (SaaS P1-F2)"),
 )
 
@@ -111,7 +113,7 @@ def routes() -> list[tuple[str, str]]:
 
 # A wrapper call left open at the end of a line (`await api(` -- the formatter put the argument on
 # the next line) is carried onto that next line, so the matcher sees `api(\`/admin/...\`` as one call.
-_OPEN_WRAPPER = re.compile(r"\bapi(?:<.*>)?\(\s*$")
+_OPEN_WRAPPER = re.compile(r"\b(?:api|stepUp\.write)(?:<.*>)?\(\s*$")
 
 
 def scan_tree(base: Path, exts: tuple[str, ...], *, root: Path = ROOT) -> list[tuple[str, int, str]]:
@@ -158,9 +160,11 @@ _END = r"(?=['\"`?]|$|\$\{?\w*[qQ]uery)"
 _INTERP = r"(?:\$\{[^}]+\}|\$[A-Za-z_]\w*)"
 # A whole path counts only on an API base: the literal `/api/vN`; an interpolated base such as
 # `$_baseUrl` / `${backend}` that the file resolves elsewhere; or the admin console's `api(...)`
-# wrapper (`aura_admin/src/lib/api.ts` prepends `/api/v3` to the path it is given). A bare
+# wrapper (`aura_admin/src/lib/api.ts` prepends `/api/v3` to the path it is given), and its
+# control-center `stepUp.write(...)` (`aura_admin/src/lib/control.ts`), which hands the path to
+# `api(...)` with the step-up header. A bare
 # `'/chat'` is a UI route (go_router, Next.js) and used to credit `/api/v3/chat` (audit FSA-083).
-_WRAPPER = r"\bapi(?:<.*>)?\(\s*[\"'`]"
+_WRAPPER = r"\b(?:api|stepUp\.write)(?:<.*>)?\(\s*[\"'`]"
 _BASE = rf"(?:/api/v\d+|{_INTERP}|{_WRAPPER})"
 
 

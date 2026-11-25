@@ -92,6 +92,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   /// Each check is guarded on its own: local_auth has no Linux implementation, and a throw
   /// there must not also hide the saved session.
   Future<bool> _biometricsEnrolled() async {
+    // A browser has no fingerprint or face unlock: a saved web session resumes directly.
+    if (kIsWeb) return false;
     try {
       if (!await _localAuth.canCheckBiometrics) return false;
       return (await _localAuth.getAvailableBiometrics()).isNotEmpty;
@@ -528,13 +530,19 @@ class _GoogleSignInButton extends StatelessWidget {
       width: double.infinity,
       child: ElevatedButton.icon(
         onPressed: onPressed,
-        icon: Image.network(
-          'https://upload.wikimedia.org/wikipedia/commons/thumb/5/53/Google_%22G%22_Logo.svg/512px-Google_%22G%22_Logo.svg.png',
-          height: 18,
-          width: 18,
-          errorBuilder: (context, error, stackTrace) =>
-              const Icon(Icons.login, color: Colors.black87),
-        ),
+        // The logo is fetched from a third-party host (Wikimedia). The web build's policy allows
+        // no such host (aura_web/nginx/security-headers-app.conf) and a page view should not tell
+        // one who visited, so a browser shows the generic icon. Bundling Google's official asset
+        // would give the web the brand mark too; it is not in the repository yet.
+        icon: kIsWeb
+            ? const Icon(Icons.login, color: Colors.black87)
+            : Image.network(
+                'https://upload.wikimedia.org/wikipedia/commons/thumb/5/53/Google_%22G%22_Logo.svg/512px-Google_%22G%22_Logo.svg.png',
+                height: 18,
+                width: 18,
+                errorBuilder: (context, error, stackTrace) =>
+                    const Icon(Icons.login, color: Colors.black87),
+              ),
         label: Text(context.l10n.loginGoogle),
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.white,

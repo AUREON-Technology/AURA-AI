@@ -1,4 +1,4 @@
-"""Per-turn usage records and the summaries the dashboard reads (ADR-041, roadmap row 72).
+"""Per-turn usage records and the summaries the dashboard reads (ADR-043, roadmap row 72).
 
 The kernel already computes a turn's tokens, cost and duration (``TurnTelemetry``) and hands them
 to metrics, spans and the content-free telemetry sink -- none of which is per *user*. This keeps

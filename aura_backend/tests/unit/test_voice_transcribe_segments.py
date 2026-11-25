@@ -1,4 +1,4 @@
-"""``POST /api/v3/voice/transcribe`` with ``detail=segments`` (ADR-040).
+"""``POST /api/v3/voice/transcribe`` with ``detail=segments`` (ADR-042).
 
 The default response is untouched (``tests/unit/test_voice_transcribe_language.py`` pins it). With
 ``detail=segments`` the route returns the engine's timestamped transcript: segments with

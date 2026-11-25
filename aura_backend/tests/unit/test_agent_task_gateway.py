@@ -1,4 +1,4 @@
-"""The agent task gateway over HTTP (ADR-041, roadmap rows 84, 87 and 91).
+"""The agent task gateway over HTTP (ADR-043, roadmap rows 84, 87 and 91).
 
 Everything is the real stack on the in-memory substrate: the ASGI app, the same ``to_turn`` /
 ``admit_turn`` / rate-limit code ``/chat`` uses, the real queue and store, and the real kernel

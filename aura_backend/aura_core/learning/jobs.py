@@ -39,12 +39,17 @@ async def run_knowledge_refresh(pipeline: Any, *, enabled: bool) -> dict[str, An
     report = await pipeline.run()
     return {
         "status": "success",
+        # Whether the alias moved. Normally false: with an unchanged embedder a refresh writes
+        # into the live index, so ``index_rebuild`` is ``not_needed``.
         "promoted": report.promoted,
+        "index_rebuild": report.index_rebuild,
         "ingested": report.documents_ingested,
         "skipped": report.documents_skipped,
         "quarantined": report.quarantined,
         "failed": report.failures,
-        "gate_failures": list(report.gate_failures),
+        "held": len(report.held_sources),
+        # Index-phase failures plus each held source's reasons, prefixed ``source:<id>:``.
+        "gate_failures": list(report.all_gate_failures),
     }
 
 
@@ -140,7 +145,7 @@ async def run_engineer_lesson_extraction(
     if turn.agent_id != "engineer":
         return {"status": "skipped", "reason": "not_engineer"}
 
-    # ADR-045 (row 60): an optional model-written path. ``None`` or an empty list -- unavailable,
+    # ADR-047 (row 60): an optional model-written path. ``None`` or an empty list -- unavailable,
     # refused, not valid JSON for the contract, or "nothing worth keeping" from a small model --
     # falls back to the keyword extractor, so enabling it can only add lessons, never lose the
     # ones the heuristic would have found. Its candidates take the same road below.

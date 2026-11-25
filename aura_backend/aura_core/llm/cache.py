@@ -35,6 +35,7 @@ from ..domain.llm import CompletionRequest, CompletionResponse, FinishReason, To
 from ..domain.messages import Role
 from ..ports.storage import Cache
 from .embeddings import cosine_similarity
+from .turn_embeddings import embed_query
 
 __all__ = ["LLMCache", "CacheHit", "InMemoryCache", "semantic_tier_useful"]
 
@@ -332,7 +333,8 @@ class LLMCache:
             return None
 
         try:
-            embedding = await self._embedder.embed([last_user.content], for_query=True)
+            # The turn's message was usually embedded already, by recall or retrieval (KAN-111).
+            embedding = await embed_query(self._embedder, last_user.content)
         except Exception:
             # Embedding failure must degrade to a miss, not fail the turn.
             self._record("semantic", "error")
@@ -383,7 +385,7 @@ class LLMCache:
             if last_user is None:
                 return
 
-            embedding = await self._embedder.embed([last_user.content], for_query=True)
+            embedding = await embed_query(self._embedder, last_user.content)
             await self._cache.set(self._SEM_ENTRY_PREFIX + fingerprint, payload, ttl_s=self._ttl)
 
             index_key = await self._semantic_index_key(request, namespace)

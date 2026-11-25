@@ -113,7 +113,13 @@ class KnowledgeViewModel extends Notifier<KnowledgeUiState> {
         final quarantine = result.quarantinedChunks > 0
             ? ' ${l10n.knowledgePassagesHeldBack(result.quarantinedChunks)}'
             : '';
-        state = state.copyWith(ingestMessage: '$saved$quarantine', ingestError: false);
+        // Stored, but the server's index is not ready, so search cannot find it yet. Saying so
+        // is the point: "Saved." alone read as done while every query came back empty.
+        final notSearchable = result.searchable == false ? ' ${l10n.knowledgeNotSearchableYet}' : '';
+        state = state.copyWith(
+          ingestMessage: '$saved$quarantine$notSearchable',
+          ingestError: false,
+        );
         return true;
       case 'unchanged_content':
         state = state.copyWith(ingestMessage: l10n.knowledgeAlreadyUnchanged, ingestError: false);

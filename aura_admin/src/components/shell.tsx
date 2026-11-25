@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { useI18n } from "@/lib/i18n/context";
-import { NAV_GROUPS, OPEN_PALETTE_EVENT, groupFor } from "@/lib/nav";
+import { OPEN_PALETTE_EVENT, groupFor, navGroupsFor } from "@/lib/nav";
 import type { Me } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -83,7 +83,7 @@ export function Shell({ me, children }: { me: Me; children: React.ReactNode }) {
           <span className="absolute top-2 bottom-2 -start-3 w-[3px] rounded-e-[3px] bg-linear-180 from-brand to-brand-2" />
         </span>
 
-        {NAV_GROUPS.map((group) => (
+        {navGroupsFor(me).map((group) => (
           <nav key={group.label} aria-label={t(group.label)} className="contents desk:mb-4 desk:block">
             <p className="mx-2.5 mb-1.5 hidden text-[11px] font-semibold tracking-[0.08em] text-faint uppercase desk:block">
               {t(group.label)}
@@ -184,7 +184,7 @@ export function Shell({ me, children }: { me: Me; children: React.ReactNode }) {
           </div>
         </header>
         <main className="w-full max-w-[1280px] px-4 pt-5 pb-10 desk:px-8 desk:pt-7 desk:pb-14">
-          <CommandPalette />
+          <CommandPalette me={me} />
           {children}
         </main>
       </div>

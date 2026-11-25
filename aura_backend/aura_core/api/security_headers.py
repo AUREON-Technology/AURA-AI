@@ -26,7 +26,18 @@ so permissive it means nothing. It stays an explicit opt-in.
 from __future__ import annotations
 
 import hmac
+import logging
+import time
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+#: A refusal reason is logged at most this often (seconds); see `_log_rejection`.
+_REJECTION_LOG_INTERVAL_S = 60.0
+
+#: The refusal reason for a request that carried no ``Authorization`` header (the only one a
+#: challenge answers).
+_NO_HEADER = "no Authorization header"
 
 #: Sent on every response. Values match the nginx template so a request that traverses both sees
 #: one consistent policy rather than two competing ones.
@@ -106,17 +117,39 @@ class MetricsAuthMiddleware:
     private network must therefore send the token too (SaaS P1 plan A, task 1).
     """
 
-    def __init__(self, app: Any, *, path: str, token: str | None) -> None:
+    def __init__(
+        self, app: Any, *, path: str, token: str | None, challenge: bool = False
+    ) -> None:
         self.app = app
         self._path = path
         self._token = token
+        self._challenge = challenge
+        self._last_logged: dict[str, float] = {}
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope["type"] != "http" or scope.get("path") != self._path:
             await self.app(scope, receive, send)
             return
 
-        if not self._authorised(scope):
+        reason = self._rejection(scope)
+        if reason is not None:
+            self._log_rejection(scope, reason)
+            # Only a request that sent no credentials at all can be challenged, and only when a
+            # token is configured: a wrong or malformed credential, or a gateway with no token,
+            # keeps the 404.
+            if self._challenge and reason == _NO_HEADER:
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 401,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"www-authenticate", b"Bearer"),
+                        ],
+                    }
+                )
+                await send({"type": "http.response.body", "body": b'{"detail":"Unauthorized"}'})
+                return
             await send(
                 {
                     "type": "http.response.start",
@@ -124,23 +157,57 @@ class MetricsAuthMiddleware:
                     "headers": [(b"content-type", b"application/json")],
                 }
             )
-            # 404, not 401: a scraping endpoint that announces itself to an unauthenticated
-            # caller tells them the stack and that there is something here worth guessing at.
-            # nginx returns 404 for the same path, so the two targets behave identically.
+            # 404, not 401, unless `challenge` is on: a scraping endpoint that announces itself to
+            # an unauthenticated caller tells them the stack and that there is something here worth
+            # guessing at. nginx returns 404 for the same path, so the two targets behave
+            # identically.
             await send({"type": "http.response.body", "body": b'{"detail":"Not Found"}'})
             return
 
         await self.app(scope, receive, send)
 
-    def _authorised(self, scope: dict[str, Any]) -> bool:
+    def _rejection(self, scope: dict[str, Any]) -> str | None:
+        """Why the request is refused, or ``None`` when it carries the right token.
+
+        The reasons are coarse on purpose: they go to the operator's log, never to the caller (who
+        always sees the same 404), and none of them contains the token or the supplied value.
+        """
         if self._token is None:
-            return False
+            return "no token configured on the gateway"
         for name, value in scope.get("headers") or ():
             if name == b"authorization":
                 supplied = value.decode("latin-1")
-                prefix = "Bearer "
-                if not supplied.startswith(prefix):
-                    return False
-                # Constant-time: a timing oracle on a scrape token is still a token leak.
-                return hmac.compare_digest(supplied[len(prefix) :], self._token)
-        return False
+                # RFC 7235: the auth-scheme is case-insensitive, so `bearer` and `BEARER` are as
+                # valid as `Bearer`. Surrounding whitespace around the credentials is not part of it.
+                scheme, _, credentials = supplied.partition(" ")
+                if scheme.lower() != "bearer":
+                    return "Authorization header is not a Bearer credential"
+                # Constant-time: a timing oracle on a scrape token is still a token leak. Bytes, so
+                # a non-ASCII value is a mismatch rather than a TypeError.
+                if hmac.compare_digest(
+                    credentials.strip().encode("latin-1"), self._token.encode("utf-8")
+                ):
+                    return None
+                return f"bearer token does not match (supplied length {len(credentials.strip())})"
+        return _NO_HEADER
+
+    def _log_rejection(self, scope: dict[str, Any], reason: str) -> None:
+        """Log a refusal at most once per reason per minute, so a scanner cannot flood the log.
+
+        A scrape that never authenticates is otherwise indistinguishable from a probe: both get the
+        same 404, and the access log shows only the status. This is what tells an operator whether
+        Grafana sent no header, the wrong scheme or the wrong value.
+        """
+        # Keyed without the "(supplied length N)" detail, so a caller cannot dodge the limit (or grow
+        # this dict) by varying the length it sends.
+        key = reason.split(" (")[0]
+        now = time.monotonic()
+        if now - self._last_logged.get(key, float("-inf")) < _REJECTION_LOG_INTERVAL_S:
+            return
+        self._last_logged[key] = now
+        agent = ""
+        for name, value in scope.get("headers") or ():
+            if name == b"user-agent":
+                agent = value.decode("latin-1")[:80]
+                break
+        logger.warning("metrics scrape refused: %s (user-agent %r)", reason, agent)

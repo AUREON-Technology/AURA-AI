@@ -1,3 +1,13 @@
+"""Not exposed (ADR-036, 2026-11-21) -- deliberately NOT registered as a tool. A process-local dict of
+session states connected to nothing: ``apply_action("pause")`` reports ``current_state: "paused"``
+while the real run continues, and sessions have no owner scoping (KAN-34).
+
+Reachable from no persona: nothing under ``aura_core`` imports this module, which
+``tests/architecture/test_open_tools_classification.py`` checks against
+``tools/open/_classification.py``. Kept as reference code; change that classification and
+ADR-036 before wiring it in.
+"""
+
 import copy
 import json
 import threading

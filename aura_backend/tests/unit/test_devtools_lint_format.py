@@ -1,4 +1,4 @@
-"""ADR-040: ``lint_code`` and ``check_format`` through the engineer's own sandbox substrate.
+"""ADR-042: ``lint_code`` and ``check_format`` through the engineer's own sandbox substrate.
 
 The runner is ``InMemorySandboxRunner``: a real temp directory and real subprocesses, so these tests
 run whichever of ruff, mypy, eslint and prettier are installed on the machine and skip (never fake)

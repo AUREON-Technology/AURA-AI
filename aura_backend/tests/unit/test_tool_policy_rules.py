@@ -1,4 +1,4 @@
-"""Declarative tool-call rules (ADR-039, ``AURA_TOOL_POLICY_FILE``).
+"""Declarative tool-call rules (ADR-041, ``AURA_TOOL_POLICY_FILE``).
 
 Three layers: the file loader (every way a rule file can be wrong must fail at start-up, naming the
 rule), the evaluation semantics (a rule only ever tightens), and the real engineer tools driven

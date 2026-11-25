@@ -423,7 +423,8 @@ attestation). That path is fail-closed: only Developer+ receive a session. Mobil
 | `POST /admin/providers/{name}/reset-circuit` | Admin+ | Close a circuit breaker |
 | `GET /admin/sources` | Admin+ | Approved knowledge sources |
 | `PATCH /admin/sources/{id}` | Admin+ | Enable or disable a source |
-| `POST /admin/sources` | SuperAdmin | Register a source (id: letters, digits, `.`, `_`, `:`, `-`; starts with a letter or digit) |
+| `POST /admin/sources` | SuperAdmin | Register a source (id: letters, digits, `.`, `_`, `:`, `-`; starts with a letter or digit). Optional provenance: `name`, `publisher`, `domains`, `language`, `license_spdx`, `attribution`. A `license_spdx` outside `AURA_KNOWLEDGE_ALLOWED_LICENSES` is a 422; none leaves the source registered but not `ingestible` |
+| `PUT /admin/sources/{id}/provenance` | SuperAdmin | Add or correct a source's provenance and licence. Naming an allowed licence approves it; another is a 422 and nothing changes |
 | `DELETE /admin/sources/{id}` | SuperAdmin | Remove a source |
 | `GET /admin/approvals` | Admin+ | Pending and historical approvals |
 | `POST /admin/approvals/{id}/decide` | Admin+; SuperAdmin for `connector_registration` and `blueprint_deployment` | Approve or reject |

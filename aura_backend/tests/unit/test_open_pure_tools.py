@@ -1,4 +1,4 @@
-"""ADR-042: the fourteen pure tools of ``tools/open_pure.py``.
+"""ADR-044: the fourteen pure tools of ``tools/open_pure.py``.
 
 Every tool is called through ``Tool.execute`` (what the kernel does) and, for the registration and
 grant claims, through a real ``Container``. The group's invariants -- no capability, no side effect,
@@ -646,7 +646,7 @@ class TestCollectVerificationEvidence:
 
     async def test_one_users_dossier_cannot_be_reached_or_forged_by_another(self, ctx) -> None:
         """No state lives here: B can only hold A's dossier if A hands it over, and cannot make B's own
-        dossier verify against A's digest (the IDOR check for ADR-042's two stateful-looking tools)."""
+        dossier verify against A's digest (the IDOR check for ADR-044's two stateful-looking tools)."""
         a_ctx = ToolContext(user_id=UserId("user-a"), correlation_id="a", deadline_s=30.0)
         b_ctx = ToolContext(user_id=UserId("user-b"), correlation_id="b", deadline_s=30.0)
         a = await self._collect(a_ctx, task_id="shared-task-id")

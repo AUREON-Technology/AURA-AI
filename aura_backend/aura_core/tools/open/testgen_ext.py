@@ -1,4 +1,4 @@
-"""Behaviour tests for ``generate_and_run_tests`` (ADR-044, row 6).
+"""Behaviour tests for ``generate_and_run_tests`` (ADR-046, row 6).
 
 The structural generator proves a module has its declared *shape*. This adds tests that assert what
 the code *does*, derived from two things the author already wrote down:

@@ -1,4 +1,4 @@
-"""Diagrams derived from project text rather than written by hand (ADR-044, row 8).
+"""Diagrams derived from project text rather than written by hand (ADR-046, row 8).
 
 ``MermaidDiagramGenerator`` renders whatever spec it is given and, from code, only class diagrams.
 These functions *derive* the spec from what the caller supplies:

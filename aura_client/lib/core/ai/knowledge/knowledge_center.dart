@@ -298,6 +298,7 @@ class KnowledgeCenter {
             : 0,
         skippedReason: map['skipped_reason']?.toString(),
         documentId: map['document_id']?.toString(),
+        searchable: map['searchable'] is bool ? map['searchable'] as bool : null,
       );
     }
     final error = AuraApiError.fromResponse(statusCode: status, body: response.body);

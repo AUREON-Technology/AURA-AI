@@ -355,6 +355,20 @@ def build_memory_tools(memory_engine: Any) -> list[Tool]:
                 "it was not stored. Remember what the credential is for, never its value.",
                 tool="remember_fact",
             )
+        # "Only what the user stated" was a sentence in the description above, and nothing else
+        # (audit B5): a fact the model inferred, or lifted from a document or a tool's output,
+        # was stored as the user's own. The kernel hands the tool a predicate over what the
+        # person actually wrote -- never the text itself, which a tool must not see -- and a
+        # fact those words do not restate is refused. No predicate (a caller outside a kernel
+        # turn) keeps the old behaviour.
+        user_stated = (context.metadata or {}).get("user_stated")
+        if callable(user_stated) and not user_stated(fact):
+            raise ToolExecutionError(
+                "not recorded: remember_fact stores only what the user said about themselves, "
+                "and nothing the user wrote states this",
+                tool="remember_fact",
+                retryable=False,
+            )
         # What the user said this turn (set by the kernel, never retrieved text or a delegating
         # agent's task). Absent means the call cannot be checked -- a context built outside a turn.
         said = (getattr(context, "metadata", None) or {}).get("user_message")
@@ -490,7 +504,7 @@ def build_file_tools(workspace: str | Path, *, max_bytes: int = 512_000, read_le
     cache: "OrderedDict[tuple[str, int, int], tuple[str, list[str]]]" = OrderedDict()
 
     def resolve_within(relative: str, tool_name: str = "read_file") -> Path:
-        # One definition shared with the ADR-040 readers (tools/confinement.py).
+        # One definition shared with the ADR-042 readers (tools/confinement.py).
         return _resolve_within(root, relative, tool_name)
 
     @tool(
@@ -624,7 +638,7 @@ def build_file_tools(workspace: str | Path, *, max_bytes: int = 512_000, read_le
             raise ToolExecutionError(f"{path} is not a file", tool="read_file")
         text, notes = await asyncio.to_thread(load, target, path)
         if read_ledger is not None and context is not None:
-            # ADR-043: remember what the agent saw, so check_file_staleness can say it changed.
+            # ADR-045: remember what the agent saw, so check_file_staleness can say it changed.
             await asyncio.to_thread(_note_read, read_ledger, context, path, target)
         return _present(text, notes, offset or 0, _WINDOW_CHARS, "read_file", "read_file")
 
@@ -999,18 +1013,18 @@ def default_tools(
         tools += build_session_tools(episodic_memory)
     if personal_os_store is not None:
         tools += build_personal_os_crud_tools(personal_os_store)
-    # ADR-043: one ledger of what the agent last read or wrote, shared by read_file, the Engineer's
+    # ADR-045: one ledger of what the agent last read or wrote, shared by read_file, the Engineer's
     # write_file/edit_file and check_file_staleness (in memory; a restart only loses baselines).
     read_ledger = FileReadLedger()
     if workspace is not None:
         tools += build_file_tools(workspace, read_ledger=read_ledger)
-        # ADR-040: structured readers over the same confined directory. Each is registered only if what
+        # ADR-042: structured readers over the same confined directory. Each is registered only if what
         # it needs is present (the OCR / vision / speech engines are injected, never imported here).
         tools += build_media_tools(
             workspace, ocr_engine=ocr_engine, vision_engine=vision_engine,
             image_normalizer=image_normalizer, stt_engine=stt_engine,
         )
-    # ADR-043: the tools/open classes that read the workspace, plus project_status over the run stores.
+    # ADR-045: the tools/open classes that read the workspace, plus project_status over the run stores.
     tools += build_open_workspace_tools(
         workspace, ledger=read_ledger, engineer_runs=engineer_runs, agent_runs=agent_runs)
     if allowed_http_hosts:
@@ -1018,7 +1032,7 @@ def default_tools(
     if enable_weather:
         tools += build_weather_tool()
     if web_search_url:
-        # ADR-040: search through the operator's own SearXNG, or not at all (no hosted search API).
+        # ADR-042: search through the operator's own SearXNG, or not at all (no hosted search API).
         tools += build_web_search_tool(
             base_url=web_search_url, timeout_s=web_search_timeout_s,
             engines=web_search_engines, language=web_search_language,
@@ -1046,17 +1060,17 @@ def default_tools(
         tools += build_analysis_tools(
             workspace=workspace, advisory_store=advisory_store, advisory_max_age_days=advisory_max_age_days)
     if enable_open_pure_tools:
-        # ADR-042: fourteen more pure tools (architecture, ambiguity, acceptance criteria, diff scope,
+        # ADR-044: fourteen more pure tools (architecture, ambiguity, acceptance criteria, diff scope,
         # explain, quiz, artifacts, evidence, plan feedback, mobile summary, file type, structured
         # data, source structure, workflow validation). Same risk profile as group A.
         tools += build_open_pure_tools()
     if enable_analysis_tools and allowed_http_hosts:
-        # ADR-044: post-release health verification, only against the operator's allowed hosts.
+        # ADR-046: post-release health verification, only against the operator's allowed hosts.
         from .release import build_release_tools
 
         tools += build_release_tools(allowed_http_hosts)
     if ops is not None:
-        # ADR-047: platform health, live telemetry and CI-workflow deploys. Each registers only when the
+        # ADR-049: platform health, live telemetry and CI-workflow deploys. Each registers only when the
         # operator configured what it needs, so a default deployment gains nothing.
         from .ops import build_ops_tools
         from .ops_deploy import build_deploy_tools, parse_deploy_workflows

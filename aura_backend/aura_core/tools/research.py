@@ -1,4 +1,4 @@
-"""``research_topic``: multi-step research over local knowledge and (when available) the web (ADR-044).
+"""``research_topic``: multi-step research over local knowledge and (when available) the web (ADR-046).
 
 ``synthesize_research`` structures notes the model already gathered. This tool *gathers* them, by calling
 other registered tools, then compares what they returned:

@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Any, Mapping, Sequence
 
 from ..domain.errors import ToolExecutionError
+from ..domain.text import fold_arabic
 from ..domain.tools import ToolCategory, ToolSensitivity
 from .base import param, tool
 
@@ -24,6 +25,7 @@ __all__ = [
     "parse_proposed_action",
     "actions_from_tool_results",
     "matching_personal_os_tool",
+    "matching_record_tool",
 ]
 
 PERSONAL_OS_TOOL_NAMES = frozenset({
@@ -101,6 +103,85 @@ _INTENT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         ),
         "propose_health_log",
     ),
+    # Arabic (audit A2): matched on folded text -- no diacritics, bare alefs, final ة as ه --
+    # so "ذكّرني" and "ذكرني", "أضف" and "اضف" are the same request.
+    (re.compile(r"ذكرني|نبهني"), "propose_task"),
+    (
+        re.compile(r"(?:اضف|ضيف|اضيف|انشئ|اعمل|سجل)\S*\s.{0,40}(?:مهمه|مهام|تذكير)"),
+        "propose_task",
+    ),
+    (re.compile(r"مهمه\s+جديده"), "propose_task"),
+    (
+        re.compile(r"(?:احجز|حدد|اضف|ضيف|جدول|سجل)\S*\s.{0,40}(?:موعد|اجتماع|مقابله|حدث)"),
+        "propose_event",
+    ),
+    (
+        re.compile(r"(?:صرفت|دفعت|انفقت)\s.{0,32}(?:\d|[٠-٩]|جنيه|دولار|ريال|درهم|يورو)"),
+        "propose_expense",
+    ),
+    (
+        re.compile(r"(?:سجل|اضف|ضيف)\S*\s.{0,40}(?:مصروف|مصاريف|نفقه|مشتريات)"),
+        "propose_expense",
+    ),
+    (re.compile(r"(?:سجل|اضف|ضيف)\S*\s.{0,40}(?:دخل|راتب|ايراد)"), "propose_income"),
+    (
+        re.compile(r"(?:سجل|تتبع)\S*\s.{0,40}(?:ماء|مياه|نوم|وزن|سعرات|تمرين|رياضه)"),
+        "propose_health_log",
+    ),
+    (re.compile(r"(?:^|\s)(?:شربت|نمت)(?=\s|$)"), "propose_health_log"),
+)
+
+#: The stored-record tools (``tools/records.py``) that serve the same request as each propose
+#: tool: a persona granted ``create_task`` but not ``propose_task`` still needs the plan.
+_WRITE_EQUIVALENTS: Mapping[str, tuple[str, ...]] = {
+    "propose_task": ("create_task",),
+    "propose_event": ("create_calendar_event",),
+    "propose_expense": ("create_finance_record",),
+    "propose_income": ("create_finance_record",),
+    "propose_health_log": ("create_health_record",),
+}
+
+#: Questions about the person's own records (audit A2): "how much did I spend on food this
+#: month?" never reached ``list_finance_records``, because the gate knew only imperatives. Each
+#: fires only when its ``list_*`` tool is offered, so a persona without records pays nothing.
+_READ_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(
+            r"\bhow much (?:did|have|do) i (?:spend|spent|pay|paid|earn|earned|make|made)\b"
+            r"|\bwhat (?:did|have) i (?:spend|spent|pay|paid|buy|bought)\b"
+            r"|\b(?:my|show|list)\b.{0,24}\b(?:expenses|spending|transactions|income|earnings)\b",
+            re.I,
+        ),
+        "list_finance_records",
+    ),
+    (re.compile(r"كم\s+(?:صرفت|دفعت|انفقت|كسبت)|مصاريفي|مصروفاتي|نفقاتي|دخلي"), "list_finance_records"),
+    (
+        re.compile(
+            r"\b(?:show|list|what are|what's|whats|do i have|any)\b.{0,24}"
+            r"\b(?:tasks|to-?dos|reminders)\b",
+            re.I,
+        ),
+        "list_tasks",
+    ),
+    (re.compile(r"مهامي|مهماتي|تذكيراتي|(?:اعرض|ما هي|ماهي|عندي)\s.{0,16}مهام"), "list_tasks"),
+    (
+        re.compile(
+            r"\b(?:on my calendar|my schedule|my meetings|my events|my appointments)\b"
+            r"|\bdo i have (?:any )?(?:meetings|events|appointments)\b",
+            re.I,
+        ),
+        "list_calendar_events",
+    ),
+    (re.compile(r"مواعيدي|اجتماعاتي|جدولي|تقويمي"), "list_calendar_events"),
+    (
+        re.compile(
+            r"\bhow (?:much|long|many hours) did i (?:sleep|drink)\b"
+            r"|\bmy (?:health|sleep|weight|water) (?:log|logs|records|history)\b",
+            re.I,
+        ),
+        "list_health_records",
+    ),
+    (re.compile(r"كم\s+(?:نمت|شربت)"), "list_health_records"),
 )
 
 
@@ -113,14 +194,31 @@ def matching_personal_os_tool(
     reaches execution after the v1 ``[ACTIONS]`` path was locked. Returns ``None``
     when none of the matching tools are in ``available_tools``.
     """
-    offered = {name for name in available_tools if name in PERSONAL_OS_TOOL_NAMES}
-    if not offered:
-        return None
-    text = message.strip()
+    names = set(available_tools)
+    text = fold_arabic(message.strip())
     if not text:
         return None
     for pattern, candidate in _INTENT_PATTERNS:
-        if candidate in offered and pattern.search(text):
+        serves = candidate in names or any(
+            e in names for e in _WRITE_EQUIVALENTS.get(candidate, ())
+        )
+        if serves and pattern.search(text):
+            return candidate
+    return None
+
+
+def matching_record_tool(message: str, available_tools: Sequence[str]) -> str | None:
+    """The ``list_*`` record tool a question about the person's own records needs, or ``None``.
+
+    Gated like :func:`matching_personal_os_tool`: only a tool actually offered can match, so
+    ordinary questions on a persona without record tools never pay for a planning generation.
+    """
+    names = set(available_tools)
+    text = fold_arabic(message.strip())
+    if not text:
+        return None
+    for pattern, candidate in _READ_PATTERNS:
+        if candidate in names and pattern.search(text):
             return candidate
     return None
 

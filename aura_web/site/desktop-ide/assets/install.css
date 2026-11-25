@@ -41,6 +41,9 @@ body {
 .top { border-bottom: 1px solid var(--line); }
 .top-row { display: flex; align-items: center; justify-content: space-between; height: 60px; }
 .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; font-weight: 700; letter-spacing: 0.04em; }
+.top-links { display: inline-flex; gap: 8px; align-items: center; }
+a.tag { text-decoration: none; }
+a.tag:hover, a.tag:focus-visible { color: inherit; border-color: currentColor; }
 .tag { font-size: 13px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 2px 12px; }
 
 .hero { padding: 56px 0 24px; }
@@ -111,3 +114,6 @@ td:first-child { white-space: nowrap; }
   .steps li { padding-left: 58px; }
   td:first-child { white-space: normal; }
 }
+
+.build { margin: 18px 0 0; color: var(--muted); font-size: 15px; }
+.direct { margin: 6px 0 0; font-size: 15px; }

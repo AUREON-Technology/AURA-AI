@@ -1,4 +1,4 @@
-"""ADR-040 building blocks beneath the tools: table finding in PDF text, delimiter sniffing and column
+"""ADR-042 building blocks beneath the tools: table finding in PDF text, delimiter sniffing and column
 statistics (``knowledge/tabular.py``), per-call OCR language, ``VisionEngine.analyze``, and
 ``pdf_image_inventory`` / ``office_images``."""
 

@@ -103,8 +103,10 @@ class TestTokenBudget:
         assert count >= letters / HeuristicTokenizer.ARABIC_CHARS_PER_TOKEN
 
     def test_english_counts_are_unchanged(self) -> None:
-        """The value the counter gave before Arabic support (measured on the unchanged code)."""
-        assert HeuristicTokenizer().count("This is a fairly long English sentence") == 9
+        """The value the counter gave before Arabic support (measured on the unchanged code) was
+        9. It is now held at the ``ceil(len/4)`` floor of 10 (38 characters): no estimate may
+        fall below the flat figure callers used before (security review of KAN-104)."""
+        assert HeuristicTokenizer().count("This is a fairly long English sentence") == 10
 
 
 class TestChunking:

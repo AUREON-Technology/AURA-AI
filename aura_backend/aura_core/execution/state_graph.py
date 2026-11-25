@@ -1,4 +1,4 @@
-"""The agent loop's control flow, as data (ADR-037).
+"""The agent loop's control flow, as data (ADR-039).
 
 ``AgenticExecutor`` used to carry its transitions in an ``if`` ladder inside ``_evaluate``. The
 ladder worked, but the *shape* of the loop -- what states exist, what can follow what, which inputs
