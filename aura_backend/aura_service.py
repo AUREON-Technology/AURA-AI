@@ -357,8 +357,10 @@ def _apply_cors(app) -> None:
         allow_headers=["*"],
         # A browser hides response headers from page scripts unless listed here; the web app
         # reads X-Aura-Refusal to explain a plan refusal (api/v2/auth.py REFUSAL_HEADER) and
-        # Retry-After to wait out a 429/503 rather than guess (INT-118).
-        expose_headers=["X-Aura-Refusal", "Retry-After"],
+        # Retry-After to wait out a 429/503 rather than guess (INT-118), and X-Correlation-Id,
+        # which the client puts on every error it shows so a report can be matched to a server
+        # log line; without it the web app never sees the server's id (audit AUD-15).
+        expose_headers=["X-Aura-Refusal", "Retry-After", "X-Correlation-Id"],
     )
 
 

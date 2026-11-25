@@ -91,6 +91,12 @@ class HostFoldersClient {
 
   static const path = '/api/v3/host/folders';
 
+  /// How long [initGit] waits. The gateway waits up to 150 s for the computer (`v3.py`,
+  /// `host_folder_git_init`: "rather than giving up first"), because `git add -A` over a large
+  /// folder is slow. The shared client's 30 s default made the app report "unreachable" while the
+  /// init was still running, and a retry then hit "already a git repository" (audit AUD-13).
+  static const initGitTimeout = Duration(seconds: 160);
+
   /// Throws [AuraApiError] when the request fails and [FormatException] on a body that is not
   /// the documented shape.
   Future<HostFolders> fetch() async => HostFolders.fromJson(await _api.json(method: 'GET', path: path));
@@ -100,7 +106,12 @@ class HostFoldersClient {
   /// not say). The computer's refusal is a 409 `desktop_refused` whose `message` is the daemon's
   /// own text; 503 means no computer is connected. Both surface as [AuraApiError].
   Future<String> initGit(String folder) async {
-    final body = await _api.json(method: 'POST', path: '$path/git-init', body: {'path': folder});
+    final body = await _api.json(
+      method: 'POST',
+      path: '$path/git-init',
+      body: {'path': folder},
+      timeout: initGitTimeout,
+    );
     final commit = body['commit'];
     return commit is String ? commit : '';
   }

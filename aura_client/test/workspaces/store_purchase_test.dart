@@ -214,4 +214,23 @@ void main() {
     ]));
     expect(find.byKey(const Key('plan-store-buy')), findsOneWidget);
   });
+
+  // AUD-11: the server also counts a payment that was received but not yet applied, and a pending
+  // one with no expiry; the client used to show Buy and then meet a 409.
+  testWidgets('a received payment blocks a store purchase, as it does on the server', (tester) async {
+    await pumpPlan(tester, billing: BillingStatus(storeProducts: _apple, payments: [
+      PaymentView(id: 'p1', plan: 'pro', amountPiastres: 15000, status: 'received',
+          expiresAt: DateTime.utc(2020)),
+    ]));
+    expect(find.byKey(const Key('plan-fawry-active')), findsOneWidget);
+    expect(find.byKey(const Key('plan-store-buy')), findsNothing);
+  });
+
+  testWidgets('a pending payment with no expiry blocks a store purchase', (tester) async {
+    await pumpPlan(tester, billing: BillingStatus(storeProducts: _apple, payments: [
+      PaymentView(id: 'p1', plan: 'pro', amountPiastres: 15000, status: 'pending'),
+    ]));
+    expect(find.byKey(const Key('plan-fawry-active')), findsOneWidget);
+    expect(find.byKey(const Key('plan-store-buy')), findsNothing);
+  });
 }

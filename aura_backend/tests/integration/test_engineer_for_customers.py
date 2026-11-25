@@ -159,10 +159,15 @@ async def test_a_lookup_error_at_recheck_keeps_a_connected_daemon(container, swi
         await asyncio.sleep(0.4)
         assert await registry.resolve(UserId("hal")) is not None
         cm.__exit__(None, None, None)
-        with pytest.raises(WebSocketDisconnect):
+        with pytest.raises(WebSocketDisconnect) as exc:
             with client.websocket_connect("/api/v3/host/agent") as ws:
                 ws.send_json({"type": "auth", "token": "hal"})
                 ws.receive_json()
+        # Admission still fails closed (no session is registered), but as "retry", not "re-pair":
+        # 4401 makes the daemon stop for good, so a plans-lookup blip on the reconnect after a
+        # deploy would silently unpair a paying customer's computer (audit AUD-03).
+        assert exc.value.code == 1011
+        assert await registry.resolve(UserId("hal")) is None
 
 
 # --- WP11 gap check: Plan E meets the stage-1 Engineer routes (module readiness, 2026-11-18) ---

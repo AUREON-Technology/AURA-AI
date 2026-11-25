@@ -217,3 +217,5 @@ def test_cors_exposes_retry_after_to_web_clients(monkeypatch) -> None:
     exposed = {h.strip().lower() for h in response.headers["access-control-expose-headers"].split(",")}
     assert "retry-after" in exposed
     assert "x-aura-refusal" in exposed
+    # The client reads the server's correlation id off every failed response (AUD-15).
+    assert "x-correlation-id" in exposed

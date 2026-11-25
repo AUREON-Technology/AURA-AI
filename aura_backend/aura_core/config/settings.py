@@ -2756,6 +2756,14 @@ class AuraSettings:
         if redact:
             for provider in payload.get("llm", {}).get("providers", []):
                 provider["api_key_configured"] = bool(os.environ.get(provider.get("api_key_env", "")))
+            # ``metrics_token`` is the one settings field that holds a secret *value* rather than
+            # the name of an environment variable. It is the bearer for ``/metrics``, and this
+            # dict is what ``/admin/status`` returns to every Admin, so report only whether one
+            # is set -- the same shape the SuperAdmin monitoring view uses (``metrics_token_set``).
+            observability = payload.get("observability")
+            if isinstance(observability, dict):
+                observability["metrics_token_set"] = bool(observability.get("metrics_token"))
+                observability["metrics_token"] = ""
         return payload
 
 

@@ -405,6 +405,22 @@ class TestIntrospection:
         assert payload["infrastructure"]["redis_url"].startswith("redis://***@")
         assert "redis" in payload["infrastructure"]["redis_url"]
 
+    def test_as_dict_never_contains_the_metrics_bearer_token(self, env) -> None:
+        """``/admin/status`` returns ``as_dict()`` to every Admin; the /metrics bearer must not."""
+        token = "metrics-bearer-must-not-leak-4c1e"
+        env.setenv("AURA_METRICS_TOKEN", token)
+
+        payload = AuraSettings.from_env().as_dict()
+        assert token not in json.dumps(payload)
+        assert payload["observability"]["metrics_token"] == ""
+        assert payload["observability"]["metrics_token_set"] is True
+
+    def test_metrics_token_set_is_false_when_none_is_configured(self, env) -> None:
+        env.delenv("AURA_METRICS_TOKEN", raising=False)
+        env.delenv("METRICS_TOKEN", raising=False)
+        payload = AuraSettings.from_env().as_dict()
+        assert payload["observability"]["metrics_token_set"] is False
+
     def test_a_missing_key_is_reported_as_not_configured(self, env) -> None:
         env.setenv("AURA_LLM_PROVIDERS", "cloud")
         env.setenv("AURA_PROVIDER_CLOUD_KIND", "openai_compatible")
