@@ -192,7 +192,7 @@ _ENGINEER_OPEN_TOOLS = frozenset({
 # (`tools/media.py`, `tools/websearch.py`) are each only registered when their own setting is present
 # (AURA_TOOLS_FILES_ROOT for the file readers, AURA_WEB_SEARCH_URL for search), so naming them here
 # is a grant, not a guarantee.
-_ENGINEER_DEVTOOLS = frozenset({"lint_code", "check_format", "scan_security"})
+_ENGINEER_DEVTOOLS = frozenset({"lint_code", "check_format", "scan_security", "gpu_status"})
 _DOCUMENT_READING_TOOLS = frozenset({"parse_document", "inspect_spreadsheet", "ocr_image"})
 _ENGINEER_READING_TOOLS = _DOCUMENT_READING_TOOLS | frozenset({
     "web_search", "fetch_url", "analyze_image_requirements", "transcribe_audio",
@@ -223,6 +223,13 @@ _ENGINEER_OPS_TOOLS = frozenset({
 # owner's own metric series (side-effecting), `compare_model_metric` reads it. Always registered with the
 # analysis group, so unlike the release tool these names are guaranteed to exist.
 _ENGINEER_MODEL_MONITOR_TOOLS = frozenset({"record_model_metric", "compare_model_metric"})
+
+# ADR-053. Pure scoring over numbers and text the caller supplies (`tools/eval_tools.py`): no I/O, no model call.
+_EVAL_SCORING_TOOLS = frozenset({"score_retrieval", "score_answer", "compute_wer", "compare_to_baseline"})
+
+# ADR-054. Read-only questions over the caller's own knowledge graph (`tools/graph_tools.py`), owner taken from the
+# context. Their results quote documents (untrusted_content), so the coding agent does not hold them.
+_GRAPH_READ_TOOLS = frozenset({"graph_find_entities", "graph_neighbours", "graph_path"})
 
 # ADR-046. `research_topic` (`tools/research.py`) calls search_knowledge / web_search / fetch_url through the
 # registry as the caller. Its output is other people's text (untrusted_content), so only the personas that
@@ -296,7 +303,7 @@ def build_default_agent_registry(*, engineer_token_budget: int | None = None) ->
                 # it here only matters once a deployment configures AURA_HTTP_ALLOWED_HOSTS.
                 allowed_tools=_READ_TOOLS | _MEMORY_WRITE_TOOLS | {"calculator", "fetch_url", "web_search"} | {
                     "synthesize_research", "validate_data_records",
-                } | _DOCUMENT_READING_TOOLS | {"transcribe_audio"} | _OPEN_PURE_RESEARCH_TOOLS | _RESEARCH_TOOLS,
+                } | _DOCUMENT_READING_TOOLS | {"transcribe_audio"} | _OPEN_PURE_RESEARCH_TOOLS | _RESEARCH_TOOLS | _GRAPH_READ_TOOLS,
                 risk_ceiling=ToolSensitivity.CONFIDENTIAL, memory_scope="shared",
             ),
             AgentSpec(
@@ -346,7 +353,7 @@ def build_default_agent_registry(*, engineer_token_budget: int | None = None) ->
                     "github_create_draft_pull_request",
                 } | _CODE_ANALYSIS_TOOLS | _DATA_ANALYSIS_TOOLS | _ENGINEER_OPEN_TOOLS | _ENGINEER_DEVTOOLS
                 | _ENGINEER_READING_TOOLS | _SESSION_TOOLS | _OPEN_PURE_CODE_TOOLS | _OPEN_PURE_PLANNING_TOOLS
-                | _ENGINEER_WORKSPACE_TOOLS | _ENGINEER_RELEASE_TOOLS | _ENGINEER_OPS_TOOLS | _ENGINEER_MODEL_MONITOR_TOOLS | _RESEARCH_TOOLS,
+                | _ENGINEER_WORKSPACE_TOOLS | _ENGINEER_RELEASE_TOOLS | _ENGINEER_OPS_TOOLS | _ENGINEER_MODEL_MONITOR_TOOLS | _EVAL_SCORING_TOOLS | _GRAPH_READ_TOOLS | _RESEARCH_TOOLS,
                 # Every tool the MCP bridge registers (`build_mcp_bridge_tools`). The prefix only
                 # decides *who* may ask: each such tool still needs the `engineer_agent`
                 # capability, and an unreviewed one stays CONFIDENTIAL + side-effecting, hence

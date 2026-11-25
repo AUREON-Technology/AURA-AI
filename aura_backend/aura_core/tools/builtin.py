@@ -978,6 +978,7 @@ def default_tools(
     advisory_store: Any = None,
     advisory_max_age_days: int = 3,
     ops: Any = None,
+    graph_store: Any = None,
 ) -> list[Tool]:
     """Assemble the tool set for a deployment.
 
@@ -1064,6 +1065,9 @@ def default_tools(
         # explain, quiz, artifacts, evidence, plan feedback, mobile summary, file type, structured
         # data, source structure, workflow validation). Same risk profile as group A.
         tools += build_open_pure_tools()
+        from .eval_tools import build_eval_tools  # ADR-053: evaluation scoring over supplied numbers and text
+
+        tools += build_eval_tools()
     if enable_analysis_tools and allowed_http_hosts:
         # ADR-046: post-release health verification, only against the operator's allowed hosts.
         from .release import build_release_tools
@@ -1084,6 +1088,11 @@ def default_tools(
             tools += build_deploy_tools(
                 github_client_resolver, repo=github_default_repo,
                 workflows=parse_deploy_workflows(ops.deploy_workflows), refs=ops.deploy_refs)
+    if graph_store is not None:
+        # ADR-054: read-only questions over the caller's own knowledge graph.
+        from .graph_tools import build_graph_tools
+
+        tools += build_graph_tools(graph_store)
     if enable_open_exec_tools:
         # ADR-036 group B: runs project code in a child of *this* process. Operator opt-in only,
         # and each tool still needs `engineer_agent` plus a per-call confirmation.

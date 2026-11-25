@@ -394,7 +394,7 @@ class TestKernelWiring:
             # ADR-049/050: each registers only when the operator configured what it reads or starts (AURA_OPS_*),
             # and `scan_security` with a sandbox runner like `lint_code`.
             "check_platform_health", "query_telemetry", "list_workflow_runs", "deploy_release",
-            "rollback_release", "scan_security",
+            "rollback_release", "scan_security", "gpu_status",
         }
         # The sandbox/git tools (minus `clone_repository`, which additionally needs a GitHub
         # resolver this default container does not configure) are unconditionally *registered*

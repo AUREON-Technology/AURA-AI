@@ -562,6 +562,7 @@ def _all_tools() -> dict[str, ToolSpec]:
         image_normalizer=object(), stt_engine=_Stt(),
         engineer_runs=object(),  # ADR-045: registers project_status
         ops=_ops_settings(),  # ADR-049: platform health, telemetry, CI-workflow deploys (all operator-configured)
+        graph_store=_graph_store(),  # ADR-054: read-only knowledge-graph questions
     )
     agents = build_default_agent_registry()
     tools += build_delegation_tools(agents=agents, kernel=lambda: None)
@@ -572,6 +573,12 @@ def _all_tools() -> dict[str, ToolSpec]:
 
     tools += build_drift_tools(InMemoryCache()) + build_research_tools(lambda: None)
     return {t.spec.name: t.spec for t in tools}
+
+
+def _graph_store():
+    from aura_core.adapters.memory_stores import InMemoryGraphStore
+
+    return InMemoryGraphStore()
 
 
 def _ops_settings():

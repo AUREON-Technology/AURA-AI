@@ -40,6 +40,8 @@ _EXPECTED_WORKSPACE_LOCAL = {
     # ADR-050: Semgrep/Gitleaks/Bandit started in the workspace, read-only, with bundled rules and no
     # network; findings are masked and secret values are never read from Gitleaks' report.
     "scan_security",
+    # ADR-055: runs nvidia-smi (a read) in the workspace's own machine; reports, never allocates.
+    "gpu_status",
     "git_commit",
     "git_checkout_branch",
     "open_workspace",

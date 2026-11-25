@@ -33,6 +33,7 @@ from ..domain.tools import ToolCategory, ToolSensitivity
 from ..ports.runtime import Tool, ToolContext
 from .base import param, tool
 from .desktop_ops import _relative_path
+from ..observability.gpu import QUERY_ARGS as _GPU_QUERY, as_dicts as _gpu_dicts, parse_nvidia_smi
 from .devtools_security import SCANNERS, parse_bandit, parse_gitleaks, parse_semgrep, scanner_args
 
 __all__ = ["build_devtools", "DEVTOOL_NAMES", "parse_mypy", "parse_pyflakes", "parse_ruff_check", "parse_eslint",
@@ -41,7 +42,7 @@ __all__ = ["build_devtools", "DEVTOOL_NAMES", "parse_mypy", "parse_pyflakes", "p
 _ENGINEER_CAPABILITY = "engineer_agent"
 
 #: Names, for persona grants (``agents/registry.py``) and the tests that pin them.
-DEVTOOL_NAMES: frozenset[str] = frozenset({"lint_code", "check_format", "scan_security"})
+DEVTOOL_NAMES: frozenset[str] = frozenset({"lint_code", "check_format", "scan_security", "gpu_status"})
 
 #: Findings returned in one result. The rest are counted, not listed: a result the model cannot fit
 #: into its context is worse than a short one that says how much it left out.
@@ -67,6 +68,7 @@ _LAUNCHERS: dict[str, tuple[tuple[str, ...], ...]] = {
     "semgrep": (("semgrep",), ("python3", "-m", "semgrep")),
     "gitleaks": (("gitleaks",),),
     "bandit": (("bandit",), ("python3", "-m", "bandit")),
+    "nvidia-smi": (("nvidia-smi",),),
 }
 
 #: Phrases on a launcher's *stderr* that mean the program (not the project) is absent. stdout is never
@@ -714,4 +716,30 @@ def build_devtools(sandbox_runner: Any, sessions: Any) -> list[Tool]:
                     "leads to review, and a clean result is not proof the code is secure.",
         }, ensure_ascii=False)
 
-    return [lint_code, check_format, scan_security]
+    @tool(
+        "gpu_status",
+        "Read the GPUs of the machine the sandbox runs on (the paired desktop or the server): name, memory used and "
+        "free, utilisation, temperature, from nvidia-smi. Reports only; it cannot reserve or allocate a GPU. "
+        "No driver or GPU is reported as unavailable, never as zero usage.",
+        timeout_s=40.0,
+        **common,
+    )
+    async def gpu_status(context: ToolContext) -> str:
+        handle = await sessions.handle(context)
+        result, launcher = await _run_tool(sandbox_runner, handle, "nvidia-smi", list(_GPU_QUERY), timeout_s=20.0)
+        if result is None:
+            return json.dumps({"available": False, "status": "not_installed",
+                               "detail": "nvidia-smi is not on this machine: no NVIDIA driver, or no GPU", "gpus": []})
+        if _timed_out(result):
+            return json.dumps({"available": False, "status": "timeout", "gpus": [], "detail": "nvidia-smi did not answer"})
+        if result.exit_code != 0:
+            return json.dumps({"available": False, "status": "failed", "gpus": [],
+                               "detail": _short(result.stderr or result.stdout or f"exit code {result.exit_code}", 300)})
+        try:
+            gpus = parse_nvidia_smi(result.stdout)
+        except ValueError as exc:
+            return json.dumps({"available": False, "status": "failed", "gpus": [], "detail": str(exc)[:200]})
+        return json.dumps({"available": True, "status": "ok", "count": len(gpus), "gpus": _gpu_dicts(gpus),
+                           "note": "read-only: this does not reserve or allocate a GPU"})
+
+    return [lint_code, check_format, scan_security, gpu_status]

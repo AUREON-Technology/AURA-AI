@@ -2980,6 +2980,15 @@ async def refresh_scrape_gauges(container: Any) -> None:
     this process's exposition. The backlog is a fact of the database, so it is read here.
     """
     await _refresh_billing_gauges(container)
+    try:  # read-only and cached; a host without a GPU leaves the gauges unset (ADR-055)
+        from ..adapters.gpu_probe import GpuProbe
+
+        probe = getattr(container, "_gpu_probe", None)
+        if probe is None:
+            probe = container._gpu_probe = GpuProbe()
+        await asyncio.wait_for(probe.refresh_gauges(container.metrics), timeout=SCRAPE_REFRESH_TIMEOUT_S + 2)
+    except Exception:
+        logger.debug("gpu gauge refresh failed", exc_info=True)
     outbox = getattr(container, "event_outbox", None)
     stats = getattr(outbox, "stats", None)
     if not callable(stats):
