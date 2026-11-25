@@ -178,6 +178,24 @@ class CloudSandboxStoreCases:
         record = await store.get(key)
         assert (record.saving_name, record.saving_until, record.in_use) == (None, None, 0)
 
+    async def test_a_loss_is_reported_exactly_once(self, store) -> None:
+        key = await self._attached(store)
+        assert not await store.take_loss(key)
+        assert await store.detach(key, "box-1", lost=True)
+        assert (await store.get(key)).lost
+
+        taken = await asyncio.gather(store.take_loss(key), store.take_loss(key))
+
+        assert sorted(taken) == [False, True]
+        assert not (await store.get(key)).lost
+
+    async def test_a_plain_detach_reports_no_loss(self, store) -> None:
+        key = await self._attached(store)
+
+        assert await store.detach(key, "box-1")
+
+        assert not (await store.get(key)).lost
+
     async def test_usage_is_remembered(self, store) -> None:
         key = await self._attached(store)
 

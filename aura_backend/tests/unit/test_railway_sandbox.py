@@ -12,9 +12,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 
 import pytest
 
+from aura_core.adapters import railway_sandbox
 from aura_core.adapters.memory_stores import InMemoryCloudSandboxStore
 from aura_core.adapters.railway_sandbox import RailwaySandboxRunner, SandboxOutcomeUnknown
 from aura_core.ports.coding import FileWriteOp, SandboxHandle
@@ -247,6 +249,36 @@ class TestALostSandboxIsReported:
 
         with pytest.raises(Exception, match="no longer exists"):
             await runner.read_file(handle, "work.txt")
+
+    async def test_measuring_the_disk_does_not_hide_the_loss(self, runner, broker) -> None:
+        """Every file write checks the quota first; that check must not swap in the older copy."""
+        handle = await _ready(runner)
+        await runner.pause_workspace(handle)
+        await runner.write_file(handle, "work.txt", "unsaved")
+        broker.vanish(next(iter(broker.sandboxes)))
+
+        await runner.workspace_disk_usage_mb(handle)
+
+        with pytest.raises(Exception, match="since it was last saved"):
+            await runner.write_file(handle, "other.txt", "x")
+        assert await runner.read_file(handle, "work.txt") == "v1"
+
+    async def test_a_save_that_finds_the_sandbox_gone_tells_the_next_caller(
+        self, runner, broker, store
+    ) -> None:
+        """A pause is housekeeping, often for somebody else's request: it frees the slot, and the
+        workspace's own next call is the one told about the loss."""
+        handle = await _ready(runner)
+        await runner.pause_workspace(handle)
+        await runner.write_file(handle, "work.txt", "unsaved")
+        broker.vanish(next(iter(broker.sandboxes)))
+
+        await runner.pause_workspace(handle)
+
+        assert (await store.get("ws1")).sandbox_id is None
+        with pytest.raises(Exception, match="since it was last saved"):
+            await runner.read_file(handle, "work.txt")
+        assert await runner.read_file(handle, "work.txt") == "v1"
 
     @pytest.mark.parametrize("code", ["fence_missing", "sandbox_unsafe", "sandbox_not_found"])
     async def test_a_sandbox_the_broker_discarded_is_forgotten(
@@ -523,6 +555,50 @@ class TestFilePaths:
             await runner.write_files(handle, [FileWriteOp(path="work.txt", content="v2")])
 
         assert await runner.read_file(handle, "work.txt") == "v1"
+
+
+class TestAnImportThatFails:
+    async def test_no_half_checkout_is_left_and_a_retry_works(
+        self, runner, broker, tmp_path, monkeypatch
+    ) -> None:
+        """A checkout cut off while unpacking would pass for the repository, with most files
+        showing as deleted."""
+        source = tmp_path / "checkout"
+        (source / ".git").mkdir(parents=True)
+        (source / ".git" / "HEAD").write_bytes(b"ref: refs/heads/main\n")
+        for number in range(40):
+            (source / f"file{number:02d}.bin").write_bytes(os.urandom(4096))
+        whole = railway_sandbox._pack
+
+        def cut_short(from_, archive, max_bytes) -> None:
+            whole(from_, archive, max_bytes)
+            data = archive.read_bytes()
+            archive.write_bytes(data[: len(data) // 2])
+
+        handle = await runner.open_workspace("ws1")
+        monkeypatch.setattr(railway_sandbox, "_pack", cut_short)
+        with pytest.raises(Exception, match="could not unpack"):
+            await runner.import_repository(handle, source, "widgets")
+
+        left = await runner.run(handle, ["ls", "-A"], timeout_s=30)
+        assert left.stdout.split() == []
+
+        monkeypatch.setattr(railway_sandbox, "_pack", whole)
+        await runner.import_repository(handle, source, "widgets")
+        assert await runner.read_file(handle, "widgets/.git/HEAD") == "ref: refs/heads/main\n"
+
+    async def test_an_existing_empty_folder_is_filled(self, runner, tmp_path) -> None:
+        source = tmp_path / "checkout"
+        source.mkdir()
+        (source / "a.txt").write_text("a", encoding="utf-8")
+        handle = await runner.open_workspace("ws1")
+        await runner.run(handle, ["mkdir", "-p", "nested/widgets"], timeout_s=30)
+
+        await runner.import_repository(handle, source, "nested/widgets")
+
+        assert await runner.read_file(handle, "nested/widgets/a.txt") == "a"
+        left = await runner.run(handle, ["ls", "-A"], timeout_s=30)
+        assert left.stdout.split() == ["nested"]
 
 
 class TestTheBrokerSecret:

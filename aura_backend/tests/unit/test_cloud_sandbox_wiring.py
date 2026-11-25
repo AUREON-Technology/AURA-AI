@@ -152,6 +152,21 @@ class TestContainer:
 
         assert container.host_git is not None
 
+    async def test_the_gateways_own_memory_does_not_refuse_a_cloud_workspace(
+        self, configure, monkeypatch
+    ) -> None:
+        """The sandbox runs elsewhere; a small gateway must still be able to open one."""
+        monkeypatch.setattr(
+            "aura_core.tools.workspaces.available_memory_mb", lambda *a, **k: 100.0)
+        container = Container(_cloud(configure))
+
+        opened = await container.workspace_manager.open(UserId("alice"), "acme/widgets")
+        stats = await container.workspace_manager.stats(opened.record)
+
+        assert opened.record.repo == "acme/widgets"
+        assert stats["state"] == opened.record.status
+        await container.shutdown()
+
     async def test_cloud_workspaces_are_recorded_as_such(self, configure) -> None:
         container = Container(_cloud(configure))
 

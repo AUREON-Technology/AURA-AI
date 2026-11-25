@@ -36,6 +36,7 @@ sandbox's configuration and hooks never reach this host.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import re
 import shutil
@@ -241,6 +242,15 @@ class HostGitService:
                 raise GitCommandError(
                     f"git {args[0]} timed out after {timeout_s or self._timeout_s:.0f}s"
                 ) from None
+            except BaseException:
+                # The caller gave up (a tool's own deadline). Left running, git would go on
+                # writing to a folder about to be removed, or finish a push reported as failed.
+                if process.returncode is None:
+                    process.kill()
+                    # Bounded: a helper git started may hold the pipes a moment longer.
+                    with contextlib.suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(process.wait(), timeout=5.0)
+                raise
 
             return GitResult(
                 stdout=_scrub(stdout.decode("utf-8", errors="replace"), token),

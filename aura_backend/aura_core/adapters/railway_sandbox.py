@@ -78,15 +78,21 @@ _EMPTY_CHECK = """
 d=$1
 if [ -e "$d" ] && { [ ! -d "$d" ] || [ -n "$(ls -A -- "$d")" ]; }; then exit 3; fi
 """
-#: ``$1`` destination, then the uploaded parts of a ``.tar.gz``; the parts are removed either way.
+#: ``$1`` destination, ``$2`` a scratch folder name at the workspace root, then the uploaded parts
+#: of a ``.tar.gz``. The checkout appears at the destination only once it is whole: a command cut
+#: off half way leaves at most a hidden folder, which the git tools never take for a repository.
 _UNPACK = """
 set -e
 d=$1
-shift
-trap 'rm -f -- "$@"' EXIT
+t=$2
+shift 2
+trap 'rm -rf -- "$t"; rm -f -- "$@"' EXIT
 if [ -e "$d" ] && { [ ! -d "$d" ] || [ -n "$(ls -A -- "$d")" ]; }; then exit 3; fi
-mkdir -p -- "$d"
-cat -- "$@" | tar -xzf - -C "$d"
+mkdir -p -- "$(dirname -- "$d")"
+mkdir -- "$t"
+cat -- "$@" | tar -xzf - -C "$t"
+[ ! -d "$d" ] || rmdir -- "$d"
+mv -- "$t" "$d"
 """
 
 
@@ -335,6 +341,8 @@ class RailwaySandboxRunner:
             record = await self._store.get(key)
             if record is None:
                 raise SandboxError(f"unknown sandbox task {key!r}; call create_task first")
+            if record.lost and await self._store.take_loss(key):
+                raise _lost()
             now = self._now()
             saving = record.saving_until is not None and record.saving_until > now
             if not saving:
@@ -688,8 +696,11 @@ class RailwaySandboxRunner:
             )
         except BaseException as exc:
             if isinstance(exc, _Refused) and exc.code == "sandbox_not_found":
-                await self._store.detach(key, sandbox_id)
-                raise _lost() from None
+                # There is nothing left to save, and whoever asked for the pause (often another
+                # request making room) is not who lost the work: the key's next user is told.
+                logger.warning("a cloud sandbox vanished before it could be saved")
+                await self._store.detach(key, sandbox_id, lost=True)
+                return
             await self._store.release_save(key, name)
             await self._quietly(self._delete_checkpoint(name), "an unfinished checkpoint")
             if not isinstance(exc, SandboxError):
@@ -769,9 +780,10 @@ class RailwaySandboxRunner:
             try:
                 used = await self._usage(record.sandbox_id)
             except _Refused as exc:
+                # A vanished sandbox stays on record: this runs before every write, and
+                # forgetting it here would let that write go quietly to the older saved copy.
                 if exc.code != "sandbox_not_found":
                     raise
-                await self._store.detach(key, record.sandbox_id)
             else:
                 await self._store.record_usage(key, used)
                 return used / (1024 * 1024)
@@ -810,7 +822,8 @@ class RailwaySandboxRunner:
         with tempfile.TemporaryDirectory(prefix="aura-upload-") as staging:
             archive = Path(staging) / "checkout.tar.gz"
             await asyncio.to_thread(_pack, source, archive, self._max_transfer_bytes)
-            prefix = f".aura-import-{uuid.uuid4().hex}"
+            token = uuid.uuid4().hex
+            prefix, scratch = f".aura-import-{token}", f".aura-unpack-{token}"
             parts: list[str] = []
             try:
                 async with self._sandbox(handle.task_id) as sandbox_id:
@@ -819,14 +832,15 @@ class RailwaySandboxRunner:
                             parts.append(f"{prefix}.{len(parts):04d}")
                             await self._put(sandbox_id, parts[-1], chunk)
                 result = await self.run(
-                    handle, ["sh", "-c", _UNPACK, "aura-import", folder, *parts], timeout_s=600.0
+                    handle, ["sh", "-c", _UNPACK, "aura-import", folder, scratch, *parts],
+                    timeout_s=600.0,
                 )
             except SandboxOutcomeUnknown:
                 raise
             except BaseException:
                 if parts:
                     await self._quietly(
-                        self._remove_files(handle, parts), "an unfinished upload"
+                        self._remove(handle, [scratch, *parts]), "an unfinished upload"
                     )
                 raise
         if result.exit_code == 3:
@@ -836,8 +850,8 @@ class RailwaySandboxRunner:
                 f"could not unpack the checkout in the workspace: {result.stderr.strip()[-300:]}"
             )
 
-    async def _remove_files(self, handle: SandboxHandle, names: Sequence[str]) -> None:
-        await self.run(handle, ["rm", "-f", "--", *names], timeout_s=30.0)
+    async def _remove(self, handle: SandboxHandle, names: Sequence[str]) -> None:
+        await self.run(handle, ["rm", "-rf", "--", *names], timeout_s=30.0)
 
     async def export_branch(
         self, handle: SandboxHandle, directory: str, branch: str, destination: Path

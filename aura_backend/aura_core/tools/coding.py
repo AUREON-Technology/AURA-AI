@@ -2025,12 +2025,14 @@ def build_sandbox_tools(
             with tempfile.TemporaryDirectory(
                 prefix="aura-push-", ignore_cleanup_errors=True
             ) as staging:
-                bare = Path(staging) / "push.git"
-                await host_git.clone_for_push(slug, dest=bare, token=token)
-                _refuse_default(branch, {await host_git.default_branch_of(bare)})
+                # The branch comes out first: it is quick, and a branch that is not there is
+                # found out before a full clone has been paid for.
                 export = await transfer.export_branch(
                     handle, directory, branch, Path(staging) / "branch.bundle"
                 )
+                bare = Path(staging) / "push.git"
+                await host_git.clone_for_push(slug, dest=bare, token=token)
+                _refuse_default(branch, {await host_git.default_branch_of(bare)})
                 if export.bundle is not None:
                     tip = await host_git.import_bundle(bare, export.bundle, branch=branch)
                 elif await host_git.has_commit(bare, export.tip):

@@ -59,6 +59,7 @@ class PostgresCloudSandboxStore:
             in_use=row["in_use"],
             in_use_until=_utc(row["in_use_until"]),
             used_bytes=row["used_bytes"],
+            lost=row["lost"],
         )
 
     async def ensure(self, key: str, kind: str, *, at: datetime) -> CloudSandbox:
@@ -101,15 +102,23 @@ class PostgresCloudSandboxStore:
             key, sandbox_id, expected_checkpoint, at,
         )
 
-    async def detach(self, key: str, sandbox_id: str) -> bool:
+    async def detach(self, key: str, sandbox_id: str, *, lost: bool = False) -> bool:
         return await self._applied(
             """
             UPDATE aura_cloud_sandboxes
             SET sandbox_id = NULL, booted_at = NULL, in_use = 0, in_use_until = NULL,
-                saving_name = NULL, saving_until = NULL, updated_at = now()
+                saving_name = NULL, saving_until = NULL, lost = lost OR $3::boolean,
+                updated_at = now()
             WHERE key = $1 AND sandbox_id = $2
             """,
-            key, sandbox_id,
+            key, sandbox_id, lost,
+        )
+
+    async def take_loss(self, key: str) -> bool:
+        return await self._applied(
+            "UPDATE aura_cloud_sandboxes SET lost = FALSE, updated_at = now() "
+            "WHERE key = $1 AND lost",
+            key,
         )
 
     async def begin_use(self, key: str, sandbox_id: str, *, at: datetime, until: datetime) -> bool:

@@ -741,12 +741,18 @@ class InMemoryCloudSandboxStore:
             saving_name=None, saving_until=None,
         )
 
-    async def detach(self, key: str, sandbox_id: str) -> bool:
+    async def detach(self, key: str, sandbox_id: str, *, lost: bool = False) -> bool:
+        row = self._rows.get(key)
+        if row is None:
+            return False
         return self._change(
             key, lambda r: r.sandbox_id == sandbox_id,
             sandbox_id=None, booted_at=None, in_use=0, in_use_until=None,
-            saving_name=None, saving_until=None,
+            saving_name=None, saving_until=None, lost=row.lost or lost,
         )
+
+    async def take_loss(self, key: str) -> bool:
+        return self._change(key, lambda r: r.lost, lost=False)
 
     @staticmethod
     def _saving(row: CloudSandbox, at: datetime) -> bool:

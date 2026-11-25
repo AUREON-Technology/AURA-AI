@@ -12,6 +12,8 @@ repository standing in for GitHub -- over the in-memory transfer runner and the 
 
 from __future__ import annotations
 
+import asyncio
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -303,9 +305,13 @@ class TestPush:
 
     async def test_an_unknown_branch_is_named(self, rig) -> None:
         await _cloned(rig)
+        before = len(rig.git.folders)
 
         with pytest.raises(ToolExecutionError, match="no branch"):
             await rig.tools["git_push"].execute({"branch": "feature/nope"}, _ctx())
+
+        # Found out in the sandbox, before spending the time on a full clone of the repository.
+        assert len(rig.git.folders) == before
 
 
 class TestAHostileSandbox:
@@ -355,6 +361,38 @@ class TestAHostileSandbox:
             await rig.tools["git_push"].execute({"branch": "feature/x"}, _ctx())
 
         assert _remote_ref(rig.remote, "refs/heads/feature/x") is None
+
+
+class TestACancelledGitCommand:
+    async def test_it_does_not_keep_running(self, tmp_path, monkeypatch) -> None:
+        """A tool call's deadline cancels its git command; a push left running could still change
+        the remote after the user was told it failed, from a folder already deleted."""
+        started: list = []
+        spawn = asyncio.create_subprocess_exec
+
+        async def noting(*args, **kwargs):
+            process = await spawn(*args, **kwargs)
+            started.append(process)
+            return process
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", noting)
+        _setup_git(tmp_path, "init", "-q")
+        reader, writer = os.pipe()
+        try:
+            # Waits on its input for as long as the pipe stays open.
+            running = asyncio.create_task(HostGitService(timeout_s=60.0)._run(
+                ["cat-file", "--batch"], cwd=tmp_path, stdin=reader))
+            async with asyncio.timeout(10):
+                while not started:
+                    await asyncio.sleep(0.01)
+            running.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(running, 10)
+
+            assert started[0].returncode is not None
+        finally:
+            os.close(writer)
+            os.close(reader)
 
 
 class TestBundleChecks:

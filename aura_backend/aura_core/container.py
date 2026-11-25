@@ -1491,9 +1491,9 @@ class Container:
             runner=runner,
             store=self.workspaces,
             host_root="" if cloud else sandbox.host_root,
-            # A cloud sandbox's size is the broker's fixed policy and costs this host nothing,
-            # so there is no free memory of ours to check before starting one.
-            memory_limit="2g" if cloud else sandbox.memory_limit,
+            # A cloud sandbox uses none of this host's memory, so there is none to check before
+            # starting one (its own size is what the runner reports in `workspace_stats`).
+            memory_limit="0" if cloud else sandbox.memory_limit,
             max_workspaces=sandbox.max_workspaces,
             max_running=sandbox.max_running,
             ttl_hours=sandbox.workspace_ttl_hours,

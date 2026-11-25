@@ -430,6 +430,8 @@ class CloudSandbox:
     in_use_until: datetime | None = None
     #: The workspace's size when last measured. Still true while no sandbox is attached.
     used_bytes: int | None = None
+    #: A sandbox vanished with unsaved changes and nobody using the key has been told yet.
+    lost: bool = False
 
 
 @runtime_checkable
@@ -458,8 +460,13 @@ class CloudSandboxStore(Protocol):
         still the key's."""
         ...
 
-    async def detach(self, key: str, sandbox_id: str) -> bool:
-        """Forget ``sandbox_id`` (and every claim on it) if it is still the attached one."""
+    async def detach(self, key: str, sandbox_id: str, *, lost: bool = False) -> bool:
+        """Forget ``sandbox_id`` (and every claim on it) if it is still the attached one.
+        ``lost`` leaves a report for the key's next user (:meth:`take_loss`)."""
+        ...
+
+    async def take_loss(self, key: str) -> bool:
+        """Take the pending loss report: ``True`` for exactly one caller per loss."""
         ...
 
     async def begin_use(

@@ -38,6 +38,7 @@ UPGRADE_STATEMENTS = (
         in_use           INTEGER     NOT NULL DEFAULT 0 CHECK (in_use >= 0),
         in_use_until     TIMESTAMPTZ,
         used_bytes       BIGINT      CHECK (used_bytes >= 0),
+        lost             BOOLEAN     NOT NULL DEFAULT FALSE,
         created_at       TIMESTAMPTZ NOT NULL,
         updated_at       TIMESTAMPTZ NOT NULL
     )
