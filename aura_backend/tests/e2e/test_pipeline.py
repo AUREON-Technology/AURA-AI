@@ -88,7 +88,9 @@ class TestTelemetry:
         timings = result.telemetry.timings.as_dict()
         assert timings["retrieval"] > 0
         assert timings["context"] > 0
-        assert timings["generation"] > 0
+        # Model time is booked once: under `reasoning` for a multi-sample strategy,
+        # otherwise under `generation`.
+        assert (timings["generation"] > 0) != (timings["reasoning"] > 0)
 
 
 class TestSessionMemory:

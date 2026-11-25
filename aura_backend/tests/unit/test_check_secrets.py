@@ -41,7 +41,7 @@ def test_service_account_json_is_found_without_echoing_the_secret(tmp_path):
 
 
 def test_private_key_block_is_found(tmp_path):
-    repo = _repo(tmp_path, {"k.txt": "-----BEGIN PRIVATE KEY-----\nx\n"})
+    repo = _repo(tmp_path, {"k.txt": "-----BEGIN " + "PRIVATE KEY-----\nx\n"})
     assert any("private key block" in f for f in _load().scan(repo))
 
 
