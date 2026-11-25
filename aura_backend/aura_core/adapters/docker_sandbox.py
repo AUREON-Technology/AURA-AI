@@ -77,6 +77,58 @@ _STOP_TIMEOUT_S = 10
 #: bounds the case where the daemon itself stops answering, which would otherwise hang the turn.
 _WAIT_GRACE_S = 15.0
 
+#: Most of one stream (stdout or stderr) a one-shot command may hand back, in bytes. Deliberately
+#: the same size as `tools/coding.py::_RUN_COMMAND_STREAM_CAP_CHARS`, which caps the streaming
+#: path. The *tail* is kept, because what a test runner or build says last (its summary, its
+#: error) is what matters.
+_ONESHOT_STREAM_CAP_BYTES = 200_000
+
+
+#: Lines asked of the daemon for each stream, so the log is cut *before* it reaches this process.
+#: The sandbox broker refuses a followed (streamed) log, but it allows ``tail``.
+_ONESHOT_TAIL_LINES = 5_000
+
+
+def _read_tail(container: Any, *, stdout: bool, stderr: bool) -> tuple[bytes, bool]:
+    """The end of one of a container's log streams, at most ``_ONESHOT_STREAM_CAP_BYTES`` long.
+
+    ``container.logs()`` with no limit reads the whole log into this process, so a command that
+    printed without limit would grow the gateway's memory with it. The daemon is asked for the last
+    ``_ONESHOT_TAIL_LINES`` lines only, and the result is then cut to the byte cap (a few very long
+    lines can still exceed it). Returns ``(bytes, was_cut)``; ``was_cut`` is also set when the line
+    limit was reached, since lines before it may have been dropped.
+    """
+    data = container.logs(stdout=stdout, stderr=stderr, tail=_ONESHOT_TAIL_LINES) or b""
+    cut = data.count(b"\n") >= _ONESHOT_TAIL_LINES
+    if len(data) > _ONESHOT_STREAM_CAP_BYTES:
+        data = data[-_ONESHOT_STREAM_CAP_BYTES:]
+        cut = True
+    return data, cut
+
+
+def _decode_tail(data: bytes, cut: bool, stream: str) -> tuple[str, str]:
+    """Decode a tail from ``_read_tail``; the note is empty unless something was cut.
+
+    A cut can land inside a multi-byte character, so leading continuation bytes are dropped
+    rather than decoded as replacement characters that would push the result back over the cap.
+    """
+    if not cut:
+        return data.decode("utf-8", errors="replace"), ""
+    while data and (data[0] & 0xC0) == 0x80:
+        data = data[1:]
+    return (
+        data.decode("utf-8", errors="replace"),
+        f"\n[aura] {stream} truncated: showing only the end of the output",
+    )
+
+
+def _read_streams(container: Any) -> tuple[str, str]:
+    """A container's stdout and stderr as bounded text, with any truncation noted on stderr."""
+    out, out_note = _decode_tail(*_read_tail(container, stdout=True, stderr=False), "stdout")
+    err, err_note = _decode_tail(*_read_tail(container, stdout=False, stderr=True), "stderr")
+    return out, err + out_note + err_note
+
+
 #: Must match the uid/gid created in deploy/sandbox/Dockerfile, because the host workspace
 #: directory is chowned to it. Mismatch shows up as permission errors on the first write, not at
 #: container start, so the two are deliberately stated in both places rather than inferred.
@@ -546,18 +598,25 @@ class DockerSandboxRunner:
                         container.kill()
                     except Exception:
                         logger.debug("timed-out command kill failed", extra={"task": handle.task_id})
+                    # What the command printed before it was killed is the only evidence of how
+                    # far it got, so keep it; a log that cannot be read must not hide the timeout.
+                    try:
+                        partial_out, partial_err = _read_streams(container)
+                    except Exception:
+                        partial_out, partial_err = "", ""
+                    note = f"command timed out after {timeout_s:.0f}s"
                     return SandboxResult(
-                        stdout="",
-                        stderr=f"command timed out after {timeout_s:.0f}s",
+                        stdout=partial_out,
+                        stderr=f"{partial_err}\n{note}" if partial_err else note,
                         exit_code=124,
                     )
                 # Read the streams separately rather than demuxed: this container ran one
-                # command, so its whole log *is* that command's output.
-                stdout_bytes = _cap_log(container.logs(stdout=True, stderr=False) or b"")
-                stderr_bytes = _cap_log(container.logs(stdout=False, stderr=True) or b"")
+                # command, so its whole log *is* that command's output. Only the tail of each
+                # is asked for and held (see _read_streams).
+                stdout, stderr = _read_streams(container)
                 return SandboxResult(
-                    stdout=stdout_bytes.decode("utf-8", errors="replace"),
-                    stderr=stderr_bytes.decode("utf-8", errors="replace"),
+                    stdout=stdout,
+                    stderr=stderr,
                     exit_code=int(status.get("StatusCode", 0) or 0),
                 )
             finally:

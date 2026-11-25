@@ -54,7 +54,7 @@ class _FakeContainer:
             raise self._wait_error
         return {"StatusCode": self._status_code}
 
-    def logs(self, *, stdout: bool = True, stderr: bool = True) -> bytes:
+    def logs(self, *, stdout: bool = True, stderr: bool = True, tail="all") -> bytes:
         if stdout and not stderr:
             return self._stdout
         if stderr and not stdout:

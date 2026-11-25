@@ -183,7 +183,10 @@ class ArtifactFeedbackIngestor:
                     actions.append(f"Removed step {n}: '{revised[n - 1]}'")
                     del revised[n - 1]
                 else:
-                    actions.append(f"Step {n} does not exist (the plan has {len(revised)} steps); nothing removed.")
+                    actions.append(
+                        f"No step {n} in this plan: step {n} does not exist (the plan has "
+                        f"{len(revised)} steps); nothing removed."
+                    )
             else:
                 keywords = [
                     w for w in dict.fromkeys(re.findall(r"\w+", lower))

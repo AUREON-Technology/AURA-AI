@@ -285,6 +285,23 @@ def _matches(path: str, pattern: str) -> bool:
 class ScopeAndDiffGuard:
     """Guard for analyzing git diffs against task scope, change budgets, forbidden paths, and secret leaks."""
 
+    @staticmethod
+    def _normalise_path(path: str) -> str:
+        """``path`` with ``\\`` as ``/`` and any leading ``./`` or ``/`` removed.
+
+        ``str.lstrip("./")`` strips *characters*, so ``.env`` became ``env`` and ``.github/x``
+        became ``github/x``; only the literal ``./`` prefix is dropped here.
+        """
+        text = path.replace("\\", "/")
+        while text.startswith("./"):
+            text = text[2:]
+        return text.lstrip("/")
+
+    @staticmethod
+    def _strip_prefix(path: str, prefix: str) -> str:
+        """Drop one leading ``prefix`` (``b/``), not every leading ``b`` or ``/`` character."""
+        return path[len(prefix):] if path.startswith(prefix) else path
+
     SECRET_PATTERNS = [
         (re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED |PGP )?PRIVATE KEY(?: BLOCK)?-----"), "Private cryptographic key"),
         (re.compile(r"(?i)\b\w*(?:api[_-]?key|secret|access[_-]?token|auth[_-]?token|passw(?:or)?d)\w*\s*[:=]\s*['\"][^'\"\s]{12,}['\"]"), "Hardcoded API secret token"),
