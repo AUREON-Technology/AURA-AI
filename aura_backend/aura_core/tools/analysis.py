@@ -345,16 +345,12 @@ async def review_code_diff(
 
 @tool(
     "scan_code_security",
-    "Pattern-scan source and/or a git diff for insecure constructs and hardcoded secrets. Languages: "
-    "Python, JavaScript/TypeScript, Go, Java/Kotlin, shell, Dockerfile, Kubernetes/Compose/GitHub-Actions "
-    "YAML and Terraform (the language is read from the text, or pass `language`). Recognises about fifty "
-    "credential formats. Matched secret values are never shown. Static; nothing is executed, and a clean "
-    "result is not proof the code is secure (it finds constructs, not data flow).",
+    "Pattern-scan source and/or a git diff (Python, JS, Go, Java, shell, Docker, YAML, Terraform) for "
+    "insecure code and hardcoded secrets (never shown). Clean is not proof.",
     param("source_code", "string", "Source text to scan.", required=False, max_length=_MAX_TEXT),
-    param("diff_text", "string", "A unified diff; only added lines are scanned, each file by its own language.",
+    param("diff_text", "string", "A unified diff; only added lines are scanned.",
           required=False, max_length=_MAX_TEXT),
-    param("language", "string", "The language of source_code when it cannot be told from the text: python, "
-          "javascript, go, java, shell, dockerfile, yaml, terraform.", required=False, max_length=20),
+    param("language", "string", "Language hint.", required=False, max_length=20),
     **_CODE,
 )
 async def scan_code_security(source_code: str | None = None, diff_text: str | None = None,

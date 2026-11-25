@@ -2365,22 +2365,16 @@ def _extend_security(original: FunctionTool, root: _Root, advisory_store: Any = 
         return _emit(result)
 
     extra = [
-        param("paths", "array", "Workspace files or folders to scan for insecure code and hard-coded secrets "
-              "(code, config, .env, scripts).", required=False, item_type="string"),
-        param("advisories_path", "string", "A workspace JSON file of OSV-format advisories; locked dependency "
-              "versions are matched against it.", required=False, max_length=300),
-        param("baseline_path", "string", "A workspace JSON file listing accepted secret findings (their "
-              "`fingerprint` values); those are counted, not reported. The file is trusted as written, so one "
-              "committed in the scanned repository is the repository's own say-so.", required=False, max_length=300),
+        param("paths", "array", "Workspace files or folders to scan.", required=False, item_type="string"),
+        param("advisories_path", "string", "Workspace JSON file of OSV advisories.", required=False,
+              max_length=300),
+        param("baseline_path", "string", "Workspace JSON list of accepted finding `fingerprint`s (trusted as "
+              "written).", required=False, max_length=300),
     ]
     return _clone(original, extra, (), (
-        "With `paths` it scans workspace files (not just pasted text) for insecure constructs and secrets "
-        "(values never returned); with `advisories_path` it matches the lockfiles' pinned versions against an "
-        "OSV advisory file you supply" + (
-            ", otherwise against the server's local OSV copy, and says how old that copy is or that it has "
-            "never been downloaded." if advisory_store is not None else
-            ". Without an advisory file it says dependency vulnerabilities were NOT checked: no advisory "
-            "database exists offline.")), handler)
+        "`paths` scans workspace files; locked dependency versions are matched against `advisories_path`" + (
+            " or else the server's local OSV copy (age reported)." if advisory_store is not None else
+            ", else NOT checked.")), handler)
 
 
 async def _store_dependency_report(store: Any, infos: list[Any], notes: list[Any], lockfiles: list[str],

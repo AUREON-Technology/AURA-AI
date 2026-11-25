@@ -105,6 +105,7 @@ class TestAgainstTheLocalCopy:
 
         assert "local OSV copy" in description(advisory_store=InMemoryAdvisoryStore())
         assert "NOT checked" in description()
+        assert len(description()) < 1400, "the tool catalogue is part of every planning prompt"
 
 
 class TestSettingsAndSchedule:
