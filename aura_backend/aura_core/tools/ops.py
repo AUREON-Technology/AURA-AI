@@ -62,6 +62,23 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+_TOTAL_S = 45.0
+
+
+def _read(response: Any, limit: int, started: float) -> bytes:
+    """Read up to ``limit + 1`` bytes within a total deadline (a slow-drip body cannot outlive the tool)."""
+    chunks, size = [], 0
+    while size <= limit:
+        if time.monotonic() - started > _TOTAL_S:
+            raise TimeoutError("response did not finish within the total time allowed")
+        piece = response.read(min(65536, limit + 1 - size))
+        if not piece:
+            break
+        chunks.append(piece)
+        size += len(piece)
+    return b"".join(chunks)
+
+
 def _get(url: str, *, timeout: float, limit: int, headers: dict[str, str] | None = None) -> dict[str, Any]:
     """One GET; never raises for an HTTP status. ``{status, body(bytes), ms}`` or ``{error}``."""
     request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": _UA, **(headers or {})})
@@ -69,10 +86,10 @@ def _get(url: str, *, timeout: float, limit: int, headers: dict[str, str] | None
     started = time.monotonic()
     try:
         with opener.open(request, timeout=timeout) as response:
-            body = response.read(limit + 1)
+            body = _read(response, limit, started)
             status = response.status
     except urllib.error.HTTPError as exc:
-        status, body = exc.code, exc.read(limit + 1)
+        status, body = exc.code, _read(exc, limit, started)
     except Exception as exc:  # DNS, TLS, refused, timeout: the tool's answer is "could not reach"
         return {"error": f"{type(exc).__name__}: {str(exc)[:160]}", "ms": round((time.monotonic() - started) * 1000)}
     return {"status": status, "body": body[:limit], "truncated": len(body) > limit,
@@ -87,9 +104,9 @@ def _post(url: str, payload: dict[str, Any], *, timeout: float, limit: int, head
     started = time.monotonic()
     try:
         with opener.open(request, timeout=timeout) as response:
-            body, status = response.read(limit + 1), response.status
+            body, status = _read(response, limit, started), response.status
     except urllib.error.HTTPError as exc:
-        status, body = exc.code, exc.read(limit + 1)
+        status, body = exc.code, _read(exc, limit, started)
     except Exception as exc:
         return {"error": f"{type(exc).__name__}: {str(exc)[:160]}", "ms": round((time.monotonic() - started) * 1000)}
     return {"status": status, "body": body[:limit], "truncated": len(body) > limit,
@@ -101,6 +118,49 @@ def _json(body: bytes) -> Any:
         return json.loads(body.decode("utf-8", "replace"))
     except ValueError:
         return None
+
+
+_RESULT_BUDGET = 11_000
+
+
+def _dump(payload: dict[str, Any], budget: int = _RESULT_BUDGET) -> str:
+    """JSON that always parses: if it is too long, ``sample`` rows are dropped (and counted) until it fits,
+    rather than the registry cutting the text mid-object."""
+    text = json.dumps(payload, ensure_ascii=False, default=str)
+    sample = payload.get("sample")
+    dropped = 0
+    while len(text) > budget and isinstance(sample, list) and sample:
+        dropped += max(1, len(sample) // 2)
+        sample = sample[: len(sample) - max(1, len(sample) // 2)]
+        payload = {**payload, "sample": sample, "sample_rows_dropped": dropped}
+        text = json.dumps(payload, ensure_ascii=False, default=str)
+    if len(text) > budget:
+        payload = {k: payload[k] for k in list(payload)[:6] if k != "analysis"}
+        payload["truncated"] = "the result was too large; narrow the query or window"
+        text = json.dumps(payload, ensure_ascii=False, default=str)
+    return text
+
+
+def _series_summary(series: Any) -> list[dict[str, Any]]:
+    """min/max/first/last per range-vector series, skipping NaN and infinities."""
+    out = []
+    for item in (series if isinstance(series, list) else [])[:25]:
+        values = []
+        for point in (item.get("values") or []) if isinstance(item, dict) else []:
+            try:
+                number = float(point[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if number == number and abs(number) != float("inf"):
+                values.append(number)
+        if values:
+            out.append({"metric": _clip_labels(item.get("metric")), "points": len(values), "min": min(values),
+                        "max": max(values), "last": values[-1], "first": values[0]})
+    return out
+
+
+def _clip_labels(labels: Any) -> dict[str, str]:
+    return {str(k)[:40]: str(v)[:80] for k, v in list(labels.items())[:10]} if isinstance(labels, dict) else {}
 
 
 def _origin(url: str, *, insecure_ok: bool) -> str:
@@ -128,9 +188,19 @@ def _components(ready: Any) -> dict[str, bool]:
     return out
 
 
+def _sha_matches(actual: str, expected: str) -> bool:
+    actual, expected = actual.lower(), expected.lower()
+    n = min(len(actual), len(expected))
+    return n >= 7 and actual[:n] == expected[:n]
+
+
 def judge_health(results: dict[str, dict[str, Any]], *, expected_git_sha: str = "",
                  expected_schema_revision: str = "") -> tuple[bool, list[str], dict[str, Any]]:
-    """``(healthy, problems, facts)`` from the three probe results."""
+    """``(healthy, problems, facts)`` from the three probe results.
+
+    A fact the caller asked to verify (commit, schema revision) that cannot be read is a *problem*, never a
+    pass: a host that answers 200 with a web page is not the gateway.
+    """
     problems: list[str] = []
     facts: dict[str, Any] = {}
     for path, result in results.items():
@@ -141,20 +211,33 @@ def judge_health(results: dict[str, dict[str, Any]], *, expected_git_sha: str = 
                             "no application behind this hostname (not the app's own 404)")
         elif path != "/health/ready" and result["status"] != 200:
             problems.append(f"{path}: HTTP {result['status']}")
-    version = _json(results.get("/health/version", {}).get("body", b"")) if "body" in results.get("/health/version", {}) else None
+    unreachable = {p for p in results if any(m.startswith(p) for m in problems)}
+
+    version_result = results.get("/health/version", {})
+    version = _json(version_result.get("body", b"")) if "body" in version_result else None
     if isinstance(version, dict):
-        facts["git_sha"] = version.get("git_sha")
-        facts["deployment_id"] = version.get("deployment_id")
-        facts["app_version"] = version.get("app_version")
-        if expected_git_sha and not str(version.get("git_sha") or "").startswith(expected_git_sha.lower()):
-            problems.append(f"serving commit {str(version.get('git_sha') or 'unknown')[:12]}, expected {expected_git_sha[:12]}")
+        facts.update(git_sha=version.get("git_sha"), deployment_id=version.get("deployment_id"),
+                     app_version=version.get("app_version"))
+    elif "/health/version" not in unreachable and "status" in version_result:
+        problems.append("/health/version did not return JSON: this host is not the gateway")
+    if expected_git_sha:
+        actual = str((version or {}).get("git_sha") or "") if isinstance(version, dict) else ""
+        if not actual:
+            if "/health/version" not in unreachable:
+                problems.append("the serving commit could not be read from /health/version (no git_sha), so "
+                                f"{expected_git_sha[:12]} was not verified")
+        elif not _sha_matches(actual, expected_git_sha):
+            problems.append(f"serving commit {actual[:12]}, expected {expected_git_sha[:12]}")
+
     ready_result = results.get("/health/ready", {})
     ready = _json(ready_result.get("body", b"")) if "body" in ready_result else None
     if "status" in ready_result:
         facts["ready_http_status"] = ready_result["status"]
-        if ready_result["status"] != 200 and not (isinstance(ready, dict) and "healthy" in ready):
-            if not any(p.startswith("/health/ready") for p in problems):
-                problems.append(f"/health/ready: HTTP {ready_result['status']}")
+        if not isinstance(ready, dict) and "/health/ready" not in unreachable:
+            problems.append("/health/ready did not return JSON: this host is not the gateway")
+        elif isinstance(ready, dict) and ready_result["status"] not in (200, 503):
+            problems.append(f"/health/ready: HTTP {ready_result['status']}")
+    schema: dict[str, Any] = {}
     if isinstance(ready, dict):
         facts["components"] = _components(ready)
         if ready.get("healthy") is not True:
@@ -171,8 +254,14 @@ def judge_health(results: dict[str, dict[str, Any]], *, expected_git_sha: str = 
             if schema.get("healthy") is False:
                 problems.append(f"database schema is behind the code (revision {schema.get('revision')}, "
                                 f"expected {schema.get('expected')}): the migration has not run")
-            if expected_schema_revision and str(schema.get("revision")) != expected_schema_revision:
-                problems.append(f"schema revision {schema.get('revision')}, expected {expected_schema_revision}")
+    if expected_schema_revision:
+        actual_rev = str(schema.get("revision") or "") if schema else ""
+        if not actual_rev:
+            if "/health/ready" not in unreachable:
+                problems.append(f"the schema revision could not be read from /health/ready, so "
+                                f"{expected_schema_revision} was not verified")
+        elif actual_rev != expected_schema_revision:
+            problems.append(f"schema revision {actual_rev}, expected {expected_schema_revision}")
     return (not problems), problems, facts
 
 
@@ -296,16 +385,20 @@ def build_ops_tools(
                 got = await asyncio.to_thread(_get, f"{base}/loki/api/v1/query_range?{qs}", timeout=30.0,
                                               limit=_MAX_TELEMETRY_BODY, headers=auth())
                 data = _need(got, name)
+                if (data.get("data") or {}).get("resultType") == "matrix":  # a metric query (rate(...)), not lines
+                    return _dump({"source": "Loki", "query": query, "window_minutes": minutes,
+                                  "series": _series_summary((data.get("data") or {}).get("result") or []),
+                                  "read_only": True})
                 streams = (data.get("data") or {}).get("result") or []
                 rows = sorted(((int(v[0]), v[1], s.get("stream", {})) for s in streams for v in s.get("values", [])),
                               key=lambda r: r[0])[-limit:]
                 lines = [r[1] for r in rows]
                 analysis = analyze_incident(lines, None, None) if lines else None
-                return json.dumps({
+                return _dump({
                     "source": "Loki", "query": query, "window_minutes": minutes, "lines": len(lines),
                     "possibly_truncated": len(rows) >= limit,
-                    "sample": [{"ts_ns": r[0], "line": r[1][:400], "labels": r[2]} for r in rows[-20:]],
-                    "analysis": analysis, "read_only": True}, ensure_ascii=False, default=str)
+                    "sample": [{"ts_ns": r[0], "line": r[1][:400], "labels": _clip_labels(r[2])} for r in rows[-20:]],
+                    "analysis": analysis, "read_only": True})
             if source == "metrics":
                 step = max(15, minutes * 60 // 120)
                 qs = urllib.parse.urlencode({"query": query, "start": int(start), "end": int(now), "step": step})
@@ -313,33 +406,25 @@ def build_ops_tools(
                                               limit=_MAX_TELEMETRY_BODY, headers=auth())
                 data = _need(got, name)
                 series = (data.get("data") or {}).get("result") or []
-                summary = []
-                for s in series[:25]:
-                    values = [float(v[1]) for v in s.get("values", []) if v[1] not in ("NaN", "+Inf", "-Inf")]
-                    if values:
-                        summary.append({"metric": s.get("metric", {}), "points": len(values), "min": min(values),
-                                        "max": max(values), "last": values[-1], "first": values[0]})
-                return json.dumps({"source": "Prometheus", "query": query, "window_minutes": minutes,
-                                   "series": len(series), "summary": summary, "read_only": True},
-                                  ensure_ascii=False, default=str)
+                return _dump({"source": "Prometheus", "query": query, "window_minutes": minutes,
+                              "series": len(series), "summary": _series_summary(series), "read_only": True})
             if source == "traces":
                 qs = urllib.parse.urlencode({"q": query, "start": int(start), "end": int(now), "limit": min(limit, 50)})
                 got = await asyncio.to_thread(_get, f"{base}/api/search?{qs}", timeout=30.0,
                                               limit=_MAX_TELEMETRY_BODY, headers=auth())
                 data = _need(got, name)
-                found = [{k: t.get(k) for k in ("traceID", "rootServiceName", "rootTraceName", "durationMs")}
-                         for t in data.get("traces", [])[:50]]
-                return json.dumps({"source": "Tempo", "query": query, "window_minutes": minutes, "traces": found,
-                                   "next": "call again with source=trace and a traceID to analyse one",
-                                   "read_only": True}, ensure_ascii=False, default=str)
+                found = [{k: str(t.get(k))[:80] if k != "durationMs" else t.get(k)
+                          for k in ("traceID", "rootServiceName", "rootTraceName", "durationMs")}
+                         for t in (data.get("traces") or [])[:50] if isinstance(t, dict)]
+                return _dump({"source": "Tempo", "query": query, "window_minutes": minutes, "traces": found,
+                              "next": "call again with source=trace and a traceID to analyse one", "read_only": True})
             trace_id = query.strip()
             if not all(c in "0123456789abcdefABCDEF" for c in trace_id) or not 16 <= len(trace_id) <= 32:
                 raise ToolExecutionError("a trace id is 16-32 hexadecimal characters", tool=name)
             got = await asyncio.to_thread(_get, f"{base}/api/traces/{trace_id}", timeout=30.0,
                                           limit=_MAX_TELEMETRY_BODY, headers=auth())
             data = _need(got, name)
-            return json.dumps({"source": "Tempo", "trace_id": trace_id, "analysis": analyze_trace(data),
-                               "read_only": True}, ensure_ascii=False, default=str)
+            return _dump({"source": "Tempo", "trace_id": trace_id, "analysis": analyze_trace(data), "read_only": True})
 
         async def _railway(query: str, minutes: int, limit: int) -> str:
             name = "query_telemetry"
@@ -365,8 +450,8 @@ def build_ops_tools(
                 node = edge.get("node") or {}
                 meta = node.get("meta") or {}
                 deployments.append({"id": node.get("id"), "status": node.get("status"), "created_at": node.get("createdAt"),
-                                    "commit": str(meta.get("commitHash") or "")[:12], "branch": meta.get("branch"),
-                                    "reason": meta.get("reason"), "message": str(meta.get("commitMessage") or "")[:120]})
+                                    "commit": str(meta.get("commitHash") or "")[:12], "branch": str(meta.get("branch") or "")[:60],
+                                    "reason": str(meta.get("reason") or "")[:40], "message": str(meta.get("commitMessage") or "")[:120]})
             live = next((d for d in deployments if d["status"] == "SUCCESS"), deployments[0] if deployments else None)
             if live is None:
                 return json.dumps({"source": "Railway", "deployments": [], "note": "no deployments found",
@@ -376,13 +461,13 @@ def build_ops_tools(
             logs = (await gql(_DEPLOYMENT_LOGS, {"d": live["id"], "n": limit, "f": filt, "a": since})).get(
                 "deploymentLogs") or []
             lines = [str(entry.get("message") or "") for entry in logs]
-            return json.dumps({
+            return _dump({
                 "source": "Railway", "deployments": deployments, "logs_from": live["id"], "window_minutes": minutes,
                 "lines": len(lines), "possibly_truncated": len(lines) >= limit,
                 "sample": [{"ts": e.get("timestamp"), "severity": e.get("severity"), "line": str(e.get("message"))[:400]}
                            for e in logs[-20:]],
                 "analysis": analyze_incident(lines, None, None) if lines else None, "read_only": True,
-            }, ensure_ascii=False, default=str)
+            })
 
         tools.append(query_telemetry)
     return tools
@@ -399,6 +484,6 @@ def _need(got: dict[str, Any], name: str) -> Any:
         raise ToolExecutionError("the telemetry response was larger than the 4 MiB limit: narrow the query "
                                  "or the time window", tool=name)
     data = _json(got["body"])
-    if data is None:
-        raise ToolExecutionError("the telemetry backend did not return JSON", tool=name)
+    if not isinstance(data, dict):
+        raise ToolExecutionError("the telemetry backend did not return a JSON object", tool=name)
     return data

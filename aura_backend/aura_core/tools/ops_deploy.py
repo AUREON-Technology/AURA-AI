@@ -151,7 +151,12 @@ def build_deploy_tools(
                 "the change on the branch and let the normal deploy run", tool=name)
         if not _SHA.match(sha.strip()):
             raise ToolExecutionError("sha must be 7-40 hexadecimal characters", tool=name)
-        message = await (await client(context)).dispatch_workflow(
+        host = await client(context)
+        if not await host.commit_is_ancestor(repo, sha.strip(), ref_list[0]):
+            raise ToolExecutionError(
+                f"{sha.strip()[:12]} is not part of {ref_list[0]}'s history (it may exist only on a fork or an "
+                "unmerged branch), so it will not be deployed", tool=name)
+        message = await host.dispatch_workflow(
             repo, workflow, ref=ref_list[0], inputs={chosen.sha_input: sha.strip().lower()})
         return json.dumps({"dispatched": True, "workflow": workflow, "rollback_to": sha.strip().lower(),
                            "reason": why, "result": message,

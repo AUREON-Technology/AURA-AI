@@ -1939,7 +1939,8 @@ class OpsSettings:
         origins = _list("OPS_PLATFORM_ORIGINS", ())
         for origin in origins:
             parts = urlsplit(origin)
-            if parts.scheme != "https" or not parts.hostname or parts.path.strip("/") or parts.username:
+            if (parts.scheme != "https" or not parts.hostname or parts.path.strip("/") or parts.username
+                    or parts.query or parts.fragment):
                 raise ConfigurationError("AURA_OPS_PLATFORM_ORIGINS entries must be bare https origins",
                                          details={"value": origin})
         urls = {}

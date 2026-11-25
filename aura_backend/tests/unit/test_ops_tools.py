@@ -202,8 +202,8 @@ PROM = {"status": "success", "data": {"resultType": "matrix", "result": [
 
 
 def span(sid, parent, name, start_ms, end_ms, *, error=False, service="gateway"):
-    return {"spanId": sid, "parentSpanId": parent, "name": name, "startTimeUnixNano": str(start_ms * 1_000_000),
-            "endTimeUnixNano": str(end_ms * 1_000_000), "status": {"code": 2 if error else 1}}
+    return {"spanId": sid, "parentSpanId": parent, "name": name, "startTimeUnixNano": str((start_ms + 1000) * 1_000_000),
+            "endTimeUnixNano": str((end_ms + 1000) * 1_000_000), "status": {"code": 2 if error else 1}}
 
 
 def trace(*spans_by_service):
@@ -276,6 +276,99 @@ class TestTelemetry:
         monkeypatch.setattr(ops_module, "_get", spy)
         data(await call(self.tools(backend, token_env="OPS_TEST_TOKEN"), "query_telemetry", source="logs", query="{a=\"b\"}"))
         assert seen == ["Bearer s3cret-token"]
+
+
+class TestReviewFindings:
+    """Found by an independent review of the first version."""
+
+    def results(self, *, version=None, ready=None, live=200):
+        def entry(status, body):
+            return {"status": status, "body": body if isinstance(body, bytes) else json.dumps(body).encode(), "ms": 1}
+
+        return {"/health/live": entry(live, {"status": "alive"}),
+                "/health/version": entry(*(version or (200, {"git_sha": SHA}))),
+                "/health/ready": entry(*(ready or (200, READY_OK)))}
+
+    def test_a_host_that_is_not_the_gateway_cannot_pass_a_verification(self) -> None:
+        page = b"<html>single page app</html>"
+        ok, problems, _ = judge_health(self.results(version=(200, page), ready=(200, page)), expected_git_sha="abc1234")
+        assert not ok and any("not the gateway" in p for p in problems) and any("was not verified" in p for p in problems)
+
+    def test_an_expected_revision_with_no_schema_block_is_not_a_pass(self) -> None:
+        ok, problems, _ = judge_health(self.results(ready=(200, {"healthy": True})), expected_schema_revision="0033")
+        assert not ok and any("schema revision could not be read" in p for p in problems)
+
+    def test_a_shorter_reported_sha_is_compared_on_their_common_length(self) -> None:
+        ok, problems, _ = judge_health(self.results(version=(200, {"git_sha": SHA[:9]})), expected_git_sha=SHA)
+        assert ok, problems
+        bad, problems, _ = judge_health(self.results(version=(200, {"git_sha": "b" * 9})), expected_git_sha=SHA)
+        assert not bad
+
+    def test_cyclic_self_parented_duplicate_and_very_deep_traces_do_not_crash(self) -> None:
+        cyc = trace(("s", [span("a", "b", "x", 0, 10), span("b", "a", "y", 1, 9)]))
+        out = analyze_trace(cyc)
+        assert out["spans"] == 2 and "loop" in out["warning"]
+        selfp = analyze_trace(trace(("s", [span("a", "a", "solo", 0, 10)])))
+        assert selfp["spans"] == 1 and selfp["roots"] == 1
+        dup = analyze_trace(trace(("s", [span("r", "", "root", 0, 10), span("a", "r", "x", 1, 9), span("a", "a", "dup", 2, 8)])))
+        assert dup["spans"] == 2
+        deep = [span(f"s{i}", f"s{i - 1}" if i else "", f"n{i}", 0, 10_000 - i) for i in range(5000)]
+        out = analyze_trace(trace(("s", deep)))
+        assert out["spans"] == 5000 and out["critical_path_truncated"] == 5000 and len(out["critical_path"]) == 50
+
+    def test_a_span_with_no_start_time_is_dropped_not_measured_from_1970(self) -> None:
+        bad = {"spanId": "x", "name": "n", "startTimeUnixNano": "0", "endTimeUnixNano": "5000000"}
+        good = span("g", "", "ok", 0, 5)
+        out = analyze_trace({"batches": [{"resource": {}, "scopeSpans": [{"spans": [bad, good]}]}]})
+        assert out["spans"] == 1 and out["duration_ms"] == 5.0
+
+    async def test_results_stay_valid_json_even_with_wide_label_sets(self, backend) -> None:
+        wide = {f"label{i}": "v" * 500 for i in range(60)}
+        rows = [[str(int(time.time() * 1e9) - i), "x" * 390] for i in range(200)]
+        backend.routes["/loki/api/v1/query_range"] = (200, {"data": {"result": [{"stream": wide, "values": rows}]}})
+        tools = build_ops_tools(loki_url=backend.url)
+        result = await call(tools, "query_telemetry", source="logs", query="{a=\"b\"}", limit=200)
+        parsed = data(result)
+        assert len(result.content) <= 12_000 and len(parsed["sample"][0]["labels"]) <= 10
+        assert all(len(v) <= 80 for v in parsed["sample"][0]["labels"].values())
+
+    async def test_a_loki_metric_query_and_odd_backend_bodies_are_handled(self, backend) -> None:
+        backend.routes["/loki/api/v1/query_range"] = (200, {"data": {"resultType": "matrix", "result": [
+            {"metric": {"app": "gw"}, "values": [[1, "2"], [2, "4"]]}]}})
+        tools = build_ops_tools(loki_url=backend.url, tempo_url=backend.url)
+        out = data(await call(tools, "query_telemetry", source="logs", query="rate({a=\"b\"}[1m])"))
+        assert out["series"][0]["max"] == 4.0
+        backend.routes["/api/search"] = (200, [1, 2, 3])
+        bad = await call(tools, "query_telemetry", source="traces", query="{}")
+        assert not bad.ok and "JSON object" in bad.content
+        backend.routes["/api/search"] = (200, {"traces": None})
+        assert data(await call(tools, "query_telemetry", source="traces", query="{}"))["traces"] == []
+
+    def test_an_origin_with_a_query_is_a_configuration_error_not_a_startup_crash(self, monkeypatch) -> None:
+        monkeypatch.setenv("AURA_OPS_PLATFORM_ORIGINS", "https://a.example?x=1")
+        with pytest.raises(ConfigurationError):
+            OpsSettings.from_env()
+
+    async def test_a_slow_drip_response_hits_the_total_deadline(self, monkeypatch) -> None:
+        import aura_core.tools.ops as ops_module
+
+        monkeypatch.setattr(ops_module, "_TOTAL_S", 0.3)
+
+        class Slow(BaseHTTPRequestHandler):
+            def log_message(self, *a): ...
+
+            def do_GET(self):
+                self.send_response(200); self.send_header("Content-Length", "100000"); self.end_headers()
+                for _ in range(100):
+                    self.wfile.write(b"x" * 10); self.wfile.flush(); time.sleep(0.2)
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Slow)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            got = ops_module._get(f"http://127.0.0.1:{server.server_port}/", timeout=5.0, limit=1_000_000)
+            assert "error" in got and "TimeoutError" in got["error"]
+        finally:
+            server.shutdown()
 
 
 class TestRailway:
@@ -357,8 +450,8 @@ class TestTraceAnalysis:
 
     def test_formats_other_than_tempos_are_read(self) -> None:
         jaeger = {"data": [{"processes": {"p1": {"serviceName": "api"}}, "spans": [
-            {"spanID": "1", "operationName": "root", "processID": "p1", "startTime": 0, "duration": 5000, "tags": []},
-            {"spanID": "2", "operationName": "child", "processID": "p1", "startTime": 1000, "duration": 2000,
+            {"spanID": "1", "operationName": "root", "processID": "p1", "startTime": 1_000_000, "duration": 5000, "tags": []},
+            {"spanID": "2", "operationName": "child", "processID": "p1", "startTime": 1_001_000, "duration": 2000,
              "references": [{"refType": "CHILD_OF", "spanID": "1"}], "tags": [{"key": "error", "value": True}]}]}]}
         out = analyze_trace(jaeger)
         assert out["spans"] == 2 and out["error_count"] == 1 and out["critical_path"][1]["name"] == "child"
@@ -383,6 +476,7 @@ class TestTraceAnalysis:
 class FakeGitHub:
     def __init__(self) -> None:
         self.dispatched: list[tuple] = []
+        self.reachable = {"abcdef1234", "abcdef1"}  # commits that are part of main
         self.runs = [{"id": 1, "status": "completed", "conclusion": "success", "sha": SHA, "branch": "main"}]
 
     async def dispatch_workflow(self, repo, workflow, *, ref, inputs=None):
@@ -391,6 +485,9 @@ class FakeGitHub:
 
     async def list_workflow_runs(self, repo, workflow, *, limit=10):
         return self.runs[:limit]
+
+    async def commit_is_ancestor(self, repo, sha, ref):
+        return sha.lower() in self.reachable
 
 
 WORKFLOWS = parse_deploy_workflows(["deploy-backend.yml:sha", "control-plane-deploy.yml"])
@@ -467,6 +564,8 @@ class TestDeployTools:
         good = await run(workflow="deploy-backend.yml", sha="ABCDEF1234", reason="the last release broke login")
         assert good.ok and github.dispatched == [("acme/aura", "deploy-backend.yml", "main", {"sha": "abcdef1234"})]
         assert json.loads(good.content)["rollback_to"] == "abcdef1234"
+        fork = await run(workflow="deploy-backend.yml", sha="deadbeefcafe", reason="the last release broke login")
+        assert not fork.ok and "not part of main" in fork.content, "a commit that is not on main is never deployed"
         refused = await run(workflow="control-plane-deploy.yml", sha="abcdef1", reason="the last release broke login")
         assert not refused.ok and "revert" in refused.content
         for sha in ("zzzzzzz", "abc", "abcdef1; rm", "main"):
@@ -550,6 +649,13 @@ class TestWiring:
                             {"ref": "main", "inputs": {"sha": "abc1234"}})
         runs = await client.list_workflow_runs("acme/aura", "deploy-backend.yml", limit=5)
         assert runs[0]["sha"] == SHA and sent[-1][1].endswith("/deploy-backend.yml/runs")
+        for status, expected in (("ahead", True), ("identical", True), ("behind", False), ("diverged", False)):
+            client._client = httpx.AsyncClient(
+                transport=httpx.MockTransport(lambda r, st=status: httpx.Response(200, json={"status": st})),
+                base_url="https://api.github.com")
+            assert await client.commit_is_ancestor("acme/aura", "abcdef1234", "main") is expected, status
+        with pytest.raises(GitHubApiError):
+            await client.commit_is_ancestor("acme/aura", "../x", "main")
         for bad in ("../../repos/x/issues", "a.sh", "a b.yml", "deploy.yml?x=1"):
             with pytest.raises(GitHubApiError):
                 await client.dispatch_workflow("acme/aura", bad, ref="main")

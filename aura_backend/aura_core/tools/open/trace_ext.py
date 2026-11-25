@@ -43,7 +43,7 @@ def _span(raw: dict[str, Any], service: str) -> dict[str, Any] | None:
         end = int(raw.get("endTimeUnixNano") or 0)
     except (TypeError, ValueError):
         return None
-    if not raw.get("spanId") or not (start or end):
+    if not raw.get("spanId") or start <= 0 or end < 0:
         return None
     status = raw.get("status") or {}
     code = status.get("code") if isinstance(status, dict) else None
@@ -103,47 +103,62 @@ def parse_spans(document: Any) -> list[dict[str, Any]]:
 
 def analyze_trace(document: Any, *, top: int = 5) -> dict[str, Any]:
     spans = parse_spans(document)
+    # Untrusted input: keep the first span of a duplicated id, and never let a span be its own parent.
+    unique: dict[str, dict[str, Any]] = {}
+    for sp in spans:
+        if sp["id"] and sp["id"] not in unique:
+            unique[sp["id"]] = sp
+    spans = list(unique.values())
     if not spans:
         return {"spans": 0, "problem": "no spans were found in the trace document"}
-    by_id = {s["id"]: s for s in spans if s["id"]}
+    for sp in spans:
+        if sp["parent"] == sp["id"]:
+            sp["parent"] = ""
+    by_id = unique
     children: dict[str, list[dict[str, Any]]] = {}
     roots: list[dict[str, Any]] = []
-    for s in spans:
-        if s["parent"] and s["parent"] in by_id:
-            children.setdefault(s["parent"], []).append(s)
+    for sp in spans:
+        if sp["parent"] and sp["parent"] in by_id:
+            children.setdefault(sp["parent"], []).append(sp)
         else:
-            roots.append(s)
-    for s in spans:
-        kids = children.get(s["id"], [])
-        covered = 0
-        last = s["start"]
+            roots.append(sp)
+    cyclic = not roots  # every span has a parent in the set: a loop, not a tree
+    if cyclic:
+        roots = [min(spans, key=lambda x: x["start"])]
+    for sp in spans:
+        kids = children.get(sp["id"], [])
+        covered, last = 0, sp["start"]
         for kid in sorted(kids, key=lambda k: k["start"]):  # union of the children's time, clipped to the span
-            lo, hi = max(kid["start"], last, s["start"]), min(kid["end"], s["end"])
+            lo, hi = max(kid["start"], last, sp["start"]), min(kid["end"], sp["end"])
             if hi > lo:
                 covered += hi - lo
                 last = hi
-        s["self_ms"] = round(max(0, (s["end"] - s["start"]) - covered) / 1e6, 3)
-        s["duration_ms"] = round((s["end"] - s["start"]) / 1e6, 3)
-
-    def critical(span: dict[str, Any]) -> list[dict[str, Any]]:
-        kids = children.get(span["id"], [])
-        return [span] + (critical(max(kids, key=lambda k: k["end"])) if kids else [])
+        sp["self_ms"] = round(max(0, (sp["end"] - sp["start"]) - covered) / 1e6, 3)
+        sp["duration_ms"] = round((sp["end"] - sp["start"]) / 1e6, 3)
 
     root = max(roots, key=lambda r: r["end"] - r["start"])
-    path = critical(root)
+    path, seen = [root], {root["id"]}
+    node = root
+    while True:  # iterative and cycle-safe: a trace may be thousands of spans deep, or malformed
+        options = [k for k in children.get(node["id"], []) if k["id"] not in seen]
+        if not options:
+            break
+        node = max(options, key=lambda k: k["end"])
+        seen.add(node["id"])
+        path.append(node)
     start, end = min(s["start"] for s in spans), max(s["end"] for s in spans)
     per_service: dict[str, float] = {}
-    for s in spans:
-        per_service[s["service"]] = per_service.get(s["service"], 0.0) + s["self_ms"]
+    for sp in spans:
+        per_service[sp["service"]] = per_service.get(sp["service"], 0.0) + sp["self_ms"]
     brief = lambda s: {k: s[k] for k in ("name", "service", "duration_ms", "self_ms", "error")}  # noqa: E731
     errors = [s for s in spans if s["error"]]
-    return {
-        "spans": len(spans), "services": sorted(per_service), "roots": len(roots),
+    out = {
+        "spans": len(spans), "services": sorted(per_service), "roots": 0 if cyclic else len(roots),
         "duration_ms": round((end - start) / 1e6, 3),
         "root": brief(root),
-        "critical_path": [brief(s) for s in path],
+        "critical_path": [brief(s) for s in path[:50]],
         "slowest_by_self_time": [brief(s) for s in sorted(spans, key=lambda s: -s["self_ms"])[:top]],
-        "self_time_by_service_ms": {k: round(v, 3) for k, v in sorted(per_service.items(), key=lambda kv: -kv[1])},
+        "self_time_by_service_ms": {k: round(v, 3) for k, v in sorted(per_service.items(), key=lambda kv: -kv[1])[:20]},
         "errors": [{**brief(s), "message": s["message"]} for s in errors[:20]],
         "error_count": len(errors),
         "orphans": sum(1 for s in spans if s["parent"] and s["parent"] not in by_id),
@@ -152,3 +167,8 @@ def analyze_trace(document: Any, *, top: int = 5) -> dict[str, Any]:
                     if errors else "no span reported an error"),
         "source": "supplied or fetched trace document",
     }
+    if cyclic:
+        out["warning"] = "the parent links form a loop (no root span); the earliest span was used as the root"
+    if len(path) > 50:
+        out["critical_path_truncated"] = len(path)
+    return out

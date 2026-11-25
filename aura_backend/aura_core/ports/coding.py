@@ -143,6 +143,11 @@ class CodeHostClient(Protocol):
         """``workflow_dispatch`` on a workflow file. Nothing else about CI is reachable."""
         ...
 
+    async def commit_is_ancestor(self, repo: str, sha: str, ref: str) -> bool:
+        """Is ``sha`` already part of ``ref``'s history (identical to it or behind it)? A commit that only
+        exists on a fork or an unmerged branch is not."""
+        ...
+
 
 @dataclass(frozen=True, slots=True)
 class SandboxHandle:

@@ -321,6 +321,16 @@ class GitHubClient:
             "POST", f"/repos/{repo}/actions/workflows/{_workflow_file(workflow)}/dispatches", json=body)
         return f"Dispatched {workflow} on {ref}"
 
+    async def commit_is_ancestor(self, repo: str, sha: str, ref: str) -> bool:
+        """``sha`` is in ``ref``'s history when comparing sha...ref says ref is ahead of it or identical.
+        GitHub resolves a fork's commit by SHA inside the parent repository, so reachability from the ref
+        is the check that matters, not that the SHA exists."""
+        self._assert_repo_allowed(repo)
+        if not re.fullmatch(r"[0-9a-fA-F]{7,40}", sha or ""):
+            raise GitHubApiError("sha must be 7-40 hexadecimal characters")
+        data = await self._request("GET", f"/repos/{repo}/compare/{sha}...{quote(ref, safe='')}")
+        return data.get("status") in ("ahead", "identical")
+
     async def close(self) -> None:
         if self._client is not None:
             await self._client.aclose()
