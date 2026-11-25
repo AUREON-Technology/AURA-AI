@@ -30,7 +30,6 @@ do not have (ADR-046).
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import math
@@ -96,17 +95,23 @@ def _psi_bins(baseline: list[float], current: list[float]) -> tuple[list[float],
     return histogram(baseline), histogram(current)
 
 
+def _k2(owner: str, model: str, metric: str, part: str) -> str:
+    return f"aura:drift:v2:{owner}:{model}:{metric}:{part}"
+
+
 def build_drift_tools(cache: Cache) -> list[Tool]:
-    """The two tools over ``cache``; nothing else is shared between calls."""
-    locks: dict[str, asyncio.Lock] = {}
+    """The two tools over ``cache``.
 
-    def lock_for(key: str) -> asyncio.Lock:
-        if len(locks) > 2000:  # a long-lived gateway must not grow this without bound
-            for stale in [k for k, v in locks.items() if not v.locked()][:1000]:
-                locks.pop(stale, None)
-        return locks.setdefault(key, asyncio.Lock())
+    Storage is built so that two writers (two gateway workers, or a worker and a scheduled job) cannot
+    lose each other's observations: each observation is **appended** to a list with one atomic operation
+    (``Cache.append_capped``), its sequence number comes from the cache's atomic counter, and the baseline
+    pin is its own key. The first version kept the whole history as one blob under a get-modify-set, where
+    two concurrent writers read the same blob and the later write erased the earlier observation (and both
+    took the same ``seq``). That blob (``aura:drift:v1:``) is still read, never written, so a history
+    recorded before the change stays visible until its 90-day TTL ends.
+    """
 
-    async def load(key: str) -> dict[str, Any]:
+    async def load_legacy(key: str) -> dict[str, Any]:
         raw = await cache.get(key)
         if raw:
             try:
@@ -117,22 +122,46 @@ def build_drift_tools(cache: Cache) -> list[Tool]:
                 pass
         return {"baseline": None, "entries": []}
 
-    async def save(key: str, data: dict[str, Any]) -> None:
-        await cache.set(key, json.dumps(data).encode("utf-8"), ttl_s=_TTL_S)
+    async def load(owner: str, model: str, metric: str) -> dict[str, Any]:
+        legacy = await load_legacy(_key(owner, model, metric))
+        entries = list(legacy["entries"])
+        for raw in await cache.get_list(_k2(owner, model, metric, "entries")):
+            try:
+                item = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(item, dict):
+                entries.append(item)
+        baseline = legacy.get("baseline")
+        pinned = await cache.get(_k2(owner, model, metric, "baseline"))
+        if pinned:
+            try:
+                baseline = json.loads(pinned)
+            except ValueError:
+                pass
+        return {"baseline": baseline, "entries": entries[-_MAX_ENTRIES:], "legacy_seq": int(legacy.get("seq", 0))}
+
+    async def known_series(owner: str) -> list[str]:
+        names: list[str] = []
+        legacy = await cache.get(f"aura:drift:v1:{owner}:_index")
+        try:
+            names += [str(x) for x in (json.loads(legacy) if legacy else [])]
+        except ValueError:
+            pass
+        names += [raw.decode("utf-8", "replace") for raw in await cache.get_list(f"aura:drift:v2:{owner}:_index")]
+        return list(dict.fromkeys(names))
 
     async def register_series(owner: str, series: str, tool_name: str) -> None:
-        index_key = f"aura:drift:v1:{owner}:_index"
-        raw = await cache.get(index_key)
-        try:
-            known = json.loads(raw) if raw else []
-        except ValueError:
-            known = []
-        if series not in known:
-            if len(known) >= _MAX_SERIES:
-                raise ToolExecutionError(
-                    f"at most {_MAX_SERIES} model/metric series per owner; clear one first", tool=tool_name)
-            known.append(series)
-        await cache.set(index_key, json.dumps(known).encode("utf-8"), ttl_s=_TTL_S)
+        known = await known_series(owner)
+        if series in known:
+            return
+        if len(known) >= _MAX_SERIES:
+            raise ToolExecutionError(
+                f"at most {_MAX_SERIES} model/metric series per owner; clear one first", tool=tool_name)
+        # Soft cap under concurrency: two first-writers can both pass the check above, so a burst may
+        # exceed the cap by a few. No series is ever lost, which is the property that matters.
+        await cache.append_capped(f"aura:drift:v2:{owner}:_index", series.encode("utf-8"),
+                                  max_len=_MAX_SERIES * 10, ttl_s=_TTL_S)
 
     @tool(
         "record_model_metric",
@@ -154,43 +183,46 @@ def build_drift_tools(cache: Cache) -> list[Tool]:
         name = "record_model_metric"
         _names(name, model, metric)
         owner = _owner(context)
-        key = _key(owner, model, metric)
-        async with lock_for(key):
-            data = await load(key)
-            if operation == "clear":
-                await cache.delete(key)
-                return json.dumps({"cleared": True, "model": model, "metric": metric,
-                                   "entries_removed": len(data["entries"])})
-            if operation == "set_baseline":
-                if not data["entries"]:
-                    raise ToolExecutionError("nothing recorded for this model/metric yet", tool=name)
-                data["baseline"] = data["entries"][-1]
-                await save(key, data)
-                return json.dumps({"baseline_set": True, "baseline": data["baseline"], "entries": len(data["entries"])})
-            if (value is None) == (values is None):
-                raise ToolExecutionError("record needs exactly one of value or values", tool=name)
-            data["seq"] = int(data.get("seq", 0)) + 1  # identity of an observation (two can share a millisecond)
-            entry: dict[str, Any] = {"t": round(time.time(), 3), "seq": data["seq"]}
-            if value is not None:
-                entry["value"] = _clean_numbers(name, [value])[0]
-            else:
-                sample = _clean_numbers(name, values or [])
-                if not sample:
-                    raise ToolExecutionError("values is empty", tool=name)
-                entry["values"] = sample[:_MAX_VALUES]
-                entry["truncated_from"] = len(sample) if len(sample) > _MAX_VALUES else None
-            kind = "value" if "value" in entry else "values"
-            if data["entries"] and ("value" in data["entries"][-1]) != ("value" in entry):
-                raise ToolExecutionError(
-                    "this series holds " + ("single scores" if "value" in data["entries"][-1] else "samples")
-                    + "; use a different metric name for the other kind", tool=name)
-            if note:
-                entry["note"] = note
-            await register_series(owner, f"{model}:{metric}", name)
-            data["entries"] = [*data["entries"], entry][-_MAX_ENTRIES:]
-            await save(key, data)
+        data = await load(owner, model, metric)
+        if operation == "clear":
+            for part in ("entries", "baseline"):
+                await cache.delete(_k2(owner, model, metric, part))
+            await cache.delete(_key(owner, model, metric))
+            return json.dumps({"cleared": True, "model": model, "metric": metric,
+                               "entries_removed": len(data["entries"])})
+        if operation == "set_baseline":
+            if not data["entries"]:
+                raise ToolExecutionError("nothing recorded for this model/metric yet", tool=name)
+            baseline = data["entries"][-1]
+            await cache.set(_k2(owner, model, metric, "baseline"), json.dumps(baseline).encode("utf-8"), ttl_s=_TTL_S)
+            return json.dumps({"baseline_set": True, "baseline": baseline, "entries": len(data["entries"])})
+        if (value is None) == (values is None):
+            raise ToolExecutionError("record needs exactly one of value or values", tool=name)
+        entry: dict[str, Any] = {"t": round(time.time(), 3)}
+        if value is not None:
+            entry["value"] = _clean_numbers(name, [value])[0]
+        else:
+            sample = _clean_numbers(name, values or [])
+            if not sample:
+                raise ToolExecutionError("values is empty", tool=name)
+            entry["values"] = sample[:_MAX_VALUES]
+            entry["truncated_from"] = len(sample) if len(sample) > _MAX_VALUES else None
+        kind = "value" if "value" in entry else "values"
+        if data["entries"] and ("value" in data["entries"][-1]) != ("value" in entry):
+            raise ToolExecutionError(
+                "this series holds " + ("single scores" if "value" in data["entries"][-1] else "samples")
+                + "; use a different metric name for the other kind", tool=name)
+        if note:
+            entry["note"] = note
+        await register_series(owner, f"{model}:{metric}", name)
+        # The identity of an observation (two can share a millisecond): an atomic counter, offset past any
+        # sequence the legacy blob already used so the two histories never reuse a number.
+        entry["seq"] = data["legacy_seq"] + await cache.incr(_k2(owner, model, metric, "seq"), ttl_s=_TTL_S)
+        await cache.append_capped(_k2(owner, model, metric, "entries"), json.dumps(entry).encode("utf-8"),
+                                          max_len=_MAX_ENTRIES, ttl_s=_TTL_S)
         return json.dumps({"recorded": True, "model": model, "metric": metric, "kind": kind,
-                           "entries": len(data["entries"]), "baseline_pinned": data["baseline"] is not None})
+                           "entries": min(len(data["entries"]) + 1, _MAX_ENTRIES),
+                           "seq": entry["seq"], "baseline_pinned": data["baseline"] is not None})
 
     @tool(
         "compare_model_metric",
@@ -212,7 +244,7 @@ def build_drift_tools(cache: Cache) -> list[Tool]:
     ) -> str:
         name = "compare_model_metric"
         _names(name, model, metric)
-        data = await load(_key(_owner(context), model, metric))
+        data = await load(_owner(context), model, metric)
         entries = data["entries"]
         result: dict[str, Any] = {"model": model, "metric": metric, "history_entries": len(entries),
                                   "evaluation_triggered": False}

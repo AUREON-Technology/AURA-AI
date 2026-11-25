@@ -75,6 +75,7 @@ class InMemoryCache:
         self._max = max_entries
         self._default_ttl = default_ttl_s
         self._data: dict[str, tuple[float, bytes]] = {}
+        self._lists: dict[str, tuple[float, list[bytes]]] = {}
 
     def _evict_if_needed(self) -> None:
         while len(self._data) > self._max:
@@ -103,12 +104,36 @@ class InMemoryCache:
 
     async def delete(self, key: str) -> None:
         self._data.pop(key, None)
+        self._lists.pop(key, None)
 
     async def incr(self, key: str, *, ttl_s: int | None = None, amount: int = 1) -> int:
         raw = await self.get(key)
         value = (int(raw) if raw else 0) + int(amount)
         await self.set(key, str(value).encode(), ttl_s=ttl_s)
         return value
+
+    async def append_capped(self, key: str, value: bytes, *, max_len: int, ttl_s: int | None = None) -> int:
+        # No ``await`` between the read and the write below, so on one event loop this is atomic --
+        # the same guarantee Redis' RPUSH + LTRIM transaction gives across processes.
+        ttl = self._default_ttl if ttl_s is None else ttl_s
+        expires_at, items = self._lists.pop(key, (0.0, []))
+        if expires_at and expires_at < time.time():
+            items = []
+        items = [*items, value][-max(1, int(max_len)):]
+        self._lists[key] = (time.time() + ttl if ttl else 0.0, items)
+        while len(self._lists) > self._max:
+            self._lists.pop(next(iter(self._lists)))
+        return len(items)
+
+    async def get_list(self, key: str) -> list[bytes]:
+        entry = self._lists.get(key)
+        if entry is None:
+            return []
+        expires_at, items = entry
+        if expires_at and expires_at < time.time():
+            self._lists.pop(key, None)
+            return []
+        return list(items)
 
     async def get_many(self, keys: Sequence[str]) -> dict[str, bytes]:
         found = {}
@@ -119,10 +144,11 @@ class InMemoryCache:
         return found
 
     def __len__(self) -> int:
-        return len(self._data)
+        return len(self._data) + len(self._lists)
 
     def clear(self) -> None:
         self._data.clear()
+        self._lists.clear()
 
 
 class LLMCache:
