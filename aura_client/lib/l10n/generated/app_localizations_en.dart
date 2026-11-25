@@ -5546,4 +5546,8 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get usageTurnCached => 'Cached';
+
+  @override
+  String get hostdCodeProtectedGitInternals =>
+      'Writing inside .git (HEAD, the index, refs, objects) is never allowed: it can corrupt the repository. Use Git commands instead.';
 }

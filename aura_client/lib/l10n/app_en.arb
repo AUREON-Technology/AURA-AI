@@ -7432,5 +7432,9 @@
   "usageTurnCached": "Cached",
   "@usageTurnCached": {
     "description": "Usage: turn answered from cache"
+  },
+  "hostdCodeProtectedGitInternals": "Writing inside .git (HEAD, the index, refs, objects) is never allowed: it can corrupt the repository. Use Git commands instead.",
+  "@hostdCodeProtectedGitInternals": {
+    "description": "aura_hostd error code protected_git_internals (hostd_error_codes.dart)"
   }
 }

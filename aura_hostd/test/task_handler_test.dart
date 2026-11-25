@@ -497,6 +497,51 @@ void main() {
       expect(Directory(p.join(workspaceDir.path, 'newdir')).existsSync(), isTrue);
     });
 
+    test('the agent is told afterwards that the command was held, why, and that it was approved', () async {
+      final future = handler.run({
+        'command': ['sh', '-c', 'mkdir newdir'],
+        'timeout_s': 5.0,
+      });
+      approvals.respond(approvals.list().single.id, true);
+      final result = await future;
+      expect(result['exit_code'], 0);
+      expect(result['stderr'], contains('held for your approval'));
+      expect(result['stderr'], contains('approved after'));
+    });
+
+    test('a refusal says why the command was held and how long the human took', () async {
+      final future = handler.run({
+        'command': ['sh', '-c', 'mkdir newdir'],
+        'timeout_s': 5.0,
+      });
+      approvals.respond(approvals.list().single.id, false);
+      await expectLater(
+        future,
+        throwsA(isA<RpcError>().having(
+          (e) => e.message, 'message',
+          allOf(contains('rejected by the user after'), contains('held for approval because'), contains('mkdir newdir')),
+        )),
+      );
+    });
+
+    test('an approval nobody answers ends in a message that names the wait and the reason', () async {
+      final slow = ApprovalQueue(timeout: const Duration(milliseconds: 150));
+      handler = TaskHandler(roots, slow);
+      final future = handler.run({
+        'command': ['sh', '-c', 'mkdir newdir'],
+        'timeout_s': 5.0,
+      });
+      // Nobody answers: the queue's own (shortened) timer expires it.
+      await expectLater(
+        future,
+        throwsA(isA<RpcError>().having(
+          (e) => e.message, 'message',
+          allOf(contains('timed out'), contains('did not answer on their computer'), contains('held for approval because')),
+        )),
+      );
+      expect(Directory(p.join(workspaceDir.path, 'newdir')).existsSync(), isFalse);
+    });
+
     test('rejecting a queued command throws and never runs it', () async {
       final future = handler.run({
         'command': ['sh', '-c', 'mkdir newdir'],

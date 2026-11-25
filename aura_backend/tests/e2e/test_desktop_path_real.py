@@ -659,12 +659,20 @@ class TestContainment:
         (".git/config", "protected_git_config"),
         # A `.git` *file* (linked worktree / submodule) names the git directory git will use.
         ("nested/.git", "protected_git_dir_file"),
+        # The repository's own state: not code execution, but a file write corrupts it.
+        (".git/HEAD", "protected_git_internals"),
+        (".git/index", "protected_git_internals"),
+        (".git/refs/heads/main", "protected_git_internals"),
+        (".git/objects/aa/bbcc", "protected_git_internals"),
+        (".git/packed-refs", "protected_git_internals"),
     ])
     async def test_writes_into_the_git_directory_are_refused(self, desk, path, code) -> None:
         task = await desk.task(desk.trusted)
         before = (desk.trusted / ".git" / "config").read_bytes()
+        head_before = (desk.trusted / ".git" / "HEAD").read_bytes()
         _, error = await desk.rpc("write_file", {"task_id": task, "path": path, "content": "#!/bin/sh\necho pwned\n"})
         assert error is not None and error["code"] == code, error
+        assert (desk.trusted / ".git" / "HEAD").read_bytes() == head_before, "HEAD was rewritten"
         assert not (desk.trusted / ".git" / "hooks" / "pre-commit").exists()
         assert not (desk.trusted / ".git" / "hooks" / "post-checkout").exists()
         assert (desk.trusted / ".git" / "config").read_bytes() == before

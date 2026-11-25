@@ -5568,4 +5568,8 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get usageTurnCached => 'من الكاش';
+
+  @override
+  String get hostdCodeProtectedGitInternals =>
+      'الكتابة جوّه .git (HEAD أو الـ index أو الـ refs أو الـ objects) ممنوعة دايمًا: ممكن تبوّظ الـ repository. استخدم أوامر Git بدالها.';
 }

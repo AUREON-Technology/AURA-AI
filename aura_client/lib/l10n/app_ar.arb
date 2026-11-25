@@ -1535,5 +1535,6 @@
   "usageRecentTurns": "آخر الردود",
   "usageTurnLine": "{tokens} توكن، {seconds} ث",
   "usageTurnFailed": "فشل",
-  "usageTurnCached": "من الكاش"
+  "usageTurnCached": "من الكاش",
+  "hostdCodeProtectedGitInternals": "الكتابة جوّه .git (HEAD أو الـ index أو الـ refs أو الـ objects) ممنوعة دايمًا: ممكن تبوّظ الـ repository. استخدم أوامر Git بدالها."
 }

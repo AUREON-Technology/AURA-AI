@@ -9317,6 +9317,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Cached'**
   String get usageTurnCached;
+
+  /// aura_hostd error code protected_git_internals (hostd_error_codes.dart)
+  ///
+  /// In en, this message translates to:
+  /// **'Writing inside .git (HEAD, the index, refs, objects) is never allowed: it can corrupt the repository. Use Git commands instead.'**
+  String get hostdCodeProtectedGitInternals;
 }
 
 class _AppLocalizationsDelegate

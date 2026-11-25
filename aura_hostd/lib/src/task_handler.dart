@@ -594,6 +594,7 @@ class TaskHandler {
         ? _roots.requireContained(root, cwdParam)
         : root.canonicalPath;
 
+    String? approvalNote;
     final commandForPolicy = _effectiveShellCommand(commandArgv);
     // WP8: a remote task gets neither the trusted tier nor the read-only allowlist -- only the
     // every-workspace refusals, then the remote device's approval (`confirmed`), never the queue.
@@ -611,7 +612,13 @@ class TaskHandler {
     if (remote) {
       _requireRemoteConfirmation(params, 'run');
     } else if (verdict.decision == CommandDecision.needsApproval) {
-      await _awaitApproval(commandForPolicy, cwd: cwd, root: root, callId: callId);
+      final waited = await _awaitApproval(
+        commandForPolicy, cwd: cwd, root: root, callId: callId, reason: verdict.reason,
+      );
+      // The agent sees nothing while a human decides; tell it afterwards that it was held, why, and
+      // that the answer was yes (a no or a timeout is an error that says the same).
+      approvalNote = '[aura_hostd] this command was held for your approval (${verdict.reason}) '
+          'and approved after ${waited.inSeconds}s';
     }
     // G-17 (SEC-10): the untrusted tier's allowlisted git runs with the repository's own
     // fsmonitor, hooks, external diff and textconv programs switched off. An approved command
@@ -731,6 +738,7 @@ class TaskHandler {
     if (outputTruncated) {
       stderrBuf.write('\n[aura_hostd] output truncated after $_maxOutputCapChars characters');
     }
+    if (approvalNote != null) stderrBuf.write('\n$approvalNote');
 
     return {
       'stdout': stdoutBuf.toString(),
@@ -789,12 +797,19 @@ class TaskHandler {
   /// executing something the human no longer sees the same context for (D5 plan design decision
   /// 5). Throws [RpcError] on rejection, expiry, or a revalidation mismatch; returns normally only
   /// when the exact operation that was approved is still safe to run.
-  Future<void> _awaitApproval(
+  ///
+  /// [reason] is why the command was held (the policy's own words); it goes into the messages so the
+  /// agent, which sees nothing while a human decides, learns afterwards *why* it waited and what
+  /// came of it. Returns how long the human took.
+  Future<Duration> _awaitApproval(
     String command, {
     required String cwd,
     required WorkspaceRoot root,
     String? callId,
+    String? reason,
   }) async {
+    final waited = Stopwatch()..start();
+    final why = reason == null || reason.isEmpty ? '' : ' (held for approval because: $reason)';
     final PendingApproval approval;
     try {
       approval = _approvals.createForCommand(canonicalCommand: command, cwd: cwd, rootPath: root.canonicalPath);
@@ -812,11 +827,14 @@ class TaskHandler {
       case ApprovalStatus.approved:
         break;
       case ApprovalStatus.rejected:
-        throw RpcError('command was rejected by the user: $command');
+        throw RpcError(
+            'command was rejected by the user after ${waited.elapsed.inSeconds}s$why: $command');
       case ApprovalStatus.expired:
-        throw RpcError('command approval timed out waiting for a response: $command');
+        throw RpcError(
+            'command approval timed out: the user did not answer on their computer within '
+            '${waited.elapsed.inSeconds}s$why, so it was not run: $command');
       case ApprovalStatus.cancelled:
-        throw RpcError('command approval was cancelled: $command');
+        throw RpcError('command approval was cancelled$why: $command');
       case ApprovalStatus.pending:
         throw RpcError('command approval resolved with no decision -- this should not happen');
     }
@@ -834,6 +852,7 @@ class TaskHandler {
         'refusing to run: $command',
       );
     }
+    return waited.elapsed;
   }
 
   /// Queues [operations] for interactive approval and blocks until a human answers or it times
