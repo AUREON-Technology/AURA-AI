@@ -113,6 +113,8 @@ class RunRecorder:
             budget=budget,
         )
         self.steps: list[AgentStep] = []
+        #: Steps recorded since the last :meth:`flush`.
+        self._pending: list[AgentStep] = []
 
     # -- clock -----------------------------------------------------------------------------
 
@@ -129,13 +131,31 @@ class RunRecorder:
     # -- persistence -----------------------------------------------------------------------
 
     async def _save(self) -> None:
+        """Bring the in-memory run up to date. Not a write: :meth:`flush` persists it."""
         self.run = self.run.with_(
             updated_at=self._now(), elapsed_s=max(0.0, self._monotonic() - self._started)
         )
+
+    async def flush(self) -> None:
+        """Persist the run row and every buffered step: two awaited writes, however many steps.
+
+        A pass used to cost one write per step plus a run save after each phase (k + 5 for k
+        tool calls), every one awaited on the turn's path. The run row goes first (steps
+        reference it); the steps then go in one batch, in order. A failure disables recording
+        for the rest of the run, as before -- the loop never fails because its record did.
+        """
+        pending, self._pending = self._pending, []
         if not self._store_ok:
             return
         try:
             await self._store.save_run(self.run)
+            if pending:
+                append_steps = getattr(self._store, "append_steps", None)
+                if append_steps is not None:
+                    await append_steps(pending)
+                else:  # a store written before the batch method existed
+                    for step in pending:
+                        await self._store.append_step(step)
         except Exception:
             self._store_ok = False
             logger.warning("failed to persist agent run; continuing without recording",
@@ -174,14 +194,7 @@ class RunRecorder:
             detail=safe_detail(detail),
         )
         self.steps.append(step)
-        if not self._store_ok:
-            return
-        try:
-            await self._store.append_step(step)
-        except Exception:
-            self._store_ok = False
-            logger.warning("failed to persist agent step; continuing without recording",
-                           extra={"agent": self.run.agent_id})
+        self._pending.append(step)
 
     # -- phases ------------------------------------------------------------------------------
 
@@ -197,6 +210,7 @@ class RunRecorder:
                 "tainted": self._context.tainted,
             },
         )
+        await self.flush()  # the run row exists before the first pass starts
 
     async def planned(
         self, plan: Plan, *, iteration: int, replan_reason: str | None = None,
@@ -316,6 +330,7 @@ class RunRecorder:
                 "risk_spent": self.run.risk_spent,
             },
         )
+        await self.flush()  # end of the pass: plan + tool calls + observation + evaluation
 
     async def finish(
         self, outcome: Any, *, stop_reason: str | None, exhausted_budget: str | None,
@@ -357,6 +372,7 @@ class RunRecorder:
             },
         )
         await self._save()
+        await self.flush()
         self._observe_metrics()
         return self.run
 
@@ -372,6 +388,7 @@ class RunRecorder:
             detail={"exception": type(exc).__name__},
         )
         await self._save()
+        await self.flush()
         self._observe_metrics()
 
     def _observe_metrics(self) -> None:

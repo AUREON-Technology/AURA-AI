@@ -101,6 +101,38 @@ class PostgresEngineerRunStore:
         except Exception as exc:
             raise _unavailable(f"could not write engineer run: {exc}") from exc
 
+    async def record_many(self, runs: Sequence[EngineerRun]) -> None:
+        if not runs:
+            return
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    await conn.executemany(
+                        """
+                        INSERT INTO aura_engineer_runs
+                            (id, user_id, turn_id, correlation_id, persona, tool, call_id, status,
+                             pr_url, branch, commit_sha, sandbox_transcript, created_at,
+                             updated_at)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                        ON CONFLICT (id) DO UPDATE SET
+                            status = EXCLUDED.status, pr_url = EXCLUDED.pr_url,
+                            branch = EXCLUDED.branch, commit_sha = EXCLUDED.commit_sha,
+                            sandbox_transcript = EXCLUDED.sandbox_transcript,
+                            updated_at = EXCLUDED.updated_at
+                        """,
+                        [
+                            (
+                                r.id.value, r.user_id.value, r.turn_id, r.correlation_id,
+                                r.persona, r.tool, r.call_id, r.status, r.pr_url, r.branch,
+                                r.commit_sha, r.sandbox_transcript, r.created_at, r.updated_at,
+                            )
+                            for r in runs
+                        ],
+                    )
+        except Exception as exc:
+            raise _unavailable(f"could not write engineer runs: {exc}") from exc
+
     async def list_for_user(
         self, user_id: UserId, *, since: datetime | None = None, limit: int = 200,
     ) -> Sequence[EngineerRun]:
@@ -253,6 +285,34 @@ class PostgresEngineerRunStore:
                 )
         except Exception as exc:
             raise _unavailable(f"could not write agent step: {exc}") from exc
+
+    async def append_steps(self, steps: Sequence[AgentStep]) -> None:
+        if not steps:
+            return
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    await conn.executemany(
+                        """
+                        INSERT INTO aura_agent_steps
+                            (id, run_id, user_id, seq, iteration, phase, kind, status, tool,
+                             call_id, error_kind, arguments_digest, risk_cost, detail, created_at)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+                                $14::jsonb, $15)
+                        """,
+                        [
+                            (
+                                st.id.value, st.run_id.value, st.user_id.value, st.seq,
+                                st.iteration, st.phase, st.kind, st.status, st.tool, st.call_id,
+                                st.error_kind, st.arguments_digest, st.risk_cost,
+                                json.dumps(dict(st.detail)), st.created_at,
+                            )
+                            for st in steps
+                        ],
+                    )
+        except Exception as exc:
+            raise _unavailable(f"could not write agent steps: {exc}") from exc
 
     async def get_run(self, run_id: AgentRunId, *, user_id: UserId) -> AgentRun | None:
         pool = await self._pool._get_pool()
