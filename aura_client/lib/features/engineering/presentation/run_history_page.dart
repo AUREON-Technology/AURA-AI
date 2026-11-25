@@ -54,6 +54,38 @@ class _RunHistoryPageState extends ConsumerState<RunHistoryPage> {
 
   void _search() => ref.read(_runSearchQueryProvider.notifier).set(_controller.text.trim());
 
+  Future<void> _stopAll() async {
+    final l10n = context.l10n;
+    final messenger = ScaffoldMessenger.of(context);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.agentStopAllTitle),
+        content: Text(l10n.agentStopAllMessage),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: Text(l10n.cancel)),
+          FilledButton(
+            key: const ValueKey('stop-all-confirm'),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(l10n.agentStopAllConfirm),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      final result = await ref.read(runHistoryRepositoryProvider).stopAll();
+      ref.invalidate(_runSearchProvider);
+      messenger.showSnackBar(SnackBar(
+        content: Text(result.stoppedAnything
+            ? l10n.agentStopAllDone(result.turnsStopped, result.desktopSessionsClosed)
+            : l10n.agentStopAllNothing),
+      ));
+    } catch (err) {
+      messenger.showSnackBar(SnackBar(content: Text(AuraFailure.from(err).message)));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
@@ -62,7 +94,18 @@ class _RunHistoryPageState extends ConsumerState<RunHistoryPage> {
 
     return Scaffold(
       backgroundColor: palette.background,
-      appBar: AppBar(backgroundColor: palette.background, title: Text(l10n.runSearchTitle)),
+      appBar: AppBar(
+        backgroundColor: palette.background,
+        title: Text(l10n.runSearchTitle),
+        actions: [
+          IconButton(
+            key: const ValueKey('stop-all-button'),
+            tooltip: l10n.agentStopAllTitle,
+            icon: Icon(Icons.stop_circle_outlined, color: Theme.of(context).colorScheme.error),
+            onPressed: _stopAll,
+          ),
+        ],
+      ),
       body: RefreshIndicator(
         onRefresh: () => ref.refresh(_runSearchProvider.future),
         child: ListView(

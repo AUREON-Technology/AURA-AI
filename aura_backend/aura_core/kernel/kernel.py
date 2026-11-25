@@ -111,6 +111,7 @@ from ..planning.feedback import PlanFeedbackService
 from ..planning.modes import PlanDecision, decide_plan, normalise_mode
 from ..reasoning.engine import ReasoningRequest
 from ..safety.guards import redact_secrets
+from ..tools.confirmation_summary import describe_pending_call
 from ..tools.personal_os import actions_from_tool_results
 from .active_turns import ActiveTurns
 from ..planning.engine import follow_up_goal
@@ -2793,6 +2794,7 @@ class AIKernel:
             {
                 "call_id": call.call_id, "tool": call.tool, "arguments": dict(call.arguments),
                 "diff_preview": None, "approval_id": approval_ids[call.call_id], "review": True,
+                **describe_pending_call(call.tool, call.arguments),
             }
             for call in calls if call.call_id in approval_ids
         )
@@ -2887,6 +2889,7 @@ class AIKernel:
                 "tool": report.tool,
                 "arguments": dict(report.arguments or {}),
                 "diff_preview": report.diff_preview,
+                **describe_pending_call(report.tool, report.arguments, report.diff_preview),
             }
             approval_id = approval_ids.get(report.call_id)
             if approval_id:

@@ -34,6 +34,7 @@ from ..domain.planning import Plan, StepKind, StepStatus
 from ..execution.confirmations import PendingCall, PendingConfirmationStore
 from ..observability.logging import get_logger
 from ..ports.runtime import AuditEvent
+from ..tools.confirmation_summary import describe_pending_call
 from ..tools.open.artifact_feedback_ingestor import ArtifactFeedbackIngestor
 from ..tools.open_pure import apply_step_feedback
 
@@ -170,6 +171,7 @@ class PlanFeedbackService:
             {
                 "call_id": call.call_id, "tool": call.tool, "arguments": dict(call.arguments),
                 "diff_preview": None, "approval_id": issued[call.call_id], "review": True,
+                **describe_pending_call(call.tool, call.arguments),
             }
             for call in calls if call.call_id in issued
         )

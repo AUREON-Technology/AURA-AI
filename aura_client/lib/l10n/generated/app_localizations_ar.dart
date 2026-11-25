@@ -5625,4 +5625,50 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get webEngineerPaneMessage =>
       'اختار عملية من القايمة تشوف حالتها والفرع والمخرجات بتاعتها.';
+
+  @override
+  String get chatConfirmDetails => 'التفاصيل';
+
+  @override
+  String get chatRiskAdvisory =>
+      'فحص تلقائي: غياب التحذير لا يعني إن الإجراء آمن.';
+
+  @override
+  String get chatRiskCommand => 'أمر خطر';
+
+  @override
+  String get chatRiskSensitiveFile => 'ملف سري';
+
+  @override
+  String get chatRiskMigration => 'قاعدة البيانات';
+
+  @override
+  String get chatRiskPipeline => 'إعدادات البناء أو النشر';
+
+  @override
+  String get chatRiskDeployment => 'نشر';
+
+  @override
+  String get chatRiskRemoteWrite => 'كتابة على مستودع بعيد';
+
+  @override
+  String get chatRiskLargeChange => 'تغيير كبير';
+
+  @override
+  String get agentStopAllTitle => 'إيقاف كل نشاط الوكيل';
+
+  @override
+  String get agentStopAllMessage =>
+      'ده بيوقّف كل اللي الوكيل بتاعك بيعمله دلوقتي، على السيرفر وعلى جهازك المربوط. أي إجراء مستني موافقتك هيفضل مستني. وأي حاجة خلصت قبل كده مش هتتلغي.';
+
+  @override
+  String get agentStopAllConfirm => 'أوقّف دلوقتي';
+
+  @override
+  String agentStopAllDone(int turns, int sessions) {
+    return 'اتوقّف $turns تشغيل شغّال واتقفلت $sessions جلسة على الكمبيوتر.';
+  }
+
+  @override
+  String get agentStopAllNothing => 'ماكانش في حاجة شغّالة.';
 }

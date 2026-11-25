@@ -9413,6 +9413,90 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Pick a run from the list to see its status, branch and output.'**
   String get webEngineerPaneMessage;
+
+  /// Confirmation card: heading of the collapsed raw command/diff section
+  ///
+  /// In en, this message translates to:
+  /// **'Details'**
+  String get chatConfirmDetails;
+
+  /// Confirmation card: reminder that the risk chips are automatic and advisory
+  ///
+  /// In en, this message translates to:
+  /// **'Automatic check: a missing warning does not mean it is safe.'**
+  String get chatRiskAdvisory;
+
+  /// Confirmation card: chatRiskCommand
+  ///
+  /// In en, this message translates to:
+  /// **'Risky command'**
+  String get chatRiskCommand;
+
+  /// Confirmation card: chatRiskSensitiveFile
+  ///
+  /// In en, this message translates to:
+  /// **'Secret file'**
+  String get chatRiskSensitiveFile;
+
+  /// Confirmation card: chatRiskMigration
+  ///
+  /// In en, this message translates to:
+  /// **'Database schema'**
+  String get chatRiskMigration;
+
+  /// Confirmation card: chatRiskPipeline
+  ///
+  /// In en, this message translates to:
+  /// **'Build or deploy config'**
+  String get chatRiskPipeline;
+
+  /// Confirmation card: chatRiskDeployment
+  ///
+  /// In en, this message translates to:
+  /// **'Deployment'**
+  String get chatRiskDeployment;
+
+  /// Confirmation card: chatRiskRemoteWrite
+  ///
+  /// In en, this message translates to:
+  /// **'Writes to a remote'**
+  String get chatRiskRemoteWrite;
+
+  /// Confirmation card: chatRiskLargeChange
+  ///
+  /// In en, this message translates to:
+  /// **'Large change'**
+  String get chatRiskLargeChange;
+
+  /// No description provided for @agentStopAllTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop all agent activity'**
+  String get agentStopAllTitle;
+
+  /// No description provided for @agentStopAllMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'This stops everything your agent is doing right now, on this server and on your paired computer. An action waiting for your approval stays waiting. Nothing already finished is undone.'**
+  String get agentStopAllMessage;
+
+  /// No description provided for @agentStopAllConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop now'**
+  String get agentStopAllConfirm;
+
+  /// Snackbar after stop-all: how many turns and desktop sessions were stopped
+  ///
+  /// In en, this message translates to:
+  /// **'Stopped {turns} running turn(s) and closed {sessions} computer session(s).'**
+  String agentStopAllDone(int turns, int sessions);
+
+  /// No description provided for @agentStopAllNothing.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing was running.'**
+  String get agentStopAllNothing;
 }
 
 class _AppLocalizationsDelegate

@@ -7496,5 +7496,57 @@
   "webEngineerPaneMessage": "Pick a run from the list to see its status, branch and output.",
   "@webEngineerPaneMessage": {
     "description": "Web wide layout: what to do in the empty Engineer detail pane"
-  }
+  },
+  "chatConfirmDetails": "Details",
+  "@chatConfirmDetails": {
+    "description": "Confirmation card: heading of the collapsed raw command/diff section"
+  },
+  "chatRiskAdvisory": "Automatic check: a missing warning does not mean it is safe.",
+  "@chatRiskAdvisory": {
+    "description": "Confirmation card: reminder that the risk chips are automatic and advisory"
+  },
+  "chatRiskCommand": "Risky command",
+  "@chatRiskCommand": {
+    "description": "Confirmation card: chatRiskCommand"
+  },
+  "chatRiskSensitiveFile": "Secret file",
+  "@chatRiskSensitiveFile": {
+    "description": "Confirmation card: chatRiskSensitiveFile"
+  },
+  "chatRiskMigration": "Database schema",
+  "@chatRiskMigration": {
+    "description": "Confirmation card: chatRiskMigration"
+  },
+  "chatRiskPipeline": "Build or deploy config",
+  "@chatRiskPipeline": {
+    "description": "Confirmation card: chatRiskPipeline"
+  },
+  "chatRiskDeployment": "Deployment",
+  "@chatRiskDeployment": {
+    "description": "Confirmation card: chatRiskDeployment"
+  },
+  "chatRiskRemoteWrite": "Writes to a remote",
+  "@chatRiskRemoteWrite": {
+    "description": "Confirmation card: chatRiskRemoteWrite"
+  },
+  "chatRiskLargeChange": "Large change",
+  "@chatRiskLargeChange": {
+    "description": "Confirmation card: chatRiskLargeChange"
+  },
+  "agentStopAllTitle": "Stop all agent activity",
+  "agentStopAllMessage": "This stops everything your agent is doing right now, on this server and on your paired computer. An action waiting for your approval stays waiting. Nothing already finished is undone.",
+  "agentStopAllConfirm": "Stop now",
+  "agentStopAllDone": "Stopped {turns} running turn(s) and closed {sessions} computer session(s).",
+  "@agentStopAllDone": {
+    "description": "Snackbar after stop-all: how many turns and desktop sessions were stopped",
+    "placeholders": {
+      "turns": {
+        "type": "int"
+      },
+      "sessions": {
+        "type": "int"
+      }
+    }
+  },
+  "agentStopAllNothing": "Nothing was running."
 }

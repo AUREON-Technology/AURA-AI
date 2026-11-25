@@ -170,4 +170,110 @@ void main() {
     expect(find.text('some_future_tool'), findsOneWidget);
     expect(find.textContaining('foo: bar'), findsOneWidget);
   });
+
+  group('backend summary and risk chips (G.1)', () {
+    testWidgets('a held call leads with its headline and chips and keeps the raw detail under Details',
+        (tester) async {
+      await _pump(tester, [
+        const PendingToolCall(
+          callId: 'c1',
+          tool: 'run_command',
+          arguments: {'command': 'pytest -q'},
+          turnId: 't1',
+          headline: 'Run: pytest -q',
+          riskFlags: [RiskFlag(code: 'command', level: 'low', text: 'uses the network')],
+        ),
+      ], turnId: 't1');
+      expect(find.byKey(const Key('confirmation_headline')), findsOneWidget);
+      expect(find.text('Run: pytest -q'), findsOneWidget);
+      expect(find.text(AppLocalizationsEn().chatRiskCommand), findsOneWidget);
+      expect(find.text(AppLocalizationsEn().chatRiskAdvisory), findsOneWidget);
+      // Collapsed: the raw terminal view is not built until "Details" is opened, and a tap opens it.
+      expect(find.byType(SandboxTerminalView), findsNothing);
+      await tester.tap(find.text(AppLocalizationsEn().chatConfirmDetails));
+      await tester.pumpAndSettle();
+      expect(find.byType(SandboxTerminalView), findsOneWidget);
+    });
+
+    testWidgets('a high-risk call opens its details at once, so it is never approved unseen', (tester) async {
+      await _pump(tester, [
+        const PendingToolCall(
+          callId: 'c1',
+          tool: 'run_command',
+          arguments: {'command': 'rm -rf build'},
+          turnId: 't1',
+          headline: 'Run: rm -rf build',
+          riskFlags: [
+            RiskFlag(code: 'command', level: 'low', text: 'uses the network'),
+            RiskFlag(code: 'command', level: 'high', text: 'deletes files recursively or by force'),
+          ],
+        ),
+      ], turnId: 't1');
+      expect(find.byType(SandboxTerminalView), findsOneWidget);
+      expect(find.byType(Tooltip), findsWidgets);
+    });
+
+    testWidgets('an older backend (no headline) shows the raw card exactly as before', (tester) async {
+      await _pump(tester, [
+        const PendingToolCall(
+          callId: 'c1',
+          tool: 'run_command',
+          arguments: {'command': 'pytest -q'},
+          turnId: 't1',
+        ),
+      ], turnId: 't1');
+      expect(find.byKey(const Key('confirmation_headline')), findsNothing);
+      expect(find.byType(SandboxTerminalView), findsOneWidget);
+    });
+
+    testWidgets('confirming still works with the summary in front', (tester) async {
+      var confirmed = false;
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            theme: AuraThemeV2.dark,
+            home: Scaffold(
+              body: EngineerConfirmationCard(
+                calls: const [
+                  PendingToolCall(
+                    callId: 'c1',
+                    tool: 'git_commit',
+                    arguments: {'message': 'fix'},
+                    headline: 'Commit: fix',
+                  ),
+                ],
+                onConfirm: () => confirmed = true,
+                onCancel: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(AppLocalizationsEn().commonConfirm));
+      expect(confirmed, isTrue);
+    });
+  });
+
+  test('PendingToolCall reads and writes the summary fields and survives an older frame', () {
+    final call = PendingToolCall.fromJson({
+      'call_id': 'c1',
+      'tool': 'run_command',
+      'arguments': {'command': 'ls'},
+      'headline': 'Run: ls',
+      'risk_flags': [
+        {'code': 'command', 'level': 'medium', 'text': 'installs packages'},
+        'junk',
+      ],
+    });
+    expect(call.headline, 'Run: ls');
+    expect(call.riskFlags.single.level, 'medium');
+    final round = PendingToolCall.fromJson(call.toJson());
+    expect(round.headline, 'Run: ls');
+    expect(round.riskFlags.single.code, 'command');
+    expect(call.copyWith(turnId: 't').riskFlags.length, 1);
+    final old = PendingToolCall.fromJson({'call_id': 'c', 'tool': 'x'});
+    expect(old.headline, isNull);
+    expect(old.riskFlags, isEmpty);
+  });
 }

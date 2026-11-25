@@ -141,10 +141,38 @@ class RunSearchResult {
   final String? scopeNote;
 }
 
+/// What `POST /api/v3/agents/stop-all` reports (ADR-041): how many of the caller's turns it cancelled
+/// and how many paired-desktop sessions it closed. [scope] is `this_process`: a turn held by another
+/// gateway worker is not reached.
+class StopAllResult {
+  const StopAllResult({required this.turnsStopped, required this.desktopSessionsClosed, required this.scope});
+
+  final int turnsStopped;
+  final int desktopSessionsClosed;
+  final String scope;
+
+  bool get stoppedAnything => turnsStopped > 0 || desktopSessionsClosed > 0;
+
+  factory StopAllResult.fromJson(Map<String, dynamic> json) => StopAllResult(
+        turnsStopped: json['turns_stopped'] is num ? (json['turns_stopped'] as num).toInt() : 0,
+        desktopSessionsClosed:
+            json['desktop_sessions_closed'] is num ? (json['desktop_sessions_closed'] as num).toInt() : 0,
+        scope: json['scope']?.toString() ?? '',
+      );
+}
+
 class RunHistoryRepository {
   RunHistoryRepository(this._api);
 
   final AuraApiClient _api;
+
+  /// `POST /agents/stop-all`: stop everything the person's agent is doing, now. Idempotent on the
+  /// server (nothing running answers zeros), so it is safe to press twice. Never revokes devices from
+  /// here: that is a separate, deliberate action.
+  Future<StopAllResult> stopAll() async {
+    final decoded = await _api.json(method: 'POST', path: '/api/v3/agents/stop-all', body: const {});
+    return StopAllResult.fromJson(decoded);
+  }
 
   /// `GET /agents/runs/search?q=&status=&limit=`. An empty [query] lists the newest runs.
   Future<RunSearchResult> search({String query = '', String? status, int limit = 30}) async {

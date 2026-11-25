@@ -5603,4 +5603,50 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get webEngineerPaneMessage =>
       'Pick a run from the list to see its status, branch and output.';
+
+  @override
+  String get chatConfirmDetails => 'Details';
+
+  @override
+  String get chatRiskAdvisory =>
+      'Automatic check: a missing warning does not mean it is safe.';
+
+  @override
+  String get chatRiskCommand => 'Risky command';
+
+  @override
+  String get chatRiskSensitiveFile => 'Secret file';
+
+  @override
+  String get chatRiskMigration => 'Database schema';
+
+  @override
+  String get chatRiskPipeline => 'Build or deploy config';
+
+  @override
+  String get chatRiskDeployment => 'Deployment';
+
+  @override
+  String get chatRiskRemoteWrite => 'Writes to a remote';
+
+  @override
+  String get chatRiskLargeChange => 'Large change';
+
+  @override
+  String get agentStopAllTitle => 'Stop all agent activity';
+
+  @override
+  String get agentStopAllMessage =>
+      'This stops everything your agent is doing right now, on this server and on your paired computer. An action waiting for your approval stays waiting. Nothing already finished is undone.';
+
+  @override
+  String get agentStopAllConfirm => 'Stop now';
+
+  @override
+  String agentStopAllDone(int turns, int sessions) {
+    return 'Stopped $turns running turn(s) and closed $sessions computer session(s).';
+  }
+
+  @override
+  String get agentStopAllNothing => 'Nothing was running.';
 }

@@ -153,7 +153,9 @@ class _PendingCallRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final summary = _PendingCallSummary(call: call);
+    final Widget summary = call.headline == null || call.headline!.isEmpty
+        ? _PendingCallSummary(call: call)
+        : _HeadlinedCall(call: call);
     if (!selectable) return summary;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -161,6 +163,124 @@ class _PendingCallRow extends StatelessWidget {
         Checkbox(value: selected, onChanged: (v) => onToggle(v ?? true)),
         Expanded(child: summary),
       ],
+    );
+  }
+}
+
+/// What the person decides on, phone-sized: the backend's one-line description and its advisory risk
+/// chips lead, and the raw command / arguments / diff sit one tap away under "Details" (open at once
+/// when something is flagged high, so a risky call is never approved without its detail in view).
+class _HeadlinedCall extends StatelessWidget {
+  const _HeadlinedCall({required this.call});
+
+  final PendingToolCall call;
+
+  static const _order = {'high': 0, 'medium': 1, 'low': 2};
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
+    final flags = [...call.riskFlags]..sort((a, b) => (_order[a.level] ?? 3).compareTo(_order[b.level] ?? 3));
+    final hasHigh = flags.any((f) => f.level == 'high');
+    return Container(
+      padding: const EdgeInsets.all(AuraSpacing.sm),
+      decoration: BoxDecoration(
+        color: palette.surfaceVariant,
+        borderRadius: BorderRadius.circular(AuraRadius.sm),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            call.headline!,
+            key: const Key('confirmation_headline'),
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+          ),
+          if (flags.isNotEmpty) ...[
+            const SizedBox(height: AuraSpacing.xs),
+            Wrap(
+              spacing: AuraSpacing.xs,
+              runSpacing: AuraSpacing.xs,
+              children: [for (final flag in flags) _RiskChip(flag: flag)],
+            ),
+          ],
+          // ExpansionTile paints on the nearest Material; inside this coloured box that would hide its ink.
+          Material(
+            type: MaterialType.transparency,
+            child: Theme(
+              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                key: ValueKey('details_${call.callId}_$hasHigh'),
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: EdgeInsets.zero,
+                initiallyExpanded: hasHigh,
+                title: Text(context.l10n.chatConfirmDetails, style: Theme.of(context).textTheme.bodySmall),
+                children: [_PendingCallSummary(call: call)],
+              ),
+            ),
+          ),
+          Text(
+            context.l10n.chatRiskAdvisory,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(color: palette.textSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RiskChip extends StatelessWidget {
+  const _RiskChip({required this.flag});
+
+  final RiskFlag flag;
+
+  String _label(BuildContext context) {
+    final l10n = context.l10n;
+    switch (flag.code) {
+      case 'command':
+        return l10n.chatRiskCommand;
+      case 'sensitive_file':
+        return l10n.chatRiskSensitiveFile;
+      case 'migration':
+        return l10n.chatRiskMigration;
+      case 'pipeline':
+        return l10n.chatRiskPipeline;
+      case 'deployment':
+        return l10n.chatRiskDeployment;
+      case 'remote_write':
+        return l10n.chatRiskRemoteWrite;
+      case 'large_change':
+        return l10n.chatRiskLargeChange;
+      default:
+        return flag.text;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = switch (flag.level) {
+      'high' => scheme.error,
+      'medium' => scheme.tertiary,
+      _ => scheme.outline,
+    };
+    return Tooltip(
+      message: flag.text,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.sm, vertical: 2),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          border: Border.all(color: color),
+          borderRadius: BorderRadius.circular(AuraRadius.sm),
+        ),
+        child: Semantics(
+          label: flag.text,
+          child: Text(
+            _label(context),
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(color: color, fontWeight: FontWeight.w600),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -1551,5 +1551,19 @@
   "webYouPaneTitle": "اختار صفحة",
   "webYouPaneMessage": "اختار إعداد أو أداة من القايمة وهتتفتح هنا.",
   "webEngineerPaneTitle": "اختار عملية",
-  "webEngineerPaneMessage": "اختار عملية من القايمة تشوف حالتها والفرع والمخرجات بتاعتها."
+  "webEngineerPaneMessage": "اختار عملية من القايمة تشوف حالتها والفرع والمخرجات بتاعتها.",
+  "chatConfirmDetails": "التفاصيل",
+  "chatRiskAdvisory": "فحص تلقائي: غياب التحذير لا يعني إن الإجراء آمن.",
+  "chatRiskCommand": "أمر خطر",
+  "chatRiskSensitiveFile": "ملف سري",
+  "chatRiskMigration": "قاعدة البيانات",
+  "chatRiskPipeline": "إعدادات البناء أو النشر",
+  "chatRiskDeployment": "نشر",
+  "chatRiskRemoteWrite": "كتابة على مستودع بعيد",
+  "chatRiskLargeChange": "تغيير كبير",
+  "agentStopAllTitle": "إيقاف كل نشاط الوكيل",
+  "agentStopAllMessage": "ده بيوقّف كل اللي الوكيل بتاعك بيعمله دلوقتي، على السيرفر وعلى جهازك المربوط. أي إجراء مستني موافقتك هيفضل مستني. وأي حاجة خلصت قبل كده مش هتتلغي.",
+  "agentStopAllConfirm": "أوقّف دلوقتي",
+  "agentStopAllDone": "اتوقّف {turns} تشغيل شغّال واتقفلت {sessions} جلسة على الكمبيوتر.",
+  "agentStopAllNothing": "ماكانش في حاجة شغّالة."
 }
