@@ -345,15 +345,20 @@ async def review_code_diff(
 
 @tool(
     "scan_code_security",
-    "Pattern-scan Python source and/or a git diff for insecure constructs (eval/exec, shell=True, "
-    "os.system, unsafe pickle/yaml, weak hashes, bare except) and hardcoded secrets. Matched "
-    "secret values are redacted in the output. Static; nothing is executed.",
+    "Pattern-scan source and/or a git diff for insecure constructs and hardcoded secrets. Languages: "
+    "Python, JavaScript/TypeScript, Go, Java/Kotlin, shell, Dockerfile, Kubernetes/Compose/GitHub-Actions "
+    "YAML and Terraform (the language is read from the text, or pass `language`). Recognises about fifty "
+    "credential formats. Matched secret values are never shown. Static; nothing is executed, and a clean "
+    "result is not proof the code is secure (it finds constructs, not data flow).",
     param("source_code", "string", "Source text to scan.", required=False, max_length=_MAX_TEXT),
-    param("diff_text", "string", "A unified diff; only added lines are scanned.",
+    param("diff_text", "string", "A unified diff; only added lines are scanned, each file by its own language.",
           required=False, max_length=_MAX_TEXT),
+    param("language", "string", "The language of source_code when it cannot be told from the text: python, "
+          "javascript, go, java, shell, dockerfile, yaml, terraform.", required=False, max_length=20),
     **_CODE,
 )
-async def scan_code_security(source_code: str | None = None, diff_text: str | None = None) -> str:
+async def scan_code_security(source_code: str | None = None, diff_text: str | None = None,
+                             language: str | None = None) -> str:
     _need("scan_code_security", source_code=source_code, diff_text=diff_text)
     _short_lines("scan_code_security", "source_code", source_code)
     _short_lines("scan_code_security", "diff_text", diff_text)
@@ -362,6 +367,7 @@ async def scan_code_security(source_code: str | None = None, diff_text: str | No
         source_code=source_code,
         diff_text=diff_text,
         use_bandit=False,  # spawns a process
+        language=language,
     )
 
 

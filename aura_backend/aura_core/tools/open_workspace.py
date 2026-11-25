@@ -75,6 +75,7 @@ from .open.project_conventions_loader import ProjectConventionsLoader
 from .open.project_status_qa_tool import ProjectStatusQaTool
 from .open.regression_impact_analyzer import RegressionImpactAnalyzer
 from .open.repo_semantic_indexer import RepoSemanticIndexer
+from .open import security_rules as _sec_rules
 from .open.security_vulnerability_scanner import SecurityVulnerabilityScanner
 from .open.skills_rules_workflows_loader import SkillsRulesWorkflowsLoader
 from .open.stale_context_detector import StaleContextDetector
@@ -2203,7 +2204,8 @@ _SKIP_SECRET_FILES = ("package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetr
 _SECRET_SCAN_SUFFIXES = (
     ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
     ".env", ".sh", ".bash", ".zsh", ".ps1", ".tf", ".properties", ".xml", ".gradle", ".dart", ".go", ".rb", ".php",
-    ".java", ".kt", ".txt", ".md", ".sql", ".html",
+    ".java", ".kt", ".kts", ".scala", ".cjs", ".vue", ".svelte", ".tfvars", ".dockerfile", ".containerfile",
+    ".txt", ".md", ".sql", ".html",
 )
 
 
@@ -2213,11 +2215,25 @@ def _extend_security(original: FunctionTool, root: _Root) -> FunctionTool:
     async def handler(context: ToolContext, **kw: Any) -> str:
         paths = _need_list(name, "paths", kw.pop("paths", None))
         advisories_path = kw.pop("advisories_path", None)
+        baseline_path = kw.pop("baseline_path", None)
         if not paths and not advisories_path:
             if kw.get("source_code") is None and kw.get("diff_text") is None:
                 raise ToolExecutionError("provide at least one of: source_code, diff_text, paths", tool=name)
             return await original.execute({k: v for k, v in kw.items() if v is not None}, context)
         _require_grant(context, name)
+        accepted: set[str] = set()
+        if baseline_path:
+            accepted_file = root.resolve(baseline_path, name, "file")
+            try:
+                loaded = json.loads(root.read_text(accepted_file, name, 2 * 1024 * 1024))
+            except ValueError as exc:
+                raise ToolExecutionError(f"{baseline_path} is not valid JSON: {exc}", tool=name) from exc
+            listed = loaded.get("fingerprints") if isinstance(loaded, dict) else loaded
+            if not isinstance(listed, list) or not all(isinstance(x, str) for x in listed):
+                raise ToolExecutionError(
+                    "the baseline must be a JSON list of fingerprints, or {\"fingerprints\": [...]}, "
+                    "taken from the `fingerprint` of earlier findings", tool=name)
+            accepted = set(listed)
 
         def run() -> dict[str, Any]:
             deadline = Deadline(40.0)
@@ -2239,12 +2255,15 @@ def _extend_security(original: FunctionTool, root: _Root) -> FunctionTool:
             findings: list[dict[str, Any]] = []
             skipped: list[dict[str, str]] = []
             scanned = 0
+            by_language: dict[str, int] = {}
+            allowlisted = baselined = 0
             for path in files:
                 rel = root.rel(path)
                 lowered = path.name.lower()
                 if lowered in _SKIP_SECRET_FILES or lowered.endswith((".min.js", ".map", ".lock")):
                     continue
-                if not (lowered.endswith(_SECRET_SCAN_SUFFIXES) or lowered.startswith(".env") or "." not in lowered):
+                if not (lowered.endswith(_SECRET_SCAN_SUFFIXES) or lowered.startswith((".env", "dockerfile", "containerfile"))
+                        or "." not in lowered):
                     continue
                 if deadline.expired():
                     skipped.append({"file": rel, "reason": "time budget used up"})
@@ -2257,9 +2276,15 @@ def _extend_security(original: FunctionTool, root: _Root) -> FunctionTool:
                     skipped.append({"file": rel, "reason": "a line is over 2,000 characters (minified or generated)"})
                     continue
                 scanned += 1
-                if lowered.endswith(".py"):
-                    findings += SecurityVulnerabilityScanner.scan_source_code(text, filename=rel)["findings"]
-                findings += SecurityVulnerabilityScanner.scan_secrets(text, filename=rel)["findings"]
+                language = _sec_rules.detect_language("", rel)
+                if language:
+                    by_language[language] = by_language.get(language, 0) + 1
+                    findings += SecurityVulnerabilityScanner.scan_source_code(
+                        text, filename=rel, language=language, sniff=False)["findings"]
+                secrets = SecurityVulnerabilityScanner.scan_secrets(text, filename=rel, baseline=accepted)
+                findings += secrets["findings"]
+                allowlisted += secrets["allowlisted"]
+                baselined += secrets["baselined"]
             severity: dict[str, int] = {}
             for f in findings:
                 severity[f["severity"]] = severity.get(f["severity"], 0) + 1
@@ -2269,8 +2294,12 @@ def _extend_security(original: FunctionTool, root: _Root) -> FunctionTool:
                 "secure": not findings and not skipped and not truncated, "complete": not skipped and not truncated,
                 "files_scanned": scanned, "findings_count": len(findings), "by_severity": severity,
                 "findings": findings[:200], "files_skipped": skipped[:30], "search_truncated": truncated,
-                "method": "pattern rules (regex + Python AST) for insecure constructs and hard-coded secrets; "
-                          "secret values are never returned. Not a replacement for semgrep or gitleaks.",
+                "files_by_language": by_language, "secrets_allowlisted": allowlisted,
+                "secrets_in_baseline": baselined,
+                "method": "line pattern rules per language (Python, JavaScript/TypeScript, Go, Java/Kotlin, shell, "
+                          "Dockerfile, Kubernetes/Compose/GitHub-Actions YAML, Terraform; Python also by AST) and a "
+                          "catalogue of credential formats; secret values are never returned. It finds constructs "
+                          "that are present, not data flow: a clean result is not proof a codebase is secure.",
             }
             if advisories_path:
                 adv_file = root.resolve(advisories_path, name, "file")
@@ -2309,6 +2338,8 @@ def _extend_security(original: FunctionTool, root: _Root) -> FunctionTool:
               "(code, config, .env, scripts).", required=False, item_type="string"),
         param("advisories_path", "string", "A workspace JSON file of OSV-format advisories; locked dependency "
               "versions are matched against it.", required=False, max_length=300),
+        param("baseline_path", "string", "A workspace JSON file listing accepted secret findings (their "
+              "`fingerprint` values); those are counted, not reported.", required=False, max_length=300),
     ]
     return _clone(original, extra, (), (
         "With `paths` it scans workspace files (not just pasted text) for insecure constructs and secrets "

@@ -22,6 +22,7 @@ import unicodedata
 from typing import Iterable, Sequence
 
 from ..domain.safety import GuardAction, GuardStage, GuardVerdict, Span, redact_spans
+from ..domain.secret_catalog import find_secrets
 from ..text import ARABIC_STOPWORDS, arabic_view, fold, is_arabic_token, light_stem
 
 __all__ = [
@@ -505,27 +506,16 @@ class SecretGuard(Guard):
     # retrieved chunk is redacted from what the model sees, never a reason to refuse the turn.
     stages = (GuardStage.INPUT, GuardStage.CONTEXT, GuardStage.OUTPUT, GuardStage.TOOL_RESULT)
 
-    _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-        (re.compile(r"\b(?:sk|pk|rk)-[A-Za-z0-9_\-]{20,}\b"), "api_key"),
-        (re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}\b"), "google_api_key"),
-        (re.compile(r"\bghp_[A-Za-z0-9]{30,}\b"), "github_token"),
-        (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"), "github_pat"),
-        (re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}\b"), "slack_token"),
-        (re.compile(r"\bya29\.[A-Za-z0-9_\-]{20,}\b"), "google_oauth_token"),
-        (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"), "private_key"),
-        (re.compile(r"\beyJ[A-Za-z0-9_\-]{15,}\.[A-Za-z0-9_\-]{15,}\.[A-Za-z0-9_\-]{10,}\b"), "jwt"),
-        (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "aws_access_key"),
-    )
+    #: The credential formats come from the shared catalogue (``domain/secret_catalog.py``), the same
+    #: one ``scan_code_security`` reports from, so a key one of them recognises the other does too.
+    #: Only the prefix-anchored formats run here; the name-based assignment rules are for code review,
+    #: not for arbitrary model output.
 
     def __init__(self, *, block: bool = True) -> None:
         self._block = block
 
     def _evaluate(self, text: str, *, stage: GuardStage, context: dict) -> GuardVerdict:
-        spans = [
-            Span(m.start(), m.end(), label, "")
-            for pattern, label in self._PATTERNS
-            for m in pattern.finditer(text)
-        ]
+        spans = [Span(hit.start, hit.end, hit.label, "") for hit in find_secrets(text, guard_only=True)]
         if not spans:
             return GuardVerdict.allow(self.name)
 
