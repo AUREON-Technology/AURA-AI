@@ -1,7 +1,7 @@
-# ADR-047: Operations tools — platform health, live telemetry, trace analysis, workflow deploys
+# ADR-049: Operations tools — platform health, live telemetry, trace analysis, workflow deploys
 
 Status: Proposed (built; checked against the live gateway and Railway, not against a live Loki/Tempo or a real
-workflow dispatch). Extends ADR-044.
+workflow dispatch). Extends ADR-046.
 
 ## Problem
 

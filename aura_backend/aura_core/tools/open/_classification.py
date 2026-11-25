@@ -116,6 +116,7 @@ CLASSIFICATION: dict[str, tuple[str, str]] = {
     # --- princess (ADR-044..046): re-decided 2026-11-25 when it was merged into main ---------
     # --- ADR-046: extensions that live beside the tool they extend ----------------------------
     "security_rules": (WRAPPED, "open_workspace.py: scan_code_security (ADR-048: shared credential catalogue and per-language rule packs)"),
+    "trace_ext": (WRAPPED, "ops.py: query_telemetry trace analysis (ADR-049; read-only, registered only when AURA_OPS_* is configured)"),
     "api_ext": (WRAPPED, "analysis.py: compare_api_specs (ADR-046)"),
     "data_ext": (WRAPPED, "analysis.py: validate_data_records (ADR-046)"),
     "diagram_ext": (WRAPPED, "analysis.py: generate_diagram (ADR-046)"),

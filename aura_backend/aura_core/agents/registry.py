@@ -213,7 +213,7 @@ _ENGINEER_WORKSPACE_TOOLS = frozenset({
 # so the Engineer holds it and the coding agent does not.
 _ENGINEER_RELEASE_TOOLS = frozenset({"verify_release_health"})
 
-# ADR-047. Registered only when the operator configured them (AURA_OPS_*), so naming them is a grant, not a
+# ADR-049. Registered only when the operator configured them (AURA_OPS_*), so naming them is a grant, not a
 # guarantee. The read tools return other systems' text (untrusted_content); the two deploy tools are
 # side-effecting, need `engineer_agent` and a confirmation on every call.
 _ENGINEER_OPS_TOOLS = frozenset({

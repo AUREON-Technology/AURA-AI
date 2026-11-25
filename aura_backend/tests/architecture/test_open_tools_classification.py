@@ -41,6 +41,7 @@ BUILDERS = {
     "open_workspace.py": AURA_CORE / "tools" / "open_workspace.py",
     "research.py": AURA_CORE / "tools" / "research.py",
     "release.py": AURA_CORE / "tools" / "release.py",
+    "ops.py": AURA_CORE / "tools" / "ops.py",
 }
 #: Directories that are not project source (a stray interpreter install, caches, virtualenvs).
 _SKIP_PARTS = {"__pycache__", ".venv", "venv", "Python", "node_modules", "site-packages"}

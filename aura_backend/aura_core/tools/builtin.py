@@ -1070,7 +1070,7 @@ def default_tools(
 
         tools += build_release_tools(allowed_http_hosts)
     if ops is not None:
-        # ADR-047: platform health, live telemetry and CI-workflow deploys. Each registers only when the
+        # ADR-049: platform health, live telemetry and CI-workflow deploys. Each registers only when the
         # operator configured what it needs, so a default deployment gains nothing.
         from .ops import build_ops_tools
         from .ops_deploy import build_deploy_tools, parse_deploy_workflows

@@ -2033,7 +2033,7 @@ class AdvisorySettings:
 
 @dataclass(frozen=True, slots=True)
 class OpsSettings:
-    """What the operations tools (ADR-047) may reach. Everything is empty by default, and an empty
+    """What the operations tools (ADR-049) may reach. Everything is empty by default, and an empty
     setting means the tool that needs it is not registered.
 
     ``platform_origins`` -- the platform's own https origins ``check_platform_health`` may probe
