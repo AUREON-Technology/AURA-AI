@@ -401,6 +401,30 @@ def knowledge_refresh_task() -> dict:
         return {"status": "error", "error": type(e).__name__}
 
 
+async def _run_osv_sync() -> dict:
+    from aura_core.adapters.osv_feed import HttpOsvFeed
+    from aura_core.learning.osv_sync import run_osv_sync
+
+    container = await _ensure_worker_container()
+    cfg = container.settings.advisories
+    if not cfg.sync_enabled:
+        return {"status": "skipped", "reason": "osv_sync_disabled"}
+    feed = HttpOsvFeed(archive_max_bytes=cfg.archive_max_mb * 1024 * 1024)
+    return await run_osv_sync(
+        container.advisory_store, feed, ecosystems=cfg.ecosystems, include_malware=cfg.include_malware)
+
+
+@celery_app.task(name="tasks.osv_sync_task", queue="learning")
+def osv_sync_task() -> dict:
+    """Copy the public OSV advisories into the local store (off unless AURA_OSV_SYNC_ENABLED)."""
+    logger.info("Celery task: syncing vulnerability advisories...")
+    try:
+        return _run_async(_run_osv_sync())
+    except Exception as e:
+        logger.error("OSV sync task failed: %s", e, exc_info=True)
+        return {"status": "error", "error": type(e).__name__}
+
+
 @celery_app.task(name="tasks.memory_consolidate_task", queue="learning")
 def memory_consolidate_task() -> dict:
     """Daily memory consolidation at 02:30 UTC, after refresh."""

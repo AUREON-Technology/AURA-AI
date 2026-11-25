@@ -66,6 +66,7 @@ __all__ = [
     "McpSettings",
     "OpenToolsSettings",
     "ExtractionSettings",
+    "AdvisorySettings",
     "GitHubSettings",
     "SandboxSettings",
     "AgentTaskSettings",
@@ -1991,6 +1992,43 @@ class ExtractionSettings:
         return found
 
 
+class AdvisorySettings:
+    """The local copy of public vulnerability advisories (OSV) that ``scan_code_security`` reads.
+
+    The scan itself never touches the network. This switch lets a *scheduled job* download advisories
+    for the listed ecosystems into the database, from one fixed host (``storage.googleapis.com``;
+    ``domain/advisories.FEED_HOST``, not configurable). Off by default: an operator who wants the
+    dependency scan to know about CVEs turns it on, and the job's worker needs outbound HTTPS to that
+    host.
+
+    ``max_age_days`` -- a copy older than this is reported as stale in every scan, so an expired
+    download is never mistaken for a clean result.
+    """
+
+    sync_enabled: bool = False
+    ecosystems: tuple[str, ...] = ("pypi", "npm")
+    sync_cron: str = "30 3 * * *"
+    include_malware: bool = False
+    max_age_days: int = 3
+    archive_max_mb: int = 400
+
+    @classmethod
+    def from_env(cls) -> "AdvisorySettings":
+        ecosystems = tuple(e.lower() for e in _list("OSV_ECOSYSTEMS", ("pypi", "npm")))
+        unknown = [e for e in ecosystems if e not in ("pypi", "npm")]
+        if unknown:
+            raise ConfigurationError(
+                "AURA_OSV_ECOSYSTEMS accepts only pypi and npm", details={"value": unknown})
+        return cls(
+            sync_enabled=_bool("OSV_SYNC_ENABLED", False),
+            ecosystems=ecosystems or ("pypi", "npm"),
+            sync_cron=_env("OSV_SYNC_CRON", "30 3 * * *") or "30 3 * * *",
+            include_malware=_bool("OSV_INCLUDE_MALWARE", False),
+            max_age_days=_int("OSV_MAX_AGE_DAYS", 3, minimum=1, maximum=365),
+            archive_max_mb=_int("OSV_ARCHIVE_MAX_MB", 400, minimum=10, maximum=4096),
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class GitHubSettings:
     """GitHub access for the engineer agent's read/write tools -- two independent paths.
@@ -2782,6 +2820,7 @@ class AuraSettings:
     vision: VisionSettings = field(default_factory=VisionSettings)
     mcp: McpSettings = field(default_factory=McpSettings)
     open_tools: OpenToolsSettings = field(default_factory=OpenToolsSettings)
+    advisories: AdvisorySettings = field(default_factory=AdvisorySettings)
     adaptation: AdaptationSettings = field(default_factory=AdaptationSettings)
     github: GitHubSettings = field(default_factory=GitHubSettings)
     sandbox: SandboxSettings = field(default_factory=SandboxSettings)
@@ -2826,6 +2865,7 @@ class AuraSettings:
             vision=VisionSettings.from_env(),
             mcp=McpSettings.from_env(),
             open_tools=OpenToolsSettings.from_env(),
+            advisories=AdvisorySettings.from_env(),
             adaptation=AdaptationSettings.from_env(),
             github=GitHubSettings.from_env(),
             sandbox=SandboxSettings.from_env(),

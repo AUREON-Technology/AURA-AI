@@ -346,15 +346,16 @@ async def review_code_diff(
 
 @tool(
     "scan_code_security",
-    "Pattern-scan Python source and/or a git diff for insecure constructs (eval/exec, shell=True, "
-    "os.system, unsafe pickle/yaml, weak hashes, bare except) and hardcoded secrets. Matched "
-    "secret values are redacted in the output. Static; nothing is executed.",
+    "Pattern-scan source and/or a git diff (Python, JS, Go, Java, shell, Docker, YAML, Terraform) for "
+    "insecure code and hardcoded secrets (never shown). Clean is not proof.",
     param("source_code", "string", "Source text to scan.", required=False, max_length=_MAX_TEXT),
     param("diff_text", "string", "A unified diff; only added lines are scanned.",
           required=False, max_length=_MAX_TEXT),
+    param("language", "string", "Language hint.", required=False, max_length=20),
     **_CODE,
 )
-async def scan_code_security(source_code: str | None = None, diff_text: str | None = None) -> str:
+async def scan_code_security(source_code: str | None = None, diff_text: str | None = None,
+                             language: str | None = None) -> str:
     _need("scan_code_security", source_code=source_code, diff_text=diff_text)
     _short_lines("scan_code_security", "source_code", source_code)
     _short_lines("scan_code_security", "diff_text", diff_text)
@@ -363,6 +364,7 @@ async def scan_code_security(source_code: str | None = None, diff_text: str | No
         source_code=source_code,
         diff_text=diff_text,
         use_bandit=False,  # spawns a process
+        language=language,
     )
 
 
@@ -1092,16 +1094,20 @@ _ANALYSIS_TOOLS: tuple[Tool, ...] = (
 ANALYSIS_TOOL_NAMES: frozenset[str] = frozenset(t.spec.name for t in _ANALYSIS_TOOLS)
 
 
-def build_analysis_tools(workspace: Any = None) -> list[Tool]:
+def build_analysis_tools(
+    workspace: Any = None, *, advisory_store: Any = None, advisory_max_age_days: int = 3,
+) -> list[Tool]:
     """The pure analysis tools: no capability, no I/O, no state.
 
     With a ``workspace`` (``AURA_TOOLS_FILES_ROOT``) five of them gain optional arguments that read
     files under it (``tools/open_workspace.py``, ADR-045); called without those arguments they behave
-    exactly as they do here. Without a workspace nothing changes.
+    exactly as they do here. Without a workspace nothing changes. ``advisory_store`` (the local OSV
+    copy) lets ``scan_code_security`` check locked versions against it when no advisory file is given.
     """
     tools = list(_ANALYSIS_TOOLS)
     if workspace is not None and str(workspace):
         from .open_workspace import extend_analysis_tools
 
-        tools = extend_analysis_tools(tools, workspace)
+        tools = extend_analysis_tools(
+            tools, workspace, advisory_store=advisory_store, advisory_max_age_days=advisory_max_age_days)
     return tools
