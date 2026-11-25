@@ -147,6 +147,43 @@ class TestContract:
         assert [r.id for r in await store.list_runs(ALICE, limit=1)] == [c.id]
 
 
+class TestBatchWrites:
+    """``append_steps`` / ``record_many``: one write for a pass, same rows as one-by-one."""
+
+    async def test_append_steps_stores_every_step_in_order(self, store) -> None:
+        run = _run()
+        await store.save_run(run)
+        await store.append_steps([
+            _step(run, 2, tool="git_diff", status="succeeded",
+                  detail={"allowed": True, "tools": ["a"]}),
+            _step(run, 1, kind=AgentStepKind.DECISION, phase=AgentPhase.PLAN),
+            _step(run, 3),
+        ])
+        steps = await store.list_steps(run.id, user_id=ALICE)
+        assert [s.seq for s in steps] == [1, 2, 3]
+        assert steps[1].detail == {"allowed": True, "tools": ["a"]}
+
+    async def test_append_steps_with_nothing_is_a_no_op(self, store) -> None:
+        run = _run()
+        await store.save_run(run)
+        await store.append_steps([])
+        assert await store.list_steps(run.id, user_id=ALICE) == []
+
+    async def test_record_many_inserts_every_engineer_run(self, store) -> None:
+        rows = [
+            EngineerRun(
+                id=EngineerRunId.new(), user_id=ALICE, turn_id="t1", correlation_id="c1",
+                persona="engineer", tool=tool, call_id=f"step_s{i}",
+                status=EngineerRunStatus.SUCCEEDED, created_at=T0, updated_at=T0,
+            )
+            for i, tool in enumerate(("git_status", "git_diff", "run_command"), start=1)
+        ]
+        await store.record_many(rows)
+        got = await store.list_for_user(ALICE)
+        assert sorted(r.tool for r in got) == ["git_diff", "git_status", "run_command"]
+        await store.record_many([])  # no-op
+
+
 class TestOwnerScoping:
     async def test_another_users_run_reads_as_absent(self, store) -> None:
         run = _run()

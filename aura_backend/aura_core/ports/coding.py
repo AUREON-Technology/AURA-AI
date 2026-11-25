@@ -389,6 +389,10 @@ class EngineerRunStore(Protocol):
     async def record(self, run: EngineerRun) -> None:
         ...
 
+    async def record_many(self, runs: Sequence[EngineerRun]) -> None:
+        """Insert ``runs`` in one write (one transaction on a real database)."""
+        ...
+
     async def list_for_user(
         self, user_id: UserId, *, since: datetime | None = None, limit: int = 200,
     ) -> Sequence[EngineerRun]:
@@ -413,6 +417,10 @@ class AgentRunStore(EngineerRunStore, Protocol):
         ...
 
     async def append_step(self, step: AgentStep) -> None:
+        ...
+
+    async def append_steps(self, steps: Sequence[AgentStep]) -> None:
+        """Append ``steps`` in one write (one transaction on a real database). Order is kept."""
         ...
 
     async def get_run(self, run_id: AgentRunId, *, user_id: UserId) -> AgentRun | None:

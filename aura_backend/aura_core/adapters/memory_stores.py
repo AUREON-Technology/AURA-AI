@@ -572,6 +572,11 @@ class InMemoryEngineerRunStore:
         async with self._lock:
             self._agent_steps.setdefault(step.run_id.value, []).append(step)
 
+    async def append_steps(self, steps: Sequence[AgentStep]) -> None:
+        async with self._lock:
+            for step in steps:
+                self._agent_steps.setdefault(step.run_id.value, []).append(step)
+
     async def get_run(self, run_id: Any, *, user_id: UserId) -> AgentRun | None:
         run = self._agent_runs.get(run_id.value)
         if run is None or run.user_id != user_id:
@@ -609,6 +614,10 @@ class InMemoryEngineerRunStore:
     async def record(self, run: EngineerRun) -> None:
         async with self._lock:
             self._runs.append(run)
+
+    async def record_many(self, runs: Sequence[EngineerRun]) -> None:
+        async with self._lock:
+            self._runs.extend(runs)
 
     async def list_for_user(
         self, user_id: UserId, *, since: datetime | None = None, limit: int = 200,
