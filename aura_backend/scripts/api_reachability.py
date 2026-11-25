@@ -53,7 +53,7 @@ TRIAGE = (
     ("/api/v3/chat$", "server-to-server: the non-streaming turn is for integrating systems (ADR-029 service keys, AR-6 structured output); the app streams via /chat/stream"),
     ("/api/v3/chat/plan-feedback", "to wire: free-text feedback on a plan held by plan_mode review (ADR-047, row 51); the client's review screen only approves or walks away so far"),
     ("/api/v3/auth/desktop/", "to wire: desktop pairing flow (ADR-011), no caller in client or hostd yet"),
-    ("/api/v3/agents/stop-all", "to wire: the kill-switch button (ADR-041) has no client or hostd caller yet; backend and API only so far"),
+    ("/api/v3/admin/model-monitor", "to wire: the production-inference monitor's report and re-baseline (ADR-052) are an operator API; the console has no page for them yet"),
     ("/api/v3/engineering/policy", "to wire: the review-profile setting (ADR-041) has no client view yet; backend and API only so far"),
 
     ("/api/v3/agents/runs", "to wire: agent-run history (wave 2) has no client or admin view yet; search and timeline (ADR-043) are backend-only so far"),
