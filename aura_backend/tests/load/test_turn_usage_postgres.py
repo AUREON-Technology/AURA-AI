@@ -93,3 +93,44 @@ async def test_a_replayed_turn_does_not_change_its_owner(database_url) -> None:
         assert await sink.get_turn_usage(original.turn_id.value, "ref-b") is None
     finally:
         await pool.close()
+
+
+async def test_usage_by_day_matches_the_in_memory_sink_on_a_real_database(database_url) -> None:
+    """Per-day tokens and cost for ``GET /api/v3/me/usage*``: UTC day grouping at the midnight edge,
+    a half-open window, the owner match, the estimated-turn count read out of the JSONB payload and
+    the sums returned as plain numbers."""
+    from datetime import timedelta
+
+    from aura_core.adapters.runtime import InMemoryTelemetrySink
+
+    pool = PostgresPool(database_url, min_size=1, max_size=2)
+    real, memory = PostgresTelemetrySink(database_url, pool=pool), InMemoryTelemetrySink()
+    d20 = datetime(2026, 11, 20, tzinfo=timezone.utc)
+    turns = [
+        _turn("ref-a", started_at=d20 + timedelta(hours=23, minutes=30), prompt_tokens=100, completion_tokens=10, cost_usd=0.0021),
+        _turn("ref-a", started_at=d20 + timedelta(days=1, minutes=30), prompt_tokens=50, completion_tokens=5, cost_usd=0.0010, usage_estimated=True),
+        _turn("ref-a", started_at=d20 + timedelta(days=1, hours=5), prompt_tokens=7, completion_tokens=3, cost_usd=0.0005),
+        _turn("ref-a", started_at=d20, prompt_tokens=1, completion_tokens=1, cost_usd=0.0001),                 # exactly on the inclusive start
+        _turn("ref-a", started_at=d20 - timedelta(seconds=1), prompt_tokens=999, completion_tokens=999, cost_usd=9.0),   # before the window
+        _turn("ref-a", started_at=d20 + timedelta(days=2), prompt_tokens=888, completion_tokens=888, cost_usd=8.0),      # on the exclusive end
+        _turn("ref-b", started_at=d20 + timedelta(hours=1), prompt_tokens=5000, completion_tokens=5000, cost_usd=5.0),   # someone else's
+        _turn(None, started_at=d20 + timedelta(hours=1), prompt_tokens=6000, completion_tokens=6000, cost_usd=6.0),      # unowned
+    ]
+    try:
+        for t in turns:
+            await real.record_turn(t)
+            await memory.record_turn(t)
+        window = dict(since=d20, until=d20 + timedelta(days=2))
+
+        got = await real.usage_by_day("ref-a", **window)
+
+        assert got == await memory.usage_by_day("ref-a", **window)
+        assert [r["day"] for r in got] == ["2026-11-21", "2026-11-20"]
+        assert got[1] == {"day": "2026-11-20", "turns": 2, "prompt_tokens": 101, "completion_tokens": 11,
+                          "cost_usd": pytest.approx(0.0022), "estimated_turns": 0}
+        assert (got[0]["turns"], got[0]["prompt_tokens"], got[0]["completion_tokens"], got[0]["estimated_turns"]) == (2, 57, 8, 1)
+        assert got[0]["cost_usd"] == pytest.approx(0.0015) and isinstance(got[0]["cost_usd"], float)
+        assert await real.usage_by_day("", **window) == [] and await real.usage_by_day("ref-zzz", **window) == []
+        assert await real.usage_by_day("ref-b", **window) == await memory.usage_by_day("ref-b", **window)
+    finally:
+        await pool.close()

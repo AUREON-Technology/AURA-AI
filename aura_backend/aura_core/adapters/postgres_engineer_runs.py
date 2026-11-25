@@ -197,6 +197,7 @@ class PostgresEngineerRunStore:
             unsafe_prevented=int(row["unsafe_prevented"]),
             plan_steps_total=int(row["plan_steps_total"]),
             plan_steps_succeeded=int(row["plan_steps_succeeded"]),
+            retry_of=row["retry_of"],
             stop_reason=row["stop_reason"],
             exhausted_budget=row["exhausted_budget"],
             finished_at=_utc(row["finished_at"]),
@@ -233,9 +234,9 @@ class PostgresEngineerRunStore:
                          goal_chars, budget, iterations, replans, replans_recovered, tokens_used,
                          tool_calls, tool_calls_ok, risk_spent, elapsed_s, unsafe_prevented,
                          plan_steps_total, plan_steps_succeeded, stop_reason, exhausted_budget,
-                         created_at, updated_at, finished_at)
+                         created_at, updated_at, finished_at, retry_of)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14,
-                            $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+                            $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
                     ON CONFLICT (id) DO UPDATE SET
                         status = EXCLUDED.status, budget = EXCLUDED.budget,
                         iterations = EXCLUDED.iterations, replans = EXCLUDED.replans,
@@ -258,6 +259,7 @@ class PostgresEngineerRunStore:
                     run.risk_spent, float(run.elapsed_s), run.unsafe_prevented,
                     run.plan_steps_total, run.plan_steps_succeeded, run.stop_reason,
                     run.exhausted_budget, run.created_at, run.updated_at, run.finished_at,
+                    run.retry_of,
                 )
         except Exception as exc:
             raise _unavailable(f"could not write agent run: {exc}") from exc
@@ -333,8 +335,13 @@ class PostgresEngineerRunStore:
         agent_id: str | None = None,
         status: str | None = None,
         limit: int = 50,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        retry_of: str | None = None,
+        before: tuple[datetime, str] | None = None,
     ) -> Sequence[AgentRun]:
         pool = await self._pool._get_pool()
+        before_at, before_id = before if before is not None else (None, None)
         try:
             async with pool.acquire() as conn:
                 rows = await conn.fetch(
@@ -343,17 +350,22 @@ class PostgresEngineerRunStore:
                     WHERE user_id = $1
                       AND ($2::text IS NULL OR agent_id = $2::text)
                       AND ($3::text IS NULL OR status = $3::text)
+                      AND ($5::timestamptz IS NULL OR created_at >= $5::timestamptz)
+                      AND ($6::timestamptz IS NULL OR created_at < $6::timestamptz)
+                      AND ($7::text IS NULL OR retry_of = $7::text)
+                      AND ($8::timestamptz IS NULL OR (created_at, id) < ($8::timestamptz, $9::text))
                     ORDER BY created_at DESC, id DESC
                     LIMIT $4
                     """,
-                    user_id.value, agent_id, status, limit,
+                    user_id.value, agent_id, status, limit, since, until, retry_of,
+                    before_at, before_id,
                 )
         except Exception as exc:
             raise _unavailable(f"could not list agent runs: {exc}") from exc
         return [self._agent_run(row) for row in rows]
 
     async def list_steps(
-        self, run_id: AgentRunId, *, user_id: UserId, limit: int = 500,
+        self, run_id: AgentRunId, *, user_id: UserId, limit: int = 500, after_seq: int = -1,
     ) -> Sequence[AgentStep]:
         pool = await self._pool._get_pool()
         try:
@@ -362,11 +374,11 @@ class PostgresEngineerRunStore:
                     """
                     SELECT s.* FROM aura_agent_steps s
                     JOIN aura_agent_runs r ON r.id = s.run_id
-                    WHERE s.run_id = $1 AND r.user_id = $2 AND s.user_id = $2
+                    WHERE s.run_id = $1 AND r.user_id = $2 AND s.user_id = $2 AND s.seq > $4
                     ORDER BY s.seq ASC
                     LIMIT $3
                     """,
-                    run_id.value, user_id.value, limit,
+                    run_id.value, user_id.value, limit, after_seq,
                 )
         except Exception as exc:
             raise _unavailable(f"could not list agent steps: {exc}") from exc

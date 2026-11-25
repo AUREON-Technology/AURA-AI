@@ -1259,6 +1259,51 @@ def build_sandbox_tools(
         )
 
     @tool(
+        "delete_file",
+        "Delete one file (or symbolic link) inside the engineer agent's workspace: the user's own "
+        "machine, inside whatever folder they have granted, if they have a paired desktop app "
+        "connected -- where, in a folder they have not marked trusted, they are asked to approve "
+        "it first -- otherwise an ephemeral sandbox's scratch directory. Refuses a directory "
+        "(remove those with run_command, deliberately) and anything inside a .git directory.",
+        param("path", "string", "Path relative to the workspace root.", max_length=300),
+        category=ToolCategory.DEVELOPMENT,
+        sensitivity=ToolSensitivity.PERSONAL,
+        side_effecting=True,
+        required_capability=_ENGINEER_CAPABILITY,
+        # Long enough for a person to answer the desktop's approval prompt, which is how
+        # `HostAgentSandboxRunner` sizes the same wait.
+        timeout_s=330.0,
+        # Same exemption as write_file, for the same reason (ADR-014): a file this tool removes is
+        # one run_command could already remove, and on the user's own machine the daemon -- not
+        # this policy -- is what asks them first. See test_workspace_local_tools.py.
+        workspace_local=True,
+    )
+    async def delete_file(path: str, context: ToolContext) -> str:
+        handle = await sessions.handle(context)
+        await sandbox_runner.delete_file(handle, path)
+        return f"Deleted {path}"
+
+    @tool(
+        "rename_file",
+        "Rename or move a file or directory inside the engineer agent's workspace. The "
+        "destination must not exist (a rename never replaces anything) and its parent "
+        "directories are created. Refuses anything inside a .git directory. On the user's own "
+        "machine, in a folder they have not marked trusted, they are asked to approve it first.",
+        param("path", "string", "Current path, relative to the workspace root.", max_length=300),
+        param("new_path", "string", "New path, relative to the workspace root.", max_length=300),
+        category=ToolCategory.DEVELOPMENT,
+        sensitivity=ToolSensitivity.PERSONAL,
+        side_effecting=True,
+        required_capability=_ENGINEER_CAPABILITY,
+        timeout_s=330.0,
+        workspace_local=True,
+    )
+    async def rename_file(path: str, new_path: str, context: ToolContext) -> str:
+        handle = await sessions.handle(context)
+        await sandbox_runner.rename_file(handle, path, new_path)
+        return f"Renamed {path} to {new_path}"
+
+    @tool(
         "run_command",
         "Run a shell command in the workspace and return its stdout, stderr and exit code. Use "
         "it to run tests, builds and linters or to inspect files. With a paired desktop app "
@@ -2150,8 +2195,9 @@ def build_sandbox_tools(
         )
 
     tools: list[Tool] = [
-        write_file, edit_file, write_files, run_command, git_diff, git_commit, git_checkout_branch,
-        git_status, workspace_snapshot, list_workspace_snapshots, workspace_restore,
+        write_file, edit_file, write_files, delete_file, rename_file, run_command, git_diff,
+        git_commit, git_checkout_branch, git_status, workspace_snapshot,
+        list_workspace_snapshots, workspace_restore,
     ]
     if host_git is not None:
         tools.append(git_push)

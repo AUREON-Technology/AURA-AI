@@ -88,6 +88,8 @@ from .ports.runtime import Closeable
 from .prompts import PIN_SYNC_INTERVAL_S, build_default_registry
 from .reasoning.engine import ReasoningEngine
 from .safety.pipeline import SafetyPipeline
+from .execution.cancellation import RunCancellation
+from .execution.runtime_presence import RuntimePresence
 from .security.owner_ref import owner_ref_maker
 from .tools.builtin import default_tools
 from .tools.policy import ToolPolicy
@@ -187,6 +189,28 @@ class Container:
         self.engineer_runs = self._build_engineer_run_store()
         # Module readiness D-03 (WP1): who agreed to the Engineer sending code to Anthropic.
         self.engineer_consent = self._build_engineer_consent_store()
+        self.custom_agents = self._build_custom_agent_store()
+        # Durable, content-free record of held tool calls and how each was decided
+        # (``domain/approvals.py``); the pending turn itself stays in the cache.
+        self.approval_ledger = self._build_approval_ledger()
+        # A person's standing defaults for how their chats are answered (``domain/model_settings.py``).
+        self.model_settings = self._build_model_settings_store()
+        # A person's in-app notification inbox and which kinds they switched off
+        # (``domain/notifications.py``). ``self.inbox.notify`` is what producers call; it never raises.
+        self.notification_store, self.notification_settings = self._build_notification_stores()
+        from .notifications.inbox import Inbox
+
+        self.inbox = Inbox(self.notification_store, self.notification_settings, self.clock)
+        # One store for the kernel (holds and approvals) and the approvals routes (rejection), both
+        # over the shared cache, so any worker can act on a hold another worker made.
+        self.tool_confirmations = PendingConfirmationStore(
+            self.cache_backend, ledger=self.approval_ledger, clock=lambda: self.clock.now(), inbox=self.inbox,
+        )
+        # Cancel-by-id for live agent runs: a request is a cache key every worker polls for the
+        # runs it is executing (``execution/cancellation.py``).
+        self.run_cancellation = RunCancellation(self.cache_backend)
+        # Which paired computer is connected, visible to every worker (best-effort; see the module).
+        self.runtime_presence = RuntimePresence(self.cache_backend)
         # GAP-024: the same store, under the name of the port it now fully implements
         # (`AgentRunStore` extends `EngineerRunStore`) -- one adapter, one pool, both ledgers.
         self.agent_runs = self.engineer_runs
@@ -533,6 +557,7 @@ class Container:
             AgenticExecutor(
                 planner=self.planner, executor=self.executor, metrics=self.metrics,
                 clock=self.clock, runs=self.agent_runs,
+                cancellation=self.run_cancellation, inbox=self.inbox,
                 # ADR-039. Each piece is settings-driven; the loop only applies them to a
                 # persona that replans (today: engineer), so single-pass personas are untouched.
                 stuck=StuckConfig(
@@ -725,7 +750,7 @@ class Container:
                 host_agent_registry=self.host_agent_registry,
                 # F-04: pending tool confirmations live in the shared cache (Redis in
                 # production), so any replica can resume the exact turn the user approved.
-                tool_confirmations=PendingConfirmationStore(self.cache_backend),
+                tool_confirmations=self.tool_confirmations,
                 vision=self.vision,
                 lesson_sink=self.lesson_sink,
                 autonomy=self.autonomy,
@@ -1435,6 +1460,69 @@ class Container:
 
         return InMemoryEngineerConsentStore()
 
+    def _build_notification_stores(self) -> tuple[Any, Any]:
+        """The notification inbox and its settings. Postgres with the other per-user stores, so a
+        notification written on one gateway worker is listed from any other."""
+        backend = self.settings.infrastructure.memory_backend
+        if backend == "postgres":
+            from .adapters.postgres_notifications import PostgresNotificationSettingsStore, PostgresNotificationStore
+
+            url, pool = self.settings.infrastructure.database_url, self._postgres_pool()
+            return PostgresNotificationStore(url, pool=pool), PostgresNotificationSettingsStore(url, pool=pool)
+        if backend != "memory":
+            raise ConfigurationError(f"unknown memory backend {backend!r}")
+        from .adapters.notifications import InMemoryNotificationSettingsStore, InMemoryNotificationStore
+
+        return InMemoryNotificationStore(), InMemoryNotificationSettingsStore()
+
+    def _build_model_settings_store(self) -> Any:
+        """A person's standing model preferences. Postgres with the other per-user stores, so a
+        preference set on one gateway worker applies to the next chat on any other."""
+        backend = self.settings.infrastructure.memory_backend
+        if backend == "postgres":
+            from .adapters.postgres_model_settings import PostgresModelSettingsStore
+
+            return PostgresModelSettingsStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        if backend != "memory":
+            raise ConfigurationError(f"unknown memory backend {backend!r}")
+        from .adapters.model_settings import InMemoryModelSettingsStore
+
+        return InMemoryModelSettingsStore()
+
+    def _build_approval_ledger(self) -> Any:
+        """The record of held tool calls (``domain/approvals.py``). Postgres with the other per-user
+        stores, so a call held on one worker is listed and refused from any other."""
+        backend = self.settings.infrastructure.memory_backend
+        if backend == "postgres":
+            from .adapters.postgres_tool_approvals import PostgresApprovalLedger
+
+            return PostgresApprovalLedger(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        if backend != "memory":
+            raise ConfigurationError(f"unknown memory backend {backend!r}")
+        from .adapters.approvals import InMemoryApprovalLedger
+
+        return InMemoryApprovalLedger()
+
+    def _build_custom_agent_store(self) -> Any:
+        """A person's own agents (``domain/custom_agents.py``). Postgres with the other per-user
+        stores, so an agent made on one request is there for the next, on any gateway worker."""
+        backend = self.settings.infrastructure.memory_backend
+        if backend == "postgres":
+            from .adapters.postgres_custom_agents import PostgresCustomAgentStore
+
+            return PostgresCustomAgentStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        if backend != "memory":
+            raise ConfigurationError(f"unknown memory backend {backend!r}")
+        from .adapters.custom_agents import InMemoryCustomAgentStore
+
+        return InMemoryCustomAgentStore()
+
     async def _github_token_resolver(self, user_id: Any) -> str | None:
         """The caller's forge token, for host-side git only.
 
@@ -1839,7 +1927,7 @@ class Container:
             subscriptions=subscriptions, payments=payments, provider=provider, plans=self.plans,
             tenancy=self.tenancy, clock=self.clock, audit=self.audit, settings=billing,
             prices=load_prices(billing.prices_json), locks=locks, contacts=contacts, notifier=self.notifier,
-            heartbeat=self.cache_backend,
+            heartbeat=self.cache_backend, inbox=self.inbox,
         )
 
     def _build_sharing(self) -> Any:

@@ -368,6 +368,116 @@ class TestIntrospection:
             container.workspaces.get_by_id(victim.record.id)
         ) is not None, "another user's workspace was deleted"
 
+    # ---- POST /engineering/workspaces ------------------------------------------------------
+
+    @staticmethod
+    def _engineer(container, user: str = "test-user"):
+        """A client for a person who has the Engineer, on a deployment with durable workspaces."""
+        from aura_core.adapters.coding_fakes import InMemorySandboxRunner
+        from aura_core.tools.workspaces import WorkspaceManager
+
+        if container.workspace_manager is None:
+            container.workspace_manager = WorkspaceManager(
+                runner=InMemorySandboxRunner(), store=container.workspaces, min_free_memory_mb=0
+            )
+
+        async def authenticator(request):
+            return Principal(user_id=UserId(user), role="Developer", capabilities=("engineer_agent",))
+
+        from fastapi.testclient import TestClient
+
+        return TestClient(build_app(container, authenticator=authenticator))
+
+    def test_creating_a_workspace_needs_the_engineer(self, container) -> None:
+        self._engineer(container)  # wires the manager; the caller below does not have the Engineer
+        with _client(container) as client:
+            response = client.post("/api/v3/engineering/workspaces", json={"repo": "acme/widgets"})
+        assert response.status_code == 403
+        assert container.workspace_manager is not None
+        import asyncio
+
+        assert asyncio.run(container.workspaces.list_for_user(UserId("test-user"))) == []
+
+    def test_creating_a_workspace_where_they_are_not_enabled_is_a_404(self, container) -> None:
+        assert container.workspace_manager is None
+        from fastapi.testclient import TestClient
+
+        async def authenticator(request):
+            return Principal(user_id=UserId("test-user"), role="Developer", capabilities=("engineer_agent",))
+
+        with TestClient(build_app(container, authenticator=authenticator)) as client:
+            response = client.post("/api/v3/engineering/workspaces", json={"repo": "acme/widgets"})
+        assert response.status_code == 404
+
+    def test_a_new_workspace_is_201_then_resuming_it_is_200_with_the_same_id(self, container) -> None:
+        with self._engineer(container) as client:
+            first = client.post("/api/v3/engineering/workspaces", json={"repo": "acme/widgets"})
+            again = client.post("/api/v3/engineering/workspaces", json={"repo": "acme/widgets"})
+            listed = client.get("/api/v3/engineering/workspaces").json()
+
+        assert first.status_code == 201 and first.json()["created"] is True
+        assert again.status_code == 200 and again.json()["created"] is False
+        assert again.json()["workspace"]["id"] == first.json()["workspace"]["id"]
+        assert [w["repo"] for w in listed["workspaces"]] == ["acme/widgets"], "one workspace, not two"
+        body = first.json()["workspace"]
+        assert body["expires_at"] > body["last_active_at"]
+
+    def test_a_created_workspace_is_stopped_straight_away_because_nothing_is_using_it(self, container) -> None:
+        """A running workspace holds memory; an empty one nobody is working in must not."""
+        with self._engineer(container) as client:
+            body = client.post("/api/v3/engineering/workspaces", json={"repo": "acme/widgets"}).json()
+        assert body["workspace"]["status"] == "warm"
+
+    @pytest.mark.parametrize("given", [
+        "https://github.com/acme/widgets", "https://github.com/acme/widgets.git", "acme/widgets/",
+        "https://github.com/acme/widgets/tree/main",
+    ])
+    def test_every_way_of_naming_a_repository_is_the_same_workspace(self, container, given: str) -> None:
+        with self._engineer(container) as client:
+            created = client.post("/api/v3/engineering/workspaces", json={"repo": "acme/widgets"})
+            same = client.post("/api/v3/engineering/workspaces", json={"repo": given})
+            stored = client.get("/api/v3/engineering/workspaces").json()["workspaces"]
+        assert same.status_code == 200 and same.json()["workspace"]["id"] == created.json()["workspace"]["id"]
+        assert same.json()["workspace"]["repo"] == "acme/widgets"
+        assert [w["repo"] for w in stored] == ["acme/widgets"], "naming it differently made a second workspace"
+
+    @pytest.mark.parametrize("repo", ["widgets", "has space/widgets", "ab", "x" * 401])
+    def test_a_repository_that_is_not_owner_slash_name_is_422_and_creates_nothing(self, container, repo: str) -> None:
+        import asyncio
+
+        with self._engineer(container) as client:
+            response = client.post("/api/v3/engineering/workspaces", json={"repo": repo})
+        assert response.status_code == 422
+        assert asyncio.run(container.workspaces.list_for_user(UserId("test-user"))) == []
+
+    def test_two_people_creating_the_same_repository_get_separate_workspaces(self, container) -> None:
+        with self._engineer(container, "alice") as alice, self._engineer(container, "bob") as bob:
+            a = alice.post("/api/v3/engineering/workspaces", json={"repo": "acme/widgets"}).json()
+            b = bob.post("/api/v3/engineering/workspaces", json={"repo": "acme/widgets"}).json()
+            assert a["created"] is True and b["created"] is True, "Bob's was treated as Alice's"
+            assert a["workspace"]["id"] != b["workspace"]["id"]
+            assert [w["id"] for w in alice.get("/api/v3/engineering/workspaces").json()["workspaces"]] == [
+                a["workspace"]["id"]
+            ]
+            # Bob cannot delete Alice's by id (existing guard), and creating did not give him a way in.
+            assert bob.delete(f"/api/v3/engineering/workspaces/{a['workspace']['id']}").status_code == 404
+
+    def test_a_host_that_cannot_afford_another_workspace_refuses_with_503_and_keeps_nothing(self, container) -> None:
+        import asyncio
+
+        from aura_core.adapters.coding_fakes import InMemorySandboxRunner
+        from aura_core.tools.workspaces import WorkspaceManager
+
+        # An impossible free-memory floor: the admission check must refuse, not start it anyway.
+        container.workspace_manager = WorkspaceManager(
+            runner=InMemorySandboxRunner(), store=container.workspaces, min_free_memory_mb=10**9
+        )
+        with self._engineer(container) as client:
+            response = client.post("/api/v3/engineering/workspaces", json={"repo": "acme/widgets"})
+
+        assert response.status_code == 503
+        assert asyncio.run(container.workspaces.list_for_user(UserId("test-user"))) == []
+
     def test_a_user_can_delete_their_own_workspace(self, container) -> None:
         import asyncio
 

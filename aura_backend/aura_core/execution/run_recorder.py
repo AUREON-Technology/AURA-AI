@@ -77,6 +77,9 @@ class AgentRunContext:
     goal: str = ""
     tools_available: int = 0
     tainted: bool = False
+    #: The earlier run this turn retries (``AgentRun.retry_of``); already checked to be the
+    #: caller's own and retryable by the API layer.
+    retry_of: str | None = None
 
 
 class RunRecorder:
@@ -90,7 +93,11 @@ class RunRecorder:
         store: Any = None,
         clock: Any = None,
         metrics: Any = None,
+        inbox: Any = None,
     ) -> None:
+        #: Optional in-app ``Inbox`` (``notifications/inbox.py``): a run that ends failed or out of
+        #: budget leaves the person a notification. A courtesy -- ``notify`` never raises.
+        self._inbox = inbox
         self._store = store
         self._clock = clock
         self._metrics = metrics
@@ -111,6 +118,7 @@ class RunRecorder:
             goal_digest=goal_digest(context.goal),
             goal_chars=len(context.goal),
             budget=budget,
+            retry_of=context.retry_of,
         )
         self.steps: list[AgentStep] = []
         #: Steps recorded since the last :meth:`flush`.
@@ -336,7 +344,9 @@ class RunRecorder:
         self, outcome: Any, *, stop_reason: str | None, exhausted_budget: str | None,
     ) -> AgentRun:
         """Completion or failure: the terminal status, and the run-level metrics."""
-        if outcome is None:
+        if stop_reason == "run_cancelled":
+            status = AgentRunStatus.CANCELLED
+        elif outcome is None:
             status = AgentRunStatus.FAILED
         elif outcome.succeeded and stop_reason in (None, "completed"):
             # Every step ran *and* the loop agreed it was done: with test results as a loop input
@@ -374,7 +384,24 @@ class RunRecorder:
         await self._save()
         await self.flush()
         self._observe_metrics()
+        await self._tell_the_person()
         return self.run
+
+    async def _tell_the_person(self) -> None:
+        """A run that ended **failed** or **out of budget** is the one a person did not see finish
+        (a partial or awaiting-approval run has its own outcome inline, and a cancelled one was their
+        own doing). Identifiers only: the run id, the agent and the status -- never the instruction
+        or any output."""
+        if self._inbox is None or self.run.status not in (AgentRunStatus.FAILED, AgentRunStatus.BUDGET_EXHAUSTED):
+            return
+        try:
+            await self._inbox.notify(
+                self.run.user_id, "run_failed",
+                {"run_id": self.run.id.value, "agent_id": self.run.agent_id, "status": str(self.run.status)},
+                dedupe_key=f"run:{self.run.id.value}",
+            )
+        except Exception:  # noqa: BLE001 -- the run's own result must never depend on a courtesy
+            logger.debug("could not notify about a failed run", exc_info=True)
 
     async def crashed(self, exc: BaseException) -> None:
         """The loop raised: record the failure (by exception type, never message) and re-raise
@@ -390,6 +417,7 @@ class RunRecorder:
         await self._save()
         await self.flush()
         self._observe_metrics()
+        await self._tell_the_person()
 
     def _observe_metrics(self) -> None:
         metrics = self._metrics

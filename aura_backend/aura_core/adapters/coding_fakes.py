@@ -21,6 +21,7 @@ from typing import Any, Mapping, Sequence
 
 from ..domain.files import strip_absolute_prefix
 from ..ports.coding import FileWriteOp, McpToolDescriptor, RepoFile, RepoTree, SandboxHandle, SandboxResult
+from .sandbox_fs import delete_entry, rename_entry
 
 __all__ = ["InMemorySandboxRunner", "InMemoryGitHubClient", "InMemoryMcpClient"]
 
@@ -121,6 +122,12 @@ class InMemorySandboxRunner:
     async def read_file_bytes(self, handle: SandboxHandle, path: str) -> bytes:
         """The file's exact bytes, for callers that must not assume text (a PDF)."""
         return await asyncio.to_thread(self._read_target_bytes, handle, path, _MAX_READ_BYTES)
+
+    async def delete_file(self, handle: SandboxHandle, path: str) -> None:
+        await asyncio.to_thread(delete_entry, self._scratch(handle), path, RuntimeError)
+
+    async def rename_file(self, handle: SandboxHandle, path: str, new_path: str) -> None:
+        await asyncio.to_thread(rename_entry, self._scratch(handle), path, new_path, RuntimeError)
 
     async def write_files(self, handle: SandboxHandle, operations: Sequence[FileWriteOp]) -> None:
         """D6: pre-validate every operation, then write all of them -- mirrors

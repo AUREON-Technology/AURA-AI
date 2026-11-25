@@ -35,11 +35,12 @@ import hashlib
 import json
 import secrets
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Sequence
 
+from ..domain.approvals import ApprovalStatus, ToolApproval
 from ..domain.errors import ConfirmationInvalidError
-from ..domain.identifiers import PlanId, StepId
+from ..domain.identifiers import PlanId, StepId, UserId
 from ..domain.planning import (
     Goal,
     Plan,
@@ -169,9 +170,20 @@ class PendingConfirmationStore:
     Not an adapter: only logic over an injected port, so it sits beside the engine that uses it.
     """
 
-    def __init__(self, cache: Any, *, ttl_s: int = _DEFAULT_TTL_S) -> None:
+    def __init__(
+        self, cache: Any, *, ttl_s: int = _DEFAULT_TTL_S, ledger: Any = None, clock: Any = None,
+        inbox: Any = None,
+    ) -> None:
         self._cache = cache
         self._ttl_s = max(1, int(ttl_s))
+        #: Optional durable record of each held call (``domain/approvals.py``). It is history, not
+        #: part of the guarantee: the cache record decides whether a call can run, and a ledger that
+        #: is down never stops a hold, an approval or a rejection (see ``_ledger_write``).
+        self._ledger = ledger
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        #: Optional in-app ``Inbox`` (``notifications/inbox.py``): tells the person a call is waiting.
+        #: Like the ledger it is a courtesy -- ``notify`` never raises.
+        self._inbox = inbox
 
     # -- issue ---------------------------------------------------------------------------
 
@@ -223,15 +235,37 @@ class PendingConfirmationStore:
             json.dumps(record, ensure_ascii=False, default=str).encode("utf-8"),
             ttl_s=self._ttl_s,
         )
+        if self._ledger is not None:
+            created = self._clock()
+            held = [
+                ToolApproval(
+                    id=approval_ids[e["call_id"]], owner_id=UserId(user_id), tool=e["tool"],
+                    call_id=e["call_id"], digest=e["digest"], session_id=session_id, turn_id=turn_id,
+                    created_at=created, expires_at=created + timedelta(seconds=self._ttl_s),
+                )
+                for e in entries
+            ]
+            await self._ledger_write("record", self._ledger.record_held(held))
+        if self._inbox is not None:
+            # The tool names and the conversation, never the approval ids: those release the call
+            # and live behind ``GET /approvals``.
+            try:
+                await self._inbox.notify(
+                    user_id, "approval_pending",
+                    {"tools": sorted({e["tool"] for e in entries})[:10], "count": len(entries), "session_id": session_id},
+                    dedupe_key=f"approval:{token}",
+                )
+            except Exception:  # noqa: BLE001 -- a hold must never depend on a courtesy
+                logger.debug("could not notify about a held call", exc_info=True)
         return approval_ids
 
     # -- claim ---------------------------------------------------------------------------
 
-    async def _load(
-        self, approval_ids: Sequence[str], *, user_id: str, session_id: str | None
-    ) -> tuple[str, tuple[str, ...], dict[str, Any], dict[str, Any]]:
-        """The stored record these ids name, after every ownership check; nothing is consumed."""
-        token, nonces = _parse(approval_ids)
+    async def _check(
+        self, token: str, nonces: Sequence[str], *, user_id: str, session_id: str | None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Every read-only check on a held turn: present, owned, same conversation, and the named
+        calls still pending. Consumes nothing. Fails closed."""
         record_key = _RECORD_KEY.format(token=token)
         try:
             raw = await self._cache.get(record_key)
@@ -259,7 +293,14 @@ class PendingConfirmationStore:
         unknown = [n for n in nonces if n not in by_nonce]
         if unknown:
             raise ConfirmationInvalidError("the confirmation names a call that was not pending")
+        return record, by_nonce
 
+    async def _load(
+        self, approval_ids: Sequence[str], *, user_id: str, session_id: str | None
+    ) -> tuple[str, tuple[str, ...], dict[str, Any], dict[str, Any]]:
+        """The stored record these ids name, after every ownership check; nothing is consumed."""
+        token, nonces = _parse(approval_ids)
+        record, by_nonce = await self._check(token, nonces, user_id=user_id, session_id=session_id)
         return token, nonces, record, by_nonce
 
     async def peek(
@@ -271,7 +312,7 @@ class PendingConfirmationStore:
         the same refusal. What it returns is the plan as stored; nothing about it can be executed
         from here -- only :meth:`claim` consumes the turn and yields a grant.
         """
-        token, _nonces, record, _by = await self._load(
+        _token, _nonces, record, _by = await self._load(
             approval_ids, user_id=user_id, session_id=session_id
         )
         return HeldTurn(
@@ -283,7 +324,6 @@ class PendingConfirmationStore:
             workspace_root=record.get("workspace_root") or None,
         )
 
-
     async def claim(
         self,
         approval_ids: Sequence[str],
@@ -292,28 +332,17 @@ class PendingConfirmationStore:
         session_id: str | None,
     ) -> ResumedTurn:
         """Consume the pending turn these ids belong to. One-shot; raises if anything is off."""
-        token, nonces, record, by_nonce = await self._load(
-            approval_ids, user_id=user_id, session_id=session_id
-        )
-        record_key = _RECORD_KEY.format(token=token)
-        try:
-            claimed = await self._cache.incr(
-                _CLAIM_KEY.format(token=token), ttl_s=self._ttl_s
-            )
-        except Exception as exc:
-            raise ConfirmationInvalidError("the confirmation could not be verified") from exc
-        if claimed != 1:
-            raise ConfirmationInvalidError(
-                "this confirmation has expired or was already used; ask again"
-            )
-        try:
-            await self._cache.delete(record_key)
-        except Exception:  # pragma: no cover - the claim key already makes it single-use
-            logger.debug("could not delete a claimed confirmation record", exc_info=True)
-
+        token, nonces = _parse(approval_ids)
+        record = await self._take(token, nonces, user_id=user_id, session_id=session_id)
+        by_nonce = {c["nonce"]: c for c in record.get("calls") or ()}
         approved = {
             by_nonce[n]["call_id"]: (by_nonce[n]["tool"], by_nonce[n]["digest"]) for n in nonces
         }
+        # The record: the approved calls are released; the rest of the turn's held calls are
+        # held again below under fresh ids, so these ids are spent (superseded).
+        await self._record_decisions(
+            token, record, user_id, approved=set(nonces), via="chat",
+        )
         plan = _plan_from_dict(record["plan"])
         # Every held step goes back to PENDING: the approved ones run (if, and only if, the
         # grant matches), the rest are held again and get a fresh approval id.
@@ -332,6 +361,77 @@ class PendingConfirmationStore:
             origin_turn_id=record.get("turn_id"),
             workspace_root=record.get("workspace_root") or None,
         )
+
+    # -- reject --------------------------------------------------------------------------
+
+    async def reject(
+        self, approval_id: str, *, user_id: str, session_id: str | None,
+    ) -> None:
+        """Refuse a held call: discard the whole pending turn so none of its calls can be approved.
+
+        A held turn is one record with one claim, so rejecting any of its calls ends the turn's
+        pending state: every call it still holds is recorded as rejected. Same checks as an
+        approval (owner, conversation, one-shot), and the same refusal when it is gone.
+        """
+        token, nonces = _parse([approval_id])
+        record = await self._take(token, nonces, user_id=user_id, session_id=session_id)
+        await self._record_decisions(token, record, user_id, approved=set(), via="reject")
+
+    # -- shared --------------------------------------------------------------------------
+
+    async def _take(
+        self, token: str, nonces: Sequence[str], *, user_id: str, session_id: str | None,
+    ) -> dict[str, Any]:
+        """Validate and consume one pending turn's record; return it. Fails closed."""
+        record, _by_nonce = await self._check(
+            token, nonces, user_id=user_id, session_id=session_id
+        )
+        record_key = _RECORD_KEY.format(token=token)
+        try:
+            claimed = await self._cache.incr(
+                _CLAIM_KEY.format(token=token), ttl_s=self._ttl_s
+            )
+        except Exception as exc:
+            raise ConfirmationInvalidError("the confirmation could not be verified") from exc
+        if claimed != 1:
+            raise ConfirmationInvalidError(
+                "this confirmation has expired or was already used; ask again"
+            )
+        try:
+            await self._cache.delete(record_key)
+        except Exception:  # pragma: no cover - the claim key already makes it single-use
+            logger.debug("could not delete a claimed confirmation record", exc_info=True)
+        return record
+
+    async def _record_decisions(
+        self, token: str, record: Mapping[str, Any], user_id: str, *, approved: set[str], via: str,
+    ) -> None:
+        """Write the outcome of a consumed turn to the ledger: ``approved`` nonces were released;
+        every other call of the turn is superseded after an approval or rejected after a
+        rejection."""
+        if self._ledger is None:
+            return
+        owner = UserId(user_id)
+        at = self._clock()
+        ids = {c["nonce"]: f"{_ID_PREFIX}.{token}.{c['nonce']}" for c in record.get("calls") or ()}
+        released = [ids[n] for n in approved if n in ids]
+        rest = [i for n, i in ids.items() if n not in approved]
+        if released:
+            await self._ledger_write(
+                "approve", self._ledger.decide(owner, released, ApprovalStatus.APPROVED, at=at, via=via)
+            )
+        if rest:
+            leftover = ApprovalStatus.REJECTED if via == "reject" else ApprovalStatus.SUPERSEDED
+            await self._ledger_write(
+                "decide", self._ledger.decide(owner, rest, leftover, at=at, via=via)
+            )
+
+    @staticmethod
+    async def _ledger_write(what: str, awaitable: Any) -> None:
+        try:
+            await awaitable
+        except Exception:  # noqa: BLE001 -- history must never stop a hold, an approval or a refusal
+            logger.warning("approval ledger write failed (%s)", what, exc_info=True)
 
 
 def _parse(approval_ids: Sequence[str]) -> tuple[str, tuple[str, ...]]:
