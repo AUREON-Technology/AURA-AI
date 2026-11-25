@@ -240,4 +240,13 @@ if _truthy(os.environ.get("AURA_LEARNING_REFRESH_ENABLED"), default=True):
         "options": {"queue": "learning"},
     }
 
+# Local copy of the public vulnerability advisories (OSV) for the dependency scan. Opt-in: the job is the
+# only thing that contacts the feed, and only from a worker whose network allows storage.googleapis.com.
+if _truthy(os.environ.get("AURA_OSV_SYNC_ENABLED"), default=False):
+    _beat_schedule["osv-advisory-sync"] = {
+        "task": "tasks.osv_sync_task",
+        "schedule": _crontab_from_cron(os.environ.get("AURA_OSV_SYNC_CRON") or "30 3 * * *"),
+        "options": {"queue": "learning"},
+    }
+
 celery_app.conf.beat_schedule = _beat_schedule

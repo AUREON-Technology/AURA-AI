@@ -763,6 +763,13 @@ services:
       AURA_EMBEDDING_DIMENSION: ${AURA_EMBEDDING_DIMENSION:-384}
       AURA_LEARNING_REFRESH_ENABLED: ${AURA_LEARNING_REFRESH_ENABLED:-true}
       AURA_LEARNING_REFRESH_CRON: ${AURA_LEARNING_REFRESH_CRON:-0 2 * * *}
+      # Local copy of public vulnerability advisories (OSV) for the dependency scan. Off by default; when on,
+      # the learning worker downloads from storage.googleapis.com only, so it needs an outbound route to it.
+      AURA_OSV_SYNC_ENABLED: ${AURA_OSV_SYNC_ENABLED:-false}
+      AURA_OSV_SYNC_CRON: ${AURA_OSV_SYNC_CRON:-30 3 * * *}
+      AURA_OSV_ECOSYSTEMS: ${AURA_OSV_ECOSYSTEMS:-pypi,npm}
+      AURA_OSV_INCLUDE_MALWARE: ${AURA_OSV_INCLUDE_MALWARE:-false}
+      AURA_OSV_MAX_AGE_DAYS: ${AURA_OSV_MAX_AGE_DAYS:-3}
       # Connection budget (audit FSA-073): each prefork child (`-c N`) holds its own pools, so a
       # worker process gets 2 + 1 + 1 = 4 connections. See the gateway's block for the arithmetic.
       AURA_POSTGRES_POOL_MIN_SIZE: ${AURA_WORKER_POSTGRES_POOL_MIN_SIZE:-1}
