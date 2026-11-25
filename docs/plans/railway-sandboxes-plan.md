@@ -1,8 +1,9 @@
 # Plan: Engineer cloud workspaces on Railway Sandboxes
 
-**Status:** Approved by the owner on 2026-11-25. Phase 0 run the same day: the S1–S3 gate passes
-using `nftables` in place of `iptables`; S6 and S7 are not measured
-([report](../reports/railway-sandbox-spike-2026-11-25.md)). No product code written.
+**Status:** Approved by the owner on 2026-11-25. The broker is built (`aura_sandbox_broker/`) and
+nothing calls it. **Gate S2 is not met:** the host allowlist can be bypassed through
+content-delivery networks, so decision 4 keeps the feature off until that is fixed
+([report](../reports/railway-sandbox-spike-2026-11-25.md)). S6 and S7 are not measured.
 **Base:** `main` at `12eabb00`. Branch `anas/railway-sandboxes`.
 
 ## Goal

@@ -1,5 +1,9 @@
 # Railway Sandboxes: Phase 0 proof, 2026-11-25
 
+> **Gate reopened the same day.** A later run showed that the host allowlist can be bypassed
+> through content-delivery networks, so S2 below is **not** met. See
+> [Broker proof](#broker-proof) at the end.
+
 Plan: [`docs/plans/railway-sandboxes-plan.md`](../plans/railway-sandboxes-plan.md). Scripts:
 `deploy/scripts/railway-sandbox-spike/` (`run.py` drives the Railway CLI, `guest.sh` runs inside
 the sandbox).
@@ -76,3 +80,36 @@ CLI behaviours and passes with workarounds. S6 and S7 are **not measured**.
   (the 1 GiB test was one incompressible file).
 - Allowed hosts can still receive data: a command holding someone else's credentials could push to
   an allowed host such as GitHub. Today's Docker allowlist has the same property.
+
+## Broker proof
+
+`broker_guest.py` runs the broker's own guest scripts (`aura_sandbox_broker/guest`) on real
+sandboxes, through the CLI. Two runs; the second followed an independent security review of the
+broker and its fixes. All sandboxes (18 across the day) were destroyed and no checkpoint remains.
+
+| Run | Result |
+|---|---|
+| First (before the review) | 48 passed, 1 failed: the test read a process limit with an option `dash` lacks |
+| Second (after the fixes) | 62 passed, 4 failed |
+
+The second run's passes include the review's findings on a real kernel: nothing runs without a
+ready mark from this boot; a fence that fails its proof leaves the sandbox unusable; a privileged
+TCP listener fails the fence; startup files and `.curlrc` left by the agent take no part; a cancel
+issued before the start holds; only the standard streams are inherited; user namespaces,
+`AF_VSOCK` and `io_uring` are refused while ordinary sockets and processes work. The kernel has no
+Yama `ptrace_scope`.
+
+The four failures:
+
+- **Allowlist bypass (2, confirmed).** With a connection tunnelled to `registry.npmjs.org`, a
+  command received HTTP 200 for `www.cloudflare.com`; through `objects.githubusercontent.com` it
+  received 200 for `pages.github.com`. The proxy checks only the host named when the tunnel opens,
+  not the name inside TLS. Anyone with a site on those networks could receive data from a command.
+  The same attempt through the two PyPI hosts failed certificate validation. The Docker sandbox's
+  proxy has the same design (not tested there). **Not fixed.** Whether requiring the TLS name to
+  match is enough, or the networks also honour a different HTTP `Host` header, is untested.
+- **Cancel check (1, unconfirmed).** The final process listing came back empty rather than "none";
+  the command's group was gone. The test now repeats an empty answer. Not yet rerun.
+- **Replaced workspace (1, test fault).** An earlier check left a mode-000 folder, so the setup's
+  `rm` failed and the workspace was never replaced. The test now asserts the replacement. Not yet
+  rerun.
