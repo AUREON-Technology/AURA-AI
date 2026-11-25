@@ -96,7 +96,7 @@ own refusal after approval (`task_handler.dart`) is unchanged and still the real
   the tool makes no network call, so by default it reports `dependency_vulnerabilities.checked: false` and
   why. With an OSV-format advisory file placed in the workspace and named in `advisories_path`, it matches
   locked versions against it. A package with no entry is not shown to be safe, and the result says so.
-  ADR-046 adds a server-side copy of the public OSV advisories (off by default, downloaded by a scheduled
+  ADR-048 adds a server-side copy of the public OSV advisories (off by default, downloaded by a scheduled
   job): with it the scan matches against that copy and reports its age; if it was never downloaded the
   result says the packages were **not** checked.
 * A small PEP 440 implementation lives in `workspace_deps.py` because `packaging` is not a direct dependency;

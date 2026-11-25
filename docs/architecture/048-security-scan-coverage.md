@@ -1,6 +1,6 @@
-# ADR-046: Security scan coverage — one credential catalogue, per-language rules, a local advisory copy
+# ADR-048: Security scan coverage — one credential catalogue, per-language rules, a local advisory copy
 
-Status: Proposed (built, not proven against a live deployment). Extends ADR-036 and ADR-043.
+Status: Proposed (built, not proven against a live deployment). Extends ADR-036 and ADR-045.
 
 ## Problem
 
