@@ -31,7 +31,7 @@ from ..domain.events import KnowledgeRefreshCompleted
 from ..domain.identifiers import GenerationId
 from ..domain.knowledge import DEFAULT_ALLOWED_LICENSES, KnowledgeSource, SourceType, TrustTier
 from ..observability.logging import LogContext, get_logger
-from .sources import SourceRegistry, SourceFetcher, FetchedDocument
+from .sources import FetchBatch, SourceRegistry, SourceFetcher, FetchedDocument
 
 __all__ = ["KnowledgeRefreshPipeline", "RefreshReport", "SourceOutcome"]
 
@@ -48,6 +48,8 @@ class SourceOutcome:
     quarantined: int = 0
     failed: int = 0
     error: str | None = None
+    #: The upstream reported nothing new, so nothing was fetched or ingested (a 304).
+    not_modified: bool = False
 
     @property
     def ok(self) -> bool:
@@ -112,6 +114,7 @@ class RefreshReport:
                     "skipped_unchanged": s.skipped_unchanged,
                     "skipped_duplicate": s.skipped_duplicate,
                     "quarantined": s.quarantined, "failed": s.failed, "error": s.error,
+                    "not_modified": s.not_modified,
                 }
                 for s in self.sources
             ],
@@ -240,7 +243,11 @@ class KnowledgeRefreshPipeline:
             return SourceOutcome(source_id=source.id, error="license_not_approved")
 
         try:
-            documents = await self._fetcher.fetch(source)
+            batcher = getattr(self._fetcher, "fetch_batch", None)
+            batch = (
+                await batcher(source) if batcher is not None
+                else FetchBatch(documents=tuple(await self._fetcher.fetch(source)))
+            )
         except Exception as exc:
             logger.warning(
                 "source fetch failed",
@@ -248,7 +255,15 @@ class KnowledgeRefreshPipeline:
             )
             return SourceOutcome(source_id=source.id, error=type(exc).__name__)
 
-        for document in documents:
+        if batch.unchanged:
+            # The upstream said nothing is new (a 304). That is a successful visit, not a gap:
+            # nothing is fetched, embedded or hashed, and the cursor is kept as it was.
+            await self._registry.record_success(
+                source.id, cursor=batch.cursor or source.last_cursor, at=datetime.now(timezone.utc)
+            )
+            return SourceOutcome(source_id=source.id, not_modified=True)
+
+        for document in batch.documents:
             if not budget.take():
                 logger.warning("refresh document budget exhausted", extra={"source": source.id})
                 break
@@ -303,7 +318,17 @@ class KnowledgeRefreshPipeline:
                 ingested += 1
                 quarantined += result.quarantined
 
-        await self._registry.record_success(source.id, cursor=None, at=datetime.now(timezone.utc))
+        handled = ingested + unchanged + duplicate + quarantined
+        if fetched > 0 and handled == 0:
+            # Every document failed. Recording a success would show a fresh "last synced" on a
+            # source that is serving nothing (KM-13), and advancing the cursor would stop the
+            # failed documents being fetched again until upstream changed (KM-08).
+            return SourceOutcome(
+                source_id=source.id, fetched=fetched, failed=failed, error="all_documents_failed",
+            )
+        # The cursor moves only when nothing failed: a failed document must be fetched again.
+        next_cursor = batch.cursor if failed == 0 else source.last_cursor
+        await self._registry.record_success(source.id, cursor=next_cursor, at=datetime.now(timezone.utc))
         return SourceOutcome(
             source_id=source.id,
             fetched=fetched,

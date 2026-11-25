@@ -371,14 +371,13 @@ class Container:
         from .domain.knowledge import SourceType
         from .learning.sources import CompositeFetcher, HttpSourceFetcher
 
-        # One fetcher per source type (AP10). The web types go over the HTTPS policy; the default
-        # keeps any other type a source was registered with fetched exactly as before. Track AP
-        # adds the `connector` type below, once its connector registry exists.
+        # One fetcher per source type (AP10), and only for types that are really fetched. `web` is
+        # one HTTPS page. `rss`, `api`, `repository` and `drive` used to be routed to the same
+        # page fetcher and "worked" by ingesting a feed or a JSON body as tag-stripped text; with
+        # no fetcher they are refused at registration instead (KM-03). Each one comes back as its
+        # own fetcher. Track AP adds the `connector` type below, once its registry exists.
         http_fetcher = HttpSourceFetcher()
-        self.source_fetcher = CompositeFetcher(
-            {SourceType.WEB: http_fetcher, SourceType.RSS: http_fetcher, SourceType.API: http_fetcher},
-            default=http_fetcher,
-        )
+        self.source_fetcher = CompositeFetcher({SourceType.WEB: http_fetcher})
         self.refresh_pipeline = KnowledgeRefreshPipeline(
             registry=self.sources,
             fetcher=self.source_fetcher,

@@ -237,6 +237,13 @@ def register_admin_ops(
             from ..adaptation.knowledge import project_owner
 
             owner_id = project_owner(twins.project_id)
+        if not container.source_fetcher.supports(source_type):
+            # Refused now rather than failing every night: a type with no fetcher cannot ingest.
+            registered = getattr(container.source_fetcher, "_fetchers", {})
+            raise ValidationError(
+                f"no fetcher exists for source type {source_type}",
+                details={"type": str(source_type), "supported": sorted(str(t) for t in registered)},
+            )
         allowed = container.settings.knowledge.allowed_licenses
         # A connector's documents belong to its project, so the global licence policy does not
         # apply to it; for any other source a stated licence is checked before anything is stored.

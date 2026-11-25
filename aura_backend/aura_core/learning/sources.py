@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import ipaddress
+import json
 import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -34,6 +35,7 @@ from ..ports.connectors import DocumentConnector
 
 __all__ = [
     "FetchedDocument",
+    "FetchBatch",
     "SourceRegistry",
     "InMemorySourceRegistry",
     "SourceFetcher",
@@ -54,6 +56,39 @@ class FetchedDocument:
     document_id: DocumentId | None = None
     uri: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class FetchBatch:
+    """What one fetch of one source returned, with what the next fetch needs.
+
+    ``cursor`` is opaque to the pipeline: the registry stores it on success and the source carries
+    it back as ``last_cursor``, so a fetcher can ask for only what changed (ETag, a sitemap's
+    ``lastmod``, a commit id). ``unchanged`` means the upstream said nothing is new and
+    ``documents`` is empty -- different from a source that returned no documents.
+    """
+
+    documents: Sequence[FetchedDocument] = ()
+    cursor: str | None = None
+    unchanged: bool = False
+
+
+def _parse_validators(cursor: str | None) -> dict[str, str] | None:
+    """The ETag / Last-Modified pair a previous fetch stored; anything else is ignored."""
+    if not cursor:
+        return None
+    try:
+        data = json.loads(cursor)
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    return {k: v for k, v in data.items() if k in ("etag", "last_modified") and isinstance(v, str) and v}
+
+
+def _validators_cursor(etag: str | None, last_modified: str | None) -> str | None:
+    found = {k: v for k, v in (("etag", etag), ("last_modified", last_modified)) if v}
+    return json.dumps(found) if found else None
 
 
 @runtime_checkable
@@ -246,6 +281,22 @@ class HttpSourceFetcher:
                 )
 
     async def fetch(self, source: KnowledgeSource) -> list[FetchedDocument]:
+        """The page, unconditionally. Used by the admin preview, which wants the content whatever
+        the last refresh saw; :meth:`fetch_batch` is the incremental path the refresh uses."""
+        batch = await self._get(source, validators=None)
+        return list(batch.documents)
+
+    async def fetch_batch(self, source: KnowledgeSource) -> FetchBatch:
+        """The page if it changed since ``source.last_cursor``, else an ``unchanged`` batch.
+
+        The cursor is the upstream's own validators (``ETag`` and ``Last-Modified``) as JSON, sent
+        back as ``If-None-Match`` / ``If-Modified-Since``. A server that ignores them simply
+        answers 200 every time, which is the old behaviour, and the content hash still keeps an
+        unchanged page from being re-embedded.
+        """
+        return await self._get(source, validators=_parse_validators(source.last_cursor))
+
+    async def _get(self, source: KnowledgeSource, *, validators: Mapping[str, str] | None) -> FetchBatch:
         self._assert_fetchable(source.uri)
         await self._assert_resolves_publicly(source.uri)
         try:
@@ -253,12 +304,21 @@ class HttpSourceFetcher:
         except ImportError as exc:  # pragma: no cover
             raise ValidationError("httpx is required for HTTP knowledge sources") from exc
 
+        headers = {"User-Agent": self._user_agent}
+        if validators:
+            if validators.get("etag"):
+                headers["If-None-Match"] = validators["etag"]
+            if validators.get("last_modified"):
+                headers["If-Modified-Since"] = validators["last_modified"]
+
         async with httpx.AsyncClient(
             timeout=self._timeout,
             follow_redirects=False,  # a redirect is a trivial policy bypass
-            headers={"User-Agent": self._user_agent},
+            headers=headers,
         ) as client:
             response = await client.get(source.uri)
+            if response.status_code == 304 and validators:
+                return FetchBatch(cursor=source.last_cursor, unchanged=True)
             if response.is_redirect:
                 raise ValidationError(
                     "source redirected; redirects are not followed", details={"source": source.id}
@@ -272,15 +332,17 @@ class HttpSourceFetcher:
         body = self._TAG.sub(" ", body)
         body = re.sub(r"\s+", " ", body).strip()
 
-        return [
-            FetchedDocument(
-                title=title,
-                content=body,
-                document_id=DocumentId(f"{source.id}:root"),
-                uri=source.uri,
-                metadata={"content_type": response.headers.get("content-type", "")},
-            )
-        ]
+        document = FetchedDocument(
+            title=title,
+            content=body,
+            document_id=DocumentId(f"{source.id}:root"),
+            uri=source.uri,
+            metadata={"content_type": response.headers.get("content-type", "")},
+        )
+        return FetchBatch(
+            documents=(document,),
+            cursor=_validators_cursor(response.headers.get("etag"), response.headers.get("last-modified")),
+        )
 
 
 class CompositeFetcher:
@@ -298,13 +360,35 @@ class CompositeFetcher:
     def register(self, source_type: SourceType, fetcher: SourceFetcher) -> None:
         self._fetchers[source_type] = fetcher
 
-    async def fetch(self, source: KnowledgeSource) -> Sequence[FetchedDocument]:
+    def supports(self, source_type: SourceType) -> bool:
+        """Whether a source of this type can be fetched at all.
+
+        Registration asks this, so a type with no fetcher is refused when an admin adds it rather
+        than failing every night afterwards (KM-03: ``rss``, ``api`` and ``repository`` used to
+        "register" fine and ingest one HTML landing page).
+        """
+        return source_type in self._fetchers or self._default is not None
+
+    def _fetcher_for(self, source: KnowledgeSource) -> SourceFetcher:
         fetcher = self._fetchers.get(source.type, self._default)
         if fetcher is None:
             raise ValidationError(
                 f"no fetcher is registered for source type {source.type}",
                 details={"registered": [str(t) for t in self._fetchers]},
             )
+        return fetcher
+
+    async def fetch_batch(self, source: KnowledgeSource) -> FetchBatch:
+        """Like :meth:`fetch`, with the cursor and unchanged signal when the fetcher has them."""
+        fetcher = self._fetcher_for(source)
+        batcher = getattr(fetcher, "fetch_batch", None)
+        batch = await batcher(source) if batcher is not None else FetchBatch(
+            documents=tuple(await fetcher.fetch(source))
+        )
+        return replace(batch, documents=tuple(batch.documents)[: source.max_documents])
+
+    async def fetch(self, source: KnowledgeSource) -> Sequence[FetchedDocument]:
+        fetcher = self._fetcher_for(source)
         documents = await fetcher.fetch(source)
         # Enforce the per-source document ceiling here rather than trusting each fetcher to
         # respect it -- one place to get right.

@@ -192,7 +192,9 @@ class TestContainerWiring:
         assert SourceType.CONNECTOR not in fetcher._fetchers
 
     async def test_without_track_ap_a_connector_source_is_never_read(self, container) -> None:
-        with pytest.raises(AuthorizationError):  # the HTTPS policy refuses a non-https uri
+        # No connector fetcher is registered without Track AP, and no default fetcher catches the
+        # type (it used to fall through to the HTTPS fetcher, which refused the non-https uri).
+        with pytest.raises(ValidationError):
             await container.source_fetcher.fetch(_source())
 
 
