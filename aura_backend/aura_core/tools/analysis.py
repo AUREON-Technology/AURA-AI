@@ -1060,16 +1060,20 @@ _ANALYSIS_TOOLS: tuple[Tool, ...] = (
 ANALYSIS_TOOL_NAMES: frozenset[str] = frozenset(t.spec.name for t in _ANALYSIS_TOOLS)
 
 
-def build_analysis_tools(workspace: Any = None) -> list[Tool]:
+def build_analysis_tools(
+    workspace: Any = None, *, advisory_store: Any = None, advisory_max_age_days: int = 3,
+) -> list[Tool]:
     """The pure analysis tools: no capability, no I/O, no state.
 
     With a ``workspace`` (``AURA_TOOLS_FILES_ROOT``) five of them gain optional arguments that read
     files under it (``tools/open_workspace.py``, ADR-043); called without those arguments they behave
-    exactly as they do here. Without a workspace nothing changes.
+    exactly as they do here. Without a workspace nothing changes. ``advisory_store`` (the local OSV
+    copy) lets ``scan_code_security`` check locked versions against it when no advisory file is given.
     """
     tools = list(_ANALYSIS_TOOLS)
     if workspace is not None and str(workspace):
         from .open_workspace import extend_analysis_tools
 
-        tools = extend_analysis_tools(tools, workspace)
+        tools = extend_analysis_tools(
+            tools, workspace, advisory_store=advisory_store, advisory_max_age_days=advisory_max_age_days)
     return tools

@@ -200,3 +200,27 @@ def test_nothing_the_catalogue_returns_contains_a_secret_value() -> None:
         for hit in cat.find_secrets(f"x = {sample}"):
             assert not hasattr(hit, "value")
             assert sample not in repr(hit)
+
+
+def test_a_private_key_is_redacted_through_its_footer_not_just_its_header() -> None:
+    header, footer = "-----BEGIN RSA PRIVATE" + " KEY-----", "-----END RSA PRIVATE" + " KEY-----"
+    body = "MIIEowIBAAKCAQEA" + _b(60) + "\n" + _b(64)
+    text = f"before\n{header}\n{body}\n{footer}\nafter"
+    cleaned = SecretGuard(block=False).evaluate(text, stage=GuardStage.CONTEXT).sanitised
+    assert body not in cleaned and header not in cleaned and cleaned.startswith("before") and cleaned.endswith("after")
+    unterminated = SecretGuard(block=False).evaluate(f"{header}\n{body}", stage=GuardStage.CONTEXT).sanitised
+    assert body not in unterminated
+
+
+def test_two_formats_that_collide_with_ordinary_identifiers_are_for_code_review_only() -> None:
+    for rule_id in ("SEC-KEY-DISCORD", "SEC-KEY-TELEGRAM"):
+        assert next(f for f in cat.FORMATS if f.rule_id == rule_id).for_guard is False
+    ident = "CamelCaseClassNameAbcdefgh.member.AnotherDottedIdentifierName123"
+    assert SecretGuard(block=True).evaluate(ident, stage=GuardStage.OUTPUT).action.name == "ALLOW"
+
+
+def test_a_jwt_with_a_huge_segment_is_bounded() -> None:
+    start = time.perf_counter()
+    cat.find_secrets("eyJ-" * 500, guard_only=True)
+    cat.find_secrets("eyJ" + "A" * 5000 + "." + "A" * 5000, guard_only=True)
+    assert time.perf_counter() - start < 1.0

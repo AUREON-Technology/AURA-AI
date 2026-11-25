@@ -17,8 +17,9 @@ Stdlib only (domain layer). Three kinds of rule:
 The catalogue never returns, logs or hashes a secret *value*: a hit carries the rule and the
 character span, and the caller decides how to mask it (:func:`mask`).
 
-Every pattern is anchored on a literal prefix and uses bounded, non-nested quantifiers, so a long
-hostile line cannot make a scan super-linear (``test_secret_catalog.py`` pins this).
+Every pattern is anchored on a literal prefix or a name and avoids nested quantifiers; the open-ended
+ones have an upper bound, so a long hostile line cannot make a scan super-linear
+(``test_secret_catalog.py`` times them).
 """
 
 from __future__ import annotations
@@ -44,7 +45,8 @@ CRITICAL, HIGH, MEDIUM = "CRITICAL", "HIGH", "MEDIUM"
 
 #: A line carrying one of these markers is a reviewed, accepted occurrence (the markers other
 #: scanners already use, so an existing allowlist keeps working).
-ALLOW_MARKERS = ("pragma: allowlist secret", "gitleaks:allow", "aura:allow-secret", "nosec")
+_ALLOW = re.compile(
+    r"(?:#|//|/\*|<!--)[^\n]*?(?:pragma:\s*allowlist secret|gitleaks:allow|aura:allow-secret|\bnosec\b)", re.I)
 
 
 @dataclass(frozen=True)
@@ -140,12 +142,14 @@ FORMATS: tuple[SecretFormat, ...] = (
     _f("SEC-KEY-SENDGRID", "SendGrid API key", r"\bSG\.[A-Za-z0-9_\-]{16,}\.[A-Za-z0-9_\-]{16,}"),
     _f("SEC-KEY-MAILGUN", "Mailgun API key", r"\bkey-[0-9a-f]{32}\b"),
     _f("SEC-KEY-MAILCHIMP", "Mailchimp API key", r"\b[0-9a-f]{32}-us\d{1,2}\b"),
-    _f("SEC-KEY-TELEGRAM", "Telegram bot token", r"\b\d{8,10}:[A-Za-z0-9_\-]{35}\b"),
-    _f("SEC-KEY-DISCORD", "Discord bot token", r"\b[MNO][A-Za-z\d_\-]{23,25}\.[A-Za-z\d_\-]{6}\.[A-Za-z\d_\-]{27,38}\b"),
+    _f("SEC-KEY-TELEGRAM", "Telegram bot token", r"\b\d{8,10}:[A-Za-z0-9_\-]{35}\b", guard=False),
+    _f("SEC-KEY-DISCORD", "Discord bot token", r"\b[MNO][A-Za-z\d_\-]{23,25}\.[A-Za-z\d_\-]{6}\.[A-Za-z\d_\-]{27,38}\b", guard=False),
     # -- structural ---------------------------------------------------------------------------
     _f("SEC-KEY-PRIVATE", "Private key block",
-       r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----", label="private_key"),
-    _f("SEC-KEY-JWT", "JSON Web Token", r"\beyJ[A-Za-z0-9_\-]{15,}\.[A-Za-z0-9_\-]{15,}\.[A-Za-z0-9_\-]{10,}\b",
+       r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----"
+       r"(?:[\s\S]{0,8192}?(?:-----END (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----|\Z))?",
+       label="private_key"),
+    _f("SEC-KEY-JWT", "JSON Web Token", r"\beyJ[A-Za-z0-9_\-]{15,2048}\.[A-Za-z0-9_\-]{15,2048}\.[A-Za-z0-9_\-]{10,2048}\b",
        HIGH, label="jwt"),
     _f("SEC-KEY-URL-CREDENTIALS", "Credentials in a URL",
        r"\b[a-z][a-z0-9+.\-]{1,15}://[^\s:/@'\"<>${}]{1,64}:([^\s:/@'\"<>${}]{3,64})@[A-Za-z0-9.\-\[\]]{1,100}",
@@ -166,16 +170,25 @@ _SOFT_NAMES = r"(?:access[_-]?key|auth[_-]?key|signing[_-]?key|encryption[_-]?ke
 _ASSIGN_STRONG = re.compile(
     rf"(?i)(?<![A-Za-z0-9])({_PREFIX}{_STRONG_NAMES}{_SUFFIX})['\"]?\s*(?::=|=>|[:=])\s*(['\"`])([^'\"`\n]{{8,200}})\2"
 )
+#: ``DB_PASSWORD=Sup3rS3cret`` / ``password: hunter2prod``: a whole line, no quotes (.env, ini, YAML). The value
+#: needs a letter and a digit and no ``(`` ``.`` ``[``, so ``password = request.form`` is not a literal.
+_ASSIGN_BARE = re.compile(
+    rf"(?im)^[ \t]*(?:export[ \t]+)?({_PREFIX}{_STRONG_NAMES}{_SUFFIX})[ \t]*[:=][ \t]*"
+    r"([A-Za-z0-9_\-+/=@!#$%^&*~]{8,200})[ \t]*(?:#.*)?$"
+)
 _ASSIGN_SOFT = re.compile(
     rf"(?i)(?<![A-Za-z0-9])({_PREFIX}{_SOFT_NAMES}{_SUFFIX})['\"]?\s*(?::=|=>|[:=])\s*(['\"`]?)([A-Za-z0-9_\-+/=.~]{{20,200}})\2"
 )
 
-_PLACEHOLDER_WORDS = (
-    "changeme", "change_me", "change-me", "replace", "example", "your_", "your-", "yourkey", "dummy",
-    "sample", "placeholder", "fixme", "todo", "redacted", "secretkey", "mysecret", "password123",
-    "notasecret", "not-a-secret", "foobar", "lorem", "xxxx", "****", "....", "<", ">", "${", "{{", "%(", "%s",
-    "os.environ", "getenv", "process.env", "env(", "config(", "settings.", "secrets.", "vault:",
+_PLACEHOLDER_SUBSTRINGS = (
+    "changeme", "change_me", "change-me", "your_", "your-", "yourkey", "dummy", "placeholder", "fixme",
+    "redacted", "secretkey", "mysecret", "password123", "notasecret", "not-a-secret", "foobar", "lorem",
+    "xxxx", "****", "....", "${", "{{", "%(", "os.environ", "getenv", "process.env", "env(", "config(",
+    "settings.", "secrets.", "vault:",
 )
+#: Words that mark a stand-in only when they are a whole word: ``Example2024!x`` is a password.
+_PLACEHOLDER_WORDS = re.compile(r"(?<![a-z0-9])(?:example|sample|replace|todo|test|none|null|secret|password)(?![a-z0-9])")
+_PLACEHOLDER_ANGLE = re.compile(r"^\s*<[^<>]{1,80}>\s*$")
 
 
 def shannon_entropy(value: str) -> float:
@@ -192,7 +205,9 @@ def shannon_entropy(value: str) -> float:
 def looks_like_placeholder(value: str) -> bool:
     """True for a value that is plainly not a real secret (a template, an env lookup, a stand-in)."""
     low = value.strip().lower()
-    if not low or any(word in low for word in _PLACEHOLDER_WORDS):
+    if not low or any(word in low for word in _PLACEHOLDER_SUBSTRINGS):
+        return True
+    if _PLACEHOLDER_ANGLE.match(low) or low in ("%s", "%d") or _PLACEHOLDER_WORDS.fullmatch(low):
         return True
     if len(set(low)) <= 2:  # "aaaaaaaa", "00000000", "********"
         return True
@@ -200,9 +215,9 @@ def looks_like_placeholder(value: str) -> bool:
 
 
 def is_allowlisted(line: str) -> bool:
-    """True when the line carries an accepted-occurrence marker."""
-    low = line.lower()
-    return any(marker in low for marker in ALLOW_MARKERS)
+    """True when the line carries an accepted-occurrence marker *in a comment* (a marker inside a
+    string literal, or a word that merely contains ``nosec``, does not count)."""
+    return bool(_ALLOW.search(line))
 
 
 def _iter_assignments(text: str) -> Iterator[tuple[str, str, int, int, str]]:
@@ -211,6 +226,11 @@ def _iter_assignments(text: str) -> Iterator[tuple[str, str, int, int, str]]:
         value = match.group(3)
         if not looks_like_placeholder(value):
             yield "SEC-SECRET-ASSIGN", "Hard-coded credential", match.start(3), match.end(3), HIGH
+    for match in _ASSIGN_BARE.finditer(text):
+        value = match.group(2)
+        if (re.search(r"[A-Za-z]", value) and re.search(r"\d", value) and not looks_like_placeholder(value)
+                and not value.startswith("$")):
+            yield "SEC-SECRET-ASSIGN", "Hard-coded credential", match.start(2), match.end(2), HIGH
     for match in _ASSIGN_SOFT.finditer(text):
         value = match.group(3)
         if looks_like_placeholder(value) or shannon_entropy(value) < 3.5 or not re.search(r"\d", value):

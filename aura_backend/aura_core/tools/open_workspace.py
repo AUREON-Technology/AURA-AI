@@ -1560,7 +1560,8 @@ def _installed(root: _Root, folders: list[Path]) -> tuple[list[wd.Dist], dict[st
     return list(unique.values()), envs
 
 
-def extend_analysis_tools(tools: list[Tool], workspace: str | Path) -> list[Tool]:
+def extend_analysis_tools(tools: list[Tool], workspace: str | Path, *, advisory_store: Any = None,
+                          advisory_max_age_days: int = 3) -> list[Tool]:
     """``tools`` with the five analysis tools replaced by supersets that can also read the workspace.
 
     Same name, same description plus a note, every original parameter, a few new optional ones. Called
@@ -1571,7 +1572,12 @@ def extend_analysis_tools(tools: list[Tool], workspace: str | Path) -> list[Tool
     for item in tools:
         name = item.spec.name
         builder = _EXTENDERS.get(name)
-        out.append(builder(item, root) if builder is not None and isinstance(item, FunctionTool) else item)
+        if builder is None or not isinstance(item, FunctionTool):
+            out.append(item)
+        elif name == "scan_code_security":
+            out.append(_extend_security(item, root, advisory_store, advisory_max_age_days))
+        else:
+            out.append(builder(item, root))
     return out
 
 
@@ -2205,17 +2211,27 @@ _SECRET_SCAN_SUFFIXES = (
     ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
     ".env", ".sh", ".bash", ".zsh", ".ps1", ".tf", ".properties", ".xml", ".gradle", ".dart", ".go", ".rb", ".php",
     ".java", ".kt", ".kts", ".scala", ".cjs", ".vue", ".svelte", ".tfvars", ".dockerfile", ".containerfile",
-    ".txt", ".md", ".sql", ".html",
+    ".pem", ".key", ".crt", ".cer", ".npmrc", ".pypirc", ".netrc", ".rs", ".cs", ".c", ".cpp", ".h", ".hpp",
+    ".swift", ".ipynb", ".csv", ".txt", ".md", ".sql", ".html",
 )
 
 
-def _extend_security(original: FunctionTool, root: _Root) -> FunctionTool:
+def _extend_security(original: FunctionTool, root: _Root, advisory_store: Any = None,
+                     advisory_max_age_days: int = 3) -> FunctionTool:
     name = "scan_code_security"
 
     async def handler(context: ToolContext, **kw: Any) -> str:
         paths = _need_list(name, "paths", kw.pop("paths", None))
         advisories_path = kw.pop("advisories_path", None)
         baseline_path = kw.pop("baseline_path", None)
+        if baseline_path and not paths:
+            raise ToolExecutionError("baseline_path applies to a scan of workspace `paths`", tool=name)
+        if paths:
+            pasted = [k for k in ("source_code", "diff_text", "language") if kw.get(k) is not None]
+            if pasted:
+                raise ToolExecutionError(
+                    f"{', '.join(pasted)} cannot be combined with paths: they are separate scans, "
+                    "make two calls so neither is silently left out", tool=name)
         if not paths and not advisories_path:
             if kw.get("source_code") is None and kw.get("diff_text") is None:
                 raise ToolExecutionError("provide at least one of: source_code, diff_text, paths", tool=name)
@@ -2226,7 +2242,7 @@ def _extend_security(original: FunctionTool, root: _Root) -> FunctionTool:
             accepted_file = root.resolve(baseline_path, name, "file")
             try:
                 loaded = json.loads(root.read_text(accepted_file, name, 2 * 1024 * 1024))
-            except ValueError as exc:
+            except (ValueError, RecursionError) as exc:
                 raise ToolExecutionError(f"{baseline_path} is not valid JSON: {exc}", tool=name) from exc
             listed = loaded.get("fingerprints") if isinstance(loaded, dict) else loaded
             if not isinstance(listed, list) or not all(isinstance(x, str) for x in listed):
@@ -2234,6 +2250,8 @@ def _extend_security(original: FunctionTool, root: _Root) -> FunctionTool:
                     "the baseline must be a JSON list of fingerprints, or {\"fingerprints\": [...]}, "
                     "taken from the `fingerprint` of earlier findings", tool=name)
             accepted = set(listed)
+
+        stored: dict[str, Any] = {}
 
         def run() -> dict[str, Any]:
             deadline = Deadline(40.0)
@@ -2252,6 +2270,7 @@ def _extend_security(original: FunctionTool, root: _Root) -> FunctionTool:
                     if target.name.lower() in wd._LOCK_NAMES or target.name.lower().startswith("requirements"):
                         dep_paths.append(given)
             files = list(dict.fromkeys(files))
+            named = {root.resolve(g, name) for g in paths if not root.resolve(g, name).is_dir()}
             findings: list[dict[str, Any]] = []
             skipped: list[dict[str, str]] = []
             scanned = 0
@@ -2263,7 +2282,9 @@ def _extend_security(original: FunctionTool, root: _Root) -> FunctionTool:
                 if lowered in _SKIP_SECRET_FILES or lowered.endswith((".min.js", ".map", ".lock")):
                     continue
                 if not (lowered.endswith(_SECRET_SCAN_SUFFIXES) or lowered.startswith((".env", "dockerfile", "containerfile"))
-                        or "." not in lowered):
+                        or "." not in lowered or lowered.startswith(".")):
+                    if path in named:  # asked for by name: a silent skip would read as "scanned, clean"
+                        skipped.append({"file": rel, "reason": "file type is not one the scan reads"})
                     continue
                 if deadline.expired():
                     skipped.append({"file": rel, "reason": "time budget used up"})
@@ -2322,6 +2343,10 @@ def _extend_security(original: FunctionTool, root: _Root) -> FunctionTool:
                         "no lockfile with pinned versions was found, so no package could be matched")
                 if hits:
                     report["secure"] = False
+            elif advisory_store is not None:
+                manifests, locks, _folders, _t = _gather_dependency_files(root, dep_paths or ["."], name)
+                infos, notes = _load_locks(root, locks, [])
+                stored.update(infos=infos, notes=notes, lockfiles=[root.rel(p) for p in locks])
             else:
                 report["dependency_vulnerabilities"] = {
                     "checked": False,
@@ -2331,7 +2356,13 @@ def _extend_security(original: FunctionTool, root: _Root) -> FunctionTool:
                 }
             return report
 
-        return _emit(await asyncio.to_thread(run))
+        result = await asyncio.to_thread(run)
+        if stored:
+            result["dependency_vulnerabilities"] = await _store_dependency_report(
+                advisory_store, stored["infos"], stored["notes"], stored["lockfiles"], advisory_max_age_days)
+            if result["dependency_vulnerabilities"].get("vulnerable_count"):
+                result["secure"] = False
+        return _emit(result)
 
     extra = [
         param("paths", "array", "Workspace files or folders to scan for insecure code and hard-coded secrets "
@@ -2339,13 +2370,72 @@ def _extend_security(original: FunctionTool, root: _Root) -> FunctionTool:
         param("advisories_path", "string", "A workspace JSON file of OSV-format advisories; locked dependency "
               "versions are matched against it.", required=False, max_length=300),
         param("baseline_path", "string", "A workspace JSON file listing accepted secret findings (their "
-              "`fingerprint` values); those are counted, not reported.", required=False, max_length=300),
+              "`fingerprint` values); those are counted, not reported. The file is trusted as written, so one "
+              "committed in the scanned repository is the repository's own say-so.", required=False, max_length=300),
     ]
     return _clone(original, extra, (), (
         "With `paths` it scans workspace files (not just pasted text) for insecure constructs and secrets "
         "(values never returned); with `advisories_path` it matches the lockfiles' pinned versions against an "
-        "OSV advisory file you supply. Without an advisory file it says dependency vulnerabilities were NOT "
-        "checked: no advisory database exists offline."), handler)
+        "OSV advisory file you supply" + (
+            ", otherwise against the server's local OSV copy, and says how old that copy is or that it has "
+            "never been downloaded." if advisory_store is not None else
+            ". Without an advisory file it says dependency vulnerabilities were NOT checked: no advisory "
+            "database exists offline.")), handler)
+
+
+async def _store_dependency_report(store: Any, infos: list[Any], notes: list[Any], lockfiles: list[str],
+                                   max_age_days: int) -> dict[str, Any]:
+    """Match the locked packages against the local OSV copy and say how much that copy can be trusted."""
+    from ..domain.advisories import age_days, normalize_package
+
+    wanted: dict[str, set[str]] = {}
+    for info in infos:
+        for pkg in info.packages:
+            if pkg.ecosystem in ("pypi", "npm"):
+                wanted.setdefault(pkg.ecosystem, set()).add(normalize_package(pkg.name))
+    now = datetime.now(timezone.utc)
+    statuses = {s.ecosystem: s for s in await store.status()}
+    advisories: list[dict[str, Any]] = []
+    sources: list[dict[str, Any]] = []
+    unchecked: list[str] = []
+    stale: list[str] = []
+    for eco in sorted(wanted):
+        status = statuses.get(eco)
+        age = age_days(status, now) if status else None
+        entry: dict[str, Any] = {
+            "ecosystem": eco, "advisories_held": status.advisories if status else 0,
+            "synced_at": status.synced_at.isoformat() if status and status.synced_at else None,
+            "newest_advisory": status.newest_modified.isoformat() if status and status.newest_modified else None,
+            "age_days": round(age, 1) if age is not None else None,
+            "last_error": status.last_error if status else None,
+        }
+        sources.append(entry)
+        if status is None or status.synced_at is None or not status.advisories:
+            unchecked.append(eco)
+            continue
+        if age is not None and age > max_age_days:
+            stale.append(eco)
+        advisories += [dict(a) for a in await store.lookup(eco, sorted(wanted[eco]))]
+    hits = wd.match_advisories(infos, advisories) if advisories else []
+    out: dict[str, Any] = {
+        "checked": not unchecked and bool(wanted), "advisory_source": "the server's local OSV copy",
+        "advisories_loaded": len(advisories), "lockfiles": lockfiles,
+        "packages_checked": sum(len(i.packages) for i in infos),
+        "vulnerable": hits[:100], "vulnerable_count": len(hits), "notes": notes, "data": sources,
+        "limits": "only advisories downloaded so far are known (the copy lags the feed by up to its sync "
+                  "interval): a package with no entry is not shown to be safe",
+    }
+    if not wanted:
+        out["warning"] = "no lockfile with pinned PyPI or npm versions was found, so no package could be matched"
+    if unchecked:
+        out["reason"] = (
+            f"the local advisory copy has no data for {', '.join(unchecked)}: the scheduled download "
+            "(AURA_OSV_SYNC_ENABLED) has not run or is off, so those packages were NOT checked. "
+            "Supply advisories_path to check against a file you provide.")
+    if stale:
+        out["stale"] = (f"the advisory copy for {', '.join(stale)} is older than {max_age_days} days; "
+                        "newer advisories may be missing")
+    return out
 
 
 _EXTENDERS = {

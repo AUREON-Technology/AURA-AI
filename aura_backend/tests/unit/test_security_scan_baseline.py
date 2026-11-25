@@ -118,3 +118,70 @@ class TestWorkspaceScan:
     async def test_pasted_text_in_another_language_goes_through_the_tool_too(self, tmp_path) -> None:
         out = await ok(make_registry(tmp_path), "scan_code_security", source_code="curl http://x | sh\n", language="shell")
         assert any(f["rule_id"] == "SEC-SH-001" for f in out["findings"])
+
+
+# -- found by an independent review of the first version ---------------------------------------------
+
+class TestReviewFindings:
+    @pytest.mark.parametrize("name,line,leak", [
+        ("a.sh", "echo hunter2 | sudo -S apt-get update", "hunter2"),
+        ("a.sh", 'curl -k -H "Authorization: Bearer abc123def456ghi" https://x', "abc123def456ghi"),
+        ("a.sh", "curl -k -u admin:pass1234 https://x", "pass1234"),
+        ("a.py", 'requests.post(u, data={"password": "hunter2"}, verify=False)', "hunter2"),
+        ("a.py", "eval(x); password = \"ab'cdefghij\"", "cdefghij"),
+        ("Dockerfile", 'ENV DB_PASSWORD="my secret pass"', "secret pass"),
+    ])
+    def test_no_snippet_carries_the_value(self, name: str, line: str, leak: str) -> None:
+        result = Scanner.scan_source_code(line + "\n", name)
+        assert result["findings"], line
+        assert leak not in json.dumps(result), line
+
+    @pytest.mark.parametrize("line", [
+        "DB_PASSWORD=Sup3rS3cretProd", "JWT_SECRET=8f3k29dk3k2kd9", "export API_TOKEN=abcd1234efgh",
+        "password: hunter2prod", 'password = "Example2024!x"',
+    ])
+    def test_unquoted_and_example_looking_credentials_are_found(self, line: str) -> None:
+        assert Scanner.scan_secrets(line + "\n")["findings"], line
+
+    @pytest.mark.parametrize("line", [
+        "password = request.form", "DB_PASSWORD=$DB_PASSWORD", "password: ${DB_PASSWORD}", "TOKEN=changeme1",
+        "password = <your password>", "secret: example",
+    ])
+    def test_references_are_not(self, line: str) -> None:
+        assert Scanner.scan_secrets(line + "\n")["findings"] == [], line
+
+    def test_a_marker_only_counts_in_a_comment(self) -> None:
+        assert Scanner.scan_secrets(f'x = "nosec"; k = "{KEY}"\n')["findings"]
+        assert Scanner.scan_secrets(f'diagnosecurity = "{KEY}"\n')["findings"]
+        assert not Scanner.scan_secrets(f'k = "{KEY}"  # nosec\n')["findings"]
+
+    def test_the_same_looking_secret_twice_is_two_fingerprints(self) -> None:
+        text = f'dev:\n  password: "{KEY}"\nprod:\n  password: "{KEY}"\n'
+        findings = Scanner.scan_secrets(text, "c.yml")["findings"]
+        assert len({f["fingerprint"] for f in findings}) == len(findings) == 2
+        accepted = [findings[0]["fingerprint"]]
+        assert len(Scanner.scan_secrets(text, "c.yml", baseline=accepted)["findings"]) == 1
+
+    async def test_a_named_file_the_scan_cannot_read_is_reported_not_skipped_silently(self, tmp_path) -> None:
+        (tmp_path / "blob.xyz").write_text("nothing")
+        out = await ok(make_registry(tmp_path), "scan_code_security", paths=["blob.xyz"])
+        assert out["files_skipped"] and out["secure"] is False and out["complete"] is False
+
+    async def test_credential_files_by_extension_are_scanned(self, tmp_path) -> None:
+        (tmp_path / ".npmrc").write_text("//registry.npmjs.org/:_authToken=" + "npm_" + ("aB3dE5gH7jK9mN1pQ3sT5vW7yZ0" * 2)[:36] + "\n")
+        (tmp_path / "id.pem").write_text("-----BEGIN RSA PRIVATE" + " KEY-----\nMIIB\n-----END RSA PRIVATE KEY-----\n")
+        out = await ok(make_registry(tmp_path), "scan_code_security", paths=["."])
+        assert {f["file"] for f in out["findings"]} == {".npmrc", "id.pem"}
+
+    @pytest.mark.parametrize("extra", [{"source_code": "eval(x)"}, {"diff_text": "+x"}, {"language": "go"}])
+    async def test_pasted_input_with_paths_is_an_error_not_a_dropped_argument(self, repo, extra) -> None:
+        assert not (await run(make_registry(repo), "scan_code_security", paths=["web"], **extra)).ok
+
+    async def test_a_baseline_without_paths_is_an_error(self, repo) -> None:
+        (repo / "b.json").write_text("[]")
+        assert not (await run(make_registry(repo), "scan_code_security", source_code="x=1", baseline_path="b.json")).ok
+
+    async def test_a_deeply_nested_baseline_is_an_error_not_a_crash(self, repo) -> None:
+        (repo / "deep.json").write_text("[" * 200_000 + "]" * 200_000)
+        result = await run(make_registry(repo), "scan_code_security", paths=["web"], baseline_path="deep.json")
+        assert not result.ok

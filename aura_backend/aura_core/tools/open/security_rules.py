@@ -36,6 +36,8 @@ class Rule:
     requires: Optional[re.Pattern[str]] = None
     #: The snippet would carry a secret value: mask what follows the name.
     masks_value: bool = False
+    #: The line is a credential in all but name (``echo pw | sudo -S``): the snippet is replaced outright.
+    withhold: bool = False
 
 
 @dataclass(frozen=True)
@@ -48,9 +50,9 @@ class FileRule:
 
 
 def _r(rule_id: str, severity: str, regex: str, message: str, *, flags: int = 0, requires: str = "",
-       masks: bool = False) -> Rule:
+       masks: bool = False, withhold: bool = False) -> Rule:
     return Rule(rule_id, severity, re.compile(regex, flags), message,
-                re.compile(requires, re.I) if requires else None, masks)
+                re.compile(requires, re.I) if requires else None, masks, withhold)
 
 
 _TOKEN_CONTEXT = r"token|secret|passw|api[_-]?key|session|otp|nonce|csrf|salt|\bkey\b"
@@ -172,7 +174,7 @@ _SHELL = (
        "TLS certificate verification is turned off."),
     _r("SEC-SH-005", "HIGH", r"\brm\s+-[A-Za-z]*[rR][A-Za-z]*\s+(?:--no-preserve-root\s+)?/(?:\s|\*|$)",
        "rm -r on the filesystem root."),
-    _r("SEC-SH-006", "HIGH", r"\|\s*sudo\s+-S\b", "A password piped into sudo -S."),
+    _r("SEC-SH-006", "HIGH", r"\|\s*sudo\s+-S\b", "A password piped into sudo -S.", withhold=True),
 )
 
 # -- Dockerfile ------------------------------------------------------------------------------
@@ -181,7 +183,7 @@ _DOCKER = (
     _r("SEC-DOCKER-001", "MEDIUM", r"^\s*USER\s+(?:root|0)(?::\S+)?\s*$", "The image runs as root.", flags=re.I),
     _r("SEC-DOCKER-004", "MEDIUM", r"^\s*ADD\s+https?://", "ADD from a URL is unverified: use curl with a checksum.", flags=re.I),
     _r("SEC-DOCKER-006", "HIGH",
-       r"""^\s*(?:ENV|ARG)\s+\w*(?:PASSWORD|SECRET|TOKEN|API_?KEY|PRIVATE_KEY)\w*(?:\s+|\s*=\s*)["']?(?![$"'\s])\S{6,}""",
+       r"""^\s*(?:ENV|ARG)\s+\w*(?:PASSWORD|SECRET|TOKEN|API_?KEY|PRIVATE_KEY)\w*(?:\s+|\s*=\s*)(?!["']?\$)["']?[^\s"'][^\n]{5,}""",
        "A credential baked into the image layer (ENV/ARG).", flags=re.I, masks=True),
     _r("SEC-DOCKER-007", "LOW", r"^\s*EXPOSE\s+22\b", "SSH port exposed.", flags=re.I),
 )

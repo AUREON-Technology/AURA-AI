@@ -250,6 +250,7 @@ class Container:
         )
 
         # INT-004: pins live in a store every gateway worker reads, not in this worker's memory.
+        self.advisory_store = self._build_advisory_store()
         self.prompt_pins = self._build_prompt_pins()
         self.prompts = build_default_registry(pins=self.prompt_pins)
         self._prompt_pin_sync_task: asyncio.Task[None] | None = None
@@ -1661,6 +1662,20 @@ class Container:
             apple=apple, google_push=google_push, google_play=google_play,
         )
 
+    def _build_advisory_store(self) -> Any:
+        """The local OSV advisory copy (``domain/advisories.py``): read by the dependency scan, written
+        by the scheduled sync. Postgres-backed like the other shared stores, so a worker's download is
+        what every gateway process reads."""
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_advisories import PostgresAdvisoryStore
+
+            return PostgresAdvisoryStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        from .adapters.advisories_memory import InMemoryAdvisoryStore
+
+        return InMemoryAdvisoryStore()
+
     def _build_prompt_pins(self) -> Any:
         """Prompt-version pins (INT-004). Postgres-backed with the other stores, so a pin reaches
         every gateway worker within ``PIN_SYNC_INTERVAL_S`` and survives a restart."""
@@ -1848,6 +1863,8 @@ class Container:
                 image_normalizer=self.image_normalizer,
                 stt_engine=self.stt_engine,
                 enable_analysis_tools=self.settings.open_tools.analysis_enabled,
+                advisory_store=self.advisory_store,
+                advisory_max_age_days=self.settings.advisories.max_age_days,
                 enable_open_exec_tools=self.settings.open_tools.exec_enabled,
                 enable_desktop_ops_tools=self.settings.open_tools.desktop_ops_enabled,
                 enable_open_pure_tools=self.settings.open_tools.pure_enabled,  # ADR-042

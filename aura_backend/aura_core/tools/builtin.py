@@ -961,6 +961,8 @@ def default_tools(
     stt_engine: Any = None,
     engineer_runs: Any = None,
     agent_runs: Any = None,
+    advisory_store: Any = None,
+    advisory_max_age_days: int = 3,
 ) -> list[Tool]:
     """Assemble the tool set for a deployment.
 
@@ -1040,7 +1042,8 @@ def default_tools(
     if enable_analysis_tools:
         # Pure text-in/JSON-out analysis (ADR-036 group A): no I/O, no capability, so unlike the
         # groups above it needs no resource to be present -- only the operator not turning it off.
-        tools += build_analysis_tools(workspace=workspace)
+        tools += build_analysis_tools(
+            workspace=workspace, advisory_store=advisory_store, advisory_max_age_days=advisory_max_age_days)
     if enable_open_pure_tools:
         # ADR-042: fourteen more pure tools (architecture, ambiguity, acceptance criteria, diff scope,
         # explain, quiz, artifacts, evidence, plan feedback, mobile summary, file type, structured
