@@ -2347,6 +2347,38 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             "devices": devices,
         })
 
+    # -- push notification devices (ADR-060) --------------------------------------------
+
+    class PushDeviceRequest(BaseModel):
+        device_id: str = Field(min_length=1, max_length=128)
+        token: str = Field(min_length=1, max_length=4096)
+        platform: str = Field(min_length=1, max_length=16)
+
+    @router.post("/push/devices")
+    async def register_push_device(
+        payload: PushDeviceRequest, caller: Principal = Depends(principal),
+    ) -> JSONResponse:
+        """Register this install for push notifications (its FCM token). Owner-scoped. The same token
+        registered under another account moves here. ``delivering`` says whether this server can send
+        pushes at all; a device may register before it can."""
+        _refuse_service_key(caller, "register a push device")
+        notifier = container.push_notifier
+        try:
+            device = await notifier.register(caller.user_id.value, payload.device_id, payload.token, payload.platform)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return JSONResponse(content={
+            "registered": True, "device_id": device.device_id, "platform": device.platform,
+            "delivering": bool(notifier.delivering),
+        })
+
+    @router.delete("/push/devices/{device_id}")
+    async def unregister_push_device(device_id: str, caller: Principal = Depends(principal)) -> JSONResponse:
+        """Stop pushes to one install (sign-out). Owner-scoped; idempotent."""
+        _refuse_service_key(caller, "remove a push device")
+        removed = await container.push_notifier.unregister(caller.user_id.value, device_id)
+        return JSONResponse(content={"removed": bool(removed)})
+
     # -- pause / resume / redirect (ADR-059) --------------------------------------------
 
     class RedirectRequest(BaseModel):

@@ -2042,6 +2042,29 @@ class AdvisorySettings:
 
 
 @dataclass(frozen=True, slots=True)
+class PushSettings:
+    """Push notifications to a person's phone (ADR-060). Off by default.
+
+    Devices can always register; nothing is *sent* until ``fcm_credentials_file`` names a Firebase
+    service-account file (a path -- the key is never a setting). ``include_detail`` adds the held
+    action's one-line headline to the notification, which then shows on a lock screen: off by
+    default, so the default message is generic.
+    """
+
+    enabled: bool = False
+    fcm_credentials_file: str = ""
+    include_detail: bool = False
+
+    @classmethod
+    def from_env(cls) -> "PushSettings":
+        return cls(
+            enabled=_bool("PUSH_ENABLED", False),
+            fcm_credentials_file=_env("PUSH_FCM_CREDENTIALS_FILE", "") or "",
+            include_detail=_bool("PUSH_INCLUDE_DETAIL", False),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class OpsSettings:
     """What the operations tools (ADR-049) may reach. Everything is empty by default, and an empty
     setting means the tool that needs it is not registered.
@@ -2904,6 +2927,7 @@ class AuraSettings:
     mcp: McpSettings = field(default_factory=McpSettings)
     open_tools: OpenToolsSettings = field(default_factory=OpenToolsSettings)
     advisories: AdvisorySettings = field(default_factory=AdvisorySettings)
+    push: PushSettings = field(default_factory=PushSettings)
     ops: OpsSettings = field(default_factory=OpsSettings)
     adaptation: AdaptationSettings = field(default_factory=AdaptationSettings)
     github: GitHubSettings = field(default_factory=GitHubSettings)
@@ -2950,6 +2974,7 @@ class AuraSettings:
             mcp=McpSettings.from_env(),
             open_tools=OpenToolsSettings.from_env(),
             advisories=AdvisorySettings.from_env(),
+            push=PushSettings.from_env(),
             ops=OpsSettings.from_env(),
             adaptation=AdaptationSettings.from_env(),
             github=GitHubSettings.from_env(),
