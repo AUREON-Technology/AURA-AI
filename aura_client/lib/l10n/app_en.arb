@@ -7548,5 +7548,15 @@
       }
     }
   },
-  "agentStopAllNothing": "Nothing was running."
+  "agentStopAllNothing": "Nothing was running.",
+  "agentPauseTooltip": "Pause the agent",
+  "agentResumeTooltip": "Resume the agent",
+  "agentRedirectTooltip": "Send the agent a new instruction",
+  "agentRedirectTitle": "Tell the agent something new",
+  "agentRedirectHint": "e.g. leave the migrations alone and fix only the test",
+  "agentRedirectSend": "Send",
+  "agentPauseDone": "Paused. It holds before its next step; it carries on by itself after 15 minutes.",
+  "agentResumeDone": "Resumed.",
+  "agentRedirectDone": "Sent. The agent replans with it before its next step.",
+  "agentControlNothing": "Nothing is running on this server."
 }

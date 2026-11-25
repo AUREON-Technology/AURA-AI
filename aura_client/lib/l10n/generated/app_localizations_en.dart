@@ -5649,4 +5649,37 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get agentStopAllNothing => 'Nothing was running.';
+
+  @override
+  String get agentPauseTooltip => 'Pause the agent';
+
+  @override
+  String get agentResumeTooltip => 'Resume the agent';
+
+  @override
+  String get agentRedirectTooltip => 'Send the agent a new instruction';
+
+  @override
+  String get agentRedirectTitle => 'Tell the agent something new';
+
+  @override
+  String get agentRedirectHint =>
+      'e.g. leave the migrations alone and fix only the test';
+
+  @override
+  String get agentRedirectSend => 'Send';
+
+  @override
+  String get agentPauseDone =>
+      'Paused. It holds before its next step; it carries on by itself after 15 minutes.';
+
+  @override
+  String get agentResumeDone => 'Resumed.';
+
+  @override
+  String get agentRedirectDone =>
+      'Sent. The agent replans with it before its next step.';
+
+  @override
+  String get agentControlNothing => 'Nothing is running on this server.';
 }

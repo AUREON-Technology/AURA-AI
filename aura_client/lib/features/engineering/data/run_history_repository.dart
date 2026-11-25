@@ -174,6 +174,26 @@ class RunHistoryRepository {
     return StopAllResult.fromJson(decoded);
   }
 
+  /// `POST /agents/pause`: hold running turns at their next checkpoint (ADR-059). Returns how many.
+  Future<int> pause() async {
+    final decoded = await _api.json(method: 'POST', path: '/api/v3/agents/pause', body: const {});
+    return decoded['turns_paused'] is num ? (decoded['turns_paused'] as num).toInt() : 0;
+  }
+
+  /// `POST /agents/resume`: let paused turns carry on. Returns how many.
+  Future<int> resume() async {
+    final decoded = await _api.json(method: 'POST', path: '/api/v3/agents/resume', body: const {});
+    return decoded['turns_resumed'] is num ? (decoded['turns_resumed'] as num).toInt() : 0;
+  }
+
+  /// `POST /agents/redirect`: send [instruction] to running turns; they replan with it at the next
+  /// checkpoint. Returns how many turns it reached (0 when nothing is running here).
+  Future<int> redirect(String instruction) async {
+    final decoded = await _api.json(
+      method: 'POST', path: '/api/v3/agents/redirect', body: {'instruction': instruction});
+    return decoded['turns_redirected'] is num ? (decoded['turns_redirected'] as num).toInt() : 0;
+  }
+
   /// `GET /agents/runs/search?q=&status=&limit=`. An empty [query] lists the newest runs.
   Future<RunSearchResult> search({String query = '', String? status, int limit = 30}) async {
     final params = <String, String>{

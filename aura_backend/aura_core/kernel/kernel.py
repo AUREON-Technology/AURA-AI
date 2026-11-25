@@ -540,6 +540,9 @@ class AIKernel:
         #: The turns each user has running here, so ``POST /agents/stop-all`` can cancel them
         #: (ADR-041). Process-local, like the host-agent registry without its relay.
         self.active_turns = ActiveTurns()
+        # ADR-059: the agent loop's checkpoints read pause / redirect requests from here.
+        if deps.agentic_executor is not None and hasattr(deps.agentic_executor, "turn_controls"):
+            deps.agentic_executor.turn_controls = self.active_turns
         #: Work a streamed turn does after its ``done`` frame (KAN-110), held so it is neither
         #: garbage-collected nor lost on shutdown, and indexed by session so the session's next
         #: turn can wait for it before reading history.

@@ -2347,6 +2347,53 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             "devices": devices,
         })
 
+    # -- pause / resume / redirect (ADR-059) --------------------------------------------
+
+    class RedirectRequest(BaseModel):
+        instruction: str = Field(min_length=1, max_length=1000)
+
+    async def _audit_control(request: Request, caller: Principal, action: str, detail: dict[str, Any]) -> None:
+        try:
+            await container.audit.record(AuditEvent(
+                action=action, actor=caller.email or caller.user_id.value, actor_role=caller.role,
+                resource=f"user:{caller.user_id.value}", outcome="ok",
+                correlation_id=request.headers.get("x-correlation-id") or "",
+                source_ip=client_ip(request), detail=detail,
+            ))
+        except Exception:
+            logger.warning("%s audit write failed", action, exc_info=False)
+
+    @router.post("/agents/pause")
+    async def pause_agents(request: Request, caller: Principal = Depends(principal)) -> JSONResponse:
+        """Hold the caller's running agent turns at their next checkpoint (between steps, never
+        inside a tool call). Idempotent; auto-resumes after 15 minutes. Same scope as stop-all:
+        turns running in this process (``scope: "this_process"``)."""
+        _refuse_service_key(caller, "pause a person's agent")
+        n = container.kernel.active_turns.pause_user(caller.user_id.value)
+        await _audit_control(request, caller, "agents.pause", {"turns_paused": n})
+        return JSONResponse(content={"paused": n > 0, "turns_paused": n, "scope": "this_process"})
+
+    @router.post("/agents/resume")
+    async def resume_agents(request: Request, caller: Principal = Depends(principal)) -> JSONResponse:
+        """Let paused turns continue."""
+        _refuse_service_key(caller, "resume a person's agent")
+        n = container.kernel.active_turns.resume_user(caller.user_id.value)
+        await _audit_control(request, caller, "agents.resume", {"turns_resumed": n})
+        return JSONResponse(content={"resumed": n > 0, "turns_resumed": n, "scope": "this_process"})
+
+    @router.post("/agents/redirect")
+    async def redirect_agents(
+        request: Request, payload: RedirectRequest, caller: Principal = Depends(principal),
+    ) -> JSONResponse:
+        """Send an instruction to the caller's running agent turns. At the next checkpoint the agent
+        replans with it as the person's own words (it also resumes a paused turn). The text is
+        audited by length only, not stored."""
+        _refuse_service_key(caller, "redirect a person's agent")
+        n = container.kernel.active_turns.redirect_user(caller.user_id.value, payload.instruction)
+        await _audit_control(request, caller, "agents.redirect",
+                             {"turns_redirected": n, "instruction_chars": len(payload.instruction)})
+        return JSONResponse(content={"redirected": n > 0, "turns_redirected": n, "scope": "this_process"})
+
     @router.get("/host/folders")
     async def host_folders(caller: Principal = Depends(principal)) -> JSONResponse:
         """The paired computer's granted folders, for the phone and web folder picker (WP8).

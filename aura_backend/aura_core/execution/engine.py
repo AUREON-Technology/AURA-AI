@@ -207,6 +207,7 @@ class ExecutionEngine:
         handlers: Mapping[StepKind, Callable[[PlanStep], Any]] | None = None,
         on_event: Callable[[StepEvent], Any] | None = None,
         gate: Any = None,
+        hold: Callable[[], Any] | None = None,
     ) -> ExecutionOutcome:
         """Run the plan to completion, blockage, or budget exhaustion.
 
@@ -220,6 +221,10 @@ class ExecutionEngine:
         :class:`~aura_core.execution.confirmations.ConfirmationGrant` for a resumed turn, which
         admits a call only if it is identical to the one the user approved, and only once. There
         is no name- or position-based confirmation (F-04).
+
+        ``hold`` (optional, ADR-059) is awaited before each batch is dispatched -- never during one.
+        It returns once the run is not paused, and a true result means "the person sent a new
+        instruction": the pass then stops with ``blocked_reason="redirected"`` and nothing further runs.
         """
         started = time.perf_counter()
         deadline = started + self._deadline_s
@@ -238,6 +243,14 @@ class ExecutionEngine:
             if steps_run >= self._max_steps:
                 blocked_reason = "step_budget_exceeded"
                 break
+
+            if hold is not None and not current.is_complete and current.ready_steps():
+                held = hold()
+                if asyncio.iscoroutine(held):
+                    held = await held
+                if held:
+                    blocked_reason = "redirected"
+                    break
 
             ready = current.ready_steps()
             if not ready:
@@ -593,6 +606,7 @@ class ExecutionEngine:
         confirmations: ConfirmationGrant | None = None,
         handlers: Mapping[StepKind, Callable[[PlanStep], Any]] | None = None,
         gate: Any = None,
+        hold: Callable[[], Any] | None = None,
     ) -> AsyncIterator[StepEvent | ExecutionOutcome]:
         """Execute while yielding progress, then yield the final outcome.
 
@@ -616,6 +630,7 @@ class ExecutionEngine:
                     handlers=handlers,
                     on_event=emit,
                     gate=gate,
+                    hold=hold,
                 )
                 await queue.put(outcome)
             finally:
