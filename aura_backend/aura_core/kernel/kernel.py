@@ -405,7 +405,7 @@ def _trace_turn(telemetry: TurnTelemetry) -> None:
 
 #: The `StageTiming` fields a turn span reports.
 _TRACED_STAGES = (
-    "guards_in", "memory", "retrieval", "context", "planning", "reasoning", "tools",
+    "guards_in", "memory", "retrieval", "context", "planning", "reasoning", "tools", "replan",
     "generation", "guards_out",
 )
 
@@ -598,6 +598,7 @@ class AIKernel:
                 planning_failed = True
                 execution_notes.append(PLANNING_FAILED_NOTE)
             timings["planning"] = (time.perf_counter() - stage_start) * 1000.0
+            self._split_execution_timings(timings, outcome)
             if outcome is not None:
                 agent_run_id = getattr(outcome, "run_id", None)
                 tools_tainted = bool(getattr(outcome, "tainted", False))
@@ -656,7 +657,14 @@ class AIKernel:
         answer, provider, model, usage, cost, cached, cache_tier, fallbacks, strategy, confidence = (
             await self._generate(request, assembled, retrieval, budget)
         )
-        timings["generation"] = (time.perf_counter() - stage_start) * 1000.0
+        generation_ms = (time.perf_counter() - stage_start) * 1000.0
+        # A multi-sample strategy (self-consistency, tree-of-thoughts, ...) is reasoning time; a
+        # plain direct answer, a cache hit or a structured answer is generation time.
+        if strategy not in (None, ReasoningStrategy.DIRECT):
+            timings["reasoning"] = generation_ms
+            timings["generation"] = 0.0
+        else:
+            timings["generation"] = generation_ms
 
         try:
             # Rebuild the completion shape for shadow (model override only).
@@ -914,6 +922,7 @@ class AIKernel:
                         planning_failed = True
                         execution_notes.append(PLANNING_FAILED_NOTE)
                     timings["planning"] = (time.perf_counter() - stage_start) * 1000.0
+                    self._split_execution_timings(timings, outcome)
                 if outcome is not None:
                     tool_results = outcome.summary_for_context()
                     plan_summary = [
@@ -1687,6 +1696,22 @@ class AIKernel:
                     await deps.engineer_runs.record(row)
         except Exception:
             logger.warning("failed to record engineer runs", extra={"count": len(rows)})
+
+    @staticmethod
+    def _split_execution_timings(timings: dict[str, float], outcome: Any) -> None:
+        """Split the planning stage's wall-clock into planning, tools and replan.
+
+        ``timings["planning"]`` covered the whole plan-execute-replan call, so one slow tool read
+        as slow planning. The execution engine and the agent loop measure tool time and replan
+        time; what is left (the first plan generation, run recording, the confirmation hold)
+        stays under ``planning``, so the three still sum to the old figure.
+        """
+        total = timings.get("planning", 0.0)
+        tools = min(max(float(getattr(outcome, "tools_ms", 0.0) or 0.0), 0.0), total)
+        replan = min(max(float(getattr(outcome, "replan_ms", 0.0) or 0.0), 0.0), total - tools)
+        timings["tools"] = tools
+        timings["replan"] = replan
+        timings["planning"] = total - tools - replan
 
     @staticmethod
     def _execution_notes(outcome: Any) -> list[str]:

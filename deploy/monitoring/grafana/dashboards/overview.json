@@ -694,6 +694,84 @@
         },
         "overrides": []
       }
+    },
+    {
+      "id": 24,
+      "title": "Execution lifecycle: where a turn's time goes",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 72
+      },
+      "panels": []
+    },
+    {
+      "id": 25,
+      "title": "Turn time by stage (p95): planning / tools / replan",
+      "type": "timeseries",
+      "description": "A planned turn's wall-clock split. planning = the first plan generation plus run recording; tools = time the execution engine ran tools, summed over every pass; replan = time spent generating revised plans. reasoning and generation are model time.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 73
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(aura_stage_duration_seconds_bucket{stage=~\"planning|tools|replan|reasoning|generation\"}[5m])) by (le, stage))",
+          "legendFormat": "{{stage}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 26,
+      "title": "Planner generation time (p95) by pool",
+      "type": "timeseries",
+      "description": "Generations labelled purpose=\"planner\" (the plan and every replan call), successful only. Compare with the answer's own time below.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 73
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(aura_llm_generation_total_seconds_bucket{outcome=\"success\",purpose=\"planner\"}[5m])) by (le, pool))",
+          "legendFormat": "planner {{pool}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(aura_llm_generation_total_seconds_bucket{outcome=\"success\",purpose=\"answer\"}[5m])) by (le, pool))",
+          "legendFormat": "answer {{pool}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {}
+        },
+        "overrides": []
+      }
     }
   ],
   "schemaVersion": 39,
