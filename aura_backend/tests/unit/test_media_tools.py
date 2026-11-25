@@ -109,7 +109,7 @@ MOCKUP = render([((40, 30), "Sign in to AURA"), ((40, 130), "Email:"), ((40, 200
 
 class TestRegistration:
     def test_spreadsheet_and_document_readers_need_only_a_root(self, root) -> None:
-        assert set(make(root)) == {"inspect_spreadsheet", "parse_document"}
+        assert set(make(root)) == {"inspect_spreadsheet", "parse_document", "compare_images"}
 
     def test_ocr_and_speech_tools_exist_only_with_their_engine(self, root) -> None:
         class PlainOcr:
@@ -135,7 +135,7 @@ class TestRegistration:
     def test_default_tools_registers_them_only_with_a_files_root(self, root) -> None:
         assert not MEDIA_TOOL_NAMES & {t.spec.name for t in default_tools()}
         names = {t.spec.name for t in default_tools(workspace=root)}
-        assert {"inspect_spreadsheet", "parse_document"} <= names
+        assert {"inspect_spreadsheet", "parse_document", "compare_images"} <= names
 
     def test_every_tool_is_untrusted_content_and_read_only(self, root) -> None:
         class Stt:
@@ -987,6 +987,9 @@ class TestTranscribeAudio:
         assert seg["confidence"] == pytest.approx(0.7778, abs=1e-3)  # exp(-0.2) * (1 - 0.05)
         assert seg["words"][0] == {"start": 2.0, "end": 2.5, "text": "Sentence", "confidence": 0.97}
         assert out["diarization"]["available"] is False and "speaker" in out["diarization"]["reason"]
+        hints = out["diarization"]["turn_hints"]  # ADR-057: pauses between segments (0.2 s here), not identities
+        assert hints["turn_breaks"] == 0 and hints["estimated_turns"] == 1 and "not identified" in hints["caveat"]
+        assert [s["turn_break_before"] for s in out["segments"]] == [False, False, False]
         assert out["window"] == {"offset": 0, "returned": 3, "total_segments": 3, "next_offset": None, "complete": True}
         assert engine.calls == [{"bytes": len(wav_bytes()), "language": None, "words": True}]
 
@@ -1078,3 +1081,57 @@ class TestTranscribeAudio:
         put(root, "bad.wav", b"not audio")
         with pytest.raises(ToolExecutionError, match="could not decode bad.wav"):
             await make(root, stt_engine=Broken())["transcribe_audio"].execute({"path": "bad.wav"}, ctx)
+
+
+# ======================================================================================
+# compare_images (ADR-058)
+# ======================================================================================
+
+
+def _flat(color=(255, 255, 255), size=(40, 40), patch=None) -> bytes:
+    image = Image.new("RGB", size, color)
+    if patch:
+        image.paste(patch[1], patch[0])
+    out = io.BytesIO()
+    image.save(out, format="PNG")
+    return out.getvalue()
+
+
+class TestCompareImages:
+    async def test_identical_images_are_reported_identical(self, root, ctx) -> None:
+        put(root, "a.png", _flat())
+        put(root, "b.png", _flat())
+        r = await call(make(root), "compare_images", ctx, before="a.png", after="b.png")
+        assert r["identical"] is True and r["changed_pixels"] == 0 and r["verdict"] == "identical"
+        assert "changed_region" not in r
+
+    async def test_a_changed_patch_is_located(self, root, ctx) -> None:
+        put(root, "a.png", _flat())
+        put(root, "b.png", _flat(patch=((30, 30, 40, 40), (0, 0, 0))))
+        r = await call(make(root), "compare_images", ctx, before="a.png", after="b.png")
+        assert r["identical"] is False and r["changed_pixels"] == 100
+        assert r["changed_region"] == {"left": 30, "top": 30, "right": 40, "bottom": 40}
+        assert r["changed_cells"] == [{"row": 3, "col": 3, "changed_ratio": 1.0}]
+
+    async def test_noise_under_the_threshold_is_ignored(self, root, ctx) -> None:
+        put(root, "a.png", _flat((200, 200, 200)))
+        put(root, "b.png", _flat((205, 205, 205)))
+        r = await call(make(root), "compare_images", ctx, before="a.png", after="b.png")
+        assert r["identical"] is True
+        strict = await call(make(root), "compare_images", ctx, before="a.png", after="b.png", threshold=1)
+        assert strict["identical"] is False
+
+    async def test_different_sizes_are_said_not_compared(self, root, ctx) -> None:
+        put(root, "a.png", _flat(size=(40, 40)))
+        put(root, "b.png", _flat(size=(50, 40)))
+        r = await call(make(root), "compare_images", ctx, before="a.png", after="b.png")
+        assert r["same_size"] is False and r["identical"] is False and "differ in size" in r["note"]
+
+    async def test_a_non_image_and_an_escape_are_refused(self, root, ctx) -> None:
+        put(root, "a.png", _flat())
+        put(root, "notes.txt", "hello")
+        tools = make(root)
+        with pytest.raises(ToolExecutionError):
+            await tools["compare_images"].execute({"before": "a.png", "after": "notes.txt"}, ctx)
+        with pytest.raises(ToolExecutionError):
+            await tools["compare_images"].execute({"before": "a.png", "after": "../etc/passwd"}, ctx)

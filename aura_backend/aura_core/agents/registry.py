@@ -193,7 +193,7 @@ _ENGINEER_OPEN_TOOLS = frozenset({
 # (AURA_TOOLS_FILES_ROOT for the file readers, AURA_WEB_SEARCH_URL for search), so naming them here
 # is a grant, not a guarantee.
 _ENGINEER_DEVTOOLS = frozenset({"lint_code", "check_format", "scan_security", "gpu_status"})
-_DOCUMENT_READING_TOOLS = frozenset({"parse_document", "inspect_spreadsheet", "ocr_image"})
+_DOCUMENT_READING_TOOLS = frozenset({"parse_document", "inspect_spreadsheet", "ocr_image", "compare_images"})
 _ENGINEER_READING_TOOLS = _DOCUMENT_READING_TOOLS | frozenset({
     "web_search", "fetch_url", "analyze_image_requirements", "transcribe_audio",
 })

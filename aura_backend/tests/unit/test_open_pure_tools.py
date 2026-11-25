@@ -755,6 +755,12 @@ class TestSummarizeForMobile:
         with pytest.raises(ToolExecutionError):
             await call("summarize_for_mobile", ctx)
 
+    async def test_a_screenshot_reading_supplied_by_the_caller_is_summarised(self, ctx) -> None:
+        r = await call("summarize_for_mobile", ctx, task="Fix login", image_summary="Login form: email, password, Sign in button")
+        assert "Screenshot:" in r["summary_text"] and "Sign in" in r["summary_text"]
+        only = await call("summarize_for_mobile", ctx, image_summary="Error banner: network unreachable")
+        assert "Screenshot:" in only["summary_text"]
+
 
 # --------------------------------------------------------------------------------------
 # Row 73 -- detect_file_type

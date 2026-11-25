@@ -73,6 +73,7 @@ __all__ = ["MEDIA_TOOL_NAMES", "build_media_tools"]
 #: Names, for persona grants (``agents/registry.py``) and the tests that pin them.
 MEDIA_TOOL_NAMES: frozenset[str] = frozenset({
     "parse_document", "inspect_spreadsheet", "ocr_image", "analyze_image_requirements", "transcribe_audio",
+    "compare_images",
 })
 
 # -- limits -----------------------------------------------------------------------------------------
@@ -102,6 +103,30 @@ _CACHE_ENTRIES = 3
 _OCR_LANG = re.compile(r"^[a-z]{3}(?:_[A-Za-z]+)?(?:\+[a-z]{3}(?:_[A-Za-z]+)?){0,3}$")
 _TWO_LETTER_OCR = {"en": "eng", "ar": "ara", "de": "deu", "fr": "fra", "es": "spa", "it": "ita", "pt": "por",
                    "ru": "rus", "nl": "nld", "tr": "tur", "zh": "chi_sim", "ja": "jpn", "ko": "kor", "hi": "hin"}
+
+
+#: A silence at least this long between two segments is reported as a possible change of speaker.
+_TURN_PAUSE_S = 1.2
+
+
+def speaker_turn_hints(segments: list[dict[str, Any]], *, pause_s: float = _TURN_PAUSE_S) -> dict[str, Any]:
+    """Possible speaker-change points from the gaps between segments; **not** who is speaking.
+
+    Marks ``turn_break_before`` on each segment that follows a pause of at least ``pause_s`` seconds (the segment
+    dicts are updated in place) and counts the resulting turns. It cannot identify or label speakers, and it is
+    wrong both ways: one person pauses to think, and two people can talk over each other without any gap. A real
+    speaker label needs an embedding model that is not part of this deployment; ``speaker`` stays ``null``.
+    """
+    previous_end: float | None = None
+    breaks = 0
+    for seg in segments:
+        gap = None if previous_end is None else round(float(seg["start"]) - previous_end, 3)
+        seg["turn_break_before"] = bool(gap is not None and gap >= pause_s)
+        breaks += seg["turn_break_before"]
+        previous_end = float(seg["end"])
+    return {"method": f"pauses of at least {pause_s:g}s between segments", "turn_breaks": breaks,
+            "estimated_turns": breaks + 1 if segments else 0,
+            "caveat": "boundaries only: one speaker may pause and two may overlap without a gap; speakers are not identified"}
 
 
 def _dump(value: Any) -> str:
@@ -632,6 +657,51 @@ def _inspect_image(data: bytes, shown: str, tool_name: str, *, max_pixels: int) 
     return info
 
 
+def _compare_images(before: bytes, after: bytes, shown: tuple[str, str], *, threshold: int,
+                    max_pixels: int) -> dict[str, Any]:
+    """Pixel difference between two images of the same size. Runs in a thread (ADR-058)."""
+    name = "compare_images"
+    for data, label in ((before, shown[0]), (after, shown[1])):
+        _inspect_image(data, label, name, max_pixels=max_pixels)
+    from PIL import Image, ImageChops
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with Image.open(io.BytesIO(before)) as a, Image.open(io.BytesIO(after)) as b:
+            size_a, size_b = a.size, b.size
+            if size_a != size_b:
+                return {"same_size": False, "before_size": list(size_a), "after_size": list(size_b),
+                        "identical": False,
+                        "note": "The images differ in size, so no pixel comparison was made; resize or "
+                                "re-capture at one size."}
+            diff = ImageChops.difference(a.convert("RGB"), b.convert("RGB")).convert("L")
+    mask = diff.point(lambda v: 255 if v > threshold else 0)
+    width, height = size_a
+    changed = sum(mask.histogram()[255:])
+    box = mask.getbbox()
+    total = width * height
+    ratio = changed / total if total else 0.0
+    out: dict[str, Any] = {
+        "same_size": True, "size": [width, height], "identical": changed == 0,
+        "changed_pixels": changed, "changed_ratio": round(ratio, 6), "threshold": threshold,
+        "verdict": "identical" if changed == 0 else "minor" if ratio < 0.01 else "changed" if ratio < 0.25
+        else "very different",
+    }
+    if box:
+        out["changed_region"] = {"left": box[0], "top": box[1], "right": box[2], "bottom": box[3]}
+        # A coarse 4x4 grid says where the change is, without returning pixels.
+        cells = []
+        for gy in range(4):
+            for gx in range(4):
+                crop = mask.crop((gx * width // 4, gy * height // 4, (gx + 1) * width // 4, (gy + 1) * height // 4))
+                n = sum(crop.histogram()[255:])
+                area = max(1, crop.size[0] * crop.size[1])
+                if n / area >= 0.01:
+                    cells.append({"row": gy, "col": gx, "changed_ratio": round(n / area, 4)})
+        out["changed_cells"] = cells
+    return out
+
+
 def _ocr_lang(lang: str | None) -> str | None:
     if not lang:
         return None
@@ -937,6 +1007,34 @@ def build_media_tools(
 
     tools.append(inspect_spreadsheet)
 
+    # -- compare_images (ADR-058) -----------------------------------------------------------
+
+    @tool(
+        "compare_images",
+        "Compare two screenshots or images of the same size in the user's workspace pixel by pixel: whether "
+        "they are identical, what fraction of pixels changed, the bounding box of the change and which cells "
+        "of a 4x4 grid it falls in. Use it to check that a UI change did what was meant (before/after) or that "
+        "nothing else moved. It does not capture screenshots and does not say what changed, only where.",
+        param("before", "string", "Path of the first image, relative to the workspace root.", max_length=300),
+        param("after", "string", "Path of the second image, relative to the workspace root.", max_length=300),
+        param("threshold", "integer", "Per-pixel brightness difference (0-255) that counts as changed "
+              "(default 16: ignores anti-aliasing noise).", required=False, default=16, minimum=0, maximum=255),
+        timeout_s=60.0,
+        max_result_chars=8_000,
+        **common,
+    )
+    async def compare_images(before: str, after: str, threshold: int = 16) -> str:
+        name = "compare_images"
+        first, second = locate(before, name), locate(after, name)
+        a = await asyncio.to_thread(_read_limited, first, _MAX_IMAGE_BYTES, before, name, "an image")
+        b = await asyncio.to_thread(_read_limited, second, _MAX_IMAGE_BYTES, after, name, "an image")
+        result = await asyncio.to_thread(
+            _compare_images, a, b, (before, after), threshold=int(16 if threshold is None else threshold),
+            max_pixels=_MAX_OCR_PIXELS)
+        return _dump(result)
+
+    tools.append(compare_images)
+
     # -- ocr_image --------------------------------------------------------------------------
 
     if ocr_engine is not None:
@@ -1121,10 +1219,12 @@ def build_media_tools(
                     raise ToolExecutionError(
                         f"the speech engine could not decode {path} as audio ({type(exc).__name__})", tool=name) from exc
                 body = transcript.as_dict(include_words=bool(include_words))
+                hints = speaker_turn_hints(body["segments"])
                 cached = {"source": source, "engine": getattr(stt_engine, "name", "stt"), **body,
                           "diarization": {"available": False,
                                           "reason": "the speech engine does not identify speakers; every segment's "
-                                                    "speaker is null"}}
+                                                    "speaker is null",
+                                          "turn_hints": hints}}
                 remember(audio_cache, key, cached, 2)
             else:
                 audio_cache.move_to_end(key)

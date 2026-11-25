@@ -1122,7 +1122,7 @@ _MIGRATION_PATH = re.compile(r"(^|/)(migrations?|alembic/versions)/|\.sql$", re.
 
 
 def _mobile(task: str, diff_text: str, test_output: str, test_results: dict, plan_steps: list[str], status: str,
-            max_chars: int, command_output: str) -> dict[str, Any]:
+            max_chars: int, command_output: str, image_summary: str = "") -> dict[str, Any]:
     cls = MobileArtifactSummarizer
     parts: dict[str, Any] = {}
     flags: list[str] = []
@@ -1160,6 +1160,11 @@ def _mobile(task: str, diff_text: str, test_output: str, test_results: dict, pla
     lines: list[str] = []
     if task.strip():
         lines.append(" ".join(task.split())[:120])
+    if image_summary.strip():
+        # What the vision step read from a screenshot, passed in by the caller (this tool never opens an image).
+        shot = " ".join(image_summary.split())
+        parts["screenshot"] = {"text": shot[:200], "source": "supplied by the caller from a vision/OCR step"}
+        lines.append("Screenshot: " + shot[:140])
     if plan_steps:
         lines.append(f"Plan: {len(plan_steps)} steps, starting with '{plan_steps[0][:60]}'")
     if diff_info:
@@ -1171,7 +1176,7 @@ def _mobile(task: str, diff_text: str, test_output: str, test_results: dict, pla
     if flags:
         lines.append("Check: " + "; ".join(flags[:3]))
     if not lines:
-        raise _fail("summarize_for_mobile", "give at least one of task, diff_text, test_output/test_results, plan_steps, command_output")
+        raise _fail("summarize_for_mobile", "give at least one of task, diff_text, test_output/test_results, plan_steps, command_output, image_summary")
     headline = status or (("FAILED" if tests and tests["status"] == "FAILED" else "REVIEW" if flags else "READY") if (tests or diff_info) else "INFO")
     text = "\n".join(lines)
     summary_text = text if len(text) <= max_chars else text[: max_chars - 1].rstrip() + "…"
@@ -1182,7 +1187,8 @@ def _mobile(task: str, diff_text: str, test_output: str, test_results: dict, pla
     card = cls.generate_mobile_card_json(title, [{"title": s["heading"][:40], "text": s["body"][:200]} for s in sections])
     return {"headline": headline, "summary_text": summary_text, "character_count": len(summary_text),
             "notification": notification, "card": card, "risk_flags": flags, "parts": parts,
-            "note": "Text, diff and test inputs only. A screenshot cannot be summarised here (no vision call from a tool)."}
+            "note": "Text, diff and test inputs, plus an image_summary you supply. This tool never opens an image: "
+                    "get the screenshot's text with analyze_image_requirements or ocr_image first and pass it in."}
 
 
 @tool(
@@ -1190,7 +1196,8 @@ def _mobile(task: str, diff_text: str, test_output: str, test_results: dict, pla
     "Condense a task's plan, diff, test output and last command output into a short phone-sized "
     "summary: a headline, a text within max_chars, a push-notification line, a card (JSON) with "
     "approve/reject actions, and risk flags (sensitive files, migrations, deletions, failing tests). "
-    "Give any of the inputs. Text only; screenshots are not read.",
+    "Give any of the inputs. It reads text only; for a screenshot pass image_summary (from analyze_image_requirements "
+    "or ocr_image).",
     param("task", "string", "One line on what the task is.", required=False, max_length=2_000),
     param("diff_text", "string", "A unified diff.", required=False, max_length=_MAX_TEXT),
     param("test_output", "string", "Raw pytest/test output.", required=False, max_length=_MAX_TEXT),
@@ -1198,18 +1205,20 @@ def _mobile(task: str, diff_text: str, test_output: str, test_results: dict, pla
     param("plan_steps", "array", "The plan's steps.", required=False, item_type="string"),
     param("command_output", "string", "The last command's output.", required=False, max_length=_MAX_TEXT),
     param("status", "string", "Override the headline (e.g. 'NEEDS APPROVAL').", required=False, max_length=40),
+    param("image_summary", "string", "What a vision/OCR step read from a screenshot.", required=False, max_length=4_000),
     param("max_chars", "integer", "Longest summary_text (default 600).", required=False, default=600, minimum=60, maximum=4000),
     **_CODE,
 )
 async def summarize_for_mobile(
     task: str = "", diff_text: str = "", test_output: str = "", test_results: dict | None = None,
     plan_steps: list | None = None, command_output: str = "", status: str = "", max_chars: int = 600,
+    image_summary: str = "",
 ) -> str:
     name = "summarize_for_mobile"
     _short_lines(name, "diff_text", diff_text or None)
     steps = [str(s) for s in _items(name, "plan_steps", plan_steps)]
     return await _run(_mobile, task or "", diff_text or "", test_output or "", _bounded(name, "test_results", test_results) or {},
-                      steps, status or "", max_chars, command_output or "")
+                      steps, status or "", max_chars, command_output or "", image_summary or "")
 
 
 # --------------------------------------------------------------------------------------
