@@ -1992,6 +1992,7 @@ class ExtractionSettings:
         return found
 
 
+@dataclass(frozen=True, slots=True)
 class AdvisorySettings:
     """The local copy of public vulnerability advisories (OSV) that ``scan_code_security`` reads.
 
