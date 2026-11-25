@@ -213,196 +213,230 @@ class ExecutionEngine:
         blocked_reason: str | None = None
         current = plan
 
-        while not current.is_complete:
-            if time.perf_counter() > deadline:
-                blocked_reason = "deadline_exceeded"
-                break
-            if steps_run >= self._max_steps:
-                blocked_reason = "step_budget_exceeded"
-                break
-
-            ready = current.ready_steps()
-            if not ready:
-                # Nothing runnable and the plan is not complete: every remaining step depends on
-                # something that failed. Mark them explicitly rather than spinning.
-                current = current.mark_blocked_steps()
-                if not current.ready_steps() and not current.is_complete:
-                    blocked_reason = "dependencies_failed"
-                    break
-                continue
-
-            batch = self._taint_ordered(ready[: self._max_parallel], context)
-            if gate is not None:
-                admitted: list[PlanStep] = []
-                for step in batch:
-                    reason = (
-                        gate.admit(step, self._tool_spec(step))
-                        if step.kind is StepKind.TOOL and step.tool else None
-                    )
-                    if reason is None:
-                        admitted.append(step)
-                        continue
-                    # Refused before dispatch: the registry never sees it, so nothing acted.
-                    # BLOCKED (not FAILED) with the budget as the reason, and a terminal
-                    # `blocked_reason` so the agent loop stops rather than replanning into the
-                    # same wall.
-                    blocked_reason = reason
-                    current = current.with_steps([step.blocked(reason)])
-                    await self._emit(
-                        on_event,
-                        StepEvent(
-                            step_id=step.id.value, kind=str(step.kind), status="blocked",
-                            description=step.description, detail=reason,
-                        ),
-                    )
-                batch = admitted
-                if not batch:
-                    break
-            running = [step.started() for step in batch]
-            current = current.with_steps(running)
-
-            for step in running:
+        async def _settle(step: PlanStep, outcome: Any) -> list[PlanStep]:
+            """Fold one finished step's outcome into the run state; returns the step updates."""
+            nonlocal blocked_reason, steps_run
+            updated: list[PlanStep] = []
+            steps_run += 1
+            if isinstance(outcome, BudgetExceededError):
+                blocked_reason = "budget_exceeded"
+                updated.append(step.failed("budget_exceeded", 0.0))
+                return updated
+            if isinstance(outcome, BaseException):
+                logger.warning(
+                    "step raised",
+                    extra={"step": step.id.value, "error": type(outcome).__name__},
+                )
+                updated.append(step.failed(type(outcome).__name__, 0.0))
                 await self._emit(
                     on_event,
                     StepEvent(
-                        step_id=step.id.value, kind=str(step.kind), status="running",
-                        description=step.description,
+                        step_id=step.id.value, kind=str(step.kind), status="failed",
+                        description=step.description, detail=type(outcome).__name__,
+                    ),
+                )
+                return updated
+
+            text, ok, elapsed, report = outcome
+            if report is _UNRESOLVED_REFERENCE:
+                # The step's arguments named an earlier step's output via `${step_id.output}`
+                # and it could not be resolved -- the tool was never dispatched. FAILED (not
+                # BLOCKED) because this is the step's own argument that is bad, not a
+                # dependency that failed; `error_kind="unresolved_reference"` is what item 5's
+                # richer replan context and any test asserting "no false success" key off of.
+                updated.append(step.failed(FailureKind.UNRESOLVED_REFERENCE, elapsed))
+                await self._emit(
+                    on_event,
+                    StepEvent(
+                        step_id=step.id.value, kind=str(step.kind), status="failed",
+                        description=step.description, detail=text[:200], elapsed_ms=elapsed,
+                    ),
+                )
+                return updated
+            if report is _NO_HANDLER:
+                # Configuration gap: skip, do not fail or retry, and do not count as a
+                # tool report. SKIPPED is terminal and treated as success for the plan.
+                updated.append(step.skipped(text))
+                await self._emit(
+                    on_event,
+                    StepEvent(
+                        step_id=step.id.value, kind=str(step.kind), status="skipped",
+                        description=step.description, detail=text[:200],
+                        elapsed_ms=elapsed,
+                    ),
+                )
+                return updated
+            if report is not None:
+                tool_reports.append(report)
+            if report is not None and getattr(report, "needs_confirmation", False):
+                # A confirm-gated call is not a failure a replan could work around -- it is
+                # the turn correctly stopping to ask the user. Without this branch it falls
+                # into the `else` below indistinguishably from a real error: marked FAILED,
+                # which (for the agentic loop specifically, `AgenticExecutor`'s
+                # `max_plan_iterations > 1` personas like `engineer`) triggers a replan that
+                # overwrites this outcome -- silently discarding the very report the kernel
+                # needs to surface `needs_confirmation`/`pending_tool_calls` to the caller.
+                # BLOCKED plus `blocked_reason="needs_confirmation"` (in `_TERMINAL_BLOCKS`,
+                # `agentic_loop.py`) stops the loop here instead, so this outcome -- and the
+                # report on it -- is what the kernel actually sees.
+                blocked_reason = NEEDS_CONFIRMATION
+                updated.append(step.blocked(NEEDS_CONFIRMATION))
+                # What the user will be asked to approve, exactly as it would be dispatched:
+                # the same resolution `_run_step` just did, against the same plan state.
+                resolved, _ = _resolve_output_tokens(step.arguments, current)
+                pending_calls.append(PendingCall(
+                    step_id=step.id.value, call_id=getattr(report, "call_id", None)
+                    or f"step_{step.id.value}",
+                    tool=step.tool or "", arguments=resolved,
+                ))
+                await self._emit(
+                    on_event,
+                    StepEvent(
+                        step_id=step.id.value, kind=str(step.kind), status="blocked",
+                        description=step.description, detail=text[:200], elapsed_ms=elapsed,
+                    ),
+                )
+                return updated
+            if ok:
+                results[step.id.value] = text
+                updated.append(step.succeeded(text, elapsed))
+                await self._emit(
+                    on_event,
+                    StepEvent(
+                        step_id=step.id.value, kind=str(step.kind), status="succeeded",
+                        description=step.description, elapsed_ms=elapsed,
+                    ),
+                )
+            else:
+                # Prefer the tool's own structured `error_kind` (e.g. "unresolved_argument",
+                # "policy_denied", "timeout" -- see `domain/failure_kinds.py`) over the
+                # truncated human-readable message: this `PlanStep.error_kind` is what
+                # `PlanningEngine.replan()`'s context block surfaces to the model
+                # ("Failed: ... (unresolved_argument)"), and a structured reason is something
+                # a replanned attempt can actually act on, where free text is not.
+                error_kind = getattr(report, "error_kind", None) or text[:120]
+                failed = step.failed(error_kind, elapsed)
+                # Retry only when the step can be safely repeated. A side-effecting tool that
+                # failed may have already acted, so retrying could duplicate the effect.
+                if failed.can_retry and not self._is_side_effecting(step):
+                    # Back to PENDING so the next loop picks it up; `attempts` is already
+                    # incremented, so `can_retry` will stop it at max_attempts.
+                    failed = replace(
+                        failed, status=StepStatus.PENDING, error_kind=None, finished_at=None
+                    )
+                updated.append(failed)
+                await self._emit(
+                    on_event,
+                    StepEvent(
+                        step_id=step.id.value, kind=str(step.kind), status="failed",
+                        description=step.description, detail=text[:200], elapsed_ms=elapsed,
                     ),
                 )
 
-            outcomes = await asyncio.gather(
-                *(
-                    self._run_step(
-                        step, context=context, capabilities=capabilities,
-                        confirmations=confirmations,
-                        handlers=handlers or {}, plan=current,
-                    )
-                    for step in running
-                ),
-                return_exceptions=True,
-            )
+            return updated
 
-            updated: list[PlanStep] = []
-            for step, outcome in zip(running, outcomes):
-                steps_run += 1
-                if isinstance(outcome, BudgetExceededError):
-                    blocked_reason = "budget_exceeded"
-                    updated.append(step.failed("budget_exceeded", 0.0))
-                    continue
-                if isinstance(outcome, BaseException):
-                    logger.warning(
-                        "step raised",
-                        extra={"step": step.id.value, "error": type(outcome).__name__},
-                    )
-                    updated.append(step.failed(type(outcome).__name__, 0.0))
-                    await self._emit(
-                        on_event,
-                        StepEvent(
-                            step_id=step.id.value, kind=str(step.kind), status="failed",
-                            description=step.description, detail=type(outcome).__name__,
-                        ),
-                    )
-                    continue
+        in_flight: dict[asyncio.Task, tuple[int, PlanStep]] = {}
+        launched = 0
+        stop = False  # no new launches once set; in-flight steps are still drained and settled
 
-                text, ok, elapsed, report = outcome
-                if report is _UNRESOLVED_REFERENCE:
-                    # The step's arguments named an earlier step's output via `${step_id.output}`
-                    # and it could not be resolved -- the tool was never dispatched. FAILED (not
-                    # BLOCKED) because this is the step's own argument that is bad, not a
-                    # dependency that failed; `error_kind="unresolved_reference"` is what item 5's
-                    # richer replan context and any test asserting "no false success" key off of.
-                    updated.append(step.failed(FailureKind.UNRESOLVED_REFERENCE, elapsed))
-                    await self._emit(
-                        on_event,
-                        StepEvent(
-                            step_id=step.id.value, kind=str(step.kind), status="failed",
-                            description=step.description, detail=text[:200], elapsed_ms=elapsed,
-                        ),
-                    )
-                    continue
-                if report is _NO_HANDLER:
-                    # Configuration gap: skip, do not fail or retry, and do not count as a
-                    # tool report. SKIPPED is terminal and treated as success for the plan.
-                    updated.append(step.skipped(text))
-                    await self._emit(
-                        on_event,
-                        StepEvent(
-                            step_id=step.id.value, kind=str(step.kind), status="skipped",
-                            description=step.description, detail=text[:200],
-                            elapsed_ms=elapsed,
-                        ),
-                    )
-                    continue
-                if report is not None:
-                    tool_reports.append(report)
-                if report is not None and getattr(report, "needs_confirmation", False):
-                    # A confirm-gated call is not a failure a replan could work around -- it is
-                    # the turn correctly stopping to ask the user. Without this branch it falls
-                    # into the `else` below indistinguishably from a real error: marked FAILED,
-                    # which (for the agentic loop specifically, `AgenticExecutor`'s
-                    # `max_plan_iterations > 1` personas like `engineer`) triggers a replan that
-                    # overwrites this outcome -- silently discarding the very report the kernel
-                    # needs to surface `needs_confirmation`/`pending_tool_calls` to the caller.
-                    # BLOCKED plus `blocked_reason="needs_confirmation"` (in `_TERMINAL_BLOCKS`,
-                    # `agentic_loop.py`) stops the loop here instead, so this outcome -- and the
-                    # report on it -- is what the kernel actually sees.
-                    blocked_reason = NEEDS_CONFIRMATION
-                    updated.append(step.blocked(NEEDS_CONFIRMATION))
-                    # What the user will be asked to approve, exactly as it would be dispatched:
-                    # the same resolution `_run_step` just did, against the same plan state.
-                    resolved, _ = _resolve_output_tokens(step.arguments, current)
-                    pending_calls.append(PendingCall(
-                        step_id=step.id.value, call_id=getattr(report, "call_id", None)
-                        or f"step_{step.id.value}",
-                        tool=step.tool or "", arguments=resolved,
-                    ))
-                    await self._emit(
-                        on_event,
-                        StepEvent(
-                            step_id=step.id.value, kind=str(step.kind), status="blocked",
-                            description=step.description, detail=text[:200], elapsed_ms=elapsed,
-                        ),
-                    )
-                    continue
-                if ok:
-                    results[step.id.value] = text
-                    updated.append(step.succeeded(text, elapsed))
-                    await self._emit(
-                        on_event,
-                        StepEvent(
-                            step_id=step.id.value, kind=str(step.kind), status="succeeded",
-                            description=step.description, elapsed_ms=elapsed,
-                        ),
-                    )
-                else:
-                    # Prefer the tool's own structured `error_kind` (e.g. "unresolved_argument",
-                    # "policy_denied", "timeout" -- see `domain/failure_kinds.py`) over the
-                    # truncated human-readable message: this `PlanStep.error_kind` is what
-                    # `PlanningEngine.replan()`'s context block surfaces to the model
-                    # ("Failed: ... (unresolved_argument)"), and a structured reason is something
-                    # a replanned attempt can actually act on, where free text is not.
-                    error_kind = getattr(report, "error_kind", None) or text[:120]
-                    failed = step.failed(error_kind, elapsed)
-                    # Retry only when the step can be safely repeated. A side-effecting tool that
-                    # failed may have already acted, so retrying could duplicate the effect.
-                    if failed.can_retry and not self._is_side_effecting(step):
-                        # Back to PENDING so the next loop picks it up; `attempts` is already
-                        # incremented, so `can_retry` will stop it at max_attempts.
-                        failed = replace(
-                            failed, status=StepStatus.PENDING, error_kind=None, finished_at=None
+        try:
+            while True:
+                if not stop:
+                    if time.perf_counter() > deadline:
+                        blocked_reason = "deadline_exceeded"
+                        stop = True
+                    elif steps_run + len(in_flight) >= self._max_steps:
+                        blocked_reason = "step_budget_exceeded"
+                        stop = True
+
+                if not stop:
+                    slots = self._max_parallel - len(in_flight)
+                    ready = current.ready_steps() if slots > 0 else ()
+                    if ready:
+                        candidates = self._taint_ordered(
+                            ready[:slots], context,
+                            inflight=[s for _, s in in_flight.values()],
                         )
-                    updated.append(failed)
-                    await self._emit(
-                        on_event,
-                        StepEvent(
-                            step_id=step.id.value, kind=str(step.kind), status="failed",
-                            description=step.description, detail=text[:200], elapsed_ms=elapsed,
-                        ),
-                    )
+                        admitted: list[PlanStep] = []
+                        for step in candidates:
+                            reason = (
+                                gate.admit(step, self._tool_spec(step))
+                                if gate is not None and step.kind is StepKind.TOOL and step.tool
+                                else None
+                            )
+                            if reason is None:
+                                admitted.append(step)
+                                continue
+                            # Refused before dispatch: the registry never sees it, so nothing
+                            # acted. BLOCKED (not FAILED) with the budget as the reason, and a
+                            # terminal `blocked_reason` so the agent loop stops rather than
+                            # replanning into the same wall.
+                            blocked_reason = reason
+                            stop = True
+                            current = current.with_steps([step.blocked(reason)])
+                            await self._emit(
+                                on_event,
+                                StepEvent(
+                                    step_id=step.id.value, kind=str(step.kind),
+                                    status="blocked", description=step.description,
+                                    detail=reason,
+                                ),
+                            )
+                        running = [step.started() for step in admitted]
+                        current = current.with_steps(running)
+                        for step in running:
+                            await self._emit(
+                                on_event,
+                                StepEvent(
+                                    step_id=step.id.value, kind=str(step.kind),
+                                    status="running", description=step.description,
+                                ),
+                            )
+                            task = asyncio.ensure_future(
+                                self._run_step(
+                                    step, context=context, capabilities=capabilities,
+                                    confirmations=confirmations,
+                                    handlers=handlers or {}, plan=current,
+                                )
+                            )
+                            in_flight[task] = (launched, step)
+                            launched += 1
+                    elif not in_flight and not current.is_complete:
+                        # Nothing runnable, nothing running, plan not complete: every remaining
+                        # step depends on something that failed. Mark them explicitly rather
+                        # than spinning.
+                        current = current.mark_blocked_steps()
+                        if not current.ready_steps() and not current.is_complete:
+                            blocked_reason = "dependencies_failed"
+                            break
+                        continue
 
-            current = current.with_steps(updated)
-            if blocked_reason:
-                break
+                if not in_flight:
+                    break
+                if current.is_complete and not in_flight:
+                    break
+
+                # Wake as soon as ANY step finishes, so its dependents start now rather than
+                # when the slowest step of a batch is done.
+                done, _ = await asyncio.wait(in_flight, return_when=asyncio.FIRST_COMPLETED)
+                updated_all: list[PlanStep] = []
+                for task in sorted(done, key=lambda t: in_flight[t][0]):
+                    _, step = in_flight.pop(task)
+                    exc = task.exception()
+                    outcome = exc if exc is not None else task.result()
+                    updated_all.extend(await _settle(step, outcome))
+                current = current.with_steps(updated_all)
+                if blocked_reason:
+                    stop = True
+                if stop and not in_flight:
+                    break
+                if not stop and current.is_complete and not in_flight:
+                    break
+        finally:
+            for task in in_flight:
+                task.cancel()
+            if in_flight:
+                await asyncio.gather(*in_flight, return_exceptions=True)
 
         duration = (time.perf_counter() - started) * 1000.0
         return ExecutionOutcome(
@@ -427,7 +461,8 @@ class ExecutionEngine:
             return None
 
     def _taint_ordered(
-        self, batch: Sequence[PlanStep], context: ToolContext
+        self, batch: Sequence[PlanStep], context: ToolContext,
+        inflight: Sequence[PlanStep] = (),
     ) -> Sequence[PlanStep]:
         """Keep a taint-gated step out of a batch that contains a tainting step.
 
@@ -444,7 +479,22 @@ class ExecutionEngine:
         the batch is gated and at least one is tainting (e.g. two MCP tools), the first tainting
         step runs alone.
         """
-        if context.tainted or len(batch) < 2:
+        if context.tainted:
+            return batch
+        if inflight:
+            # Rolling scheduler: a tainting step already running will taint the context when it
+            # returns, so a taint-gated step must not start until it has (same rule as a batch).
+            running_tainting = any(
+                (spec := self._tool_spec(s)) is not None and "untrusted_content" in spec.tags
+                for s in inflight
+            )
+            if running_tainting:
+                return [
+                    step for step in batch
+                    if not ((spec := self._tool_spec(step)) is not None
+                            and spec.side_effecting and not spec.workspace_local)
+                ]
+        if len(batch) < 2:
             return batch
         specs = [self._tool_spec(step) for step in batch]
         tainting = [
