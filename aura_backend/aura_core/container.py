@@ -524,6 +524,7 @@ class Container:
                 RecoveryPolicy(backoff_base_s=settings.reasoning.loop_recovery_backoff_s)
                 if settings.reasoning.loop_recovery_policy_enabled else None
             ),
+            clock=self.clock.monotonic,
         )
         # The engineer agent's bounded plan-execute-observe-replan loop (execution/agentic_loop.py)
         # -- `None` when planning itself is disabled, since there is nothing to loop.

@@ -31,6 +31,7 @@ __all__ = [
     "current_generation_budget",
     "generation_budget",
     "no_generation_budget",
+    "paused_generation_budget",
     "time_left",
 ]
 
@@ -38,19 +39,41 @@ __all__ = [
 class GenerationBudget:
     """``seconds`` of generation time, counted from the first :meth:`remaining` call."""
 
-    __slots__ = ("seconds", "_expires_at")
+    __slots__ = ("seconds", "_expires_at", "_paused_at", "_pause_depth")
 
     def __init__(self, seconds: float) -> None:
         if seconds <= 0:
             raise ValueError("a generation budget must be positive")
         self.seconds = seconds
         self._expires_at: float | None = None
+        self._paused_at: float | None = None
+        self._pause_depth = 0
 
     def remaining(self, now: float) -> float:
-        """Seconds left at monotonic time ``now`` (negative once spent). Starts the clock."""
+        """Seconds left at monotonic time ``now`` (negative once spent). Starts the clock.
+
+        While paused the answer is frozen at what was left when the pause began.
+        """
+        if self._paused_at is not None:
+            now = self._paused_at
         if self._expires_at is None:
             self._expires_at = now + self.seconds
         return self._expires_at - now
+
+    def pause(self, now: float) -> None:
+        """Stop the clock (reentrant): time until the matching :meth:`resume` is not charged."""
+        self._pause_depth += 1
+        if self._pause_depth == 1:
+            self._paused_at = now
+
+    def resume(self, now: float) -> None:
+        if self._pause_depth == 0:
+            return
+        self._pause_depth -= 1
+        if self._pause_depth == 0 and self._paused_at is not None:
+            if self._expires_at is not None:
+                self._expires_at += max(0.0, now - self._paused_at)
+            self._paused_at = None
 
 
 _AMBIENT: ContextVar[GenerationBudget | None] = ContextVar("aura_generation_budget", default=None)
@@ -96,6 +119,26 @@ def no_generation_budget() -> Iterator[None]:
             _AMBIENT.reset(token)
         except ValueError:  # pragma: no cover - see `generation_budget`
             pass
+
+
+@contextlib.contextmanager
+def paused_generation_budget(clock: Callable[[], float]) -> Iterator[None]:
+    """Do not charge the block to the ambient budget (a no-op when there is none).
+
+    For tool execution on a chat turn: the budget bounds *model* time, and a 40 s tool must not
+    leave the answer generation with nothing (it would end in ``turn_deadline``). The budget
+    object is paused directly rather than through the context variable, so this is safe across
+    the ``yield`` points of a streaming turn.
+    """
+    budget = _AMBIENT.get()
+    if budget is None:
+        yield
+        return
+    budget.pause(clock())
+    try:
+        yield
+    finally:
+        budget.resume(clock())
 
 
 def time_left(clock: Callable[[], float]) -> float | None:
