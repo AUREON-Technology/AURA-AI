@@ -28,12 +28,18 @@ PATTERNS: dict[str, re.Pattern[str]] = {
     "Slack token": re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{10,}"),
     "Google API key": re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"),
     "Anthropic/OpenAI-style key": re.compile(r"\bsk-(?:ant-)?[A-Za-z0-9_-]{32,}"),
+    "Google OAuth client secret": re.compile(r"\bGOCSPX-[0-9A-Za-z_-]{20,}"),
+    "Google AI Studio key": re.compile(r"\bAQ\.[0-9A-Za-z_-]{40,}"),
+    # A signed token: Qdrant Cloud API keys are JWTs, as are most service tokens.
+    "JSON Web Token": re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{20,}"),
 }
 
-# Tracked files whose *name* alone is a credential, whatever they contain.
+# Tracked files whose *name* alone is a credential, whatever they contain. `.env` files count;
+# their `.example` / `.sample` / `.template` forms do not (their contents are still scanned).
 FORBIDDEN_NAMES = re.compile(
     r"(^|/)(credentials\.json|service[-_]?account[^/]*\.json|[^/]*firebase-adminsdk[^/]*\.json|"
-    r"[^/]*\.pem|[^/]*\.p12|id_(?:rsa|ecdsa|ed25519))$", re.IGNORECASE)
+    r"[^/]*\.pem|[^/]*\.p12|id_(?:rsa|ecdsa|ed25519)|"
+    r"[^/]*\.env|\.env\.(?!(?:[^/]*\.)?(?:example|sample|template)$)[^/]*)$", re.IGNORECASE)
 
 # (path, pattern name) -> why it may stay tracked. Every entry is a decision someone has to defend.
 ALLOWLIST: dict[tuple[str, str], str] = {

@@ -5,7 +5,9 @@ import importlib.util
 import subprocess
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "check_secrets.py"
+import pytest
+
+SCRIPT =Path(__file__).resolve().parents[3] / "scripts" / "check_secrets.py"
 
 
 def _load():
@@ -57,3 +59,26 @@ def test_allowlisted_firebase_client_key_passes(tmp_path):
 def test_same_key_elsewhere_is_still_flagged(tmp_path):
     repo = _repo(tmp_path, {"other.json": '"' + "AIza" + "A" * 35 + '"'})
     assert any("Google API key" in f for f in _load().scan(repo))
+
+
+@pytest.mark.parametrize(("kind", "secret"), [
+    ("Google OAuth client secret", "GOCSPX-" + "a1B2" * 7),
+    ("Google AI Studio key", "AQ." + "Ab8R" * 12 + "xy"),
+    ("JSON Web Token", ".".join(["eyJ" + "a" * 20, "eyJ" + "b" * 30, "c" * 43])),
+])
+def test_other_leaked_key_formats_are_found_without_echoing_them(tmp_path, kind, secret):
+    repo = _repo(tmp_path, {"cfg.txt": f"KEY = {secret}\n"})
+    assert _load().scan(repo) == [f"cfg.txt:1: {kind}"]
+
+
+@pytest.mark.parametrize("name", [".env", "aura_backend/.env", "deploy/.env.production", "prod.env"])
+def test_env_files_are_refused_by_name(tmp_path, name):
+    repo = _repo(tmp_path, {name: "PORT=8000\n"})
+    assert _load().scan(repo) == [f"{name}: file name is a credential (never commit it)"]
+
+
+@pytest.mark.parametrize("name", ["deploy/.env.example", "deploy/.env.development.example", ".env.sample",
+                                  ".env.template"])
+def test_env_templates_may_be_tracked(tmp_path, name):
+    repo = _repo(tmp_path, {name: "PORT=8000\n"})
+    assert _load().scan(repo) == []
