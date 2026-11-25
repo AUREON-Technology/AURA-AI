@@ -316,6 +316,8 @@ class AgenticExecutor:
             if run_context is not None else None
         )
         tokens_used = int(plan.generation_tokens)
+        tools_ms = 0.0
+        replan_ms = 0.0
         stop_reason: str | None = None
         exhausted: str | None = None
         outcome: ExecutionOutcome | None = None
@@ -343,6 +345,7 @@ class AgenticExecutor:
                 if outcome is None:
                     stop_reason = "no_outcome"
                     break
+                tools_ms += float(getattr(outcome, "duration_ms", 0.0) or 0.0)
                 if recorder is not None:
                     await recorder.observed(
                         outcome, iteration=iteration, gate=gate,
@@ -356,9 +359,11 @@ class AgenticExecutor:
                     await recorder.evaluated(iteration=iteration, stop_reason=stop_reason)
                 if stop_reason is not None:
                     break
+                replan_started = time.perf_counter()
                 revised = await self._next_plan(
                     outcome, available_tools=available_tools, max_iterations=max_iterations
                 )
+                replan_ms += (time.perf_counter() - replan_started) * 1000.0
                 if revised is None:
                     stop_reason = "replan_failed"
                     break
@@ -381,6 +386,12 @@ class AgenticExecutor:
             if outcome is not None:
                 outcome.run_id = recorder.run.id.value
         if outcome is not None:
+            # The outcome describes the last pass; the turn's timings cover every pass.
+            try:
+                outcome.tools_ms = tools_ms
+                outcome.replan_ms = replan_ms
+            except AttributeError:  # an executor double whose outcome has no timing slots
+                pass
             yield outcome
 
     async def run(
