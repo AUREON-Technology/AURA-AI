@@ -93,6 +93,7 @@ class TestThroughARealTurn:
         assert len(frames_of(frames, "context_pressure")) == 1
         done = frames_of(frames, "done")[0]
         assert done["agent_loop"]["history_compacted"] is True
+        await container.kernel.wait_for_post_turn()  # the exchange is persisted after `done` (KAN-110)
         state = await container.episodic.load(session, ENGINEER)
         assert state.folded == 4 and state.summary, "the four older messages are now a summary"
         assert [m.content for m in state.messages][-2:] == ["continue", "Done."]

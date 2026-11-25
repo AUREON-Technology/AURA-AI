@@ -238,10 +238,14 @@ class TestSessionHistoryAndPastedText:
         await container.kernel.run(_turn("what did I just tell you?", session_id=SessionId(session)))
         return history
 
-    async def test_by_default_the_transcript_keeps_the_key_as_typed(self, monkeypatch) -> None:
+    async def test_with_the_input_switch_on_the_transcript_holds_the_guarded_text(self, monkeypatch) -> None:
+        """Audit B3: once the input guard has redacted the message, the guarded text *is* the
+        message, so history never holds the key even with the history switch off. (Before the two
+        branches were merged this test asserted the key was kept as typed.)"""
         container = _container(monkeypatch, INPUT="true")
         history = await self._two_turns(container, "s-default")
-        assert any(_fake_github_token() in m.content for m in history.messages)
+        assert history.messages, "history was written"
+        assert not any(_fake_github_token() in m.content for m in history.messages)
 
     async def test_the_history_switch_redacts_what_is_persisted(self, monkeypatch) -> None:
         container = _container(monkeypatch, INPUT="true", HISTORY="true")
@@ -255,7 +259,12 @@ class TestSessionHistoryAndPastedText:
         container = _container(monkeypatch, INPUT="true")
         await container.startup()
         session = SessionId("s-old")
-        await container.kernel.run(_turn(f"my token is {_fake_github_token()}", session_id=session))
+        # Seeded directly: a transcript stored before any redaction existed. A turn run now would
+        # already persist the guarded text (audit B3), so it could not stand in for one.
+        await container.episodic.append(
+            session, USER,
+            user_message=f"my token is {_fake_github_token()}", assistant_message="noted",
+        )
         raw, _ = await container.episodic.history(session, USER)
         assert any(_fake_github_token() in m.content for m in raw.messages)
 
@@ -287,5 +296,6 @@ class TestSessionHistoryAndPastedText:
         frames = [f async for f in container.kernel.stream(
             _turn(f"my token is {_fake_github_token()}", session_id=session))]
         assert frames[-1]["type"] == "done"
+        await container.kernel.wait_for_post_turn()  # history is written after the done frame (KAN-110)
         history, _ = await container.episodic.history(session, USER)
         assert history.messages and not any(_fake_github_token() in m.content for m in history.messages)
