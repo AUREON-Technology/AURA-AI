@@ -32,7 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         npm \
     && rm -rf /var/lib/apt/lists/*
 
-# Security scanners for the `scan_security` tool (ADR-048), pinned like everything else here: Semgrep and
+# Security scanners for the `scan_security` tool (ADR-050), pinned like everything else here: Semgrep and
 # Bandit in their own virtualenv (so they cannot disturb a workspace's Python), Gitleaks as a release binary
 # checked against its published sha256, and the Semgrep rule set as a checkout at one commit. The rules are
 # bundled so a scan needs no network and no `--config auto` (which would phone home); the tool never reads

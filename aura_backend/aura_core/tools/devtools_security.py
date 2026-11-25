@@ -1,4 +1,4 @@
-"""``scan_security``: Semgrep, Gitleaks and Bandit run in the engineer's sandbox (ADR-048).
+"""``scan_security``: Semgrep, Gitleaks and Bandit run in the engineer's sandbox (ADR-050).
 
 ``scan_code_security`` is a pattern scanner inside the gateway (no process, no network). Deeper tools
 exist -- Semgrep for data-flow-aware rules in many languages, Gitleaks for secrets and git history,

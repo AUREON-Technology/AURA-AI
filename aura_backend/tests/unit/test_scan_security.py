@@ -1,4 +1,4 @@
-"""ADR-048: ``scan_security`` runs Semgrep, Gitleaks and Bandit in the engineer's sandbox.
+"""ADR-050: ``scan_security`` runs Semgrep, Gitleaks and Bandit in the engineer's sandbox.
 
 The parsers are tested on the real output of those tools (``tests/fixtures/scanners``: semgrep 1.187, bandit
 1.9.4, gitleaks 8.28 over a small vulnerable project). The tool is tested through ``InMemorySandboxRunner``
