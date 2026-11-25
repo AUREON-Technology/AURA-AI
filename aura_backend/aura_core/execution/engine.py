@@ -227,8 +227,8 @@ class ExecutionEngine:
         tool_reports: list[Any] = []
         pending_calls: list[PendingCall] = []
         failure_messages: dict[str, str] = {}
-        # Steps waiting out a retry backoff: step id -> the monotonic time they may relaunch.
-        held: dict[str, float] = {}
+        # Steps waiting out a retry backoff: step id -> (monotonic time it may relaunch, backoff).
+        held: dict[str, tuple[float, float]] = {}
         steps_run = 0
         blocked_reason: str | None = None
         current = plan
@@ -360,7 +360,7 @@ class ExecutionEngine:
                     if delay > 0:
                         # Only this step waits out its backoff; the rest of the plan keeps
                         # running, and the scheduler will not relaunch it before this time.
-                        held[step.id.value] = time.perf_counter() + delay
+                        held[step.id.value] = (time.perf_counter() + delay, delay)
                 updated.append(failed)
                 await self._emit(
                     on_event,
@@ -389,15 +389,20 @@ class ExecutionEngine:
                 if not stop:
                     slots = self._max_parallel - len(in_flight)
                     now = time.perf_counter()
-                    ready = (
-                        [s for s in current.ready_steps() if held.get(s.id.value, 0.0) <= now]
-                        if slots > 0 else ()
-                    )
-                    if ready:
-                        candidates = self._taint_ordered(
-                            ready[:slots], context,
-                            inflight=[s for _, s in in_flight.values()],
-                        )
+                    ready = [
+                        s for s in current.ready_steps()
+                        if held.get(s.id.value, (0.0, 0.0))[0] <= now
+                    ] if slots > 0 else []
+                    # A step held for its backoff may be a tainting step that has not run yet:
+                    # it counts as in flight for ordering, or a gated step could start before it.
+                    candidates = self._taint_ordered(
+                        ready[:slots], context,
+                        inflight=[
+                            *(s for _, s in in_flight.values()),
+                            *(s for s in current.steps if s.id.value in held),
+                        ],
+                    ) if ready else []
+                    if candidates:
                         admitted: list[PlanStep] = []
                         for step in candidates:
                             reason = (
@@ -446,18 +451,17 @@ class ExecutionEngine:
                             launched += 1
                     elif not in_flight and not current.is_complete:
                         backing_off = [
-                            (held[s.id.value], s.id.value)
+                            (held[s.id.value][0], s.id.value, held[s.id.value][1])
                             for s in current.ready_steps() if s.id.value in held
                         ]
                         if backing_off:
-                            # Only steps waiting out a retry backoff remain: sleep until the
-                            # earliest wakes (never past the deadline). The wake is cleared
+                            # Nothing is running and only backed-off steps remain: wait out the
+                            # earliest one (never past the deadline). Nothing else runs while
+                            # idle, so its backoff is its remaining wait. The entry is cleared
                             # explicitly, so a sleeper that does not advance the clock still
                             # makes progress.
-                            wake, sid = min(backing_off)
-                            await self._sleep(max(0.0, min(
-                                wake - time.perf_counter(), deadline - time.perf_counter(),
-                            )))
+                            _, sid, backoff = min(backing_off)
+                            await self._sleep(max(0.0, min(backoff, deadline - time.perf_counter())))
                             held.pop(sid, None)
                             continue
                         # Nothing runnable, nothing running, plan not complete: every remaining
