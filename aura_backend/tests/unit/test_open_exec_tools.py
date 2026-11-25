@@ -151,7 +151,7 @@ class TestGenerateAndRunTests:
 class TestAnalyzeTestQuality:
     async def test_coverage_and_mutation_on_tests_that_catch_the_mutation(self, ctx) -> None:
         out = json.loads(await _TOOLS["analyze_test_quality"].execute(
-            {"source_code": SOURCE, "test_code": TESTS, "timeout_seconds": 20}, ctx
+            {"source_code": SOURCE, "test_code": TESTS, "timeout_s": 20}, ctx
         ))
         assert out["coverage"]["available"] is True, out["coverage"]
         assert out["coverage"]["tests_passed"] is True
@@ -162,7 +162,7 @@ class TestAnalyzeTestQuality:
     async def test_tests_that_miss_the_mutation_score_zero(self, ctx) -> None:
         weak = "from module_under_test import is_on\n\n\ndef test_runs():\n    is_on()\n"
         out = json.loads(await _TOOLS["analyze_test_quality"].execute(
-            {"source_code": SOURCE, "test_code": weak, "operations": "mutation", "timeout_seconds": 20}, ctx
+            {"source_code": SOURCE, "test_code": weak, "operations": "mutation", "timeout_s": 20}, ctx
         ))
         assert out["mutation"]["mutation_score"] == 0.0
         assert "coverage" not in out
@@ -170,7 +170,7 @@ class TestAnalyzeTestQuality:
     async def test_a_red_baseline_is_refused_with_the_reason(self, ctx) -> None:
         failing = "from module_under_test import is_on\n\n\ndef test_bad():\n    assert is_on() is False\n"
         out = json.loads(await _TOOLS["analyze_test_quality"].execute(
-            {"source_code": SOURCE, "test_code": failing, "operations": "mutation", "timeout_seconds": 20}, ctx
+            {"source_code": SOURCE, "test_code": failing, "operations": "mutation", "timeout_s": 20}, ctx
         ))
         assert out["mutation"]["evaluated"] is False
         assert "does not pass" in out["mutation"]["error"]

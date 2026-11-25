@@ -2,6 +2,8 @@ import ast
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
+from ._input import SourceReadError, read_source_file
+
 
 class ASTCodeAnalyzer:
     """AST-based static analyzer for extracting Python module structure and metadata."""
@@ -310,6 +312,14 @@ class ASTCodeAnalyzer:
                 "offset": e.offset,
                 "file_path": file_path,
             }
+        except (ValueError, RecursionError, MemoryError) as e:
+            return {
+                "status": "error",
+                "error": f"Source code could not be parsed: {type(e).__name__}",
+                "line": None,
+                "offset": None,
+                "file_path": file_path,
+            }
 
         dependencies = cls.extract_dependencies(tree)
         globals_list = cls.extract_constants_and_globals(tree)
@@ -349,24 +359,33 @@ class ASTCodeAnalyzer:
         include_methods_in_functions: bool = False,
         include_calls: bool = True,
         compact: bool = False,
+        base_dir: Union[str, Path, None] = None,
     ) -> Dict[str, Any]:
-        path = Path(file_path)
-        if not path.exists():
-            return {"status": "error", "error": f"File not found: {path}"}
-        if not path.is_file():
-            return {"status": "error", "error": f"Path is not a file: {path}"}
+        """Analyze a Python file. A PDF is read in full (every page) before analysis.
 
+        The result carries an ``input`` block saying what was read (kind, pages, unreadable pages).
+        Text extracted from a PDF has lost its indentation, so it usually will not parse as Python;
+        that is reported as an error that says so -- not as a crash, and not as an empty success.
+        ``base_dir`` confines the path to a directory when the caller is not trusted.
+        """
         try:
-            source_code = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            source_code = path.read_text(encoding="latin-1")
-        except Exception as e:
-            return {"status": "error", "error": f"Failed to read file: {str(e)}"}
+            read = read_source_file(file_path, base_dir=base_dir)
+        except SourceReadError as e:
+            return {"status": "error", "error": str(e), "file_path": str(file_path)}
 
-        return cls.ast_code_analyzer(
-            source_code=source_code,
+        result = cls.ast_code_analyzer(
+            source_code=read.text,
             include_methods_in_functions=include_methods_in_functions,
             include_calls=include_calls,
             compact=compact,
-            file_path=str(path),
+            file_path=str(file_path),
         )
+        result["input"] = read.describe()
+        if read.warnings():
+            result["warnings"] = read.warnings()
+        if read.kind == "pdf" and result.get("status") == "error":
+            result["error"] += (
+                f" (the PDF's {read.pages} page(s) were read in full, but text extracted from a PDF "
+                "has no indentation and is rarely valid Python; pass the original .py file instead)"
+            )
+        return result

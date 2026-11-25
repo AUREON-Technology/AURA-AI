@@ -259,7 +259,7 @@ class PlanningEngine:
         tool_lines = "\n".join(_render_tool_line(t) for t in available_tools)
         rendered = self._prompts.render(
             "task.plan_decomposition",
-            {"goal": goal.description, "tools": tool_lines, "max_steps": str(limit)},
+            {"goal": _goal_text(goal), "tools": tool_lines, "max_steps": str(limit)},
         )
 
         try:
@@ -447,6 +447,7 @@ class PlanningEngine:
         reason: str,
         available_tools: Sequence[Mapping[str, Any]] = (),
         limit: int | None = None,
+        feedback: Sequence[str] = (),
     ) -> Plan:
         """Produce a revised plan after a failure.
 
@@ -456,6 +457,11 @@ class PlanningEngine:
         ``limit`` mirrors :meth:`can_replan`'s override -- a caller with its own iteration budget
         (``AgenticExecutor``) passes its ``max_plan_iterations`` through here too, so this
         method's own guard cannot reject a revision that its caller already confirmed was allowed.
+
+        ``feedback`` (ADR-039) is extra, already-formatted observations the loop wants the revised
+        plan to act on -- a failing test run, a validator's message, the critic's findings. They are
+        the loop's own words about what happened, so they ride in the goal text like the
+        completed/failed lines do. Empty (the default) leaves the revision prompt exactly as it was.
         """
         if not self.can_replan(plan, limit=limit):
             raise PlanningError(
@@ -475,11 +481,26 @@ class PlanningEngine:
                 f"Failed: {s.description} ({s.error_kind})" for s in failed
             ]
         )
-        revised_goal = Goal(
-            description=(
+        notes = "\n".join(f"- {line}" for line in feedback if line)
+        if notes and not context:
+            description = (
+                f"{plan.goal.description}\n\nA review of the previous plan found problems:\n"
+                f"{notes}\n\nPlan the whole task again, fixing them."
+            )
+        else:
+            description = (
                 f"{plan.goal.description}\n\nProgress so far:\n{context}\n\n"
-                f"Plan the remaining work only. Do not repeat completed steps."
-            ),
+                + (
+                    f"Observations to act on:\n{notes}\n\n"
+                    "If an observation says tests failed, that step is not finished work even though "
+                    "it ran: plan the fix and a new step that re-runs the tests. Otherwise plan "
+                    "the remaining work only and do not repeat completed steps."
+                    if notes else
+                    "Plan the remaining work only. Do not repeat completed steps."
+                )
+            )
+        revised_goal = Goal(
+            description=description,
             success_criteria=plan.goal.success_criteria,
             constraints=plan.goal.constraints,
             priority=plan.goal.priority,
@@ -527,6 +548,19 @@ class PlanningEngine:
     @staticmethod
     def goal_from_message(message: str, *, criteria: Sequence[str] = ()) -> Goal:
         return Goal(description=message.strip(), success_criteria=tuple(criteria))
+
+
+def _goal_text(goal: Goal) -> str:
+    """The goal as the planner sees it. With ``success_criteria`` (ADR-047) they are listed, so the
+    plan includes a step that produces evidence for each; without them it is the description
+    unchanged."""
+    if not goal.success_criteria:
+        return goal.description
+    listed = "\n".join(f"- {c}" for c in goal.success_criteria)
+    return (
+        f"{goal.description}\n\nAcceptance criteria (the finished run is checked against these "
+        f"using the tools' own output, so include steps whose output shows each one):\n{listed}"
+    )
 
 
 def _parse_json_object(text: str) -> dict[str, Any]:

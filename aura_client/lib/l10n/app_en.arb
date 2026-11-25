@@ -2421,12 +2421,20 @@
   "agentLockedElsewhereMessage": "This workspace's plan doesn't include the Engineer, but {workspace} does. Switch to it to use the Engineer here.",
   "@agentLockedElsewhereMessage": {
     "description": "Desktop Engineer panel: names the workspace whose plan includes the Engineer",
-    "placeholders": {"workspace": {"type": "String"}}
+    "placeholders": {
+      "workspace": {
+        "type": "String"
+      }
+    }
   },
   "agentLockedSwitchTo": "Switch to {workspace}",
   "@agentLockedSwitchTo": {
     "description": "Button: make this workspace the active one",
-    "placeholders": {"workspace": {"type": "String"}}
+    "placeholders": {
+      "workspace": {
+        "type": "String"
+      }
+    }
   },
   "agentEmptyTitle": "No messages yet",
   "@agentEmptyTitle": {
@@ -5147,7 +5155,11 @@
   "chatPersonaSwitchToUse": "Included in {workspace} -- tap to switch to it and use the Engineer",
   "@chatPersonaSwitchToUse": {
     "description": "Persona picker: subtitle of the Engineer when another of the person's workspaces includes it; tapping switches to that workspace",
-    "placeholders": {"workspace": {"type": "String"}}
+    "placeholders": {
+      "workspace": {
+        "type": "String"
+      }
+    }
   },
   "chatWithheldNotice": "This response was withheld by a safety check.",
   "@chatWithheldNotice": {
@@ -7107,6 +7119,352 @@
   "@desktopSignInReturnFailed": {
     "description": "Web desktop sign-in page: the browser would not navigate back to the desktop app's local address"
   },
+  "chatToolAsksApproval": "Asks for your approval before it runs",
+  "@chatToolAsksApproval": {
+    "description": "Tool chip tooltip: the server holds a call to this tool for the user's approval"
+  },
+  "chatToolChangesThings": "This action changes things outside the chat.",
+  "@chatToolChangesThings": {
+    "description": "Confirmation card: caption on a pending tool call that has side effects"
+  },
+  "engineeringTasksTooltip": "Agent tasks",
+  "@engineeringTasksTooltip": {
+    "description": "Engineer history: app bar button to the agent tasks screen"
+  },
+  "engineeringRunSearchTooltip": "Search runs",
+  "@engineeringRunSearchTooltip": {
+    "description": "Engineer history: app bar button to run search"
+  },
+  "engineeringUsageTooltip": "Usage and cost",
+  "@engineeringUsageTooltip": {
+    "description": "Engineer history: app bar button to the usage screen"
+  },
+  "agentTasksTitle": "Agent tasks",
+  "@agentTasksTitle": {
+    "description": "Agent tasks screen title"
+  },
+  "agentTasksGoalHint": "Describe the task for the agent",
+  "@agentTasksGoalHint": {
+    "description": "Agent tasks: goal field hint"
+  },
+  "agentTasksSend": "Send task",
+  "@agentTasksSend": {
+    "description": "Agent tasks: send button"
+  },
+  "agentTasksWaiting": "Waiting to send",
+  "@agentTasksWaiting": {
+    "description": "Agent tasks: label on a queued submission not yet accepted"
+  },
+  "agentTasksSending": "Sending…",
+  "@agentTasksSending": {
+    "description": "Agent tasks: label on a submission whose request is in flight"
+  },
+  "agentTasksNotSent": "Not sent",
+  "@agentTasksNotSent": {
+    "description": "Agent tasks: label on a submission the server refused for good"
+  },
+  "agentTasksRetryingIn": "Attempt {count} failed. Will retry on its own.",
+  "@agentTasksRetryingIn": {
+    "description": "Agent tasks: a waiting submission that has failed before",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "agentTasksQueuedOffline": "Saved. It will be sent when you are back online.",
+  "@agentTasksQueuedOffline": {
+    "description": "Agent tasks: snackbar after a submission could not be sent yet"
+  },
+  "agentTasksSentSnack": "Task sent.",
+  "@agentTasksSentSnack": {
+    "description": "Agent tasks: snackbar after the server accepted a submission"
+  },
+  "agentTasksAlreadySentSnack": "That task had already been received. Nothing was run twice.",
+  "@agentTasksAlreadySentSnack": {
+    "description": "Agent tasks: snackbar when the server recognised a replayed submission"
+  },
+  "agentTasksNotSentSnack": "The server refused this task. See the reason on the list.",
+  "@agentTasksNotSentSnack": {
+    "description": "Agent tasks: snackbar after a submission was refused for good"
+  },
+  "agentTasksQueueFull": "Too many unsent tasks. Wait for some to be sent or dismiss them.",
+  "@agentTasksQueueFull": {
+    "description": "Agent tasks: snackbar when the local queue is full"
+  },
+  "agentTasksRetryNow": "Retry now",
+  "@agentTasksRetryNow": {
+    "description": "Agent tasks: button to replay the queue now"
+  },
+  "agentTasksDismiss": "Dismiss",
+  "@agentTasksDismiss": {
+    "description": "Agent tasks: button to remove a queued submission"
+  },
+  "agentTasksSendAgain": "Send again as a new task",
+  "@agentTasksSendAgain": {
+    "description": "Agent tasks: button on a refused submission"
+  },
+  "agentTasksSentTitle": "Recent tasks",
+  "@agentTasksSentTitle": {
+    "description": "Agent tasks: header of the list the server holds"
+  },
+  "agentTasksNoneYet": "No tasks yet",
+  "@agentTasksNoneYet": {
+    "description": "Agent tasks: empty state title"
+  },
+  "agentTasksNoneYetMessage": "Tasks you send show up here with their status.",
+  "@agentTasksNoneYetMessage": {
+    "description": "Agent tasks: empty state message"
+  },
+  "agentTasksConflict": "This request was already used with different contents, so it was not sent.",
+  "@agentTasksConflict": {
+    "description": "Agent tasks: a 409 idempotency_key_reused refusal"
+  },
+  "agentTaskStatusQueued": "Queued",
+  "@agentTaskStatusQueued": {
+    "description": "Agent task status"
+  },
+  "agentTaskStatusRunning": "Running",
+  "@agentTaskStatusRunning": {
+    "description": "Agent task status"
+  },
+  "agentTaskStatusAwaitingApproval": "Needs your approval",
+  "@agentTaskStatusAwaitingApproval": {
+    "description": "Agent task status"
+  },
+  "agentTaskStatusSucceeded": "Done",
+  "@agentTaskStatusSucceeded": {
+    "description": "Agent task status"
+  },
+  "agentTaskStatusFailed": "Failed",
+  "@agentTaskStatusFailed": {
+    "description": "Agent task status"
+  },
+  "agentTaskStatusCancelled": "Cancelled",
+  "@agentTaskStatusCancelled": {
+    "description": "Agent task status"
+  },
+  "runSearchTitle": "Run history",
+  "@runSearchTitle": {
+    "description": "Run search screen title"
+  },
+  "runSearchHint": "Search by agent, status or tool",
+  "@runSearchHint": {
+    "description": "Run search: field hint"
+  },
+  "runSearchButton": "Search",
+  "@runSearchButton": {
+    "description": "Run search: button"
+  },
+  "runSearchResults": "{count} runs",
+  "@runSearchResults": {
+    "description": "Run search: result count",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "runSearchEmpty": "No runs match",
+  "@runSearchEmpty": {
+    "description": "Run search: empty state title"
+  },
+  "runSearchEmptyMessage": "Try a different word, or clear the search to see the newest runs.",
+  "@runSearchEmptyMessage": {
+    "description": "Run search: empty state message"
+  },
+  "runStatusFailed": "Failed",
+  "@runStatusFailed": {
+    "description": "Agent run status"
+  },
+  "runStatusCompleted": "Completed",
+  "@runStatusCompleted": {
+    "description": "Agent run status"
+  },
+  "runStatusPartial": "Partly done",
+  "@runStatusPartial": {
+    "description": "Agent run status"
+  },
+  "runStatusRunning": "Running",
+  "@runStatusRunning": {
+    "description": "Agent run status"
+  },
+  "runStatusAwaitingApproval": "Needs approval",
+  "@runStatusAwaitingApproval": {
+    "description": "Agent run status"
+  },
+  "runStatusBudgetExhausted": "Stopped at its limit",
+  "@runStatusBudgetExhausted": {
+    "description": "Agent run status"
+  },
+  "runSummaryLine": "{steps} plan steps, {tools} tool calls",
+  "@runSummaryLine": {
+    "description": "Run tile: counts",
+    "placeholders": {
+      "steps": {
+        "type": "int"
+      },
+      "tools": {
+        "type": "int"
+      }
+    }
+  },
+  "runTimelineTitle": "Run timeline",
+  "@runTimelineTitle": {
+    "description": "Run timeline sheet title"
+  },
+  "runTimelineNoSteps": "No steps were recorded for this run.",
+  "@runTimelineNoSteps": {
+    "description": "Run timeline: empty"
+  },
+  "runTimelineIteration": "Pass {n}",
+  "@runTimelineIteration": {
+    "description": "Run timeline: iteration heading",
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "runTimelineStepFailed": "Failed",
+  "@runTimelineStepFailed": {
+    "description": "Run timeline: step failed"
+  },
+  "runMetricElapsed": "Elapsed",
+  "@runMetricElapsed": {
+    "description": "Run detail metric label"
+  },
+  "runMetricTokens": "Tokens",
+  "@runMetricTokens": {
+    "description": "Run detail metric label"
+  },
+  "runMetricToolCalls": "Tool calls",
+  "@runMetricToolCalls": {
+    "description": "Run detail metric label"
+  },
+  "runMetricIterations": "Passes",
+  "@runMetricIterations": {
+    "description": "Run detail metric label"
+  },
+  "runSeconds": "{seconds} s",
+  "@runSeconds": {
+    "description": "Duration in seconds",
+    "placeholders": {
+      "seconds": {
+        "type": "String"
+      }
+    }
+  },
+  "usageTitle": "Usage and cost",
+  "@usageTitle": {
+    "description": "Usage screen title"
+  },
+  "usagePeriodDay": "24 hours",
+  "@usagePeriodDay": {
+    "description": "Usage period switch"
+  },
+  "usagePeriodWeek": "7 days",
+  "@usagePeriodWeek": {
+    "description": "Usage period switch"
+  },
+  "usagePeriodMonth": "30 days",
+  "@usagePeriodMonth": {
+    "description": "Usage period switch"
+  },
+  "usageGroupDay": "By day",
+  "@usageGroupDay": {
+    "description": "Usage group-by switch"
+  },
+  "usageGroupAgent": "By agent",
+  "@usageGroupAgent": {
+    "description": "Usage group-by switch"
+  },
+  "usageGroupTask": "By task",
+  "@usageGroupTask": {
+    "description": "Usage group-by switch"
+  },
+  "usageTotalTurns": "Turns",
+  "@usageTotalTurns": {
+    "description": "Usage total label"
+  },
+  "usageTotalTokensIn": "Tokens in",
+  "@usageTotalTokensIn": {
+    "description": "Usage total label"
+  },
+  "usageTotalTokensOut": "Tokens out",
+  "@usageTotalTokensOut": {
+    "description": "Usage total label"
+  },
+  "usageTotalCost": "Cost",
+  "@usageTotalCost": {
+    "description": "Usage total label"
+  },
+  "usageFailedTurns": "{count} failed",
+  "@usageFailedTurns": {
+    "description": "Usage: failed turns in a row",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "usageCostValue": "{amount} USD",
+  "@usageCostValue": {
+    "description": "Usage: a cost in US dollars",
+    "placeholders": {
+      "amount": {
+        "type": "String"
+      }
+    }
+  },
+  "usageTruncated": "Totals may be incomplete: the server keeps only the most recent turns.",
+  "@usageTruncated": {
+    "description": "Usage: truncated window note"
+  },
+  "usageDisabled": "Usage is not recorded on this server.",
+  "@usageDisabled": {
+    "description": "Usage: recording is off"
+  },
+  "usageNoData": "Nothing recorded in this period",
+  "@usageNoData": {
+    "description": "Usage: empty"
+  },
+  "usageNoTask": "No task",
+  "@usageNoTask": {
+    "description": "Usage: group label for turns outside a task"
+  },
+  "usageBreakdown": "Breakdown",
+  "@usageBreakdown": {
+    "description": "Usage: bars section header"
+  },
+  "usageRecentTurns": "Recent turns",
+  "@usageRecentTurns": {
+    "description": "Usage: recent turns header"
+  },
+  "usageTurnLine": "{tokens} tokens, {seconds} s",
+  "@usageTurnLine": {
+    "description": "Usage: one turn line",
+    "placeholders": {
+      "tokens": {
+        "type": "int"
+      },
+      "seconds": {
+        "type": "String"
+      }
+    }
+  },
+  "usageTurnFailed": "Failed",
+  "@usageTurnFailed": {
+    "description": "Usage: turn failed label"
+  },
+  "usageTurnCached": "Cached",
+  "@usageTurnCached": {
+    "description": "Usage: turn answered from cache"
+  },
+  "hostdCodeProtectedGitInternals": "Writing inside .git (HEAD, the index, refs, objects) is never allowed: it can corrupt the repository. Use Git commands instead.",
+  "@hostdCodeProtectedGitInternals": {
+    "description": "aura_hostd error code protected_git_internals (hostd_error_codes.dart)"
+  },
   "webDaemonUnavailableTitle": "Pair a computer in the desktop app",
   "@webDaemonUnavailableTitle": {
     "description": "Web only: title of the Engineer daemon page, which a browser cannot run"
@@ -7138,5 +7496,57 @@
   "webEngineerPaneMessage": "Pick a run from the list to see its status, branch and output.",
   "@webEngineerPaneMessage": {
     "description": "Web wide layout: what to do in the empty Engineer detail pane"
-  }
+  },
+  "chatConfirmDetails": "Details",
+  "@chatConfirmDetails": {
+    "description": "Confirmation card: heading of the collapsed raw command/diff section"
+  },
+  "chatRiskAdvisory": "Automatic check: a missing warning does not mean it is safe.",
+  "@chatRiskAdvisory": {
+    "description": "Confirmation card: reminder that the risk chips are automatic and advisory"
+  },
+  "chatRiskCommand": "Risky command",
+  "@chatRiskCommand": {
+    "description": "Confirmation card: chatRiskCommand"
+  },
+  "chatRiskSensitiveFile": "Secret file",
+  "@chatRiskSensitiveFile": {
+    "description": "Confirmation card: chatRiskSensitiveFile"
+  },
+  "chatRiskMigration": "Database schema",
+  "@chatRiskMigration": {
+    "description": "Confirmation card: chatRiskMigration"
+  },
+  "chatRiskPipeline": "Build or deploy config",
+  "@chatRiskPipeline": {
+    "description": "Confirmation card: chatRiskPipeline"
+  },
+  "chatRiskDeployment": "Deployment",
+  "@chatRiskDeployment": {
+    "description": "Confirmation card: chatRiskDeployment"
+  },
+  "chatRiskRemoteWrite": "Writes to a remote",
+  "@chatRiskRemoteWrite": {
+    "description": "Confirmation card: chatRiskRemoteWrite"
+  },
+  "chatRiskLargeChange": "Large change",
+  "@chatRiskLargeChange": {
+    "description": "Confirmation card: chatRiskLargeChange"
+  },
+  "agentStopAllTitle": "Stop all agent activity",
+  "agentStopAllMessage": "This stops everything your agent is doing right now, on this server and on your paired computer. An action waiting for your approval stays waiting. Nothing already finished is undone.",
+  "agentStopAllConfirm": "Stop now",
+  "agentStopAllDone": "Stopped {turns} running turn(s) and closed {sessions} computer session(s).",
+  "@agentStopAllDone": {
+    "description": "Snackbar after stop-all: how many turns and desktop sessions were stopped",
+    "placeholders": {
+      "turns": {
+        "type": "int"
+      },
+      "sessions": {
+        "type": "int"
+      }
+    }
+  },
+  "agentStopAllNothing": "Nothing was running."
 }

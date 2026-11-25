@@ -14,6 +14,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/workspaces/active_workspace.dart';
+import '../engineering/data/agent_task_outbox.dart';
 import '../auth/presentation/auth_provider.dart';
 import '../workspaces/data/workspaces_client.dart';
 import 'sync_engine.dart';
@@ -24,6 +25,8 @@ final signedInSessionProvider = Provider<void>((ref) {
   // Listened, so the engine is never paused: it rebuilds on sign-in and sign-out itself
   // (`SyncEngine.build`), starting and cancelling its timer.
   ref.listen(syncEngineProvider, (_, _) {});
+  // Queued agent task submissions (row 91): replayed on sign-in, every 30 s and on app resume.
+  ref.listen(agentTaskOutboxDriverProvider, (_, _) {});
   ref.listen(authProvider.select((auth) => auth.value?.id), (previous, next) {
     if (next != null && next != previous) unawaited(_reconcileActiveWorkspace(ref));
   }, fireImmediately: true);

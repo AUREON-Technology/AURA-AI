@@ -107,4 +107,8 @@ class BackendConnection {
   }
 
   void stop() => _client?.stop();
+
+  /// The daemon is exiting: end the commands the agent started (and what they spawned) instead
+  /// of orphaning them. Call after [stop].
+  Future<void> stopRunningCommands() async => await _client?.stopRunningCommands();
 }

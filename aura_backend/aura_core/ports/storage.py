@@ -554,3 +554,15 @@ class Cache(Protocol):
 
     async def get_many(self, keys: Sequence[str]) -> Mapping[str, bytes]:
         ...
+
+    async def append_capped(self, key: str, value: bytes, *, max_len: int, ttl_s: int | None = None) -> int:
+        """Atomically add ``value`` to the end of the list at ``key``, keep only the newest ``max_len``
+        items and refresh the TTL; returns the new length. The primitive for a history shared by several
+        writers: a get-modify-set of one blob lets two concurrent writers read the same list and the
+        later write erase the earlier one. Like :meth:`incr` this **raises** on a backend failure,
+        because a lost write must not be silent."""
+        ...
+
+    async def get_list(self, key: str) -> list[bytes]:
+        """The list at ``key`` in append order (empty on a miss; best-effort like :meth:`get`)."""
+        ...

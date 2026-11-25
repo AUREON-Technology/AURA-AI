@@ -1,5 +1,5 @@
-from typing import Any, Dict, Iterable, List, Optional
-from typing import Any, Dict, List, Optional, Tuple
+import math
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 class QualityGateAggregator:
@@ -62,13 +62,18 @@ class QualityGateAggregator:
                 "required_checks",
             )
         )
-        checks = {name: bool(v) for name, v in supplied.items() if v is not None}
+        # Only a real boolean counts as a result. ``bool("false")`` is True, so a string, number
+        # or anything else a caller passes is reported as invalid and fails the gate.
+        invalid = [name for name, v in supplied.items() if v is not None and not isinstance(v, bool)]
+        checks = {name: v for name, v in supplied.items() if isinstance(v, bool)}
         not_run = [name for name, v in supplied.items() if v is None]
         failed_checks = [name for name, ok in checks.items() if not ok]
+        failed_checks += [name for name in invalid if name not in failed_checks]
         failed_checks += [name for name in not_run if name in required]
-        passed = len(failed_checks) == 0
+        # A gate that ran nothing has approved nothing, even if no check was marked required.
+        passed = len(failed_checks) == 0 and len(checks) > 0
 
-        return {
+        result: Dict[str, Any] = {
             "status": "APPROVED" if passed else "FAILED",
             "passed": passed,
             "checks": checks,
@@ -76,18 +81,27 @@ class QualityGateAggregator:
             "failed_checks": failed_checks,
             "details": details or {},
         }
+        if invalid:
+            result["invalid_checks"] = invalid
+        if not checks:
+            result["error"] = "No check result was supplied, so nothing was approved."
+        return result
 
     @staticmethod
     def compute_quality_score(weights_and_results: Dict[str, Tuple[float, bool]]) -> Dict[str, Any]:
         """Compute a weighted 0-100 quality score from (weight, passed) tuples."""
-        total_weight = sum(max(0.0, w) for w, _ in weights_and_results.values())
+        def clean(weight: Any) -> float:
+            ok = isinstance(weight, (int, float)) and not isinstance(weight, bool) and math.isfinite(weight)
+            return max(0.0, float(weight)) if ok else 0.0
+
+        total_weight = sum(clean(w) for w, _ in weights_and_results.values())
         if total_weight <= 0:
             return {"score": 0.0, "breakdown": {}}
 
         earned = 0.0
         breakdown: Dict[str, Dict[str, Any]] = {}
         for name, (weight, passed) in weights_and_results.items():
-            w = max(0.0, weight)
+            w = clean(weight)
             if passed:
                 earned += w
             breakdown[name] = {"weight": w, "passed": bool(passed)}
@@ -135,14 +149,20 @@ class QualityGateAggregator:
         for name, weight in cls.CHECK_WEIGHTS.items():
             if name in gate["checks"]:
                 weighted[name] = (weight, gate["checks"][name])
-            elif name in required:
+            elif name in required or name in gate.get("invalid_checks", []):
                 weighted[name] = (weight, False)
         score_info = cls.compute_quality_score(weighted)
 
         blocker_failed = [
             b for b in blockers if b in gate["failed_checks"] or b in gate["not_run"]
         ]
-        ready = (len(blocker_failed) == 0) and (score_info["score"] >= min_score_threshold)
+        # Nothing run is never ready, whatever the threshold (a threshold of 0 would otherwise
+        # approve an empty report).
+        ready = (
+            len(blocker_failed) == 0
+            and bool(gate["checks"])
+            and score_info["score"] >= min_score_threshold
+        )
 
         return {
             "ready_to_merge": ready,
@@ -155,6 +175,10 @@ class QualityGateAggregator:
             "score_breakdown": score_info["breakdown"],
         }
 
+    @staticmethod
+    def _count(value: Any) -> Optional[int]:
+        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
     @classmethod
     def aggregate_all_checks(
         cls,
@@ -163,43 +187,87 @@ class QualityGateAggregator:
         cov_result: Optional[Dict[str, Any]] = None,
         arch_result: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Ingest tool result payloads from across the test suite and evaluate release readiness."""
-        tests_ok = True
-        if test_result:
-            tests_ok = test_result.get("failed", 0) == 0 and test_result.get("passed", 0) > 0
+        """Ingest tool result payloads from across the test suite and evaluate release readiness.
 
-        sec_ok = True
-        if sec_result:
-            sec_ok = len(sec_result.get("findings", [])) == 0 and sec_result.get("clean", True)
+        A result that was not supplied is a check that was not run (``None``), never a pass; the
+        required set here is security, tests and coverage (there is no complexity input).
+        A result that is empty, malformed or says it was incomplete is a failure:
 
-        cov_ok = True
-        if cov_result:
-            cov_ok = float(cov_result.get("coverage_ratio", 1.0)) >= 0.70
+        * tests: ``failed`` and ``errors`` must be 0 and ``passed`` must be > 0;
+        * security: no ``findings``, ``secure`` not False, ``clean`` not False, ``has_secrets``
+          not True and ``complete`` not False (a partly read document is not a clean one);
+        * coverage: ``coverage_ratio`` must be present and >= 0.70;
+        * architecture: ``is_consistent`` must be True and ``violations`` empty.
+        """
+        tests_ok: Optional[bool] = None
+        if test_result is not None:
+            failed = cls._count(test_result.get("failed", 0)) if isinstance(test_result, dict) else None
+            errors = cls._count(test_result.get("errors", 0)) if isinstance(test_result, dict) else None
+            passed = cls._count(test_result.get("passed", 0)) if isinstance(test_result, dict) else None
+            tests_ok = failed == 0 and errors == 0 and passed is not None and passed > 0
 
-        arch_ok = True
-        if arch_result:
-            arch_ok = arch_result.get("is_consistent", True) and len(arch_result.get("violations", [])) == 0
+        sec_ok: Optional[bool] = None
+        if sec_result is not None:
+            if not isinstance(sec_result, dict) or not sec_result:
+                sec_ok = False
+            else:
+                findings = sec_result.get("findings", [])
+                sec_ok = (
+                    isinstance(findings, (list, tuple))
+                    and len(findings) == 0
+                    and sec_result.get("clean", True) is not False
+                    and sec_result.get("secure", True) is not False
+                    and sec_result.get("has_secrets", False) is not True
+                    and sec_result.get("complete", True) is not False
+                )
+
+        cov_ok: Optional[bool] = None
+        if cov_result is not None:
+            ratio = cov_result.get("coverage_ratio") if isinstance(cov_result, dict) else None
+            usable = isinstance(ratio, (int, float)) and not isinstance(ratio, bool) and math.isfinite(ratio)
+            cov_ok = bool(usable and ratio >= 0.70)
+
+        arch_ok: Optional[bool] = None
+        if arch_result is not None:
+            if not isinstance(arch_result, dict):
+                arch_ok = False
+            else:
+                violations = arch_result.get("violations", [])
+                arch_ok = (
+                    arch_result.get("is_consistent") is True
+                    and isinstance(violations, (list, tuple))
+                    and len(violations) == 0
+                )
 
         return cls.build_release_readiness_report(
             security_pass=sec_ok,
             tests_pass=tests_ok,
             coverage_pass=cov_ok,
-            complexity_pass=True,
-            lint_pass=True,
+            complexity_pass=None,
+            lint_pass=None,
             architecture_pass=arch_ok,
+            required_checks=["security", "tests", "coverage"],
         )
 
     @staticmethod
     def format_quality_gate_badge(score: float, ready_to_merge: bool) -> str:
         """Render Markdown shield badge reflecting quality score and readiness."""
+        ready_to_merge = ready_to_merge is True
         color = "brightgreen" if ready_to_merge else "red"
-        label = f"Quality%20Gate-{score}%25%20{'PASSED' if ready_to_merge else 'BLOCKED'}-{color}"
+        try:
+            shown = round(float(score), 2)
+            shown = shown if math.isfinite(shown) else 0.0
+        except (TypeError, ValueError):
+            shown = 0.0
+        label = f"Quality%20Gate-{shown}%25%20{'PASSED' if ready_to_merge else 'BLOCKED'}-{color}"
         return f"![Quality Gate](https://img.shields.io/badge/{label})"
 
     @staticmethod
     def generate_ci_blocker_summary(report: Dict[str, Any]) -> str:
         """Render PR review comment summarizing gate blockers."""
-        ready = report.get("ready_to_merge", False)
+        if not isinstance(report, dict):
+            report = {}
+        ready = report.get("ready_to_merge", False) is True
         score = report.get("quality_score", 0.0)
         blockers = report.get("blocker_failures", [])
         failed = report.get("failed_checks", [])
@@ -214,5 +282,8 @@ class QualityGateAggregator:
             lines.append(f"- **Hard Blockers:** {', '.join(blockers)}")
         if failed:
             lines.append(f"- **Failed Checks:** {', '.join(failed)}")
+        not_run = report.get("not_run", [])
+        if not_run:
+            lines.append(f"- **Not Run:** {', '.join(not_run)}")
 
         return "\n".join(lines)

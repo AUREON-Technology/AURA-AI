@@ -14,6 +14,7 @@ completed, so a hang shows up as a ``TimeoutError`` failure instead of a stuck s
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -195,3 +196,54 @@ async def test_is_error_result_surfaces_as_failed_tool_call_with_server_text(use
         assert with_error in result.content
     finally:
         await client.close()
+
+
+class TestSdkFieldSpellings:
+    """``mcp==2.3.0`` (the locked version) spells these fields in snake_case; 1.x used camelCase."""
+
+    def test_the_field_helper_reads_either_spelling(self) -> None:
+        from types import SimpleNamespace
+
+        from aura_core.adapters.mcp_client import _field
+
+        assert _field(SimpleNamespace(input_schema={"a": 1}), "input_schema", "inputSchema") == {"a": 1}
+        assert _field(SimpleNamespace(inputSchema={"b": 2}), "input_schema", "inputSchema") == {"b": 2}
+        assert _field(SimpleNamespace(), "is_error", "isError", False) is False
+        assert _field(SimpleNamespace(is_error=True), "is_error", "isError", False) is True
+
+    async def test_a_snake_case_result_reports_its_error_instead_of_succeeding(self) -> None:
+        from types import SimpleNamespace
+
+        from aura_core.adapters.mcp_client import McpClient, McpToolError
+
+        class Session:
+            async def call_tool(self, name, arguments):
+                return SimpleNamespace(is_error=True, structured_content=None, content=[SimpleNamespace(text="boom")])
+
+        client = McpClient.__new__(McpClient)
+        client._configs = {"s": object()}
+
+        async def session_for(server):
+            return Session()
+
+        client._session_for = session_for
+        with pytest.raises(McpToolError, match="boom"):
+            await client.call_tool("s", "t", {})
+
+    async def test_a_snake_case_structured_result_is_returned_as_json(self) -> None:
+        from types import SimpleNamespace
+
+        from aura_core.adapters.mcp_client import McpClient
+
+        class Session:
+            async def call_tool(self, name, arguments):
+                return SimpleNamespace(is_error=False, structured_content={"n": 3}, content=[])
+
+        client = McpClient.__new__(McpClient)
+        client._configs = {"s": object()}
+
+        async def session_for(server):
+            return Session()
+
+        client._session_for = session_for
+        assert json.loads(await client.call_tool("s", "t", {})) == {"n": 3}

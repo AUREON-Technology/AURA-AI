@@ -42,7 +42,7 @@ MAX_STORE_NOTIFICATION_BYTES = 64 * 1024
 
 def register_billing_ops(
     router: Any, container: Any, *, principal: Callable, require_super_admin: Callable,
-    Depends: Any, JSONResponse: Any, Request: Any, Response: Any,
+    Depends: Any, JSONResponse: Any, Request: Any, Response: Any, idempotent: Any = (),
 ) -> None:
     from pydantic import BaseModel, ConfigDict, Field
 
@@ -238,12 +238,14 @@ def register_billing_ops(
         require_super_admin(caller)
         return JSONResponse(content=await billing.customers(max(1, min(limit, 200)), after))
 
-    @router.post("/admin/customers/{workspace_id}/extend-grace")
+    # Keyed (audit AUD-12): extending grace moves `grace_until` forward from `max(grace_until, now)`
+    # on every call, so a resend after a lost answer would extend it twice.
+    @router.post("/admin/customers/{workspace_id}/extend-grace", dependencies=idempotent)
     async def extend_grace(workspace_id: str, payload: GraceRequest, caller=Depends(principal)) -> JSONResponse:
         require_super_admin(caller)
         return JSONResponse(content=await billing.extend_grace(str(caller.user_id), workspace_id, payload.days))
 
-    @router.post("/admin/billing/run-cycle")
+    @router.post("/admin/billing/run-cycle", dependencies=idempotent)
     async def run_billing_cycle(caller=Depends(principal)) -> JSONResponse:
         require_super_admin(caller)
         require_enabled()

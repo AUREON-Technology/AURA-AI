@@ -1,0 +1,559 @@
+"""The five ``aura_core/tools/open`` tools, run for real.
+
+PDFs here are built byte by byte (``tests.unit.test_document_extraction._pdf``) and read by the
+actual ``pypdf``; the test runner really spawns ``python -m pytest``. Nothing is mocked.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+from aura_core.tools.open.ast_code_analyzer import ASTCodeAnalyzer
+from aura_core.tools.open.automated_test_generator_and_verifier import AutomatedTestGeneratorAndVerifier as Gen
+from aura_core.tools.open.mermaid_diagram_generator import MermaidDiagramGenerator as Mermaid
+from aura_core.tools.open.security_vulnerability_scanner import SecurityVulnerabilityScanner as Scanner
+from aura_core.tools.open.symbol_and_import_verifier import SymbolAndImportVerifier as Verifier
+from aura_core.tools.open._input import SourceReadError, read_source_bytes, read_source_file
+from tests.unit.test_document_extraction import _pdf
+
+SECRET = "sk-" + "a1B2c3D4e5F6g7H8i9J0k1L2"
+
+
+def _many_pages(n: int) -> bytes:
+    return _pdf([{"text": [f"page {i} marker-{i} line of ordinary prose here"]} for i in range(1, n + 1)])
+
+
+# -- PDF: the whole document is read -------------------------------------------------------------
+
+
+class TestPdfIsReadInFull:
+    def test_every_page_of_a_long_pdf_is_in_the_text(self, tmp_path: Path) -> None:
+        path = tmp_path / "long.pdf"
+        path.write_bytes(_many_pages(60))
+        read = read_source_file(path)
+        assert read.kind == "pdf" and read.pages == 60 and read.complete
+        for i in (1, 2, 30, 59, 60):  # first, last and middle: nothing truncated
+            assert f"marker-{i} " in read.text + " "
+        assert read.describe()["pages_read"] == 60
+
+    def test_a_short_last_page_is_not_dropped(self, tmp_path: Path) -> None:
+        """A closing page that says only "PASSED" has < 16 chars; the default extractor calls it blank."""
+        path = tmp_path / "short.pdf"
+        path.write_bytes(_pdf([{"text": ["A normal page with plenty of ordinary prose"]}, {"text": ["PASSED"]}]))
+        read = read_source_file(path)
+        assert "PASSED" in read.text and read.pages == 2 and read.complete and read.blank_pages == ()
+
+    def test_more_than_500_pages_are_read(self, tmp_path: Path) -> None:
+        path = tmp_path / "huge.pdf"
+        path.write_bytes(_many_pages(520))
+        read = read_source_file(path)
+        assert read.pages == 520 and "marker-520 " in read.text + " "
+
+    def test_scanned_pages_are_named_not_silently_dropped(self, tmp_path: Path) -> None:
+        path = tmp_path / "mixed.pdf"
+        path.write_bytes(_pdf([
+            {"text": ["Readable page with plenty of text"]},
+            {"image": True},
+            {"text": ["Another readable page of text"]},
+        ]))
+        read = read_source_file(path)
+        assert read.unreadable_pages == (2,) and not read.complete
+        assert "page(s) 2" in read.warnings()[0]
+
+    def test_pdf_is_detected_by_content_not_only_extension(self) -> None:
+        assert read_source_bytes(_many_pages(2), name="upload.bin").kind == "pdf"
+
+    def test_fake_pdf_extension_and_binary_files_are_refused(self, tmp_path: Path) -> None:
+        fake = tmp_path / "x.pdf"
+        fake.write_text("print('hi')")
+        with pytest.raises(SourceReadError):
+            read_source_file(fake)
+        blob = tmp_path / "blob.dat"
+        blob.write_bytes(b"\x00\x01\x02binary")
+        with pytest.raises(SourceReadError, match="binary"):
+            read_source_file(blob)
+
+    def test_corrupt_pdf_is_an_error_not_a_crash(self, tmp_path: Path) -> None:
+        path = tmp_path / "bad.pdf"
+        path.write_bytes(b"%PDF-1.4\n garbage \x00\x01")
+        with pytest.raises(SourceReadError):
+            read_source_file(path)
+
+    def test_overlong_path_is_a_clean_error(self, tmp_path: Path) -> None:
+        with pytest.raises(SourceReadError):
+            read_source_file(tmp_path / ("x" * 5000))
+
+    def test_base_dir_confines_paths(self, tmp_path: Path) -> None:
+        (tmp_path / "in").mkdir()
+        outside = tmp_path / "secret.py"
+        outside.write_text("x = 1")
+        with pytest.raises(SourceReadError, match="outside"):
+            read_source_file(outside, base_dir=tmp_path / "in")
+        with pytest.raises(SourceReadError, match="outside"):
+            read_source_file(tmp_path / "in" / ".." / "secret.py", base_dir=tmp_path / "in")
+
+    def test_scanner_scans_all_pages_of_a_pdf(self, tmp_path: Path) -> None:
+        pages = [{"text": [f"page {i} nothing here to see"]} for i in range(1, 41)]
+        pages[39] = {"text": [f"page 40 token = '{SECRET}'  and password = \"hunter2hunter2\""]}
+        path = tmp_path / "report.pdf"
+        path.write_bytes(_pdf(pages))
+        result = Scanner.scan_file(path)
+        assert result["input"]["pages"] == 40 and result["complete"]
+        rules = {f["rule_id"] for f in result["findings"]}
+        assert {"SEC-KEY-OPENAI", "SEC-SECRET-ASSIGN"} <= rules  # the finding is on the LAST page
+        assert SECRET not in repr(result)
+
+    def test_scanner_never_says_secure_for_a_partly_unreadable_pdf(self, tmp_path: Path) -> None:
+        path = tmp_path / "scan.pdf"
+        path.write_bytes(_pdf([{"text": ["clean page, nothing to report"]}, {"image": True}]))
+        result = Scanner.scan_file(path)
+        assert result["findings_count"] == 0
+        assert result["secure"] is False and result["complete"] is False and result["warnings"]
+
+    def test_full_scan_reads_pdf_and_skips_bandit_for_it(self, tmp_path: Path) -> None:
+        path = tmp_path / "r.pdf"
+        path.write_bytes(_many_pages(3))
+        result = Scanner.full_scan(file_path=str(path), use_bandit=True)
+        assert result["secure"] is True and result["bandit"] is None
+        assert any("bandit was skipped" in w for w in result["warnings"])
+
+    def test_analyzer_reports_pdf_input_instead_of_crashing(self, tmp_path: Path) -> None:
+        path = tmp_path / "doc.pdf"
+        path.write_bytes(_many_pages(5))
+        result = ASTCodeAnalyzer.analyze_file(path)
+        assert result["status"] == "error" and result["input"]["pages"] == 5
+        assert "5 page(s) were read in full" in result["error"]
+
+    def test_analyzer_still_analyzes_a_python_file(self, tmp_path: Path) -> None:
+        path = tmp_path / "m.py"
+        path.write_text("import os\nclass A(B):\n    def f(self, x: int = 1) -> str:\n        return os.getcwd()\n")
+        result = ASTCodeAnalyzer.analyze_file(path)
+        assert result["status"] == "success" and result["input"]["kind"] == "text"
+        assert result["classes"][0]["methods"][0]["signature"] == "def f(self, x: int = 1) -> str"
+
+
+# -- ast_code_analyzer ---------------------------------------------------------------------------
+
+
+class TestAstAnalyzer:
+    def test_nul_bytes_and_syntax_errors_return_errors(self) -> None:
+        assert ASTCodeAnalyzer.ast_code_analyzer("x = 1\x00")["status"] == "error"
+        assert ASTCodeAnalyzer.ast_code_analyzer("def (:")["status"] == "error"
+
+    def test_missing_and_directory_paths(self, tmp_path: Path) -> None:
+        assert "not found" in ASTCodeAnalyzer.analyze_file(tmp_path / "nope.py")["error"]
+        assert "not a file" in ASTCodeAnalyzer.analyze_file(tmp_path)["error"]
+
+    def test_compact_mode_and_all_param_kinds(self) -> None:
+        src = "async def f(a, /, b, *args, c=2, **kw): ...\nCONST = 1\n"
+        full = ASTCodeAnalyzer.ast_code_analyzer(src)
+        assert full["functions"][0]["signature"] == "async def f(a, /, b, *args, c = 2, **kw)"
+        assert ASTCodeAnalyzer.ast_code_analyzer(src, compact=True)["constants"] == ["CONST"]
+
+
+# -- security_vulnerability_scanner --------------------------------------------------------------
+
+
+class TestScanner:
+    def test_known_risks_are_found(self) -> None:
+        src = "import os, pickle\nos.system('ls')\neval(x)\npickle.loads(b)\ntry:\n    pass\nexcept:\n    pass\n"
+        ids = {f["rule_id"] for f in Scanner.scan_source_code(src)["findings"]}
+        assert {"SEC-OSSYS-004", "SEC-EVAL-001", "SEC-PICKLE-005", "SEC-AST-BARE-EXCEPT"} <= ids
+
+    def test_safe_lookalikes_are_not_flagged(self) -> None:
+        src = "model.eval()\nsession.exec(stmt)\nast.literal_eval(s)\n# eval(x)\nyaml.load(f, Loader=yaml.SafeLoader)\n"
+        assert Scanner.scan_source_code(src)["findings"] == []
+
+    def test_unsafe_yaml_loader_is_still_flagged(self) -> None:
+        assert Scanner.scan_source_code("yaml.load(f, Loader=yaml.Loader)\n")["findings"]
+
+    def test_secrets_are_never_echoed_back(self) -> None:
+        src = f"x = eval('{SECRET}')\npassword = 'hunter2hunter2'\n"
+        result = Scanner.scan_source_code(src)
+        assert SECRET not in repr(result) and "hunter2hunter2" not in repr(result)
+        diff = f"diff --git a/a.py b/a.py\n+++ b/a.py\n@@ -1,1 +1,2 @@\n ctx\n+k = '{SECRET}'\n"
+        d = Scanner.scan_git_diff(diff)
+        assert d["findings"][0]["line"] == 2 and d["findings"][0]["file"] == "a.py"
+        assert SECRET not in repr(d)
+
+    def test_diff_without_hunk_header_is_still_scanned(self) -> None:
+        assert Scanner.scan_git_diff(f"+k = '{SECRET}'\n")["findings_count"] == 1
+
+    def test_file_not_found_and_bandit_options(self, tmp_path: Path) -> None:
+        assert "error" in Scanner.scan_file(tmp_path / "missing.py")
+        out = Scanner.run_bandit_if_available("-x-not-an-option")
+        assert out["secure"] is not True  # a failed/absent bandit run is never an all-clear
+
+    def test_bandit_run_is_real_or_honestly_unavailable(self, tmp_path: Path) -> None:
+        target = tmp_path / "t.py"
+        target.write_text("import subprocess\nsubprocess.call('ls', shell=True)\n")
+        out = Scanner.run_bandit_if_available(str(target))
+        if out["available"]:
+            assert out["issues"] and out["secure"] is False
+        else:
+            assert out["secure"] is None
+
+
+# -- symbol_and_import_verifier ------------------------------------------------------------------
+
+
+class TestVerifier:
+    def test_importing_is_never_executed(self, tmp_path: Path) -> None:
+        marker = tmp_path / "ran"
+        (tmp_path / "evil_pkg").mkdir()
+        (tmp_path / "evil_pkg" / "__init__.py").write_text(f"open({str(marker)!r}, 'w').write('x')\n")
+        (tmp_path / "evil_pkg" / "sub.py").write_text("def real(): ...\n")
+        src = "from evil_pkg.sub import real, ghost\nimport evil_pkg.sub\n"
+        out = Verifier.verify_imported_symbols_exist_in_env(src, search_paths=[str(tmp_path)])
+        assert not marker.exists(), "verifying an import executed the imported package"
+        assert [m["symbol"] for m in out["missing_symbols"]] == ["ghost"]
+        assert out["missing_modules"] == []
+
+    def test_search_paths_are_honoured_and_missing_modules_reported(self, tmp_path: Path) -> None:
+        (tmp_path / "zz_local.py").write_text("def f(): ...\n")
+        out = Verifier.verify_imported_symbols_exist_in_env(
+            "from zz_local import f\nimport definitely_not_a_module_xyz\n", search_paths=[str(tmp_path)]
+        )
+        assert [m["module"] for m in out["missing_modules"]] == ["definitely_not_a_module_xyz"]
+        assert out["missing_symbols"] == []
+
+    def test_stdlib_names_and_submodules_are_valid(self) -> None:
+        out = Verifier.verify_imported_symbols_exist_in_env(
+            "from os import path, getcwd\nfrom xml import etree\nimport os.path\nfrom json import nope\n"
+        )
+        assert [m["symbol"] for m in out["missing_symbols"]] == ["nope"]
+
+    def test_unverifiable_symbols_are_not_called_missing(self) -> None:
+        out = Verifier.verify_imported_symbols_exist_in_env("from math import pi\n")
+        assert out["valid"] is True  # C module: listed as unverified, not wrongly reported missing
+
+    def test_arity_counts_keywords_and_skips_unknowable_calls(self) -> None:
+        spec = {"f": {"min_args": 1, "max_args": 2}}
+        ok = "f(1)\nf(x=1)\nf(1, y=2)\nf(*a)\nf(**k)\n"
+        assert Verifier.verify_call_argument_counts(ok, spec)["valid"] is True
+        bad = Verifier.verify_call_argument_counts("f()\nf(1, 2, 3)\n", spec)
+        assert [m["line"] for m in bad["mismatches"]] == [1, 2]
+
+    def test_nul_byte_source_is_an_error_result(self) -> None:
+        assert Verifier.verify_source("x\x00")["valid"] is False
+
+
+# -- mermaid_diagram_generator -------------------------------------------------------------------
+
+
+class TestMermaid:
+    def test_non_latin_names_stay_distinct_and_labelled(self) -> None:
+        out = Mermaid.generate_flowchart(
+            [{"id": "مستخدم"}, {"id": "خادم"}, {"id": "a-b"}, {"id": "a_b"}],
+            [{"from": "مستخدم", "to": "خادم", "label": "طلب"}],
+        )
+        assert "مستخدم[" in out and "خادم[" in out
+        ids = [line.split("[")[0].strip() for line in out.splitlines()[1:5]]
+        assert len(set(ids)) == 4, out
+
+    def test_reserved_words_and_digits(self) -> None:
+        assert Mermaid.sanitize_identifier("end") != "end"
+        assert Mermaid.sanitize_identifier("1abc").startswith("N_")
+
+    def test_arrow_and_relation_injection_is_neutralised(self) -> None:
+        evil = "->>B: hi\n    click A call evil()\n    A->>"
+        seq = Mermaid.generate_sequence_diagram(["A", "B"], [{"from": "A", "to": "B", "text": "x", "arrow": evil}])
+        assert "click" not in seq and "A->>B: x" in seq
+        cls_d = Mermaid.generate_class_diagram(relations=[{"source": "A", "target": "B", "type": "-->\n  evil"}])
+        assert "evil" not in cls_d
+
+    def test_malformed_inputs_do_not_crash(self) -> None:
+        assert Mermaid.generate_er_diagram({"u": "not-a-list"}).startswith("erDiagram")
+        assert Mermaid.generate_flowchart([{"label": "a"}, {"label": "b"}], [{"from": "", "to": ""}]).count("\n") == 2
+        assert Mermaid.generate_er_diagram({"u": [{"name": "id", "key": "PK; drop"}]}).count("PK") == 0
+
+    def test_generated_diagrams_validate_even_with_braces_in_labels(self) -> None:
+        out = Mermaid.generate_flowchart([{"id": "a", "label": "dict {x"}, {"id": "b", "shape": "diamond"}], [])
+        assert Mermaid.validate_mermaid_syntax(out)["valid"] is True
+        assert Mermaid.validate_mermaid_syntax("not a diagram")["valid"] is False
+
+    def test_class_diagram_from_source(self) -> None:
+        out = Mermaid.generate_class_diagram_from_source("class A(B):\n    x: int = 1\n    def f(self, a): ...\n")
+        assert out["generated"] and "B <|-- A : inherits" in out["mermaid"]
+        assert Mermaid.generate_class_diagram_from_source("class (")["generated"] is False
+
+
+# -- automated_test_generator_and_verifier -------------------------------------------------------
+
+
+class TestGeneratorAndVerifier:
+    def test_generated_tests_really_import_and_pass(self) -> None:
+        out = Gen.generate_and_verify("def add(a, b):\n    return a + b\nclass K:\n    def go(self): ...\n")
+        assert out["verified"] is True
+        assert out["execution"]["counts"]["passed"] >= 3
+        assert out["verification_level"] == "structural"
+
+    def test_module_import_path_places_source_correctly(self) -> None:
+        out = Gen.generate_and_verify("def f(): ...\n", module_import_path="pkg.sub.mod")
+        assert out["verified"] is True
+
+    def test_missing_symbol_fails_verification(self) -> None:
+        out = Gen.generate_and_verify("def f(): ...\n", custom_test_code="from module_under_test import g\ndef test_g():\n    assert g\n")
+        assert out["verified"] is False and out["execution"]["counts"]["errors"] >= 1
+
+    def test_custom_tests_detect_a_real_bug(self) -> None:
+        out = Gen.generate_and_verify(
+            "def add(a, b):\n    return a - b\n",
+            custom_test_code="from module_under_test import add\ndef test_add():\n    assert add(1, 2) == 3\n",
+        )
+        assert out["verified"] is False and out["verification_level"] == "custom"
+        assert out["execution"]["counts"]["failed"] == 1
+
+    @pytest.mark.parametrize("bad", ["os\nimport sys; sys.exit(0)", "a.b; import os", "class", "x y", "../x"])
+    def test_module_path_injection_is_rejected(self, bad: str) -> None:
+        out = Gen.generate_pytest_code("def f(): ...\n", module_import_path=bad)
+        assert out["generated"] is False and "dotted Python identifier" in out["error"]
+
+    def test_colliding_test_names_are_made_unique(self) -> None:
+        code = Gen.generate_pytest_code("class Foo:\n    def x(self): ...\nclass FOO:\n    def x(self): ...\n")["test_code"]
+        names = [line[4:].split("(")[0] for line in code.splitlines() if line.startswith("def ")]
+        assert len(names) == len(set(names))
+
+    def test_bad_source_and_syntax_errors(self) -> None:
+        assert Gen.generate_and_verify("def (:")["stage"] == "generation"
+        assert Gen.generate_pytest_code("x\x00")["generated"] is False
+        assert Gen.run_tests_in_temp_dir("def broken(:")["passed"] is False
+
+    def test_child_process_gets_no_credentials(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AURA_FAKE_API_KEY", "leak-me")
+        monkeypatch.setenv("DATABASE_URL", "postgres://u:p@h/db")
+        code = "import os\ndef test_env():\n    assert 'AURA_FAKE_API_KEY' not in os.environ\n    assert 'DATABASE_URL' not in os.environ\n"
+        assert Gen.run_tests_in_temp_dir(code)["passed"] is True
+
+
+
+    def test_existing_tests_run_and_are_confined(self, tmp_path: Path) -> None:
+        (tmp_path / "test_ok.py").write_text("def test_a():\n    assert True\n")
+        ok = Gen.run_existing_tests("test_ok.py", working_dir=str(tmp_path))
+        assert ok["passed"] and ok["counts"]["passed"] == 1
+        assert "inside the working directory" in Gen.run_existing_tests("../x.py", working_dir=str(tmp_path))["error"]
+        assert "not found" in Gen.run_existing_tests("nope.py", working_dir=str(tmp_path))["error"]
+
+    @pytest.mark.parametrize("arg", ["-p", "-c", "--rootdir=/", "--version", "-o", "--pyargs", "-k"])
+    def test_dangerous_pytest_options_are_refused(self, tmp_path: Path, arg: str) -> None:
+        (tmp_path / "test_ok.py").write_text("def test_a():\n    assert True\n")
+        out = Gen.run_existing_tests("test_ok.py", working_dir=str(tmp_path), extra_args=[arg])
+        assert out["passed"] is False and "not allowed" in out["error"]
+
+    def test_safe_options_are_accepted(self, tmp_path: Path) -> None:
+        (tmp_path / "test_ok.py").write_text("def test_a():\n    assert True\ndef test_b():\n    assert True\n")
+        out = Gen.run_existing_tests("test_ok.py", working_dir=str(tmp_path), extra_args=["-x", "-k", "test_a", "--maxfail=2"])
+        assert out["passed"] and out["counts"]["passed"] == 1
+
+    def test_timeout_kills_the_whole_process_group(self, tmp_path: Path) -> None:
+        pidfile = tmp_path / "grandchild.pid"
+        code = (
+            "import subprocess, sys, time\n"
+            "def test_hang():\n"
+            f"    p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+            f"    open({str(pidfile)!r}, 'w').write(str(p.pid))\n"
+            "    time.sleep(60)\n"
+        )
+        started = time.time()
+        out = Gen.run_tests_in_temp_dir(code, timeout_seconds=2)
+        assert out["exit_code"] == 124 and time.time() - started < 15
+        if os.name == "posix" and pidfile.exists():
+            time.sleep(0.3)
+            pid = int(pidfile.read_text())
+            # Killed means gone, or a zombie awaiting reaping by a PID 1 that does not wait() (as
+            # in some containers). A zombie is dead: it holds no memory and runs nothing.
+            try:
+                state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+            except (FileNotFoundError, ProcessLookupError):
+                state = "gone"
+            assert state in ("gone", "Z"), f"grandchild survived the timeout (state {state})"
+
+    def test_output_is_bounded(self) -> None:
+        out = Gen.run_tests_in_temp_dir("def test_noise():\n    print('x' * 500000)\n    assert False\n")
+        assert len(out["stdout"]) < 25_000
+
+    def test_timeout_is_clamped(self) -> None:
+        assert Gen._bounded_timeout(10**9) == 600 and Gen._bounded_timeout("junk") == 30 and Gen._bounded_timeout(-5) == 1
+
+
+# -- OCR: scanned pages are recognised when the platform's engine is available ----------------------
+
+
+class _FakeOcr:
+    """An ``OcrEngine`` (the port): returns text keyed by page number."""
+
+    name = "fake-ocr"
+
+    def __init__(self, texts: dict[int, str] | None = None, *, delay: float = 0.0, fail: bool = False) -> None:
+        self.texts, self.delay, self.fail, self.calls = texts or {}, delay, fail, 0
+
+    async def image_text(self, image: bytes, *, page: int) -> str:
+        import asyncio
+
+        self.calls += 1
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if self.fail:
+            raise RuntimeError("engine down")
+        return self.texts.get(page, "")
+
+
+@pytest.fixture
+def pillow() -> None:
+    pytest.importorskip("PIL")
+
+
+def _scanned_pdf() -> bytes:
+    return _pdf([{"text": ["A normal page with plenty of ordinary prose"]}, {"image": True}, {"text": ["Last page of ordinary prose here"]}])
+
+
+class TestOcrOfScannedPages:
+    def test_a_scanned_page_is_recognised_and_marked_as_ocr(self, pillow: None) -> None:
+        engine = _FakeOcr({2: "الفاتورة الإجمالية مئة وعشرون جنيها OCR-MARKER"})
+        read = read_source_bytes(_scanned_pdf(), name="scan.pdf", ocr_engine=engine)
+        assert "OCR-MARKER" in read.text and "ordinary prose" in read.text
+        assert read.ocr_pages == (2,) and read.unreadable_pages == () and read.complete
+        assert read.text.index("normal page") < read.text.index("OCR-MARKER") < read.text.index("Last page")
+        assert "approximate" in read.warnings()[0] and read.describe()["ocr_pages"] == [2]
+
+    def test_without_an_engine_the_page_is_named_as_unread(self, pillow: None) -> None:
+        read = read_source_bytes(_scanned_pdf(), name="scan.pdf")
+        assert read.unreadable_pages == (2,) and not read.complete and "not configured" in read.warnings()[0]
+
+    def test_a_configured_engine_is_used_and_can_be_switched_off(self, pillow: None) -> None:
+        from aura_core.tools.open._input import configure_ocr_engine
+
+        configure_ocr_engine(_FakeOcr({2: "CONFIGURED-OCR"}))
+        try:
+            assert "CONFIGURED-OCR" in read_source_bytes(_scanned_pdf()).text
+        finally:
+            configure_ocr_engine(None)
+        assert read_source_bytes(_scanned_pdf()).unreadable_pages == (2,)
+
+    def test_an_engine_that_fails_leaves_the_page_unread_without_raising(self, pillow: None) -> None:
+        read = read_source_bytes(_scanned_pdf(), ocr_engine=_FakeOcr(fail=True))
+        assert read.unreadable_pages == (2,) and not read.complete and "recognised no text" in read.warnings()[0]
+        assert "ordinary prose" in read.text  # the readable pages are still returned
+
+    def test_a_slow_engine_is_cut_off_by_the_budget(self, pillow: None) -> None:
+        started = time.time()
+        read = read_source_bytes(_scanned_pdf(), ocr_engine=_FakeOcr({2: "late"}, delay=30), ocr_time_budget_s=1)
+        assert time.time() - started < 10
+        assert read.unreadable_pages == (2,) and "did not finish within 1s" in read.warnings()[0]
+
+    async def test_it_works_from_inside_a_running_event_loop(self, pillow: None) -> None:
+        read = read_source_bytes(_scanned_pdf(), ocr_engine=_FakeOcr({2: "FROM-LOOP"}))
+        assert "FROM-LOOP" in read.text
+
+    def test_a_text_only_pdf_never_calls_the_engine(self, pillow: None) -> None:
+        engine = _FakeOcr({1: "x"})
+        read_source_bytes(_many_pages(3), ocr_engine=engine)
+        assert engine.calls == 0
+
+    def test_tools_get_ocr_through_the_shared_reader(self, pillow: None, tmp_path: Path) -> None:
+        path = tmp_path / "scan.pdf"
+        path.write_bytes(_pdf([{"image": True}]))
+        from aura_core.tools.open._input import configure_ocr_engine
+
+        configure_ocr_engine(_FakeOcr({1: f"token = '{SECRET}'"}))
+        try:
+            result = Scanner.scan_file(path)
+        finally:
+            configure_ocr_engine(None)
+        assert {f["rule_id"] for f in result["findings"]} >= {"SEC-KEY-OPENAI"}
+        assert result["input"]["ocr_pages"] == [1] and any("OCR" in w for w in result["warnings"])
+
+    def test_real_tesseract_reads_a_real_scanned_pdf(self, tmp_path: Path) -> None:
+        pytest.importorskip("PIL")
+        from aura_core.adapters.tesseract_ocr import TesseractOcrEngine, tesseract_available
+
+        if not tesseract_available():
+            pytest.skip("tesseract binary not on PATH")
+        import io
+
+        from PIL import Image, ImageDraw
+
+        image = Image.new("RGB", (900, 200), color="white")
+        ImageDraw.Draw(image).text((20, 80), "Invoice total forty two dollars", fill="black")
+        buf = io.BytesIO()
+        image.save(buf, format="PDF")
+        read = read_source_bytes(buf.getvalue(), name="scan.pdf", ocr_engine=TesseractOcrEngine(lang="eng"))
+        assert read.ocr_pages == (1,) and read.complete and "forty" in read.text.lower()
+
+
+def test_the_container_hands_its_ocr_engine_to_the_open_tools(pillow: None) -> None:
+    """Wiring: ``Container`` installs ``container.ocr_engine`` into the shared reader."""
+    from aura_core.config.settings import load_settings
+    from aura_core.container import Container
+    from aura_core.tools.open._input import configure_ocr_engine, get_ocr_engine
+
+    try:
+        container = Container(load_settings(refresh=True, validate=False))
+        assert get_ocr_engine() is container.ocr_engine  # None when OCR is disabled / tesseract is absent
+    finally:
+        configure_ocr_engine(None)
+
+
+# -- Office documents: read by the same reader (and therefore by read_file and every file-reading tool) --
+
+
+class TestOfficeDocuments:
+    def _docx(self, text: str) -> bytes:
+        from tests.unit.test_docx_pptx_xlsx_readers import _docx, _p
+
+        return _docx(_p("Quarterly report", "Heading1") + _p(text))
+
+    def test_docx_text_is_returned_through_the_shared_reader(self, tmp_path: Path) -> None:
+        path = tmp_path / "r.docx"
+        path.write_bytes(self._docx("التقرير ربع السنوي OFFICE-MARKER"))
+        read = read_source_file(path)
+        assert read.kind == "docx" and "Quarterly report" in read.text and "OFFICE-MARKER" in read.text
+        assert "التقرير ربع السنوي" in read.text and read.complete
+
+    def test_pptx_slides_notes_and_xlsx_sheets(self, tmp_path: Path) -> None:
+        from tests.unit.test_docx_pptx_xlsx_readers import _c, _notes, _pptx, _row, _shape, _sheet_xml, _slide, _xlsx
+
+        deck = _pptx([(_slide(_shape(["Roadmap"], "title"), _shape(["Ship v2"])), _notes(["Mention the migration."]))])
+        (tmp_path / "d.pptx").write_bytes(deck)
+        deck_read = read_source_file(tmp_path / "d.pptx")
+        assert deck_read.kind == "pptx" and deck_read.pages == 1
+        assert "Roadmap" in deck_read.text and "Ship v2" in deck_read.text and "Mention the migration." in deck_read.text
+
+        sheet = _sheet_xml(_row(1, _c("A1", inline="name"), _c("B1", inline="score")), _row(2, _c("A2", inline="ليلى"), _c("B2", "7.5")))
+        (tmp_path / "b.xlsx").write_bytes(_xlsx([("Scores", sheet)]))
+        book = read_source_file(tmp_path / "b.xlsx")
+        assert book.kind == "xlsx" and "## Scores" in book.text
+        assert "name\tscore" in book.text and "ليلى\t7.5" in book.text
+
+    def test_a_zip_that_is_not_office_is_still_refused_and_a_corrupt_office_file_is_an_error(self, tmp_path: Path) -> None:
+        import io
+        import zipfile
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("a.txt", "hello")
+        (tmp_path / "plain.zip").write_bytes(buf.getvalue())
+        with pytest.raises(SourceReadError, match="binary"):
+            read_source_file(tmp_path / "plain.zip")
+        broken = self._docx("x")[:200]
+        (tmp_path / "broken.docx").write_bytes(broken)
+        with pytest.raises(SourceReadError):
+            read_source_file(tmp_path / "broken.docx")
+
+    def test_read_file_opens_office_documents(self, monkeypatch, tmp_path: Path) -> None:
+        import asyncio
+
+        from aura_core.tools.builtin import build_file_tools
+        from aura_core.domain.identifiers import UserId
+        from aura_core.ports.runtime import ToolContext
+
+        (tmp_path / "r.docx").write_bytes(self._docx("OFFICE-MARKER"))
+        _, read_file = build_file_tools(tmp_path)
+        ctx = ToolContext(user_id=UserId("u"), correlation_id="c", deadline_s=30)
+        out = asyncio.run(read_file.execute({"path": "r.docx"}, ctx))
+        assert "Word document" in out and "read in full" in out and "OFFICE-MARKER" in out

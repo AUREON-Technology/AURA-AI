@@ -10,7 +10,31 @@ Kept for reference only: nothing under ``aura_core`` may import it
 """
 
 import copy
+import math
 from typing import Any, Dict, List, Optional
+
+
+def _finite(value: Any) -> Optional[float]:
+    """``value`` as a finite float, or ``None`` (NaN, +-inf, text, None, bool, ...).
+
+    A metric that is not a finite number never counts as passing: ``inf >= 0.85`` is true and
+    ``nan`` poisons ``max()``, so both would otherwise promote or pick a broken model.
+    """
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _key(value: Any) -> Optional[str]:
+    """A usable model id / version: non-empty after ``str().strip()``; ``None`` is not one."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 class ModelRegistryAndEvaluationManager:
@@ -53,6 +77,13 @@ class ModelRegistryAndEvaluationManager:
         promote_if_eligible.  This prevents metrics from being silently
         overwritten while the model is in production.
         """
+        model_id, version = _key(model_id), _key(version)
+        if model_id is None or version is None:
+            return {"registered": False, "error": "model_id and version must be non-empty."}
+        if not isinstance(metrics, dict):
+            return {"registered": False, "error": "metrics must be an object of metric name -> number."}
+        if metadata is not None and not isinstance(metadata, dict):
+            return {"registered": False, "error": "metadata must be an object."}
         versions = self._models.setdefault(model_id, [])
         existing = next((v for v in versions if v["version"] == version), None)
 
@@ -90,7 +121,7 @@ class ModelRegistryAndEvaluationManager:
 
         Returns deep copies so that callers cannot mutate internal registry state.
         """
-        return [copy.deepcopy(v) for v in self._models.get(model_id, [])]
+        return [copy.deepcopy(v) for v in self._models.get(_key(model_id), [])]
 
     # ------------------------------------------------------------------
     # Evaluation & Promotion
@@ -110,7 +141,20 @@ class ModelRegistryAndEvaluationManager:
         registry.  Callers are responsible for supplying the correct metric_score
         retrieved from the registry.
         """
-        eligible = float(metric_score) >= float(threshold)
+        score, limit = _finite(metric_score), _finite(threshold)
+        if score is None or limit is None or limit <= 0:
+            # A missing / NaN / infinite score is not evidence of quality, and a threshold of zero
+            # or less accepts anything: neither may produce "ELIGIBLE".
+            return {
+                "model_id": model_id,
+                "version": version,
+                "score": metric_score,
+                "threshold": threshold,
+                "deployment_eligible": False,
+                "status": "INVALID_INPUT",
+                "error": "metric_score must be a finite number and threshold a finite positive number.",
+            }
+        eligible = score >= limit
         return {
             "model_id": model_id,
             "version": version,
@@ -135,19 +179,39 @@ class ModelRegistryAndEvaluationManager:
         A threshold <= 0 is rejected to prevent promoting a model that has no
         metric (which would score 0.0 and pass a zero threshold).
         """
-        if float(threshold) <= 0:
+        limit = _finite(threshold)
+        if limit is None or limit <= 0:
             return {
                 "promoted": False,
                 "error": "threshold must be a positive number.",
             }
 
+        model_id, version = _key(model_id), _key(version)
         versions = self._models.get(model_id, [])
         target = next((v for v in versions if v["version"] == version), None)
         if target is None:
             return {"promoted": False, "error": f"Version '{version}' not found for model '{model_id}'."}
+        if target["stage"] == "deprecated":
+            return {
+                "promoted": False,
+                "model_id": model_id,
+                "version": version,
+                "stage": "deprecated",
+                "error": "A deprecated version cannot be promoted; register a new version instead.",
+            }
 
-        score = float(target["metrics"].get(primary_metric_key, 0.0))
-        if score >= float(threshold):
+        score = _finite(target["metrics"].get(primary_metric_key))
+        if score is None:
+            return {
+                "promoted": False,
+                "model_id": model_id,
+                "version": version,
+                "stage": target["stage"],
+                "score": None,
+                "threshold": threshold,
+                "error": f"Metric '{primary_metric_key}' is missing or not a finite number.",
+            }
+        if score >= limit:
             # Demote any existing production version for this model first.
             for v in versions:
                 if v["stage"] == "production" and v["version"] != version:
@@ -182,8 +246,11 @@ class ModelRegistryAndEvaluationManager:
         model_b: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Produce head-to-head delta comparison between two model versions."""
-        metrics_a = model_a.get("metrics", {})
-        metrics_b = model_b.get("metrics", {})
+        if not isinstance(model_a, dict) or not isinstance(model_b, dict):
+            return {"model_a_id": None, "model_b_id": None, "metric_comparisons": {},
+                    "error": "model_a and model_b must be objects with a 'metrics' object."}
+        metrics_a = model_a.get("metrics") if isinstance(model_a.get("metrics"), dict) else {}
+        metrics_b = model_b.get("metrics") if isinstance(model_b.get("metrics"), dict) else {}
 
         all_keys = set(metrics_a.keys()) | set(metrics_b.keys())
         deltas: Dict[str, Dict[str, Any]] = {}
@@ -191,7 +258,8 @@ class ModelRegistryAndEvaluationManager:
         for k in sorted(all_keys):
             val_a = metrics_a.get(k)
             val_b = metrics_b.get(k)
-            diff = (val_b - val_a) if (val_a is not None and val_b is not None) else None
+            fa, fb = _finite(val_a), _finite(val_b)
+            diff = (fb - fa) if (fa is not None and fb is not None) else None
             deltas[k] = {
                 "model_a": val_a,
                 "model_b": val_b,
@@ -211,16 +279,21 @@ class ModelRegistryAndEvaluationManager:
         higher_is_better: bool = True,
     ) -> Optional[Dict[str, Any]]:
         """Identify the highest performing registered version for a target metric."""
-        versions = self._models.get(model_id, [])
+        versions = self._models.get(_key(model_id), [])
         if not versions:
             return None
 
-        candidates = [v for v in versions if metric_key in v.get("metrics", {})]
+        # Deprecated versions are out of the candidate pool (see deprecate_model), and a metric that
+        # is not a finite number cannot be ranked (NaN would make max() order-dependent).
+        candidates = [
+            v for v in versions
+            if v["stage"] != "deprecated" and _finite(v.get("metrics", {}).get(metric_key)) is not None
+        ]
         if not candidates:
             return None
 
         factor = 1.0 if higher_is_better else -1.0
-        best = max(candidates, key=lambda v: factor * v["metrics"][metric_key])
+        best = max(candidates, key=lambda v: factor * _finite(v["metrics"][metric_key]))
         return copy.deepcopy(best)
 
     def deprecate_model(
@@ -230,6 +303,7 @@ class ModelRegistryAndEvaluationManager:
         reason: str = "Superseded by newer release",
     ) -> Dict[str, Any]:
         """Mark a model version as deprecated/archived to remove it from candidate pools."""
+        model_id, version = _key(model_id), _key(version)
         versions = self._models.get(model_id, [])
         target = next((v for v in versions if v["version"] == version), None)
         if not target:

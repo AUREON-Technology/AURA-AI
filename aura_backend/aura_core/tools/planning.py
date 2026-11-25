@@ -11,8 +11,10 @@ capability grant beyond the tool itself.
 
 from __future__ import annotations
 
+import math
+import re
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 
 from ..domain.errors import ToolExecutionError
 from ..domain.tools import ToolCategory, ToolSensitivity
@@ -23,18 +25,43 @@ __all__ = ["prioritize_tasks", "find_calendar_slots"]
 _PRIORITY_WEIGHT = {"high": 30.0, "medium": 15.0, "low": 5.0}
 
 
-def _parse_datetime(value: str, *, field: str, tool_name: str) -> datetime:
+#: Tasks, goals or busy intervals one call may carry. Both tools run on the event loop, where a
+#: timeout cannot interrupt them, so the cap is the actual bound on the work.
+_MAX_ITEMS = 5_000
+_DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _parse_datetime(
+    value: str, *, field: str, tool_name: str, default_tz: tzinfo = timezone.utc,
+    end_of_day: bool = False,
+) -> datetime:
+    """An ISO 8601 date or datetime as an aware datetime.
+
+    A value with no offset takes ``default_tz`` (UTC unless the caller says otherwise). A bare date
+    is midnight, or with ``end_of_day`` the last instant of that day: a task due "2026-11-22" is not
+    overdue at 09:00 on the 22nd.
+    """
     if not isinstance(value, str):
         raise ToolExecutionError(f"{field} must be a string; got {type(value).__name__}", tool=tool_name)
+    text = value.strip()
+    if text[-1:] in ("Z", "z"):
+        text = text[:-1] + "+00:00"
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(text)
     except ValueError as exc:
         raise ToolExecutionError(
-            f"{field} must be an ISO 8601 date/datetime string; got {value!r}", tool=tool_name,
+            f"{field} must be an ISO 8601 date/datetime string; got {value[:60]!r}", tool=tool_name,
         ) from exc
+    if end_of_day and _DATE_ONLY.match(text):
+        parsed = parsed.replace(hour=23, minute=59, second=59, microsecond=999_999)
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=default_tz)
     return parsed
+
+
+def _label(value: object) -> str:
+    """An id as one printable line, so a hostile id cannot forge a second line of the ranking."""
+    return "".join(c if c.isprintable() else "?" for c in str(value))[:80]
 
 
 # --------------------------------------------------------------------------------------
@@ -72,7 +99,9 @@ def _score_tasks(tasks: list, goals_by_id: dict, now: datetime):
 
         due_date_raw = t.get("due_date")
         if due_date_raw:
-            due = _parse_datetime(due_date_raw, field="due_date", tool_name="prioritize_tasks")
+            due = _parse_datetime(
+                due_date_raw, field="due_date", tool_name="prioritize_tasks", end_of_day=True
+            )
             days_left = (due - now).total_seconds() / 86400.0
             if days_left < 0:
                 score += 100.0 + min(-days_left, 30.0) * 2.0
@@ -88,7 +117,8 @@ def _score_tasks(tasks: list, goals_by_id: dict, now: datetime):
             reasons.append(f"goal priority={goals_by_id[goal_id]}")
 
         effort = t.get("effort_minutes")
-        if isinstance(effort, (int, float)) and effort > 0:
+        if isinstance(effort, (int, float)) and not isinstance(effort, bool) \
+                and math.isfinite(effort) and effort > 0:
             # All else equal, a quick win beats a slog -- a small tilt, not a dominant factor.
             score += max(0.0, (120.0 - min(effort, 120.0)) / 120.0 * 10.0)
             reasons.append(f"effort={effort:g}m")
@@ -129,33 +159,76 @@ def _score_tasks(tasks: list, goals_by_id: dict, now: datetime):
     timeout_s=3.0,
 )
 async def prioritize_tasks(tasks: list, goals: list | None = None) -> str:
+    name = "prioritize_tasks"
     if not tasks:
         return "No tasks to prioritise."
+    if len(tasks) > _MAX_ITEMS or len(goals or []) > _MAX_ITEMS:
+        raise ToolExecutionError(f"at most {_MAX_ITEMS} tasks or goals per call", tool=name)
+
+    clean: list[dict] = []
+    seen: set[str] = set()
     for t in tasks:
-        if not isinstance(t, dict) or not t.get("id"):
+        raw_id = t.get("id") if isinstance(t, dict) else None
+        if isinstance(raw_id, bool) or not isinstance(raw_id, (str, int)) or not str(raw_id).strip():
             raise ToolExecutionError(
-                "each task must be an object with a non-empty 'id' field", tool="prioritize_tasks"
+                "each task must be an object with a non-empty 'id' field", tool=name
             )
+        task_id = str(raw_id)
+        if task_id in seen:
+            # Two tasks under one id would be ranked as one and one of them silently lost.
+            raise ToolExecutionError(f"task id {_label(task_id)!r} appears more than once", tool=name)
+        seen.add(task_id)
+        deps = t.get("depends_on")
+        if deps is None:
+            deps = []
+        elif isinstance(deps, (str, int)) and not isinstance(deps, bool):
+            deps = [deps]  # one id given bare; iterating it would split a string into characters
+        elif not isinstance(deps, list):
+            raise ToolExecutionError(f"depends_on of {_label(task_id)!r} must be an array of ids", tool=name)
+        clean.append({**t, "id": task_id, "depends_on": [str(d) for d in deps],
+                      "goal_id": None if t.get("goal_id") is None else str(t["goal_id"])})
+
     goals_by_id = {
-        g["id"]: g.get("priority", "medium")
+        str(g["id"]): str(g.get("priority") or "medium").lower()
         for g in (goals or []) if isinstance(g, dict) and g.get("id")
     }
-    scored, blocked = _score_tasks(tasks, goals_by_id, datetime.now(timezone.utc))
+    scored, blocked = _score_tasks(clean, goals_by_id, datetime.now(timezone.utc))
 
     lines = []
     for rank, s in enumerate(scored, start=1):
         reason = ", ".join(s.reasons) if s.reasons else "no deadline, goal, or effort signal"
-        lines.append(f"{rank}. {s.id} (score={s.score:.1f}: {reason})")
+        lines.append(f"{rank}. {_label(s.id)} (score={s.score:.1f}: {reason})")
     if blocked:
+        waiting = {task_id: deps for task_id, deps in blocked}
+
+        def circular(start: str) -> bool:
+            """Whether ``start`` is (transitively) waiting on itself, so it can never be unblocked."""
+            stack, visited = list(waiting[start]), set()
+            while stack:
+                node = stack.pop()
+                if node == start:
+                    return True
+                if node not in visited:
+                    visited.add(node)
+                    stack.extend(waiting.get(node, ()))
+            return False
+
         lines.append("Blocked (waiting on dependencies not marked done):")
         for task_id, deps in blocked:
-            lines.append(f"  - {task_id} waiting on {', '.join(deps)}")
+            note = " -- circular dependency: it can never be unblocked as listed" if circular(task_id) else ""
+            lines.append(f"  - {_label(task_id)} waiting on {', '.join(_label(d) for d in deps)}{note}")
     return "\n".join(lines)
 
 
 # --------------------------------------------------------------------------------------
 # find_calendar_slots
 # --------------------------------------------------------------------------------------
+
+
+def _clock_minutes(value: str) -> int:
+    """``'09:30'`` -> 570. Raises ``ValueError`` for anything that is not an ``HH:MM`` time."""
+    parsed = datetime.strptime(str(value).strip(), "%H:%M")
+    return parsed.hour * 60 + parsed.minute
 
 
 def _merge_intervals(intervals: list[tuple[datetime, datetime]]) -> list[tuple[datetime, datetime]]:
@@ -173,23 +246,26 @@ def _merge_intervals(intervals: list[tuple[datetime, datetime]]) -> list[tuple[d
 
 
 def _daily_windows(search_start: datetime, search_end: datetime, work_start, work_end):
-    """Yield each day's working-hours window (default: the whole day) clipped to the search
-    range. Calendar days are read off the datetimes' own tzinfo/offset as given -- callers
-    searching across timezones should normalise before calling."""
+    """Yield the windows to look for slots in, clipped to the search range.
+
+    With no working hours that is the whole range as one window, so a slot may cross midnight (a
+    per-day split with a 23:59:59.999999 end meant the day's last hour was never offered).
+    ``work_start``/``work_end`` are minutes after midnight; ``work_end`` may be 1440 (24:00). Calendar
+    days are read off ``search_start``'s own offset -- callers searching across timezones should
+    normalise before calling.
+    """
+    if work_start is None:
+        yield search_start, search_end
+        return
+    tz = search_start.tzinfo
     day = search_start.date()
-    while True:
-        if work_start is None:
-            window_start = datetime.combine(day, datetime.min.time(), tzinfo=search_start.tzinfo)
-            window_end = datetime.combine(day, datetime.max.time(), tzinfo=search_start.tzinfo)
-        else:
-            window_start = datetime.combine(day, work_start, tzinfo=search_start.tzinfo)
-            window_end = datetime.combine(day, work_end, tzinfo=search_start.tzinfo)
-        window_start = max(window_start, search_start)
-        window_end = min(window_end, search_end)
+    last_day = search_end.astimezone(tz).date()
+    while day <= last_day:
+        midnight = datetime.combine(day, datetime.min.time(), tzinfo=tz)
+        window_start = max(midnight + timedelta(minutes=work_start), search_start)
+        window_end = min(midnight + timedelta(minutes=work_end), search_end)
         if window_start < window_end:
             yield window_start, window_end
-        if window_end >= search_end or day > search_end.date():
-            break
         day += timedelta(days=1)
 
 
@@ -252,7 +328,8 @@ async def find_calendar_slots(
 ) -> str:
     tool_name = "find_calendar_slots"
     start = _parse_datetime(search_start, field="search_start", tool_name=tool_name)
-    end = _parse_datetime(search_end, field="search_end", tool_name=tool_name)
+    # A value with no offset means the caller's own timezone, i.e. the one search_start names.
+    end = _parse_datetime(search_end, field="search_end", tool_name=tool_name, default_tz=start.tzinfo)
     if end <= start:
         raise ToolExecutionError("search_end must be after search_start", tool=tool_name)
     if (end - start) > timedelta(days=400):
@@ -261,6 +338,8 @@ async def find_calendar_slots(
         raise ToolExecutionError(
             "search window must not exceed 400 days", tool=tool_name
         )
+    if duration_minutes < 1 or duration_minutes > 400 * 24 * 60:
+        raise ToolExecutionError("duration_minutes must be between 1 and the 400-day window", tool=tool_name)
 
     if (working_hours_start is None) != (working_hours_end is None):
         raise ToolExecutionError(
@@ -270,8 +349,9 @@ async def find_calendar_slots(
     work_start = work_end = None
     if working_hours_start is not None:
         try:
-            work_start = datetime.strptime(working_hours_start, "%H:%M").time()
-            work_end = datetime.strptime(working_hours_end, "%H:%M").time()
+            work_start = _clock_minutes(working_hours_start)
+            # "24:00" is how a window runs to midnight; "23:59" would lose that last minute.
+            work_end = 24 * 60 if str(working_hours_end).strip() == "24:00" else _clock_minutes(working_hours_end)
         except ValueError as exc:
             raise ToolExecutionError(
                 "working_hours_start/working_hours_end must be 'HH:MM'", tool=tool_name
@@ -281,14 +361,23 @@ async def find_calendar_slots(
                 "working_hours_end must be after working_hours_start", tool=tool_name
             )
 
+    if len(busy or []) > _MAX_ITEMS:
+        raise ToolExecutionError(f"at most {_MAX_ITEMS} busy intervals per call", tool=tool_name)
     intervals = []
     for item in busy or []:
         if not isinstance(item, dict) or "start" not in item or "end" not in item:
             raise ToolExecutionError(
                 "each busy item must be an object with 'start' and 'end'", tool=tool_name
             )
-        b_start = _parse_datetime(item["start"], field="busy.start", tool_name=tool_name)
-        b_end = _parse_datetime(item["end"], field="busy.end", tool_name=tool_name)
+        b_start = _parse_datetime(item["start"], field="busy.start", tool_name=tool_name,
+                                  default_tz=start.tzinfo)
+        b_end = _parse_datetime(item["end"], field="busy.end", tool_name=tool_name,
+                                default_tz=start.tzinfo)
+        if b_end < b_start:
+            # Dropping it would offer the very time the caller meant to block (start and end swapped).
+            raise ToolExecutionError(
+                f"busy interval ends before it starts: {item['start']} -> {item['end']}", tool=tool_name
+            )
         if b_end > b_start:
             intervals.append((b_start, b_end))
     merged = _merge_intervals(intervals)

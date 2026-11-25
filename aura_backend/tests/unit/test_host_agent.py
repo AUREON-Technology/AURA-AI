@@ -408,6 +408,40 @@ class TestHostAgentSandboxRunner:
         assert events[-1].kind == "done" and events[-1].exit_code == 0
 
     @pytest.mark.anyio
+    async def test_run_streaming_surfaces_the_daemons_notes_that_only_the_final_frame_carries(self) -> None:
+        """The daemon appends "command killed after Ns timeout" / "output truncated" to the
+        aggregated output of its terminal ``result`` and never streams it. A caller that reads
+        only the stream (``run_command``) used to see a timed-out command as exit -1 with empty
+        stderr. Found by driving the real ``aura_hostd`` through the real relay."""
+        registry = HostAgentRegistry()
+
+        async def send(frame):
+            method, call_id = frame["method"], frame["id"]
+            if method == "create_task":
+                session.resolve({"type": "result", "id": call_id, "result": {"task_id": "task-1"}})
+                return
+            session.resolve({"type": "stream", "id": call_id, "stream": "stdout", "data": "partial\n"})
+            session.resolve({"type": "stream", "id": call_id, "stream": "stderr", "data": "warn\n"})
+            session.resolve({"type": "result", "id": call_id, "result": {
+                "stdout": "partial\n",
+                "stderr": "warn\n\n[aura_hostd] command killed after 2s timeout",
+                "exit_code": -1,
+            }})
+
+        session = HostAgentSession(UserId("u1"), send)
+        await registry.register(session)
+        runner = HostAgentSandboxRunner(registry)
+        handle = await runner.create_task(user_id=UserId("u1"))
+
+        events = [e async for e in runner.run_streaming(handle, ["sh", "-c", "sleep 9"], timeout_s=5)]
+
+        stdout = "".join(e.data for e in events if e.kind == "stdout")
+        stderr = "".join(e.data for e in events if e.kind == "stderr")
+        assert stdout == "partial\n"  # nothing is duplicated
+        assert stderr == "warn\n\n[aura_hostd] command killed after 2s timeout"
+        assert events[-1].kind == "done" and events[-1].exit_code == -1
+
+    @pytest.mark.anyio
     async def test_run_streaming_propagates_an_error_frame(self) -> None:
         registry = HostAgentRegistry()
 

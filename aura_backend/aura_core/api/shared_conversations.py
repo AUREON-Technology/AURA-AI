@@ -16,7 +16,7 @@ def _summary(c: Any) -> dict:
 
 
 def register_sharing_ops(router: Any, container: Any, *, principal: Callable, Depends: Any,
-                         JSONResponse: Any, Response: Any) -> None:
+                         JSONResponse: Any, Response: Any, idempotent: Any = ()) -> None:
     from pydantic import BaseModel, ConfigDict, Field
 
     sharing = container.sharing
@@ -27,7 +27,7 @@ def register_sharing_ops(router: Any, container: Any, *, principal: Callable, De
         title: str = Field(default="", max_length=500)
         messages: list[dict] = Field(max_length=10_000)
 
-    @router.post("/workspaces/{workspace_id}/shared-conversations")
+    @router.post("/workspaces/{workspace_id}/shared-conversations", dependencies=idempotent)
     async def share_conversation(workspace_id: str, payload: ShareRequest, caller=Depends(principal)) -> JSONResponse:
         shared = await sharing.share(str(caller.user_id), workspace_id, payload.source_id, payload.title, payload.messages)
         return JSONResponse(status_code=201, content=_summary(shared))
@@ -42,7 +42,7 @@ def register_sharing_ops(router: Any, container: Any, *, principal: Callable, De
         c = await sharing.get(str(caller.user_id), workspace_id, conversation_id)
         return JSONResponse(content={**_summary(c), "messages": [{"role": m.role, "text": m.text} for m in c.messages]})
 
-    @router.delete("/workspaces/{workspace_id}/shared-conversations/{conversation_id}")
+    @router.delete("/workspaces/{workspace_id}/shared-conversations/{conversation_id}", dependencies=idempotent)
     async def unshare_conversation(workspace_id: str, conversation_id: str, caller=Depends(principal)) -> Any:
         await sharing.unshare(str(caller.user_id), workspace_id, conversation_id)
         return Response(status_code=204)

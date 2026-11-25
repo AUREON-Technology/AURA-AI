@@ -35,6 +35,9 @@ _CLOSE_UNAUTHORIZED = 4401
 _CLOSE_SERVER_ERROR = 1011
 _CLOSE_UNAVAILABLE = 4503
 _CLOSE_BAD_REQUEST = 4400
+#: The user pressed stop-all (ADR-041). Not 4401: the daemon must not unpair itself over this --
+#: revoking the device is the separate, explicit way to make that happen.
+_CLOSE_STOPPED = 4409
 
 _AUTH_TIMEOUT_S = 5.0
 
@@ -77,9 +80,16 @@ def _host_check(container: Any) -> Callable[[Any], Any]:
         try:
             admitted = await plans.engineer_entitled(principal.user_id.value)
         except Exception:
-            # Admission fails closed; a blip at a later recheck keeps a daemon already admitted
-            # until the next recheck answers (Plan E review #1).
             logger.warning("could not re-check a customer's plan for their daemon", exc_info=True)
+            if not admitted:
+                # Not yet admitted: the lookup failing is the absence of an answer, not a "no".
+                # Returning False here closed the socket 4401, which makes the daemon unpair for
+                # good over a database blip (e.g. the reconnect right after a deploy). Raise so
+                # the caller answers "retry" (1011 at connect, UNAVAILABLE at a recheck), the
+                # same rule the authentication step applies.
+                raise
+            # Already admitted: a blip at a later recheck keeps the daemon until the next recheck
+            # answers (Plan E review #1).
             return admitted
         return admitted
 
@@ -125,7 +135,14 @@ def register_host_agent(
             await websocket.close(code=_CLOSE_SERVER_ERROR)
             return
 
-        if not await host_allowed(principal):
+        try:
+            hosting_allowed = await host_allowed(principal)
+        except Exception:
+            # The plan lookup could not run (database blip). That is not a verdict on the account:
+            # 1011 makes the daemon reconnect with backoff instead of unpairing (see `_host_check`).
+            await websocket.close(code=_CLOSE_SERVER_ERROR)
+            return
+        if not hosting_allowed:
             # A daemon can only ever be usefully paired to an account the server would actually
             # route engineer-agent tool calls to -- refuse it here rather than registering a
             # session nothing will ever call.
@@ -135,7 +152,10 @@ def register_host_agent(
         async def send(frame: Mapping[str, Any]) -> None:
             await websocket.send_json(dict(frame))
 
-        session = HostAgentSession(principal.user_id, send)
+        async def close_for_stop() -> None:
+            await websocket.close(code=_CLOSE_STOPPED)
+
+        session = HostAgentSession(principal.user_id, send, close=close_for_stop)
         credential = LiveCredential(
             token=token, principal=principal, recheck_s=recheck_s or ws_auth.DEFAULT_RECHECK_S,
             check=lambda t: _authenticate_frame({"token": t}, authenticator),

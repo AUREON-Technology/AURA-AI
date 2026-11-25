@@ -9,7 +9,14 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ._process import PYTEST_ENV, run_bounded
+from ._ops_common import run_group
+from ._process import PYTEST_ENV, scrubbed_env
+
+#: Cap on each returned output stream (the TAIL is kept: pytest's summary is at the end).
+_MAX_OUTPUT_CHARS = 20_000
+#: Timeout bounds. A caller may ask for longer than the default to let a large suite finish, never for
+#: an unbounded run.
+_MAX_TIMEOUT_S = 600
 
 
 class AutomatedTestGeneratorAndVerifier:
@@ -99,6 +106,14 @@ class AutomatedTestGeneratorAndVerifier:
             return {
                 "valid_syntax": False,
                 "error": f"SyntaxError: {e}",
+                "functions": [],
+                "classes": [],
+                "imports": [],
+            }
+        except (ValueError, RecursionError, MemoryError) as e:
+            return {
+                "valid_syntax": False,
+                "error": f"Source code could not be parsed: {type(e).__name__}",
                 "functions": [],
                 "classes": [],
                 "imports": [],
@@ -372,6 +387,13 @@ class AutomatedTestGeneratorAndVerifier:
                 "line": e.lineno,
                 "test_functions": [],
             }
+        except (ValueError, RecursionError, MemoryError) as e:
+            return {
+                "valid": False,
+                "error": f"Test code could not be parsed: {type(e).__name__}",
+                "line": None,
+                "test_functions": [],
+            }
 
         test_funcs = [
             node.name
@@ -393,13 +415,42 @@ class AutomatedTestGeneratorAndVerifier:
             return Path("module_under_test.py")
         return Path(*parts).with_suffix(".py")
 
+    @staticmethod
+    def _tail(text: str) -> str:
+        text = (text or "").strip()
+        if len(text) <= _MAX_OUTPUT_CHARS:
+            return text
+        return f"[... {len(text) - _MAX_OUTPUT_CHARS} chars truncated ...]\n" + text[-_MAX_OUTPUT_CHARS:]
+
+    @staticmethod
+    def _bounded_timeout(timeout_seconds: Any) -> int:
+        """Clamp a caller-supplied timeout to 1..600 s; junk falls back to 30 s."""
+        try:
+            value = int(timeout_seconds)
+        except (TypeError, ValueError, OverflowError):
+            return 30
+        return max(1, min(value, _MAX_TIMEOUT_S))
+
+    @classmethod
+    def _run_pytest(cls, cmd: List[str], cwd: Any, timeout_seconds: Any) -> "subprocess.CompletedProcess[str]":
+        """Run pytest in its own process group under a scrubbed environment.
+
+        On timeout the whole group is killed (a test that spawned its own children leaves nothing
+        behind) and ``subprocess.TimeoutExpired`` is raised for the callers' existing handlers.
+        """
+        timeout = cls._bounded_timeout(timeout_seconds)
+        result = run_group(cmd, cwd=cwd, timeout_s=timeout, env=scrubbed_env(PYTEST_ENV))
+        if result.timed_out:
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        return subprocess.CompletedProcess(cmd, result.returncode if result.returncode is not None else 0, result.stdout, result.stderr)
+
     @classmethod
     def run_tests_in_temp_dir(
         cls,
         test_code: str,
         source_code: Optional[str] = None,
         source_filename: str = "module_under_test.py",
-        timeout_seconds: int = 30,
+        timeout_seconds: int = 60,
     ) -> Dict[str, Any]:
         syntax_check = cls.validate_test_syntax(test_code)
         if not syntax_check["valid"]:
@@ -440,7 +491,7 @@ class AutomatedTestGeneratorAndVerifier:
 
             cmd = [sys.executable, "-m", "pytest", str(test_file), "-q", "--tb=short", "-p", "no:cacheprovider"]
             try:
-                proc = run_bounded(cmd, cwd=tmp_path, timeout_s=timeout_seconds, extra_env=PYTEST_ENV)
+                proc = cls._run_pytest(cmd, tmp_path, timeout_seconds)
                 duration_ms = round((time.time() - start_time) * 1000, 2)
                 parsed = cls.parse_pytest_output(proc.stdout, proc.stderr, proc.returncode)
                 parsed["duration_ms"] = duration_ms
@@ -465,22 +516,77 @@ class AutomatedTestGeneratorAndVerifier:
                     "duration_ms": 0,
                 }
 
+    #: The only pytest options ``run_existing_tests`` forwards. ``-p``, ``-c``, ``-o``,
+    #: ``--rootdir``, ``--confcutdir``, ``--pyargs`` and friends load plugins, configuration or
+    #: modules from places the caller never named, i.e. they run code of the caller's choosing.
+    _SAFE_FLAGS = frozenset({"-x", "-q", "-v", "-vv", "-s", "--lf", "--ff", "--co", "--collect-only"})
+    _SAFE_VALUE_FLAGS = frozenset({"-k", "-m"})
+
+    @classmethod
+    def _safe_pytest_args(cls, extra_args: Optional[List[str]]) -> List[str]:
+        """Validate ``extra_args`` against the allowlist. Raises ``ValueError`` on anything else."""
+        accepted: List[str] = []
+        items = [str(a) for a in (extra_args or [])]
+        i = 0
+        while i < len(items):
+            arg = items[i]
+            if arg in cls._SAFE_FLAGS or re.fullmatch(r"--maxfail=\d{1,4}", arg):
+                accepted.append(arg)
+            elif arg in cls._SAFE_VALUE_FLAGS and i + 1 < len(items) and not items[i + 1].startswith("-"):
+                accepted.extend([arg, items[i + 1]])
+                i += 1
+            else:
+                raise ValueError(f"pytest option not allowed: {arg!r}")
+            i += 1
+        return accepted
+
     @classmethod
     def run_existing_tests(
         cls,
         target_path: str,
         working_dir: Optional[str] = None,
         extra_args: Optional[List[str]] = None,
-        timeout_seconds: int = 60,
+        timeout_seconds: int = 180,
     ) -> Dict[str, Any]:
-        cwd = working_dir or os.getcwd()
-        cmd = [sys.executable, "-m", "pytest", target_path, "-q", "--tb=short"]
-        if extra_args:
-            cmd.extend(extra_args)
+        def refuse(message: str) -> Dict[str, Any]:
+            return {
+                "passed": False,
+                "exit_code": -1,
+                "target_path": target_path,
+                "error": message,
+                "stdout": "",
+                "stderr": "",
+                "duration_ms": 0,
+            }
+
+        try:
+            cwd_path = Path(working_dir).resolve() if working_dir else Path.cwd().resolve()
+        except (OSError, ValueError):
+            return refuse("Invalid working directory.")
+        if not cwd_path.is_dir():
+            return refuse(f"Working directory not found: {working_dir}")
+        # ``target_path`` is handed to pytest as a positional argument, so a value such as
+        # ``--version`` or ``-p evil`` would be read as an option. Resolve it against the working
+        # directory instead and require it to stay inside: what runs is a test the caller named,
+        # not whatever a ``../`` or an absolute path points at.
+        try:
+            target = (cwd_path / str(target_path)).resolve()
+            target.relative_to(cwd_path)
+        except (ValueError, OSError):
+            return refuse("target_path must be inside the working directory.")
+        if not target.exists():
+            return refuse(f"Test path not found: {target_path}")
+        try:
+            safe_extra = cls._safe_pytest_args(extra_args)
+        except ValueError as exc:
+            return refuse(str(exc))
+
+        cwd = str(cwd_path)
+        cmd = [sys.executable, "-m", "pytest", str(target), "-q", "--tb=short", *safe_extra]
 
         start_time = time.time()
         try:
-            proc = run_bounded(cmd, cwd=cwd, timeout_s=timeout_seconds, extra_env=PYTEST_ENV)
+            proc = cls._run_pytest(cmd, cwd, timeout_seconds)
             duration_ms = round((time.time() - start_time) * 1000, 2)
             parsed = cls.parse_pytest_output(proc.stdout, proc.stderr, proc.returncode)
             parsed["duration_ms"] = duration_ms
@@ -538,8 +644,8 @@ class AutomatedTestGeneratorAndVerifier:
                 "skipped": int(skipped_match.group(1)) if skipped_match else 0,
             },
             "failed_tests": failed_tests,
-            "stdout": stdout.strip(),
-            "stderr": stderr.strip(),
+            "stdout": AutomatedTestGeneratorAndVerifier._tail(stdout),
+            "stderr": AutomatedTestGeneratorAndVerifier._tail(stderr),
         }
 
     @classmethod
@@ -549,7 +655,7 @@ class AutomatedTestGeneratorAndVerifier:
         custom_test_code: Optional[str] = None,
         module_import_path: Optional[str] = None,
         include_edge_cases: bool = True,
-        timeout_seconds: int = 30,
+        timeout_seconds: int = 60,
         include_call_smoke: bool = False,
     ) -> Dict[str, Any]:
         """Generate (or take) tests and run them against ``source_code``.

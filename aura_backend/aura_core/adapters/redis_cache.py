@@ -172,6 +172,26 @@ class RedisCache:
         results = await pipe.execute()
         return int(results[0])
 
+    async def append_capped(self, key: str, value: bytes, *, max_len: int, ttl_s: int | None = None) -> int:
+        """``RPUSH`` + ``LTRIM`` (+ ``EXPIRE``) in one transaction: atomic across replicas, no
+        read-modify-write. **Raises** on backend failure (a lost history write must not be silent)."""
+        client = self._get_client()
+        pipe = client.pipeline(transaction=True)
+        pipe.rpush(key, value)
+        pipe.ltrim(key, -max(1, int(max_len)), -1)
+        if ttl_s and ttl_s > 0:
+            pipe.expire(key, ttl_s)
+        pipe.llen(key)
+        results = await pipe.execute()
+        return int(results[-1])
+
+    async def get_list(self, key: str) -> list[bytes]:
+        try:
+            return list(await self._get_client().lrange(key, 0, -1))
+        except Exception as exc:
+            self._record_error("get_list", exc)
+            return []
+
     # -- lifecycle --------------------------------------------------------------------
 
     async def close(self) -> None:

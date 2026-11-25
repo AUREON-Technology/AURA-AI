@@ -368,6 +368,7 @@ class TestKernelWiring:
             "fetch_url",
             "write_file", "write_files", "edit_file", "run_command", "clone_repository",
             "git_diff", "git_commit", "git_checkout_branch", "git_status", "git_push",
+            "workspace_snapshot", "list_workspace_snapshots", "workspace_restore",
             # Persistent workspaces (ADR-013) additionally need a workspace manager, which this
             # default container has no sandbox runner to build one from.
             "open_workspace", "list_workspaces", "destroy_workspace",
@@ -379,6 +380,21 @@ class TestKernelWiring:
             # `AURA_OPEN_EXEC_TOOLS_ENABLED`.
             "generate_and_run_tests", "analyze_test_quality",
             "docker_build", "docker_compose", "profile_python",
+            # ADR-042: registered only with their engine / AURA_WEB_SEARCH_URL / files root, none of
+            # which this default container configures (`test_media_tools` registers them for real).
+            "web_search", "ocr_image", "inspect_spreadsheet", "parse_document", "compare_images", "transcribe_audio",
+            "analyze_image_requirements",
+            # `engineer_agent`-gated like the other sandbox tools (registered in build_sandbox_tools).
+            "lint_code", "check_format",
+            # ADR-045: need AURA_TOOLS_FILES_ROOT (file tools) or a run store (project_status).
+            "index_repository", "search_repository", "check_file_staleness", "load_project_conventions",
+            "load_project_skills", "read_notebook", "inspect_binary_file", "verify_backup",
+            # ADR-046: only registered when AURA_TOOLS_HTTP_ALLOWED_HOSTS names a host.
+            "verify_release_health",
+            # ADR-049/050: each registers only when the operator configured what it reads or starts (AURA_OPS_*),
+            # and `scan_security` with a sandbox runner like `lint_code`.
+            "check_platform_health", "query_telemetry", "list_workflow_runs", "deploy_release",
+            "rollback_release", "scan_security", "gpu_status",
         }
         # The sandbox/git tools (minus `clone_repository`, which additionally needs a GitHub
         # resolver this default container does not configure) are unconditionally *registered*

@@ -49,9 +49,14 @@ from .config.settings import (
 from .context.engine import ContextEngine
 from .context.tokenizer import get_tokenizer, tokenizer_for
 from .domain.errors import ConfigurationError
+from .domain.identifiers import SessionId
 from .execution.agentic_loop import AgenticExecutor
+from .execution.critic import Critic, LLMCritic
+from .execution.recovery import RecoveryPolicy
+from .execution.stuck import StuckConfig
 from .execution.confirmations import PendingConfirmationStore
 from .execution.engine import ExecutionEngine
+from .history import RunSearchIndex, UsageLedger
 from .knowledge.chunking import ChunkingConfig
 from .knowledge.engine import KnowledgeEngine
 from .knowledge.extraction import RuleEntityExtractor
@@ -71,10 +76,12 @@ from .llm.registry import (
 from .llm.router import ProviderRouter
 from .agents import build_default_agent_registry
 from .memory.engine import MemoryEngine
+from .memory.checkpoint import build_session_checkpointer
 from .memory.session import EpisodicMemory, build_session_summariser
 from .observability.logging import configure_logging, get_logger
 from .observability.metrics import get_metrics
 from .rag import StrategyFacade, build_strategies
+from .tasks import AgentTaskQueue, AgentTaskStore, KernelTaskRunner
 from .observability.tracing import Tracer, install_tracer
 from .planning.engine import PlanningEngine
 from .ports.runtime import Closeable
@@ -253,10 +260,13 @@ class Container:
         )
 
         # INT-004: pins live in a store every gateway worker reads, not in this worker's memory.
+        self.advisory_store = self._build_advisory_store()
         self.prompt_pins = self._build_prompt_pins()
         self.prompts = build_default_registry(pins=self.prompt_pins)
         self._prompt_pin_sync_task: asyncio.Task[None] | None = None
-        self.agents = build_default_agent_registry()
+        self.agents = build_default_agent_registry(
+            engineer_token_budget=settings.reasoning.engineer_token_budget
+        )
         if settings.adaptation.enabled:
             # Track AP7: the same registry interface, over a snapshot a blueprint deploy can swap
             # atomically. Wrapped here, before the kernel and the delegation tools capture it.
@@ -354,6 +364,12 @@ class Container:
         # `api/v3.py`'s `/knowledge/documents/upload` -- so it lives here as its own attribute
         # rather than as a `KnowledgeEngine` constructor argument.
         self.ocr_engine = self._build_ocr_engine()
+        # The developer tools in `tools/open/` read PDFs through one shared reader; handing it the same
+        # engine means a scanned page is recognised there too instead of being reported as unread.
+        # `None` (OCR disabled or tesseract missing) leaves them on the "name the unread pages" path.
+        from .tools.open._input import configure_ocr_engine
+
+        configure_ocr_engine(self.ocr_engine)
         # Phase F2: neither speech port feeds an engine constructor either -- both are reached
         # directly from `api/v3.py`'s `/voice/*` routes.
         self.stt_engine = self._build_stt_engine()
@@ -424,6 +440,9 @@ class Container:
             window=settings.memory.episodic_window,
             summarise_after=settings.memory.summarise_after_turns,
             summariser=build_session_summariser(self.router, self.prompts),
+            checkpointer=build_session_checkpointer(self.router),
+            # Off (0) unless AURA_MEMORY_AUTO_CHECKPOINT_EVERY_TURNS: each one is a model call.
+            auto_checkpoint_every=settings.memory.auto_checkpoint_every_turns,
         )
 
         # The ten retrieval strategies, and a facade presenting the selected one with the
@@ -494,18 +513,46 @@ class Container:
             verification_enabled=settings.reasoning.verification_enabled,
             metrics=self.metrics,
         )
+        # ADR-039: failure-kind-aware retries, only when the operator turns them on; the engine
+        # otherwise keeps its original "retry any failed read-only step" rule.
         self.executor = ExecutionEngine(
             tools=self.tools,
             max_parallel=settings.tools.max_parallel,
             metrics=self.metrics,
             event_bus=self.events,
+            recovery=(
+                RecoveryPolicy(backoff_base_s=settings.reasoning.loop_recovery_backoff_s)
+                if settings.reasoning.loop_recovery_policy_enabled else None
+            ),
         )
         # The engineer agent's bounded plan-execute-observe-replan loop (execution/agentic_loop.py)
         # -- `None` when planning itself is disabled, since there is nothing to loop.
+        reasoning = settings.reasoning
         self.agentic_executor = (
             AgenticExecutor(
                 planner=self.planner, executor=self.executor, metrics=self.metrics,
                 clock=self.clock, runs=self.agent_runs,
+                # ADR-039. Each piece is settings-driven; the loop only applies them to a
+                # persona that replans (today: engineer), so single-pass personas are untouched.
+                stuck=StuckConfig(
+                    enabled=reasoning.loop_stuck_detection_enabled,
+                    identical_calls=reasoning.loop_stuck_identical_calls,
+                    same_error=reasoning.loop_stuck_same_error,
+                    no_progress=reasoning.loop_stuck_no_progress,
+                ),
+                recovery=(
+                    RecoveryPolicy(backoff_base_s=reasoning.loop_recovery_backoff_s)
+                    if reasoning.loop_recovery_policy_enabled else None
+                ),
+                critic=Critic(
+                    enabled=reasoning.critic_enabled,
+                    llm=(
+                        LLMCritic(router=self.router, timeout_s=min(30.0, settings.llm.request_timeout_s))
+                        if reasoning.critic_enabled and reasoning.critic_llm_enabled else None
+                    ),
+                ),
+                test_signals=reasoning.loop_test_signals_enabled,
+                pressure_threshold=reasoning.context_pressure_threshold,
             )
             if self.planner is not None
             else None
@@ -622,6 +669,30 @@ class Container:
             self.blueprint_compiler = self._build_compiler(use_postgres=use_postgres)
             self.blueprint_deployment = self._build_deployment()
 
+        # ADR-040 (row 60): lesson extraction after Engineer turns. None unless
+        # AURA_AUTO_LESSONS_ENABLED (and memory on): the kernel then does nothing extra.
+        self.lesson_sink = self._build_lesson_sink()
+
+        from .tools.autonomy import AutonomyStore
+
+        # ADR-041: the user's review profile, in the cache port (see tools/autonomy.py for why).
+        self.autonomy = AutonomyStore(self.cache_backend, default=settings.tools.autonomy_default)
+        #: ``async (uid: str) -> list[dict]`` revoking the paired desktop devices ``uid`` owns,
+        #: attached by ``aura_service`` because the device registry lives outside aura_core
+        #: (ADR-002). ``None`` where it is not attached; ``stop-all`` then reports it unavailable.
+        self.device_revoker = None
+        # ADR-043: per-turn usage and the opt-in run-goal preview, both in the cache port (Redis
+        # in production) -- no table. The kernel writes them; the usage and run-search routes read.
+        usage = settings.usage
+        self.usage_ledger = UsageLedger(
+            self.cache_backend, enabled=usage.ledger_enabled, ttl_days=usage.ledger_ttl_days,
+            max_per_user=usage.ledger_max_per_user, clock=self.clock,
+        )
+        self.run_index = RunSearchIndex(
+            self.cache_backend, self.agent_runs, store_preview=usage.runs_store_preview,
+            preview_ttl_s=usage.runs_preview_ttl_s, scan=usage.runs_search_scan,
+        )
+
         self.kernel = AIKernel(
             KernelDependencies(
                 router=self.router,
@@ -655,13 +726,56 @@ class Container:
                 # production), so any replica can resume the exact turn the user approved.
                 tool_confirmations=PendingConfirmationStore(self.cache_backend),
                 vision=self.vision,
+                lesson_sink=self.lesson_sink,
+                autonomy=self.autonomy,
+                usage_ledger=self.usage_ledger,
+                run_index=self.run_index,
+                audit=self.audit,
             )
         )
+        # ADR-043: user agent tasks. The queue runs each task through `self.kernel` -- the same
+        # path as /chat -- so it can only exist once the kernel does. `None` is the kill switch
+        # (AURA_AGENT_TASKS_ENABLED=false): the routes then answer 503.
+        self.agent_task_store = AgentTaskStore(
+            self.cache_backend, record_ttl_s=settings.agent_tasks.record_ttl_s,
+            idempotency_ttl_s=settings.agent_tasks.idempotency_ttl_s,
+        )
+        self.task_queue = (
+            AgentTaskQueue(
+                store=self.agent_task_store, runner=KernelTaskRunner(self.kernel),
+                settings=settings.agent_tasks, clock=self.clock,
+            )
+            if settings.agent_tasks.enabled else None
+        )
+
         # After kernel exists, same reason as live_voice below: `delegate_to_agent`
         # (tools/delegation.py) recurses into `self.kernel.run()`, so it cannot be built inside
         # `_build_tools()` (which runs before the kernel does) -- the resolver defers the lookup
         # of `self.kernel` to call time, once it is guaranteed to exist.
+        from .agents.handoff import HandoffStore
+        from .agents.tasks import AgentTaskManager
         from .tools.delegation import build_delegation_tools
+
+        # ADR-040, both off by default. Status and results of a background task, and handoff
+        # records, live in the shared cache (Redis in production); the running task itself is an
+        # asyncio task in this process (agents/tasks.py).
+        reasoning = settings.reasoning
+        self.agent_tasks = (
+            AgentTaskManager(
+                self.cache_backend,
+                per_user=reasoning.agent_tasks_per_user,
+                global_cap=reasoning.agent_tasks_global,
+                ttl_s=reasoning.agent_task_ttl_s,
+                deadline_s=reasoning.agent_task_deadline_s,
+            )
+            if reasoning.background_delegation_enabled else None
+        )
+        self.handoffs = (
+            HandoffStore(self.cache_backend) if reasoning.structured_handoff_enabled else None
+        )
+
+        async def _parent_checkpoint(owner: Any, session_id: str) -> Any:
+            return await self.episodic.fresh_checkpoint(SessionId(session_id), owner)
 
         self.tools.register_all(
             build_delegation_tools(
@@ -669,8 +783,19 @@ class Container:
                 kernel=lambda: self.kernel,
                 max_depth=settings.reasoning.max_delegation_depth,
                 deadline_s=settings.reasoning.delegation_deadline_s,
+                tasks=self.agent_tasks,
+                handoffs=self.handoffs,
+                checkpoint_provider=_parent_checkpoint,
+                structured_handoff=reasoning.structured_handoff_enabled,
             )
         )
+
+        # ADR-046: `research_topic` composes other tools (search_knowledge, web_search, fetch_url) through
+        # this same registry, as the caller, so it is registered once the registry is complete.
+        if settings.open_tools.analysis_enabled:
+            from .tools.research import build_research_tools
+
+            self.tools.register_all(build_research_tools(lambda: self.tools))
 
         # Phase H: after kernel exists so the live session can stream through it.
         self.live_voice = self._build_live_voice()
@@ -1781,6 +1906,20 @@ class Container:
             apple=apple, google_push=google_push, google_play=google_play,
         )
 
+    def _build_advisory_store(self) -> Any:
+        """The local OSV advisory copy (``domain/advisories.py``): read by the dependency scan, written
+        by the scheduled sync. Postgres-backed like the other shared stores, so a worker's download is
+        what every gateway process reads."""
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_advisories import PostgresAdvisoryStore
+
+            return PostgresAdvisoryStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        from .adapters.advisories_memory import InMemoryAdvisoryStore
+
+        return InMemoryAdvisoryStore()
+
     def _build_prompt_pins(self) -> Any:
         """Prompt-version pins (INT-004). Postgres-backed with the other stores, so a pin reaches
         every gateway worker within ``PIN_SYNC_INTERVAL_S`` and survives a restart."""
@@ -1931,6 +2070,14 @@ class Container:
             lookups.desktop[key] = True
         return routed
 
+    async def _guard_tool_result(self, text: str, tool: str, context) -> Any:
+        """Tool output through the safety pipeline's TOOL_RESULT stage (inventory row 34).
+
+        Credentials are redacted and injection-looking output is withheld. ``SafetyPipeline`` is a
+        pass-through when ``AURA_SAFETY_ENABLED`` is off, so this needs no flag of its own.
+        """
+        return await self.safety.guard_tool_result(text, tool=tool, user_id=context.user_id)
+
     def _build_tools(self) -> ToolRegistry:
         registry = ToolRegistry(
             policy=ToolPolicy.from_settings(self.settings.tools),
@@ -1942,6 +2089,7 @@ class Container:
             event_bus=self.events,
             audit=self.audit,
             host_routed=self._host_routed,
+            result_guard=self._guard_tool_result,
         )
         github_default_repo = ""
         if self.settings.github.default_owner and self.settings.github.default_repo:
@@ -1959,11 +2107,39 @@ class Container:
                 host_git=self.host_git,
                 github_token_resolver=self._github_token_resolver,
                 host_agent_registry=self.host_agent_registry,
+                # Both default to empty, which registers nothing (list_files/read_file/fetch_url were
+                # implemented but could never be switched on: audit T-06). An operator opts in with
+                # AURA_TOOLS_FILES_ROOT / AURA_TOOLS_HTTP_ALLOWED_HOSTS; personas still need a grant.
+                workspace=self.settings.tools.files_root or None,
+                allowed_http_hosts=self.settings.tools.http_allowed_hosts,
+                web_search_url=self.settings.tools.web_search_url,
+                web_search_timeout_s=self.settings.tools.web_search_timeout_s,
+                web_search_engines=self.settings.tools.web_search_engines,
+                web_search_language=self.settings.tools.web_search_language,
+                ocr_engine=self.ocr_engine,
+                vision_engine=self.vision,
+                image_normalizer=self.image_normalizer,
+                stt_engine=self.stt_engine,
                 enable_analysis_tools=self.settings.open_tools.analysis_enabled,
+                advisory_store=self.advisory_store,
+                advisory_max_age_days=self.settings.advisories.max_age_days,
+                ops=self.settings.ops,
+                graph_store=self.graph if self.settings.knowledge.graph_enabled else None,
                 enable_open_exec_tools=self.settings.open_tools.exec_enabled,
                 enable_desktop_ops_tools=self.settings.open_tools.desktop_ops_enabled,
+                enable_open_pure_tools=self.settings.open_tools.pure_enabled,  # ADR-044
+                episodic_memory=self.episodic,
+                # ADR-045 project_status: the owner-scoped run stores (None when not configured).
+                engineer_runs=self.engineer_runs,
+                agent_runs=self.agent_runs,
             )
         )
+        # ADR-046 (open partial tools): the model-metric history lives in the Cache port, so these two
+        # tools need the container's cache and cannot be built by `default_tools`.
+        if self.settings.open_tools.analysis_enabled:
+            from .tools.drift import build_drift_tools
+
+            registry.register_all(build_drift_tools(self.cache_backend))
         if self.structured_extractor is not None:
             # ADR-038. Built here, not in ``default_tools``: it needs the audit sink and the clock,
             # and like every other opt-in resource it exists only when its adapter does.
@@ -1982,6 +2158,45 @@ class Container:
                 )
             )
         return registry
+
+    def _build_lesson_sink(self) -> Any:
+        """``async (LessonTurn) -> None`` queueing an Engineer turn's lessons for review, or ``None``.
+
+        Candidates are screened with the same context guards retrieved chunks pass (an injection
+        in a "lesson" is dropped, not stored), checked for secrets and duplicates, and written to
+        the engineer scope's *pending* partition (``learning/jobs.py``). Nothing here promotes them.
+        """
+        if not self.settings.learning.auto_lessons_enabled or self.memory is None:
+            return None
+        from .learning.jobs import run_engineer_lesson_extraction
+
+        safety = self.safety if self.settings.safety.enabled else None
+        # ADR-047 (row 60): optional, default off. Local-only by construction (see the module).
+        model_extractor = None
+        if self.settings.learning.auto_lessons_model_enabled:
+            from .learning.model_lessons import build_model_lesson_extractor
+
+            model_extractor = build_model_lesson_extractor(self.router)
+
+        async def screen(text: str) -> bool:
+            if safety is None:
+                return True
+            _accepted, quarantined, _tainted = await safety.guard_context_items([("lesson", text)])
+            return not quarantined
+
+        async def sink(turn: Any) -> None:
+            checkpoint = None
+            if turn.session_id:
+                # The saved one, never a fresh model call: this runs after every Engineer turn.
+                checkpoint = await self.episodic.latest_checkpoint(SessionId(turn.session_id), turn.user_id)
+            report = await run_engineer_lesson_extraction(
+                self.memory, turn, checkpoint=checkpoint, enabled=True, screen=screen,
+                model_extractor=model_extractor,
+            )
+            logger.info("engineer lessons", extra={"report": report})
+
+        return sink
+
 
     def _build_structured_extractor(self) -> Any:
         """Cloudflare's ``clairic`` behind the extraction port, or ``None`` when it is off (ADR-038).
@@ -2187,6 +2402,8 @@ class Container:
         # Re-arms shutdown(): a container started again after one (a test client re-entering
         # its lifespan, an evaluation run) reconnects lazily, and those clients must close too.
         self._shut_down = False
+        if self.task_queue is not None:
+            await self.task_queue.start()
         await self.index_manager.ensure_ready()
         if self.settings.knowledge.hybrid_enabled:
             await self.knowledge.rebuild_lexical_index()
@@ -2316,6 +2533,14 @@ class Container:
         if self._shut_down:
             return
         self._shut_down = True
+        if getattr(self, "task_queue", None) is not None:
+            # ADR-043 gateway queue: first, and on its own -- it cancels running tasks and writes
+            # their final state to the cache, which must still be open while it does.
+            await self._close_quietly("agent task queue", self.task_queue.stop)
+        if getattr(self, "agent_tasks", None) is not None:
+            # Background sub-turns live in this process: stop them and write their final records
+            # first, before the cache they report to (and the providers they call) are closed.
+            await self._close_quietly("agent tasks", self.agent_tasks.shutdown)
         await self._stop_control_reconciler()
         try:
             await self.kernel.wait_for_post_turn(timeout_s=POST_TURN_DRAIN_S)

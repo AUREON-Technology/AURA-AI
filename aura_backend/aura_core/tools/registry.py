@@ -35,7 +35,7 @@ from ..domain.events import ToolInvoked
 from ..domain.llm import DataClassification
 from ..domain.messages import ToolCall, ToolResult
 from ..domain.output_schema import output_errors
-from ..domain.tools import ToolPolicyDecision, ToolSensitivity, ToolSpec
+from ..domain.tools import NESTED_DISPATCH_TAG, ToolPolicyDecision, ToolSensitivity, ToolSpec
 from ..llm.sensitivity import escalate
 from ..observability.logging import get_logger
 from ..ports.coding import TOOL_CALL_CONFIRMED
@@ -48,6 +48,11 @@ from .schema import validate_arguments
 #: the floor on a host-routed tool's server-side budget (audit FSA-041). The Engineer loop's
 #: deadline must cover it on top of the longest tool run (settings.reasoning.engineer_loop_deadline_s).
 HOST_APPROVAL_WINDOW_S = 330.0
+
+#: The most a tool's ``preview`` hook may take. It runs before the human is even asked, outside the
+#: tool's own timeout and concurrency slot, and the one that exists reads the forge once per file;
+#: a hook that cannot finish in this long degrades to "no diff" like one that raised.
+PREVIEW_TIMEOUT_S = 15.0
 
 __all__ = ["ToolRegistry", "ToolExecutionReport"]
 
@@ -115,8 +120,14 @@ class ToolRegistry:
         event_bus: Any = None,
         audit: Any = None,
         host_routed: Callable[[ToolContext], Awaitable[bool]] | None = None,
+        result_guard: Callable[[str, str, ToolContext], Awaitable[Any]] | None = None,
     ) -> None:
         self._tools: dict[str, Tool] = {}
+        # ``await result_guard(content, tool_name, context)`` -> a ``SafetyDecision`` (the container
+        # passes ``SafetyPipeline.guard_tool_result``). Every successful tool result goes through it
+        # before the model, a UI or the transcript sees it: credentials are redacted, and output
+        # that looks like an injection or cannot be checked is withheld. ``None`` = unguarded.
+        self._result_guard = result_guard
         self._policy = policy or ToolPolicy()
         # An allowlist, when non-empty, is exclusive: only listed tools are visible at all.
         self._allowlist = frozenset(allowlist)
@@ -263,9 +274,7 @@ class ToolRegistry:
         """
         started = time.perf_counter()
         name = call.name
-        arguments_digest = hashlib.sha256(
-            json.dumps(dict(call.arguments), sort_keys=True, default=str).encode()
-        ).hexdigest()[:16]
+        arguments_digest = _arguments_digest(call.arguments)
 
         def finish(
             *, ok: bool, content: str, error_kind: str | None = None, allowed: bool = True,
@@ -305,11 +314,15 @@ class ToolRegistry:
         try:
             tool = self.get(name)
         except ToolNotFoundError as exc:
-            self._observe(name, outcome="not_found")
-            await self._audit_call(name, context, "denied", arguments_digest, "tool_not_found")
+            # The name is whatever the model wrote. It must not become a metrics label (every
+            # distinct value would be a new time series, kept for the life of the process), nor an
+            # unbounded string in the audit log or in the reply.
+            shown = name if len(name) <= _MAX_NAME_SHOWN else name[:_MAX_NAME_SHOWN] + "..."
+            self._observe(_UNKNOWN_TOOL_LABEL, outcome="not_found")
+            await self._audit_call(shown, context, "denied", arguments_digest, "tool_not_found")
             return finish(
                 ok=False,
-                content=f"Tool '{name}' is not available. Available tools: "
+                content=f"Tool '{shown}' is not available. Available tools: "
                         f"{', '.join(s.name for s in self.available(capabilities=capabilities))}.",
                 error_kind=exc.kind,
                 allowed=False,
@@ -323,6 +336,7 @@ class ToolRegistry:
             arguments = validate_arguments(spec, call.arguments)
         except ValidationError as exc:
             self._observe(name, outcome="invalid_arguments")
+            await self._audit_call(name, context, "denied", arguments_digest, "invalid_arguments")
             # Argument values are not logged (they can carry user content); the keys and the
             # validator's own message are enough to tell a bad name from a bad value.
             logger.warning(
@@ -356,11 +370,12 @@ class ToolRegistry:
         host_routed = on_desktop and not confirmed
         decision: ToolPolicyDecision = self._policy.evaluate(
             spec, context=context, capabilities=capabilities, confirmed=confirmed,
-            host_routed=host_routed,
+            host_routed=host_routed, arguments=arguments,
         )
         if not decision.allowed:
             self._observe(name, outcome="denied", denied_reason=decision.reason)
-            await self._audit_call(name, context, "denied", arguments_digest, decision.reason)
+            await self._audit_call(name, context, "denied", arguments_digest, decision.reason,
+                                   decision=decision)
             await self._publish(name, context, allowed=False, ok=False, duration_ms=0.0,
                                 error_kind=decision.reason)
             return finish(
@@ -372,6 +387,11 @@ class ToolRegistry:
             )
         if decision.requires_confirmation and not confirmed:
             self._observe(name, outcome="needs_confirmation")
+            # A held call is an attempt like a refused one: "a tainted turn tried to write and was
+            # stopped for confirmation" is the event a reviewer looks for, and until now it left
+            # only a metric and a same-user response.
+            await self._audit_call(name, context, "needs_confirmation", arguments_digest,
+                                   decision.reason, decision=decision)
             # D6: give the human something to review beyond the raw arguments, when the tool can
             # produce one. A preview failure must never block confirmation itself -- the call is
             # already going to sit in confirm-required limbo either way, so this degrades to "no
@@ -379,7 +399,9 @@ class ToolRegistry:
             diff_preview: str | None = None
             if spec.preview is not None:
                 try:
-                    diff_preview = await spec.preview(arguments, context)
+                    diff_preview = await asyncio.wait_for(
+                        spec.preview(arguments, context), timeout=PREVIEW_TIMEOUT_S
+                    )
                 except Exception:
                     logger.exception("tool preview hook failed", extra={"tool": name})
             return finish(
@@ -397,10 +419,13 @@ class ToolRegistry:
         timeout = self.call_timeout(spec, context, host_routed=on_desktop)
         confirmed_token = TOOL_CALL_CONFIRMED.set(bool(confirmed))
         try:
-            if on_desktop:
+            if on_desktop or NESTED_DISPATCH_TAG in spec.tags:
                 # The work happens on the user's own machine, and most of the wait is a human
                 # deciding. Holding one of this process's few sandbox slots for that would let a
                 # handful of pending approvals stall every other user's tool calls here.
+                # A tool that dispatches further calls through this registry (delegation) is held
+                # to the same rule for a different reason: its children need slots, and each
+                # parent holding one while it waits is a deadlock once `max_parallel` of them run.
                 raw = await asyncio.wait_for(tool.execute(arguments, context), timeout=timeout)
             else:
                 async with self._semaphore:
@@ -431,6 +456,7 @@ class ToolRegistry:
             duration = (time.perf_counter() - started) * 1000.0
             logger.exception("tool raised an unexpected exception", extra={"tool": name})
             self._observe(name, outcome="error", duration_ms=duration)
+            await self._audit_call(name, context, "error", arguments_digest, "tool_execution_error")
             await self._publish(name, context, allowed=True, ok=False, duration_ms=duration,
                                 error_kind=type(exc).__name__)
             return finish(
@@ -471,7 +497,10 @@ class ToolRegistry:
             # instead -- the schema subset has no minItems, so a shorter list still matches it --
             # and flag it (ADR-025): in the result itself when its schema admits a `truncated`
             # field, and always in the ToolResult metadata.
-            fitted = _fit_json(content, spec.max_result_chars, spec.output_schema)
+            try:
+                fitted = _fit_json(content, spec.max_result_chars, spec.output_schema)
+            except RecursionError:
+                fitted = None  # nested past what the interpreter can walk: too large, not a crash
             if fitted is None:
                 duration = (time.perf_counter() - started) * 1000.0
                 self._observe(name, outcome="result_too_large", duration_ms=duration)
@@ -496,6 +525,64 @@ class ToolRegistry:
                 + f"\n[…truncated at {spec.max_result_chars} characters]"
             )
 
+        if self._result_guard is not None:
+            try:
+                verdict = await self._result_guard(content, name, context)
+            except Exception:
+                # Fails CLOSED, like every exfiltration guard (ADR-006): output that could not be
+                # checked for credentials is not handed on.
+                logger.exception("tool result guard failed", extra={"tool": name})
+                duration = (time.perf_counter() - started) * 1000.0
+                self._observe(name, outcome="guard_error", duration_ms=duration)
+                await self._audit_call(name, context, "error", arguments_digest, "output_guard_error")
+                await self._publish(name, context, allowed=True, ok=False, duration_ms=duration,
+                                    error_kind="output_withheld")
+                return finish(
+                    ok=False,
+                    content=f"The '{name}' tool's output could not be checked and was withheld.",
+                    error_kind="output_withheld",
+                    policy_reason=decision.reason,
+                )
+            if not verdict.allowed:
+                reasons = ", ".join(verdict.report.reasons()) or "safety guard"
+                if getattr(verdict, "tainted", False):
+                    context.tainted = True  # suspected injection: later side effects need confirmation
+                duration = (time.perf_counter() - started) * 1000.0
+                self._observe(name, outcome="output_withheld", duration_ms=duration)
+                await self._audit_call(name, context, "error", arguments_digest, "output_withheld")
+                await self._publish(name, context, allowed=True, ok=False, duration_ms=duration,
+                                    error_kind="output_withheld")
+                return finish(
+                    ok=False,
+                    content=f"The '{name}' tool's output was withheld by a safety guard ({reasons}).",
+                    error_kind="output_withheld",
+                    policy_reason=decision.reason,
+                )
+            if verdict.text != content:
+                logger.info("tool result redacted by the output guard", extra={"tool": name})
+                if spec.output_schema is not None:
+                    # The shape check ran before the guard, and the guard rewrites text: NFKC
+                    # folds a full-width quote into a real one (a string value then closes itself
+                    # and adds keys), and the size guard cuts mid-document. What goes on has to
+                    # still be the result that was checked, so check again, and fail closed.
+                    problems = _rewrite_problems(spec.output_schema, content, verdict.text)
+                    if problems:
+                        duration = (time.perf_counter() - started) * 1000.0
+                        self._observe(name, outcome="invalid_output", duration_ms=duration)
+                        await self._audit_call(name, context, "error", arguments_digest,
+                                               "invalid_output")
+                        await self._publish(name, context, allowed=True, ok=False,
+                                            duration_ms=duration, error_kind="invalid_output")
+                        return finish(
+                            ok=False,
+                            content=f"The '{name}' tool's result no longer matches its declared "
+                                    "output schema after safety processing "
+                                    f"({'; '.join(problems)}), so it was withheld.",
+                            error_kind="invalid_output",
+                            policy_reason=decision.reason,
+                        )
+                content = verdict.text
+
         if "untrusted_content" in spec.tags:
             # This tool's output is attacker-influenceable external content that
             # deps.safety.guard_context_items never scanned (that only covers RAG
@@ -512,7 +599,8 @@ class ToolRegistry:
 
         duration = (time.perf_counter() - started) * 1000.0
         self._observe(name, outcome="ok", duration_ms=duration)
-        await self._audit_call(name, context, "success", arguments_digest, decision.reason)
+        await self._audit_call(name, context, "success", arguments_digest, decision.reason,
+                               decision=decision)
         await self._publish(name, context, allowed=True, ok=True, duration_ms=duration)
         return finish(ok=True, content=content, policy_reason=decision.reason, truncation=truncation)
 
@@ -602,7 +690,8 @@ class ToolRegistry:
             logger.debug("tool event publication failed", exc_info=True)
 
     async def _audit_call(
-        self, name: str, context: ToolContext, outcome: str, digest: str, reason: str
+        self, name: str, context: ToolContext, outcome: str, digest: str, reason: str,
+        decision: ToolPolicyDecision | None = None,
     ) -> None:
         """Audit every attempt.
 
@@ -613,6 +702,14 @@ class ToolRegistry:
             return
         from ..ports.runtime import AuditEvent
 
+        detail: dict[str, Any] = {"arguments_digest": digest, "reason": reason,
+                                  "tainted": context.tainted}
+        if decision is not None:
+            # Which declarative rule fired and under which review profile (ADR-041); the rule's
+            # id and the profile name are operator-authored, never argument values.
+            for key in ("rule", "autonomy"):
+                if key in decision.audit_fields:
+                    detail[key] = decision.audit_fields[key]
         try:
             await self._audit.record(
                 AuditEvent(
@@ -621,8 +718,7 @@ class ToolRegistry:
                     resource=name,
                     outcome=outcome,
                     correlation_id=context.correlation_id,
-                    detail={"arguments_digest": digest, "reason": reason,
-                            "tainted": context.tainted},
+                    detail=detail,
                 )
             )
         except Exception:  # pragma: no cover - defensive
@@ -646,13 +742,76 @@ class ToolRegistry:
         ]
 
 
+#: What a model-chosen tool name is cut to before it is logged, audited or echoed back, and the
+#: one metrics label every unknown name shares.
+_MAX_NAME_SHOWN = 120
+_UNKNOWN_TOOL_LABEL = "_unknown"
+
+
+def _arguments_digest(arguments: Any) -> str:
+    """Digest of the call's arguments for the audit log; never raises.
+
+    Computed before anything else in ``execute``, so a value that cannot be serialized (not an
+    object, keys of mixed types, nesting past the interpreter's recursion limit) used to escape
+    as an exception ahead of validation, audit and the reply -- the model's own malformed call
+    ending the turn. It is digested as unserializable instead and refused by validation.
+    """
+    try:
+        encoded = json.dumps(dict(arguments), sort_keys=True, default=str)
+    except (TypeError, ValueError, RecursionError):
+        encoded = f"<unserializable {type(arguments).__name__}>"
+    return hashlib.sha256(encoded.encode()).hexdigest()[:16]
+
+
 def _output_problems(schema: Mapping[str, Any], content: str) -> list[str]:
     """Why ``content`` is not a JSON value matching ``schema`` (empty when it is)."""
     try:
         value = json.loads(content)
+    except RecursionError:
+        # `RecursionError` is not a `ValueError`. A connected system's result nested a few
+        # thousand levels deep used to escape `execute` here, after the tool had already acted.
+        return ["result is nested too deeply"]
     except ValueError:
         return ["result is not JSON"]
     return output_errors(schema, value)
+
+
+def _rewrite_problems(schema: Mapping[str, Any], before: str, after: str) -> list[str]:
+    """Why ``after`` (``before`` rewritten by the output guard) may not stand in for it.
+
+    Empty when ``after`` still matches ``schema`` *and* has the same structure as ``before``
+    (same keys, same list lengths, strings still strings): a guard may redact or normalise a
+    string value, never add a key or cut the document.
+    """
+    problems = _output_problems(schema, after)
+    if problems:
+        return problems
+    try:
+        same = _same_shape(json.loads(before), json.loads(after))
+    except (ValueError, RecursionError):
+        return ["result could not be compared after safety processing"]
+    return [] if same else ["its structure was changed"]
+
+
+def _same_shape(before: Any, after: Any) -> bool:
+    """Whether two parsed JSON values differ at most in their string contents (iterative)."""
+    stack: list[tuple[Any, Any]] = [(before, after)]
+    while stack:
+        left, right = stack.pop()
+        if isinstance(left, dict):
+            if not isinstance(right, dict) or left.keys() != right.keys():
+                return False
+            stack.extend((left[key], right[key]) for key in left)
+        elif isinstance(left, list):
+            if not isinstance(right, list) or len(left) != len(right):
+                return False
+            stack.extend(zip(left, right))
+        elif isinstance(left, str):
+            if not isinstance(right, str):
+                return False
+        elif type(left) is not type(right) or not (left == right or left != left):
+            return False  # (``left != left``: a NaN is the same NaN)
+    return True
 
 
 #: Work budget for shortening one structured result: how many lists may be shortened before it

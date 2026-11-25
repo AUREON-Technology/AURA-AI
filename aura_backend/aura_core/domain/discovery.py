@@ -50,7 +50,7 @@ _MAX_ATTR_STR = 512
 _MAX_ATTR_ITEMS = 256
 _MAX_LOCATOR = 512
 #: Document formats a connector may hand to project knowledge (AP10).
-DOCUMENT_FORMATS = frozenset({"markdown", "text", "html", "pdf"})
+DOCUMENT_FORMATS = frozenset({"markdown", "text", "html", "pdf", "docx", "pptx"})
 
 
 def quote_identifier(name: str) -> str:

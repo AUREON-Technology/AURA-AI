@@ -5327,6 +5327,257 @@ class AppLocalizationsEn extends AppLocalizations {
       'Couldn\'t go back to the desktop app. Make sure it\'s still waiting for you, then start again from it.';
 
   @override
+  String get chatToolAsksApproval => 'Asks for your approval before it runs';
+
+  @override
+  String get chatToolChangesThings =>
+      'This action changes things outside the chat.';
+
+  @override
+  String get engineeringTasksTooltip => 'Agent tasks';
+
+  @override
+  String get engineeringRunSearchTooltip => 'Search runs';
+
+  @override
+  String get engineeringUsageTooltip => 'Usage and cost';
+
+  @override
+  String get agentTasksTitle => 'Agent tasks';
+
+  @override
+  String get agentTasksGoalHint => 'Describe the task for the agent';
+
+  @override
+  String get agentTasksSend => 'Send task';
+
+  @override
+  String get agentTasksWaiting => 'Waiting to send';
+
+  @override
+  String get agentTasksSending => 'Sending…';
+
+  @override
+  String get agentTasksNotSent => 'Not sent';
+
+  @override
+  String agentTasksRetryingIn(int count) {
+    return 'Attempt $count failed. Will retry on its own.';
+  }
+
+  @override
+  String get agentTasksQueuedOffline =>
+      'Saved. It will be sent when you are back online.';
+
+  @override
+  String get agentTasksSentSnack => 'Task sent.';
+
+  @override
+  String get agentTasksAlreadySentSnack =>
+      'That task had already been received. Nothing was run twice.';
+
+  @override
+  String get agentTasksNotSentSnack =>
+      'The server refused this task. See the reason on the list.';
+
+  @override
+  String get agentTasksQueueFull =>
+      'Too many unsent tasks. Wait for some to be sent or dismiss them.';
+
+  @override
+  String get agentTasksRetryNow => 'Retry now';
+
+  @override
+  String get agentTasksDismiss => 'Dismiss';
+
+  @override
+  String get agentTasksSendAgain => 'Send again as a new task';
+
+  @override
+  String get agentTasksSentTitle => 'Recent tasks';
+
+  @override
+  String get agentTasksNoneYet => 'No tasks yet';
+
+  @override
+  String get agentTasksNoneYetMessage =>
+      'Tasks you send show up here with their status.';
+
+  @override
+  String get agentTasksConflict =>
+      'This request was already used with different contents, so it was not sent.';
+
+  @override
+  String get agentTaskStatusQueued => 'Queued';
+
+  @override
+  String get agentTaskStatusRunning => 'Running';
+
+  @override
+  String get agentTaskStatusAwaitingApproval => 'Needs your approval';
+
+  @override
+  String get agentTaskStatusSucceeded => 'Done';
+
+  @override
+  String get agentTaskStatusFailed => 'Failed';
+
+  @override
+  String get agentTaskStatusCancelled => 'Cancelled';
+
+  @override
+  String get runSearchTitle => 'Run history';
+
+  @override
+  String get runSearchHint => 'Search by agent, status or tool';
+
+  @override
+  String get runSearchButton => 'Search';
+
+  @override
+  String runSearchResults(int count) {
+    return '$count runs';
+  }
+
+  @override
+  String get runSearchEmpty => 'No runs match';
+
+  @override
+  String get runSearchEmptyMessage =>
+      'Try a different word, or clear the search to see the newest runs.';
+
+  @override
+  String get runStatusFailed => 'Failed';
+
+  @override
+  String get runStatusCompleted => 'Completed';
+
+  @override
+  String get runStatusPartial => 'Partly done';
+
+  @override
+  String get runStatusRunning => 'Running';
+
+  @override
+  String get runStatusAwaitingApproval => 'Needs approval';
+
+  @override
+  String get runStatusBudgetExhausted => 'Stopped at its limit';
+
+  @override
+  String runSummaryLine(int steps, int tools) {
+    return '$steps plan steps, $tools tool calls';
+  }
+
+  @override
+  String get runTimelineTitle => 'Run timeline';
+
+  @override
+  String get runTimelineNoSteps => 'No steps were recorded for this run.';
+
+  @override
+  String runTimelineIteration(int n) {
+    return 'Pass $n';
+  }
+
+  @override
+  String get runTimelineStepFailed => 'Failed';
+
+  @override
+  String get runMetricElapsed => 'Elapsed';
+
+  @override
+  String get runMetricTokens => 'Tokens';
+
+  @override
+  String get runMetricToolCalls => 'Tool calls';
+
+  @override
+  String get runMetricIterations => 'Passes';
+
+  @override
+  String runSeconds(String seconds) {
+    return '$seconds s';
+  }
+
+  @override
+  String get usageTitle => 'Usage and cost';
+
+  @override
+  String get usagePeriodDay => '24 hours';
+
+  @override
+  String get usagePeriodWeek => '7 days';
+
+  @override
+  String get usagePeriodMonth => '30 days';
+
+  @override
+  String get usageGroupDay => 'By day';
+
+  @override
+  String get usageGroupAgent => 'By agent';
+
+  @override
+  String get usageGroupTask => 'By task';
+
+  @override
+  String get usageTotalTurns => 'Turns';
+
+  @override
+  String get usageTotalTokensIn => 'Tokens in';
+
+  @override
+  String get usageTotalTokensOut => 'Tokens out';
+
+  @override
+  String get usageTotalCost => 'Cost';
+
+  @override
+  String usageFailedTurns(int count) {
+    return '$count failed';
+  }
+
+  @override
+  String usageCostValue(String amount) {
+    return '$amount USD';
+  }
+
+  @override
+  String get usageTruncated =>
+      'Totals may be incomplete: the server keeps only the most recent turns.';
+
+  @override
+  String get usageDisabled => 'Usage is not recorded on this server.';
+
+  @override
+  String get usageNoData => 'Nothing recorded in this period';
+
+  @override
+  String get usageNoTask => 'No task';
+
+  @override
+  String get usageBreakdown => 'Breakdown';
+
+  @override
+  String get usageRecentTurns => 'Recent turns';
+
+  @override
+  String usageTurnLine(int tokens, String seconds) {
+    return '$tokens tokens, $seconds s';
+  }
+
+  @override
+  String get usageTurnFailed => 'Failed';
+
+  @override
+  String get usageTurnCached => 'Cached';
+
+  @override
+  String get hostdCodeProtectedGitInternals =>
+      'Writing inside .git (HEAD, the index, refs, objects) is never allowed: it can corrupt the repository. Use Git commands instead.';
+
+  @override
   String get webDaemonUnavailableTitle => 'Pair a computer in the desktop app';
 
   @override
@@ -5352,4 +5603,50 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get webEngineerPaneMessage =>
       'Pick a run from the list to see its status, branch and output.';
+
+  @override
+  String get chatConfirmDetails => 'Details';
+
+  @override
+  String get chatRiskAdvisory =>
+      'Automatic check: a missing warning does not mean it is safe.';
+
+  @override
+  String get chatRiskCommand => 'Risky command';
+
+  @override
+  String get chatRiskSensitiveFile => 'Secret file';
+
+  @override
+  String get chatRiskMigration => 'Database schema';
+
+  @override
+  String get chatRiskPipeline => 'Build or deploy config';
+
+  @override
+  String get chatRiskDeployment => 'Deployment';
+
+  @override
+  String get chatRiskRemoteWrite => 'Writes to a remote';
+
+  @override
+  String get chatRiskLargeChange => 'Large change';
+
+  @override
+  String get agentStopAllTitle => 'Stop all agent activity';
+
+  @override
+  String get agentStopAllMessage =>
+      'This stops everything your agent is doing right now, on this server and on your paired computer. An action waiting for your approval stays waiting. Nothing already finished is undone.';
+
+  @override
+  String get agentStopAllConfirm => 'Stop now';
+
+  @override
+  String agentStopAllDone(int turns, int sessions) {
+    return 'Stopped $turns running turn(s) and closed $sessions computer session(s).';
+  }
+
+  @override
+  String get agentStopAllNothing => 'Nothing was running.';
 }

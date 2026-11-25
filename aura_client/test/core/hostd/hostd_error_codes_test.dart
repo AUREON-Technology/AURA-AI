@@ -60,6 +60,7 @@ const _daemonErrorCodes = [
   'path_outside_trusted_folder',
   'remote_command_needs_confirmation',
   'protected_git_dir_file',
+  'protected_git_internals',
   'remote_control_disabled',
   'remote_confirmation_required',
   'invalid_task_key',

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 import stat
 import tempfile
@@ -56,6 +57,42 @@ _ASKPASS_SCRIPT = """#!/bin/sh
 # in argv, so it does not appear in /proc/<pid>/cmdline for other processes on the host.
 printf '%s\\n' "$AURA_GIT_TOKEN"
 """
+
+
+#: Overrides every host-side git command is run with. ``-c`` outranks anything in a repository's own
+#: ``.git/config``, and this process runs git in directories that a container running model-chosen
+#: commands can write to -- including ``.git/hooks``. A hook is not configuration, so an allowlist of
+#: config keys (below) cannot see it: without ``core.hooksPath`` pointing nowhere, a ``pre-push``
+#: script the container wrote would run *here*, in the gateway, with the token in its environment.
+_HARDENING: tuple[str, ...] = (
+    "-c", "core.hooksPath=/dev/null",
+    "-c", "core.fsmonitor=false",
+    "-c", "credential.helper=",
+    "-c", "protocol.ext.allow=never",
+)
+
+#: ``.git/config`` keys that may exist in a checkout this process runs git on *with a credential*.
+#: The file is writable from inside the workspace container, and several keys turn a push or fetch
+#: into a credential leak or a code execution here: ``url.<x>.insteadOf`` re-points the remote at a
+#: host of the writer's choosing, ``http.*`` redirects or weakens TLS, ``credential.*`` hands the
+#: token to a program, ``core.sshCommand``/``core.gitProxy``/``include.path`` run or import more.
+#: Anything not matched below is refused rather than judged, because the list of keys that can do
+#: that is longer than anyone remembers and an allowlist fails closed.
+_SAFE_CONFIG_KEYS = re.compile(
+    r"^(?:"
+    r"core\.(?:repositoryformatversion|filemode|bare|logallrefupdates|symlinks|ignorecase|"
+    r"precomposeunicode|autocrlf|eol|safecrlf|longpaths|sparsecheckout)|"
+    r"user\.(?:name|email)|"
+    r"init\.defaultbranch|"
+    r"branch\..+\.(?:remote|merge|rebase|description)|"
+    r"remote\..+\.(?:url|fetch|tagopt|prunetags)|"
+    r"(?:advice|color)\..+|"
+    r"push\.default|pull\.rebase|fetch\.prune|"
+    r"extensions\.(?:objectformat|worktreeconfig)"
+    r")$"
+)
+#: What ``remote.<name>.url`` may be when a credential is about to be used against that remote.
+_CREDENTIAL_REMOTE_URL = re.compile(r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?(?:\.git)?/?$")
 
 
 class GitCommandError(RuntimeError):
@@ -99,6 +136,8 @@ class HostGitService:
         token: str | None = None,
         timeout_s: float | None = None,
     ) -> GitResult:
+        if token:
+            await self._assert_safe_config_for_credential(cwd, fetches=bool(args) and args[0] in ("fetch", "pull"))
         askpass_dir: str | None = None
         env = {
             # A deliberately minimal environment. Inheriting the gateway's would hand git every
@@ -123,7 +162,7 @@ class HostGitService:
                 env["GIT_USERNAME"] = "x-access-token"
 
             process = await asyncio.create_subprocess_exec(
-                "git", *args,
+                "git", *_HARDENING, *args,
                 cwd=str(cwd),
                 env=env,
                 stdout=asyncio.subprocess.PIPE,
@@ -148,6 +187,47 @@ class HostGitService:
         finally:
             if askpass_dir:
                 shutil.rmtree(askpass_dir, ignore_errors=True)
+
+    async def _assert_safe_config_for_credential(self, cwd: Path, *, fetches: bool) -> None:
+        """Refuse to use a credential in a repository whose config the workspace has tampered with.
+
+        Reads the local config only (``git config --list`` executes nothing) and checks every key
+        against :data:`_SAFE_CONFIG_KEYS`; for a ``fetch``, every ``remote.*.url`` must also be a
+        plain GitHub URL. When ``cwd`` is not inside a repository there is no local config to check.
+        """
+        result = await self._run(["config", "--local", "--list", "--no-includes", "-z"], cwd=cwd)
+        if not result.ok:
+            if any((directory / ".git").exists() for directory in (cwd, *cwd.parents)):
+                # Inside a repository whose config cannot even be read: that is not "nothing to
+                # check", it is a config git itself rejects, and the credential stays home.
+                raise GitCommandError(
+                    "refusing to use the GitHub credential: this workspace's git configuration "
+                    f"cannot be read ({result.stderr.strip()[:200] or 'unknown error'})"
+                )
+            return
+        for entry in result.stdout.split("\0"):
+            if not entry:
+                continue
+            key, _, value = entry.partition("\n")
+            lowered = key.lower()
+            if not _SAFE_CONFIG_KEYS.match(lowered):
+                raise GitCommandError(
+                    f"refusing to use the GitHub credential: the workspace's .git/config sets "
+                    f"{key!r}, which can redirect or capture it. Remove that setting, or destroy "
+                    "and re-clone the workspace."
+                )
+            if (
+                fetches
+                and lowered.startswith("remote.")
+                and lowered.endswith(".url")
+                and not _CREDENTIAL_REMOTE_URL.match(value)
+            ):
+                # `fetch` uses the remotes' own URLs, so with a credential it must only ever
+                # talk to GitHub. (`push` names its URL itself and never reads these.)
+                raise GitCommandError(
+                    f"refusing to use the GitHub credential: {key!r} is {value!r}, not a GitHub "
+                    "repository URL."
+                )
 
     async def _checked(
         self, args: Sequence[str], *, cwd: Path, token: str | None = None,
@@ -181,18 +261,29 @@ class HostGitService:
         token even transiently -- rewriting it afterwards would leave a window in which a command
         running in the container could read it, and this directory is bind-mounted there.
         """
+        existed = dest.exists()
         dest.mkdir(parents=True, exist_ok=True)
-        args = ["clone", self.remote_url(repo)]
+        args = ["clone"]
         if depth:
             # Shallow, but not single-branch: an agent asked to compare against main needs the
             # other branch to exist.
             args += ["--depth", str(depth), "--no-single-branch"]
         if ref:
             args += ["--branch", ref]
-        args.append(str(dest))
+        # `--` so neither the URL nor the destination can ever be read as an option.
+        args += ["--", self.remote_url(repo), str(dest)]
 
-        result = await self._checked(args, cwd=dest.parent, token=token)
-        await self._assert_no_credential_in_config(dest)
+        try:
+            result = await self._checked(args, cwd=dest.parent, token=token)
+            await self._assert_no_credential_in_config(dest)
+        except BaseException:
+            # A failed clone (bad ref, no access, timeout) leaves a partial `.git` behind, and the
+            # next attempt then fails with "already exists and is not an empty directory" -- a
+            # second, unrelated-looking error for the same problem. Only a directory this call
+            # made is removed; one that was already there is the caller's.
+            if not existed:
+                shutil.rmtree(dest, ignore_errors=True)
+            raise
         return result
 
     async def _assert_no_credential_in_config(self, repo_dir: Path) -> None:
@@ -295,4 +386,7 @@ class HostGitService:
         ).stdout
 
     async def is_repository(self, path: Path) -> bool:
-        return (path / ".git").exists()
+        # A real directory, not a symlink or a `gitdir:` file: those are how a workspace could
+        # point this process's credentialed git at a repository that is not the checkout.
+        git_dir = path / ".git"
+        return git_dir.is_dir() and not git_dir.is_symlink()

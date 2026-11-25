@@ -83,6 +83,8 @@ aura_client/scratch_test_*.tmp
 # fixes it predated had landed in source -- the Desktop IDE kept calling into a daemon binary that
 # had never seen those changes, and nothing about `git log` or a merged PR made that visible.
 aura_hostd/build/
+# scripts/real_desktop_path.sh: the locked `websockets` pin, when the venv lacks it
+aura_backend/.real_desktop_lib/
 aura_hostd/*.exe
 # `dart compile exe` with no -o names the output after the entrypoint, with no extension on Linux
 # and macOS -- and a 7.3 MB Windows build was committed under exactly that name.

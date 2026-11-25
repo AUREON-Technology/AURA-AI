@@ -175,6 +175,12 @@ void main() {
       expect(requests.single.headers['Authorization'], 'Bearer jwt-test');
     });
 
+    test('initGit waits longer than the gateway does for the computer', () {
+      // The gateway waits 150 s (v3.py host_folder_git_init); giving up first at the shared
+      // client's 30 s left the init running and the retry refused as "already a git repository".
+      expect(HostFoldersClient.initGitTimeout, greaterThan(const Duration(seconds: 150)));
+    });
+
     test("the computer's refusal (409 desktop_refused) carries its own message", () async {
       final container = containerWith((_) => http.Response(
           jsonEncode({

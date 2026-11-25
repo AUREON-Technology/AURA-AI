@@ -16,6 +16,7 @@ Three properties carry security weight:
 from __future__ import annotations
 
 import enum
+import math
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -32,7 +33,20 @@ __all__ = [
     "ToolInvocation",
     "tool_grant_permits",
     "intersect_tool_grants",
+    "NESTED_DISPATCH_TAG",
+    "NETWORK_TAG",
 ]
+
+#: A tool tagged with this runs further tool calls through the same ``ToolRegistry`` while it
+#: executes (``delegate_to_agent`` re-enters the kernel). ``ToolRegistry`` does not make such a
+#: call hold one of its few concurrency slots: the nested calls need slots of their own, so
+#: ``max_parallel`` concurrent delegations would each occupy a slot waiting for a child that can
+#: never get one, until the delegation timeout cut them all off.
+NESTED_DISPATCH_TAG = "nested_dispatch"
+
+#: Marks a tool that reaches a network service on the caller's behalf (a web fetch, a forge call,
+#: a bridged MCP server). The ``strict`` autonomy profile refuses these outright (ADR-041).
+NETWORK_TAG = "network"
 
 
 class ToolSensitivity(int, enum.Enum):
@@ -175,8 +189,13 @@ class ToolSpec:
             )
         if not self.description:
             raise ValueError(f"tool {self.name!r} must have a description; the model selects on it")
-        if self.timeout_s <= 0:
-            raise ValueError("timeout_s must be positive")
+        if not (math.isfinite(self.timeout_s) and self.timeout_s > 0):
+            # ``not (x > 0)`` rather than ``x <= 0``: NaN is neither, and would reach ``wait_for``.
+            raise ValueError("timeout_s must be positive and finite")
+        if self.max_result_chars < 1:
+            # A zero or negative cap is a slice bound, not "unlimited": ``content[:-5]`` keeps
+            # everything but the last five characters.
+            raise ValueError("max_result_chars must be at least 1")
         names = [p.name for p in self.parameters]
         if len(names) != len(set(names)):
             raise ValueError(f"tool {self.name!r} has duplicate parameter names")

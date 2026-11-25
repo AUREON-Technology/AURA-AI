@@ -56,6 +56,24 @@ class _EngineerHistoryPageState extends ConsumerState<EngineerHistoryPage> {
         title: Text(context.l10n.settingsEngineerTitle),
         actions: [
           IconButton(
+            key: const ValueKey('engineer-tasks-button'),
+            tooltip: context.l10n.engineeringTasksTooltip,
+            icon: const Icon(Icons.task_alt_outlined),
+            onPressed: () => context.push('/engineer-tasks'),
+          ),
+          IconButton(
+            key: const ValueKey('engineer-run-search-button'),
+            tooltip: context.l10n.engineeringRunSearchTooltip,
+            icon: const Icon(Icons.manage_search),
+            onPressed: () => context.push('/engineer-runs'),
+          ),
+          IconButton(
+            key: const ValueKey('engineer-usage-button'),
+            tooltip: context.l10n.engineeringUsageTooltip,
+            icon: const Icon(Icons.bar_chart_outlined),
+            onPressed: () => context.push('/usage'),
+          ),
+          IconButton(
             tooltip: context.l10n.engineeringDesktopDaemonTooltip,
             icon: const Icon(Icons.dns_outlined),
             onPressed: () => context.push('/engineer-daemon'),
@@ -225,6 +243,8 @@ class _EngineerRunTile extends StatelessWidget {
   final VoidCallback onTap;
   final bool selected;
 
+  bool get _failed => run.status == 'failed';
+
   @override
   Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
@@ -234,8 +254,101 @@ class _EngineerRunTile extends StatelessWidget {
       'failed' => palette.danger,
       _ => palette.warning,
     };
+    final statusWord = _statusLabel(context.l10n, run.status);
+
+    final body = InkWell(
+      onTap: onTap,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20, color: _failed ? palette.danger : palette.brand),
+          const SizedBox(width: AuraSpacing.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: _failed ? palette.danger : null,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                if (run.prUrl != null)
+                  Text(
+                    run.prUrl!,
+                    style: TextStyle(
+                      fontFamily: 'Courier',
+                      fontSize: 12,
+                      color: palette.brand,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  )
+                else if (run.branch != null)
+                  Text(
+                    run.branch!,
+                    style: TextStyle(
+                      fontFamily: 'Courier',
+                      fontSize: 12,
+                      color: palette.textSecondary,
+                    ),
+                  ),
+                const SizedBox(height: 2),
+                Text(
+                  DateFormat.yMMMd().add_jm().format(run.createdAt),
+                  style: TextStyle(fontSize: 11, color: palette.textSecondary),
+                ),
+              ],
+            ),
+          ),
+          if (_failed)
+            // Red is not the only signal: a failed run also says so in words, with its own icon.
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.error_outline, size: 16, color: palette.danger),
+                const SizedBox(width: 4),
+                Text(
+                  statusWord,
+                  key: const ValueKey('engineer-run-failed-label'),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: palette.danger,
+                  ),
+                ),
+              ],
+            )
+          else
+            Container(
+              width: 8,
+              height: 8,
+              margin: const EdgeInsets.only(top: 4),
+              decoration: BoxDecoration(
+                color: statusColor,
+                shape: BoxShape.circle,
+              ),
+            ),
+        ],
+      ),
+    );
+
+    final card = _failed
+        ? Container(
+            key: const ValueKey('engineer-run-failed-card'),
+            padding: const EdgeInsets.all(AuraSpacing.lg),
+            decoration: BoxDecoration(
+              color: palette.danger.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(AuraRadius.lg),
+              border: Border.all(color: palette.danger, width: 1),
+            ),
+            child: body,
+          )
+        : AuraCard(child: body);
 
     return Semantics(
+      label: '$label, ${context.l10n.engineeringRunStatus(statusWord)}',
       selected: selected,
       child: DecoratedBox(
         position: DecorationPosition.foreground,
@@ -243,68 +356,7 @@ class _EngineerRunTile extends StatelessWidget {
           borderRadius: BorderRadius.circular(AuraRadius.lg),
           border: selected ? Border.all(color: palette.brand, width: 2) : null,
         ),
-        child: AuraCard(
-          child: InkWell(
-            onTap: onTap,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(icon, size: 20, color: palette.brand),
-                const SizedBox(width: AuraSpacing.sm),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        label,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      if (run.prUrl != null)
-                        Text(
-                          run.prUrl!,
-                          style: TextStyle(
-                            fontFamily: 'Courier',
-                            fontSize: 12,
-                            color: palette.brand,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        )
-                      else if (run.branch != null)
-                        Text(
-                          run.branch!,
-                          style: TextStyle(
-                            fontFamily: 'Courier',
-                            fontSize: 12,
-                            color: palette.textSecondary,
-                          ),
-                        ),
-                      const SizedBox(height: 2),
-                      Text(
-                        DateFormat.yMMMd().add_jm().format(run.createdAt),
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: palette.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Container(
-                  width: 8,
-                  height: 8,
-                  margin: const EdgeInsets.only(top: 4),
-                  decoration: BoxDecoration(
-                    color: statusColor,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+        child: card,
       ),
     );
   }
@@ -373,7 +425,9 @@ class _EngineerRunDetailBody extends StatelessWidget {
           context.l10n.engineeringRunStatus(
             _statusLabel(context.l10n, run.status),
           ),
-          style: TextStyle(color: palette.textSecondary),
+          style: run.status == 'failed'
+              ? TextStyle(color: palette.danger, fontWeight: FontWeight.w600)
+              : TextStyle(color: palette.textSecondary),
         ),
         if (run.branch != null)
           Text(

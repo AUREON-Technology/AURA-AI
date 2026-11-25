@@ -71,6 +71,7 @@ class AuraApiClient {
     Map<String, dynamic>? body,
     String? correlationId,
     Duration? timeout,
+    String? idempotencyKey,
   }) async {
     final deadline = timeout ?? this.timeout;
     final uri = path.startsWith('http')
@@ -78,7 +79,10 @@ class AuraApiClient {
         : Uri.parse('$_backendUrl$path');
     final tokens = _ref.read(tokenManagerProvider);
     // One key per logical write, shared by the 401 re-send below (audit FSA-046).
-    final idempotencyKey = isSideEffecting(method) ? newIdempotencyKey() : null;
+    //
+    // A caller that replays a write from a durable queue passes its own [idempotencyKey]
+    // (ADR-043: the key is also the body's `client_request_id`, and the two must agree).
+    final writeKey = idempotencyKey ?? (isSideEffecting(method) ? newIdempotencyKey() : null);
 
     Future<http.Response> send() async {
       final headers = await _headers(
@@ -88,7 +92,7 @@ class AuraApiClient {
         // fail them (F2 review #10).
         workspaceScoped: !uri.path.startsWith('/api/v3/workspaces'),
       );
-      if (idempotencyKey != null) headers[idempotencyKeyHeader] = idempotencyKey;
+      if (writeKey != null) headers[idempotencyKeyHeader] = writeKey;
       final encoded = body == null ? null : jsonEncode(body);
       final client = _http;
       final Future<http.Response> pending;
@@ -145,6 +149,7 @@ class AuraApiClient {
     Map<String, dynamic>? body,
     String? correlationId,
     Duration? timeout,
+    String? idempotencyKey,
   }) async {
     final response = await request(
       method: method,
@@ -152,6 +157,7 @@ class AuraApiClient {
       body: body,
       correlationId: correlationId,
       timeout: timeout,
+      idempotencyKey: idempotencyKey,
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw AuraApiError.fromResponse(

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/features/chat/data/chat_repository.dart';
+import 'package:aura_client/features/chat/data/tool_catalog_repository.dart';
 import 'package:aura_client/features/chat/data/turn_meta.dart';
 import 'package:aura_client/features/chat/presentation/chat_view_model.dart';
 import 'package:aura_client/l10n/l10n.dart';
@@ -152,7 +153,9 @@ class _PendingCallRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final summary = _PendingCallSummary(call: call);
+    final Widget summary = call.headline == null || call.headline!.isEmpty
+        ? _PendingCallSummary(call: call)
+        : _HeadlinedCall(call: call);
     if (!selectable) return summary;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -164,15 +167,134 @@ class _PendingCallRow extends StatelessWidget {
   }
 }
 
-/// Dispatches to a per-tool sub-card by `call.tool`, falling back to a generic
-/// name+arguments table for anything unrecognized.
-class _PendingCallSummary extends StatelessWidget {
+/// What the person decides on, phone-sized: the backend's one-line description and its advisory risk
+/// chips lead, and the raw command / arguments / diff sit one tap away under "Details" (open at once
+/// when something is flagged high, so a risky call is never approved without its detail in view).
+class _HeadlinedCall extends StatelessWidget {
+  const _HeadlinedCall({required this.call});
+
+  final PendingToolCall call;
+
+  static const _order = {'high': 0, 'medium': 1, 'low': 2};
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
+    final flags = [...call.riskFlags]..sort((a, b) => (_order[a.level] ?? 3).compareTo(_order[b.level] ?? 3));
+    final hasHigh = flags.any((f) => f.level == 'high');
+    return Container(
+      padding: const EdgeInsets.all(AuraSpacing.sm),
+      decoration: BoxDecoration(
+        color: palette.surfaceVariant,
+        borderRadius: BorderRadius.circular(AuraRadius.sm),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            call.headline!,
+            key: const Key('confirmation_headline'),
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+          ),
+          if (flags.isNotEmpty) ...[
+            const SizedBox(height: AuraSpacing.xs),
+            Wrap(
+              spacing: AuraSpacing.xs,
+              runSpacing: AuraSpacing.xs,
+              children: [for (final flag in flags) _RiskChip(flag: flag)],
+            ),
+          ],
+          // ExpansionTile paints on the nearest Material; inside this coloured box that would hide its ink.
+          Material(
+            type: MaterialType.transparency,
+            child: Theme(
+              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                key: ValueKey('details_${call.callId}_$hasHigh'),
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: EdgeInsets.zero,
+                initiallyExpanded: hasHigh,
+                title: Text(context.l10n.chatConfirmDetails, style: Theme.of(context).textTheme.bodySmall),
+                children: [_PendingCallSummary(call: call)],
+              ),
+            ),
+          ),
+          Text(
+            context.l10n.chatRiskAdvisory,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(color: palette.textSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RiskChip extends StatelessWidget {
+  const _RiskChip({required this.flag});
+
+  final RiskFlag flag;
+
+  String _label(BuildContext context) {
+    final l10n = context.l10n;
+    switch (flag.code) {
+      case 'command':
+        return l10n.chatRiskCommand;
+      case 'sensitive_file':
+        return l10n.chatRiskSensitiveFile;
+      case 'migration':
+        return l10n.chatRiskMigration;
+      case 'pipeline':
+        return l10n.chatRiskPipeline;
+      case 'deployment':
+        return l10n.chatRiskDeployment;
+      case 'remote_write':
+        return l10n.chatRiskRemoteWrite;
+      case 'large_change':
+        return l10n.chatRiskLargeChange;
+      default:
+        return flag.text;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = switch (flag.level) {
+      'high' => scheme.error,
+      'medium' => scheme.tertiary,
+      _ => scheme.outline,
+    };
+    return Tooltip(
+      message: flag.text,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.sm, vertical: 2),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          border: Border.all(color: color),
+          borderRadius: BorderRadius.circular(AuraRadius.sm),
+        ),
+        child: Semantics(
+          label: flag.text,
+          child: Text(
+            _label(context),
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(color: color, fontWeight: FontWeight.w600),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Dispatches to a per-tool sub-card by `call.tool`, falling back to a generic card built from
+/// `GET /api/v3/tools` (the tool's own description and argument descriptions) for anything the
+/// client has no purpose-built card for.
+class _PendingCallSummary extends ConsumerWidget {
   const _PendingCallSummary({required this.call});
 
   final PendingToolCall call;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     switch (call.tool) {
       case 'github_create_draft_pull_request':
         return _DraftPrSummary(call: call);
@@ -204,7 +326,10 @@ class _PendingCallSummary extends StatelessWidget {
           ],
         );
       default:
-        return _GenericToolSummary(call: call);
+        return _GenericToolSummary(
+          call: call,
+          info: (ref.watch(toolCatalogProvider).value ?? ToolCatalog.empty)[call.tool],
+        );
     }
   }
 }
@@ -396,6 +521,9 @@ class _GitCommitSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final message = call.arguments['message']?.toString() ?? '';
+    // `paths` limits the commit to those files (git_commit); without it every change is committed.
+    final rawPaths = call.arguments['paths'];
+    final paths = rawPaths is List ? rawPaths.map((p) => p.toString()).toList() : const <String>[];
     return _SummaryShell(
       icon: Icons.commit,
       title: context.l10n.chatConfirmCommitSandbox,
@@ -405,6 +533,16 @@ class _GitCommitSummary extends StatelessWidget {
             padding: const EdgeInsets.only(top: 2),
             child: Text(message, style: Theme.of(context).textTheme.bodyMedium),
           ),
+        for (final path in paths.take(20))
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(path, style: const TextStyle(fontFamily: 'Courier', fontSize: 12)),
+          ),
+        if (paths.length > 20)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(_moreCount(paths.length - 20), style: Theme.of(context).textTheme.bodySmall),
+          ),
         if (call.diffPreview != null && call.diffPreview!.trim().isNotEmpty)
           SandboxDiffView(diffText: call.diffPreview!),
       ],
@@ -413,27 +551,55 @@ class _GitCommitSummary extends StatelessWidget {
 }
 
 class _GenericToolSummary extends StatelessWidget {
-  const _GenericToolSummary({required this.call});
+  const _GenericToolSummary({required this.call, this.info});
 
   final PendingToolCall call;
 
+  /// What the server says this tool is. `null` (catalog not fetched, or the tool is not listed)
+  /// renders the plain name-and-arguments table this card always was.
+  final ToolInfo? info;
+
   @override
   Widget build(BuildContext context) {
+    final info = this.info;
+    final palette = AuraPalette.of(context);
+    final textTheme = Theme.of(context).textTheme;
     return _SummaryShell(
-      icon: Icons.build_outlined,
-      title: call.tool,
+      icon: info == null ? Icons.build_outlined : iconForToolCategory(info.category),
+      title: info == null ? call.tool : prettyToolName(call.tool),
       children: [
+        if (info != null && info.summary.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(info.summary, style: textTheme.bodySmall?.copyWith(color: palette.textSecondary)),
+          ),
         for (final entry in call.arguments.entries)
           Padding(
             padding: const EdgeInsets.only(top: 2),
+            child: Tooltip(
+              // The schema's own description of this argument, when the tool declares one.
+              message: info?.parameterDescriptions[entry.key] ?? '',
+              child: Text(
+                '${entry.key}: ${entry.value}',
+                style: textTheme.bodySmall,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+        if (info != null && info.sideEffecting)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
             child: Text(
-              '${entry.key}: ${entry.value}',
-              style: Theme.of(context).textTheme.bodySmall,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+              context.l10n.chatToolChangesThings,
+              style: textTheme.labelSmall?.copyWith(color: palette.warning),
             ),
           ),
       ],
     );
   }
 }
+
+/// "... +N": only a count and punctuation, no words, so there is nothing to translate; kept out of
+/// a `Text('...')` literal so the hard-coded-text ratchet counts words, not symbols.
+String _moreCount(int n) => '... +$n';

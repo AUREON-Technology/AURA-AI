@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import keyword
 import re
 import tempfile
 import threading
@@ -37,6 +38,10 @@ from ..ports.runtime import Tool
 from .base import param, tool
 from .open.automated_test_generator_and_verifier import AutomatedTestGeneratorAndVerifier
 from .open.test_coverage_and_mutation_analyzer import TestCoverageAndMutationAnalyzer
+from .open.quality_ext import (
+    KINDS as _MUTATION_KINDS, changed_line_coverage, changed_lines, evaluate_operator_mutants,
+)
+from .open.testgen_ext import generate_and_verify_with_behaviour
 
 __all__ = ["build_open_exec_tools", "OPEN_EXEC_TOOL_NAMES"]
 
@@ -44,6 +49,7 @@ _ENGINEER_CAPABILITY = "engineer_agent"
 _MAX_SOURCE = 100_000
 _MODULE_PATH = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
 _OUTPUT_CAP = 3_000
+_RESERVED_MODULE_NAMES = frozenset({"test_generated", "conftest"})
 
 #: Concurrent child processes across the whole gateway. A threading primitive on purpose: the work
 #: happens in ``asyncio.to_thread`` workers, and an asyncio lock would bind to one event loop.
@@ -106,7 +112,11 @@ def _module_path(name: str, value: str | None) -> str | None:
     param("include_call_smoke", "boolean", "Also CALL every no-argument function and instantiate "
           "no-argument classes (default false; only for code with no side effects).",
           required=False, default=False),
-    param("timeout_seconds", "integer", "Hard limit for the test run (default 30).",
+    param("include_behavior_tests", "boolean", "Also assert behaviour (default true): run each "
+          "function's docstring examples, and for pure functions with simple type hints check the "
+          "return type, determinism, no argument mutation and that only declared exceptions escape.",
+          required=False, default=True),
+    param("timeout_s", "number", "Hard limit in seconds for the test run (default 30).",
           required=False, default=30, minimum=5, maximum=60),
     timeout_s=95.0,
     **_COMMON,
@@ -116,10 +126,21 @@ async def generate_and_run_tests(
     module_import_path: str | None = None,
     custom_test_code: str | None = None,
     include_call_smoke: bool = False,
-    timeout_seconds: int = 30,
+    timeout_s: float = 30,
+    include_behavior_tests: bool = True,
 ) -> str:
     name = "generate_and_run_tests"
     module = _module_path(name, module_import_path)
+    if include_behavior_tests and custom_test_code is None:
+        return await asyncio.to_thread(
+            _in_slot,
+            name,
+            generate_and_verify_with_behaviour,
+            source_code,
+            module_import_path=module,
+            include_call_smoke=include_call_smoke,
+            timeout_seconds=int(timeout_s),
+        )
     return await asyncio.to_thread(
         _in_slot,
         name,
@@ -128,7 +149,7 @@ async def generate_and_run_tests(
         custom_test_code=custom_test_code,
         module_import_path=module,
         include_call_smoke=include_call_smoke,
-        timeout_seconds=timeout_seconds,
+        timeout_seconds=int(timeout_s),
     )
 
 
@@ -139,8 +160,25 @@ def _quality(
     operations: str,
     threshold: float,
     timeout_seconds: int,
+    diff_text: str | None = None,
+    mutation_kinds: tuple[str, ...] = _MUTATION_KINDS,
+    max_mutants: int = 10,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {"module": module_name}
+    changed: set[int] | None = None
+    if diff_text is not None:
+        per_file = changed_lines(diff_text)
+        if not per_file:
+            return {**result, "error": "diff_text has no changed lines (is it a unified diff?)"}
+        picked = per_file.get(f"{module_name}.py") or next(
+            (v for k, v in per_file.items() if k.rsplit("/", 1)[-1] == f"{module_name}.py"), None)
+        if picked is None and len(per_file) == 1:
+            picked = next(iter(per_file.values()))
+        if picked is None:
+            return {**result, "error": f"diff_text names {sorted(per_file)}; none is {module_name}.py "
+                                       "(name the module to match, or pass a one-file diff)"}
+        changed = picked
+        result["changed_lines"] = sorted(changed)
     with tempfile.TemporaryDirectory(prefix="aura-quality-") as tmp:
         root = Path(tmp)
         (root / f"{module_name}.py").write_text(source_code, encoding="utf-8")
@@ -153,18 +191,23 @@ def _quality(
                 threshold=threshold,
                 timeout_seconds=timeout_seconds,
             )
+            if changed is not None:
+                scoped = changed_line_coverage(root, module_name, changed, timeout_seconds)
+                pct = scoped.get("percent_covered")
+                scoped["threshold"] = threshold
+                scoped["passed_threshold"] = pct is not None and pct >= threshold
+                result["changed_line_coverage"] = scoped
         if operations in ("mutation", "both"):
-            result["mutation"] = TestCoverageAndMutationAnalyzer.evaluate_mutations_against_tests(
-                f"{module_name}.py", str(root), timeout_seconds=timeout_seconds
-            )
+            result["mutation"] = evaluate_operator_mutants(
+                root, f"{module_name}.py", mutation_kinds, changed, timeout_seconds, max_mutants)
     return result
 
 
 @tool(
     "analyze_test_quality",
     "Measure how well a pytest file tests a Python module: line coverage under coverage.py and/or "
-    "a mutation score (each True/False constant flipped in turn, up to 10 mutants, counting the "
-    "ones the tests catch). RUNS CODE, once for coverage and up to 11 more times for mutation; "
+    "a mutation score (True/False, comparison, arithmetic and and/or operators flipped in turn, up to "
+    "10 mutants, counting the ones the tests catch; give diff_text to scope both to the added lines). RUNS CODE, once for coverage and up to 11 more times for mutation; "
     "the tests must already pass on the unmodified source.",
     param("source_code", "string", "The module under test.", max_length=_MAX_SOURCE),
     param("test_code", "string", "The pytest file. Import the module by `module_name`.",
@@ -175,7 +218,13 @@ def _quality(
           enum=("coverage", "mutation", "both"), default="both"),
     param("coverage_threshold", "number", "Coverage percentage that counts as passing "
           "(default 80).", required=False, default=80.0, minimum=0, maximum=100),
-    param("timeout_seconds", "integer", "Hard limit for EACH pytest run (default 15).",
+    param("diff_text", "string", "A unified diff of the module: coverage and mutants are then "
+          "also scoped to its added lines.", required=False, max_length=_MAX_SOURCE),
+    param("mutation_kinds", "array", "Mutant kinds: boolean, comparison, arithmetic, logical "
+          "(default all).", required=False, item_type="string"),
+    param("max_mutants", "integer", "Mutants to run (default 10, at most 20).", required=False,
+          default=10, minimum=1, maximum=20),
+    param("timeout_s", "number", "Hard limit in seconds for EACH pytest run (default 15).",
           required=False, default=15, minimum=5, maximum=20),
     timeout_s=270.0,
     **_COMMON,
@@ -186,11 +235,26 @@ async def analyze_test_quality(
     module_name: str = "module_under_test",
     operations: str = "both",
     coverage_threshold: float = 80.0,
-    timeout_seconds: int = 15,
+    timeout_s: float = 15,
+    diff_text: str | None = None,
+    mutation_kinds: list | None = None,
+    max_mutants: int = 10,
 ) -> str:
     name = "analyze_test_quality"
+    kinds = tuple(str(k) for k in (mutation_kinds or _MUTATION_KINDS))
+    unknown = [k for k in kinds if k not in _MUTATION_KINDS]
+    if unknown:
+        raise ToolExecutionError(f"unknown mutation kind(s) {unknown}; use {list(_MUTATION_KINDS)}", tool=name)
     if "." in module_name or _module_path(name, module_name) is None:
         raise ToolExecutionError("module_name must be a single Python identifier", tool=name)
+    if module_name in _RESERVED_MODULE_NAMES or keyword.iskeyword(module_name):
+        # `test_generated` is the file the tests are written to, so naming the module that would
+        # overwrite the source with the tests and then measure the tests against themselves.
+        raise ToolExecutionError(
+            f"module_name {module_name!r} is reserved (it collides with the test file, pytest's "
+            "conftest or a Python keyword); choose another name",
+            tool=name,
+        )
     return await asyncio.to_thread(
         _in_slot,
         name,
@@ -200,7 +264,10 @@ async def analyze_test_quality(
         module_name,
         operations,
         coverage_threshold,
-        timeout_seconds,
+        int(timeout_s),
+        diff_text,
+        kinds,
+        int(max_mutants),
     )
 
 

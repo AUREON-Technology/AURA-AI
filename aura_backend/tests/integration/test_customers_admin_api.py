@@ -96,6 +96,20 @@ async def test_extend_grace_from_past_due_and_expired_restores_plan(client, cont
     assert (await container.billing.subscriptions.get(ws)).status is SubscriptionStatus.GRACE
 
 
+async def test_a_keyed_extend_grace_retry_extends_once(client, container, clock) -> None:
+    """A resend after a lost answer must not extend grace twice (audit AUD-12): the route moves
+    `grace_until` forward from `max(grace_until, now)` on every call."""
+    ws = await _paid(container, "ann")
+    await _set(container, ws, status=SubscriptionStatus.PAST_DUE)
+    headers = {**_as("sa"), "Idempotency-Key": "grace-1"}
+    first = client.post(f"/api/v3/admin/customers/{ws}/extend-grace", headers=headers, json={"days": 5})
+    after_first = (await container.billing.subscriptions.get(ws)).grace_until
+    retry = client.post(f"/api/v3/admin/customers/{ws}/extend-grace", headers=headers, json={"days": 5})
+    assert first.status_code == retry.status_code == 200, retry.text
+    assert retry.headers.get("idempotent-replayed") == "true"
+    assert (await container.billing.subscriptions.get(ws)).grace_until == after_first
+
+
 async def test_extend_grace_refused_for_store_or_active(client, container) -> None:
     ws = await _paid(container, "ann")
     assert client.post(f"/api/v3/admin/customers/{ws}/extend-grace", headers=_as("sa"), json={"days": 3}).status_code == 409

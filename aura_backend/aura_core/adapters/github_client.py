@@ -52,6 +52,13 @@ def _query_value(value: str) -> str:
     return quote(value, safe="")
 
 
+def _workflow_file(name: str) -> str:
+    """A workflow *file name* (``deploy.yml``), the only form we send: never an id or a path."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.ya?ml", name or ""):
+        raise GitHubApiError(f"{name!r} is not a workflow file name such as deploy.yml")
+    return quote(name, safe="")
+
+
 class GitHubClient:
     def __init__(
         self,
@@ -93,28 +100,65 @@ class GitHubClient:
             )
         return self._client
 
+    @staticmethod
+    def _check(response: Any, method: str, path: str) -> None:
+        if response.status_code < 400:
+            return
+        note = ""
+        if response.status_code in (403, 429):
+            # GitHub answers a rate limit with 403 or 429 and a body that says so only in prose;
+            # the headers say when it lifts, which is what a caller deciding whether to wait needs.
+            retry = response.headers.get("retry-after")
+            reset = response.headers.get("x-ratelimit-reset")
+            if response.headers.get("x-ratelimit-remaining") == "0" or retry:
+                when = f"retry after {retry}s" if retry else f"limit resets at epoch {reset}"
+                note = f" (rate limited; {when})"
+        raise GitHubApiError(
+            f"GitHub API {method} {path} failed: HTTP {response.status_code}{note} "
+            f"{response.text[:300]}"
+        )
+
     async def _request(self, method: str, path: str, *, json: Mapping[str, Any] | None = None) -> Any:
         client = await self._get_client()
         response = await client.request(method, path, json=json)
-        if response.status_code >= 400:
-            raise GitHubApiError(
-                f"GitHub API {method} {path} failed: HTTP {response.status_code} "
-                f"{response.text[:300]}"
-            )
+        self._check(response, method, path)
         return response.json() if response.content else {}
+
+    async def _request_raw(self, path: str) -> bytes:
+        """A file's exact bytes. The JSON contents API returns ``content: ""`` for anything over
+        1 MB; the ``raw`` media type is how GitHub serves those (up to 100 MB)."""
+        client = await self._get_client()
+        response = await client.request(
+            "GET", path, headers={"Accept": "application/vnd.github.raw+json"}
+        )
+        self._check(response, "GET", path)
+        return bytes(response.content)
 
     # -- read ----------------------------------------------------------------------
 
-    async def get_file_contents(self, repo: str, path: str, *, ref: str | None = None) -> str:
+    async def get_file_bytes(self, repo: str, path: str, *, ref: str | None = None) -> bytes:
+        """The file's exact bytes -- what a PDF or any other binary needs, and what makes a file
+        over 1 MB readable at all (the JSON response carries no content for those)."""
         self._assert_repo_allowed(repo)
         params = f"?ref={_query_value(ref)}" if ref else ""
         safe_path = _path_segments(path, what="path")
-        data = await self._request("GET", f"/repos/{repo}/contents/{safe_path}{params}")
+        url = f"/repos/{repo}/contents/{safe_path}{params}"
+        data = await self._request("GET", url)
         if isinstance(data, list):
-            return "\n".join(entry.get("name", "") for entry in data)
+            return "\n".join(entry.get("name", "") for entry in data).encode("utf-8")
+        kind = data.get("type")
+        if kind == "symlink":
+            return f"(symlink to {data.get('target')})".encode("utf-8")
+        if kind == "submodule":
+            return f"(submodule: {data.get('submodule_git_url')})".encode("utf-8")
         if data.get("encoding") == "base64":
-            return base64.b64decode(data["content"]).decode("utf-8", errors="replace")
-        return str(data.get("content", ""))
+            return base64.b64decode(data.get("content") or "")
+        if int(data.get("size") or 0) > 0 and not data.get("content"):
+            return await self._request_raw(url)
+        return str(data.get("content", "")).encode("utf-8")
+
+    async def get_file_contents(self, repo: str, path: str, *, ref: str | None = None) -> str:
+        return (await self.get_file_bytes(repo, path, ref=ref)).decode("utf-8", errors="replace")
 
     async def list_files(self, repo: str, *, ref: str | None = None) -> RepoTree:
         """The repository's whole file list at ``ref``, in one call.
@@ -250,6 +294,42 @@ class GitHubClient:
             json={"title": title, "head": branch, "base": base, "body": body, "draft": True},
         )
         return f"Opened draft PR #{data.get('number')}: {data.get('html_url')}"
+
+    async def list_workflow_runs(self, repo: str, workflow: str, *, limit: int = 10) -> list[dict[str, Any]]:
+        """Recent runs of one workflow file (newest first): enough to say what ran, on which commit,
+        and how it ended."""
+        self._assert_repo_allowed(repo)
+        data = await self._request(
+            "GET", f"/repos/{repo}/actions/workflows/{_workflow_file(workflow)}/runs?per_page={max(1, min(limit, 30))}")
+        return [
+            {"id": r.get("id"), "status": r.get("status"), "conclusion": r.get("conclusion"),
+             "branch": r.get("head_branch"), "sha": r.get("head_sha"), "event": r.get("event"),
+             "created_at": r.get("created_at"), "url": r.get("html_url")}
+            for r in data.get("workflow_runs", [])
+        ]
+
+    async def dispatch_workflow(
+        self, repo: str, workflow: str, *, ref: str, inputs: Mapping[str, str] | None = None
+    ) -> str:
+        """``workflow_dispatch`` on one workflow file. GitHub answers 204 with no run id; the run
+        shows up in :meth:`list_workflow_runs` a moment later."""
+        self._assert_repo_allowed(repo)
+        body: dict[str, Any] = {"ref": ref}
+        if inputs:
+            body["inputs"] = {str(k): str(v) for k, v in inputs.items()}
+        await self._request(
+            "POST", f"/repos/{repo}/actions/workflows/{_workflow_file(workflow)}/dispatches", json=body)
+        return f"Dispatched {workflow} on {ref}"
+
+    async def commit_is_ancestor(self, repo: str, sha: str, ref: str) -> bool:
+        """``sha`` is in ``ref``'s history when comparing sha...ref says ref is ahead of it or identical.
+        GitHub resolves a fork's commit by SHA inside the parent repository, so reachability from the ref
+        is the check that matters, not that the SHA exists."""
+        self._assert_repo_allowed(repo)
+        if not re.fullmatch(r"[0-9a-fA-F]{7,40}", sha or ""):
+            raise GitHubApiError("sha must be 7-40 hexadecimal characters")
+        data = await self._request("GET", f"/repos/{repo}/compare/{sha}...{quote(ref, safe='')}")
+        return data.get("status") in ("ahead", "identical")
 
     async def close(self) -> None:
         if self._client is not None:

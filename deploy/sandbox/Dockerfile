@@ -32,6 +32,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         npm \
     && rm -rf /var/lib/apt/lists/*
 
+# Security scanners for the `scan_security` tool (ADR-050), pinned like everything else here: Semgrep and
+# Bandit in their own virtualenv (so they cannot disturb a workspace's Python), Gitleaks as a release binary
+# checked against its published sha256, and the Semgrep rule set as a checkout at one commit. The rules are
+# bundled so a scan needs no network and no `--config auto` (which would phone home); the tool never reads
+# rules from the scanned repository. Roughly +300 MB.
+ARG SEMGREP_VERSION=1.187.0
+ARG BANDIT_VERSION=1.9.4
+ARG GITLEAKS_VERSION=8.28.0
+ARG GITLEAKS_SHA256=a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb
+ARG SEMGREP_RULES_COMMIT=a5ad1714f00c9f7fde980cab0ea1d6dc6d414fd2
+RUN python -m venv /opt/aura/scanners \
+    && /opt/aura/scanners/bin/pip install --no-cache-dir "semgrep==${SEMGREP_VERSION}" "bandit==${BANDIT_VERSION}" \
+    && curl -fsSL -o /tmp/gitleaks.tgz \
+        "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+    && echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tgz" | sha256sum -c - \
+    && tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks \
+    && rm /tmp/gitleaks.tgz \
+    && git init -q /opt/aura/semgrep-rules \
+    && git -C /opt/aura/semgrep-rules fetch -q --depth 1 https://github.com/semgrep/semgrep-rules "${SEMGREP_RULES_COMMIT}" \
+    && git -C /opt/aura/semgrep-rules checkout -q FETCH_HEAD \
+    && rm -rf /opt/aura/semgrep-rules/.git \
+    && chmod -R a+rX /opt/aura
+ENV PATH=/opt/aura/scanners/bin:$PATH \
+    SEMGREP_SEND_METRICS=off \
+    SEMGREP_ENABLE_VERSION_CHECK=0
+
 # Unprivileged, and fixed rather than auto-assigned: the host directory bind-mounted at
 # /workspace is chowned to this exact uid by deploy/scripts/bootstrap-host.sh, so the two have to
 # agree. Root inside the container is root on a bind-mounted host directory, which is precisely
