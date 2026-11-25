@@ -499,6 +499,7 @@ class Container:
             max_parallel=settings.tools.max_parallel,
             metrics=self.metrics,
             event_bus=self.events,
+            clock=self.clock.monotonic,
         )
         # The engineer agent's bounded plan-execute-observe-replan loop (execution/agentic_loop.py)
         # -- `None` when planning itself is disabled, since there is nothing to loop.

@@ -31,6 +31,7 @@ from ..domain.failure_kinds import FailureKind
 from ..domain.identifiers import ToolCallId
 from ..domain.messages import ToolCall
 from ..domain.planning import Plan, PlanStep, StepKind, StepStatus
+from ..llm.deadline import paused_generation_budget
 from ..observability.logging import get_logger
 from ..ports.runtime import ToolContext
 from .confirmations import NEEDS_CONFIRMATION, ConfirmationGrant, PendingCall
@@ -172,8 +173,12 @@ class ExecutionEngine:
         deadline_s: float = 120.0,
         metrics: Any = None,
         event_bus: Any = None,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         self._tools = tools
+        #: The clock the router charges the turn's generation budget with, so tool time can be
+        #: taken off it (``paused_generation_budget``); real monotonic when not wired.
+        self._budget_clock = clock or time.monotonic
         self._max_parallel = max(1, max_parallel)
         self._max_steps = max_steps_executed
         self._deadline_s = deadline_s
@@ -562,12 +567,15 @@ class ExecutionEngine:
             confirmed = confirmations is not None and confirmations.admits(
                 call_id, step.tool, arguments
             )
-            result, report = await self._tools.execute(
-                call,
-                context,
-                capabilities=capabilities,
-                confirmed=confirmed,
-            )
+            # The turn's generation budget bounds *model* time: a 40 s tool must not leave the
+            # answer generation with nothing. Overlapping tools share one pause.
+            with paused_generation_budget(self._budget_clock):
+                result, report = await self._tools.execute(
+                    call,
+                    context,
+                    capabilities=capabilities,
+                    confirmed=confirmed,
+                )
             return result.content, result.ok, (time.perf_counter() - started) * 1000.0, report
 
         handler = handlers.get(step.kind)
