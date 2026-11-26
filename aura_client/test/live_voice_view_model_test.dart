@@ -20,6 +20,7 @@ import 'package:aura_client/core/ai/voice/live/live_mic_source.dart';
 import 'package:aura_client/core/ai/voice/live/live_voice_socket.dart';
 import 'package:aura_client/core/ai/voice/voice_language.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
+import 'package:aura_client/features/chat/data/chat_repository.dart';
 import 'package:aura_client/features/voice_live/presentation/live_voice_view_model.dart';
 import 'package:aura_client/l10n/l10n.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -487,5 +488,23 @@ void main() {
       expect((jsonDecode(sent.last as String) as Map)['type'], 'commit');
       expect(sent.indexOf(audio.last), sent.length - 2, reason: 'the audio precedes the commit');
     });
+  });
+
+  test('an actions frame populates pendingActionsProvider for the approval card', () async {
+    await readySession();
+    channel.incoming.add(jsonEncode({
+      'type': 'actions',
+      'actions': [
+        {
+          'type': 'add_task',
+          'params': {'title': 'Buy milk', 'priority': 'medium', 'category': 'personal'},
+        },
+      ],
+    }));
+    await _settle();
+
+    final actions = container.read(pendingActionsProvider);
+    expect(actions, hasLength(1));
+    expect((actions.single as Map)['type'], 'add_task');
   });
 }

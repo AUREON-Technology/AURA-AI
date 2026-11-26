@@ -50,6 +50,14 @@ void main() {
         'needs_confirmation': ['propose_task'],
       });
       expect(done, isA<LiveDoneFrame>());
+      final actions = LiveServerFrame.tryParse({
+        'type': 'actions',
+        'actions': [
+          {'type': 'add_task', 'params': {'title': 'Buy milk'}},
+        ],
+      });
+      expect(actions, isA<LiveActionsFrame>());
+      expect((actions! as LiveActionsFrame).actions.single['type'], 'add_task');
     });
   });
 }

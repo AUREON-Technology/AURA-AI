@@ -168,6 +168,13 @@ sealed class LiveServerFrame {
         return LivePlaybackHintFrame(
           sampleRate: (map['sample_rate'] as num?)?.toInt() ?? 22050,
         );
+      case 'actions':
+        return LiveActionsFrame(
+          actions: (map['actions'] as List? ?? const [])
+              .whereType<Map>()
+              .map((a) => Map<String, dynamic>.from(a))
+              .toList(),
+        );
       default:
         return LivePassthroughFrame(type: type ?? 'unknown', raw: map);
     }
@@ -263,6 +270,11 @@ final class LiveErrorFrame extends LiveServerFrame {
 final class LivePlaybackHintFrame extends LiveServerFrame {
   const LivePlaybackHintFrame({required this.sampleRate});
   final int sampleRate;
+}
+
+final class LiveActionsFrame extends LiveServerFrame {
+  const LiveActionsFrame({this.actions = const []});
+  final List<Map<String, dynamic>> actions;
 }
 
 final class LivePassthroughFrame extends LiveServerFrame {

@@ -344,6 +344,10 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
         state = state.copyWith(error: message);
       case LivePlaybackHintFrame(:final sampleRate):
         unawaited(_sink?.start(sampleRate: sampleRate));
+      case LiveActionsFrame(:final actions):
+        if (actions.isNotEmpty) {
+          ref.read(pendingActionsProvider.notifier).setActions(actions);
+        }
       default:
         break;
     }
