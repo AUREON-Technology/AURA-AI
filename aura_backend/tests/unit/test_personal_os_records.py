@@ -382,8 +382,8 @@ class TestKernelWiring:
             "docker_build", "docker_compose", "profile_python",
             # ADR-042: registered only with their engine / AURA_WEB_SEARCH_URL / files root, none of
             # which this default container configures (`test_media_tools` registers them for real).
-            "web_search", "ocr_image", "inspect_spreadsheet", "parse_document", "compare_images", "transcribe_audio",
-            "analyze_image_requirements",
+            "list_files", "read_file", "web_search", "ocr_image", "inspect_spreadsheet", "parse_document",
+            "compare_images", "transcribe_audio", "analyze_image_requirements",
             # `engineer_agent`-gated like the other sandbox tools (registered in build_sandbox_tools).
             "lint_code", "check_format",
             # ADR-045: need AURA_TOOLS_FILES_ROOT (file tools) or a run store (project_status).

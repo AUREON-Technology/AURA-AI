@@ -142,7 +142,7 @@ Original finding:
 
 **T-06 · FIXED · `fetch_url`, `get_weather`, `list_files` and `read_file` can never be enabled.** (RUN + CODE; pass-C C-08)
 
-> **Fix:** `ToolSettings.files_root` (`AURA_TOOLS_FILES_ROOT`) and `ToolSettings.http_allowed_hosts` (`AURA_TOOLS_HTTP_ALLOWED_HOSTS`) are now wired through `Container._build_tools` (`container.py:2138-2142`) into `default_tools`. Every registered tool is also pinned against persona grants or `_ORCHESTRATOR_ONLY_REGISTERED_TOOLS` in `tests/unit/test_tools_review_engine.py` (`test_every_registered_tool_is_granted_to_a_persona_or_explicitly_orchestrator_only`) and `tests/unit/test_builtin_tools_registration.py`.
+> **Fix:** `ToolSettings.files_root` (`AURA_TOOLS_FILES_ROOT`), `ToolSettings.http_allowed_hosts` (`AURA_TOOLS_HTTP_ALLOWED_HOSTS`), and `ToolSettings.weather_enabled` (`AURA_TOOLS_WEATHER_ENABLED`) are now wired through `Container._build_tools` (`container.py`) into `default_tools`. `list_files` and `read_file` are granted to `engineer` and `research_agent` (`agents/registry.py::_DOCUMENT_READING_TOOLS`), and every registered tool is pinned against persona grants or `_ORCHESTRATOR_ONLY_REGISTERED_TOOLS` in `tests/unit/test_tools_review_engine.py` and `tests/unit/test_builtin_tools_registration.py`.
 
 Original finding:
 - `Container._build_tools` (`container.py:1453-1466`) never passes `workspace`, `allowed_http_hosts` or `enable_weather` to `default_tools`.
@@ -249,7 +249,7 @@ It arrives as a generic SSE `error`, with no prompt to re-ask.
 | C-05 `max_calls_per_turn` never enforced | ✅ **Fixed** | **T-08** (`_turn_budget_and_gate`, parent-chained `RunBudgetGate`, `test_kernel_tool_budget.py`) |
 | C-06 delegation enum frozen | ✅ **Fixed** (#241) | **T-16** |
 | C-07 `GET /tools` has no caller | ✅ **Fixed** | **T-17** (`tool_catalog_repository.dart`, `run_history_repository.dart`) |
-| C-08 opt-in tools have no wiring | ✅ **Fixed** | **T-06** (`AURA_TOOLS_FILES_ROOT`, `AURA_TOOLS_HTTP_ALLOWED_HOSTS`) |
+| C-08 opt-in tools have no wiring | ✅ **Fixed** | **T-06** (`AURA_TOOLS_FILES_ROOT`, `AURA_TOOLS_HTTP_ALLOWED_HOSTS`, `AURA_TOOLS_WEATHER_ENABLED`) |
 
 ## 5. Checked and fine
 
