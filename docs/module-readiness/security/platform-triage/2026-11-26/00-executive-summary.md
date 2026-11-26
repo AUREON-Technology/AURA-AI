@@ -5,9 +5,9 @@
 - **Depth:** triage across `aura_backend`, deploy/supply chain, `aura_client`, `aura_web`, `aura_admin`, `aura_hostd`. Scope chosen by the user (option 4: whole-platform sweep).
 - **Method:** targeted code reads and greps by three parallel investigations, validated against `CLAUDE.md`, `docs/reports/security-audit.md` and `docs/roadmaps/AURA_CRITICAL_BACKLOG.md`.
 
-## Readiness decision: NO-SHIP for a "production-ready" claim
+## Readiness decision: NO-SHIP for the private beta until WP-1..WP-3 are done
 
-Reason: unresolved P1 items, and no executable evidence was produced in this run.
+Release gate confirmed by the user: **private beta** (decision D-02). Reason: unresolved P1 items, and no executable evidence was produced in this run. Once the three P1 items are resolved and evidenced, the status moves to CONDITIONALLY READY, with the P2 items and the unproven checks in `05-implementation-plan.md` as conditions. A "production-ready" verdict is not available from code reading and needs the evidence listed there.
 
 - **P1-1 (CB-02):** `main` has no branch protection and Railway auto-deploys every push with no CI gate. Taken from docs; cannot be checked from the repo.
 - **P1-2 (CB-08 remainder):** the dev stack mounts prod's postgres, redis and qdrant credential files (`deploy/docker-compose.dev.yml:225-229`). Verified in code.
