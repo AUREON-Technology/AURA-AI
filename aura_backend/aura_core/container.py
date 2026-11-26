@@ -724,6 +724,7 @@ class Container:
                 settings=settings,
                 models=self.models,
                 host_agent_registry=self.host_agent_registry,
+                sandbox_runner=self.sandbox_runner,
                 # F-04: pending tool confirmations live in the shared cache (Redis in
                 # production), so any replica can resume the exact turn the user approved.
                 tool_confirmations=PendingConfirmationStore(self.cache_backend),

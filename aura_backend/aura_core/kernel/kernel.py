@@ -374,6 +374,11 @@ class KernelDependencies:
     #: entirely, so `_tool_declarations` behaves exactly as before (matching every other optional
     #: dependency's "absent means off" contract).
     host_agent_registry: Any = None
+    #: `SandboxRunner` (`CompositeSandboxRunner` in `Container`): when present and its server-side
+    #: fallback (`_fallback`) is `None`, sandbox-backed tools and desktop-only tools are hidden on
+    #: turns where `_desktop_active` is false so the model is never offered tools whose runner is
+    #: absent (audit T-13).
+    sandbox_runner: Any = None
     #: `PendingConfirmationStore` (`execution/confirmations.py`) holding confirm-gated turns
     #: until the user approves them. `None` falls back to a process-local store, which is
     #: correct for one process; the container wires one over the shared cache (Redis).
@@ -2325,6 +2330,32 @@ class AIKernel:
     #: has nothing repository-shaped to give `open_workspace`'s required `repo` argument, and the
     #: folder it already has needs no explicit "open" step at all.
     _DESKTOP_ONLY_UNAVAILABLE = frozenset({"open_workspace", "list_workspaces", "destroy_workspace"})
+    #: Tools that run only on a paired desktop (`tools/desktop_ops.py`, ADR-036 group C): never run
+    #: on the server, even when a Docker sandbox is available.
+    _REQUIRES_PAIRED_DESKTOP = frozenset({"docker_build", "docker_compose", "profile_python"})
+    #: Tools that require either a paired desktop or a server-side sandbox runner (`tools/coding.py`,
+    #: `tools/devtools.py`). When neither is available for this user's turn (e.g. Railway with no
+    #: paired desktop, audit T-13), advertising them only produces calls that always fail.
+    _REQUIRES_SANDBOX_OR_DESKTOP = frozenset({
+        "write_file", "write_files", "edit_file", "run_command", "clone_repository",
+        "git_diff", "git_commit", "git_checkout_branch", "git_status",
+        "workspace_snapshot", "list_workspace_snapshots", "workspace_restore",
+        "lint_code", "check_format", "scan_security",
+    }) | _REQUIRES_PAIRED_DESKTOP
+
+    def _has_server_sandbox(self) -> bool:
+        """Whether a server-side sandbox runner is available when no desktop is paired.
+
+        ``deps.sandbox_runner`` is ``None`` on a bare test kernel (which leaves declarations
+        unfiltered, matching ``host_agent_registry=None``). On a real ``Container`` it is a
+        ``CompositeSandboxRunner`` whose ``_fallback`` is the Docker runner (or ``None`` when
+        Docker is disabled or unreachable); a test that swaps ``sandbox_runner`` for an
+        ``InMemorySandboxRunner`` has no ``_fallback`` attribute and counts as available.
+        """
+        runner = self._deps.sandbox_runner
+        if runner is None:
+            return True
+        return getattr(runner, "_fallback", runner) is not None
 
     async def _desktop_active(self, user_id: Any) -> bool:
         """Whether ``user_id`` has a paired desktop session, resolved once per turn (KAN-109).
@@ -2357,11 +2388,21 @@ class AIKernel:
             max_sensitivity=max_sensitivity if max_sensitivity is not None else ToolSensitivity.SYSTEM,
         )
         if await self._desktop_active(getattr(request, "user_id", None)):
+            unavailable = self._DESKTOP_ONLY_UNAVAILABLE
+        elif self._deps.host_agent_registry is not None:
+            unavailable = (
+                self._REQUIRES_PAIRED_DESKTOP
+                if self._has_server_sandbox()
+                else self._REQUIRES_SANDBOX_OR_DESKTOP
+            )
+        else:
+            unavailable = frozenset()
+        if unavailable:
             declarations = tuple(
-                d for d in declarations if d.get("name") not in self._DESKTOP_ONLY_UNAVAILABLE
+                d for d in declarations if d.get("name") not in unavailable
             )
             if allowed_tools is not None:
-                allowed_tools = allowed_tools - self._DESKTOP_ONLY_UNAVAILABLE
+                allowed_tools = allowed_tools - unavailable
         if allowed_tools is None:
             return declarations
         # Not advertised, not requested: a tool outside the agent's grant should not appear in

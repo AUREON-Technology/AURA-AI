@@ -195,7 +195,11 @@ Original finding:
 
 ### P4
 
-**T-13 · GAP (by design) · Engineer tools are advertised when nothing can run them.** (RUN)
+**T-13 · FIXED · Engineer tools are advertised when nothing can run them.** (RUN)
+
+> **Fix:** `AIKernel._tool_declarations` (`kernel.py`) now hides `_REQUIRES_PAIRED_DESKTOP` (`docker_build`, `docker_compose`, `profile_python`) whenever the calling user has no paired desktop session, and hides `_REQUIRES_SANDBOX_OR_DESKTOP` (`write_file`, `write_files`, `edit_file`, `run_command`, `clone_repository`, `git_*`, `workspace_snapshot`/`list_workspace_snapshots`/`workspace_restore`, `lint_code`, `check_format`, `scan_security`) when neither a paired desktop nor a server-side sandbox runner (`sandbox_runner._fallback`) is available for the turn (`tests/unit/test_agents.py::test_sandbox_and_desktop_tools_are_hidden_when_their_runner_is_absent`).
+
+Original finding:
 - With no paired desktop and no Docker (Railway, today's production), the model is still offered `run_command`, `write_file` and the `git_*` tools, and every call fails.
 - The container docstring chooses this deliberately ("registered-but-unusable is a better failure than invisible"). It contradicts the registry's own "don't advertise what always fails" rule and costs a planning generation per attempt.
 - The error text is at least actionable.
