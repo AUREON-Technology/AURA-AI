@@ -125,8 +125,8 @@ real broker.
 ## As built: PR 2
 
 `adapters/railway_sandbox.py`, `adapters/postgres_cloud_sandboxes.py`, the bundle path in
-`adapters/host_git.py` and `tools/coding.py`, three settings, `git` in the image, migration `0040`
-(`down_revision` `0034`; re-point it if another migration merges first).
+`adapters/host_git.py` and `tools/coding.py`, three settings, `git` in the image, migration `0041`
+(`down_revision` `0040`; renumber it if another migration merges first).
 
 Differences from the tables above:
 

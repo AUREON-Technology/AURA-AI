@@ -70,6 +70,10 @@ class AgentSpec:
     time_budget_s: float | None = None
     tool_budget: int | None = None
     risk_budget: int | None = None
+    #: Extra instructions a person added to this persona (``agents/custom.py``): appended under the
+    #: rendered prompt as a delimited, lower-priority block, never in place of it. Empty for every
+    #: built-in; only a custom agent's resolved spec carries one.
+    extra_instruction: str = ""
 
     def __post_init__(self) -> None:
         # An empty prefix matches every name: "everything" spelled so that it reads like a
@@ -339,7 +343,8 @@ def build_default_agent_registry(*, engineer_token_budget: int | None = None) ->
                     # engineer_agent capability but missing here, so the persona could never use
                     # it (audit FSA-057). tests/unit/test_agents.py pins that every tool the
                     # sandbox and code-host builders register for the capability is granted.
-                    "write_file", "write_files", "edit_file", "run_command", "clone_repository",
+                    "write_file", "write_files", "edit_file", "delete_file", "rename_file", "run_command",
+                    "clone_repository",
                     "git_diff", "git_commit", "git_checkout_branch", "git_status", "git_push",
                     # Snapshot and roll back the workspace (ADR-041); restore always confirms.
                     "workspace_snapshot", "list_workspace_snapshots", "workspace_restore",

@@ -101,6 +101,38 @@ class PostgresEngineerRunStore:
         except Exception as exc:
             raise _unavailable(f"could not write engineer run: {exc}") from exc
 
+    async def record_many(self, runs: Sequence[EngineerRun]) -> None:
+        if not runs:
+            return
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    await conn.executemany(
+                        """
+                        INSERT INTO aura_engineer_runs
+                            (id, user_id, turn_id, correlation_id, persona, tool, call_id, status,
+                             pr_url, branch, commit_sha, sandbox_transcript, created_at,
+                             updated_at)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                        ON CONFLICT (id) DO UPDATE SET
+                            status = EXCLUDED.status, pr_url = EXCLUDED.pr_url,
+                            branch = EXCLUDED.branch, commit_sha = EXCLUDED.commit_sha,
+                            sandbox_transcript = EXCLUDED.sandbox_transcript,
+                            updated_at = EXCLUDED.updated_at
+                        """,
+                        [
+                            (
+                                r.id.value, r.user_id.value, r.turn_id, r.correlation_id,
+                                r.persona, r.tool, r.call_id, r.status, r.pr_url, r.branch,
+                                r.commit_sha, r.sandbox_transcript, r.created_at, r.updated_at,
+                            )
+                            for r in runs
+                        ],
+                    )
+        except Exception as exc:
+            raise _unavailable(f"could not write engineer runs: {exc}") from exc
+
     async def list_for_user(
         self, user_id: UserId, *, since: datetime | None = None, limit: int = 200,
     ) -> Sequence[EngineerRun]:
@@ -165,6 +197,7 @@ class PostgresEngineerRunStore:
             unsafe_prevented=int(row["unsafe_prevented"]),
             plan_steps_total=int(row["plan_steps_total"]),
             plan_steps_succeeded=int(row["plan_steps_succeeded"]),
+            retry_of=row["retry_of"],
             stop_reason=row["stop_reason"],
             exhausted_budget=row["exhausted_budget"],
             finished_at=_utc(row["finished_at"]),
@@ -201,9 +234,9 @@ class PostgresEngineerRunStore:
                          goal_chars, budget, iterations, replans, replans_recovered, tokens_used,
                          tool_calls, tool_calls_ok, risk_spent, elapsed_s, unsafe_prevented,
                          plan_steps_total, plan_steps_succeeded, stop_reason, exhausted_budget,
-                         created_at, updated_at, finished_at)
+                         created_at, updated_at, finished_at, retry_of)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14,
-                            $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+                            $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
                     ON CONFLICT (id) DO UPDATE SET
                         status = EXCLUDED.status, budget = EXCLUDED.budget,
                         iterations = EXCLUDED.iterations, replans = EXCLUDED.replans,
@@ -226,6 +259,7 @@ class PostgresEngineerRunStore:
                     run.risk_spent, float(run.elapsed_s), run.unsafe_prevented,
                     run.plan_steps_total, run.plan_steps_succeeded, run.stop_reason,
                     run.exhausted_budget, run.created_at, run.updated_at, run.finished_at,
+                    run.retry_of,
                 )
         except Exception as exc:
             raise _unavailable(f"could not write agent run: {exc}") from exc
@@ -254,6 +288,34 @@ class PostgresEngineerRunStore:
         except Exception as exc:
             raise _unavailable(f"could not write agent step: {exc}") from exc
 
+    async def append_steps(self, steps: Sequence[AgentStep]) -> None:
+        if not steps:
+            return
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    await conn.executemany(
+                        """
+                        INSERT INTO aura_agent_steps
+                            (id, run_id, user_id, seq, iteration, phase, kind, status, tool,
+                             call_id, error_kind, arguments_digest, risk_cost, detail, created_at)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+                                $14::jsonb, $15)
+                        """,
+                        [
+                            (
+                                st.id.value, st.run_id.value, st.user_id.value, st.seq,
+                                st.iteration, st.phase, st.kind, st.status, st.tool, st.call_id,
+                                st.error_kind, st.arguments_digest, st.risk_cost,
+                                json.dumps(dict(st.detail)), st.created_at,
+                            )
+                            for st in steps
+                        ],
+                    )
+        except Exception as exc:
+            raise _unavailable(f"could not write agent steps: {exc}") from exc
+
     async def get_run(self, run_id: AgentRunId, *, user_id: UserId) -> AgentRun | None:
         pool = await self._pool._get_pool()
         try:
@@ -273,8 +335,13 @@ class PostgresEngineerRunStore:
         agent_id: str | None = None,
         status: str | None = None,
         limit: int = 50,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        retry_of: str | None = None,
+        before: tuple[datetime, str] | None = None,
     ) -> Sequence[AgentRun]:
         pool = await self._pool._get_pool()
+        before_at, before_id = before if before is not None else (None, None)
         try:
             async with pool.acquire() as conn:
                 rows = await conn.fetch(
@@ -283,17 +350,22 @@ class PostgresEngineerRunStore:
                     WHERE user_id = $1
                       AND ($2::text IS NULL OR agent_id = $2::text)
                       AND ($3::text IS NULL OR status = $3::text)
+                      AND ($5::timestamptz IS NULL OR created_at >= $5::timestamptz)
+                      AND ($6::timestamptz IS NULL OR created_at < $6::timestamptz)
+                      AND ($7::text IS NULL OR retry_of = $7::text)
+                      AND ($8::timestamptz IS NULL OR (created_at, id) < ($8::timestamptz, $9::text))
                     ORDER BY created_at DESC, id DESC
                     LIMIT $4
                     """,
-                    user_id.value, agent_id, status, limit,
+                    user_id.value, agent_id, status, limit, since, until, retry_of,
+                    before_at, before_id,
                 )
         except Exception as exc:
             raise _unavailable(f"could not list agent runs: {exc}") from exc
         return [self._agent_run(row) for row in rows]
 
     async def list_steps(
-        self, run_id: AgentRunId, *, user_id: UserId, limit: int = 500,
+        self, run_id: AgentRunId, *, user_id: UserId, limit: int = 500, after_seq: int = -1,
     ) -> Sequence[AgentStep]:
         pool = await self._pool._get_pool()
         try:
@@ -302,11 +374,11 @@ class PostgresEngineerRunStore:
                     """
                     SELECT s.* FROM aura_agent_steps s
                     JOIN aura_agent_runs r ON r.id = s.run_id
-                    WHERE s.run_id = $1 AND r.user_id = $2 AND s.user_id = $2
+                    WHERE s.run_id = $1 AND r.user_id = $2 AND s.user_id = $2 AND s.seq > $4
                     ORDER BY s.seq ASC
                     LIMIT $3
                     """,
-                    run_id.value, user_id.value, limit,
+                    run_id.value, user_id.value, limit, after_seq,
                 )
         except Exception as exc:
             raise _unavailable(f"could not list agent steps: {exc}") from exc

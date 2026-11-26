@@ -307,6 +307,36 @@ class Message(Base, SyncableMixin):
     persona: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
+class Conversation(Base, SyncableMixin):
+    """What a person sets on a chat: its title, whether it is pinned, whether it is archived.
+
+    A chat itself is not a row. It is the ``conversation_id`` its ``messages`` share, and the
+    chat list is derived from those (``api/chats.py``), so every chat that exists already has a
+    place in the list without a backfill. This row exists only for what the messages cannot say
+    and is created the first time the person sets one of those, or creates a chat before its
+    first message.
+
+    ``conversation_key`` is that shared ``messages.conversation_id`` (the client mints it).
+    ``title_enc`` is ciphertext like every other synced text, so the server can store, return and
+    clear it but not read or search it. ``pinned`` and ``archived`` are plaintext on purpose: the
+    server filters and orders the list by them, and neither says anything about the content.
+    Migration 0035.
+    """
+
+    __tablename__ = "conversations"
+    __table_args__ = (
+        UniqueConstraint("user_id", "conversation_key", name="uq_conversations_user_key"),
+        Index("ix_conversations_user_updated", "user_id", "updated_at"),
+        Index("ix_conversations_user_sync_txid", "user_id", "sync_txid"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    conversation_key: Mapped[str] = mapped_column(String(128))
+    title_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+
+
 class Insight(Base):
     """AURA Insights feed (blueprint §8) — not part of the Phase 0 sync
     protocol (insights are generated server-side, not user-editable), but
@@ -330,6 +360,7 @@ SYNCABLE_MODELS: dict[str, type[Base]] = {
     "health_records": HealthRecord,
     "memories": Memory,
     "messages": Message,
+    "conversations": Conversation,
     "projects": Project,
     "goals": Goal,
 }

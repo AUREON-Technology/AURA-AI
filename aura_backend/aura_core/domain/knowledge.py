@@ -24,6 +24,7 @@ from typing import Any, Mapping, Sequence
 from .identifiers import ChunkId, DocumentId, UserId
 
 __all__ = [
+    "DocumentStats",
     "SourceType",
     "TrustTier",
     "LicenseStatus",
@@ -117,6 +118,16 @@ class DocumentStatus(str, enum.Enum):
 
     def __str__(self) -> str:
         return self.value
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentStats:
+    """What one owner's active documents add up to (``GET /api/v3/knowledge``)."""
+
+    documents: int = 0
+    #: UTF-8 bytes of the active versions' text -- the same measure the plan's storage quota counts.
+    content_bytes: int = 0
+    pinned: int = 0
 
 
 @dataclass(frozen=True, slots=True)

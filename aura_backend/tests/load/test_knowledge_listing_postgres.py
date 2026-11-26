@@ -107,3 +107,26 @@ async def test_a_dense_hit_for_a_tombstoned_document_is_dropped(documents) -> No
     await documents.tombstone(DocumentId("notes"), owner_id=ALICE)  # vectors left behind
 
     assert not (await engine.retrieve("parking permits renewed", owner_id=ALICE)).chunks
+
+
+async def test_owner_stats_count_active_documents_bytes_and_pins_the_same_on_both_stores(documents) -> None:
+    """The corpus summary (``GET /api/v3/knowledge``): one owner's active documents, their UTF-8
+    size (multi-byte text counts its bytes, not its characters) and pins; never another owner's,
+    never a deleted document's; global documents are their own, separate total."""
+    engine = _engine(documents, InMemoryVectorStore())
+    multibyte = "héllo wörld — ünïcode " * 5
+    await engine.ingest(content="a" * 100, title="a1", owner_id=ALICE)
+    second = await engine.ingest(content=multibyte, title="a2", owner_id=ALICE)
+    gone = await engine.ingest(content="z" * 40, title="gone", owner_id=ALICE)
+    await engine.ingest(content="b" * 300, title="b1", owner_id=BOB)
+    await engine.ingest(content="g" * 25, title="global", owner_id=None)
+    await documents.set_cag_pin(second.document.id, owner_id=ALICE, pinned=True)
+    await engine.delete_document(gone.document.id, owner_id=ALICE)
+
+    mine = await documents.owner_stats(owner_id=ALICE)
+    assert (mine.documents, mine.pinned) == (2, 1)
+    assert mine.content_bytes == 100 + len(multibyte.strip().encode("utf-8")) > 100 + len(multibyte.strip())
+    assert (await documents.owner_stats(owner_id=BOB)).content_bytes == 300
+    assert (await documents.owner_stats(owner_id=None)).content_bytes == 25
+    empty = await documents.owner_stats(owner_id=UserId("nobody"))
+    assert (empty.documents, empty.content_bytes, empty.pinned) == (0, 0, 0)

@@ -1,8 +1,8 @@
 """cloud sandboxes: which sandbox serves which workspace, and who provides each workspace
 
-Revision ID: 0040
-Revises: 0034
-Create Date: 2026-11-25
+Revision ID: 0041
+Revises: 0040
+Create Date: 2026-11-26
 
 ``aura_cloud_sandboxes`` is the record behind the Railway sandbox runner
 (``adapters/postgres_cloud_sandboxes.py``; no DDL there). It is separate from
@@ -13,15 +13,15 @@ gets one too.
 ``aura_agent_workspaces.provider`` says which runner holds a workspace's files. Existing rows are
 the Docker sandbox's, which is the default.
 
-Numbered 0040 to stay clear of the numbers open pull requests claim (0035-0039). Whoever merges
-after one of them re-points ``down_revision``.
+Another open branch may claim this number too: whoever merges second renumbers and re-points
+``down_revision`` at the new head.
 """
 from typing import Sequence, Union
 
 from alembic import op
 
-revision: str = "0040"
-down_revision: Union[str, None] = "0034"
+revision: str = "0041"
+down_revision: Union[str, None] = "0040"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

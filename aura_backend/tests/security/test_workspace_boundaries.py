@@ -125,6 +125,83 @@ class TestPathContainment:
         assert not (scratch.parent / "escaped.txt").exists()
 
 
+class TestDeleteAndRenameContainment:
+    """``delete_file`` / ``rename_file`` on both server-side runners: neither can touch, create or
+    reveal anything outside the workspace, by ``..``, an absolute path or a symlinked directory.
+    The desktop daemon enforces the same on the user's machine (``aura_hostd/test/file_ops_test.dart``)."""
+
+    @pytest.fixture
+    async def arena(self, runner, tmp_path):
+        handle = await runner.create_task()
+        scratch = await _scratch(runner, handle)
+        victim = scratch.parent / "victim.txt"
+        victim.write_text("original")
+        (scratch / "inside.txt").write_text("inside")
+        return handle, scratch, victim
+
+    @pytest.mark.parametrize("path", ESCAPES + ["../victim.txt", "sub/../../victim.txt"])
+    async def test_delete_refuses_an_escape_and_leaves_the_victim(self, runner, arena, path: str) -> None:
+        handle, scratch, victim = arena
+        with pytest.raises(Exception):
+            await runner.delete_file(handle, path)
+        assert victim.read_text() == "original"
+        assert scratch.exists() and (scratch / "inside.txt").exists()
+
+    @pytest.mark.parametrize("path", ESCAPES + ["../victim.txt"])
+    async def test_rename_refuses_an_escaping_source_or_destination(self, runner, arena, path: str) -> None:
+        handle, scratch, victim = arena
+        before = set(os.listdir(scratch.parent))
+        with pytest.raises(Exception):
+            await runner.rename_file(handle, path, "stolen.txt")
+        with pytest.raises(Exception):
+            await runner.rename_file(handle, "inside.txt", path)
+        assert victim.read_text() == "original"
+        assert (scratch / "inside.txt").read_text() == "inside"
+        assert not (scratch / "stolen.txt").exists()
+        assert set(os.listdir(scratch.parent)) == before
+
+    async def test_a_symlinked_directory_cannot_be_used_to_reach_outside(self, runner, arena) -> None:
+        handle, scratch, victim = arena
+        (scratch / "linkdir").symlink_to(scratch.parent, target_is_directory=True)
+
+        with pytest.raises(Exception):
+            await runner.delete_file(handle, "linkdir/victim.txt")
+        with pytest.raises(Exception):
+            await runner.rename_file(handle, "linkdir/victim.txt", "taken.txt")
+        with pytest.raises(Exception):
+            await runner.rename_file(handle, "inside.txt", "linkdir/planted.txt")
+
+        assert victim.read_text() == "original"
+        assert (scratch / "inside.txt").exists() and not (scratch / "taken.txt").exists()
+        assert not (scratch.parent / "planted.txt").exists()
+
+    async def test_deleting_a_symlink_removes_the_link_and_never_its_target(self, runner, arena) -> None:
+        handle, scratch, victim = arena
+        (scratch / "link.txt").symlink_to(victim)
+
+        await runner.delete_file(handle, "link.txt")
+
+        assert not (scratch / "link.txt").is_symlink() and not (scratch / "link.txt").exists()
+        assert victim.read_text() == "original"
+
+    async def test_renaming_a_symlink_moves_the_link_and_never_its_target(self, runner, arena) -> None:
+        handle, scratch, victim = arena
+        (scratch / "link.txt").symlink_to(victim)
+
+        await runner.rename_file(handle, "link.txt", "moved.txt")
+
+        assert (scratch / "moved.txt").is_symlink() and not (scratch / "link.txt").is_symlink()
+        assert victim.read_text() == "original"
+
+    async def test_a_null_byte_is_refused(self, runner, arena) -> None:
+        handle, scratch, victim = arena
+        with pytest.raises(Exception):
+            await runner.delete_file(handle, "inside.txt\x00../victim.txt")
+        with pytest.raises(Exception):
+            await runner.rename_file(handle, "inside.txt", "x\x00../victim.txt")
+        assert (scratch / "inside.txt").exists() and victim.read_text() == "original"
+
+
 # --------------------------------------------------------------------------------------
 # git_push refspec injection
 # --------------------------------------------------------------------------------------

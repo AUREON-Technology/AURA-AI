@@ -162,6 +162,70 @@ class TestWriteFiles:
             await runner.read_file(task, "added.txt")
 
 
+class TestDeleteAndRename:
+    async def test_delete_removes_one_file(self, runner, task) -> None:
+        await runner.write_file(task, "dir/a.txt", "a")
+        await runner.write_file(task, "dir/b.txt", "b")
+
+        await runner.delete_file(task, "dir/a.txt")
+
+        with pytest.raises(Exception, match="not a file"):
+            await runner.read_file(task, "dir/a.txt")
+        assert await runner.read_file(task, "dir/b.txt") == "b"
+
+    @pytest.mark.parametrize("path, message", [
+        ("missing.txt", "does not exist"),
+        ("dir", "is a directory"),
+        ("../outside.txt", "escapes"),
+        (".git/config", r"\.git"),
+        ("dir/.GIT/x", r"\.git"),
+    ])
+    async def test_delete_refusals(self, runner, task, path, message) -> None:
+        await runner.write_file(task, "dir/a.txt", "a")
+        await runner.write_file(task, ".git/config", "[core]\n")
+
+        with pytest.raises(Exception, match=message):
+            await runner.delete_file(task, path)
+
+        assert await runner.read_file(task, "dir/a.txt") == "a"
+        assert await runner.read_file(task, ".git/config") == "[core]\n"
+
+    async def test_rename_moves_and_makes_folders(self, runner, task) -> None:
+        await runner.write_file(task, "old.txt", "x")
+
+        await runner.rename_file(task, "old.txt", "new/deep/name.txt")
+
+        assert await runner.read_file(task, "new/deep/name.txt") == "x"
+        with pytest.raises(Exception, match="not a file"):
+            await runner.read_file(task, "old.txt")
+
+    async def test_a_folder_can_be_renamed(self, runner, task) -> None:
+        await runner.write_file(task, "dir/a.txt", "a")
+
+        await runner.rename_file(task, "dir", "moved")
+
+        assert await runner.read_file(task, "moved/a.txt") == "a"
+
+    @pytest.mark.parametrize("source, target, message", [
+        ("missing.txt", "x.txt", "does not exist"),
+        ("a.txt", "b.txt", "already exists"),
+        ("a.txt", "../outside.txt", "escapes"),
+        ("../outside.txt", "x.txt", "escapes"),
+        ("a.txt", ".git/hooks/pre-push", r"\.git"),
+        (".git/config", "x.txt", r"\.git"),
+        ("dir", "dir/inside", "into itself"),
+    ])
+    async def test_rename_refusals(self, runner, task, source, target, message) -> None:
+        for path in ("a.txt", "b.txt", "dir/c.txt", ".git/config"):
+            await runner.write_file(task, path, path)
+
+        with pytest.raises(Exception, match=message):
+            await runner.rename_file(task, source, target)
+
+        for path in ("a.txt", "b.txt", "dir/c.txt", ".git/config"):
+            assert await runner.read_file(task, path) == path
+
+
 class TestCommands:
     async def test_exit_code_and_both_streams(self, runner, task) -> None:
         result = await runner.run(

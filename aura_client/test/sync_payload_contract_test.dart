@@ -120,8 +120,17 @@ void main() {
     'memories': () => SyncPayloads.userMemory('I live in Cairo'),
   };
 
-  test('every syncable table has a payload builder', () {
-    expect(payloads.keys.toSet(), contract.keys.toSet());
+  // Tables the server syncs that this build deliberately does not: no Drift table or screen yet.
+  // Naming one here is a decision, not an escape hatch: any *other* table the contract gains
+  // without a builder still fails below. Remove the entry when its builder lands. `conversations`
+  // (migration 0035) is the chat title/pin/archive state behind `/api/v3/chats`; the backend ships
+  // first, and `sync_pull_unknown_table_test.dart` proves a pull carrying it is harmless meanwhile.
+  const serverOnlyTables = <String>{'conversations'};
+
+  test('every syncable table has a payload builder, or is named as server-only', () {
+    expect(payloads.keys.toSet().intersection(serverOnlyTables), isEmpty,
+        reason: 'a table with a builder is no longer server-only: drop it from serverOnlyTables');
+    expect(payloads.keys.toSet().union(serverOnlyTables), contract.keys.toSet());
   });
 
   for (final entry in payloads.entries) {

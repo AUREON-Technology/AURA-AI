@@ -426,6 +426,22 @@ async def _erase_core(
     if consent_store is not None:
         # D-03: the record of agreeing to send code to Anthropic is personal data too.
         await step("engineer_consent", lambda: consent_store.delete_for_owner(owner_id))
+    custom_agents = getattr(container, "custom_agents", None)
+    if custom_agents is not None:
+        # The instructions a person wrote into their own agents are theirs (migration 0036).
+        await step("custom_agents", lambda: custom_agents.delete_for_owner(owner_id))
+    notification_store = getattr(container, "notification_store", None)
+    if notification_store is not None:
+        await step("notifications", lambda: notification_store.delete_for_owner(owner_id))
+    notification_settings = getattr(container, "notification_settings", None)
+    if notification_settings is not None:
+        await step("notification_settings", lambda: notification_settings.delete(owner_id))
+    model_settings = getattr(container, "model_settings", None)
+    if model_settings is not None:
+        await step("model_settings", lambda: model_settings.delete(owner_id))
+    approval_ledger = getattr(container, "approval_ledger", None)
+    if approval_ledger is not None:
+        await step("tool_approvals", lambda: approval_ledger.delete_for_owner(owner_id))
     await step("audit_events_pseudonymised", audit_actor)
     return counts, failed
 

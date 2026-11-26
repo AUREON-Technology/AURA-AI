@@ -133,6 +133,17 @@ label on a narrow surface still leaves the status in a live-region announcement,
 shows a spinner and no button at all rather than a disabled one, and that the view is read-only
 when given no callback.
 
+### `test/ux/degradation_reasons_test.dart` — Phase 7 (rule 14)
+
+That `TurnMeta` carries `degraded_reasons` (including a malformed value being empty rather than a
+crash, and surviving `copyWith` and a JSON round trip), that each known slug becomes a sentence,
+and the two restraints: a reason already stated by its own note is not repeated, and an
+unrecognised slug is dropped rather than leaked as a raw identifier.
+
+Then the row: it says *why* instead of "a reduced mode"; it still says the generic line when the
+backend named nothing or named only things already said; an older backend sending no reasons still
+gets that line; and an empty library no longer hides a second reason alongside it.
+
 ### `test/ux/incomplete_plan_test.dart` — Phase 7 (rules 12 and 15)
 
 Both halves of the finding. The plumbing: that the plan parses from the streamed `plan_summary`

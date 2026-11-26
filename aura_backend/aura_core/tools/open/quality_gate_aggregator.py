@@ -239,6 +239,7 @@ class QualityGateAggregator:
                     and len(violations) == 0
                 )
 
+        required = ["security", "tests", "coverage"] + (["architecture"] if arch_result is not None else [])
         return cls.build_release_readiness_report(
             security_pass=sec_ok,
             tests_pass=tests_ok,

@@ -77,6 +77,9 @@ class AgentRunContext:
     goal: str = ""
     tools_available: int = 0
     tainted: bool = False
+    #: The earlier run this turn retries (``AgentRun.retry_of``); already checked to be the
+    #: caller's own and retryable by the API layer.
+    retry_of: str | None = None
 
 
 class RunRecorder:
@@ -90,7 +93,11 @@ class RunRecorder:
         store: Any = None,
         clock: Any = None,
         metrics: Any = None,
+        inbox: Any = None,
     ) -> None:
+        #: Optional in-app ``Inbox`` (``notifications/inbox.py``): a run that ends failed or out of
+        #: budget leaves the person a notification. A courtesy -- ``notify`` never raises.
+        self._inbox = inbox
         self._store = store
         self._clock = clock
         self._metrics = metrics
@@ -111,8 +118,11 @@ class RunRecorder:
             goal_digest=goal_digest(context.goal),
             goal_chars=len(context.goal),
             budget=budget,
+            retry_of=context.retry_of,
         )
         self.steps: list[AgentStep] = []
+        #: Steps recorded since the last :meth:`flush`.
+        self._pending: list[AgentStep] = []
 
     # -- clock -----------------------------------------------------------------------------
 
@@ -129,13 +139,31 @@ class RunRecorder:
     # -- persistence -----------------------------------------------------------------------
 
     async def _save(self) -> None:
+        """Bring the in-memory run up to date. Not a write: :meth:`flush` persists it."""
         self.run = self.run.with_(
             updated_at=self._now(), elapsed_s=max(0.0, self._monotonic() - self._started)
         )
+
+    async def flush(self) -> None:
+        """Persist the run row and every buffered step: two awaited writes, however many steps.
+
+        A pass used to cost one write per step plus a run save after each phase (k + 5 for k
+        tool calls), every one awaited on the turn's path. The run row goes first (steps
+        reference it); the steps then go in one batch, in order. A failure disables recording
+        for the rest of the run, as before -- the loop never fails because its record did.
+        """
+        pending, self._pending = self._pending, []
         if not self._store_ok:
             return
         try:
             await self._store.save_run(self.run)
+            if pending:
+                append_steps = getattr(self._store, "append_steps", None)
+                if append_steps is not None:
+                    await append_steps(pending)
+                else:  # a store written before the batch method existed
+                    for step in pending:
+                        await self._store.append_step(step)
         except Exception:
             self._store_ok = False
             logger.warning("failed to persist agent run; continuing without recording",
@@ -174,14 +202,7 @@ class RunRecorder:
             detail=safe_detail(detail),
         )
         self.steps.append(step)
-        if not self._store_ok:
-            return
-        try:
-            await self._store.append_step(step)
-        except Exception:
-            self._store_ok = False
-            logger.warning("failed to persist agent step; continuing without recording",
-                           extra={"agent": self.run.agent_id})
+        self._pending.append(step)
 
     # -- phases ------------------------------------------------------------------------------
 
@@ -197,6 +218,7 @@ class RunRecorder:
                 "tainted": self._context.tainted,
             },
         )
+        await self.flush()  # the run row exists before the first pass starts
 
     async def planned(
         self, plan: Plan, *, iteration: int, replan_reason: str | None = None,
@@ -316,12 +338,15 @@ class RunRecorder:
                 "risk_spent": self.run.risk_spent,
             },
         )
+        await self.flush()  # end of the pass: plan + tool calls + observation + evaluation
 
     async def finish(
         self, outcome: Any, *, stop_reason: str | None, exhausted_budget: str | None,
     ) -> AgentRun:
         """Completion or failure: the terminal status, and the run-level metrics."""
-        if outcome is None:
+        if stop_reason == "run_cancelled":
+            status = AgentRunStatus.CANCELLED
+        elif outcome is None:
             status = AgentRunStatus.FAILED
         elif outcome.succeeded and stop_reason in (None, "completed"):
             # Every step ran *and* the loop agreed it was done: with test results as a loop input
@@ -357,8 +382,26 @@ class RunRecorder:
             },
         )
         await self._save()
+        await self.flush()
         self._observe_metrics()
+        await self._tell_the_person()
         return self.run
+
+    async def _tell_the_person(self) -> None:
+        """A run that ended **failed** or **out of budget** is the one a person did not see finish
+        (a partial or awaiting-approval run has its own outcome inline, and a cancelled one was their
+        own doing). Identifiers only: the run id, the agent and the status -- never the instruction
+        or any output."""
+        if self._inbox is None or self.run.status not in (AgentRunStatus.FAILED, AgentRunStatus.BUDGET_EXHAUSTED):
+            return
+        try:
+            await self._inbox.notify(
+                self.run.user_id, "run_failed",
+                {"run_id": self.run.id.value, "agent_id": self.run.agent_id, "status": str(self.run.status)},
+                dedupe_key=f"run:{self.run.id.value}",
+            )
+        except Exception:  # noqa: BLE001 -- the run's own result must never depend on a courtesy
+            logger.debug("could not notify about a failed run", exc_info=True)
 
     async def crashed(self, exc: BaseException) -> None:
         """The loop raised: record the failure (by exception type, never message) and re-raise
@@ -372,7 +415,9 @@ class RunRecorder:
             detail={"exception": type(exc).__name__},
         )
         await self._save()
+        await self.flush()
         self._observe_metrics()
+        await self._tell_the_person()
 
     def _observe_metrics(self) -> None:
         metrics = self._metrics

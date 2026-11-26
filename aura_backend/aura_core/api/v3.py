@@ -28,7 +28,9 @@ from ..domain.errors import (
     AuraError,
     AuthenticationError,
     AuthorizationError,
+    ConflictError,
     DependencyUnavailableError,
+    KnowledgeError,
     NotFoundError,
     OverloadedError,
     RateLimitedError,
@@ -36,9 +38,14 @@ from ..domain.errors import (
 )
 from ..domain.caller_context import MAX_CALLER_CONTEXT, CallerContext
 from ..domain.connectors import CONNECTOR_ID_PATTERN, Credential
-from ..domain.identifiers import CorrelationId, DocumentId, SessionId, TurnId, UserId
+from ..domain.agent_runs import AgentRunStatus
+from ..domain.custom_agents import is_custom_agent_id
+from ..domain.identifiers import AgentRunId, CorrelationId, DocumentId, SessionId, TurnId, UserId
 from ..domain.engineering import ENGINEER_CONSENT_NOTICE_VERSION
+from ..domain.repository_identity import RepositoryIdentity
 from ..domain.llm import RoutingPolicy, WorkloadClass
+from ..domain.model_settings import SERVER_DEFAULTS, ModelSettings
+from ..domain.plans import PlanLimitError
 from ..llm.workload import workload_class_for_turn
 from ..text.language import CLIENT_LANGUAGE_HEADER, normalize_language
 from ..domain.memory import MemoryKind, MemoryQuery
@@ -52,12 +59,36 @@ from ..tools.policy import AUTONOMY_PROFILES
 from ..observability.logging import get_logger
 from ..ports.runtime import AuditEvent
 from ..prompts import PIN_SYNC_INTERVAL_S
+from ..tools.workspaces import WorkspaceCapacityError
 from ..security.rate_limit import extract_client_ip
 from .admin import register_admin_ops
 
 __all__ = ["build_router", "build_app", "Principal"]
 
 logger = get_logger("api.v3")
+
+def _first(*values: Any) -> Any:
+    """The first value that is not ``None`` (``False`` and ``0`` count as values)."""
+    return next((v for v in values if v is not None), None)
+
+
+#: Most documents one ``DELETE /knowledge/documents?confirm=true`` removes: each removal touches the
+#: graph, the indexes and the plan, so a corpus of thousands is cleared by calling again.
+BULK_DELETE_LIMIT = 100
+#: What ``POST /knowledge/documents/upload`` accepts as a file, by extension (no extension means PDF,
+#: as before). Text formats must be UTF-8.
+UPLOAD_TYPES = ("pdf", "md", "txt", "html")
+
+def upload_kind(filename: str | None) -> str | None:
+    """Which of :data:`UPLOAD_TYPES` an uploaded file is, by extension; ``None`` when it is none of
+    them. A name with no extension is a PDF, which is what every earlier client sent."""
+    name = (filename or "").rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    if "." not in name:
+        return "pdf"
+    extension = name.rsplit(".", 1)[-1].lower()
+    return {"pdf": "pdf", "md": "md", "markdown": "md", "txt": "txt", "text": "txt",
+            "html": "html", "htm": "html"}.get(extension)
+
 
 #: The role a service-key principal carries (AR-4). Never an admin role, so every admin check
 #: refuses it before the route allowlist even has to.
@@ -158,7 +189,7 @@ class Principal:
 
     __slots__ = (
         "user_id", "email", "role", "capabilities", "service_key", "workspace", "client_platform",
-        "email_verified",
+        "email_verified", "device_id",
     )
 
     def __init__(
@@ -172,6 +203,7 @@ class Principal:
         workspace: WorkspaceContext | None = None,
         client_platform: str | None = None,
         email_verified: bool = False,
+        device_id: str | None = None,
     ) -> None:
         self.user_id = user_id
         self.email = email
@@ -190,6 +222,10 @@ class Principal:
         # WP8: ``"desktop"`` only when the access token was issued to the desktop app (a signed
         # claim the authenticator copies); ``None`` for phone, web and every other caller.
         self.client_platform = client_platform
+        # The paired device the access token was issued to (a signed claim the authenticator
+        # copies), or ``None`` for a token that names none. Lets the host-agent socket say which
+        # computer is connected (``execution/runtime_presence.py``).
+        self.device_id = device_id
 
     @property
     def origin(self) -> str:
@@ -269,6 +305,11 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         message: str = Field(min_length=1, max_length=32_000)
         session_id: str | None = None
         agent: str = "orchestrator"
+        #: The id of one of the caller's own earlier agent runs that ended without achieving what it
+        #: planned (failed, partial, budget exhausted, cancelled), which this turn retries. Only a
+        #: link: the instruction is not stored, so a retry is this request, sent again. The new run
+        #: records it as ``retry_of``.
+        retry_of: str | None = Field(default=None, max_length=64)
         use_knowledge: bool = True
         use_memory: bool = True
         use_tools: bool = True
@@ -286,7 +327,9 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         success_criteria: list[str] = Field(default_factory=list, max_length=20)
         strategy: str | None = None
         routing_policy: str | None = None
-        require_local: bool = False
+        #: ``None`` = not specified: the caller's stored preference (``/me/model-settings``) applies,
+        #: then the server default (False for ``require_local``, 1024 tokens, temperature 0.3).
+        require_local: bool | None = None
         #: F-04 (ADR-006): the `approval_id`s, from one turn's `pending_tool_calls`, of the held
         #: calls the user approved. The request then resumes *that* turn -- its stored plan, its
         #: own message -- and runs only calls identical to the approved ones, once. Unknown,
@@ -294,8 +337,8 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         #: `confirmed_tools`/`confirmed_call_ids` fields confirmed by name or position; they are
         #: no longer read (an old client's field is ignored, so its call is simply held again).
         approval_ids: list[str] = Field(default_factory=list, max_length=32)
-        max_output_tokens: int = Field(default=1024, ge=16, le=8192)
-        temperature: float = Field(default=0.3, ge=0.0, le=2.0)
+        max_output_tokens: int | None = Field(default=None, ge=16, le=8192)
+        temperature: float | None = Field(default=None, ge=0.0, le=2.0)
         #: D8 (Desktop IDE only): ask the paired desktop daemon to isolate this task's writes into
         #: a dedicated git worktree keyed by `session_id`, rather than the user's live checkout.
         #: Silently a no-op for any caller without a live desktop pairing.
@@ -429,6 +472,24 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     plans = getattr(container, "plans", None)
 
+    async def notify_plan_limit(caller: Principal, exc: Exception) -> None:
+        """Tell the person, in their inbox, that their plan's allowance is used up -- once per
+        period for messages, once a day for storage. The 402 still goes to the request; this only
+        leaves a trace they can find later. Never raises."""
+        inbox = getattr(container, "inbox", None)
+        details = getattr(exc, "details", None) or {}
+        if inbox is None or caller.is_service or not details.get("limit"):
+            return
+        window = details.get("resets_at") or container.clock.now().date().isoformat()
+        try:
+            await inbox.notify(
+                caller.user_id, "usage_limit_reached",
+                {"limit": details["limit"], "plan": details.get("plan"), "resets_at": details.get("resets_at")},
+                dedupe_key=f"limit:{details['limit']}:{details.get('plan')}:{window}",
+            )
+        except Exception:  # noqa: BLE001 -- the 402 must still reach the caller
+            logger.debug("could not notify about a plan limit", exc_info=True)
+
     async def admit_turn(caller: Principal, agent: str | None, turn: Any) -> tuple[Any, Any]:
         """SaaS P1-C: reserve one message against the workspace's plan. Returns the reservation
         to give back if the turn fails (None when unmetered) and the turn to run.
@@ -452,7 +513,11 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 await plans.require_engineer(workspace_id)
             if "engineer_agent" in turn.capabilities:
                 turn = replace(turn, capabilities=tuple(c for c in turn.capabilities if c != "engineer_agent"))
-        return await plans.admit_message(workspace_id), turn
+        try:
+            return await plans.admit_message(workspace_id), turn
+        except PlanLimitError as exc:
+            await notify_plan_limit(caller, exc)
+            raise
 
     async def engineer_granted(caller: Principal) -> bool:
         """Whether the caller has the Engineer outside a turn: by role (``granted``) or, with
@@ -623,6 +688,19 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 )
         return normalise_criteria(raw)
 
+    async def standing_model_settings(caller: Principal) -> ModelSettings:
+        """The caller's stored model preferences, or none. History-free and best effort: a person
+        with no row, a service key, a deployment without the store and a store that is down all mean
+        "no preference", and the turn goes on with the server's defaults."""
+        store = getattr(container, "model_settings", None)
+        if store is None or caller.is_service:
+            return ModelSettings()
+        try:
+            return await store.get(caller.user_id) or ModelSettings()
+        except Exception:  # noqa: BLE001 -- preferences must never stop a chat
+            logger.warning("could not read model settings; using the server defaults", exc_info=True)
+            return ModelSettings()
+
     async def to_turn(payload: ChatRequest, caller: Principal, request: Request) -> TurnRequest:
         # Phase I: shared transcript/message normalize before the kernel (same path live voice uses).
         from ..nlp import normalize_for_turn
@@ -653,8 +731,39 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         if len({e.id for e in caller_context}) != len(caller_context):
             raise ValidationError("context ids must be unique within a turn")
         images = await normalize_images(payload.images, caller) if payload.images else ()
+        # A custom agent is named by its id, which is only ever looked up under the caller's own
+        # ownership: another person's id and a missing one both read as 404. The turn then runs
+        # on its base persona (`agent`), narrowed by the custom agent (`custom_agent`).
+        agent_id, custom_agent = payload.agent, None
+        if is_custom_agent_id(agent_id):
+            if caller.is_service:
+                raise ValidationError("a service key cannot use a custom agent",
+                                      details={"field": "agent"})
+            agents_store = getattr(container, "custom_agents", None)
+            custom_agent = await agents_store.get(caller.user_id, agent_id) if agents_store is not None else None
+            if custom_agent is None:
+                raise NotFoundError("agent not found", details={"agent_id": agent_id})
+            agent_id = custom_agent.base_agent_id
         # F43: both are client-supplied; an identifier that fails its own validation is a bad
         # request (422), not a server error.
+        retry_of = None
+        if payload.retry_of:
+            if caller.is_service:
+                raise ValidationError("a service key has no runs to retry", details={"field": "retry_of"})
+            run_store = getattr(container, "agent_runs", None)
+            try:
+                earlier = (await run_store.get_run(AgentRunId(payload.retry_of), user_id=caller.user_id)
+                           if run_store is not None else None)
+            except ValueError:
+                earlier = None
+            if earlier is None:
+                raise NotFoundError("run not found", details={"retry_of": payload.retry_of})
+            if earlier.status not in AgentRunStatus.RETRYABLE:
+                raise ConflictError(
+                    f"a run that is {earlier.status} cannot be retried",
+                    details={"reason": "not_retryable", "status": earlier.status},
+                )
+            retry_of = earlier.id.value
         try:
             session_id = SessionId(payload.session_id) if payload.session_id else None
         except ValueError as exc:
@@ -667,12 +776,15 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         except ValueError as exc:
             raise ValidationError("X-Correlation-Id is not a valid identifier",
                                   details={"field": "x-correlation-id"}) from exc
+        preferences = await standing_model_settings(caller)
         return TurnRequest(
             message=message,
             user_id=caller.user_id,
             knowledge_owner=caller.knowledge_owner,
             session_id=session_id,
-            agent=payload.agent,
+            agent=agent_id,
+            custom_agent=custom_agent,
+            retry_of=retry_of,
             correlation_id=correlation_id,
             use_knowledge=payload.use_knowledge,
             # Spec §5.2 / ADR-034: a team turn draws on the team's corpus, never on the person's
@@ -683,12 +795,16 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             plan_mode=payload.plan_mode,
             success_criteria=success_criteria,
             strategy=_parse_enum(ReasoningStrategy, payload.strategy),
-            routing_policy=_parse_enum(RoutingPolicy, payload.routing_policy),
-            require_local=payload.require_local,
+            # A value the request names wins; then the person's standing preference; then the
+            # server's own default. A stored preference never overrides what the request says.
+            routing_policy=_parse_enum(
+                RoutingPolicy, payload.routing_policy if payload.routing_policy is not None else preferences.routing_policy,
+            ),
+            require_local=_first(payload.require_local, preferences.require_local, SERVER_DEFAULTS["require_local"]),
             capabilities=granted(caller),
             approval_ids=tuple(payload.approval_ids),
-            max_output_tokens=payload.max_output_tokens,
-            temperature=payload.temperature,
+            max_output_tokens=_first(payload.max_output_tokens, preferences.max_output_tokens, SERVER_DEFAULTS["max_output_tokens"]),
+            temperature=_first(payload.temperature, preferences.temperature, SERVER_DEFAULTS["temperature"]),
             desktop_task_isolation=payload.desktop_task_isolation,
             workspace_root=payload.workspace_root,
             # WP8: from the token's signed claim, never from the request body.
@@ -768,7 +884,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         """One complete turn. Use ``/chat/stream`` for incremental output."""
         await enforce_rate_limit(request, caller, "chat")
         turn = await to_turn(payload, caller, request)
-        reservation, turn = await admit_turn(caller, payload.agent, turn)
+        reservation, turn = await admit_turn(caller, turn.agent, turn)
         try:
             result = await container.kernel.run(turn)
         except BaseException:
@@ -898,6 +1014,12 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "max_request_image_bytes": vision.max_request_image_bytes,
             },
             "knowledge": {"max_upload_bytes": settings.knowledge.max_document_bytes},
+            # What a client may offer for choosing how a chat is answered (``GET /models``).
+            "models": {
+                "routing_policies": [p.value for p in RoutingPolicy],
+                "local_available": any(m["local"] and m["available"] for m in container.router.catalog()),
+                "settings_endpoint": "/api/v3/me/model-settings",
+            },
         })
 
     @router.post("/chat/plan-feedback")
@@ -946,7 +1068,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             raise ValidationError("response_schema is supported on POST /api/v3/chat only, not on the stream")
         await enforce_rate_limit(request, caller, "chat")
         turn = await to_turn(payload, caller, request)
-        reservation, turn = await admit_turn(caller, payload.agent, turn)
+        reservation, turn = await admit_turn(caller, turn.agent, turn)
 
         async def events() -> AsyncIterator[bytes]:
             counted = False
@@ -1073,7 +1195,11 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         storage_ws = await storage_workspace(caller)
         reserved = await storage_to_reserve(caller, payload.content) if storage_ws is not None else 0
         if storage_ws is not None:
-            await plans.admit_storage(storage_ws, reserved)
+            try:
+                await plans.admit_storage(storage_ws, reserved)
+            except PlanLimitError as exc:
+                await notify_plan_limit(caller, exc)
+                raise
         result = None
         try:
             result = await container.knowledge.ingest(
@@ -1108,7 +1234,8 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         title: str = Form(..., min_length=1, max_length=500),
         caller: Principal = Depends(principal),
     ) -> JSONResponse:
-        """Accept a raw PDF upload -- text and scanned pages alike (Phase F1).
+        """Accept a file upload: a PDF (text and scanned pages alike, Phase F1) or a Markdown, text or
+        HTML file, chosen by the file extension (none means PDF).
 
         The one HTTP entry point that was missing to reach `knowledge/documents.py`'s
         page-aware extraction (`extract_pdf` already tells a text page from a scanned one and
@@ -1127,21 +1254,43 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 details={"limit_bytes": settings.knowledge.max_document_bytes},
             )
 
-        from ..knowledge.documents import apply_ocr, extract_pdf_async, image_extraction_available
-
-        # In a worker thread (F40): parsing a long PDF held this worker's event loop. A PDF over
-        # the page cap raises DocumentTooLargeError, which answers 413 naming the limit.
-        extraction = await extract_pdf_async(
-            data, title=title, keep_images=image_extraction_available()
+        from ..knowledge.documents import (
+            apply_ocr, extract_document, extract_pdf_async, image_extraction_available,
         )
-        if extraction.unreadable_pages and container.ocr_engine is not None:
-            extraction = await apply_ocr(extraction, container.ocr_engine)
+
+        kind = upload_kind(file.filename)
+        if kind is None:
+            raise ValidationError(
+                "this file type is not supported; upload a PDF, Markdown, text or HTML file",
+                details={"filename": file.filename, "supported": list(UPLOAD_TYPES)},
+            )
+        if kind == "pdf":
+            # In a worker thread (F40): parsing a long PDF held this worker's event loop. A PDF over
+            # the page cap raises DocumentTooLargeError, which answers 413 naming the limit.
+            extraction = await extract_pdf_async(
+                data, title=title, keep_images=image_extraction_available()
+            )
+            if extraction.unreadable_pages and container.ocr_engine is not None:
+                extraction = await apply_ocr(extraction, container.ocr_engine)
+        else:
+            # Text formats are read as UTF-8; anything else is refused with the reason
+            # (``KnowledgeError``), not stored as garbled text.
+            try:
+                extraction = extract_document(
+                    data, format={"md": "markdown", "txt": "text", "html": "html"}[kind], title=title,
+                )
+            except KnowledgeError as exc:
+                raise ValidationError(exc.message, details={**exc.details, "filename": file.filename}) from exc
 
         storage_ws = await storage_workspace(caller)
         joined = "\n\n".join(block.text for block in extraction.blocks if block.text)
         reserved = await storage_to_reserve(caller, joined) if storage_ws is not None else 0
         if storage_ws is not None:
-            await plans.admit_storage(storage_ws, reserved)
+            try:
+                await plans.admit_storage(storage_ws, reserved)
+            except PlanLimitError as exc:
+                await notify_plan_limit(caller, exc)
+                raise
         result = None
         try:
             result = await container.knowledge.ingest(
@@ -1198,6 +1347,19 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             }
         )
 
+    async def remove_document(caller: Principal, stored: Any) -> int:
+        """Remove one of the caller's own documents everywhere it lives, and give its bytes back to
+        the plan. ``stored`` is the document as the store holds it, already checked as the caller's."""
+        doc_id = stored.id
+        removed = await container.knowledge.delete_document(doc_id, owner_id=caller.knowledge_owner)
+        storage_ws = await storage_workspace(caller)
+        if removed and storage_ws is not None:
+            # Gives back what settle_storage counted for it (spec 5.3); never below 0.
+            await plans.free_storage(storage_ws, len(stored.content.encode("utf-8")))
+        if container.cag is not None:
+            await container.cag.on_document_changed(doc_id, owner_id=caller.knowledge_owner)
+        return removed
+
     @router.delete("/knowledge/documents/{document_id}", dependencies=idempotent)
     async def delete_document(
         request: Request, document_id: str, caller: Principal = Depends(principal)
@@ -1212,16 +1374,105 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             # on "0 chunks removed", which a fully quarantined document of one's own reports.
             raise NotFoundError(f"document {document_id!r} not found",
                                 details={"document_id": document_id})
-        removed = await container.knowledge.delete_document(
-            doc_id, owner_id=caller.knowledge_owner
-        )
-        storage_ws = await storage_workspace(caller)
-        if removed and storage_ws is not None:
-            # Gives back what settle_storage counted for it (spec 5.3); never below 0.
-            await plans.free_storage(storage_ws, len(stored.content.encode("utf-8")))
-        if container.cag is not None:
-            await container.cag.on_document_changed(doc_id, owner_id=caller.knowledge_owner)
+        removed = await remove_document(caller, stored)
         return JSONResponse(content={"deleted": True, "chunks_removed": removed})
+
+    @router.delete("/knowledge/documents", dependencies=idempotent)
+    async def delete_all_documents(
+        request: Request,
+        caller: Principal = Depends(principal),
+        confirm: bool = Query(default=False, description="Must be true: this removes every document."),
+    ) -> JSONResponse:
+        """Delete every document in the caller's own corpus (a team's corpus for a team owner or
+        admin), at most ``BULK_DELETE_LIMIT`` per call: ``remaining`` says whether to call again.
+
+        Each document goes through the same removal as ``DELETE /knowledge/documents/{id}`` -- its
+        graph facts, tombstone, index entries and plan storage -- one at a time, so one that fails
+        is reported in ``failed`` and the rest still go. Never reaches another person's documents
+        or the global corpus: the list it works from is the caller's owner scope alone.
+        """
+        await enforce_rate_limit(request, caller, "ingest")
+        require_knowledge_write(caller)
+        if not confirm:
+            raise ValidationError(
+                "confirm=true is required: this deletes every document in the corpus",
+                details={"field": "confirm"},
+            )
+        owner = caller.knowledge_owner
+        mine = await container.documents.list_active(owner_id=owner, limit=BULK_DELETE_LIMIT)
+        deleted, chunks_removed, failed = 0, 0, []
+        for stored in mine:
+            try:
+                chunks_removed += await remove_document(caller, stored)
+                deleted += 1
+            except Exception:  # noqa: BLE001 -- report it and carry on with the rest
+                logger.warning("bulk knowledge delete: a document could not be removed", exc_info=True)
+                failed.append(stored.id.value)
+        stats = await container.documents.owner_stats(owner_id=owner)
+        return JSONResponse(content={
+            "deleted": deleted, "chunks_removed": chunks_removed, "failed": failed,
+            "remaining": stats.documents,
+        })
+
+    @router.get("/knowledge/documents/{document_id}")
+    async def get_document(
+        request: Request,
+        document_id: str,
+        caller: Principal = Depends(principal),
+        content: bool = Query(default=False, description="Include the document's full text."),
+    ) -> JSONResponse:
+        """One of the caller's documents: what it is, its size and how many chunks it was split into.
+
+        Someone else's, a global one and an unknown id all answer the same 404, like the delete.
+        The text comes back only when asked for (``content=true``); it is the caller's own upload.
+        """
+        await enforce_rate_limit(request, caller, "read")
+        stored = await container.documents.get(DocumentId(document_id))
+        if stored is None or stored.owner_id != caller.knowledge_owner:
+            raise NotFoundError(f"document {document_id!r} not found", details={"document_id": document_id})
+        chunks = await container.documents.chunks_for(stored.id, stored.version)
+        body = {
+            "document_id": stored.id.value,
+            "title": stored.title,
+            "version": stored.version,
+            "status": str(stored.status),
+            "cag_pinned": stored.cag_pinned,
+            "source_type": str(stored.source_type),
+            "language": stored.language,
+            "size_bytes": len(stored.content.encode("utf-8")),
+            "chunks": len(chunks),
+            "created_at": stored.created_at.isoformat(),
+            "updated_at": stored.updated_at.isoformat(),
+            "metadata": dict(stored.metadata),
+        }
+        if content:
+            body["content"] = stored.content
+        return JSONResponse(content=body)
+
+    @router.get("/knowledge")
+    async def knowledge_summary(
+        request: Request, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """The caller's corpus at a glance: how many documents, their size, how many are pinned, what
+        a single upload may be and how much of the plan's storage is used (when the workspace is
+        metered). There is one corpus per person (or per team), not several named knowledge bases."""
+        await enforce_rate_limit(request, caller, "read")
+        stats = await container.documents.owner_stats(owner_id=caller.knowledge_owner)
+        storage = None
+        storage_ws = await storage_workspace(caller)
+        if storage_ws is not None:
+            usage = await plans.usage(storage_ws)
+            storage = {
+                "plan": usage["plan"], "used_bytes": usage["storage_used"], "allowed_bytes": usage["storage_allowed"],
+            }
+        return JSONResponse(content={
+            "documents": stats.documents,
+            "content_bytes": stats.content_bytes,
+            "cag_pinned": stats.pinned,
+            "max_document_bytes": settings.knowledge.max_document_bytes,
+            "upload_types": list(UPLOAD_TYPES),
+            "storage": storage,
+        })
 
     @router.post("/knowledge/documents/{document_id}/cag-pin", dependencies=idempotent)
     async def pin_cag_document(
@@ -1987,6 +2238,37 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         )
         return JSONResponse(content={"recorded": True})
 
+    @router.get("/feedback")
+    async def list_feedback(
+        request: Request,
+        caller: Principal = Depends(principal),
+        turn_id: str | None = Query(default=None, max_length=64),
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> JSONResponse:
+        """The caller's own ratings, newest first, optionally for one turn.
+
+        Content-free on purpose: the stored record also holds the prompt, the reply and any
+        correction the person typed, and those stay out of this answer (``has_correction`` says
+        whether there is one). Owner-scoped in the store, which has no unscoped list.
+        """
+        await enforce_rate_limit(request, caller, "read")
+        if caller.is_service:
+            raise AuthorizationError("a service key has no ratings of its own to list")
+        rows = await container.feedback.list_for_owner(caller.user_id, limit=200)
+        wanted = [r for r in rows if turn_id is None or r.metadata.get("turn_id") == turn_id]
+        wanted.sort(key=lambda r: r.created_at, reverse=True)
+        return JSONResponse(content={"feedback": [
+            {
+                "id": r.id,
+                "turn_id": r.metadata.get("turn_id"),
+                "rating": r.rating,
+                "comment": r.metadata.get("comment") or "",
+                "has_correction": bool(r.correction),
+                "created_at": r.created_at.isoformat(),
+            }
+            for r in wanted[:limit]
+        ]})
+
     # -- introspection -----------------------------------------------------------------
 
     @router.get("/tools")
@@ -2014,6 +2296,14 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             return True
         consent = await store.get(caller.user_id)
         return consent is not None and consent.is_current(ENGINEER_CONSENT_NOTICE_VERSION)
+
+    async def _custom_agents_summary(caller: Principal) -> list[dict[str, Any]]:
+        """The caller's own agents, without their instruction text (``GET /agents/{id}`` has it).
+        A service key has none."""
+        agents_store = getattr(container, "custom_agents", None)
+        if caller.is_service or agents_store is None:
+            return []
+        return [a.as_dict(include_instruction=False) for a in await agents_store.list_for_owner(caller.user_id)]
 
     @router.get("/agents")
     async def list_agents(caller: Principal = Depends(principal)) -> JSONResponse:
@@ -2067,8 +2357,22 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                     for spec in container.agents
                 ],
                 "engineer_workspaces": engineer_elsewhere,
+                "custom_agents": await _custom_agents_summary(caller),
             }
         )
+
+    def _workspace_body(w: Any, ttl_hours: float) -> dict[str, Any]:
+        """One workspace as the routes show it. ``expires_at`` is computed from the deployment's TTL
+        rather than stored, so changing the TTL does not leave rows advertising the old one."""
+        return {
+            "id": w.id.value,
+            "repo": w.repo,
+            "status": w.status,
+            "branch": w.branch,
+            "created_at": w.created_at.isoformat(),
+            "last_active_at": w.last_active_at.isoformat(),
+            "expires_at": (w.last_active_at + timedelta(hours=ttl_hours)).isoformat(),
+        }
 
     @router.get("/engineering/workspaces")
     async def list_agent_workspaces(caller: Principal = Depends(principal)) -> JSONResponse:
@@ -2087,21 +2391,58 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             content={
                 "enabled": True,
                 "ttl_hours": ttl_hours,
-                "workspaces": [
-                    {
-                        "id": w.id.value,
-                        "repo": w.repo,
-                        "status": w.status,
-                        "branch": w.branch,
-                        "created_at": w.created_at.isoformat(),
-                        "last_active_at": w.last_active_at.isoformat(),
-                        "expires_at": (
-                            w.last_active_at + timedelta(hours=ttl_hours)
-                        ).isoformat(),
-                    }
-                    for w in rows
-                ],
+                "workspaces": [_workspace_body(w, ttl_hours) for w in rows],
             }
+        )
+
+    class CreateWorkspaceRequest(BaseModel):
+        repo: str = Field(
+            min_length=3, max_length=400,
+            description="The repository this workspace is for: 'owner/name' or a GitHub URL.",
+        )
+
+    @router.post("/engineering/workspaces", dependencies=idempotent)
+    async def create_agent_workspace(
+        payload: CreateWorkspaceRequest, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Create (or resume) the caller's persistent workspace for a repository, outside a chat turn.
+
+        This is the server-side workspace of ADR-013: a durable checkout directory keyed by
+        (user, repository), the one ``open_workspace`` opens for the agent. **It creates the
+        workspace, it does not clone into it** -- the repository arrives when the agent (or a
+        ``run_command``) clones it, which needs the user's GitHub connection. It is empty until then.
+
+        Opening is an admission decision (memory, how many exist); a host that cannot afford another
+        is 503 rather than a workspace that dies mid-build. The workspace is stopped again straight
+        away -- nothing is using it yet, and a stopped one holds no memory (the next turn resumes
+        it). 201 when it is new, 200 when it already existed.
+        """
+        if not await engineer_granted(caller):
+            raise HTTPException(
+                status_code=403,
+                detail=AuthorizationError("the Engineer is not available to this account").to_dict(),
+            )
+        manager = container.workspace_manager
+        if manager is None:
+            raise HTTPException(status_code=404, detail="workspaces are not enabled")
+        identity = RepositoryIdentity.parse_or_none(payload.repo)
+        if identity is None:
+            raise ValidationError("repo must be 'owner/name' or a GitHub URL", details={"field": "repo"})
+        existed = await manager.get(caller.user_id, identity.slug) is not None
+        try:
+            opened = await manager.open(caller.user_id, identity.slug)
+        except WorkspaceCapacityError as exc:  # the host cannot afford another workspace right now
+            raise DependencyUnavailableError(str(exc), dependency="workspace_capacity") from exc
+        await manager.pause(opened.record.id)
+        record = await manager.get(caller.user_id, identity.slug) or opened.record
+        ttl_hours = container.settings.sandbox.workspace_ttl_hours
+        return JSONResponse(
+            status_code=200 if existed else 201,
+            content={
+                "workspace": _workspace_body(record, ttl_hours),
+                "created": not existed,
+                "evicted": list(opened.evicted),
+            },
         )
 
     @router.delete("/engineering/workspaces/{workspace_id}", dependencies=idempotent)
@@ -2391,6 +2732,37 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             "roots": roots,
         })
 
+    @router.get("/runtime/status")
+    async def runtime_status(caller: Principal = Depends(principal)) -> JSONResponse:
+        """Whether the caller's computer (``aura_hostd``) is connected right now, and which one.
+
+        ``connected`` is the registry's own answer -- a live session, on this worker or another --
+        so it is true exactly when a tool call could reach the computer. ``device_id`` and
+        ``connected_since`` come from a best-effort shared record (``execution/runtime_presence.py``)
+        and are ``null`` when it is missing, which does **not** mean disconnected. Match
+        ``device_id`` against ``GET /api/v2/auth/desktop/devices`` for the name. For the folders the
+        computer allows and whether it takes control from other devices, ``GET /host/folders``.
+
+        Nothing here is a heartbeat reading: the daemon's keep-alive is a WebSocket ping the server
+        library answers, so there is no "last seen" to report.
+        """
+        if not await engineer_granted(caller):
+            raise HTTPException(
+                status_code=403,
+                detail=AuthorizationError("the Engineer is not available to this account").to_dict(),
+            )
+        registry = getattr(container, "host_agent_registry", None)
+        session = await registry.resolve(caller.user_id) if registry is not None else None
+        if session is None:
+            return JSONResponse(content={"connected": False, "device_id": None, "connected_since": None})
+        presence = getattr(container, "runtime_presence", None)
+        known = await presence.get(caller.user_id.value) if presence is not None else None
+        return JSONResponse(content={
+            "connected": True,
+            "device_id": known["device_id"] if known else None,
+            "connected_since": known["connected_since"] if known else None,
+        })
+
     class GitInitRequest(BaseModel):
         path: str = Field(min_length=1, max_length=1024)
 
@@ -2515,18 +2887,37 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         agent: str | None = Query(default=None, max_length=64),
         status: str | None = Query(default=None, max_length=32),
         limit: int = Query(default=50, ge=1, le=200),
+        cursor: str | None = Query(default=None, max_length=512),
+        since: datetime | None = Query(default=None, description="Only runs created at or after this instant."),
+        until: datetime | None = Query(default=None, description="Only runs created before this instant."),
+        retry_of: str | None = Query(default=None, max_length=64, description="Only the retries of this run."),
     ) -> JSONResponse:
         """The caller's own agent runs, newest first, with run-level metrics. Owner-scoped in
-        the store (``user_id`` is a required argument of every read), not filtered here."""
+        the store (``user_id`` is a required argument of every read), not filtered here.
+
+        Keyset-paged: pass ``next_cursor`` back as ``cursor`` with the same filters (a cursor made
+        for other filters is a 422). ``agent`` is a built-in id or ``custom:<id>``."""
         await enforce_rate_limit(request, caller, "read")
         from ..domain.agent_runs import run_metrics
+        from .agent_runs import decode_run_cursor, encode_run_cursor, run_list_fingerprint
 
         store = getattr(container, "agent_runs", None)
-        if store is None:
-            return JSONResponse(content={"runs": []})
-        runs = await store.list_runs(caller.user_id, agent_id=agent, status=status, limit=limit)
+        if store is None or caller.is_service:
+            return JSONResponse(content={"runs": [], "next_cursor": None})
+        fingerprint = run_list_fingerprint(agent=agent, status=status, since=since, until=until, retry_of=retry_of)
+        before = decode_run_cursor(cursor, fingerprint) if cursor is not None else None
+        runs = list(await store.list_runs(
+            caller.user_id, agent_id=agent, status=status, limit=limit + 1, since=since, until=until,
+            retry_of=retry_of, before=before,
+        ))
+        page, more = runs[:limit], len(runs) > limit
+        next_cursor = (
+            encode_run_cursor(fingerprint, created_at=page[-1].created_at, run_id=page[-1].id.value)
+            if more else None
+        )
         return JSONResponse(
-            content={"runs": [{**r.as_dict(), "metrics": run_metrics(r)} for r in runs]}
+            content={"runs": [{**r.as_dict(), "metrics": run_metrics(r)} for r in page],
+                     "next_cursor": next_cursor}
         )
 
     @router.get("/agents/runs/{run_id}")
@@ -2792,6 +3183,55 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         Depends=Depends,
         JSONResponse=JSONResponse,
         Response=Response,
+    )
+
+    from .agents import register_agent_ops
+
+    register_agent_ops(
+        router, container, principal=principal, idempotent=idempotent, Depends=Depends,
+        JSONResponse=JSONResponse,
+    )
+
+    from .agent_runs import register_run_ops
+
+    register_run_ops(
+        router, container, principal=principal, idempotent=idempotent, Depends=Depends,
+        JSONResponse=JSONResponse, enforce_rate_limit=enforce_rate_limit, Request=Request,
+    )
+
+    from .export import register_export_ops
+
+    register_export_ops(
+        router, container, principal=principal, idempotent=idempotent, Depends=Depends,
+        JSONResponse=JSONResponse, enforce_rate_limit=enforce_rate_limit, Request=Request,
+    )
+
+    from .notifications import register_notification_ops
+
+    register_notification_ops(
+        router, container, principal=principal, idempotent=idempotent, Depends=Depends,
+        JSONResponse=JSONResponse, enforce_rate_limit=enforce_rate_limit, Request=Request,
+    )
+
+    from .usage import register_usage_ops
+
+    register_usage_ops(
+        router, container, principal=principal, idempotent=idempotent, Depends=Depends,
+        JSONResponse=JSONResponse, enforce_rate_limit=enforce_rate_limit, Request=Request,
+    )
+
+    from .models import register_model_ops
+
+    register_model_ops(
+        router, container, principal=principal, idempotent=idempotent, Depends=Depends,
+        JSONResponse=JSONResponse, enforce_rate_limit=enforce_rate_limit, Request=Request,
+    )
+
+    from .approvals import register_approval_ops
+
+    register_approval_ops(
+        router, container, principal=principal, idempotent=idempotent, Depends=Depends,
+        JSONResponse=JSONResponse, enforce_rate_limit=enforce_rate_limit, Request=Request,
     )
 
     # The WebSocket routes authenticate per frame without the `principal` dependency, so the

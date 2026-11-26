@@ -220,7 +220,11 @@ class PushNotificationDispatcher:
         headers: Optional[Dict[str, str]] = None,
         timeout_seconds: float = 5.0,
     ) -> Dict[str, Any]:
-        """Send JSON payload to target webhook URL. Every failure is a returned result."""
+        """Send JSON payload to target webhook URL. Every failure is a returned result.
+
+        The URL must pass the outbound policy in ``_ops_common`` (public host, no redirects); there
+        is no switch to relax it.
+        """
         shown = redact_url(url)
 
         def failed(error: str, status: int = 0) -> Dict[str, Any]:

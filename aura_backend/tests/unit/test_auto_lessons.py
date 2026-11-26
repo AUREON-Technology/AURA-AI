@@ -313,6 +313,15 @@ async def _engineer_turn(container, message: str, *, tainted_tool: bool = False)
                  arguments={"target": "2+2"}),
     ))
     container.kernel._deps.planner = _FixedPlanner(plan)
+
+    async def unplannable(goal, available_tools=(), max_steps=None):  # noqa: ANN001
+        # The agent loop replans with the real engine. Make its model answer unusable on purpose
+        # (the fallback is one respond step carrying the goal, "Failed: ..." lines included), so
+        # the result does not depend on how much of its own prompt the echo provider repeats.
+        step = PlanStep(id=StepId("s1"), kind=StepKind.RESPOND, description=goal.description)
+        return Plan(id=PlanId.new(), goal=goal, steps=(step,))
+
+    container.planner.plan = unplannable
     result = await container.kernel.run(TurnRequest(
         message=message, user_id=ALICE, session_id=SessionId("eng-session"), agent="engineer",
         capabilities=("engineer_agent",), plan=True,

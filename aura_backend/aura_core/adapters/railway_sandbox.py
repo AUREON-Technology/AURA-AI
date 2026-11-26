@@ -96,6 +96,38 @@ mv -- "$t" "$d"
 """
 
 
+#: ``delete_file`` and ``rename_file`` run inside the sandbox, under the rules of
+#: ``sandbox_fs.py``: an entry is named, not followed (its parent is resolved, the last part is
+#: not), nothing at or under ``.git``, delete removes no folder, rename replaces nothing.
+#: Exit: 91 leaves the workspace, 92 no such entry, 93 inside ``.git``, 94 a folder,
+#: 95 the destination exists, 96 a folder moved into itself.
+_ENTRY = """
+root=$(realpath -m -- .) || exit 1
+entry() {
+    parent=$(realpath -m -- "$(dirname -- "$1")") || exit 1
+    case "$parent/" in "$root"/*) ;; *) exit 91 ;; esac
+    case "$(printf '%s' "${parent#"$root"}/" | tr 'A-Z' 'a-z')" in */.git/*) exit 93 ;; esac
+    found="$parent/$(basename -- "$1")"
+}
+"""
+_DELETE = _ENTRY + """
+entry "$1"
+{ [ -e "$found" ] || [ -L "$found" ]; } || exit 92
+if [ -d "$found" ] && [ ! -L "$found" ]; then exit 94; fi
+rm -f -- "$found"
+"""
+_RENAME = _ENTRY + """
+entry "$1"
+source=$found
+entry "$2"
+{ [ -e "$source" ] || [ -L "$source" ]; } || exit 92
+if [ -e "$found" ] || [ -L "$found" ]; then exit 95; fi
+if [ -d "$source" ] && [ ! -L "$source" ]; then case "$found/" in "$source"/*) exit 96 ;; esac; fi
+mkdir -p -- "$(dirname -- "$found")" || exit 1
+mv -n -- "$source" "$found"
+"""
+
+
 class SandboxOutcomeUnknown(SandboxError):
     """A command may or may not have run. It was not, and must not be, sent again blindly."""
 
@@ -655,6 +687,52 @@ class RailwaySandboxRunner:
         if stuck:
             return f"; could not restore {', '.join(stuck)} -- check them"
         return "; the files already written in this call were restored" if written else ""
+
+    @staticmethod
+    def _entry_path(path: str, verb: str) -> str:
+        relative = workspace_relative(path)
+        if any(part.lower().rstrip(". ") == ".git" for part in relative.split("/")):
+            raise SandboxError(
+                f"{verb} of {path!r} is refused: it is inside a .git directory -- use git "
+                "commands to change a repository's own storage"
+            )
+        return relative
+
+    async def delete_file(self, handle: SandboxHandle, path: str) -> None:
+        relative = self._entry_path(path, "delete")
+        result = await self.run(
+            handle, ["sh", "-c", _DELETE, "aura-delete", relative], timeout_s=30.0
+        )
+        if result.exit_code != 0:
+            raise self._entry_error(result, "delete", path, path)
+
+    async def rename_file(self, handle: SandboxHandle, path: str, new_path: str) -> None:
+        source = self._entry_path(path, "rename")
+        target = self._entry_path(new_path, "rename")
+        result = await self.run(
+            handle, ["sh", "-c", _RENAME, "aura-rename", source, target], timeout_s=30.0
+        )
+        if result.exit_code != 0:
+            raise self._entry_error(result, "rename", path, new_path)
+
+    @staticmethod
+    def _entry_error(
+        result: SandboxResult, verb: str, path: str, new_path: str
+    ) -> SandboxError:
+        reasons = {
+            91: f"path {new_path if verb == 'rename' else path!r} or its source escapes the "
+                "sandbox workspace",
+            92: f"{path} does not exist in the sandbox workspace",
+            93: f"{verb} of {path!r} is refused: it is inside a .git directory",
+            94: f"{path} is a directory -- delete_file removes one file at a time; use "
+                "run_command to remove a directory",
+            95: f"{new_path} already exists -- rename never replaces an existing entry",
+            96: f"cannot move {path} into itself ({new_path})",
+        }
+        return SandboxError(
+            reasons.get(result.exit_code)
+            or f"could not {verb} {path}: {result.stderr.strip()[-300:]}"
+        )
 
     # -- durable workspaces -----------------------------------------------------------------
 

@@ -280,6 +280,10 @@ class HostAgentClient {
         return taskHandler.writeFile(params, callId: id?.toString());
       case 'write_files':
         return taskHandler.writeFiles(params, callId: id?.toString());
+      case 'delete_file':
+        return taskHandler.deleteFile(params, callId: id?.toString());
+      case 'rename_file':
+        return taskHandler.renameFile(params, callId: id?.toString());
       case 'read_file':
         return taskHandler.readFile(params);
       case 'list_roots':

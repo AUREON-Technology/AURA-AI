@@ -209,9 +209,21 @@ PAGE_PREFIX = "page1."
 #: Upper bound on `limit`, so one request stays well inside the client's timeout.
 MAX_PULL_LIMIT = 5000
 
-#: The order a paged pull walks the tables in. Sorted, so it cannot differ between two pages
-#: served by different processes.
-_PULL_TABLES: tuple[str, ...] = tuple(sorted(SYNCABLE_MODELS))
+#: The paged pull walks the tables in this order and its page token records a position in it, so
+#: the order is part of the protocol: a token minted by one gateway instance is read by another
+#: mid-deploy. Sorting the whole set would have slid every existing table's index when a table
+#: sorting earlier was added (`conversations` between `calendar_events` and `finance_records`),
+#: and a pull in flight across that deploy would resume in the wrong table. So the tables that
+#: existed when this was written keep their original (sorted) positions, and every table added
+#: since is appended after them.
+_LEGACY_PULL_TABLES = frozenset({
+    "calendar_events", "finance_records", "goals", "health_records", "memories", "messages",
+    "projects", "tasks",
+})
+_PULL_TABLES: tuple[str, ...] = (
+    tuple(sorted(name for name in SYNCABLE_MODELS if name in _LEGACY_PULL_TABLES))
+    + tuple(sorted(name for name in SYNCABLE_MODELS if name not in _LEGACY_PULL_TABLES))
+)
 
 
 class PageToken(BaseModel):
@@ -454,6 +466,9 @@ async def pull_sync(
 #: that already holds the key instead, under the same last-write-wins rule as any other update.
 _NATURAL_KEYS: dict[str, tuple[str, ...]] = {
     "health_records": ("record_date",),
+    # One metadata row per chat (`uq_conversations_user_key`), but every device that pins or
+    # renames a chat offline mints its own uuid for it. Same shape as `health_records` above.
+    "conversations": ("conversation_key",),
 }
 
 
