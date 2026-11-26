@@ -2826,7 +2826,10 @@ class _McpTool:
 
 
 async def build_mcp_bridge_tools(
-    mcp_client: Any, *, safe_tools: Sequence[str] = ()
+    mcp_client: Any,
+    *,
+    safe_tools: Sequence[str] = (),
+    collisions: list[dict[str, str]] | None = None,
 ) -> list[Tool]:
     """Discover every tool every configured MCP server advertises and wrap each as a tool.
 
@@ -2836,24 +2839,39 @@ async def build_mcp_bridge_tools(
     in which case it registers as ``PERSONAL``/non-side-effecting instead. An MCP server an
     operator has not individually reviewed is therefore inert-but-confirmable, never silently
     trusted, regardless of what the server itself claims about its own tools.
+
+    If ``collisions`` is given, each skipped descriptor whose sanitised name collided with an
+    earlier tool appends ``{"tool", "server", "mcp_name", "collides_with_server",
+    "collides_with_name"}`` so callers (startup logging, tests) can report both sides.
     """
     safe = frozenset(safe_tools)
     descriptors: Sequence[McpToolDescriptor] = await mcp_client.list_tools()
     tools: list[Tool] = []
-    taken: set[str] = set()
+    taken: dict[str, McpToolDescriptor] = {}
     for descriptor in descriptors:
         qualified_name = (
             f"mcp_{_sanitize_name_part(descriptor.server)}_{_sanitize_name_part(descriptor.name)}"
         )
-        # `a-b` and `a_b` sanitise to the same name; the registry refuses a duplicate, and one
-        # odd name must not cost the operator every other tool.
-        if qualified_name in taken:
+        # `a-b` and `a_b` sanitise to the same name (as do server `a` + tool `b_c` and server
+        # `a_b` + tool `c`); the registry refuses a duplicate, and one odd name must not cost
+        # the operator every other tool.
+        winner = taken.get(qualified_name)
+        if winner is not None:
+            record = {
+                "tool": qualified_name,
+                "server": descriptor.server,
+                "mcp_name": descriptor.name,
+                "collides_with_server": winner.server,
+                "collides_with_name": winner.name,
+            }
+            if collisions is not None:
+                collisions.append(record)
             logger.warning(
                 "MCP tool skipped: its sanitised name collides with another tool's",
-                extra={"tool": qualified_name, "server": descriptor.server, "mcp_name": descriptor.name},
+                extra=record,
             )
             continue
-        taken.add(qualified_name)
+        taken[qualified_name] = descriptor
         is_safe = qualified_name in safe
         try:
             params = tuple(_params_from_json_schema(descriptor.input_schema))

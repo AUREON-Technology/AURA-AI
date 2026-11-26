@@ -1772,6 +1772,27 @@ class McpServerConfig:
             raise ConfigurationError(f"MCP server {self.name!r} (sse) must declare a url")
 
 
+_MCP_NAME_OK = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_")
+
+
+def _sanitize_mcp_server_name(value: str) -> str:
+    lowered = value.strip().lower()
+    return "".join(c if c in _MCP_NAME_OK else "_" for c in lowered) or "tool"
+
+
+def _check_mcp_server_collisions(servers: Sequence[McpServerConfig]) -> None:
+    seen: dict[str, str] = {}
+    for server in servers:
+        key = _sanitize_mcp_server_name(server.name)
+        prior = seen.get(key)
+        if prior is not None:
+            raise ConfigurationError(
+                f"MCP server {server.name!r} collides with {prior!r} (both sanitise to {key!r})",
+                details={"server": server.name, "collides_with": prior, "sanitised": key},
+            )
+        seen[key] = server.name
+
+
 def _parse_mcp_servers(raw: str) -> tuple[McpServerConfig, ...]:
     if not raw.strip():
         return ()
@@ -1796,6 +1817,7 @@ def _parse_mcp_servers(raw: str) -> tuple[McpServerConfig, ...]:
                 url=str(item.get("url", "")),
             )
         )
+    _check_mcp_server_collisions(servers)
     return tuple(servers)
 
 
@@ -1886,6 +1908,9 @@ class McpSettings:
     enabled: bool = False
     servers: tuple[McpServerConfig, ...] = ()
     safe_tools: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        _check_mcp_server_collisions(self.servers)
 
     @classmethod
     def from_env(cls) -> "McpSettings":

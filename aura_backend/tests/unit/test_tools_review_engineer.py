@@ -1511,11 +1511,47 @@ class TestMcpBridgeSchemas:
             tools=[
                 McpToolDescriptor(server="s", name="a-b", description="first"),
                 McpToolDescriptor(server="s", name="a_b", description="second"),
+                McpToolDescriptor(server="a", name="b_c", description="cross-1"),
+                McpToolDescriptor(server="a_b", name="c", description="cross-2"),
                 McpToolDescriptor(server="s", name="other", description="third"),
             ],
         )
-        names = [t.spec.name for t in await build_mcp_bridge_tools(client)]
-        assert names == ["mcp_s_a_b", "mcp_s_other"]
+        collisions: list[dict[str, str]] = []
+        names = [t.spec.name for t in await build_mcp_bridge_tools(client, collisions=collisions)]
+        assert names == ["mcp_s_a_b", "mcp_a_b_c", "mcp_s_other"]
+        assert collisions == [
+            {
+                "tool": "mcp_s_a_b",
+                "server": "s",
+                "mcp_name": "a_b",
+                "collides_with_server": "s",
+                "collides_with_name": "a-b",
+            },
+            {
+                "tool": "mcp_a_b_c",
+                "server": "a_b",
+                "mcp_name": "c",
+                "collides_with_server": "a",
+                "collides_with_name": "b_c",
+            },
+        ]
+
+    def test_mcp_servers_whose_names_sanitise_alike_are_refused(self) -> None:
+        from aura_core.config.settings import ConfigurationError, McpServerConfig, McpSettings, _parse_mcp_servers
+
+        with pytest.raises(ConfigurationError, match="collides with 'My-Server'"):
+            _parse_mcp_servers(json.dumps([
+                {"name": "My-Server", "transport": "stdio", "command": "x"},
+                {"name": "my_server", "transport": "stdio", "command": "y"},
+            ]))
+        with pytest.raises(ConfigurationError, match="both sanitise to 'my_server'"):
+            McpSettings(
+                enabled=True,
+                servers=(
+                    McpServerConfig(name="My-Server", transport="stdio", command="x"),
+                    McpServerConfig(name="my_server", transport="stdio", command="y"),
+                ),
+            )
 
     async def test_a_server_failure_becomes_a_tool_error_not_a_crash(self) -> None:
         def boom(args):

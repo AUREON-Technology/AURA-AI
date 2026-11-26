@@ -2453,11 +2453,18 @@ class Container:
             from .tools.coding import build_mcp_bridge_tools
 
             try:
+                collisions: list[dict[str, str]] = []
                 mcp_tools = await build_mcp_bridge_tools(
-                    self.mcp_client, safe_tools=self.settings.mcp.safe_tools
+                    self.mcp_client,
+                    safe_tools=self.settings.mcp.safe_tools,
+                    collisions=collisions,
                 )
+                self.mcp_tool_collisions = tuple(collisions)
                 self.tools.register_all(mcp_tools)
-                logger.info("MCP tools registered", extra={"count": len(mcp_tools)})
+                logger.info(
+                    "MCP tools registered",
+                    extra={"count": len(mcp_tools), "collisions": len(collisions)},
+                )
             except Exception:
                 logger.exception("MCP tool discovery failed; continuing without MCP tools")
         if self.blueprint_deployment is not None:

@@ -167,7 +167,7 @@ The flag nulls `deps.tools`, but the resume path executes its stored plan throug
 
 **T-10 · FIXED · MCP name collisions silently drop tools.** (CODE)
 
-> **Fix:** `build_mcp_bridge_tools` (`tools/coding.py:2842-2860`) tracks `taken` tool names and skips colliding or unusable MCP tool declarations with a structured warning instead of letting `register_all` abort discovery for every remaining tool (`tests/unit/test_tools_review_engineer.py`).
+> **Fix:** `_parse_mcp_servers` and `McpSettings` (`config/settings.py`) refuse two MCP servers whose names sanitise to the same identifier (`My-Server` vs `my_server`) with `ConfigurationError`. `build_mcp_bridge_tools` (`tools/coding.py`) tracks `taken` tool names by their winning `McpToolDescriptor`, skips colliding or unusable MCP tool declarations without aborting discovery for the remaining tools, logs both sides of a collision (`collides_with_server`, `collides_with_name`), and populates an optional `collisions` list stored on `Container.mcp_tool_collisions` (`tests/unit/test_tools_review_engineer.py`).
 
 Original finding:
 - `My-Server` / `my_server`, or server `a` + tool `b_c` vs server `a_b` + tool `c`, sanitize to the same name.
