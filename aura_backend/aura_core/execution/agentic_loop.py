@@ -142,14 +142,28 @@ class RunBudgetGate:
     Charged at admission, per dispatch attempt (a retried step is a second dispatch and pays
     again). Also records each admitted call's risk cost by call id, so the run record can show
     what every call spent even when neither budget is set.
+
+    When ``parent`` is given (a delegated sub-turn inside an outer turn), every dispatch is
+    checked and charged against this gate *and* every ancestor gate in the chain -- the same
+    anti-reset rule :class:`~aura_core.llm.router.TurnBudget` applies to cost and engine
+    generations across delegation (audit T-08).
     """
 
-    def __init__(self, budget: AgentBudget) -> None:
+    def __init__(self, budget: AgentBudget, *, parent: "RunBudgetGate | None" = None) -> None:
         self._budget = budget
+        self.parent = parent
         self.tools_used = 0
         self.risk_spent = 0
         self.costs: dict[str, int] = {}
         self._refusals: list[BudgetRefusal] = []
+
+    def _chain(self) -> list["RunBudgetGate"]:
+        chain: list[RunBudgetGate] = []
+        node: RunBudgetGate | None = self
+        while node is not None:
+            chain.append(node)
+            node = node.parent
+        return chain
 
     def admit(self, step: PlanStep, spec: Any) -> str | None:
         sensitivity = int(getattr(spec, "sensitivity", 0) or 0) if spec is not None else 0
@@ -158,13 +172,17 @@ class RunBudgetGate:
         side_effecting = bool(getattr(spec, "side_effecting", True)) if spec is not None else True
         cost = risk_cost(sensitivity, side_effecting=side_effecting) if spec is not None else 0
         reason: str | None = None
-        if self._budget.tool_budget is not None and self.tools_used + 1 > self._budget.tool_budget:
-            reason = "tool_budget_exceeded"
-        elif (
-            self._budget.risk_budget is not None
-            and self.risk_spent + cost > self._budget.risk_budget
-        ):
-            reason = "risk_budget_exceeded"
+        chain = self._chain()
+        for gate in chain:
+            if gate._budget.tool_budget is not None and gate.tools_used + 1 > gate._budget.tool_budget:
+                reason = "tool_budget_exceeded"
+                break
+            if (
+                gate._budget.risk_budget is not None
+                and gate.risk_spent + cost > gate._budget.risk_budget
+            ):
+                reason = "risk_budget_exceeded"
+                break
         call_id = f"step_{step.id.value}"
         if reason is not None:
             self._refusals.append(BudgetRefusal(
@@ -172,8 +190,9 @@ class RunBudgetGate:
                 risk=cost, side_effecting=side_effecting,
             ))
             return reason
-        self.tools_used += 1
-        self.risk_spent += cost
+        for gate in chain:
+            gate.tools_used += 1
+            gate.risk_spent += cost
         self.costs[call_id] = cost
         return None
 
@@ -455,13 +474,14 @@ class AgenticExecutor:
         on_event: Callable[[StepEvent], Any] | None,
         budget: AgentBudget | None,
         run_context: AgentRunContext | None,
+        gate: RunBudgetGate | None = None,
     ) -> AsyncIterator[StepEvent | LoopEvent | ExecutionOutcome]:
         budget = budget or AgentBudget(max_iterations=max(0, max_iterations))
         time_limit = deadline_s
         if budget.time_budget_s is not None:
             time_limit = min(deadline_s, budget.time_budget_s)
         deadline = self._monotonic() + time_limit
-        gate = RunBudgetGate(budget)
+        gate = gate or RunBudgetGate(budget)
         recorder = (
             RunRecorder(
                 context=run_context, budget=budget, store=self._runs, clock=self._clock,
@@ -773,6 +793,7 @@ class AgenticExecutor:
         on_event: Callable[[StepEvent], Any] | None = None,
         budget: AgentBudget | None = None,
         run_context: AgentRunContext | None = None,
+        gate: RunBudgetGate | None = None,
     ) -> ExecutionOutcome | None:
         """Run ``plan`` to completion, replanning on failure up to ``max_iterations`` times."""
         outcome: ExecutionOutcome | None = None
@@ -781,6 +802,7 @@ class AgenticExecutor:
             confirmations=confirmations,
             available_tools=available_tools, max_iterations=max_iterations,
             deadline_s=deadline_s, on_event=on_event, budget=budget, run_context=run_context,
+            gate=gate,
         ):
             if isinstance(item, ExecutionOutcome):
                 outcome = item
@@ -798,6 +820,7 @@ class AgenticExecutor:
         deadline_s: float = 600.0,
         budget: AgentBudget | None = None,
         run_context: AgentRunContext | None = None,
+        gate: RunBudgetGate | None = None,
     ) -> AsyncIterator[StepEvent | LoopEvent | ExecutionOutcome]:
         """Stream step progress across every iteration, then yield the final outcome.
 
@@ -813,5 +836,6 @@ class AgenticExecutor:
             confirmations=confirmations,
             available_tools=available_tools, max_iterations=max_iterations,
             deadline_s=deadline_s, on_event=None, budget=budget, run_context=run_context,
+            gate=gate,
         ):
             yield item

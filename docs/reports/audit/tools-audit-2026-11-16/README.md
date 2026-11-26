@@ -156,7 +156,11 @@ Original finding:
 Original finding:
 `orchestrator` has `allowed_tools=None` and a SYSTEM ceiling, so an `engineer_agent` caller gets all sandbox, GitHub and MCP tools there with a single-pass plan and the generic prompt.
 
-**T-08 · GAP · `TOOLS_MAX_CALLS_PER_TURN` is only partly enforced.** (CODE; C-05, **partly fixed**)
+**T-08 · FIXED · `TOOLS_MAX_CALLS_PER_TURN` is only partly enforced.** (CODE; C-05)
+
+> **Fix:** `AIKernel._turn_budget_and_gate` (`kernel.py`) builds the effective `AgentBudget` and a `RunBudgetGate` for every execution path -- both the standard `agentic_executor` loop and the direct `executor.execute` / `executor.stream` fallback -- and chains a delegated sub-turn's `RunBudgetGate` to its parent turn's gate via `TurnLookups` (`kernel/turn_scope.py`), so delegation cannot reset the root turn's `TOOLS_MAX_CALLS_PER_TURN` cap. `tests/unit/test_kernel_tool_budget.py` now pins real tool-dispatch refusals on the loop, on the direct executor fallback, and across delegation.
+
+Original finding:
 - It now becomes the default `tool_budget` in `_loop_arguments` (`kernel.py:2641-2643`), enforced by `RunBudgetGate` across every persona on the standard agent loop.
 - **Not applied** on the direct `executor.execute` fallback (used only when no `AgentRegistry` or no `agentic_executor` is wired).
 - **Not cumulative across delegation:** each sub-turn gets a fresh cap.
@@ -242,7 +246,7 @@ It arrives as a generic SSE `error`, with no prompt to re-ask.
 | C-02 `write_files` missing from engineer grant | ✅ **Fixed** | `agents/registry.py:226`. MCP prefix grant fixed as **T-03**, and `test_tools_review_engine.py` pins every registered tool against persona grants |
 | C-03 engineer tools reachable via orchestrator | ✅ **Mitigated** | **T-07**: orchestrator turns with `engineer_agent` now receive `engineer_loop_deadline_s` (`kernel.py::_tool_context`) |
 | C-04 `remember_fact` granted to every persona | ✅ **Fixed** | split into `_MEMORY_WRITE_TOOLS`; `decision_agent` excluded (`registry.py:129-135,210`) |
-| C-05 `max_calls_per_turn` never enforced | ⚠ Partly fixed | **T-08** |
+| C-05 `max_calls_per_turn` never enforced | ✅ **Fixed** | **T-08** (`_turn_budget_and_gate`, parent-chained `RunBudgetGate`, `test_kernel_tool_budget.py`) |
 | C-06 delegation enum frozen | ✅ **Fixed** (#241) | **T-16** |
 | C-07 `GET /tools` has no caller | ✅ **Fixed** | **T-17** (`tool_catalog_repository.dart`, `run_history_repository.dart`) |
 | C-08 opt-in tools have no wiring | ✅ **Fixed** | **T-06** (`AURA_TOOLS_FILES_ROOT`, `AURA_TOOLS_HTTP_ALLOWED_HOSTS`) |

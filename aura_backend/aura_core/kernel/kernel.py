@@ -82,8 +82,9 @@ from ..domain.telemetry import (
     TurnOutcome,
     TurnTelemetry,
 )
+from ..domain.agent_runs import AgentBudget
 from ..execution.acceptance import AcceptanceReport, check_acceptance
-from ..execution.agentic_loop import AgentRunContext
+from ..execution.agentic_loop import AgentRunContext, RunBudgetGate
 from ..execution.confirmations import PendingCall, PendingConfirmationStore, ResumedTurn
 from ..execution.critic import critique_answer
 from ..execution.engine import ExecutionOutcome, StepEvent
@@ -2621,6 +2622,32 @@ class AIKernel:
             getattr(getattr(self._deps.settings, "reasoning", None), "engineer_loop_deadline_s", 600.0)
         )
 
+    def _turn_budget_and_gate(self, request: TurnRequest) -> tuple[AgentBudget, RunBudgetGate]:
+        """The effective ``AgentBudget`` for this turn and a ``RunBudgetGate`` linked to any
+        enclosing parent turn's gate (audit T-08).
+
+        Used both by the standard agent loop (:meth:`_loop_arguments`) and by the direct
+        ``executor.execute`` / ``executor.stream`` fallback (when no ``AgentRegistry`` or no
+        ``agentic_executor`` is wired), and chained across ``delegate_to_agent`` sub-turns via
+        :class:`~aura_core.kernel.turn_scope.TurnLookups` so delegation cannot reset the root
+        turn's ``TOOLS_MAX_CALLS_PER_TURN`` cap.
+        """
+        deps = self._deps
+        agent = self._resolve_agent(request)
+        budget = agent.budget if agent is not None else AgentBudget(max_iterations=0)
+        # TOOLS_MAX_CALLS_PER_TURN (audit FSA-112 / T-08): the per-turn tool cap for a persona
+        # that declares no tool_budget of its own; 0 keeps "not bounded by this". A persona's
+        # own figure (engineer: 216) is never overridden.
+        per_turn = int(getattr(getattr(deps.settings, "tools", None), "max_calls_per_turn", 0) or 0)
+        if budget.tool_budget is None and per_turn > 0:
+            budget = replace(budget, tool_budget=per_turn)
+        lookups = current_turn_lookups()
+        parent_gate = lookups.parent_tool_gate if (lookups is not None and request.delegation_depth > 0) else None
+        gate = RunBudgetGate(budget, parent=parent_gate)
+        if lookups is not None:
+            lookups.tool_gate = gate
+        return budget, gate
+
     def _loop_arguments(
         self,
         request: TurnRequest,
@@ -2641,17 +2668,12 @@ class AIKernel:
         agent = self._resolve_agent(request)
         if agent is None or deps.agentic_executor is None:
             return None
-        budget = agent.budget
-        # TOOLS_MAX_CALLS_PER_TURN (audit FSA-112): the per-turn tool cap for a persona that
-        # declares no tool_budget of its own; 0 keeps "not bounded by this". A persona's own
-        # figure (engineer: 216) is never overridden.
-        per_turn = int(getattr(getattr(deps.settings, "tools", None), "max_calls_per_turn", 0) or 0)
-        if budget.tool_budget is None and per_turn > 0:
-            budget = replace(budget, tool_budget=per_turn)
+        budget, gate = self._turn_budget_and_gate(request)
         return {
             "max_iterations": budget.max_iterations,
             "deadline_s": self._agentic_loop_deadline_s(),
             "budget": budget,
+            "gate": gate,
             "run_context": AgentRunContext(
                 user_id=request.user_id,
                 agent_id=agent.id,
@@ -2694,11 +2716,13 @@ class AIKernel:
                 available_tools=tools,
                 **loop,
             )
+        _, gate = self._turn_budget_and_gate(request)
         return await deps.executor.execute(
             plan,
             context=context,
             capabilities=request.capabilities,
             confirmations=confirmations,
+            gate=gate,
         )
 
     async def _iter_execution(
@@ -2733,6 +2757,7 @@ class AIKernel:
             ):
                 yield item
             return
+        _, gate = self._turn_budget_and_gate(request)
         stream = getattr(deps.executor, "stream", None)
         if callable(stream):
             async for item in stream(
@@ -2740,6 +2765,7 @@ class AIKernel:
                 context=context,
                 capabilities=request.capabilities,
                 confirmations=confirmations,
+                gate=gate,
             ):
                 yield item
             return
@@ -2748,6 +2774,7 @@ class AIKernel:
             context=context,
             capabilities=request.capabilities,
             confirmations=confirmations,
+            gate=gate,
         )
 
     async def _hold_plan_for_review(
