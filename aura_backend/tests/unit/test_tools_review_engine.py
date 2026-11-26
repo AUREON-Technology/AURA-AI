@@ -565,13 +565,20 @@ def _all_tools() -> dict[str, ToolSpec]:
         graph_store=_graph_store(),  # ADR-054: read-only knowledge-graph questions
     )
     agents = build_default_agent_registry()
-    tools += build_delegation_tools(agents=agents, kernel=lambda: None)
+    tools += build_delegation_tools(
+        agents=agents, kernel=lambda: None, tasks=object(), handoffs=object(), structured_handoff=True
+    )
     # ADR-046: the two groups the Container registers itself because they need its cache / registry.
     from aura_core.llm.cache import InMemoryCache
     from aura_core.tools.drift import build_drift_tools
+    from aura_core.tools.extract import build_extract_tools
     from aura_core.tools.research import build_research_tools
 
-    tools += build_drift_tools(InMemoryCache()) + build_research_tools(lambda: None)
+    tools += (
+        build_drift_tools(InMemoryCache())
+        + build_research_tools(lambda: None)
+        + build_extract_tools(extractor=object(), audit=object(), clock=object())
+    )
     return {t.spec.name: t.spec for t in tools}
 
 
@@ -588,6 +595,23 @@ def _ops_settings():
                        deploy_workflows=("deploy-backend.yml:sha",))
 
 
+# Tools registered in a full deployment that are intentionally left out of every explicit
+# persona grant and reachable only through the orchestrator (`allowed_tools=None`):
+# - delegation / background agent tasks / handoffs: only the orchestrator delegates;
+# - `extract_structured`: third-party (Cloudflare) extraction gated to internal-only turns;
+# - `get_weather`: general-assistant lookup on the orchestrator turn;
+# - `read_file` / `list_files`: legacy `AURA_TOOLS_FILES_ROOT` server-filesystem readers (the
+#   Engineer uses its own workspace/sandbox tools instead).
+_ORCHESTRATOR_ONLY_REGISTERED_TOOLS = frozenset({
+    "delegate_to_agent",
+    "list_agent_tasks", "get_agent_task", "cancel_agent_task",
+    "get_handoff", "list_handoffs",
+    "extract_structured",
+    "get_weather",
+    "read_file", "list_files",
+})
+
+
 class TestPersonaGrantsAgainstTheRealToolSet:
     def test_every_granted_name_is_a_tool_that_registers(self) -> None:
         specs = _all_tools()
@@ -595,6 +619,15 @@ class TestPersonaGrantsAgainstTheRealToolSet:
             if agent.allowed_tools is None:
                 continue
             assert sorted(n for n in agent.allowed_tools if n not in specs) == [], agent.id
+
+    def test_every_registered_tool_is_granted_to_a_persona_or_explicitly_orchestrator_only(self) -> None:
+        specs = _all_tools()
+        granted = frozenset().union(*(
+            agent.allowed_tools for agent in build_default_agent_registry()
+            if agent.allowed_tools is not None
+        ))
+        assert granted & _ORCHESTRATOR_ONLY_REGISTERED_TOOLS == frozenset()
+        assert set(specs) - granted == _ORCHESTRATOR_ONLY_REGISTERED_TOOLS
 
     def test_no_persona_but_the_orchestrator_can_delegate(self) -> None:
         for agent in build_default_agent_registry():
