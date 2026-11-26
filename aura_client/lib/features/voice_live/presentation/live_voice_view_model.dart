@@ -327,6 +327,15 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
         // The socket is gone: stop the mic and playback rather than leave the screen
         // "listening" to nothing. Each close code carries its own message (INT-015).
         unawaited(_fail(message));
+      case LiveErrorFrame(:final error) when error == 'confirmation_invalid':
+        // An approval id the server no longer holds (expired, already used, or unknown): clear any
+        // leftover pending confirmation state, return to listening, and show the localized notice.
+        ref.read(liveVoicePendingProvider.notifier).clear();
+        state = state.copyWith(
+          pendingTools: const [],
+          phase: 'listening',
+          error: currentL10n.chatApprovalExpiredNotice,
+        );
       case LiveErrorFrame(:final error, :final message, :final details, :final retryAfter)
           when _refusals.contains(error):
         // A turn the server declined before running it (plan quota, rate limit, plans service

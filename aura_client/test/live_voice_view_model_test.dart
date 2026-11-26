@@ -507,4 +507,36 @@ void main() {
     expect(actions, hasLength(1));
     expect((actions.single as Map)['type'], 'add_task');
   });
+
+  test('a confirmation_invalid error clears pending confirmation, returns to listening, and shows chatApprovalExpiredNotice', () async {
+    await readySession();
+    channel.incoming.add(jsonEncode({
+      'type': 'confirmation',
+      'tools': ['run_command'],
+      'calls': [
+        {
+          'approval_id': 'appr-1',
+          'call_id': 'step_1',
+          'tool': 'run_command',
+          'arguments': {'command': 'pytest'},
+        },
+      ],
+    }));
+    await _settle();
+    expect(container.read(liveVoiceViewModelProvider).phase, 'awaiting_confirmation');
+    expect(container.read(liveVoicePendingProvider), hasLength(1));
+
+    channel.incoming.add(jsonEncode({
+      'type': 'error',
+      'error': 'confirmation_invalid',
+      'message': 'There is nothing pending to confirm.',
+    }));
+    await _settle();
+
+    final state = container.read(liveVoiceViewModelProvider);
+    expect(state.phase, 'listening');
+    expect(state.pendingTools, isEmpty);
+    expect(state.error, currentL10n.chatApprovalExpiredNotice);
+    expect(container.read(liveVoicePendingProvider), isEmpty);
+  });
 }

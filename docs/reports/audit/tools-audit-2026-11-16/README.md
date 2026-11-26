@@ -237,7 +237,7 @@ Original finding:
 
 **T-19 · FIXED · `confirmation_invalid` has no client handling.** (CODE)
 
-> **Fix:** `chat_repository.dart` maps `confirmation_invalid` to `_SseSendOutcome.approvalExpired` and surfaces a dedicated expired-approval transcript row (`chat_connection_error.dart`, `test/chat_robustness_test.dart`).
+> **Fix:** `chat_repository.dart` maps `confirmation_invalid` (both SSE `error` frames and HTTP 409 `AuraApiError` responses) to `_SseSendOutcome.approvalExpired` and surfaces a dedicated expired-approval transcript row (`chat_connection_error.dart`, `test/chat_robustness_test.dart`), `AuraFailure._fromApiError` (`aura_failure.dart`) maps `confirmation_invalid` to localized `chatApprovalExpiredNotice` with `canRetry: false`, and `LiveVoiceViewModel._onFrame` (`live_voice_view_model.dart`) clears pending confirmation state, returns to `listening`, and shows `chatApprovalExpiredNotice` (`test/live_voice_view_model_test.dart`).
 
 Original finding:
 It arrives as a generic SSE `error`, with no prompt to re-ask.
