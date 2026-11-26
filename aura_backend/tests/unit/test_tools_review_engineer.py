@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import os
 import re
 import subprocess
@@ -1535,6 +1536,19 @@ class TestMcpBridgeSchemas:
                 "collides_with_name": "b_c",
             },
         ]
+
+    async def test_a_tool_name_longer_than_providers_accept_is_skipped_and_reported(self) -> None:
+        client = InMemoryMcpClient(
+            tools=[
+                McpToolDescriptor(server="s" * 40, name="n" * 40, description="too long"),
+                McpToolDescriptor(server="s", name="short", description="fine"),
+            ],
+        )
+        collisions: list[dict[str, str]] = []
+        tools = await build_mcp_bridge_tools(client, collisions=collisions)
+        assert [t.spec.name for t in tools] == ["mcp_s_short"]
+        assert [(c["reason"], c["mcp_name"]) for c in collisions] == [("name_too_long", "n" * 40)]
+        assert all(len(t.spec.name) <= 64 for t in tools)
 
     def test_mcp_servers_whose_names_sanitise_alike_are_refused(self) -> None:
         from aura_core.config.settings import ConfigurationError, McpServerConfig, McpSettings, _parse_mcp_servers

@@ -167,7 +167,9 @@ The flag nulls `deps.tools`, but the resume path executes its stored plan throug
 
 **T-10 · FIXED · MCP name collisions silently drop tools.** (CODE)
 
-> **Fix:** `_parse_mcp_servers` and `McpSettings` (`config/settings.py`) refuse two MCP servers whose names sanitise to the same identifier (`My-Server` vs `my_server`) with `ConfigurationError`. `build_mcp_bridge_tools` (`tools/coding.py`) tracks `taken` tool names by their winning `McpToolDescriptor`, skips colliding or unusable MCP tool declarations without aborting discovery for the remaining tools, logs both sides of a collision (`collides_with_server`, `collides_with_name`), and populates an optional `collisions` list stored on `Container.mcp_tool_collisions` (`tests/unit/test_tools_review_engineer.py`).
+> **Fix:** `_parse_mcp_servers` and `McpSettings` (`config/settings.py`) refuse two MCP servers whose names sanitise to the same identifier (`My-Server` vs `my_server`) with `ConfigurationError`. `build_mcp_bridge_tools` (`tools/coding.py`) tracks `taken` tool names by their winning `McpToolDescriptor`, skips colliding or unusable MCP tool declarations without aborting discovery for the remaining tools, logs both sides of a collision (`collides_with_server`, `collides_with_name`), and populates an optional `collisions` list stored on `Container.mcp_tool_collisions` (`tests/unit/test_tools_review_engineer.py`). A qualified name longer than 64 characters (the provider limit, which rejects the whole request) is now skipped and reported in the same list with `reason: "name_too_long"`.
+>
+> **Still open:** the collision list is logged and kept on the container, but no API, health or admin view shows it.
 
 Original finding:
 - `My-Server` / `my_server`, or server `a` + tool `b_c` vs server `a_b` + tool `c`, sanitize to the same name.
@@ -181,8 +183,10 @@ Original finding:
 Original finding:
 `pending_actions_executor.dart:101-109` never passes `params['description']` to `addTask`, although `AddTaskFn` accepts it (`:27-32`) and the backend sends it.
 
-**T-12 · FIXED (live voice) · `propose_*` over live voice.** (CODE)
+**T-12 · PARTLY FIXED (live voice only) · `propose_*` over live voice.** (CODE)
 
+> **Still open:** the non-streaming `POST /api/v3/chat` response has no `actions` field (`TurnResult` carries none); only the streamed route and live voice deliver them.
+>
 > **Fix:** `LiveServerFrame.tryParse` (`live_voice_protocol.dart`) now parses `actions` frames into `LiveActionsFrame`, `LiveVoiceViewModel._onFrame` forwards non-empty actions to `pendingActionsProvider`, and `LiveVoicePage` renders `PendingActionsCard` (`test/live_voice_protocol_test.dart`, `test/live_voice_view_model_test.dart`).
 
 Original finding:

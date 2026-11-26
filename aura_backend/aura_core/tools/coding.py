@@ -2733,6 +2733,10 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
 _NAME_OK = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_")
 
 
+#: Providers cap a function name at 64 characters (the blueprint tools cap theirs lower, at 48, to leave room).
+_MAX_TOOL_NAME_CHARS = 64
+
+
 def _sanitize_name_part(value: str) -> str:
     """Tool names are pinned to lowercase snake_case (``ToolSpec._NAME_OK``); an MCP server or
     tool name is arbitrary text an operator configured, not guaranteed to already conform."""
@@ -2855,6 +2859,17 @@ async def build_mcp_bridge_tools(
         # `a-b` and `a_b` sanitise to the same name (as do server `a` + tool `b_c` and server
         # `a_b` + tool `c`); the registry refuses a duplicate, and one odd name must not cost
         # the operator every other tool.
+        if len(qualified_name) > _MAX_TOOL_NAME_CHARS:
+            # Providers cap a function name at 64 characters and reject the *whole* request when one tool's
+            # name is longer, so one long MCP name would break every turn that is offered it.
+            record = {
+                "tool": qualified_name, "server": descriptor.server, "mcp_name": descriptor.name,
+                "reason": "name_too_long", "length": str(len(qualified_name)),
+            }
+            if collisions is not None:
+                collisions.append(record)
+            logger.warning("MCP tool skipped: its qualified name is longer than providers accept", extra=record)
+            continue
         winner = taken.get(qualified_name)
         if winner is not None:
             record = {
