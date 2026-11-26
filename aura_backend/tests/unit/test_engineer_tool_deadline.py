@@ -69,6 +69,47 @@ class TestTheKernelsRealContext:
         )
         assert context.deadline_s == 60.0
 
+    async def test_an_orchestrator_turn_with_engineer_capability_gets_the_engineer_deadline(
+        self, container, user
+    ) -> None:
+        """An orchestrator turn (`allowed_tools=None`) whose caller holds `engineer_agent` is
+        offered the Engineer's tools directly; capping its context at `delegation_deadline_s`
+        (180 s) would truncate `run_command` (605 s) and `docker_build` (910 s)."""
+        await container.startup()
+        spec = _run_command_spec(container)
+        context = container.kernel._tool_context(
+            TurnRequest(
+                message="run the tests", user_id=user, agent="orchestrator",
+                capabilities=("engineer_agent",),
+            ),
+            False,
+        )
+        assert context.deadline_s == container.settings.reasoning.engineer_loop_deadline_s
+        assert container.tools.call_timeout(spec, context, host_routed=False) == spec.timeout_s
+
+    async def test_an_orchestrator_turn_without_engineer_capability_keeps_the_delegation_deadline(
+        self, container, user
+    ) -> None:
+        await container.startup()
+        context = container.kernel._tool_context(
+            TurnRequest(message="hi", user_id=user, agent="orchestrator"), False
+        )
+        assert context.deadline_s == container.settings.reasoning.delegation_deadline_s
+
+    async def test_a_non_engineer_persona_with_engineer_capability_still_keeps_the_short_deadline(
+        self, container, user
+    ) -> None:
+        """A narrow persona (`task_planner`) cannot call `run_command` even when the caller holds
+        `engineer_agent`, so its per-call ceiling stays 60 s."""
+        await container.startup()
+        context = container.kernel._tool_context(
+            TurnRequest(
+                message="hi", user_id=user, agent="task_planner", capabilities=("engineer_agent",),
+            ),
+            False,
+        )
+        assert context.deadline_s == 60.0
+
 
 class TestTheRegistryAtSmallScale:
     """Real sleeps, scaled down: spec 0.2 s, approval window 0.3 s."""

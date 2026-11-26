@@ -2532,13 +2532,20 @@ class AIKernel:
         allowed_tools, allowed_prefixes, max_sensitivity = self._delegation_grant(request, agent)
         deadline_s = 60.0
         reasoning = getattr(self._deps.settings, "reasoning", None)
-        if agent is not None and agent.max_plan_iterations > 1:
-            # An agentic persona (today: `engineer`) runs builds and test suites: `run_command`
-            # declares 605 s, and on a paired desktop the daemon may also wait for a human's
-            # approval first. The flat 60 s cut those off long before their own budgets
-            # (`ToolRegistry.call_timeout`, tool audit T-01). The loop's own deadline is the
-            # right ceiling: it is sized for the longest such call plus the approval window, and
-            # no single call can usefully outlive the loop that made it.
+        can_run_engineer_tools = (
+            _ENGINEER_AGENT_CAPABILITY in request.capabilities
+            and (agent is None or agent.permits_tool("run_command"))
+        )
+        if (agent is not None and agent.max_plan_iterations > 1) or can_run_engineer_tools:
+            # An agentic persona (today: `engineer`), or an unrestricted turn (`orchestrator`)
+            # whose caller holds `engineer_agent` and can therefore invoke those same tools
+            # directly, runs builds and test suites: `run_command` declares 605 s, and on a
+            # paired desktop the daemon may also wait for a human's approval first. The flat
+            # 60 s (or the orchestrator's 180 s `delegation_deadline_s`) cut those off long
+            # before their own budgets (`ToolRegistry.call_timeout`, tool audit T-01). The
+            # loop's own deadline is the right ceiling: it is sized for the longest such call
+            # plus the approval window, and no single call can usefully outlive the loop that
+            # made it.
             deadline_s = getattr(reasoning, "engineer_loop_deadline_s", 960.0)
         elif agent is not None and agent.permits_tool("delegate_to_agent"):
             # A turn whose persona can delegate may itself be dispatching a recursive kernel.run()
