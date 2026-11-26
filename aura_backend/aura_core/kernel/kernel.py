@@ -281,6 +281,11 @@ class TurnResult:
     #: same tool must surface as two separate pending calls, not collapse into one.
     pending_tool_calls: tuple[Mapping[str, Any], ...] = ()
     plan_summary: tuple[Mapping[str, Any], ...] = ()
+    #: Personal-OS proposals this turn made (`propose_task`, ...), as the streamed `actions` frame carries
+    #: them: `{"type", "params"}` entries the client applies after the user approves. Empty when the turn
+    #: proposed nothing. Added so the non-streaming `POST /chat` is not the one route that drops them (tool
+    #: audit T-12).
+    actions: tuple[Mapping[str, Any], ...] = ()
     #: The persona id `AgentRegistry.resolve()` actually used -- may differ from
     #: `TurnRequest.agent` when the caller lacked that persona's `required_capabilities` and the
     #: registry silently fell back to `orchestrator` (see `AgentRegistry.resolve()`'s docstring).
@@ -949,6 +954,7 @@ class AIKernel:
             needs_confirmation=tuple(dict.fromkeys(needs_confirmation)),
             pending_tool_calls=tuple(pending_tool_calls),
             plan_summary=tuple(plan_summary),
+            actions=tuple(actions_from_tool_results(tool_results)),
             resolved_agent=resolved_agent,
             agent_run_id=agent_run_id,
             data=data,

@@ -29,7 +29,7 @@ The default container (in-memory, no opt-ins) registers **37 tools** (RUN). With
 | `delegate_to_agent` | SYSTEM | – | ✅ runs a sub-turn. Granted to no persona explicitly; reachable via orchestrator's open grant |
 | `write_file`, `write_files`, `edit_file`, `run_command`, `git_diff`, `git_status`, `git_commit`, `git_checkout_branch` | PERSONAL/SYSTEM | mostly ✓ | ❌ with no paired desktop and no Docker sandbox (= Railway today), every call fails: *"no desktop app is connected and no server-side sandbox is configured"* (T-13) |
 | `clone_repository`, `github_*` (7) | CONFIDENTIAL | mixed | Registered only with GitHub configured. Not executed (would call GitHub) |
-| `git_push`, `open/list/destroy_workspace` | – | – | **Never registered** without Docker. Granted to `engineer` anyway (T-14) |
+| `git_push`, `open/list/destroy_workspace` | – | – | At audit time: never registered without Docker. Since T-14 `git_push` registers with a paired desktop; the workspace trio still needs Docker |
 | `fetch_url`, `get_weather`, `list_files`, `read_file` | – | – | **Never registered in any configuration** (T-06) |
 
 ### 1b. Persona grants vs registry (RUN)
@@ -187,9 +187,9 @@ Original finding:
 Original finding:
 `pending_actions_executor.dart:101-109` never passes `params['description']` to `addTask`, although `AddTaskFn` accepts it (`:27-32`) and the backend sends it.
 
-**T-12 · PARTLY FIXED (live voice only) · `propose_*` over live voice.** (CODE)
+**T-12 · FIXED · `propose_*` over live voice and `POST /api/v3/chat`.** (CODE)
 
-> **Still open:** the non-streaming `POST /api/v3/chat` response has no `actions` field (`TurnResult` carries none); only the streamed route and live voice deliver them.
+> **`POST /api/v3/chat`:** `TurnResult.actions` (filled from the turn's `propose_*` results, like the stream's `actions` frame) is returned as `actions`, always present and empty when nothing was proposed. A proposal held for confirmation has none until it is approved (`tests/unit/test_chat_actions.py`, `test_kernel_degradation.py`).
 >
 > **Fix:** `LiveServerFrame.tryParse` (`live_voice_protocol.dart`) now parses `actions` frames into `LiveActionsFrame`, `LiveVoiceViewModel._onFrame` forwards non-empty actions to `pendingActionsProvider`, and `LiveVoicePage` renders `PendingActionsCard` (`test/live_voice_protocol_test.dart`, `test/live_voice_view_model_test.dart`).
 
