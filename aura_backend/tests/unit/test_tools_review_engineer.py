@@ -1660,6 +1660,10 @@ class TestWorkspaces:
             ("write_file", {"path": "a.txt", "content": "x"}),
             ("edit_file", {"path": "a.txt", "find": "x", "replace": "y"}),
             ("write_files", {"operations": [{"path": "a.txt", "content": "x"}]}),
+            ("git_commit", {"message": "feat: add a"}),
+            ("git_checkout_branch", {"branch": "feature/a"}),
+            ("workspace_snapshot", {"label": "before change"}),
+            ("workspace_restore", {"snapshot_id": "snap-0123456789ab"}),
         ):
             with pytest.raises(WorkspaceCapacityError, match="disk quota"):
                 await built[name].execute(args, ctx)

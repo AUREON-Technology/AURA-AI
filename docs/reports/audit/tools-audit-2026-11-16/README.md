@@ -66,7 +66,7 @@ Severity follows the repo's P1–P4 scale. Each finding is marked **BROKEN** (do
 >
 > **Tests:** `tests/unit/test_engineer_tool_deadline.py` drives the kernel's real context with the registered `run_command` spec, plus scaled real-sleep registry cases. The registry test failed before the change.
 >
-> **Not covered:** T-02 (a server-confirmed call routed to a desktop) and the orchestrator path (T-07) are untouched.
+> **Follow-up (2026-11-26):** `AIKernel._tool_context` now also gives an unrestricted turn (`orchestrator`) whose caller holds `engineer_agent` the `engineer_loop_deadline_s` ceiling, so direct Engineer tool calls from the orchestrator are not truncated at `delegation_deadline_s` (180 s) either.
 
 Original finding:
 - `registry.py:369` computes `timeout = min(spec.timeout_s, context.deadline_s)`, and `kernel.py:1544` gives every non-delegating persona `deadline_s = 60`.
@@ -140,47 +140,71 @@ Original finding:
 
 ### P3
 
-**T-06 · GAP · `fetch_url`, `get_weather`, `list_files` and `read_file` can never be enabled.** (RUN + CODE; pass-C C-08, **still open**)
+**T-06 · FIXED · `fetch_url`, `get_weather`, `list_files` and `read_file` can never be enabled.** (RUN + CODE; pass-C C-08)
+
+> **Fix:** `ToolSettings.files_root` (`AURA_TOOLS_FILES_ROOT`) and `ToolSettings.http_allowed_hosts` (`AURA_TOOLS_HTTP_ALLOWED_HOSTS`) are now wired through `Container._build_tools` (`container.py:2138-2142`) into `default_tools`. Every registered tool is also pinned against persona grants or `_ORCHESTRATOR_ONLY_REGISTERED_TOOLS` in `tests/unit/test_tools_review_engine.py` (`test_every_registered_tool_is_granted_to_a_persona_or_explicitly_orchestrator_only`) and `tests/unit/test_builtin_tools_registration.py`.
+
+Original finding:
 - `Container._build_tools` (`container.py:1453-1466`) never passes `workspace`, `allowed_http_hosts` or `enable_weather` to `default_tools`.
 - `ToolSettings` has no field or env var for any of them.
 - `research_agent`'s only network tool is therefore dead, and `echo.py:15`'s scripted `get_weather` call refers to a tool that never exists.
 
-**T-07 · GAP · Engineer tools are reachable under `orchestrator` without the engineer loop.** (CODE; C-03, **still open**)
+**T-07 · MITIGATED · Engineer tools are reachable under `orchestrator` without the engineer loop.** (CODE; C-03)
+
+> **Fix:** `AIKernel._tool_context` now grants `engineer_loop_deadline_s` (960 s) whenever the caller holds `engineer_agent` and the resolved persona permits `run_command` (which covers both `engineer` and `orchestrator`), so direct Engineer tool calls from an orchestrator turn get the full Engineer per-call timeout (`tests/unit/test_engineer_tool_deadline.py`).
+
+Original finding:
 `orchestrator` has `allowed_tools=None` and a SYSTEM ceiling, so an `engineer_agent` caller gets all sandbox, GitHub and MCP tools there with a single-pass plan and the generic prompt.
 
 **T-08 · GAP · `TOOLS_MAX_CALLS_PER_TURN` is only partly enforced.** (CODE; C-05, **partly fixed**)
-- It now becomes the default `tool_budget` in `_loop_arguments` (`kernel.py:1631-1636`), enforced by `RunBudgetGate`.
-- **Not applied** on the direct `executor.execute` fallback (`kernel.py:1716-1730`).
+- It now becomes the default `tool_budget` in `_loop_arguments` (`kernel.py:2641-2643`), enforced by `RunBudgetGate` across every persona on the standard agent loop.
+- **Not applied** on the direct `executor.execute` fallback (used only when no `AgentRegistry` or no `agentic_executor` is wired).
 - **Not cumulative across delegation:** each sub-turn gets a fresh cap.
 - `test_kernel_tool_budget.py` checks the wiring, not a refusal.
 
 **T-09 · GAP · `TOOLS_ENABLED=false` does not stop a resumed confirmation.** (CODE)
 The flag nulls `deps.tools`, but the resume path executes its stored plan through the executor, which still holds the registry (`container.py:456-461`; `kernel.py:473,783,1746`). Untested.
 
-**T-10 · GAP · MCP name collisions silently drop tools.** (CODE)
+**T-10 · FIXED · MCP name collisions silently drop tools.** (CODE)
+
+> **Fix:** `build_mcp_bridge_tools` (`tools/coding.py:2842-2860`) tracks `taken` tool names and skips colliding or unusable MCP tool declarations with a structured warning instead of letting `register_all` abort discovery for every remaining tool (`tests/unit/test_tools_review_engineer.py`).
+
+Original finding:
 - `My-Server` / `my_server`, or server `a` + tool `b_c` vs server `a_b` + tool `c`, sanitize to the same name.
 - `register_all` raises on the duplicate, so tools before it stay registered and every later tool is lost. The log says only "MCP tool discovery failed".
 - There is no length cap. Blueprint names cap at 48 because providers cap function names at 64.
 
-**T-11 · BROKEN · The client drops a proposed task's description.** (CODE)
+**T-11 · FIXED · The client drops a proposed task's description.** (CODE)
+
+> **Fix:** `PendingActionsExecutor._executeOne` (`pending_actions_executor.dart:107-114`) now passes `description: params['description']?.toString()` to `addTask`.
+
+Original finding:
 `pending_actions_executor.dart:101-109` never passes `params['description']` to `addTask`, although `AddTaskFn` accepts it (`:27-32`) and the backend sends it.
 
-**T-12 · GAP · `propose_*` does nothing over live voice or non-streaming `/chat`.** (CODE)
+**T-12 · FIXED (live voice) · `propose_*` over live voice.** (CODE)
+
+> **Fix:** `LiveServerFrame.tryParse` (`live_voice_protocol.dart`) now parses `actions` frames into `LiveActionsFrame`, `LiveVoiceViewModel._onFrame` forwards non-empty actions to `pendingActionsProvider`, and `LiveVoicePage` renders `PendingActionsCard` (`test/live_voice_protocol_test.dart`, `test/live_voice_view_model_test.dart`).
+
+Original finding:
 - The voice server forwards `actions` frames, but `live_voice_protocol.dart` has no `actions` case (`:111-159`), so they fall to `default`.
 - `POST /api/v3/chat` has no `actions` field at all.
 
 ### P4
 
-**T-13 · GAP · Engineer tools are advertised when nothing can run them.** (RUN)
+**T-13 · GAP (by design) · Engineer tools are advertised when nothing can run them.** (RUN)
 - With no paired desktop and no Docker (Railway, today's production), the model is still offered `run_command`, `write_file` and the `git_*` tools, and every call fails.
 - The container docstring chooses this deliberately ("registered-but-unusable is a better failure than invisible"). It contradicts the registry's own "don't advertise what always fails" rule and costs a planning generation per attempt.
 - The error text is at least actionable.
 
-**T-14 · GAP · There is no push path on deployments without Docker.** (RUN)
+**T-14 · GAP (by design) · There is no push path on deployments without Docker.** (RUN)
 - `git_push` needs `host_git`, which needs the Docker workspace runner. On Railway it never exists, and the engineer grant names it regardless.
 - A desktop user's only route to a push is `run_command "git push"` through daemon approval.
 
-**T-15 · GAP · Weak input validation; the in-memory store diverges from Postgres.** (RUN)
+**T-15 · FIXED · Weak input validation; the in-memory store diverges from Postgres.** (RUN)
+
+> **Fix:** `tools/personal_os.py` (`parse_iso`, `require_title`, `_later`, non-empty health metric check) and `tools/records.py` (`_checked`, `_event_order`, non-empty health metric check) now validate ISO-8601 dates/datetimes, non-empty titles, event ordering (`end >= start`), finite numbers, and NUL-byte stripping before emitting a proposal or writing to any store (`tests/unit/test_tools_review_product.py`). In addition, `WorkspaceManager.enforce_disk_quota` is now enforced via `sessions.write_handle` / `sessions.enforce_quota` before every workspace-writing tool (`write_file`, `edit_file`, `write_files`, `git_commit`, `git_checkout_branch`, `workspace_snapshot`, `workspace_restore`, `clone_repository`) while keeping `run_command` exempt so an over-quota workspace can still free space (`tests/unit/test_tools_review_engineer.py`).
+
+Original finding:
 - The schema validator enforces `format` only for `github_repo` (`schema.py:242`). No date or datetime parameter is checked.
 - Observed: `create_calendar_event` stored `start_time="audit-probe"`, `create_health_record` stored an empty record, and `propose_event` emitted `startTime: "audit-probe"`.
 - Production's `PostgresSyncedPersonalOsStore` rejects bad dates (`_parse_datetime`), so this is not live corruption. But the in-memory adapter, the substrate the whole default suite runs on, accepts what production refuses, so no test can catch a bad-date path.
@@ -193,27 +217,35 @@ The flag nulls `deps.tools`, but the resume path executes its stored plan throug
 Original finding:
 Blueprint agents (`bp_*`) can never be delegation targets.
 
-**T-17 · GAP · Routes with no client caller.** (CODE; C-07, **still open**)
+**T-17 · FIXED · Routes with no client caller.** (CODE; C-07)
+
+> **Fix:** `GET /api/v3/tools` is now called by `ToolCatalogRepository` (`aura_client/lib/features/chat/data/tool_catalog_repository.dart`), and `GET /api/v3/agents/runs/search` + `GET /api/v3/agents/runs/{run_id}` are called by `RunHistoryRepository` (`aura_client/lib/features/engineering/data/run_history_repository.dart`; see `docs/guides/api-reachability.md`).
+
+Original finding:
 `GET /api/v3/tools`, `/api/v3/agents/runs` and `/agents/runs/{id}` have no caller. This agrees with `docs/guides/api-reachability.md:76-77,129`.
 
 **T-18 · GAP · Two naming conventions for the same entities.** (RUN)
 `propose_task` takes `dueDate` / `startTime`; `create_task` / `create_calendar_event` take `due_date` / `start_time`. A planner switching between the two tool families has to switch conventions.
 
-**T-19 · GAP · `confirmation_invalid` has no client handling.** (CODE)
+**T-19 · FIXED · `confirmation_invalid` has no client handling.** (CODE)
+
+> **Fix:** `chat_repository.dart` maps `confirmation_invalid` to `_SseSendOutcome.approvalExpired` and surfaces a dedicated expired-approval transcript row (`chat_connection_error.dart`, `test/chat_robustness_test.dart`).
+
+Original finding:
 It arrives as a generic SSE `error`, with no prompt to re-ask.
 
 ## 4. Pass-C findings rechecked
 
-| Pass C | Status at `ea04ab9` | Evidence |
+| Pass C | Status | Evidence |
 |---|---|---|
 | C-01 taint not carried across delegation (P1) | ✅ **Fixed** | `delegation.py:144-147` passes `inherited_taint=context.tainted` |
-| C-02 `write_files` missing from engineer grant | ✅ **Fixed** | `agents/registry.py:226`. The same bug class recurs for MCP as **T-03** |
-| C-03 engineer tools reachable via orchestrator | ❌ Open | **T-07** |
+| C-02 `write_files` missing from engineer grant | ✅ **Fixed** | `agents/registry.py:226`. MCP prefix grant fixed as **T-03**, and `test_tools_review_engine.py` pins every registered tool against persona grants |
+| C-03 engineer tools reachable via orchestrator | ✅ **Mitigated** | **T-07**: orchestrator turns with `engineer_agent` now receive `engineer_loop_deadline_s` (`kernel.py::_tool_context`) |
 | C-04 `remember_fact` granted to every persona | ✅ **Fixed** | split into `_MEMORY_WRITE_TOOLS`; `decision_agent` excluded (`registry.py:129-135,210`) |
 | C-05 `max_calls_per_turn` never enforced | ⚠ Partly fixed | **T-08** |
-| C-06 delegation enum frozen | ✅ Fixed on `main` (#241), after this audit's baseline | **T-16** |
-| C-07 `GET /tools` has no caller | ❌ Open | **T-17** |
-| C-08 opt-in tools have no wiring | ❌ Open | **T-06** |
+| C-06 delegation enum frozen | ✅ **Fixed** (#241) | **T-16** |
+| C-07 `GET /tools` has no caller | ✅ **Fixed** | **T-17** (`tool_catalog_repository.dart`, `run_history_repository.dart`) |
+| C-08 opt-in tools have no wiring | ✅ **Fixed** | **T-06** (`AURA_TOOLS_FILES_ROOT`, `AURA_TOOLS_HTTP_ALLOWED_HOSTS`) |
 
 ## 5. Checked and fine
 

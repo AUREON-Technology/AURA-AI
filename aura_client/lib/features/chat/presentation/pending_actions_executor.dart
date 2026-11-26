@@ -106,6 +106,7 @@ class PendingActionsExecutor {
         if (params['dueDate'] != null) due = DateTime.tryParse(params['dueDate'].toString());
         await addTask(
           title: params['title'] ?? 'Task',
+          description: params['description']?.toString(),
           priority: params['priority'] ?? 'medium',
           category: params['category'] ?? 'personal',
           dueDate: due,

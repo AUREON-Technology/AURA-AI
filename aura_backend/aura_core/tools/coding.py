@@ -1660,7 +1660,7 @@ def build_sandbox_tools(
         if not message.strip():
             raise ToolExecutionError("commit message must not be empty", tool="git_commit")
         selected = _clean_paths(paths, "git_commit")
-        handle = await sessions.handle(context)
+        handle = await sessions.write_handle(context, tool_name="git_commit")
         where = await _checkout_args(context, handle, repo_path, tool_name="git_commit")
         await _refuse_default_branch_commit(handle, where)
         added = await _git(handle, ["git", *where, "add", "-A", *(["--", *selected] if selected else [])])
@@ -1714,7 +1714,7 @@ def build_sandbox_tools(
                 tool="git_checkout_branch",
             )
         start = _valid_revision(start_point, "start_point", "git_checkout_branch") if start_point else None
-        handle = await sessions.handle(context)
+        handle = await sessions.write_handle(context, tool_name="git_checkout_branch")
         where = await _checkout_args(context, handle, repo_path, tool_name="git_checkout_branch")
         exists = await _git(
             handle, ["git", *where, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], timeout_s=10.0
@@ -2018,7 +2018,7 @@ def build_sandbox_tools(
     async def workspace_snapshot(label: str, context: ToolContext) -> str:
         if not label.strip():
             raise ToolExecutionError("label must not be empty", tool="workspace_snapshot")
-        handle = await sessions.handle(context)
+        handle = await sessions.write_handle(context, tool_name="workspace_snapshot")
         snapshot_id = await _take_snapshot(handle, label, "workspace_snapshot")
         return (
             f"Saved snapshot {snapshot_id} ({' '.join(label.split())[:_SNAPSHOT_LABEL_MAX]}). Nothing in "
@@ -2081,7 +2081,7 @@ def build_sandbox_tools(
                 "list_workspace_snapshots shows them",
                 tool="workspace_restore",
             )
-        handle = await sessions.handle(context)
+        handle = await sessions.write_handle(context, tool_name="workspace_restore")
         status = await _git(handle, ["git", "status", "--porcelain"], timeout_s=20.0)
         if status.exit_code != 0:
             raise _snapshot_failure(status, "workspace_restore")
