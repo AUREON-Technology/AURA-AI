@@ -44,6 +44,11 @@ class TurnLookups:
     #: delegated sub-turn inherits its parent's: its own "message" is a brief the parent's model
     #: wrote, not something the person said.
     user_statements: tuple[str, ...] = ()
+    #: The ``RunBudgetGate`` governing this turn's tool dispatches, and the parent turn's gate
+    #: when this turn is a delegated sub-turn (audit T-08). Linking the child gate to the parent
+    #: ensures delegation cannot reset the root turn's ``TOOLS_MAX_CALLS_PER_TURN`` cap.
+    parent_tool_gate: Any = None
+    tool_gate: Any = None
 
 
 _CURRENT: ContextVar[TurnLookups | None] = ContextVar("aura_turn_lookups", default=None)
@@ -63,7 +68,10 @@ def turn_lookup_scope() -> Iterator[TurnLookups]:
     """
     parent = _CURRENT.get()
     lookups = TurnLookups(
-        user_statements=parent.user_statements if parent is not None else ()
+        user_statements=parent.user_statements if parent is not None else (),
+        parent_tool_gate=(
+            (parent.tool_gate or parent.parent_tool_gate) if parent is not None else None
+        ),
     )
     token = _CURRENT.set(lookups)
     try:

@@ -1280,6 +1280,78 @@ class TestGitPush:
         with pytest.raises(ToolExecutionError, match="not a valid GitHub repository"):
             await built["git_push"].execute({"branch": "x", "repo": "acme/.."}, _ctx())
 
+    async def test_paired_desktop_can_push_a_feature_branch_without_docker_or_host_git(
+        self, tmp_path
+    ) -> None:
+        """Audit T-14: on a deployment without Docker (`workspace_manager=None, host_git=None`),
+        `git_push` registers when `host_agent_registry` is wired and pushes from the paired
+        desktop checkout while still refusing refspecs and the default branch."""
+        from aura_core.adapters.host_agent import HostAgentRegistry, HostAgentSession
+
+        runner = InMemorySandboxRunner()
+        registry = HostAgentRegistry()
+
+        async def _noop_send(_frame):
+            return None
+
+        await registry.register(HostAgentSession(_ALICE, _noop_send))
+        built = _by_name(
+            build_sandbox_tools(runner, workspace_manager=None, host_git=None, host_agent_registry=registry)
+        )
+        assert "git_push" in built
+
+        ctx = _ctx()
+        origin = tmp_path / "origin.git"
+        git = HostGitService(timeout_s=60.0)
+        await git._checked(["init", "--bare", "-b", "main", str(origin)], cwd=tmp_path)
+
+        await _run(built, f"git init -b main && git remote add origin {origin}", ctx)
+        await built["write_file"].execute({"path": "README.md", "content": "# hello\n"}, ctx)
+        await built["git_checkout_branch"].execute({"branch": "feature/desktop-push"}, ctx)
+        await built["git_commit"].execute({"message": "initial commit"}, ctx)
+
+        for refused_branch in ("main", "master", "HEAD:main", "--mirror"):
+            with pytest.raises(ToolExecutionError):
+                await built["git_push"].execute({"branch": refused_branch}, ctx)
+
+        pushed = await built["git_push"].execute({"branch": "feature/desktop-push"}, ctx)
+        assert "Pushed feature/desktop-push" in pushed
+        assert _heads(origin) == ["refs/heads/feature/desktop-push"]
+
+    async def test_paired_desktop_push_also_respects_github_default_branch(self, tmp_path) -> None:
+        from aura_core.adapters.host_agent import HostAgentRegistry, HostAgentSession
+
+        forge = InMemoryGitHubClient()
+        forge.set_default_branch("acme/widgets", "develop")
+
+        async def resolver(user_id):
+            return forge
+
+        runner = InMemorySandboxRunner()
+        registry = HostAgentRegistry()
+
+        async def _noop_send(_frame):
+            return None
+
+        await registry.register(HostAgentSession(_ALICE, _noop_send))
+        built = _by_name(
+            build_sandbox_tools(
+                runner,
+                code_host_resolver=resolver,
+                workspace_manager=None,
+                host_git=None,
+                host_agent_registry=registry,
+            )
+        )
+        ctx = _ctx()
+        await _run(
+            built,
+            "git init -b develop && git remote add origin https://github.com/acme/widgets.git",
+            ctx,
+        )
+        with pytest.raises(ToolExecutionError, match="refusing to push to 'develop'"):
+            await built["git_push"].execute({"branch": "develop"}, ctx)
+
 
 # --------------------------------------------------------------------------------------
 # host-side git: the workspace's .git is writable by the container

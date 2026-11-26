@@ -724,6 +724,7 @@ class Container:
                 settings=settings,
                 models=self.models,
                 host_agent_registry=self.host_agent_registry,
+                sandbox_runner=self.sandbox_runner,
                 # F-04: pending tool confirmations live in the shared cache (Redis in
                 # production), so any replica can resume the exact turn the user approved.
                 tool_confirmations=PendingConfirmationStore(self.cache_backend),
@@ -2135,11 +2136,13 @@ class Container:
                 host_git=self.host_git,
                 github_token_resolver=self._github_token_resolver,
                 host_agent_registry=self.host_agent_registry,
-                # Both default to empty, which registers nothing (list_files/read_file/fetch_url were
-                # implemented but could never be switched on: audit T-06). An operator opts in with
-                # AURA_TOOLS_FILES_ROOT / AURA_TOOLS_HTTP_ALLOWED_HOSTS; personas still need a grant.
+                # Both default to empty (and weather_enabled to False), which registers nothing
+                # (list_files/read_file/fetch_url/get_weather were implemented but could never be
+                # switched on: audit T-06). An operator opts in with AURA_TOOLS_FILES_ROOT /
+                # AURA_TOOLS_HTTP_ALLOWED_HOSTS / AURA_TOOLS_WEATHER_ENABLED; personas still need a grant.
                 workspace=self.settings.tools.files_root or None,
                 allowed_http_hosts=self.settings.tools.http_allowed_hosts,
+                enable_weather=self.settings.tools.weather_enabled,
                 web_search_url=self.settings.tools.web_search_url,
                 web_search_timeout_s=self.settings.tools.web_search_timeout_s,
                 web_search_engines=self.settings.tools.web_search_engines,

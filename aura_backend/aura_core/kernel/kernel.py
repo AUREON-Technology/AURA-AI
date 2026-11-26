@@ -82,8 +82,9 @@ from ..domain.telemetry import (
     TurnOutcome,
     TurnTelemetry,
 )
+from ..domain.agent_runs import AgentBudget
 from ..execution.acceptance import AcceptanceReport, check_acceptance
-from ..execution.agentic_loop import AgentRunContext
+from ..execution.agentic_loop import AgentRunContext, RunBudgetGate
 from ..execution.confirmations import PendingCall, PendingConfirmationStore, ResumedTurn
 from ..execution.critic import critique_answer
 from ..execution.engine import ExecutionOutcome, StepEvent
@@ -373,6 +374,11 @@ class KernelDependencies:
     #: entirely, so `_tool_declarations` behaves exactly as before (matching every other optional
     #: dependency's "absent means off" contract).
     host_agent_registry: Any = None
+    #: `SandboxRunner` (`CompositeSandboxRunner` in `Container`): when present and its server-side
+    #: fallback (`_fallback`) is `None`, sandbox-backed tools and desktop-only tools are hidden on
+    #: turns where `_desktop_active` is false so the model is never offered tools whose runner is
+    #: absent (audit T-13).
+    sandbox_runner: Any = None
     #: `PendingConfirmationStore` (`execution/confirmations.py`) holding confirm-gated turns
     #: until the user approves them. `None` falls back to a process-local store, which is
     #: correct for one process; the container wires one over the shared cache (Redis).
@@ -2324,6 +2330,32 @@ class AIKernel:
     #: has nothing repository-shaped to give `open_workspace`'s required `repo` argument, and the
     #: folder it already has needs no explicit "open" step at all.
     _DESKTOP_ONLY_UNAVAILABLE = frozenset({"open_workspace", "list_workspaces", "destroy_workspace"})
+    #: Tools that run only on a paired desktop (`tools/desktop_ops.py`, ADR-036 group C): never run
+    #: on the server, even when a Docker sandbox is available.
+    _REQUIRES_PAIRED_DESKTOP = frozenset({"docker_build", "docker_compose", "profile_python"})
+    #: Tools that require either a paired desktop or a server-side sandbox runner (`tools/coding.py`,
+    #: `tools/devtools.py`). When neither is available for this user's turn (e.g. Railway with no
+    #: paired desktop, audit T-13), advertising them only produces calls that always fail.
+    _REQUIRES_SANDBOX_OR_DESKTOP = frozenset({
+        "write_file", "write_files", "edit_file", "run_command", "clone_repository",
+        "git_diff", "git_commit", "git_checkout_branch", "git_status", "git_push",
+        "workspace_snapshot", "list_workspace_snapshots", "workspace_restore",
+        "lint_code", "check_format", "scan_security",
+    }) | _REQUIRES_PAIRED_DESKTOP
+
+    def _has_server_sandbox(self) -> bool:
+        """Whether a server-side sandbox runner is available when no desktop is paired.
+
+        ``deps.sandbox_runner`` is ``None`` on a bare test kernel (which leaves declarations
+        unfiltered, matching ``host_agent_registry=None``). On a real ``Container`` it is a
+        ``CompositeSandboxRunner`` whose ``_fallback`` is the Docker runner (or ``None`` when
+        Docker is disabled or unreachable); a test that swaps ``sandbox_runner`` for an
+        ``InMemorySandboxRunner`` has no ``_fallback`` attribute and counts as available.
+        """
+        runner = self._deps.sandbox_runner
+        if runner is None:
+            return True
+        return getattr(runner, "_fallback", runner) is not None
 
     async def _desktop_active(self, user_id: Any) -> bool:
         """Whether ``user_id`` has a paired desktop session, resolved once per turn (KAN-109).
@@ -2356,11 +2388,21 @@ class AIKernel:
             max_sensitivity=max_sensitivity if max_sensitivity is not None else ToolSensitivity.SYSTEM,
         )
         if await self._desktop_active(getattr(request, "user_id", None)):
+            unavailable = self._DESKTOP_ONLY_UNAVAILABLE
+        elif self._deps.host_agent_registry is not None:
+            unavailable = (
+                self._REQUIRES_PAIRED_DESKTOP
+                if self._has_server_sandbox()
+                else self._REQUIRES_SANDBOX_OR_DESKTOP
+            )
+        else:
+            unavailable = frozenset()
+        if unavailable:
             declarations = tuple(
-                d for d in declarations if d.get("name") not in self._DESKTOP_ONLY_UNAVAILABLE
+                d for d in declarations if d.get("name") not in unavailable
             )
             if allowed_tools is not None:
-                allowed_tools = allowed_tools - self._DESKTOP_ONLY_UNAVAILABLE
+                allowed_tools = allowed_tools - unavailable
         if allowed_tools is None:
             return declarations
         # Not advertised, not requested: a tool outside the agent's grant should not appear in
@@ -2621,6 +2663,32 @@ class AIKernel:
             getattr(getattr(self._deps.settings, "reasoning", None), "engineer_loop_deadline_s", 600.0)
         )
 
+    def _turn_budget_and_gate(self, request: TurnRequest) -> tuple[AgentBudget, RunBudgetGate]:
+        """The effective ``AgentBudget`` for this turn and a ``RunBudgetGate`` linked to any
+        enclosing parent turn's gate (audit T-08).
+
+        Used both by the standard agent loop (:meth:`_loop_arguments`) and by the direct
+        ``executor.execute`` / ``executor.stream`` fallback (when no ``AgentRegistry`` or no
+        ``agentic_executor`` is wired), and chained across ``delegate_to_agent`` sub-turns via
+        :class:`~aura_core.kernel.turn_scope.TurnLookups` so delegation cannot reset the root
+        turn's ``TOOLS_MAX_CALLS_PER_TURN`` cap.
+        """
+        deps = self._deps
+        agent = self._resolve_agent(request)
+        budget = agent.budget if agent is not None else AgentBudget(max_iterations=0)
+        # TOOLS_MAX_CALLS_PER_TURN (audit FSA-112 / T-08): the per-turn tool cap for a persona
+        # that declares no tool_budget of its own; 0 keeps "not bounded by this". A persona's
+        # own figure (engineer: 216) is never overridden.
+        per_turn = int(getattr(getattr(deps.settings, "tools", None), "max_calls_per_turn", 0) or 0)
+        if budget.tool_budget is None and per_turn > 0:
+            budget = replace(budget, tool_budget=per_turn)
+        lookups = current_turn_lookups()
+        parent_gate = lookups.parent_tool_gate if (lookups is not None and request.delegation_depth > 0) else None
+        gate = RunBudgetGate(budget, parent=parent_gate)
+        if lookups is not None:
+            lookups.tool_gate = gate
+        return budget, gate
+
     def _loop_arguments(
         self,
         request: TurnRequest,
@@ -2641,17 +2709,12 @@ class AIKernel:
         agent = self._resolve_agent(request)
         if agent is None or deps.agentic_executor is None:
             return None
-        budget = agent.budget
-        # TOOLS_MAX_CALLS_PER_TURN (audit FSA-112): the per-turn tool cap for a persona that
-        # declares no tool_budget of its own; 0 keeps "not bounded by this". A persona's own
-        # figure (engineer: 216) is never overridden.
-        per_turn = int(getattr(getattr(deps.settings, "tools", None), "max_calls_per_turn", 0) or 0)
-        if budget.tool_budget is None and per_turn > 0:
-            budget = replace(budget, tool_budget=per_turn)
+        budget, gate = self._turn_budget_and_gate(request)
         return {
             "max_iterations": budget.max_iterations,
             "deadline_s": self._agentic_loop_deadline_s(),
             "budget": budget,
+            "gate": gate,
             "run_context": AgentRunContext(
                 user_id=request.user_id,
                 agent_id=agent.id,
@@ -2694,11 +2757,13 @@ class AIKernel:
                 available_tools=tools,
                 **loop,
             )
+        _, gate = self._turn_budget_and_gate(request)
         return await deps.executor.execute(
             plan,
             context=context,
             capabilities=request.capabilities,
             confirmations=confirmations,
+            gate=gate,
         )
 
     async def _iter_execution(
@@ -2733,6 +2798,7 @@ class AIKernel:
             ):
                 yield item
             return
+        _, gate = self._turn_budget_and_gate(request)
         stream = getattr(deps.executor, "stream", None)
         if callable(stream):
             async for item in stream(
@@ -2740,6 +2806,7 @@ class AIKernel:
                 context=context,
                 capabilities=request.capabilities,
                 confirmations=confirmations,
+                gate=gate,
             ):
                 yield item
             return
@@ -2748,6 +2815,7 @@ class AIKernel:
             context=context,
             capabilities=request.capabilities,
             confirmations=confirmations,
+            gate=gate,
         )
 
     async def _hold_plan_for_review(

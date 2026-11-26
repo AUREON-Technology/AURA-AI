@@ -599,16 +599,13 @@ def _ops_settings():
 # persona grant and reachable only through the orchestrator (`allowed_tools=None`):
 # - delegation / background agent tasks / handoffs: only the orchestrator delegates;
 # - `extract_structured`: third-party (Cloudflare) extraction gated to internal-only turns;
-# - `get_weather`: general-assistant lookup on the orchestrator turn;
-# - `read_file` / `list_files`: legacy `AURA_TOOLS_FILES_ROOT` server-filesystem readers (the
-#   Engineer uses its own workspace/sandbox tools instead).
+# - `get_weather`: general-assistant lookup on the orchestrator turn.
 _ORCHESTRATOR_ONLY_REGISTERED_TOOLS = frozenset({
     "delegate_to_agent",
     "list_agent_tasks", "get_agent_task", "cancel_agent_task",
     "get_handoff", "list_handoffs",
     "extract_structured",
     "get_weather",
-    "read_file", "list_files",
 })
 
 

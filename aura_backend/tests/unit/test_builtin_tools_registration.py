@@ -1,8 +1,8 @@
-"""``list_files`` / ``read_file`` / ``fetch_url`` can now be switched on (audit T-06, inventory rows 56, 141-143).
+"""``list_files`` / ``read_file`` / ``fetch_url`` / ``get_weather`` can now be switched on (audit T-06, inventory rows 56, 141-143).
 
-They were implemented in ``tools/builtin.py`` but ``Container`` never passed the ``workspace`` or
-``allowed_http_hosts`` that ``default_tools`` needs, so no deployment could register them. These tests
-build a real ``Container`` and read its real tool registry.
+They were implemented in ``tools/builtin.py`` but ``Container`` never passed the ``workspace``,
+``allowed_http_hosts`` or ``enable_weather`` that ``default_tools`` needs, so no deployment could
+register them. These tests build a real ``Container`` and read its real tool registry.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from aura_core.domain.errors import ConfigurationError
 from aura_core.domain.identifiers import UserId
 from aura_core.tools.base import ToolContext
 
-TOOLS = {"list_files", "read_file", "fetch_url"}
+TOOLS = {"list_files", "read_file", "fetch_url", "get_weather"}
 
 
 def _names(monkeypatch: pytest.MonkeyPatch, **env: str) -> set[str]:
@@ -29,6 +29,7 @@ def _names(monkeypatch: pytest.MonkeyPatch, **env: str) -> set[str]:
 def test_nothing_is_registered_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AURA_TOOLS_FILES_ROOT", raising=False)
     monkeypatch.delenv("AURA_TOOLS_HTTP_ALLOWED_HOSTS", raising=False)
+    monkeypatch.delenv("AURA_TOOLS_WEATHER_ENABLED", raising=False)
     assert not (_names(monkeypatch) & TOOLS)
 
 
@@ -40,6 +41,11 @@ def test_a_files_root_registers_the_read_only_file_tools(monkeypatch: pytest.Mon
 def test_allowed_hosts_register_fetch_url(monkeypatch: pytest.MonkeyPatch) -> None:
     names = _names(monkeypatch, AURA_TOOLS_HTTP_ALLOWED_HOSTS="docs.python.org, example.com")
     assert "fetch_url" in names and not ({"list_files", "read_file"} & names)
+
+
+def test_weather_enabled_registers_get_weather(monkeypatch: pytest.MonkeyPatch) -> None:
+    names = _names(monkeypatch, AURA_TOOLS_WEATHER_ENABLED="true")
+    assert "get_weather" in names and not ({"list_files", "read_file", "fetch_url"} & names)
 
 
 async def test_registered_file_tools_really_work_and_stay_confined(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
