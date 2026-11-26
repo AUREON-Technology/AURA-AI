@@ -294,6 +294,12 @@ async def _engineer_turn(container, message: str, *, tainted_tool: bool = False)
     from aura_core.domain.errors import ToolExecutionError
 
     await container.startup()
+    # The default container has no sandbox (no Docker, no paired desktop), and the kernel now hides the
+    # sandbox-backed tools from a turn in that state (audit T-13). These turns exercise the Engineer loop
+    # over tools that stand in for a deployment that has one, so give it the in-memory runner.
+    from aura_core.adapters.coding_fakes import InMemorySandboxRunner
+
+    container.sandbox_runner._fallback = InMemorySandboxRunner()
     await container.engineer_consent.accept(ALICE, ENGINEER_CONSENT_NOTICE_VERSION, at=datetime.now(timezone.utc))
 
     @tool("git_status", "Show git status.", param("target", "string", "t"), sensitivity=ToolSensitivity.PUBLIC)
