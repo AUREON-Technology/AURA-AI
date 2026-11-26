@@ -404,9 +404,10 @@ class TestKernelWiring:
         # at call time if neither a desktop session nor `sandbox.enabled` is actually usable.
         engineer_sandbox_tools = {
             # write_files (D6) joined the grant with audit FSA-057; it is registered exactly as
-            # write_file is, so it belongs in both sets here.
+            # write_file is, so it belongs in both sets here. git_push (audit T-14) registers
+            # whenever host_agent_registry is wired, so a paired desktop can push without Docker.
             "write_file", "write_files", "edit_file", "run_command",
-            "git_diff", "git_commit", "git_checkout_branch",
+            "git_diff", "git_commit", "git_checkout_branch", "git_status", "git_push",
         }
         registered_for_engineer = {
             s.name for s in container.tools.available(capabilities=("engineer_agent",))

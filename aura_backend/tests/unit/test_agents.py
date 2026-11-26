@@ -505,14 +505,14 @@ class TestMcpToolsReachOnlyTheEngineer:
         # 1. Neither desktop nor server sandbox: sandbox + desktop tools are hidden, while pure
         # analysis and MCP tools remain advertised.
         no_runner = await self._declared(container, user, "engineer")
-        assert not ({"run_command", "write_file", "git_status", "lint_code", "docker_build"} & no_runner)
+        assert not ({"run_command", "write_file", "git_status", "git_push", "lint_code", "docker_build"} & no_runner)
         assert {"analyze_python_ast", "mcp_fs_list_dir"} <= no_runner
 
         # 2. Server-side sandbox available (no desktop paired): sandbox tools appear, but
         # desktop-only tools (`docker_build`, `docker_compose`, `profile_python`) stay hidden.
         container.sandbox_runner._fallback = InMemorySandboxRunner()
         with_server_sandbox = await self._declared(container, user, "engineer")
-        assert {"run_command", "write_file", "git_status", "lint_code"} <= with_server_sandbox
+        assert {"run_command", "write_file", "git_status", "git_push", "lint_code"} <= with_server_sandbox
         assert not ({"docker_build", "docker_compose", "profile_python"} & with_server_sandbox)
 
         # 3. Paired desktop session active: both sandbox and desktop-only tools appear.
@@ -521,7 +521,7 @@ class TestMcpToolsReachOnlyTheEngineer:
 
         await container.host_agent_registry.register(HostAgentSession(user, _noop_send))
         with_desktop = await self._declared(container, user, "engineer")
-        assert {"run_command", "write_file", "docker_build", "docker_compose", "profile_python"} <= with_desktop
+        assert {"run_command", "write_file", "git_push", "docker_build", "docker_compose", "profile_python"} <= with_desktop
 
 
 class TestEveryPersonaIsToldItsTools:

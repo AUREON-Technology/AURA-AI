@@ -204,7 +204,11 @@ Original finding:
 - The container docstring chooses this deliberately ("registered-but-unusable is a better failure than invisible"). It contradicts the registry's own "don't advertise what always fails" rule and costs a planning generation per attempt.
 - The error text is at least actionable.
 
-**T-14 · GAP (by design) · There is no push path on deployments without Docker.** (RUN)
+**T-14 · FIXED · There is no push path on deployments without Docker.** (RUN)
+
+> **Fix:** `build_sandbox_tools` (`tools/coding.py`) now registers `git_push` whenever `host_git` or `host_agent_registry` is wired (and passes `host_agent_registry` to `_SessionAdapter` even when `workspace_manager is None`). When a paired desktop session is active (`sessions._desktop_active`), `git_push` runs `_desktop_git_push` against the desktop checkout via the host-agent runner with the same plain-branch validation (`_is_plain_branch_name`), default-branch protection (`origin/HEAD`, `main`/`master`, and GitHub's `default_branch` when connected), and explicit `refs/heads/<branch>:refs/heads/<branch>` refspec as server-side `git_push` (`tests/unit/test_tools_review_engineer.py::TestGitPush`). When neither a paired desktop nor a server-side sandbox exists, `AIKernel._tool_declarations` hides `git_push` alongside the other sandbox/git tools (`_REQUIRES_SANDBOX_OR_DESKTOP`).
+
+Original finding:
 - `git_push` needs `host_git`, which needs the Docker workspace runner. On Railway it never exists, and the engineer grant names it regardless.
 - A desktop user's only route to a push is `run_command "git push"` through daemon approval.
 

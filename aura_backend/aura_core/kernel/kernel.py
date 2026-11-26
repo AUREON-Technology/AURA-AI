@@ -2338,7 +2338,7 @@ class AIKernel:
     #: paired desktop, audit T-13), advertising them only produces calls that always fail.
     _REQUIRES_SANDBOX_OR_DESKTOP = frozenset({
         "write_file", "write_files", "edit_file", "run_command", "clone_repository",
-        "git_diff", "git_commit", "git_checkout_branch", "git_status",
+        "git_diff", "git_commit", "git_checkout_branch", "git_status", "git_push",
         "workspace_snapshot", "list_workspace_snapshots", "workspace_restore",
         "lint_code", "check_format", "scan_security",
     }) | _REQUIRES_PAIRED_DESKTOP
