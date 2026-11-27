@@ -50,7 +50,7 @@ import asyncio
 import json
 import os
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping
 
@@ -90,6 +90,10 @@ from evaluation.suites.docs_corpus_sources import load_docs_corpus_sources  # no
 RETRIEVAL_K = 5
 #: Matches TestDocsCorpusAnswerGate: groundedness/cited vary slightly with context-budget ties.
 ANSWER_TOLERANCES: Mapping[str, float] = {"groundedness": 0.05, "cited": 0.05}
+#: Prompt cap the answer gate measures under. At the shipped 400-token default no retrieved chunk
+#: reaches the model (docs/reports/PROMPT_BUDGET_EVAL_2026-11-22.md), so answers carry no evidence
+#: and groundedness is never measured. This gate therefore says nothing about the default cap.
+ANSWER_PROMPT_TOKENS = 3000
 #: The agent-run suite is fully scripted (planner responses, tool outcomes, a FrozenClock), so
 #: any movement is a real behaviour change, not noise: the tolerance is only float rounding.
 AGENT_RUN_TOLERANCES: Mapping[str, float] = {
@@ -169,9 +173,15 @@ def deterministic_environment_problems(settings: Any) -> list[str]:
     return problems
 
 
-def _new_container() -> Container:
-    """Exactly what tests/conftest.py's ``container`` fixture builds."""
-    return Container(load_settings(refresh=True, validate=False))
+def with_answer_prompt_cap(settings: Any) -> Any:
+    """``settings`` with the prompt cap the answer gate measures under."""
+    return replace(settings, llm=replace(settings.llm, max_prompt_tokens=ANSWER_PROMPT_TOKENS))
+
+
+def _new_container(configure: Callable[[Any], Any] | None = None) -> Container:
+    """What tests/conftest.py's ``container`` fixture builds, plus a gate's own settings change."""
+    settings = load_settings(refresh=True, validate=False)
+    return Container(configure(settings) if configure else settings)
 
 
 # --------------------------------------------------------------------------------------
@@ -229,6 +239,7 @@ class GateSpec:
     baseline_file: str
     score: Callable[[Container], Awaitable[Any]]
     tolerances: Mapping[str, float] = field(default_factory=lambda: dict(RegressionGate().tolerances))
+    configure: Callable[[Any], Any] | None = None
 
 
 GATES: tuple[GateSpec, ...] = (
@@ -236,7 +247,7 @@ GATES: tuple[GateSpec, ...] = (
     GateSpec("docs_corpus_retrieval", "docs_corpus_baseline.json", _score_docs_retrieval),
     GateSpec(
         "docs_corpus_answer", "docs_corpus_answer_baseline.json", _score_docs_answer,
-        tolerances=ANSWER_TOLERANCES,
+        tolerances=ANSWER_TOLERANCES, configure=with_answer_prompt_cap,
     ),
     GateSpec(
         "agent_runs", "agent_runs_baseline.json", _score_agent_runs,
@@ -262,7 +273,7 @@ async def run_gate(spec: GateSpec, baseline_dir: Path) -> GateOutcome:
         return outcome
     outcome.baseline = _load_baseline(baseline_path)
 
-    container = _new_container()
+    container = _new_container(spec.configure)
     await container.startup()
     try:
         result = await spec.score(container)

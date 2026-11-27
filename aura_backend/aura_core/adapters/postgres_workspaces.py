@@ -54,6 +54,7 @@ class PostgresWorkspaceStore:
             branch=row["branch"],
             created_at=_utc(row["created_at"]),
             last_active_at=_utc(row["last_active_at"]),
+            provider=row["provider"],
         )
 
     async def upsert(self, workspace: AgentWorkspace) -> None:
@@ -64,18 +65,20 @@ class PostgresWorkspaceStore:
                     """
                     INSERT INTO aura_agent_workspaces
                         (id, user_id, repo, workspace_path, status, container_id, branch,
-                         created_at, last_active_at)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                         created_at, last_active_at, provider)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                     ON CONFLICT (id) DO UPDATE SET
                         workspace_path = EXCLUDED.workspace_path,
                         status = EXCLUDED.status,
                         container_id = EXCLUDED.container_id,
                         branch = EXCLUDED.branch,
-                        last_active_at = EXCLUDED.last_active_at
+                        last_active_at = EXCLUDED.last_active_at,
+                        provider = EXCLUDED.provider
                     """,
                     workspace.id.value, workspace.user_id.value, workspace.repo,
                     workspace.workspace_path, workspace.status, workspace.container_id,
                     workspace.branch, workspace.created_at, workspace.last_active_at,
+                    workspace.provider,
                 )
         except Exception as exc:
             raise _unavailable(f"could not write agent workspace: {exc}") from exc

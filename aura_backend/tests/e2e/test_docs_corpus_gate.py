@@ -30,10 +30,13 @@ from pathlib import Path
 
 import pytest
 
+from aura_core.config import load_settings
+from aura_core.container import Container
 from aura_core.domain import DocumentId
 from aura_core.evaluation.harness import AnswerEvaluator, EvalSuite, RegressionGate, RetrievalEvaluator
 from aura_core.llm.providers.echo import ContextGroundedProvider
 
+from evaluation.gate import with_answer_prompt_cap
 from evaluation.suites.docs_corpus_sources import load_docs_corpus_sources
 
 _SUITE_DIR = Path(__file__).resolve().parents[2] / "evaluation" / "suites"
@@ -101,6 +104,11 @@ class TestDocsCorpusAnswerGate:
     ``test_kernel_degradation.py`` already uses to override provider behaviour in a test.
     """
 
+    @pytest.fixture
+    def container(self) -> Container:
+        """The shared fixture's container, under the prompt cap ``evaluation.gate`` measures with."""
+        return Container(with_answer_prompt_cap(load_settings(refresh=True, validate=False)))
+
     async def test_answer_grounding_meets_the_recorded_baseline(
         self, docs_corpus_index, docs_corpus_suite
     ) -> None:
@@ -126,6 +134,9 @@ class TestDocsCorpusAnswerGate:
 
         baseline = RegressionGate.load_baseline(_ANSWER_BASELINE_PATH.read_text(encoding="utf-8"))
         gate = RegressionGate(tolerances={"groundedness": 0.05, "cited": 0.05})
+        # RegressionGate skips a baselined metric the run did not produce, which is how this
+        # test stayed green while no retrieved text reached the prompt.
+        assert set(baseline) <= set(result.metrics()), "a baselined metric was not measured"
         ok, failures = gate.check(result, baseline)
 
         assert ok, "answer-grounding regression vs. baseline:\n" + "\n".join(failures)

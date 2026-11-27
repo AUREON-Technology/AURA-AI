@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from .adapters.memory_stores import (
+    InMemoryCloudSandboxStore,
     InMemoryDocumentStore,
     InMemoryEngineerRunStore,
     InMemoryWorkspaceStore,
@@ -1536,20 +1537,22 @@ class Container:
         return getattr(client, "token", None) or getattr(client, "_token", None)
 
     def _build_host_git(self) -> Any:
-        """Real `git`, run by *this* process against a workspace directory.
+        """Real `git`, run by *this* process: against a Docker workspace directory, or for a
+        cloud workspace in folders of its own (`adapters/host_git.py`).
 
-        Host-side so a private clone's token never enters the container: the workspace gets a
+        Host-side so a private clone's token never enters the sandbox: the workspace gets a
         complete checkout -- history, branches, tags -- and no credential in any file a
-        model-chosen command could read. `None` without a sandbox runner, since there would be no
-        workspace to run it against.
+        model-chosen command could read. `None` without a server-side runner, since there would
+        be no workspace to run it for.
 
         `AURA_SANDBOX_IN_CONTAINER_GIT` is the opt-out for operators who would rather have git
-        inside the container and accept that a command can then read the credential; it is off by
-        default and deliberately not the recommended path.
+        inside the *Docker* container and accept that a command can then read the credential; it
+        is off by default and deliberately not the recommended path. It does not apply to cloud
+        sandboxes, where the token never enters.
         """
-        if (
-            getattr(self, "docker_sandbox_runner", None) is None
-            or self.settings.sandbox.in_container_git
+        if self.server_sandbox_runner is None or (
+            getattr(self, "docker_sandbox_runner", None) is not None
+            and self.settings.sandbox.in_container_git
         ):
             return None
         from .adapters.host_git import HostGitService
@@ -1563,28 +1566,32 @@ class Container:
         `CompositeSandboxRunner`: it routes a task to the caller's desktop or to the server-side
         sandbox, and can pause or reap neither. Building a manager on it would produce a
         workspace that appears to persist and is never reclaimed -- worse than not offering the
-        feature. The Docker runner is the one that can, so the manager is built against it
-        directly.
+        feature. The server-side runners (Docker, cloud) are the ones that can, so the manager is
+        built against one of those directly.
         """
-        runner = getattr(self, "docker_sandbox_runner", None)
+        runner = self.server_sandbox_runner
         if runner is None or not hasattr(runner, "open_workspace"):
             return None
         from .tools.workspaces import WorkspaceManager
 
         sandbox = self.settings.sandbox
+        cloud = runner is getattr(self, "cloud_sandbox_runner", None)
         return WorkspaceManager(
             runner=runner,
             store=self.workspaces,
-            host_root=sandbox.host_root,
-            memory_limit=sandbox.memory_limit,
+            host_root="" if cloud else sandbox.host_root,
+            # A cloud sandbox uses none of this host's memory, so there is none to check before
+            # starting one (its own size is what the runner reports in `workspace_stats`).
+            memory_limit="0" if cloud else sandbox.memory_limit,
             max_workspaces=sandbox.max_workspaces,
             max_running=sandbox.max_running,
             ttl_hours=sandbox.workspace_ttl_hours,
             hot_idle_s=sandbox.hot_idle_s,
             disk_quota_mb=sandbox.workspace_disk_quota_mb,
-            min_free_memory_mb=sandbox.min_free_memory_mb,
+            min_free_memory_mb=0 if cloud else sandbox.min_free_memory_mb,
             clock=self.clock,
             metrics=self.metrics,
+            provider="railway" if cloud else "docker",
         )
 
     def _build_workspace_store(self) -> Any:
@@ -2324,12 +2331,59 @@ class Container:
 
         # Kept as its own attribute as well as the composite's fallback: durable workspaces are
         # a server-side feature and need the runner that implements them. The composite routes
-        # per-task between a user's desktop and this, and cannot pause or reap anything.
+        # per-task between a user's desktop and this, and cannot pause or reap anything. At most
+        # one of the two server-side runners exists (`AURA_SANDBOX_PROVIDER`).
         self.docker_sandbox_runner = self._build_docker_sandbox_runner()
+        self.cloud_sandbox_runner = self._build_cloud_sandbox_runner()
         return CompositeSandboxRunner(
             host_runner=HostAgentSandboxRunner(self.host_agent_registry),
-            fallback=self.docker_sandbox_runner,
+            fallback=self.server_sandbox_runner,
         )
+
+    @property
+    def server_sandbox_runner(self) -> Any:
+        """The sandbox this deployment runs for users without a desktop: Docker, the cloud, or
+        ``None``."""
+        return (
+            getattr(self, "docker_sandbox_runner", None)
+            or getattr(self, "cloud_sandbox_runner", None)
+        )
+
+    def _build_cloud_sandbox_runner(self) -> Any:
+        """`None` unless opted in (`sandbox.enabled`, `AURA_SANDBOX_PROVIDER=railway`) and the
+        broker is configured. Nothing is contacted here: the first tool call is what reaches the
+        broker."""
+        sandbox = self.settings.sandbox
+        if not sandbox.enabled or sandbox.provider != "railway":
+            return None
+        if sandbox.broker_problems():
+            # `validate()` refuses to start on this; a caller that skipped it gets no sandbox
+            # rather than one that would send the secret somewhere it should not go.
+            logger.warning(
+                "cloud sandboxes are enabled but the broker is not configured; the server-side "
+                "sandbox is off",
+                extra={"problems": sandbox.broker_problems()},
+            )
+            return None
+        from .adapters.railway_sandbox import RailwaySandboxRunner
+
+        return RailwaySandboxRunner(
+            broker_url=sandbox.broker_url,
+            token=sandbox.broker_token,
+            store=self._build_cloud_sandbox_store(),
+            clock=self.clock,
+        )
+
+    def _build_cloud_sandbox_store(self) -> Any:
+        """The same backend switch as the workspace store: a deployment that kept workspaces in
+        Postgres and their sandboxes in memory would destroy them at the next startup."""
+        if self.settings.infrastructure.memory_backend == "postgres":
+            from .adapters.postgres_cloud_sandboxes import PostgresCloudSandboxStore
+
+            return PostgresCloudSandboxStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        return InMemoryCloudSandboxStore()
 
     def _build_docker_sandbox_runner(self) -> Any:
         """`None` unless both opted in (`sandbox.enabled`) and a Docker daemon is actually
@@ -2337,7 +2391,7 @@ class Container:
         `_build_stt_engine`. This is only the `CompositeSandboxRunner` fallback now; a `None`
         here just means no shared server-side sandbox, not "no engineer-agent tools" -- a
         connected desktop app still works."""
-        if not self.settings.sandbox.enabled:
+        if not self.settings.sandbox.enabled or self.settings.sandbox.provider != "docker":
             return None
         from .adapters.docker_sandbox import DockerSandboxRunner, docker_available
 
@@ -2631,6 +2685,10 @@ class Container:
             # first, before the cache they report to (and the providers they call) are closed.
             await self._close_quietly("agent tasks", self.agent_tasks.shutdown)
         await self._stop_control_reconciler()
+        if getattr(self, "cloud_sandbox_runner", None) is not None:
+            # Before the closers: a boot or save still in progress records its result in
+            # Postgres, so the pool must still be open while it finishes.
+            await self._close_quietly("cloud sandbox", self.cloud_sandbox_runner.close)
         try:
             await self.kernel.wait_for_post_turn(timeout_s=POST_TURN_DRAIN_S)
         except Exception:  # pragma: no cover - defensive; shutdown never raises

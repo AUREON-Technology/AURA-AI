@@ -113,6 +113,8 @@ class AgentWorkspace:
     last_active_at: datetime
     container_id: str | None = None
     branch: str | None = None
+    #: Which sandbox runner holds the files: ``"docker"`` or ``"railway"``.
+    provider: str = "docker"
 
     def is_expired(self, *, now: datetime, ttl_hours: float) -> bool:
         """True when nothing has touched this workspace for ``ttl_hours``.

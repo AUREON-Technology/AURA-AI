@@ -20,10 +20,23 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from ..domain.files import strip_absolute_prefix
-from ..ports.coding import FileWriteOp, McpToolDescriptor, RepoFile, RepoTree, SandboxHandle, SandboxResult
+from ..ports.coding import (
+    BranchExport,
+    FileWriteOp,
+    McpToolDescriptor,
+    RepoFile,
+    RepoTree,
+    SandboxHandle,
+    SandboxResult,
+)
 from .sandbox_fs import delete_entry, rename_entry
 
-__all__ = ["InMemorySandboxRunner", "InMemoryGitHubClient", "InMemoryMcpClient"]
+__all__ = [
+    "InMemorySandboxRunner",
+    "InMemoryTransferSandboxRunner",
+    "InMemoryGitHubClient",
+    "InMemoryMcpClient",
+]
 
 #: Same ceilings as ``DockerSandboxRunner`` (the fake mirrors the adapter's contract, not just its
 #: happy path), so a test of an oversized file means the same thing against either.
@@ -222,6 +235,35 @@ class InMemorySandboxRunner:
     def is_paused(self, key: str) -> bool:
         """Test-only view of the flag above; no production caller."""
         return key in self._paused
+
+
+class InMemoryTransferSandboxRunner(InMemorySandboxRunner):
+    """:class:`InMemorySandboxRunner` shaped like a runner whose files are not on this host
+    (``RepositoryTransferRunner``): a repository moves in by copy and a branch moves out as a
+    bundle, and nothing is offered a path to run git in."""
+
+    async def workspace_path(self, handle: SandboxHandle) -> str:
+        raise RuntimeError("this workspace has no path on this server")
+
+    async def import_repository(
+        self, handle: SandboxHandle, source: Path, destination: str
+    ) -> None:
+        from .sandbox_transfer import workspace_relative
+
+        folder = workspace_relative(destination)
+        target = self._resolve_within(handle, folder)
+        if target.exists() and (not target.is_dir() or any(target.iterdir())):
+            raise RuntimeError(f"{folder} already exists and is not empty")
+        await asyncio.to_thread(
+            shutil.copytree, source, target, symlinks=True, dirs_exist_ok=True
+        )
+
+    async def export_branch(
+        self, handle: SandboxHandle, directory: str, branch: str, destination: Path
+    ) -> BranchExport:
+        from .sandbox_transfer import export_branch
+
+        return await export_branch(self, handle, directory, branch, destination)
 
 
 class InMemoryGitHubClient:

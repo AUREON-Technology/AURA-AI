@@ -193,7 +193,10 @@ class TestAdminRoutes:
 
         return TestClient(build_app(container, authenticator=authenticator))
 
-    async def test_the_report_is_empty_before_the_job_has_run_and_shows_it_after(self, container) -> None:
+    async def test_the_report_is_empty_before_the_job_has_run_and_shows_it_after(self, container, monkeypatch) -> None:
+        # These go through the real route and a monitor on the real clock, so the turns must be recent by it
+        # (a fixed NOW passed only on the day it was written).
+        monkeypatch.setitem(globals(), "NOW", datetime.now(timezone.utc))
         await container.startup()
         with self.client(container) as client:
             first = client.get("/api/v3/admin/model-monitor").json()
@@ -203,7 +206,10 @@ class TestAdminRoutes:
             shown = client.get("/api/v3/admin/model-monitor").json()["report"]
             assert shown["generated_at"] == report["generated_at"] and shown["models_observed"] == ["qwen"]
 
-    async def test_rebaseline_pins_the_latest_observation_and_is_audited(self, container) -> None:
+    async def test_rebaseline_pins_the_latest_observation_and_is_audited(self, container, monkeypatch) -> None:
+        # These go through the real route and a monitor on the real clock, so the turns must be recent by it
+        # (a fixed NOW passed only on the day it was written).
+        monkeypatch.setitem(globals(), "NOW", datetime.now(timezone.utc))
         await container.startup()
         await fill(container.telemetry_sink, "qwen", 30, minutes_ago=5)
         await run_model_monitor(container.telemetry_sink, container.cache_backend)

@@ -1,9 +1,13 @@
 # Plan: Engineer cloud workspaces on Railway Sandboxes
 
-**Status:** Approved by the owner on 2026-11-25. The broker is built (`aura_sandbox_broker/`) and
-nothing calls it. Gate S2 is met again with the rebuilt proxy (decisions 12 and 13; 87 of 87
+**Status:** Approved by the owner on 2026-11-25. The broker is built (`aura_sandbox_broker/`).
+Gate S2 is met again with the rebuilt proxy (decisions 12 and 13; 87 of 87
 checks, [report](../reports/railway-sandbox-spike-2026-11-25.md)). The official SDK is unproven;
 S6 and S7 are not measured.
+
+PR 2 (the backend runner and git transfer) is built and tested against a stand-in for the broker,
+not against a deployed broker; see [As built: PR 2](#as-built-pr-2). **Do not set
+`AURA_SANDBOX_PROVIDER=railway` before PR 3.**
 **Base:** `main` at `12eabb00`. Branch `anas/railway-sandboxes`.
 
 ## Goal
@@ -117,6 +121,40 @@ limits and no cross-customer eviction; failed checkpoint never destroys; routing
 confirmation rule; allowance and platform cap; erasure; consent refusal; push from a hostile
 bundle; boot rules; migration round trip on a disposable Postgres. Opt-in `-m load` test against a
 real broker.
+
+## As built: PR 2
+
+`adapters/railway_sandbox.py`, `adapters/postgres_cloud_sandboxes.py`, the bundle path in
+`adapters/host_git.py` and `tools/coding.py`, three settings, `git` in the image, migration `0041`
+(`down_revision` `0040`; renumber it if another migration merges first).
+
+Differences from the tables above:
+
+- Sandbox ids and checkpoint names are in their own table, `aura_cloud_sandboxes`, not in
+  `aura_agent_workspaces` (which gains only `provider`). The record has to outlive the workspace
+  row until the vendor confirms deletion, and single tasks have sandboxes too.
+- The Docker runner keeps working on the host path. Only the cloud runner transfers a checkout.
+- A workspace boots on its first command or file call, not when it is opened.
+- Each save gets a new checkpoint name; the previous one is deleted after the new one is recorded.
+
+Still missing before it can be switched on, all outside PR 2:
+
+- Nothing saves a workspace when a turn ends, and production runs no reaper. Railway destroys an
+  idle sandbox after 120 minutes, and unsaved changes go with it.
+- Capacity is still the Docker policy: the running and workspace limits are global, so one
+  person's request can save or delete another's workspace. At the running limit, an open fails if
+  the workspace picked to stop has a command running. A save can also outlast the tool call that
+  asked for it, while the process's admission lock is held.
+- The automatic clone inside a git tool, and `git_push`, run within those tools' timeouts, which
+  were sized for work on a local disk. A large repository will not fit.
+- A push does not check that the pushed branch belongs to the named repository beyond requiring
+  its history to be one the repository has; a folder made with `git init` has no such history to
+  check (the Docker path pushes whatever checkout it finds too).
+- Account erasure does not yet remove sandboxes or checkpoints.
+- Nothing removes sandboxes or checkpoints that lost their record (a crash between a vendor call
+  and the write that records it).
+- A push moves at most 100 MiB of new commits, and clones the whole repository on the gateway
+  within `AURA_SANDBOX_TIMEOUT_S`.
 
 ## Client (`aura_client/`)
 
