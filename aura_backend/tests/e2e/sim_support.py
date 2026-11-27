@@ -120,8 +120,9 @@ class _FakeDockerContainer:
         self._stdout, self._stderr = done.stdout, done.stderr
         return {"StatusCode": done.returncode}
 
-    def logs(self, stdout: bool = True, stderr: bool = True) -> bytes:
-        return (self._stdout if stdout else b"") + (self._stderr if stderr else b"")
+    def logs(self, stdout: bool = True, stderr: bool = True, tail: int | str = "all") -> bytes:
+        data = (self._stdout if stdout else b"") + (self._stderr if stderr else b"")
+        return data if tail == "all" else b"".join(data.splitlines(keepends=True)[-int(tail):])
 
     def kill(self) -> None:
         self.killed = True

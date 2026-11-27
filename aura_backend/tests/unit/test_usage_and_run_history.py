@@ -230,7 +230,9 @@ def _seed(container, run: AgentRun, tools=()) -> None:
 
 class TestRunSearch:
     def test_filters_and_tool_name_search_without_goal_text(self, container) -> None:
-        t = datetime.now(timezone.utc)
+        # Midday of the day before: the date filters below need all three runs on one calendar
+        # day, which "now minus two hours" is not between 00:00 and 02:00 UTC.
+        t = (datetime.now(timezone.utc) - timedelta(days=1)).replace(hour=12, minute=0, second=0)
         a = _run("alice", at=t - timedelta(hours=1))
         b = _run("alice", agent="orchestrator", status=AgentRunStatus.FAILED, at=t - timedelta(hours=2))
         _seed(container, a, tools=("git_status", "run_command"))
