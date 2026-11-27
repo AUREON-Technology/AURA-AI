@@ -1241,6 +1241,9 @@ class ToolSettings:
     #: Hosts ``fetch_url`` may reach (``build_http_tool``); subdomains are not implied. Empty (the
     #: default) registers no ``fetch_url``. Private/loopback addresses are refused regardless.
     http_allowed_hosts: tuple[str, ...] = ()
+    #: Whether ``get_weather`` (Open-Meteo current conditions, ``build_weather_tool``) is registered.
+    #: Off by default so a default install makes no outbound network calls (audit T-06).
+    weather_enabled: bool = False
     #: Base URL of an operator-run SearXNG instance (JSON API enabled) that ``web_search`` queries
     #: (``tools/websearch.py``, ADR-042). Empty (the default) registers no ``web_search``. There is
     #: deliberately no hosted-vendor alternative: search is self-hosted like everything else here.
@@ -1277,6 +1280,7 @@ class ToolSettings:
             require_confirmation_for_side_effects=_bool("TOOLS_REQUIRE_CONFIRMATION", True),
             files_root=(_env("TOOLS_FILES_ROOT", "") or "").strip(),
             http_allowed_hosts=_list("TOOLS_HTTP_ALLOWED_HOSTS"),
+            weather_enabled=_bool("TOOLS_WEATHER_ENABLED", False),
             web_search_url=(_env("WEB_SEARCH_URL", "") or "").strip(),
             web_search_timeout_s=_float("WEB_SEARCH_TIMEOUT_S", 10.0, minimum=1.0, maximum=60.0),
             web_search_engines=(_env("WEB_SEARCH_ENGINES", "") or "").strip(),

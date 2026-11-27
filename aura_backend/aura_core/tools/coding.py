@@ -899,7 +899,10 @@ def build_sandbox_tools(
     else:
         # No manager: per-turn sandboxes, exactly as before. This is the local/dev shape and the
         # one every pre-workspace caller still gets.
-        sessions = _SessionAdapter(cache=_SandboxSessionCache(sandbox_runner))
+        sessions = _SessionAdapter(
+            cache=_SandboxSessionCache(sandbox_runner),
+            host_agent_registry=host_agent_registry,
+        )
 
     @tool(
         "write_file",
@@ -1845,6 +1848,87 @@ def build_sandbox_tools(
             )
         return _with_clone_note(context, result.stdout or "(clean)")
 
+    _GITHUB_REMOTE_URL = re.compile(
+        r"^(?:https?://|ssh://(?:[^@]+@)?|git@)github\.com[:/]([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$"
+    )
+
+    async def _desktop_git_push(
+        branch: str, context: ToolContext, *, repo: str | None = None, repo_path: str | None = None,
+    ) -> str:
+        """Push ``branch`` from a paired desktop workspace via the host-agent runner (audit T-14).
+
+        Applies the same branch validation and default-branch protection as server-side ``git_push``
+        before invoking ``git push --set-upstream -- origin refs/heads/<branch>:refs/heads/<branch>``
+        on the desktop checkout.
+        """
+        explicit_slug = _strict_slug(repo, "git_push") if repo else None
+        if not _is_plain_branch_name(branch):
+            raise ToolExecutionError(
+                f"{branch!r} is not a plain branch name; pass just the branch to push, "
+                "e.g. 'feature/login-fix'",
+                tool="git_push",
+            )
+        handle = await sessions.handle(context)
+        where = await _checkout_args(context, handle, repo_path, tool_name="git_push")
+        inside = await _git(handle, ["git", *where, "rev-parse", "--is-inside-work-tree"], timeout_s=10.0)
+        if inside.exit_code != 0 or inside.stdout.strip() != "true":
+            raise ToolExecutionError(
+                "the workspace is not a git repository; clone one (clone_repository) or run "
+                "`git init` first",
+                tool="git_push",
+            )
+        remote_res = await _git(handle, ["git", *where, "remote", "get-url", "origin"], timeout_s=10.0)
+        if remote_res.exit_code != 0 or not remote_res.stdout.strip():
+            raise ToolExecutionError(
+                "the workspace repository has no 'origin' remote configured to push to",
+                tool="git_push",
+            )
+        remote_url = remote_res.stdout.strip()
+
+        refused: set[str] = {"main", "master"}
+        origin_head = await _git(
+            handle,
+            ["git", *where, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+            timeout_s=10.0,
+        )
+        if origin_head.exit_code == 0 and origin_head.stdout.strip():
+            refused.add(origin_head.stdout.strip().split("/", 1)[-1])
+        slug = explicit_slug
+        if slug is None:
+            matched = _GITHUB_REMOTE_URL.match(remote_url)
+            if matched and matched.group(1) not in (".", "..") and matched.group(2) not in (".", ".."):
+                slug = f"{matched.group(1)}/{matched.group(2)}"
+        if code_host_resolver is not None and slug is not None:
+            client = await code_host_resolver(context.user_id)
+            if client is not None:
+                try:
+                    refused.add(await client.default_branch(slug))
+                except Exception as exc:
+                    raise ToolExecutionError(
+                        f"could not confirm {slug}'s default branch with GitHub ({exc}); not pushing "
+                        "without knowing which branch is protected",
+                        tool="git_push",
+                    ) from exc
+        if branch in refused:
+            raise ToolExecutionError(
+                f"refusing to push to {branch!r}, the default branch. Push a feature "
+                "branch and open a pull request from it.",
+                tool="git_push",
+            )
+
+        ref = f"refs/heads/{branch}"
+        result = await _git(
+            handle,
+            ["git", *where, "push", "--set-upstream", "--", "origin", f"{ref}:{ref}"],
+            timeout_s=300.0,
+        )
+        if result.exit_code != 0:
+            raise ToolExecutionError(
+                f"git push failed: {_git_failure(result)}",
+                tool="git_push",
+            )
+        return _with_clone_note(context, f"Pushed {branch} to {slug or remote_url}.")
+
     @tool(
         "git_push",
         "Push a branch of the workspace to GitHub. The user is always asked to confirm first, "
@@ -1854,6 +1938,9 @@ def build_sandbox_tools(
               max_length=200),
         param("repo", "string", "Repository as 'owner/name'. Defaults to the one you cloned.",
               required=False, max_length=400, format="github_repo"),
+        param("repo_path", "string", "Repository directory inside the workspace, when it holds more than one "
+              "or the repository is not at the root (default: the root, else the repository found below it).",
+              required=False, max_length=200),
         category=ToolCategory.DEVELOPMENT,
         # The one tool here that publishes anything. CONFIDENTIAL + side_effecting makes
         # confirmation mandatory (ToolSpec.__post_init__), and it is deliberately not
@@ -1864,7 +1951,11 @@ def build_sandbox_tools(
         timeout_s=300.0,
         tags=(NETWORK_TAG,),
     )
-    async def git_push(branch: str, context: ToolContext, repo: str | None = None) -> str:
+    async def git_push(
+        branch: str, context: ToolContext, repo: str | None = None, repo_path: str | None = None,
+    ) -> str:
+        if await sessions._desktop_active(context):
+            return await _desktop_git_push(branch, context, repo=repo, repo_path=repo_path)
         if host_git is None or not sessions.durable:
             raise ToolExecutionError(
                 "pushing is not available on this deployment; propose the change with "
@@ -2111,7 +2202,7 @@ def build_sandbox_tools(
         write_file, edit_file, write_files, run_command, git_diff, git_commit, git_checkout_branch,
         git_status, workspace_snapshot, list_workspace_snapshots, workspace_restore,
     ]
-    if host_git is not None:
+    if host_git is not None or host_agent_registry is not None:
         tools.append(git_push)
     if workspace_manager is not None:
         tools += [open_workspace, list_workspaces, destroy_workspace]
@@ -2733,6 +2824,10 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
 _NAME_OK = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_")
 
 
+#: Providers cap a function name at 64 characters (the blueprint tools cap theirs lower, at 48, to leave room).
+_MAX_TOOL_NAME_CHARS = 64
+
+
 def _sanitize_name_part(value: str) -> str:
     """Tool names are pinned to lowercase snake_case (``ToolSpec._NAME_OK``); an MCP server or
     tool name is arbitrary text an operator configured, not guaranteed to already conform."""
@@ -2855,6 +2950,17 @@ async def build_mcp_bridge_tools(
         # `a-b` and `a_b` sanitise to the same name (as do server `a` + tool `b_c` and server
         # `a_b` + tool `c`); the registry refuses a duplicate, and one odd name must not cost
         # the operator every other tool.
+        if len(qualified_name) > _MAX_TOOL_NAME_CHARS:
+            # Providers cap a function name at 64 characters and reject the *whole* request when one tool's
+            # name is longer, so one long MCP name would break every turn that is offered it.
+            record = {
+                "tool": qualified_name, "server": descriptor.server, "mcp_name": descriptor.name,
+                "reason": "name_too_long", "length": str(len(qualified_name)),
+            }
+            if collisions is not None:
+                collisions.append(record)
+            logger.warning("MCP tool skipped: its qualified name is longer than providers accept", extra=record)
+            continue
         winner = taken.get(qualified_name)
         if winner is not None:
             record = {

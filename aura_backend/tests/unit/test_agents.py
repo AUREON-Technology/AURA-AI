@@ -492,6 +492,37 @@ class TestMcpToolsReachOnlyTheEngineer:
         declared = await self._declared(container, user, "engineer", delegated_tool_grant=frozenset())
         assert declared == set()
 
+    async def test_sandbox_and_desktop_tools_are_hidden_when_their_runner_is_absent(
+        self, container, user
+    ) -> None:
+        """Audit T-13: with no paired desktop and no server-side Docker sandbox (the default test
+        container, and Railway), `_tool_declarations` hides sandbox-backed and desktop-only tools
+        instead of advertising tools that always fail at `create_task`."""
+        from aura_core.adapters.coding_fakes import InMemorySandboxRunner
+        from aura_core.adapters.host_agent import HostAgentSession
+
+        await self._started(container)
+        # 1. Neither desktop nor server sandbox: sandbox + desktop tools are hidden, while pure
+        # analysis and MCP tools remain advertised.
+        no_runner = await self._declared(container, user, "engineer")
+        assert not ({"run_command", "write_file", "git_status", "git_push", "lint_code", "docker_build"} & no_runner)
+        assert {"analyze_python_ast", "mcp_fs_list_dir"} <= no_runner
+
+        # 2. Server-side sandbox available (no desktop paired): sandbox tools appear, but
+        # desktop-only tools (`docker_build`, `docker_compose`, `profile_python`) stay hidden.
+        container.sandbox_runner._fallback = InMemorySandboxRunner()
+        with_server_sandbox = await self._declared(container, user, "engineer")
+        assert {"run_command", "write_file", "git_status", "git_push", "lint_code"} <= with_server_sandbox
+        assert not ({"docker_build", "docker_compose", "profile_python"} & with_server_sandbox)
+
+        # 3. Paired desktop session active: both sandbox and desktop-only tools appear.
+        async def _noop_send(_frame):
+            return None
+
+        await container.host_agent_registry.register(HostAgentSession(user, _noop_send))
+        with_desktop = await self._declared(container, user, "engineer")
+        assert {"run_command", "write_file", "git_push", "docker_build", "docker_compose", "profile_python"} <= with_desktop
+
 
 class TestEveryPersonaIsToldItsTools:
     """Audit 2026-11-16 F11: `system.decision_agent` declared no `capabilities` variable, so the

@@ -29,7 +29,7 @@ The default container (in-memory, no opt-ins) registers **37 tools** (RUN). With
 | `delegate_to_agent` | SYSTEM | – | ✅ runs a sub-turn. Granted to no persona explicitly; reachable via orchestrator's open grant |
 | `write_file`, `write_files`, `edit_file`, `run_command`, `git_diff`, `git_status`, `git_commit`, `git_checkout_branch` | PERSONAL/SYSTEM | mostly ✓ | ❌ with no paired desktop and no Docker sandbox (= Railway today), every call fails: *"no desktop app is connected and no server-side sandbox is configured"* (T-13) |
 | `clone_repository`, `github_*` (7) | CONFIDENTIAL | mixed | Registered only with GitHub configured. Not executed (would call GitHub) |
-| `git_push`, `open/list/destroy_workspace` | – | – | **Never registered** without Docker. Granted to `engineer` anyway (T-14) |
+| `git_push`, `open/list/destroy_workspace` | – | – | At audit time: never registered without Docker. Since T-14 `git_push` registers with a paired desktop; the workspace trio still needs Docker |
 | `fetch_url`, `get_weather`, `list_files`, `read_file` | – | – | **Never registered in any configuration** (T-06) |
 
 ### 1b. Persona grants vs registry (RUN)
@@ -142,7 +142,7 @@ Original finding:
 
 **T-06 · FIXED · `fetch_url`, `get_weather`, `list_files` and `read_file` can never be enabled.** (RUN + CODE; pass-C C-08)
 
-> **Fix:** `ToolSettings.files_root` (`AURA_TOOLS_FILES_ROOT`) and `ToolSettings.http_allowed_hosts` (`AURA_TOOLS_HTTP_ALLOWED_HOSTS`) are now wired through `Container._build_tools` (`container.py:2138-2142`) into `default_tools`. Every registered tool is also pinned against persona grants or `_ORCHESTRATOR_ONLY_REGISTERED_TOOLS` in `tests/unit/test_tools_review_engine.py` (`test_every_registered_tool_is_granted_to_a_persona_or_explicitly_orchestrator_only`) and `tests/unit/test_builtin_tools_registration.py`.
+> **Fix:** `ToolSettings.files_root` (`AURA_TOOLS_FILES_ROOT`), `ToolSettings.http_allowed_hosts` (`AURA_TOOLS_HTTP_ALLOWED_HOSTS`), and `ToolSettings.weather_enabled` (`AURA_TOOLS_WEATHER_ENABLED`) are now wired through `Container._build_tools` (`container.py`) into `default_tools`. `list_files` and `read_file` are granted to `engineer` and `research_agent` (`agents/registry.py::_DOCUMENT_READING_TOOLS`), and every registered tool is pinned against persona grants or `_ORCHESTRATOR_ONLY_REGISTERED_TOOLS` in `tests/unit/test_tools_review_engine.py` and `tests/unit/test_builtin_tools_registration.py`.
 
 Original finding:
 - `Container._build_tools` (`container.py:1453-1466`) never passes `workspace`, `allowed_http_hosts` or `enable_weather` to `default_tools`.
@@ -156,7 +156,11 @@ Original finding:
 Original finding:
 `orchestrator` has `allowed_tools=None` and a SYSTEM ceiling, so an `engineer_agent` caller gets all sandbox, GitHub and MCP tools there with a single-pass plan and the generic prompt.
 
-**T-08 · GAP · `TOOLS_MAX_CALLS_PER_TURN` is only partly enforced.** (CODE; C-05, **partly fixed**)
+**T-08 · FIXED · `TOOLS_MAX_CALLS_PER_TURN` is only partly enforced.** (CODE; C-05)
+
+> **Fix:** `AIKernel._turn_budget_and_gate` (`kernel.py`) builds the effective `AgentBudget` and a `RunBudgetGate` for every execution path -- both the standard `agentic_executor` loop and the direct `executor.execute` / `executor.stream` fallback -- and chains a delegated sub-turn's `RunBudgetGate` to its parent turn's gate via `TurnLookups` (`kernel/turn_scope.py`), so delegation cannot reset the root turn's `TOOLS_MAX_CALLS_PER_TURN` cap. `tests/unit/test_kernel_tool_budget.py` now pins real tool-dispatch refusals on the loop, on the direct executor fallback, and across delegation.
+
+Original finding:
 - It now becomes the default `tool_budget` in `_loop_arguments` (`kernel.py:2641-2643`), enforced by `RunBudgetGate` across every persona on the standard agent loop.
 - **Not applied** on the direct `executor.execute` fallback (used only when no `AgentRegistry` or no `agentic_executor` is wired).
 - **Not cumulative across delegation:** each sub-turn gets a fresh cap.
@@ -167,7 +171,9 @@ The flag nulls `deps.tools`, but the resume path executes its stored plan throug
 
 **T-10 · FIXED · MCP name collisions silently drop tools.** (CODE)
 
-> **Fix:** `_parse_mcp_servers` and `McpSettings` (`config/settings.py`) refuse two MCP servers whose names sanitise to the same identifier (`My-Server` vs `my_server`) with `ConfigurationError`. `build_mcp_bridge_tools` (`tools/coding.py`) tracks `taken` tool names by their winning `McpToolDescriptor`, skips colliding or unusable MCP tool declarations without aborting discovery for the remaining tools, logs both sides of a collision (`collides_with_server`, `collides_with_name`), and populates an optional `collisions` list stored on `Container.mcp_tool_collisions` (`tests/unit/test_tools_review_engineer.py`).
+> **Fix:** `_parse_mcp_servers` and `McpSettings` (`config/settings.py`) refuse two MCP servers whose names sanitise to the same identifier (`My-Server` vs `my_server`) with `ConfigurationError`. `build_mcp_bridge_tools` (`tools/coding.py`) tracks `taken` tool names by their winning `McpToolDescriptor`, skips colliding or unusable MCP tool declarations without aborting discovery for the remaining tools, logs both sides of a collision (`collides_with_server`, `collides_with_name`), and populates an optional `collisions` list stored on `Container.mcp_tool_collisions` (`tests/unit/test_tools_review_engineer.py`). A qualified name longer than 64 characters (the provider limit, which rejects the whole request) is now skipped and reported in the same list with `reason: "name_too_long"`.
+>
+> **Still open:** the collision list is logged and kept on the container, but no API, health or admin view shows it.
 
 Original finding:
 - `My-Server` / `my_server`, or server `a` + tool `b_c` vs server `a_b` + tool `c`, sanitize to the same name.
@@ -181,8 +187,10 @@ Original finding:
 Original finding:
 `pending_actions_executor.dart:101-109` never passes `params['description']` to `addTask`, although `AddTaskFn` accepts it (`:27-32`) and the backend sends it.
 
-**T-12 · FIXED (live voice) · `propose_*` over live voice.** (CODE)
+**T-12 · FIXED · `propose_*` over live voice and `POST /api/v3/chat`.** (CODE)
 
+> **`POST /api/v3/chat`:** `TurnResult.actions` (filled from the turn's `propose_*` results, like the stream's `actions` frame) is returned as `actions`, always present and empty when nothing was proposed. A proposal held for confirmation has none until it is approved (`tests/unit/test_chat_actions.py`, `test_kernel_degradation.py`).
+>
 > **Fix:** `LiveServerFrame.tryParse` (`live_voice_protocol.dart`) now parses `actions` frames into `LiveActionsFrame`, `LiveVoiceViewModel._onFrame` forwards non-empty actions to `pendingActionsProvider`, and `LiveVoicePage` renders `PendingActionsCard` (`test/live_voice_protocol_test.dart`, `test/live_voice_view_model_test.dart`).
 
 Original finding:
@@ -191,12 +199,20 @@ Original finding:
 
 ### P4
 
-**T-13 · GAP (by design) · Engineer tools are advertised when nothing can run them.** (RUN)
+**T-13 · FIXED · Engineer tools are advertised when nothing can run them.** (RUN)
+
+> **Fix:** `AIKernel._tool_declarations` (`kernel.py`) now hides `_REQUIRES_PAIRED_DESKTOP` (`docker_build`, `docker_compose`, `profile_python`) whenever the calling user has no paired desktop session, and hides `_REQUIRES_SANDBOX_OR_DESKTOP` (`write_file`, `write_files`, `edit_file`, `run_command`, `clone_repository`, `git_*`, `workspace_snapshot`/`list_workspace_snapshots`/`workspace_restore`, `lint_code`, `check_format`, `scan_security`) when neither a paired desktop nor a server-side sandbox runner (`sandbox_runner._fallback`) is available for the turn (`tests/unit/test_agents.py::test_sandbox_and_desktop_tools_are_hidden_when_their_runner_is_absent`).
+
+Original finding:
 - With no paired desktop and no Docker (Railway, today's production), the model is still offered `run_command`, `write_file` and the `git_*` tools, and every call fails.
 - The container docstring chooses this deliberately ("registered-but-unusable is a better failure than invisible"). It contradicts the registry's own "don't advertise what always fails" rule and costs a planning generation per attempt.
 - The error text is at least actionable.
 
-**T-14 · GAP (by design) · There is no push path on deployments without Docker.** (RUN)
+**T-14 · FIXED · There is no push path on deployments without Docker.** (RUN)
+
+> **Fix:** `build_sandbox_tools` (`tools/coding.py`) now registers `git_push` whenever `host_git` or `host_agent_registry` is wired (and passes `host_agent_registry` to `_SessionAdapter` even when `workspace_manager is None`). When a paired desktop session is active (`sessions._desktop_active`), `git_push` runs `_desktop_git_push` against the desktop checkout via the host-agent runner with the same plain-branch validation (`_is_plain_branch_name`), default-branch protection (`origin/HEAD`, `main`/`master`, and GitHub's `default_branch` when connected), and explicit `refs/heads/<branch>:refs/heads/<branch>` refspec as server-side `git_push` (`tests/unit/test_tools_review_engineer.py::TestGitPush`). When neither a paired desktop nor a server-side sandbox exists, `AIKernel._tool_declarations` hides `git_push` alongside the other sandbox/git tools (`_REQUIRES_SANDBOX_OR_DESKTOP`).
+
+Original finding:
 - `git_push` needs `host_git`, which needs the Docker workspace runner. On Railway it never exists, and the engineer grant names it regardless.
 - A desktop user's only route to a push is `run_command "git push"` through daemon approval.
 
@@ -229,7 +245,7 @@ Original finding:
 
 **T-19 · FIXED · `confirmation_invalid` has no client handling.** (CODE)
 
-> **Fix:** `chat_repository.dart` maps `confirmation_invalid` to `_SseSendOutcome.approvalExpired` and surfaces a dedicated expired-approval transcript row (`chat_connection_error.dart`, `test/chat_robustness_test.dart`).
+> **Fix:** `chat_repository.dart` maps `confirmation_invalid` (both SSE `error` frames and HTTP 409 `AuraApiError` responses) to `_SseSendOutcome.approvalExpired` and surfaces a dedicated expired-approval transcript row (`chat_connection_error.dart`, `test/chat_robustness_test.dart`), `AuraFailure._fromApiError` (`aura_failure.dart`) maps `confirmation_invalid` to localized `chatApprovalExpiredNotice` with `canRetry: false`, and `LiveVoiceViewModel._onFrame` (`live_voice_view_model.dart`) clears pending confirmation state, returns to `listening`, and shows `chatApprovalExpiredNotice` (`test/live_voice_view_model_test.dart`).
 
 Original finding:
 It arrives as a generic SSE `error`, with no prompt to re-ask.
@@ -242,10 +258,10 @@ It arrives as a generic SSE `error`, with no prompt to re-ask.
 | C-02 `write_files` missing from engineer grant | ✅ **Fixed** | `agents/registry.py:226`. MCP prefix grant fixed as **T-03**, and `test_tools_review_engine.py` pins every registered tool against persona grants |
 | C-03 engineer tools reachable via orchestrator | ✅ **Mitigated** | **T-07**: orchestrator turns with `engineer_agent` now receive `engineer_loop_deadline_s` (`kernel.py::_tool_context`) |
 | C-04 `remember_fact` granted to every persona | ✅ **Fixed** | split into `_MEMORY_WRITE_TOOLS`; `decision_agent` excluded (`registry.py:129-135,210`) |
-| C-05 `max_calls_per_turn` never enforced | ⚠ Partly fixed | **T-08** |
+| C-05 `max_calls_per_turn` never enforced | ✅ **Fixed** | **T-08** (`_turn_budget_and_gate`, parent-chained `RunBudgetGate`, `test_kernel_tool_budget.py`) |
 | C-06 delegation enum frozen | ✅ **Fixed** (#241) | **T-16** |
 | C-07 `GET /tools` has no caller | ✅ **Fixed** | **T-17** (`tool_catalog_repository.dart`, `run_history_repository.dart`) |
-| C-08 opt-in tools have no wiring | ✅ **Fixed** | **T-06** (`AURA_TOOLS_FILES_ROOT`, `AURA_TOOLS_HTTP_ALLOWED_HOSTS`) |
+| C-08 opt-in tools have no wiring | ✅ **Fixed** | **T-06** (`AURA_TOOLS_FILES_ROOT`, `AURA_TOOLS_HTTP_ALLOWED_HOSTS`, `AURA_TOOLS_WEATHER_ENABLED`) |
 
 ## 5. Checked and fine
 

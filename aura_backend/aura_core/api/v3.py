@@ -848,6 +848,9 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "tools_used": list(result.tool_calls),
                 "needs_confirmation": list(result.needs_confirmation),
                 "pending_tool_calls": list(result.pending_tool_calls),
+                # Personal-OS proposals the client applies after approval (same entries as the stream's
+                # `actions` frame). Always present, empty when nothing was proposed.
+                "actions": list(result.actions),
                 "plan": list(result.plan_summary),
                 "plan_mode": result.plan_mode,
                 # ADR-047: the loop report appears only when the request asked for an

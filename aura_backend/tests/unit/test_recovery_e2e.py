@@ -69,6 +69,12 @@ async def _ready(script: _Script, probe: _Probe, *, policy: bool):
     ))
     container = Container(settings)
     await container.startup()
+    # The default container has no sandbox (no Docker, no paired desktop), and the kernel now hides the
+    # sandbox-backed tools from a turn in that state (audit T-13). These turns exercise the Engineer loop
+    # over tools that stand in for a deployment that has one, so give it the in-memory runner.
+    from aura_core.adapters.coding_fakes import InMemorySandboxRunner
+
+    container.sandbox_runner._fallback = InMemorySandboxRunner()
     await container.engineer_consent.accept(USER, ENGINEER_CONSENT_NOTICE_VERSION, at=datetime.now(timezone.utc))
 
     @tool("git_status", "A read that times out once, then works.", sensitivity=ToolSensitivity.PUBLIC)

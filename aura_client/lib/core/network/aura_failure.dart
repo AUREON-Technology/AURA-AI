@@ -323,6 +323,14 @@ class AuraFailure {
           canRetry: true,
           detail: detail,
         );
+      case 'confirmation_invalid':
+        return AuraFailure(
+          kind: AuraFailureKind.unknown,
+          title: currentL10n.commonSomethingWentWrong,
+          message: currentL10n.chatApprovalExpiredNotice,
+          canRetry: false,
+          detail: detail,
+        );
     }
 
     // No recognised slug — fall back to the status code.

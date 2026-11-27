@@ -557,6 +557,30 @@ class TestStreamToolExecution:
         assert actions["actions"][0]["params"]["title"] == "Backup notes"
         assert frames[-1]["pending_tool_calls"] == []
 
+    async def test_the_non_streaming_result_carries_the_proposed_actions_too(self, container) -> None:
+        """Tool audit T-12: `run()` (behind `POST /chat`) used to drop the `propose_*` actions that the
+        stream delivered as an `actions` frame."""
+        await container.startup()
+        container.kernel._deps.planner = _FixedPlanner(
+            _tool_plan("propose_task", {"title": "Water the plants", "dueDate": "2026-12-01T09:00:00"})
+        )
+        result = await container.kernel.run(_request("add a task called Water the plants", plan=True))
+        assert [(a["type"], a["params"]["title"]) for a in result.actions] == [("add_task", "Water the plants")]
+
+        container.kernel._deps.planner = _FixedPlanner(_tool_plan("calculator", {"expression": "2+2"}))
+        other = await container.kernel.run(_request("what is 2+2", plan=True))
+        assert other.actions == ()  # a tool that proposes nothing leaves the field empty
+
+    async def test_a_held_proposal_has_no_actions_until_it_is_approved(self, container) -> None:
+        await container.startup()
+        pending = await self._held(container, "Backup notes")
+        held = await container.kernel.run(
+            _request("add a task called Backup notes", plan=True))
+        assert held.actions == ()  # held for confirmation: nothing for the client to apply yet
+        approved = await container.kernel.run(
+            _request("yes, approve.", approval_ids=(pending["approval_id"],)))
+        assert [a["params"]["title"] for a in approved.actions] == ["Backup notes"]
+
     async def test_a_resume_executes_the_stored_plan_without_re_planning(
         self, container
     ) -> None:
