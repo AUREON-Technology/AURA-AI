@@ -482,6 +482,8 @@ class Container:
         self._github_clients_by_user: dict[str, Any] = {}
         self.github_client_resolver = self._build_github_client_resolver()
         self.mcp_client = self._build_mcp_client()
+        # Filled by startup() once MCP tools are discovered; empty when MCP is off.
+        self.mcp_tool_collisions: tuple[dict[str, str], ...] = ()
         # ADR-038: None unless AURA_ALLOW_EXTRACTION_INFERENCE is on. Before the tools, which
         # register ``extract_structured`` only when there is an extractor to call.
         self.structured_extractor = self._build_structured_extractor()
